@@ -1,0 +1,6 @@
+{
+  "name": "matrix-arc",
+  "scripts": {
+    "start": "python -m http.server 3001"
+  }
+}
