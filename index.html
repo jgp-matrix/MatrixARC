@@ -2,20 +2,718 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<meta name="apple-mobile-web-app-capable" content="yes"/>
-<meta name="theme-color" content="#0a0a0f"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Matrix ARC</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,'Inter',sans-serif;background:#0a0a0f;color:#f0f0f0;min-height:100vh;display:flex;align-items:center;justify-content:center;}
+html,body{background:#0d0d14;color:#e8e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}
+input,textarea,select,button{font-family:inherit;font-size:inherit}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:#13131e}
+::-webkit-scrollbar-thumb{background:#2a2a40;border-radius:3px}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.fade-in{animation:fadeIn 0.25s ease-out both}
+.spin{animation:spin 1s linear infinite;display:inline-block}
 </style>
 </head>
 <body>
-<div style="text-align:center;">
-  <div style="font-size:48px;margin-bottom:16px;">⬡</div>
-  <div style="font-size:28px;font-weight:800;letter-spacing:-0.5px;">Matrix ARC</div>
-  <div style="font-size:14px;color:#6b7280;margin-top:8px;">AI Recognition and Capture</div>
-</div>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+// ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
+const firebaseConfig={
+  apiKey:"REPLACE_ME",
+  authDomain:"REPLACE_ME",
+  projectId:"REPLACE_ME",
+  storageBucket:"REPLACE_ME",
+  messagingSenderId:"REPLACE_ME",
+  appId:"REPLACE_ME"
+};
+firebase.initializeApp(firebaseConfig);
+const fbAuth=firebase.auth();
+const fbDb=firebase.firestore();
+</script>
+<script type="text/babel">
+const {useState,useEffect,useRef}=React;
+
+// ── THEME ──
+const C={
+  bg:"#0d0d14",card:"#13131e",border:"#1e2030",
+  accent:"#3b82f6",accentDim:"#1d3a6e",
+  green:"#10b981",greenDim:"#052e1c",
+  yellow:"#f59e0b",yellowDim:"#3a1f00",
+  red:"#ef4444",redDim:"#3b0808",
+  muted:"#6b7280",text:"#e8e8f0",sub:"#9ca3af",
+  purple:"#8b5cf6",teal:"#14b8a6"
+};
+
+// ── STYLE HELPERS ──
+const btn=(bg,color,x={})=>({background:bg,color,border:"none",borderRadius:8,padding:"9px 16px",fontWeight:600,cursor:"pointer",fontSize:14,transition:"opacity 0.15s",...x});
+const inp=(x={})=>({background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",color:C.text,fontSize:14,width:"100%",outline:"none",...x});
+const card=(x={})=>({background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:20,...x});
+
+// ── API KEY (loaded from Firestore) ──
+let _apiKey=null;
+async function loadApiKey(){
+  try{const d=await fbDb.doc("config/api").get();if(d.exists)_apiKey=d.data().key||null;}catch(e){}
+}
+async function apiCall(body){
+  if(!_apiKey)throw new Error("API key not set. Open Settings and add your Anthropic key.");
+  const r=await fetch("https://api.anthropic.com/v1/messages",{
+    method:"POST",
+    headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+    body:JSON.stringify({model:"claude-opus-4-6",...body})
+  });
+  const d=await r.json();
+  if(!r.ok)throw new Error(d.error?.message||"API error");
+  return d.content?.[0]?.text||"";
+}
+
+// ── IMAGE RESIZE ──
+function resizeImage(dataUrl,maxW=1400){
+  return new Promise(res=>{
+    const img=new Image();
+    img.onload=()=>{
+      let w=img.width,h=img.height;
+      if(w>maxW){h=Math.round(h*(maxW/w));w=maxW;}
+      const c=document.createElement("canvas");c.width=w;c.height=h;
+      c.getContext("2d").drawImage(img,0,0,w,h);
+      res(c.toDataURL("image/jpeg",0.75));c.width=0;c.height=0;
+    };img.src=dataUrl;
+  });
+}
+
+// ── FIRESTORE ──
+async function saveProject(uid,project){
+  const col=fbDb.collection(`users/${uid}/projects`);
+  const ref=project.id?col.doc(project.id):col.doc();
+  const data={...project,id:ref.id,updatedAt:Date.now()};
+  // Don't store page images in Firestore — keep only metadata + bom
+  const toSave={...data,pages:(data.pages||[]).map(p=>({...p,dataUrl:undefined}))};
+  await ref.set(toSave);
+  return data; // return with dataUrls intact for in-memory use
+}
+async function loadProjects(uid){
+  const snap=await fbDb.collection(`users/${uid}/projects`).orderBy("updatedAt","desc").get();
+  return snap.docs.map(d=>d.data());
+}
+async function deleteProject(uid,id){
+  await fbDb.doc(`users/${uid}/projects/${id}`).delete();
+}
+
+// ── BOM EXTRACTION PROMPT ──
+const BOM_PROMPT=`You are reading a page from a UL508A industrial electrical control panel drawing set.
+If this page contains a Bill of Materials (BOM) table, extract every line item.
+Return ONLY a valid JSON array. Each object must have exactly these fields:
+- "qty": number
+- "partNumber": string
+- "description": string
+- "manufacturer": string (empty string if not shown)
+- "notes": string (ref designators or other notes, empty string if none)
+
+Rules:
+- Include ALL rows even if some fields are blank
+- If no BOM table exists on this page, return []
+- Do NOT include column headers, totals rows, title blocks, or revision history
+- Return the JSON array only — no explanation, no markdown`;
+
+async function extractBomPage(dataUrl){
+  const b64=dataUrl.split(",")[1];
+  const raw=await apiCall({
+    max_tokens:3000,
+    messages:[{role:"user",content:[
+      {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
+      {type:"text",text:BOM_PROMPT}
+    ]}]
+  });
+  try{
+    const cleaned=raw.replace(/```json|```/g,"").trim();
+    const m=cleaned.match(/\[[\s\S]*\]/);
+    return m?JSON.parse(m[0]):[];
+  }catch(e){return[];}
+}
+
+// ── COMPONENTS ──
+
+function Badge({status}){
+  const map={
+    draft:[C.border,C.muted,"Draft"],
+    extracted:[C.greenDim,C.green,"Extracted"],
+    validated:[C.accentDim,C.accent,"Validated"],
+    quoted:[C.yellowDim,C.yellow,"Quoted"]
+  };
+  const [bg,col,label]=map[status]||map.draft;
+  return<span style={{background:bg,color:col,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap"}}>{label.toUpperCase()}</span>;
+}
+
+function PageTypePill({type,onChange}){
+  const order=["untagged","bom","schematic","layout"];
+  const colors={untagged:C.muted,bom:C.accent,schematic:C.green,layout:C.purple};
+  const labels={untagged:"Untagged",bom:"BOM",schematic:"Schematic",layout:"Layout"};
+  const next=order[(order.indexOf(type)+1)%order.length];
+  return(
+    <button onClick={()=>onChange(next)} style={{background:colors[type]+"22",color:colors[type],border:`1px solid ${colors[type]}55`,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+      {labels[type]}
+    </button>
+  );
+}
+
+// ── LOGIN ──
+function LoginScreen(){
+  const [email,setEmail]=useState("");
+  const [pass,setPass]=useState("");
+  const [mode,setMode]=useState("login");
+  const [err,setErr]=useState("");
+  const [loading,setLoading]=useState(false);
+
+  async function submit(e){
+    e.preventDefault();setErr("");setLoading(true);
+    try{
+      if(mode==="login")await fbAuth.signInWithEmailAndPassword(email,pass);
+      else await fbAuth.createUserWithEmailAndPassword(email,pass);
+    }catch(ex){setErr(ex.message);}
+    setLoading(false);
+  }
+  async function google(){
+    setLoading(true);
+    try{await fbAuth.signInWithPopup(new firebase.auth.GoogleAuthProvider());}
+    catch(ex){setErr(ex.message);}
+    setLoading(false);
+  }
+  return(
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 50% 0%,#1a1a3e 0%,${C.bg} 60%)`}}>
+      <div style={{textAlign:"center",marginBottom:32}}>
+        <div style={{fontSize:52,marginBottom:10}}>⬡</div>
+        <div style={{fontSize:34,fontWeight:800,letterSpacing:-1}}>Matrix <span style={{color:C.accent}}>ARC</span></div>
+        <div style={{fontSize:14,color:C.muted,marginTop:6}}>AI Recognition &amp; Capture · Control Panel Quoting</div>
+      </div>
+      <div style={{...card(),width:"100%",maxWidth:400}}>
+        <div style={{fontSize:18,fontWeight:700,marginBottom:20}}>{mode==="login"?"Sign In":"Create Account"}</div>
+        <form onSubmit={submit}>
+          <div style={{marginBottom:10}}><input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email" style={inp()} required/></div>
+          <div style={{marginBottom:16}}><input value={pass} onChange={e=>setPass(e.target.value)} type="password" placeholder="Password" style={inp()} required/></div>
+          {err&&<div style={{color:C.red,fontSize:12,marginBottom:12,lineHeight:1.5}}>{err}</div>}
+          <button type="submit" disabled={loading} style={btn(C.accent,"#fff",{width:"100%",opacity:loading?0.6:1})}>{loading?"Please wait…":mode==="login"?"Sign In":"Create Account"}</button>
+        </form>
+        <div style={{textAlign:"center",margin:"14px 0",color:C.muted,fontSize:12}}>or</div>
+        <button onClick={google} disabled={loading} style={btn("#fff","#1a1a1a",{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})}>
+          <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+          Continue with Google
+        </button>
+        <div style={{textAlign:"center",marginTop:14,fontSize:12,color:C.muted}}>
+          {mode==="login"?"No account? ":"Have an account? "}
+          <button onClick={()=>setMode(m=>m==="login"?"register":"login")} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontWeight:600,fontSize:12}}>
+            {mode==="login"?"Register":"Sign In"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── DRAWINGS TAB ──
+function DrawingsTab({project,onUpdate}){
+  const [dragging,setDragging]=useState(false);
+  const fileRef=useRef(null);
+
+  async function addFiles(files){
+    const items=[];
+    for(const f of Array.from(files).filter(f=>f.type.startsWith("image/"))){
+      const reader=new FileReader();
+      const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
+      const resized=await resizeImage(dataUrl,1400);
+      items.push({id:Date.now()+Math.random(),name:f.name,dataUrl:resized,type:"untagged"});
+    }
+    onUpdate({...project,pages:[...(project.pages||[]),...items]});
+  }
+
+  function drop(e){e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files);}
+  function tagPage(id,type){onUpdate({...project,pages:project.pages.map(p=>p.id===id?{...p,type}:p)});}
+  function removePage(id){onUpdate({...project,pages:project.pages.filter(p=>p.id!==id)});}
+  function movePage(id,dir){
+    const pages=[...(project.pages||[])];
+    const i=pages.findIndex(p=>p.id===id);const ni=i+dir;
+    if(ni<0||ni>=pages.length)return;
+    [pages[i],pages[ni]]=[pages[ni],pages[i]];
+    onUpdate({...project,pages});
+  }
+
+  const pages=project.pages||[];
+  const counts={bom:pages.filter(p=>p.type==="bom").length,schematic:pages.filter(p=>p.type==="schematic").length,layout:pages.filter(p=>p.type==="layout").length};
+
+  return(
+    <div>
+      <div style={{display:"flex",gap:12,marginBottom:20,flexWrap:"wrap"}}>
+        {[["📄",pages.length,"Total"],["📋",counts.bom,"BOM"],["📐",counts.schematic,"Schematic"],["🗂️",counts.layout,"Layout"]].map(([icon,n,label])=>(
+          <div key={label} style={{...card({padding:"12px 16px"}),display:"flex",alignItems:"center",gap:10,minWidth:110}}>
+            <span style={{fontSize:22}}>{icon}</span>
+            <div><div style={{fontSize:22,fontWeight:800,color:C.accent}}>{n}</div><div style={{fontSize:11,color:C.muted}}>{label}</div></div>
+          </div>
+        ))}
+      </div>
+
+      <div
+        onDragOver={e=>{e.preventDefault();setDragging(true);}}
+        onDragLeave={()=>setDragging(false)}
+        onDrop={drop}
+        onClick={()=>fileRef.current?.click()}
+        style={{border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:12,padding:36,textAlign:"center",marginBottom:20,cursor:"pointer",transition:"all 0.15s",background:dragging?C.accentDim+"33":"transparent"}}>
+        <input ref={fileRef} type="file" multiple accept="image/*" onChange={e=>{addFiles(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+        <div style={{fontSize:40,marginBottom:10,opacity:0.6}}>🖼️</div>
+        <div style={{fontSize:15,fontWeight:600,color:C.sub,marginBottom:6}}>Drop drawing scans here</div>
+        <div style={{fontSize:13,color:C.muted}}>or click to browse · JPG, PNG, TIFF supported</div>
+      </div>
+
+      {pages.length>0&&(
+        <div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:14}}>
+            Tap each badge to cycle page type: <span style={{color:C.accent}}>BOM</span> · <span style={{color:C.green}}>Schematic</span> · <span style={{color:C.purple}}>Layout</span> · then go to <strong style={{color:C.text}}>Extract</strong>.
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:12}}>
+            {pages.map((p,i)=>(
+              <div key={p.id} className="fade-in" style={{...card({padding:10})}}>
+                <img src={p.dataUrl} alt={p.name} style={{width:"100%",aspectRatio:"8.5/11",objectFit:"cover",borderRadius:6,marginBottom:8,background:"#080810"}}/>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <PageTypePill type={p.type} onChange={t=>tagPage(p.id,t)}/>
+                  <div style={{display:"flex",gap:3}}>
+                    {i>0&&<button onClick={()=>movePage(p.id,-1)} style={{background:C.border,color:C.muted,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>↑</button>}
+                    {i<pages.length-1&&<button onClick={()=>movePage(p.id,1)} style={{background:C.border,color:C.muted,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>↓</button>}
+                    <button onClick={()=>removePage(p.id)} style={{background:C.redDim,color:C.red,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>✕</button>
+                  </div>
+                </div>
+                <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── EXTRACT TAB ──
+function ExtractTab({project,uid,onUpdate}){
+  const [running,setRunning]=useState(false);
+  const [progress,setProgress]=useState(null);
+  const [err,setErr]=useState("");
+
+  const bomPages=(project.pages||[]).filter(p=>p.type==="bom");
+
+  async function runExtraction(){
+    if(!bomPages.length){setErr("No pages tagged as BOM. Tag your BOM pages in the Drawings tab first.");return;}
+    setRunning(true);setErr("");setProgress({msg:"Starting…",pct:0});
+    let all=[];
+    for(let i=0;i<bomPages.length;i++){
+      const pg=bomPages[i];
+      setProgress({msg:`Reading page ${i+1} of ${bomPages.length}: ${pg.name}`,pct:Math.round((i/bomPages.length)*90)});
+      try{const items=await extractBomPage(pg.dataUrl);all=[...all,...items];}
+      catch(ex){setErr(`Failed on ${pg.name}: ${ex.message}`);setRunning(false);return;}
+    }
+    setProgress({msg:"Merging duplicates…",pct:95});
+    // Deduplicate: group by partNumber, sum qty
+    const map={};
+    all.forEach(item=>{
+      const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));
+      if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
+      else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
+    });
+    const bom=Object.values(map);
+    const updated={...project,bom,status:"extracted",updatedAt:Date.now()};
+    await saveProject(uid,updated);
+    onUpdate(updated);
+    setProgress({msg:`Complete — ${bom.length} unique items extracted.`,pct:100});
+    setRunning(false);
+  }
+
+  function updateRow(id,field,val){
+    onUpdate({...project,bom:project.bom.map(r=>r.id===id?{...r,[field]:val}:r)});
+  }
+  function addRow(){
+    onUpdate({...project,bom:[...(project.bom||[]),{id:Date.now(),qty:1,partNumber:"",description:"",manufacturer:"",notes:""}]});
+  }
+  function deleteRow(id){
+    onUpdate({...project,bom:project.bom.filter(r=>r.id!==id)});
+  }
+  function exportCSV(){
+    const header=["Qty","Part Number","Description","Manufacturer","Notes"];
+    const rows=[header,...(project.bom||[]).map(r=>[r.qty,r.partNumber,r.description,r.manufacturer,r.notes])];
+    const csv=rows.map(r=>r.map(c=>`"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a=document.createElement("a");
+    a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+    a.download=`${(project.name||"BOM").replace(/[^a-z0-9]/gi,"_")}_BOM.csv`;
+    a.click();
+  }
+
+  const bom=project.bom||[];
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>BOM Extraction</div>
+          <div style={{fontSize:13,color:C.muted}}>{bomPages.length} BOM page{bomPages.length!==1?"s":""} tagged · {bom.length} items in table</div>
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {bom.length>0&&(
+            <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:13})}>⬇ Export CSV</button>
+          )}
+          <button onClick={runExtraction} disabled={running||!bomPages.length} style={btn(C.accent,"#fff",{fontSize:13,opacity:running||!bomPages.length?0.5:1})}>
+            {running?"Extracting…":"🔍 Run Extraction"}
+          </button>
+        </div>
+      </div>
+
+      {progress&&(
+        <div style={{...card({padding:16}),marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:13,color:C.sub}}>{progress.msg}</span>
+            <span style={{fontSize:13,fontWeight:700,color:C.accent}}>{progress.pct}%</span>
+          </div>
+          <div style={{background:C.border,borderRadius:4,height:6,overflow:"hidden"}}>
+            <div style={{width:`${progress.pct}%`,height:"100%",background:C.accent,borderRadius:4,transition:"width 0.4s"}}/>
+          </div>
+        </div>
+      )}
+
+      {err&&(
+        <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:10,padding:12,marginBottom:16,fontSize:13,color:C.red}}>{err}</div>
+      )}
+
+      {bom.length>0?(
+        <div>
+          <div style={{overflowX:"auto",borderRadius:10,border:`1px solid ${C.border}`}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead>
+                <tr style={{background:"#0a0a12"}}>
+                  {[["Qty",60],["Part Number",140],["Description",0],["Manufacturer",140],["Notes",160],["",40]].map(([h,w])=>(
+                    <th key={h} style={{padding:"10px 12px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,whiteSpace:"nowrap",width:w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bom.map((row,i)=>(
+                  <tr key={row.id} style={{borderBottom:i<bom.length-1?`1px solid ${C.border}22`:"none"}}>
+                    {[["qty",60],["partNumber",140],["description",0],["manufacturer",140],["notes",160]].map(([f,w])=>(
+                      <td key={f} style={{padding:"4px 6px",width:w||"auto"}}>
+                        <input
+                          value={row[f]||""}
+                          onChange={e=>updateRow(row.id,f,e.target.value)}
+                          style={{...inp({padding:"6px 8px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:6}),width:w?w+"px":"100%",minWidth:w?w+"px":"160px"}}
+                          onFocus={e=>e.target.style.borderColor=C.accent}
+                          onBlur={e=>e.target.style.borderColor="transparent"}
+                        />
+                      </td>
+                    ))}
+                    <td style={{padding:"4px 6px",textAlign:"center"}}>
+                      <button onClick={()=>deleteRow(row.id)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,opacity:0.4,padding:"4px 6px"}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.4}>✕</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button onClick={addRow} style={{...btn("transparent",C.accent,{marginTop:10,fontSize:13,border:`1px dashed ${C.accent}44`,width:"100%",padding:"10px"})}}>+ Add Row</button>
+        </div>
+      ):(
+        !running&&(
+          <div style={{textAlign:"center",padding:60,color:C.muted}}>
+            <div style={{fontSize:44,marginBottom:12,opacity:0.3}}>📋</div>
+            <div style={{fontSize:16,fontWeight:600,color:C.sub,marginBottom:8}}>No BOM data yet</div>
+            <div style={{fontSize:13,lineHeight:1.7}}>
+              {bomPages.length===0
+                ?"Tag your BOM pages in the Drawings tab, then return here."
+                :"Click Run Extraction to analyze your BOM pages."}
+            </div>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+// ── PLACEHOLDER TAB ──
+function PlaceholderTab({icon,title,desc,coming}){
+  return(
+    <div style={{textAlign:"center",padding:"60px 20px",color:C.muted,maxWidth:520,margin:"0 auto"}}>
+      <div style={{fontSize:52,marginBottom:16,opacity:0.3}}>{icon}</div>
+      <div style={{fontSize:20,fontWeight:700,color:C.sub,marginBottom:10}}>{title}</div>
+      <div style={{fontSize:14,lineHeight:1.8,marginBottom:28}}>{desc}</div>
+      <div style={{textAlign:"left",display:"inline-block"}}>
+        {coming.map((c,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"flex-start",gap:10,marginBottom:10,fontSize:13}}>
+            <span style={{color:C.accent,marginTop:1}}>◦</span>
+            <span style={{color:C.sub}}>{c}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{marginTop:28,display:"inline-block",background:C.accentDim,color:C.accent,borderRadius:20,padding:"4px 16px",fontSize:12,fontWeight:700,letterSpacing:0.5}}>COMING SOON</div>
+    </div>
+  );
+}
+
+// ── PROJECT VIEW ──
+function ProjectView({project:init,uid,onBack,onChange}){
+  const [project,setProject]=useState(init);
+  const [tab,setTab]=useState("drawings");
+  const saveTimer=useRef(null);
+
+  function update(p){
+    setProject(p);onChange(p);
+    clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(()=>saveProject(uid,p),1000);
+  }
+
+  const tabs=[
+    {id:"drawings",icon:"🗂️",label:"Drawings"},
+    {id:"extract",icon:"🔍",label:"Extract"},
+    {id:"validate",icon:"✅",label:"Validate"},
+    {id:"price",icon:"💲",label:"Price"},
+    {id:"quote",icon:"📊",label:"Quote"},
+  ];
+
+  return(
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:C.bg}}>
+      {/* Header */}
+      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",gap:16,minHeight:52,flexShrink:0}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>
+          ← Projects
+        </button>
+        <div style={{width:1,height:18,background:C.border}}/>
+        <div style={{fontSize:15,fontWeight:700,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{project.name}</div>
+        <Badge status={project.status||"draft"}/>
+        <div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{(project.bom||[]).length} items · {(project.pages||[]).length} pages</div>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",gap:4,flexShrink:0,overflowX:"auto"}}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)}
+            style={{background:"none",border:"none",borderBottom:`2px solid ${tab===t.id?C.accent:"transparent"}`,color:tab===t.id?C.accent:C.muted,padding:"13px 14px",fontSize:13,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap",marginBottom:-1,transition:"color 0.15s"}}>
+            {t.icon} {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      <div style={{flex:1,overflowY:"auto",padding:24}}>
+        <div style={{maxWidth:1200,margin:"0 auto"}}>
+          {tab==="drawings"&&<DrawingsTab project={project} onUpdate={update}/>}
+          {tab==="extract"&&<ExtractTab project={project} uid={uid} onUpdate={update}/>}
+          {tab==="validate"&&(
+            <PlaceholderTab icon="✅" title="Schematic Validation"
+              desc="Cross-reference every BOM item against the schematic to confirm all components are represented — and catch anything missing from either."
+              coming={["BOM ↔ schematic cross-reference","Missing component detection","Unaccounted schematic elements report","Confidence score per line item"]}/>
+          )}
+          {tab==="price"&&(
+            <PlaceholderTab icon="💲" title="Pricing"
+              desc="Look up pricing from Business Central. Items not found in BC fall back to web pricing, flagged for supplier confirmation."
+              coming={["Business Central price lookup","Web pricing fallback with source flag","Manual unit price override","Cost rollup and margin calculation"]}/>
+          )}
+          {tab==="quote"&&(
+            <PlaceholderTab icon="📊" title="Quote Generation"
+              desc="Generate a complete control panel quote ready for Business Central import, including wire count labor."
+              coming={["Business Central import format export","Wire count → labor cost estimate","Full quote document with line totals","PDF export"]}/>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SETTINGS MODAL ──
+function SettingsModal({onClose}){
+  const [key,setKey]=useState("");
+  const [loading,setLoading]=useState(true);
+  const [saved,setSaved]=useState(false);
+
+  useEffect(()=>{
+    fbDb.doc("config/api").get()
+      .then(d=>{if(d.exists)setKey(d.data().key||"");})
+      .finally(()=>setLoading(false));
+  },[]);
+
+  async function save(){
+    await fbDb.doc("config/api").set({key});
+    _apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div style={{...card(),width:"100%",maxWidth:460}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>⚙ Settings</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Matrix ARC configuration</div>
+        <div style={{marginBottom:20}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Anthropic API Key</label>
+          {loading
+            ?<div style={{color:C.muted,fontSize:13,padding:"9px 0"}}>Loading…</div>
+            :<input value={key} onChange={e=>setKey(e.target.value)} type="password" placeholder="sk-ant-…" style={inp()}/>
+          }
+          <div style={{fontSize:11,color:C.muted,marginTop:6}}>Stored in your Firebase project. Shared across all team members.</div>
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Close</button>
+          <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:2,opacity:loading||!key.trim()?0.5:1})}>
+            {saved?"✓ Saved":"Save Key"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── NEW PROJECT MODAL ──
+function NewProjectModal({uid,onCreated,onClose}){
+  const [name,setName]=useState("");
+  const [loading,setLoading]=useState(false);
+
+  async function create(e){
+    e.preventDefault();if(!name.trim())return;setLoading(true);
+    const p=await saveProject(uid,{name:name.trim(),status:"draft",pages:[],bom:[],createdAt:Date.now(),updatedAt:Date.now()});
+    onCreated(p);
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div style={{...card(),width:"100%",maxWidth:440}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:20,fontWeight:700,marginBottom:4}}>New Project</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Name this control panel quote</div>
+        <form onSubmit={create}>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Panel 2024-001 — Conveyor Control" style={{...inp(),marginBottom:16}} autoFocus/>
+          <div style={{display:"flex",gap:10}}>
+            <button type="button" onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
+            <button type="submit" disabled={!name.trim()||loading} style={btn(C.accent,"#fff",{flex:2,opacity:!name.trim()||loading?0.5:1})}>
+              {loading?"Creating…":"Create Project"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── DASHBOARD ──
+function Dashboard({uid,projects,loading,onOpen,onNew,onDelete}){
+  return(
+    <div style={{maxWidth:1100,margin:"0 auto",padding:32}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:32}}>
+        <div>
+          <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
+          <div style={{fontSize:13,color:C.muted,marginTop:4}}>Control panel quote extraction</div>
+        </div>
+        <button onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
+          <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
+        </button>
+      </div>
+
+      {loading&&(
+        <div style={{textAlign:"center",padding:80,color:C.muted}}>
+          <div className="spin" style={{fontSize:24,marginBottom:12}}>◌</div>
+          <div>Loading projects…</div>
+        </div>
+      )}
+
+      {!loading&&projects.length===0&&(
+        <div style={{textAlign:"center",padding:80,color:C.muted}}>
+          <div style={{fontSize:52,marginBottom:16,opacity:0.2}}>⬡</div>
+          <div style={{fontSize:18,fontWeight:700,color:C.sub,marginBottom:8}}>No projects yet</div>
+          <div style={{fontSize:13,marginBottom:24,lineHeight:1.7}}>Upload scanned UL508A drawings to extract<br/>BOM data, validate schematics, and generate quotes.</div>
+          <button onClick={onNew} style={btn(C.accent,"#fff")}>Create First Project</button>
+        </div>
+      )}
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:16}}>
+        {projects.map(p=>(
+          <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
+            style={{...card(),cursor:"pointer",transition:"border-color 0.15s,transform 0.15s"}}
+            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"66";e.currentTarget.style.transform="translateY(-2px)";}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="none";}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{p.name}</div>
+              <Badge status={p.status||"draft"}/>
+            </div>
+            <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14}}>
+              <span>📋 {p.bom?.length||0} items</span>
+              <span>🖼️ {p.pages?.length||0} pages</span>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontSize:11,color:C.muted}}>{p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+              <button onClick={e=>{e.stopPropagation();onDelete(p.id);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"4px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── APP ──
+function App({user}){
+  const [projects,setProjects]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [view,setView]=useState("dashboard");
+  const [openProject,setOpenProject]=useState(null);
+  const [showNew,setShowNew]=useState(false);
+  const [showSettings,setShowSettings]=useState(false);
+
+  useEffect(()=>{
+    loadApiKey();
+    loadProjects(user.uid).then(p=>{setProjects(p);setLoading(false);});
+  },[user.uid]);
+
+  function handleOpen(p){setOpenProject(p);setView("project");}
+  function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");}
+  function handleChange(p){setProjects(ps=>ps.map(x=>x.id===p.id?p:x));setOpenProject(p);}
+  function handleDelete(id){if(!confirm("Delete this project?"))return;deleteProject(user.uid,id);setProjects(ps=>ps.filter(x=>x.id!==id));}
+
+  return(
+    <div style={{minHeight:"100vh",background:C.bg}}>
+      {view==="dashboard"&&(
+        <>
+          <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 32px",display:"flex",alignItems:"center",height:52}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+              <span style={{fontSize:22}}>⬡</span>
+              <span style={{fontSize:16,fontWeight:800,letterSpacing:-0.5}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
+              <span style={{fontSize:11,color:C.muted,marginLeft:4}}>AI Recognition &amp; Capture</span>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Settings</button>
+              <div style={{width:1,height:18,background:C.border}}/>
+              <span style={{fontSize:12,color:C.muted}}>{user.email}</span>
+              <button onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"6px 10px"}}>Sign out</button>
+            </div>
+          </div>
+          <Dashboard uid={user.uid} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete}/>
+        </>
+      )}
+      {view==="project"&&openProject&&(
+        <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange}/>
+      )}
+      {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
+      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}/>}
+    </div>
+  );
+}
+
+// ── ROOT ──
+function Root(){
+  const [user,setUser]=useState(undefined);
+  useEffect(()=>{return fbAuth.onAuthStateChanged(u=>setUser(u));},[]);
+  if(user===undefined)return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}>
+      <div style={{color:C.muted,fontSize:14}}>Loading…</div>
+    </div>
+  );
+  if(!user)return<LoginScreen/>;
+  return<App user={user}/>;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<Root/>);
+</script>
 </body>
 </html>
