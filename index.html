@@ -537,19 +537,23 @@ function ValidateTab({project,uid,onUpdate}){
     setProgress({msg:"Cross-referencing BOM…",pct:90});
     const schematicTags=[...new Set(allTags.map(t=>t.trim()).filter(Boolean))];
     const allTagsSet=new Set(schematicTags.map(t=>t.toUpperCase()));
-    const matched=[],missing=[];
+    const isAsShown=notes=>/^as\s+shown$/i.test(notes.trim());
+    const matched=[],missing=[],notTraceable=[];
     for(const item of (project.bom||[])){
-      const itemTags=(item.notes||"").split(/[\s,;]+/).filter(Boolean);
+      const notes=(item.notes||"").trim();
+      if(isAsShown(notes)){notTraceable.push(item);continue;}
+      const itemTags=notes.split(/[\s,;]+/).filter(Boolean);
       const found=itemTags.filter(t=>allTagsSet.has(t.toUpperCase()));
       if(found.length>0||itemTags.length===0)matched.push({item,found});
       else missing.push(item);
     }
     const allBomTags=new Set((project.bom||[]).flatMap(i=>(i.notes||"").split(/[\s,;]+/).filter(Boolean).map(t=>t.toUpperCase())));
     const unaccounted=schematicTags.filter(t=>!allBomTags.has(t.toUpperCase()));
-    const total=(project.bom||[]).length;
-    const matchPct=total>0?matched.length/total:1;
+    // Confidence only counts traceable items (excludes AS SHOWN)
+    const traceable=(project.bom||[]).length-notTraceable.length;
+    const matchPct=traceable>0?matched.length/traceable:1;
     const confidence=matchPct>=0.9?"high":matchPct>=0.7?"medium":"low";
-    const validation={runAt:Date.now(),schematicTags,wireCount:totalWires,matched,missingFromSchematic:missing,unaccountedTags:unaccounted,confidence};
+    const validation={runAt:Date.now(),schematicTags,wireCount:totalWires,matched,missingFromSchematic:missing,notTraceable,unaccountedTags:unaccounted,confidence};
     setProgress({msg:"Saving results…",pct:97});
     const updated={...project,validation,status:"validated",updatedAt:Date.now()};
     try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}
@@ -619,6 +623,10 @@ function ValidateTab({project,uid,onUpdate}){
               <div style={{fontSize:24,fontWeight:800,color:C.accent}}>{v.wireCount||0}</div>
               <div style={{fontSize:12,color:C.sub,marginTop:2}}>🔌 Wire terminations</div>
             </div>
+            <div style={{...card({padding:"14px 16px"}),borderColor:C.purple+"44"}}>
+              <div style={{fontSize:24,fontWeight:800,color:C.purple}}>{v.notTraceable?.length||0}</div>
+              <div style={{fontSize:12,color:C.sub,marginTop:2}}>📋 Review required</div>
+            </div>
           </div>
 
           <div style={{...card({padding:"12px 16px"}),marginBottom:16,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
@@ -650,6 +658,37 @@ function ValidateTab({project,uid,onUpdate}){
                       <td style={{padding:"8px 12px",color:C.sub,whiteSpace:"nowrap"}}>{item.partNumber||"—"}</td>
                       <td style={{padding:"8px 12px",color:C.text}}>{item.description||"—"}</td>
                       <td style={{padding:"8px 12px",color:C.yellow,fontFamily:"monospace",fontSize:12}}>{item.notes||"—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {v.notTraceable?.length>0&&(
+            <div style={{...card({padding:0,overflow:"hidden"}),marginBottom:16}}>
+              <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{color:C.purple,fontSize:15}}>📋</span>
+                <span style={{fontSize:14,fontWeight:700}}>Review Required</span>
+                <span style={{fontSize:12,color:C.muted,marginLeft:"auto"}}>{v.notTraceable.length} item{v.notTraceable.length!==1?"s":""} tagged "AS SHOWN" — no schematic ref designator to match</span>
+              </div>
+              <div style={{padding:"8px 16px",background:C.purple+"11",borderBottom:`1px solid ${C.border}`,fontSize:12,color:C.sub}}>
+                These items have no unique device tag on the schematic. Verify manually that each is physically present in the panel.
+              </div>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead>
+                  <tr style={{background:"#0a0a12"}}>
+                    {["Part Number","Description","Qty"].map(h=>(
+                      <th key={h} style={{padding:"8px 12px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {v.notTraceable.map((item,i)=>(
+                    <tr key={item.id||i} style={{borderBottom:i<v.notTraceable.length-1?`1px solid ${C.border}22`:"none"}}>
+                      <td style={{padding:"8px 12px",color:C.sub,whiteSpace:"nowrap"}}>{item.partNumber||"—"}</td>
+                      <td style={{padding:"8px 12px",color:C.text}}>{item.description||"—"}</td>
+                      <td style={{padding:"8px 12px",color:C.muted}}>{item.qty||"—"}</td>
                     </tr>
                   ))}
                 </tbody>
