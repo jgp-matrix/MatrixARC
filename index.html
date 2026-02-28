@@ -212,10 +212,24 @@ const BOM_PROMPT=`You are reading a page from a UL508A industrial electrical con
 If this page contains a Bill of Materials (BOM) table, extract every line item.
 Return ONLY a valid JSON array. Each object must have exactly these fields:
 - "qty": number
-- "partNumber": string
+- "partNumber": string — the manufacturer's catalog/model/part number (see rules below)
 - "description": string
 - "manufacturer": string (empty string if not shown)
 - "notes": string (ref designators or other notes, empty string if none)
+
+IDENTIFYING THE PART NUMBER COLUMN:
+First scan the column headers. The part number column may be labeled any of:
+"Part No.", "Part Number", "Part #", "Cat. No.", "Catalog No.", "Catalog Number",
+"Model No.", "Model Number", "MFG Part No.", "Mfg/Part No.", "MFG/Part #",
+"Order No.", "Product No.", "Stock No.", "Item No.", "Material No.", or similar variations.
+
+If no clear header exists, identify the column whose values look like manufacturer catalog numbers:
+alphanumeric codes such as 1492-A3, 22B-D2P3N104, 855T-B2, 100-C09D10, AB-123, XO-4C, etc.
+
+CRITICAL RULES for partNumber:
+- NEVER use sequential row/item numbers (1, 2, 3, 4…) as the partNumber — if a row only has a number as its ID leave partNumber as ""
+- If a column contains both manufacturer and part number combined (e.g. "Allen Bradley / 100-C09"), split: put the brand in manufacturer and the code in partNumber
+- If the drawing uses tag/reference designators (CB1, M1, PB2) as the only identifier with no catalog number visible, put those in notes instead of partNumber
 
 Rules:
 - Include ALL rows even if some fields are blank
