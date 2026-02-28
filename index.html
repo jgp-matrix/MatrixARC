@@ -25,15 +25,26 @@ input,textarea,select,button{font-family:inherit;font-size:inherit}
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
+<script>
+// PDF.js setup — load via importShim after DOM ready
+window.pdfjsReady=new Promise(res=>{
+  const s=document.createElement("script");
+  s.type="module";
+  s.textContent=`import * as pdfjs from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";pdfjs.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";window._pdfjs=pdfjs;window._pdfjsResolve();`;
+  window._pdfjsResolve=res;
+  document.head.appendChild(s);
+});
+</script>
 <script>
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
-  apiKey:"REPLACE_ME",
-  authDomain:"REPLACE_ME",
-  projectId:"REPLACE_ME",
-  storageBucket:"REPLACE_ME",
-  messagingSenderId:"REPLACE_ME",
-  appId:"REPLACE_ME"
+  apiKey:"AIzaSyCGgcsb-pV7ZpDDfUd6KQKaDetXUZPCTVw",
+  authDomain:"matrix-arc.firebaseapp.com",
+  projectId:"matrix-arc",
+  storageBucket:"matrix-arc.firebasestorage.app",
+  messagingSenderId:"198633509276",
+  appId:"1:198633509276:web:852ce699c3ee3213643859"
 };
 firebase.initializeApp(firebaseConfig);
 const fbAuth=firebase.auth();
@@ -60,8 +71,8 @@ const card=(x={})=>({background:C.card,border:`1px solid ${C.border}`,borderRadi
 
 // ── API KEY (loaded from Firestore) ──
 let _apiKey=null;
-async function loadApiKey(){
-  try{const d=await fbDb.doc("config/api").get();if(d.exists)_apiKey=d.data().key||null;}catch(e){}
+async function loadApiKey(uid){
+  try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists)_apiKey=d.data().key||null;}catch(e){}
 }
 async function apiCall(body){
   if(!_apiKey)throw new Error("API key not set. Open Settings and add your Anthropic key.");
@@ -76,7 +87,7 @@ async function apiCall(body){
 }
 
 // ── IMAGE RESIZE ──
-function resizeImage(dataUrl,maxW=1400){
+function resizeImage(dataUrl,maxW=2800){
   return new Promise(res=>{
     const img=new Image();
     img.onload=()=>{
@@ -95,7 +106,9 @@ async function saveProject(uid,project){
   const ref=project.id?col.doc(project.id):col.doc();
   const data={...project,id:ref.id,updatedAt:Date.now()};
   // Don't store page images in Firestore — keep only metadata + bom
-  const toSave={...data,pages:(data.pages||[]).map(p=>({...p,dataUrl:undefined}))};
+  const stripped={...data,pages:(data.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})};
+  // Firestore rejects undefined values — round-trip through JSON to remove them
+  const toSave=JSON.parse(JSON.stringify(stripped));
   await ref.set(toSave);
   return data; // return with dataUrls intact for in-memory use
 }
@@ -126,17 +139,19 @@ Rules:
 async function extractBomPage(dataUrl){
   const b64=dataUrl.split(",")[1];
   const raw=await apiCall({
-    max_tokens:3000,
+    max_tokens:4000,
     messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
       {type:"text",text:BOM_PROMPT}
     ]}]
   });
+  console.log("Claude raw response:",raw);
   try{
     const cleaned=raw.replace(/```json|```/g,"").trim();
     const m=cleaned.match(/\[[\s\S]*\]/);
-    return m?JSON.parse(m[0]):[];
-  }catch(e){return[];}
+    if(!m){console.warn("No JSON array found in response");return[];}
+    return JSON.parse(m[0]);
+  }catch(e){console.error("JSON parse error:",e,raw);return[];}
 }
 
 // ── COMPONENTS ──
@@ -220,17 +235,38 @@ function LoginScreen(){
 // ── DRAWINGS TAB ──
 function DrawingsTab({project,onUpdate}){
   const [dragging,setDragging]=useState(false);
+  const [processing,setProcessing]=useState(false);
   const fileRef=useRef(null);
 
   async function addFiles(files){
+    setProcessing(true);
     const items=[];
-    for(const f of Array.from(files).filter(f=>f.type.startsWith("image/"))){
-      const reader=new FileReader();
-      const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
-      const resized=await resizeImage(dataUrl,1400);
-      items.push({id:Date.now()+Math.random(),name:f.name,dataUrl:resized,type:"untagged"});
+    for(const f of Array.from(files)){
+      if(f.type==="application/pdf"){
+        await window.pdfjsReady;
+        const pdfjs=window._pdfjs;
+        const buf=await f.arrayBuffer();
+        const pdf=await pdfjs.getDocument({data:buf}).promise;
+        for(let pg=1;pg<=pdf.numPages;pg++){
+          const page=await pdf.getPage(pg);
+          const vp=page.getViewport({scale:3.0});
+          const canvas=document.createElement("canvas");
+          canvas.width=vp.width;canvas.height=vp.height;
+          await page.render({canvasContext:canvas.getContext("2d"),viewport:vp}).promise;
+          const dataUrl=canvas.toDataURL("image/jpeg",0.95);
+          canvas.width=0;canvas.height=0;
+          const resized=await resizeImage(dataUrl,2800);
+          items.push({id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,type:"untagged"});
+        }
+      } else if(f.type.startsWith("image/")){
+        const reader=new FileReader();
+        const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
+        const resized=await resizeImage(dataUrl,1400);
+        items.push({id:Date.now()+Math.random(),name:f.name,dataUrl:resized,type:"untagged"});
+      }
     }
     onUpdate({...project,pages:[...(project.pages||[]),...items]});
+    setProcessing(false);
   }
 
   function drop(e){e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files);}
@@ -264,10 +300,10 @@ function DrawingsTab({project,onUpdate}){
         onDrop={drop}
         onClick={()=>fileRef.current?.click()}
         style={{border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:12,padding:36,textAlign:"center",marginBottom:20,cursor:"pointer",transition:"all 0.15s",background:dragging?C.accentDim+"33":"transparent"}}>
-        <input ref={fileRef} type="file" multiple accept="image/*" onChange={e=>{addFiles(e.target.files);e.target.value="";}} style={{display:"none"}}/>
-        <div style={{fontSize:40,marginBottom:10,opacity:0.6}}>🖼️</div>
-        <div style={{fontSize:15,fontWeight:600,color:C.sub,marginBottom:6}}>Drop drawing scans here</div>
-        <div style={{fontSize:13,color:C.muted}}>or click to browse · JPG, PNG, TIFF supported</div>
+        <input ref={fileRef} type="file" multiple accept="image/*,application/pdf" onChange={e=>{addFiles(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+        <div style={{fontSize:40,marginBottom:10,opacity:0.6}}>{processing?"⏳":"📄"}</div>
+        <div style={{fontSize:15,fontWeight:600,color:C.sub,marginBottom:6}}>{processing?"Processing pages…":"Drop drawings here"}</div>
+        <div style={{fontSize:13,color:C.muted}}>{processing?"Converting PDF pages to images, please wait…":"or click to browse · PDF, JPG, PNG supported · multi-page PDFs auto-split"}</div>
       </div>
 
       {pages.length>0&&(
@@ -307,13 +343,15 @@ function ExtractTab({project,uid,onUpdate}){
 
   async function runExtraction(){
     if(!bomPages.length){setErr("No pages tagged as BOM. Tag your BOM pages in the Drawings tab first.");return;}
-    setRunning(true);setErr("");setProgress({msg:"Starting…",pct:0});
+    setRunning(true);setErr("");setProgress({msg:"Starting…",pct:5});
     let all=[];
     for(let i=0;i<bomPages.length;i++){
       const pg=bomPages[i];
-      setProgress({msg:`Reading page ${i+1} of ${bomPages.length}: ${pg.name}`,pct:Math.round((i/bomPages.length)*90)});
+      if(!pg.dataUrl){setErr(`Page "${pg.name}" has no image data. Please re-upload the PDF.`);setRunning(false);return;}
+      setProgress({msg:`Analyzing page ${i+1} of ${bomPages.length}: ${pg.name}…`,pct:10+Math.round((i/bomPages.length)*80)});
       try{const items=await extractBomPage(pg.dataUrl);all=[...all,...items];}
       catch(ex){setErr(`Failed on ${pg.name}: ${ex.message}`);setRunning(false);return;}
+      setProgress({msg:`Page ${i+1} of ${bomPages.length} done — ${all.length} items so far`,pct:10+Math.round(((i+1)/bomPages.length)*80)});
     }
     setProgress({msg:"Merging duplicates…",pct:95});
     // Deduplicate: group by partNumber, sum qty
@@ -325,7 +363,8 @@ function ExtractTab({project,uid,onUpdate}){
     });
     const bom=Object.values(map);
     const updated={...project,bom,status:"extracted",updatedAt:Date.now()};
-    await saveProject(uid,updated);
+    setProgress({msg:"Saving results…",pct:97});
+    try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}
     onUpdate(updated);
     setProgress({msg:`Complete — ${bom.length} unique items extracted.`,pct:100});
     setRunning(false);
@@ -527,19 +566,19 @@ function ProjectView({project:init,uid,onBack,onChange}){
 }
 
 // ── SETTINGS MODAL ──
-function SettingsModal({onClose}){
+function SettingsModal({uid,onClose}){
   const [key,setKey]=useState("");
   const [loading,setLoading]=useState(true);
   const [saved,setSaved]=useState(false);
 
   useEffect(()=>{
-    fbDb.doc("config/api").get()
+    fbDb.doc(`users/${uid}/config/api`).get()
       .then(d=>{if(d.exists)setKey(d.data().key||"");})
       .finally(()=>setLoading(false));
-  },[]);
+  },[uid]);
 
   async function save(){
-    await fbDb.doc("config/api").set({key});
+    await fbDb.doc(`users/${uid}/config/api`).set({key});
     _apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);
   }
 
@@ -662,7 +701,7 @@ function App({user}){
   const [showSettings,setShowSettings]=useState(false);
 
   useEffect(()=>{
-    loadApiKey();
+    loadApiKey(user.uid);
     loadProjects(user.uid).then(p=>{setProjects(p);setLoading(false);});
   },[user.uid]);
 
@@ -695,7 +734,7 @@ function App({user}){
         <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange}/>
       )}
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
-      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}/>}
+      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)}/>}
     </div>
   );
 }
