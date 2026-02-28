@@ -214,25 +214,33 @@ Return ONLY a valid JSON array. Each object must have exactly these fields:
 - "qty": number
 - "partNumber": string — the manufacturer's catalog/model/part number (see rules below)
 - "description": string
-- "manufacturer": string (empty string if not shown)
-- "notes": string (ref designators or other notes, empty string if none)
+- "manufacturer": string (brand name only, empty string if not shown)
+- "notes": string (ref designators / tags, empty string if none)
 
-IDENTIFYING THE PART NUMBER COLUMN:
-First scan the column headers. The part number column may be labeled any of:
-"Part No.", "Part Number", "Part #", "Cat. No.", "Catalog No.", "Catalog Number",
-"Model No.", "Model Number", "MFG Part No.", "Mfg/Part No.", "MFG/Part #",
-"Order No.", "Product No.", "Stock No.", "Item No.", "Material No.", or similar variations.
+STEP 1 — IDENTIFY COLUMNS:
+Scan the column headers before extracting data. Map each column to the correct field:
+• qty       → columns labeled: QTY, Quantity, Qty.
+• partNumber → columns labeled: "MFG/PART NO.", "MFG/Part No.", "Part No.", "Part #",
+               "Cat. No.", "Catalog No.", "Model No.", "Order No.", "Product No.", "Stock No.",
+               or any column whose values look like alphanumeric catalog codes (e.g. SCE-24EL20X10SSLP, 1492-A3, 100-C09D10)
+• manufacturer → columns labeled: Manufacturer, MFG, Brand, Make
+• notes     → columns labeled: TAG, Tag No., Ref, Reference, Device ID — these contain
+               device reference designators (LT1, PB1, M1, CB1, etc.)
+• description → columns labeled: Description, Item Description, Function
 
-If no clear header exists, identify the column whose values look like manufacturer catalog numbers:
-alphanumeric codes such as 1492-A3, 22B-D2P3N104, 855T-B2, 100-C09D10, AB-123, XO-4C, etc.
+STEP 2 — EXTRACT RULES:
+- NEVER use sequential row/item numbers (1, 2, 3…) as partNumber — leave partNumber "" if no catalog number exists
+- Values of "---", "—", "N/A", or blank in the part number column → partNumber ""
+- If the part number column contains a manufacturer prefix before the catalog code
+  (e.g. "SAGINAW SCE-24EL20X10SSLP", "ABB AF09-30-10-13"), split them:
+  put the brand word(s) in manufacturer and the catalog code in partNumber
+- If a cell contains multiple part numbers separated by commas or slashes
+  (e.g. "ABB AF09-30-10-13, CA4-22M, TF42-1.0"), put the primary part number in partNumber
+  and any additional part numbers in notes
+- Reference designator tags (LT1, PB1, M1…) always go in notes, never in partNumber
+- Include ALL data rows even if some fields are blank; skip blank trailing rows
 
-CRITICAL RULES for partNumber:
-- NEVER use sequential row/item numbers (1, 2, 3, 4…) as the partNumber — if a row only has a number as its ID leave partNumber as ""
-- If a column contains both manufacturer and part number combined (e.g. "Allen Bradley / 100-C09"), split: put the brand in manufacturer and the code in partNumber
-- If the drawing uses tag/reference designators (CB1, M1, PB2) as the only identifier with no catalog number visible, put those in notes instead of partNumber
-
-Rules:
-- Include ALL rows even if some fields are blank
+General:
 - If no BOM table exists on this page, return []
 - Do NOT include column headers, totals rows, title blocks, or revision history
 - Return the JSON array only — no explanation, no markdown`;
