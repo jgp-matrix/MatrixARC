@@ -132,8 +132,8 @@ async function saveProject(uid,project){
   const col=fbDb.collection(path);
   const ref=project.id?col.doc(project.id):col.doc();
   const data={...project,id:ref.id,updatedAt:Date.now(),...(!project.id&&{createdBy:uid})};
-  // Don't store page images in Firestore — keep only metadata + bom
-  const stripped={...data,pages:(data.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})};
+  // Don't store page images in Firestore — strip dataUrls from panels
+  const stripped={...data,panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
   // Firestore rejects undefined values — round-trip through JSON to remove them
   const toSave=JSON.parse(JSON.stringify(stripped));
   await ref.set(toSave);
@@ -147,6 +147,25 @@ async function loadProjects(uid){
 async function deleteProject(uid,id){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   await fbDb.doc(`${path}/${id}`).delete();
+}
+
+// ── PROJECT MIGRATION (flat → panels) ──
+function migrateProject(p){
+  if(p.panels) return p;
+  const panel={id:'panel-1',name:'Panel 1',pages:p.pages||[],bom:p.bom||[],validation:p.validation||null,pricing:p.pricing||null,budgetaryQuote:p.budgetaryQuote||null,status:p.status||'draft'};
+  const {pages,bom,validation,pricing,budgetaryQuote,...rest}=p;
+  return{...rest,panels:[panel]};
+}
+
+// ── BOM MERGER (combine by partNumber, sum qty) ──
+function mergeBoms(bomArrays){
+  const map={};
+  bomArrays.flat().forEach(item=>{
+    const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+((item.description||"").toLowerCase().slice(0,40)));
+    if(map[key]){map[key]={...map[key],qty:(+map[key].qty||1)+(+item.qty||1)};}
+    else{map[key]={...item};}
+  });
+  return Object.values(map);
 }
 
 // ── FIRESTORE TEAM HELPERS ──
@@ -769,7 +788,7 @@ function LoginScreen({invite}){
 }
 
 // ── FAST QUOTE OVERLAY ──
-function FastQuoteOverlay({project,uid,onUpdate,onClose,onDone}){
+function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone}){
   const [progress,setProgress]=useState(0);
   const [stepLabel,setStepLabel]=useState("Starting…");
   const [status,setStatus]=useState("running"); // running | done | error
@@ -853,7 +872,7 @@ function FastQuoteOverlay({project,uid,onUpdate,onClose,onDone}){
 
         if(cancelled)return;
         setProgress(97);
-        await saveProject(uid,proj);
+        if(onSaveImmediate){await onSaveImmediate(proj);}else{await saveProject(uid,proj);}
         onUpdate(proj);
         setProgress(100);
         setStepLabel("Complete!");
@@ -891,7 +910,7 @@ function FastQuoteOverlay({project,uid,onUpdate,onClose,onDone}){
 }
 
 // ── DRAWINGS TAB ──
-function DrawingsTab({project,uid,onUpdate,readOnly,onNavigateTab}){
+function DrawingsTab({project,uid,onUpdate,onSaveImmediate,readOnly,onNavigateTab}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [pendingFiles,setPendingFiles]=useState(null);
@@ -1067,6 +1086,7 @@ function DrawingsTab({project,uid,onUpdate,readOnly,onNavigateTab}){
           project={project}
           uid={uid}
           onUpdate={onUpdate}
+          onSaveImmediate={onSaveImmediate}
           onClose={()=>setShowFastQuote(false)}
           onDone={tab=>{setShowFastQuote(false);onNavigateTab&&onNavigateTab(tab);}}
         />
@@ -1076,7 +1096,7 @@ function DrawingsTab({project,uid,onUpdate,readOnly,onNavigateTab}){
 }
 
 // ── EXTRACT TAB ──
-function ExtractTab({project,uid,onUpdate,readOnly}){
+function ExtractTab({project,uid,onUpdate,onSaveImmediate,readOnly}){
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(null);
   const [err,setErr]=useState("");
@@ -1106,7 +1126,8 @@ function ExtractTab({project,uid,onUpdate,readOnly}){
     const bom=Object.values(map);
     const updated={...project,bom,status:"extracted",updatedAt:Date.now()};
     setProgress({msg:"Saving results…",pct:97});
-    try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}
+    if(onSaveImmediate){try{await onSaveImmediate(updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}}
+    else{try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}}
     onUpdate(updated);
     setProgress({msg:`Complete — ${bom.length} unique items extracted.`,pct:100});
     setRunning(false);
@@ -1219,7 +1240,7 @@ function ExtractTab({project,uid,onUpdate,readOnly}){
 }
 
 // ── VALIDATE TAB ──
-function ValidateTab({project,uid,onUpdate,readOnly}){
+function ValidateTab({project,uid,onUpdate,onSaveImmediate,readOnly}){
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(null);
   const [err,setErr]=useState("");
@@ -1265,7 +1286,8 @@ function ValidateTab({project,uid,onUpdate,readOnly}){
     const validation={runAt:Date.now(),schematicTags,wireCount:totalWires,matched,missingFromSchematic:missing,notTraceable,unaccountedTags:unaccounted,confidence};
     setProgress({msg:"Saving results…",pct:97});
     const updated={...project,validation,status:"validated",updatedAt:Date.now()};
-    try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}
+    if(onSaveImmediate){try{await onSaveImmediate(updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}}
+    else{try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}}
     onUpdate(updated);
     setProgress({msg:`Complete — ${schematicTags.length} tags found, ${matched.length} BOM items matched.`,pct:100});
     setRunning(false);
@@ -1493,7 +1515,7 @@ function ValidateTab({project,uid,onUpdate,readOnly}){
 }
 
 // ── PRICE TAB ──
-function PriceTab({project,uid,onUpdate,readOnly}){
+function PriceTab({project,uid,onUpdate,onSaveImmediate,readOnly}){
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(null);
   const [err,setErr]=useState("");
@@ -1538,7 +1560,8 @@ function PriceTab({project,uid,onUpdate,readOnly}){
     }
     setProgress({msg:"Saving prices…",pct:97});
     const updated={...project,bom:updatedBom,updatedAt:Date.now()};
-    try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}
+    if(onSaveImmediate){try{await onSaveImmediate(updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}}
+    else{try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}}
     onUpdate(updated);
     setProgress({msg:`Done — ${updatedBom.filter(r=>r.unitPrice!=null).length} of ${bom.length} items priced.`,pct:100});
     setRunning(false);
@@ -2156,17 +2179,93 @@ function PlaceholderTab({icon,title,desc,coming}){
   );
 }
 
-// ── PROJECT VIEW ──
-function ProjectView({project:init,uid,onBack,onChange}){
-  const [project,setProject]=useState(init);
-  const [tab,setTab]=useState("drawings");
-  const saveTimer=useRef(null);
-  const readOnly=isReadOnly();
+// ── PANEL LIST VIEW ──
+function PanelListView({project,uid,readOnly,onBack,onOpenPanel,onViewQuote,onUpdate}){
+  function addPanel(){
+    const n=(project.panels||[]).length+1;
+    const newPanel={id:'panel-'+Date.now(),name:`Panel ${n}`,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'};
+    onUpdate({...project,panels:[...(project.panels||[]),newPanel]});
+  }
+  function deletePanel(id){
+    if(!window.confirm("Delete this panel and all its data?"))return;
+    onUpdate({...project,panels:(project.panels||[]).filter(p=>p.id!==id)});
+  }
+  const panels=project.panels||[];
+  return(
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",gap:16,minHeight:52,flexShrink:0}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>← Projects</button>
+        <div style={{width:1,height:18,background:C.border}}/>
+        <div style={{fontSize:15,fontWeight:700,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{project.name}</div>
+        {readOnly&&<span style={{background:C.border,color:C.muted,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}}>VIEW ONLY</span>}
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:24}}>
+        <div style={{maxWidth:1100,margin:"0 auto"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
+            <div>
+              <div style={{fontSize:22,fontWeight:800,marginBottom:4}}>Panels</div>
+              <div style={{fontSize:13,color:C.muted}}>{panels.length} panel{panels.length!==1?"s":""} · click to open</div>
+            </div>
+            <div style={{display:"flex",gap:10}}>
+              {panels.length>0&&<button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13})}>📊 View Quote</button>}
+              {!readOnly&&<button onClick={addPanel} style={btn(C.accent,"#fff",{fontSize:13})}>+ Add Panel</button>}
+            </div>
+          </div>
+          {panels.length===0?(
+            <div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
+              <div style={{fontSize:52,marginBottom:16,opacity:0.3}}>🗂️</div>
+              <div style={{fontSize:18,fontWeight:700,color:C.sub,marginBottom:8}}>No panels yet</div>
+              <div style={{fontSize:13,marginBottom:24,lineHeight:1.7}}>Add a panel to start uploading drawings and quoting this job.</div>
+              {!readOnly&&<button onClick={addPanel} style={btn(C.accent,"#fff")}>+ Add First Panel</button>}
+            </div>
+          ):(
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:16}}>
+              {panels.map(panel=>(
+                <div key={panel.id} onClick={()=>onOpenPanel(panel)} className="fade-in"
+                  style={{...card(),cursor:"pointer",transition:"border-color 0.15s,transform 0.15s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"66";e.currentTarget.style.transform="translateY(-2px)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="none";}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                    <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{panel.name}</div>
+                    <Badge status={panel.status||"draft"}/>
+                  </div>
+                  <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14,flexWrap:"wrap"}}>
+                    <span>📋 {(panel.bom||[]).length} items</span>
+                    <span>🖼️ {(panel.pages||[]).length} pages</span>
+                    {panel.validation?.wireCount>0&&<span>⚡ {panel.validation.wireCount} wires</span>}
+                  </div>
+                  <div style={{display:"flex",justifyContent:"flex-end"}}>
+                    {!readOnly&&<button onClick={e=>{e.stopPropagation();deletePanel(panel.id);}}
+                      style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"4px 6px",borderRadius:4}}
+                      onMouseEnter={e=>e.target.style.color=C.red}
+                      onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  function update(p){
-    setProject(p);onChange(p);
-    clearTimeout(saveTimer.current);
-    saveTimer.current=setTimeout(()=>saveProject(uid,p),1000);
+// ── PANEL VIEW ──
+function PanelView({project,panel:initPanel,uid,readOnly,onBack,onUpdatePanel,onViewQuote}){
+  const [localPanel,setLocalPanel]=useState(initPanel);
+  const [tab,setTab]=useState("drawings");
+
+  function update(updatedPanel){
+    setLocalPanel(updatedPanel);
+    onUpdatePanel(updatedPanel);
+  }
+
+  async function saveImmediatePanel(updatedPanel){
+    const newPanels=project.panels.map(p=>p.id===updatedPanel.id?updatedPanel:p);
+    const fullProject={...project,panels:newPanels};
+    await saveProject(uid,fullProject);
+    setLocalPanel(updatedPanel);
+    onUpdatePanel(updatedPanel);
   }
 
   const tabs=[
@@ -2174,24 +2273,20 @@ function ProjectView({project:init,uid,onBack,onChange}){
     {id:"extract",icon:"🔍",label:"Extract"},
     {id:"validate",icon:"✅",label:"Validate"},
     {id:"price",icon:"💲",label:"Price"},
-    {id:"quote",icon:"📊",label:"Quote"},
   ];
 
   return(
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:C.bg}}>
-      {/* Header */}
       <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",gap:16,minHeight:52,flexShrink:0}}>
-        <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>
-          ← Projects
-        </button>
+        <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>← Panels</button>
         <div style={{width:1,height:18,background:C.border}}/>
-        <div style={{fontSize:15,fontWeight:700,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{project.name}</div>
-        <Badge status={project.status||"draft"}/>
+        <div style={{fontSize:13,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:160}}>{project.name}</div>
+        <div style={{color:C.muted,fontSize:13}}>/</div>
+        <div style={{fontSize:15,fontWeight:700,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{localPanel.name}</div>
+        <Badge status={localPanel.status||"draft"}/>
         {readOnly&&<span style={{background:C.border,color:C.muted,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}}>VIEW ONLY</span>}
-        <div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{(project.bom||[]).length} items · {(project.pages||[]).length} pages</div>
+        <div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{(localPanel.bom||[]).length} items · {(localPanel.pages||[]).length} pages</div>
       </div>
-
-      {/* Tab bar */}
       <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",gap:4,flexShrink:0,overflowX:"auto"}}>
         {tabs.map(t=>(
           <button key={t.id} onClick={()=>setTab(t.id)}
@@ -2200,18 +2295,140 @@ function ProjectView({project:init,uid,onBack,onChange}){
           </button>
         ))}
       </div>
-
-      {/* Content */}
       <div style={{flex:1,overflowY:"auto",padding:24}}>
         <div style={{maxWidth:1200,margin:"0 auto"}}>
-          {tab==="drawings"&&<DrawingsTab project={project} uid={uid} onUpdate={update} readOnly={readOnly} onNavigateTab={t=>{setTab(t);}}/>}
-          {tab==="extract"&&<ExtractTab project={project} uid={uid} onUpdate={update} readOnly={readOnly}/>}
-          {tab==="validate"&&<ValidateTab project={project} uid={uid} onUpdate={update} readOnly={readOnly}/>}
-          {tab==="price"&&<PriceTab project={project} uid={uid} onUpdate={update} readOnly={readOnly}/>}
-          {tab==="quote"&&<QuoteTab project={project} onUpdate={update}/>}
+          {tab==="drawings"&&<DrawingsTab project={localPanel} uid={uid} onUpdate={update} onSaveImmediate={saveImmediatePanel} readOnly={readOnly} onNavigateTab={t=>{if(t==="quote"){onViewQuote&&onViewQuote();}else setTab(t);}}/>}
+          {tab==="extract"&&<ExtractTab project={localPanel} uid={uid} onUpdate={update} onSaveImmediate={saveImmediatePanel} readOnly={readOnly}/>}
+          {tab==="validate"&&<ValidateTab project={localPanel} uid={uid} onUpdate={update} onSaveImmediate={saveImmediatePanel} readOnly={readOnly}/>}
+          {tab==="price"&&<PriceTab project={localPanel} uid={uid} onUpdate={update} onSaveImmediate={saveImmediatePanel} readOnly={readOnly}/>}
         </div>
       </div>
     </div>
+  );
+}
+
+// ── QUOTE VIEW (aggregates all panels) ──
+function QuoteView({project,uid,onBack,onUpdate}){
+  const panels=project.panels||[];
+  const allBom=mergeBoms(panels.map(p=>p.bom||[]));
+  const totalWireCount=panels.reduce((s,p)=>s+(p.validation?.wireCount||0),0);
+  const aggregated={
+    ...project,
+    bom:allBom,
+    validation:{wireCount:totalWireCount},
+    pricing:project.pricing||{},
+    pages:panels.flatMap(p=>p.pages||[]),
+  };
+  function handleQuoteUpdate(upd){
+    onUpdate({...project,quote:upd.quote,pricing:upd.pricing,budgetaryQuote:upd.budgetaryQuote});
+  }
+  const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
+  return(
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",gap:16,minHeight:52,flexShrink:0}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>← Panels</button>
+        <div style={{width:1,height:18,background:C.border}}/>
+        <div style={{fontSize:15,fontWeight:700,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{project.name}</div>
+        <span style={{background:C.greenDim,color:C.green,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>COMBINED QUOTE</span>
+        <div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{allBom.length} items · {totalWireCount} wires</div>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:24}}>
+        <div style={{maxWidth:1200,margin:"0 auto"}}>
+          {panels.length>0&&(
+            <div style={{...card({padding:"12px 16px"}),marginBottom:20}} className="no-print">
+              <div style={{fontSize:12,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Panel Breakdown</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
+                {panels.map(p=>{
+                  const mats=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+                  return(
+                    <div key={p.id} style={{...card({padding:"10px 14px"}),minWidth:170}}>
+                      <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>{p.name}</div>
+                      <div style={{fontSize:12,color:C.muted}}>{(p.bom||[]).length} items · {(p.pages||[]).length} pages</div>
+                      {p.validation?.wireCount>0&&<div style={{fontSize:12,color:C.muted}}>⚡ {p.validation.wireCount} wires</div>}
+                      {mats>0&&<div style={{fontSize:12,color:C.green,marginTop:4}}>Materials: {fmtMoney(mats)}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <QuoteTab project={aggregated} onUpdate={handleQuoteUpdate}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── PROJECT VIEW ──
+function ProjectView({project:init,uid,onBack,onChange}){
+  const [project,setProject]=useState(()=>migrateProject(init));
+  const projectRef=useRef(migrateProject(init));
+  const [view,setView]=useState("panels"); // "panels"|"panel"|"quote"
+  const [activePanel,setActivePanel]=useState(null);
+  const saveTimer=useRef(null);
+  const readOnly=isReadOnly();
+  const didMigrate=useRef(!init.panels);
+
+  // Keep ref in sync with state for use in callbacks
+  useEffect(()=>{projectRef.current=project;},[project]);
+
+  // Save migrated project immediately on first open
+  useEffect(()=>{
+    if(didMigrate.current){
+      didMigrate.current=false;
+      saveProject(uid,migrateProject(init)).catch(()=>{});
+    }
+  },[]);
+
+  function update(p){
+    setProject(p);projectRef.current=p;onChange(p);
+    clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(()=>saveProject(uid,p),1000);
+  }
+
+  function updatePanel(panelId,updatedPanel){
+    const cur=projectRef.current;
+    const newPanels=cur.panels.map(p=>p.id===panelId?updatedPanel:p);
+    const newProject={...cur,panels:newPanels};
+    setActivePanel(updatedPanel);
+    update(newProject);
+  }
+
+  if(view==="panel"&&activePanel){
+    return(
+      <PanelView
+        project={project}
+        panel={activePanel}
+        uid={uid}
+        readOnly={readOnly}
+        onBack={()=>{setView("panels");setActivePanel(null);}}
+        onUpdatePanel={updatedPanel=>updatePanel(activePanel.id,updatedPanel)}
+        onViewQuote={()=>setView("quote")}
+      />
+    );
+  }
+
+  if(view==="quote"){
+    return(
+      <QuoteView
+        project={project}
+        uid={uid}
+        onBack={()=>setView("panels")}
+        onUpdate={update}
+      />
+    );
+  }
+
+  return(
+    <PanelListView
+      project={project}
+      uid={uid}
+      readOnly={readOnly}
+      onBack={onBack}
+      onOpenPanel={panel=>{setActivePanel(panel);setView("panel");}}
+      onViewQuote={()=>setView("quote")}
+      onUpdate={update}
+    />
   );
 }
 
@@ -2329,7 +2546,7 @@ function NewProjectModal({uid,onCreated,onClose}){
 
   async function create(e){
     e.preventDefault();if(!name.trim())return;setLoading(true);
-    const p=await saveProject(uid,{name:name.trim(),status:"draft",pages:[],bom:[],createdAt:Date.now(),updatedAt:Date.now()});
+    const p=await saveProject(uid,{name:name.trim(),status:"draft",panels:[{id:'panel-1',name:'Panel 1',pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'}],createdAt:Date.now(),updatedAt:Date.now()});
     onCreated(p);
   }
 
@@ -2406,9 +2623,10 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                   <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{p.name}</div>
                   <Badge status={p.status||"draft"}/>
                 </div>
-                <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14}}>
-                  <span>📋 {p.bom?.length||0} items</span>
-                  <span>🖼️ {p.pages?.length||0} pages</span>
+                <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14,flexWrap:"wrap"}}>
+                  <span>📋 {p.panels?p.panels.reduce((s,pl)=>s+(pl.bom||[]).length,0):(p.bom||[]).length} items</span>
+                  <span>🖼️ {p.panels?p.panels.reduce((s,pl)=>s+(pl.pages||[]).length,0):(p.pages||[]).length} pages</span>
+                  {p.panels&&<span>⬡ {p.panels.length} panel{p.panels.length!==1?"s":""}</span>}
                 </div>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <div style={{fontSize:11,color:C.muted}}>{p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
@@ -2434,9 +2652,9 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                       <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{p.name}</div>
                       <Badge status={p.status||"draft"}/>
                     </div>
-                    <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14}}>
-                      <span>📋 {p.bom?.length||0} items</span>
-                      <span>🖼️ {p.pages?.length||0} pages</span>
+                    <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14,flexWrap:"wrap"}}>
+                      <span>📋 {p.panels?p.panels.reduce((s,pl)=>s+(pl.bom||[]).length,0):(p.bom||[]).length} items</span>
+                      <span>🖼️ {p.panels?p.panels.reduce((s,pl)=>s+(pl.pages||[]).length,0):(p.pages||[]).length} pages</span>
                     </div>
                     <button onClick={e=>{e.stopPropagation();onAccept(p.id);}}
                       style={btn(C.yellow,"#000",{width:"100%",fontSize:12,padding:"6px 0",fontWeight:700})}>
