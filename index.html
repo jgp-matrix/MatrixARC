@@ -537,7 +537,7 @@ function ValidateTab({project,uid,onUpdate}){
     setProgress({msg:"Cross-referencing BOM…",pct:90});
     const schematicTags=[...new Set(allTags.map(t=>t.trim()).filter(Boolean))];
     const allTagsSet=new Set(schematicTags.map(t=>t.toUpperCase()));
-    const isAsShown=notes=>/^as\s+shown$/i.test(notes.trim());
+    const isAsShown=notes=>/^(as\s+shown|enclosure)$/i.test(notes.trim());
     const matched=[],missing=[],notTraceable=[];
     for(const item of (project.bom||[])){
       const notes=(item.notes||"").trim();
