@@ -416,8 +416,16 @@ function TeamModal({uid,companyId,userRole,onClose}){
   useEffect(()=>{
     if(!companyId){setLoading(false);return;}
     loadCompanyMembers(companyId)
-      .then(m=>{setMembers(m);setLoading(false);})
-      .catch(()=>setLoading(false));
+      .then(m=>{
+        // Ensure the current user always appears; repair missing member doc if needed
+        if(!m.some(x=>x.uid===uid)){
+          const self={uid,email:fbAuth.currentUser?.email||"",role:userRole};
+          fbDb.doc(`companies/${companyId}/members/${uid}`).set(self,{merge:true}).catch(()=>{});
+          m=[self,...m];
+        }
+        setMembers(m);setLoading(false);
+      })
+      .catch(e=>{setErr("Failed to load members: "+e.message);setLoading(false);});
   },[companyId]);
 
   async function sendInvite(e){
@@ -435,16 +443,16 @@ function TeamModal({uid,companyId,userRole,onClose}){
   }
 
   async function removeMember(targetUid){
-    if(!confirm("Remove this member from the company?"))return;
+    if(!confirm("Remove this member from the company? They will lose access immediately."))return;
     try{
-      await fbDb.doc(`companies/${companyId}/members/${targetUid}`).delete();
+      await fbFunctions.httpsCallable("removeTeamMember")({targetUid,companyId});
       setMembers(m=>m.filter(x=>x.uid!==targetUid));
     }catch(ex){setErr(ex.message);}
   }
 
   async function changeRole(targetUid,role){
     try{
-      await fbDb.doc(`companies/${companyId}/members/${targetUid}`).update({role});
+      await fbFunctions.httpsCallable("updateMemberRole")({targetUid,role,companyId});
       setMembers(m=>m.map(x=>x.uid===targetUid?{...x,role}:x));
     }catch(ex){setErr(ex.message);}
   }
