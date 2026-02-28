@@ -542,11 +542,11 @@ function TeamModal({uid,companyId,userRole,onClose}){
 }
 
 // ── LOGIN ──
-function LoginScreen({invite,redirectErr,redirectEmail}){
-  const [email,setEmail]=useState(invite?.e||redirectEmail||"");
+function LoginScreen({invite}){
+  const [email,setEmail]=useState(invite?.e||"");
   const [pass,setPass]=useState("");
   const [mode,setMode]=useState(invite?"register":"login");
-  const [err,setErr]=useState(redirectErr||"");
+  const [err,setErr]=useState("");
   const [loading,setLoading]=useState(false);
   const [resetSent,setResetSent]=useState(false);
   const emailRef=useRef(null);
@@ -577,9 +577,16 @@ function LoginScreen({invite,redirectErr,redirectEmail}){
     try{
       const provider=new firebase.auth.OAuthProvider("microsoft.com");
       provider.setCustomParameters({prompt:"select_account"});
-      await fbAuth.signInWithRedirect(provider);
-    }catch(ex){setErr(ex.message);setLoading(false);}
-    // page will redirect — no need to setLoading(false) on success
+      await fbAuth.signInWithPopup(provider);
+    }catch(ex){
+      if(ex.code==="auth/account-exists-with-different-credential"){
+        if(ex.email)setEmail(ex.email);
+        setErr("An account with this email already exists — please sign in with your email and password below.");
+      } else {
+        setErr(ex.message);
+      }
+    }
+    setLoading(false);
   }
   async function sendReset(e){
     e.preventDefault();setErr("");setLoading(true);
@@ -2409,25 +2416,9 @@ function App({user}){
 // ── ROOT ──
 function Root(){
   const [user,setUser]=useState(undefined);
-  const [redirectErr,setRedirectErr]=useState("");
-  const [redirectEmail,setRedirectEmail]=useState("");
   const [redirectDone,setRedirectDone]=useState(false);
 
-  // Process redirect sign-in result (Microsoft etc.) before showing login screen
-  useEffect(()=>{
-    fbAuth.getRedirectResult()
-      .then(()=>setRedirectDone(true))
-      .catch(e=>{
-        if(e.code==="auth/account-exists-with-different-credential"){
-          const em=e.email||"";
-          if(em)setRedirectEmail(em);
-          setRedirectErr(`An account with ${em||"this email"} already exists — sign in with your password instead${em?", or use Forgot Password to reset it":""}.`);
-        } else if(e.code!=="auth/no-auth-event"){
-          setRedirectErr(e.message);
-        }
-        setRedirectDone(true);
-      });
-  },[]);
+  useEffect(()=>{setRedirectDone(true);},[]);
   const [joinPayload]=useState(()=>{
     try{
       const params=new URLSearchParams(window.location.search);
@@ -2473,7 +2464,7 @@ function Root(){
       <div style={{color:C.muted,fontSize:14}}>Loading…</div>
     </div>
   );
-  if(!user)return<LoginScreen invite={joinPayload} redirectErr={redirectErr} redirectEmail={redirectEmail}/>;
+  if(!user)return<LoginScreen invite={joinPayload}/>;
   return<App user={user}/>;
 }
 
