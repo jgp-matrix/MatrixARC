@@ -160,12 +160,12 @@ const SCHEMATIC_PROMPT=`You are reading a UL508A electrical control panel schema
 Extract TWO things and return ONLY valid JSON:
 {
   "tags": ["CB100", "M178", ...],
-  "wireTerminations": 42
+  "wireCount": 42
 }
 
 Rules:
 - tags: include all alphanumeric device IDs, reference designators, terminal block labels visible on this schematic page
-- wireTerminations: count each end of a wire that connects to a device or terminal (a wire has 2 ends)
+- wireCount: count the number of individual wires (each wire counted once, regardless of how many ends it has)
 - Return JSON only, no explanation`;
 
 async function analyzeSchematicPage(dataUrl){
@@ -183,8 +183,8 @@ async function analyzeSchematicPage(dataUrl){
     const m=cleaned.match(/\{[\s\S]*\}/);
     if(!m){console.warn("No JSON object found in schematic response");return{tags:[],wireTerminations:0};}
     const parsed=JSON.parse(m[0]);
-    return{tags:Array.isArray(parsed.tags)?parsed.tags:[],wireTerminations:+parsed.wireTerminations||0};
-  }catch(e){console.error("Schematic JSON parse error:",e,raw);return{tags:[],wireTerminations:0};}
+    return{tags:Array.isArray(parsed.tags)?parsed.tags:[],wireCount:+parsed.wireCount||0};
+  }catch(e){console.error("Schematic JSON parse error:",e,raw);return{tags:[],wireCount:0};}
 }
 
 // ── COMPONENTS ──
@@ -530,7 +530,7 @@ function ValidateTab({project,uid,onUpdate}){
       try{
         const result=await analyzeSchematicPage(pg.dataUrl);
         allTags=[...allTags,...result.tags];
-        totalWires+=result.wireTerminations;
+        totalWires+=result.wireCount;
       }catch(ex){setErr(`Failed on ${pg.name}: ${ex.message}`);setRunning(false);return;}
       setProgress({msg:`Page ${i+1} of ${schematicPages.length} done — ${allTags.length} tags so far`,pct:10+Math.round(((i+1)/schematicPages.length)*75)});
     }
@@ -621,7 +621,7 @@ function ValidateTab({project,uid,onUpdate}){
             </div>
             <div style={{...card({padding:"14px 16px"}),borderColor:C.accent+"44"}}>
               <div style={{fontSize:24,fontWeight:800,color:C.accent}}>{v.wireCount||0}</div>
-              <div style={{fontSize:12,color:C.sub,marginTop:2}}>🔌 Wire terminations</div>
+              <div style={{fontSize:12,color:C.sub,marginTop:2}}>🔌 Wires</div>
             </div>
             <div style={{...card({padding:"14px 16px"}),borderColor:C.purple+"44"}}>
               <div style={{fontSize:24,fontWeight:800,color:C.purple}}>{v.notTraceable?.length||0}</div>
@@ -632,7 +632,7 @@ function ValidateTab({project,uid,onUpdate}){
           <div style={{...card({padding:"12px 16px"}),marginBottom:16,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
             <div style={{fontSize:13,color:C.sub}}>Confidence: <strong style={{color:confColor[v.confidence]||C.muted}}>{(v.confidence||"—").toUpperCase()}</strong></div>
             <div style={{width:1,height:16,background:C.border}}/>
-            <div style={{fontSize:13,color:C.sub}}>~{v.wireCount||0} wire terminations → estimated <strong style={{color:C.text}}>{Math.ceil((v.wireCount||0)/25)}–{Math.ceil((v.wireCount||0)/20)} labor hours</strong></div>
+            <div style={{fontSize:13,color:C.sub}}>~{v.wireCount||0} wires → estimated <strong style={{color:C.text}}>{Math.ceil((v.wireCount||0)/12)}–{Math.ceil((v.wireCount||0)/8)} labor hours</strong></div>
             <div style={{width:1,height:16,background:C.border}}/>
             <div style={{fontSize:13,color:C.sub}}>{v.schematicTags?.length||0} unique tags · {schematicPages.length} page{schematicPages.length!==1?"s":""} analyzed</div>
           </div>
