@@ -329,6 +329,42 @@ async function estimatePrices(items){
   return result;
 }
 
+// ── PAGE TYPE DETECTION ──
+const PAGE_TYPE_DETECT_PROMPT=`You are analyzing a page from a UL508A industrial control panel drawing set.
+Identify what content types are present on this page. Return ONLY a JSON array containing zero or more of:
+"bom"       — page contains a Bill of Materials table (columns for qty, part numbers, descriptions)
+"schematic" — page contains electrical schematic diagrams (wires, symbols, terminal numbers, device tags)
+"layout"    — page contains physical layout, dimensional drawings, panel arrangement, or assembly view
+
+Return [] for title sheets, revision history pages, or pages with none of the above.
+Return multiple types if the page genuinely contains more than one (e.g. ["bom","layout"]).
+JSON array only — no explanation, no markdown.`;
+
+async function detectPageTypes(dataUrl){
+  const b64=dataUrl&&dataUrl.split(",")[1];
+  if(!b64||!_apiKey)return[];
+  try{
+    const raw=await apiCall({
+      max_tokens:50,
+      messages:[{role:"user",content:[
+        {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
+        {type:"text",text:PAGE_TYPE_DETECT_PROMPT}
+      ]}]
+    });
+    const m=raw.replace(/```json|```/g,"").trim().match(/\[[\s\S]*\]/);
+    if(!m)return[];
+    const arr=JSON.parse(m[0]);
+    return arr.filter(t=>["bom","schematic","layout"].includes(t));
+  }catch(e){return[];}
+}
+
+// ── PAGE TYPES HELPER (backward compat: old pages have type string, new have types array) ──
+function getPageTypes(page){
+  if(Array.isArray(page.types))return page.types;
+  if(page.type&&page.type!=="untagged")return[page.type];
+  return[];
+}
+
 // ── COMPONENTS ──
 
 function Badge({status}){
@@ -342,15 +378,24 @@ function Badge({status}){
   return<span style={{background:bg,color:col,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap"}}>{label.toUpperCase()}</span>;
 }
 
-function PageTypePill({type,onChange}){
-  const order=["untagged","bom","schematic","layout"];
-  const colors={untagged:C.muted,bom:C.accent,schematic:C.green,layout:C.purple};
-  const labels={untagged:"Untagged",bom:"BOM",schematic:"Schematic",layout:"Layout"};
-  const next=order[(order.indexOf(type)+1)%order.length];
+function PageTags({types,onChange,detecting}){
+  const all=["bom","schematic","layout"];
+  const colors={bom:C.accent,schematic:C.green,layout:C.purple};
+  const labels={bom:"BOM",schematic:"Schematic",layout:"Layout"};
+  if(detecting)return<span style={{fontSize:10,color:C.yellow,fontWeight:600}}>🤖 Detecting…</span>;
   return(
-    <button onClick={()=>onChange(next)} style={{background:colors[type]+"22",color:colors[type],border:`1px solid ${colors[type]}55`,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
-      {labels[type]}
-    </button>
+    <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
+      {types.length===0&&<span style={{fontSize:10,color:C.muted,lineHeight:"20px"}}>tag:</span>}
+      {all.map(t=>{
+        const active=types.includes(t);
+        return(
+          <button key={t} onClick={()=>{const next=active?types.filter(x=>x!==t):[...types,t];onChange(next);}}
+            style={{background:active?colors[t]+"33":"transparent",color:active?colors[t]:C.muted,border:`1px solid ${active?colors[t]+"88":C.border}`,borderRadius:20,padding:"2px 7px",fontSize:10,fontWeight:700,cursor:"pointer",transition:"all 0.1s"}}>
+            {labels[t]}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -824,7 +869,7 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
 
         // Step 1: Extract BOM (0–33%)
         setStepLabel("Extracting BOM…");
-        const bomPages=(proj.pages||[]).filter(p=>p.type==="bom");
+        const bomPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("bom"));
         let all=[];
         for(let i=0;i<bomPages.length;i++){
           if(cancelled)return;
@@ -847,7 +892,7 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
 
         // Step 2: Validate schematics (33–66%)
         setStepLabel("Analyzing schematics…");
-        const schPages=(proj.pages||[]).filter(p=>p.type==="schematic");
+        const schPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("schematic"));
         let allTags=[];let totalWires=0;
         for(let i=0;i<schPages.length;i++){
           if(cancelled)return;
@@ -935,6 +980,9 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
 function DrawingsTab({project,uid,onUpdate,onSaveImmediate,readOnly,onNavigateTab}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
+  const [processingMsg,setProcessingMsg]=useState("");
+  const [detecting,setDetecting]=useState(false);
+  const [detectProgress,setDetectProgress]=useState("");
   const [pendingFiles,setPendingFiles]=useState(null);
   const [showFastQuote,setShowFastQuote]=useState(false);
   const fileRef=useRef(null);
@@ -960,17 +1008,41 @@ function DrawingsTab({project,uid,onUpdate,onSaveImmediate,readOnly,onNavigateTa
           const dataUrl=canvas.toDataURL("image/jpeg",0.95);
           canvas.width=0;canvas.height=0;
           const resized=await resizeImage(dataUrl,2800);
-          items.push({id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,type:"untagged",lineItem:lineItem||null});
+          items.push({id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,types:[],lineItem:lineItem||null});
         }
       } else if(f.type.startsWith("image/")){
         const reader=new FileReader();
         const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
         const resized=await resizeImage(dataUrl,1400);
-        items.push({id:Date.now()+Math.random(),name:f.name,dataUrl:resized,type:"untagged",lineItem:lineItem||null});
+        items.push({id:Date.now()+Math.random(),name:f.name,dataUrl:resized,types:[],lineItem:lineItem||null});
       }
     }
-    onUpdate({...project,pages:[...(project.pages||[]),...items]});
     setProcessing(false);
+    // Auto-detect page types if API key is available
+    if(_apiKey&&items.length){
+      setDetecting(true);
+      for(let i=0;i<items.length;i++){
+        setDetectProgress(`Detecting types — page ${i+1} of ${items.length}…`);
+        items[i].types=await detectPageTypes(items[i].dataUrl);
+      }
+      setDetecting(false);setDetectProgress("");
+    }
+    onUpdate({...project,pages:[...(project.pages||[]),...items]});
+  }
+
+  async function autoDetectAll(){
+    if(!_apiKey)return;
+    const untagged=(project.pages||[]).filter(p=>getPageTypes(p).length===0&&p.dataUrl);
+    if(!untagged.length)return;
+    setDetecting(true);
+    let updatedPages=[...(project.pages||[])];
+    for(let i=0;i<untagged.length;i++){
+      setDetectProgress(`Detecting types — page ${i+1} of ${untagged.length}…`);
+      const types=await detectPageTypes(untagged[i].dataUrl);
+      updatedPages=updatedPages.map(p=>p.id===untagged[i].id?{...p,types}:p);
+    }
+    onUpdate({...project,pages:updatedPages});
+    setDetecting(false);setDetectProgress("");
   }
 
   function stageFiles(files){setPendingFiles(files);}
@@ -980,7 +1052,7 @@ function DrawingsTab({project,uid,onUpdate,onSaveImmediate,readOnly,onNavigateTa
   }
 
   function drop(e){e.preventDefault();setDragging(false);stageFiles(e.dataTransfer.files);}
-  function tagPage(id,type){onUpdate({...project,pages:project.pages.map(p=>p.id===id?{...p,type}:p)});}
+  function tagPage(id,types){onUpdate({...project,pages:project.pages.map(p=>p.id===id?{...p,types}:p)});}
   function removePage(id){onUpdate({...project,pages:project.pages.filter(p=>p.id!==id)});}
   function movePage(id,dir){
     const arr=[...(project.pages||[])];
@@ -990,7 +1062,7 @@ function DrawingsTab({project,uid,onUpdate,onSaveImmediate,readOnly,onNavigateTa
     onUpdate({...project,pages:arr});
   }
 
-  const counts={bom:pages.filter(p=>p.type==="bom").length,schematic:pages.filter(p=>p.type==="schematic").length,layout:pages.filter(p=>p.type==="layout").length};
+  const counts={bom:pages.filter(p=>getPageTypes(p).includes("bom")).length,schematic:pages.filter(p=>getPageTypes(p).includes("schematic")).length,layout:pages.filter(p=>getPageTypes(p).includes("layout")).length};
 
   // Build display groups: numbered line items in order, then ungrouped
   const lineItemNums=[...new Set(pages.map(p=>p.lineItem).filter(Boolean))].sort((a,b)=>a-b);
@@ -1001,9 +1073,9 @@ function DrawingsTab({project,uid,onUpdate,onSaveImmediate,readOnly,onNavigateTa
     return(
       <div key={p.id} className="fade-in" style={{...card({padding:10})}}>
         <img src={p.dataUrl} alt={p.name} style={{width:"100%",aspectRatio:"8.5/11",objectFit:"cover",borderRadius:6,marginBottom:8,background:"#080810"}}/>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-          <PageTypePill type={p.type} onChange={t=>tagPage(p.id,t)}/>
-          <div style={{display:"flex",gap:3}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6,gap:4}}>
+          <PageTags types={getPageTypes(p)} detecting={p.detecting} onChange={types=>tagPage(p.id,types)}/>
+          <div style={{display:"flex",gap:3,flexShrink:0}}>
             {i>0&&<button onClick={()=>movePage(p.id,-1)} style={{background:C.border,color:C.muted,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>↑</button>}
             {i<allPages.length-1&&<button onClick={()=>movePage(p.id,1)} style={{background:C.border,color:C.muted,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>↓</button>}
             <button onClick={()=>removePage(p.id)} style={{background:C.redDim,color:C.red,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>✕</button>
@@ -1032,9 +1104,9 @@ function DrawingsTab({project,uid,onUpdate,onSaveImmediate,readOnly,onNavigateTa
         onClick={()=>!pendingFiles&&!processing&&fileRef.current?.click()}
         style={{border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:12,padding:36,textAlign:"center",marginBottom:20,cursor:pendingFiles||processing?"default":"pointer",transition:"all 0.15s",background:dragging?C.accentDim+"33":"transparent"}}>
         <input ref={fileRef} type="file" multiple accept="image/*,application/pdf" onChange={e=>{stageFiles(e.target.files);e.target.value="";}} style={{display:"none"}}/>
-        <div style={{fontSize:40,marginBottom:10,opacity:0.6}}>{processing?"⏳":"📄"}</div>
-        <div style={{fontSize:15,fontWeight:600,color:C.sub,marginBottom:6}}>{processing?"Processing pages…":"Drop drawings here"}</div>
-        <div style={{fontSize:13,color:C.muted}}>{processing?"Converting PDF pages to images, please wait…":"or click to browse · PDF, JPG, PNG supported · multi-page PDFs auto-split"}</div>
+        <div style={{fontSize:40,marginBottom:10,opacity:0.6}}>{processing||detecting?"⏳":"📄"}</div>
+        <div style={{fontSize:15,fontWeight:600,color:C.sub,marginBottom:6}}>{detecting?detectProgress:processing?"Processing pages…":"Drop drawings here"}</div>
+        <div style={{fontSize:13,color:C.muted}}>{processing?"Converting PDF pages to images…":detecting?"AI is identifying BOM, schematic, and layout pages…":"or click to browse · PDF, JPG, PNG supported · multi-page PDFs auto-split"}</div>
       </div>
 
       {/* Line item prompt */}
@@ -1060,13 +1132,20 @@ function DrawingsTab({project,uid,onUpdate,onSaveImmediate,readOnly,onNavigateTa
         <div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
             <div style={{fontSize:12,color:C.muted}}>
-              Tap each badge to cycle page type: <span style={{color:C.accent}}>BOM</span> · <span style={{color:C.green}}>Schematic</span> · <span style={{color:C.purple}}>Layout</span> · then go to <strong style={{color:C.text}}>Extract</strong>.
+              Toggle page types below — pages can be <span style={{color:C.accent}}>BOM</span>, <span style={{color:C.green}}>Schematic</span>, <span style={{color:C.purple}}>Layout</span>, or any combination.
             </div>
-            {pages.some(p=>p.type==="bom"||p.type==="schematic")&&(
-              <button onClick={()=>setShowFastQuote(true)} disabled={readOnly} style={btn(C.yellowDim,C.yellow,{fontSize:13,border:`1px solid ${C.yellow}44`,opacity:readOnly?0.5:1})}>
-                ⚡ Fast Quote
-              </button>
-            )}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {_apiKey&&pages.some(p=>getPageTypes(p).length===0&&p.dataUrl)&&(
+                <button onClick={autoDetectAll} disabled={detecting||readOnly} style={btn(C.yellowDim,C.yellow,{fontSize:13,border:`1px solid ${C.yellow}44`,opacity:detecting||readOnly?0.5:1})}>
+                  {detecting?"🤖 Detecting…":"🤖 Auto-detect types"}
+                </button>
+              )}
+              {pages.some(p=>getPageTypes(p).includes("bom")||getPageTypes(p).includes("schematic"))&&(
+                <button onClick={()=>setShowFastQuote(true)} disabled={readOnly} style={btn(C.yellowDim,C.yellow,{fontSize:13,border:`1px solid ${C.yellow}44`,opacity:readOnly?0.5:1})}>
+                  ⚡ Fast Quote
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Grouped line items */}
@@ -1123,7 +1202,7 @@ function ExtractTab({project,uid,onUpdate,onSaveImmediate,readOnly}){
   const [progress,setProgress]=useState(null);
   const [err,setErr]=useState("");
 
-  const bomPages=(project.pages||[]).filter(p=>p.type==="bom");
+  const bomPages=(project.pages||[]).filter(p=>getPageTypes(p).includes("bom"));
 
   async function runExtraction(){
     if(!bomPages.length){setErr("No pages tagged as BOM. Tag your BOM pages in the Drawings tab first.");return;}
@@ -1267,7 +1346,7 @@ function ValidateTab({project,uid,onUpdate,onSaveImmediate,readOnly}){
   const [progress,setProgress]=useState(null);
   const [err,setErr]=useState("");
 
-  const schematicPages=(project.pages||[]).filter(p=>p.type==="schematic");
+  const schematicPages=(project.pages||[]).filter(p=>getPageTypes(p).includes("schematic"));
   const v=project.validation;
 
   async function runValidation(){
