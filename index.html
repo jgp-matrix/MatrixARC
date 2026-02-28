@@ -560,6 +560,8 @@ function LoginScreen({invite}){
       if(ex.code==="auth/email-already-in-use"){
         setMode("login");
         setErr("That email already has an account — sign in below, or use Forgot Password to reset it.");
+      } else if(["auth/user-not-found","auth/wrong-password","auth/invalid-credential","auth/invalid-email"].includes(ex.code)){
+        setErr("Email or password not recognized. Please try again, or use Forgot Password to reset it.");
       } else {
         setErr(ex.message);
       }
