@@ -154,6 +154,39 @@ async function extractBomPage(dataUrl){
   }catch(e){console.error("JSON parse error:",e,raw);return[];}
 }
 
+// ── SCHEMATIC ANALYSIS PROMPT ──
+const SCHEMATIC_PROMPT=`You are reading a UL508A electrical control panel schematic page.
+
+Extract TWO things and return ONLY valid JSON:
+{
+  "tags": ["CB100", "M178", ...],
+  "wireTerminations": 42
+}
+
+Rules:
+- tags: include all alphanumeric device IDs, reference designators, terminal block labels visible on this schematic page
+- wireTerminations: count each end of a wire that connects to a device or terminal (a wire has 2 ends)
+- Return JSON only, no explanation`;
+
+async function analyzeSchematicPage(dataUrl){
+  const b64=dataUrl.split(",")[1];
+  const raw=await apiCall({
+    max_tokens:4000,
+    messages:[{role:"user",content:[
+      {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
+      {type:"text",text:SCHEMATIC_PROMPT}
+    ]}]
+  });
+  console.log("Schematic Claude response:",raw);
+  try{
+    const cleaned=raw.replace(/```json|```/g,"").trim();
+    const m=cleaned.match(/\{[\s\S]*\}/);
+    if(!m){console.warn("No JSON object found in schematic response");return{tags:[],wireTerminations:0};}
+    const parsed=JSON.parse(m[0]);
+    return{tags:Array.isArray(parsed.tags)?parsed.tags:[],wireTerminations:+parsed.wireTerminations||0};
+  }catch(e){console.error("Schematic JSON parse error:",e,raw);return{tags:[],wireTerminations:0};}
+}
+
 // ── COMPONENTS ──
 
 function Badge({status}){
@@ -476,6 +509,174 @@ function ExtractTab({project,uid,onUpdate}){
   );
 }
 
+// ── VALIDATE TAB ──
+function ValidateTab({project,uid,onUpdate}){
+  const [running,setRunning]=useState(false);
+  const [progress,setProgress]=useState(null);
+  const [err,setErr]=useState("");
+
+  const schematicPages=(project.pages||[]).filter(p=>p.type==="schematic");
+  const v=project.validation;
+
+  async function runValidation(){
+    if(!schematicPages.length){setErr("No pages tagged as Schematic. Tag your schematic pages in the Drawings tab first.");return;}
+    setRunning(true);setErr("");setProgress({msg:"Starting…",pct:5});
+    let allTags=[];
+    let totalWires=0;
+    for(let i=0;i<schematicPages.length;i++){
+      const pg=schematicPages[i];
+      if(!pg.dataUrl){setErr(`Page "${pg.name}" has no image data. Please re-upload the PDF.`);setRunning(false);return;}
+      setProgress({msg:`Analyzing page ${i+1} of ${schematicPages.length}: ${pg.name}…`,pct:10+Math.round((i/schematicPages.length)*75)});
+      try{
+        const result=await analyzeSchematicPage(pg.dataUrl);
+        allTags=[...allTags,...result.tags];
+        totalWires+=result.wireTerminations;
+      }catch(ex){setErr(`Failed on ${pg.name}: ${ex.message}`);setRunning(false);return;}
+      setProgress({msg:`Page ${i+1} of ${schematicPages.length} done — ${allTags.length} tags so far`,pct:10+Math.round(((i+1)/schematicPages.length)*75)});
+    }
+    setProgress({msg:"Cross-referencing BOM…",pct:90});
+    const schematicTags=[...new Set(allTags.map(t=>t.trim()).filter(Boolean))];
+    const allTagsSet=new Set(schematicTags.map(t=>t.toUpperCase()));
+    const matched=[],missing=[];
+    for(const item of (project.bom||[])){
+      const itemTags=(item.notes||"").split(/[\s,;]+/).filter(Boolean);
+      const found=itemTags.filter(t=>allTagsSet.has(t.toUpperCase()));
+      if(found.length>0||itemTags.length===0)matched.push({item,found});
+      else missing.push(item);
+    }
+    const allBomTags=new Set((project.bom||[]).flatMap(i=>(i.notes||"").split(/[\s,;]+/).filter(Boolean).map(t=>t.toUpperCase())));
+    const unaccounted=schematicTags.filter(t=>!allBomTags.has(t.toUpperCase()));
+    const total=(project.bom||[]).length;
+    const matchPct=total>0?matched.length/total:1;
+    const confidence=matchPct>=0.9?"high":matchPct>=0.7?"medium":"low";
+    const validation={runAt:Date.now(),schematicTags,wireCount:totalWires,matched,missingFromSchematic:missing,unaccountedTags:unaccounted,confidence};
+    setProgress({msg:"Saving results…",pct:97});
+    const updated={...project,validation,status:"validated",updatedAt:Date.now()};
+    try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}
+    onUpdate(updated);
+    setProgress({msg:`Complete — ${schematicTags.length} tags found, ${matched.length} BOM items matched.`,pct:100});
+    setRunning(false);
+  }
+
+  const confColor={high:C.green,medium:C.yellow,low:C.red};
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>Schematic Validation</div>
+          <div style={{fontSize:13,color:C.muted}}>{schematicPages.length} schematic page{schematicPages.length!==1?"s":""} tagged{v?` · last run ${new Date(v.runAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}`:""}</div>
+        </div>
+        <button onClick={runValidation} disabled={running||!schematicPages.length} style={btn(C.accent,"#fff",{fontSize:13,opacity:running||!schematicPages.length?0.5:1})}>
+          {running?"Analyzing…":"✅ Run Validation"}
+        </button>
+      </div>
+
+      {progress&&(
+        <div style={{...card({padding:16}),marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:13,color:C.sub}}>{progress.msg}</span>
+            <span style={{fontSize:13,fontWeight:700,color:C.accent}}>{progress.pct}%</span>
+          </div>
+          <div style={{background:C.border,borderRadius:4,height:6,overflow:"hidden"}}>
+            <div style={{width:`${progress.pct}%`,height:"100%",background:C.accent,borderRadius:4,transition:"width 0.4s"}}/>
+          </div>
+        </div>
+      )}
+
+      {err&&(
+        <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:10,padding:12,marginBottom:16,fontSize:13,color:C.red}}>{err}</div>
+      )}
+
+      {!v&&!running&&(
+        <div style={{...card(),textAlign:"center",padding:"48px 20px",color:C.muted}}>
+          <div style={{fontSize:44,marginBottom:12,opacity:0.3}}>✅</div>
+          <div style={{fontSize:16,fontWeight:600,color:C.sub,marginBottom:8}}>No validation results yet</div>
+          <div style={{fontSize:13,lineHeight:1.7}}>
+            {schematicPages.length===0
+              ?"Tag your schematic pages in the Drawings tab, then return here."
+              :"Click Run Validation to cross-reference BOM against schematics."}
+          </div>
+        </div>
+      )}
+
+      {v&&(
+        <div className="fade-in">
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",gap:12,marginBottom:16}}>
+            <div style={{...card({padding:"14px 16px"}),borderColor:C.green+"44"}}>
+              <div style={{fontSize:24,fontWeight:800,color:C.green}}>{v.matched?.length||0}</div>
+              <div style={{fontSize:12,color:C.sub,marginTop:2}}>✅ Matched</div>
+            </div>
+            <div style={{...card({padding:"14px 16px"}),borderColor:C.yellow+"44"}}>
+              <div style={{fontSize:24,fontWeight:800,color:C.yellow}}>{v.missingFromSchematic?.length||0}</div>
+              <div style={{fontSize:12,color:C.sub,marginTop:2}}>⚠️ Missing from schematic</div>
+            </div>
+            <div style={{...card({padding:"14px 16px"})}}>
+              <div style={{fontSize:24,fontWeight:800,color:C.muted}}>{v.unaccountedTags?.length||0}</div>
+              <div style={{fontSize:12,color:C.sub,marginTop:2}}>❓ Unaccounted tags</div>
+            </div>
+            <div style={{...card({padding:"14px 16px"}),borderColor:C.accent+"44"}}>
+              <div style={{fontSize:24,fontWeight:800,color:C.accent}}>{v.wireCount||0}</div>
+              <div style={{fontSize:12,color:C.sub,marginTop:2}}>🔌 Wire terminations</div>
+            </div>
+          </div>
+
+          <div style={{...card({padding:"12px 16px"}),marginBottom:16,display:"flex",alignItems:"center",gap:16,flexWrap:"wrap"}}>
+            <div style={{fontSize:13,color:C.sub}}>Confidence: <strong style={{color:confColor[v.confidence]||C.muted}}>{(v.confidence||"—").toUpperCase()}</strong></div>
+            <div style={{width:1,height:16,background:C.border}}/>
+            <div style={{fontSize:13,color:C.sub}}>~{v.wireCount||0} wire terminations → estimated <strong style={{color:C.text}}>{Math.ceil((v.wireCount||0)/25)}–{Math.ceil((v.wireCount||0)/20)} labor hours</strong></div>
+            <div style={{width:1,height:16,background:C.border}}/>
+            <div style={{fontSize:13,color:C.sub}}>{v.schematicTags?.length||0} unique tags · {schematicPages.length} page{schematicPages.length!==1?"s":""} analyzed</div>
+          </div>
+
+          {v.missingFromSchematic?.length>0&&(
+            <div style={{...card({padding:0,overflow:"hidden"}),marginBottom:16}}>
+              <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{color:C.yellow,fontSize:15}}>⚠️</span>
+                <span style={{fontSize:14,fontWeight:700}}>Missing from Schematic</span>
+                <span style={{fontSize:12,color:C.muted,marginLeft:"auto"}}>{v.missingFromSchematic.length} BOM item{v.missingFromSchematic.length!==1?"s":""} with no matching tag found</span>
+              </div>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead>
+                  <tr style={{background:"#0a0a12"}}>
+                    {["Part Number","Description","Notes (Ref Tags)"].map(h=>(
+                      <th key={h} style={{padding:"8px 12px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {v.missingFromSchematic.map((item,i)=>(
+                    <tr key={item.id||i} style={{borderBottom:i<v.missingFromSchematic.length-1?`1px solid ${C.border}22`:"none"}}>
+                      <td style={{padding:"8px 12px",color:C.sub,whiteSpace:"nowrap"}}>{item.partNumber||"—"}</td>
+                      <td style={{padding:"8px 12px",color:C.text}}>{item.description||"—"}</td>
+                      <td style={{padding:"8px 12px",color:C.yellow,fontFamily:"monospace",fontSize:12}}>{item.notes||"—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {v.unaccountedTags?.length>0&&(
+            <div style={{...card({padding:0,overflow:"hidden"})}}>
+              <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{color:C.muted,fontSize:15}}>❓</span>
+                <span style={{fontSize:14,fontWeight:700}}>Unaccounted Tags</span>
+                <span style={{fontSize:12,color:C.muted,marginLeft:"auto"}}>{v.unaccountedTags.length} tag{v.unaccountedTags.length!==1?"s":""} in schematic not found in BOM</span>
+              </div>
+              <div style={{padding:"12px 16px",display:"flex",flexWrap:"wrap",gap:8}}>
+                {v.unaccountedTags.map((t,i)=>(
+                  <span key={i} style={{background:C.border,color:C.sub,borderRadius:6,padding:"3px 10px",fontSize:12,fontFamily:"monospace"}}>{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── PLACEHOLDER TAB ──
 function PlaceholderTab({icon,title,desc,coming}){
   return(
@@ -544,11 +745,7 @@ function ProjectView({project:init,uid,onBack,onChange}){
         <div style={{maxWidth:1200,margin:"0 auto"}}>
           {tab==="drawings"&&<DrawingsTab project={project} onUpdate={update}/>}
           {tab==="extract"&&<ExtractTab project={project} uid={uid} onUpdate={update}/>}
-          {tab==="validate"&&(
-            <PlaceholderTab icon="✅" title="Schematic Validation"
-              desc="Cross-reference every BOM item against the schematic to confirm all components are represented — and catch anything missing from either."
-              coming={["BOM ↔ schematic cross-reference","Missing component detection","Unaccounted schematic elements report","Confidence score per line item"]}/>
-          )}
+          {tab==="validate"&&<ValidateTab project={project} uid={uid} onUpdate={update}/>}
           {tab==="price"&&(
             <PlaceholderTab icon="💲" title="Pricing"
               desc="Look up pricing from Business Central. Items not found in BC fall back to web pricing, flagged for supplier confirmation."
