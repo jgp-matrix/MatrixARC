@@ -131,7 +131,7 @@ async function saveProject(uid,project){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const col=fbDb.collection(path);
   const ref=project.id?col.doc(project.id):col.doc();
-  const data={...project,id:ref.id,updatedAt:Date.now()};
+  const data={...project,id:ref.id,updatedAt:Date.now(),...(!project.id&&{createdBy:uid})};
   // Don't store page images in Firestore — keep only metadata + bom
   const stripped={...data,pages:(data.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})};
   // Firestore rejects undefined values — round-trip through JSON to remove them
@@ -402,6 +402,88 @@ function CompanySetupModal({uid,email,onDone,onClose}){
   );
 }
 
+// ── REMOVE MEMBER MODAL ──
+function RemoveMemberModal({uid,companyId,member,members,onRemoved,onClose}){
+  const [transferTo,setTransferTo]=useState("");
+  const [memberProjects,setMemberProjects]=useState([]);
+  const [loadingProjects,setLoadingProjects]=useState(true);
+  const [removing,setRemoving]=useState(false);
+  const [err,setErr]=useState("");
+
+  useEffect(()=>{
+    fbDb.collection(`companies/${companyId}/projects`)
+      .where("createdBy","==",member.uid)
+      .get()
+      .then(snap=>{setMemberProjects(snap.docs.map(d=>d.data()));setLoadingProjects(false);})
+      .catch(()=>setLoadingProjects(false));
+  },[]);
+
+  async function doRemove(){
+    setRemoving(true);setErr("");
+    try{
+      if(transferTo&&memberProjects.length>0){
+        const batch=fbDb.batch();
+        memberProjects.forEach(p=>{
+          batch.update(fbDb.doc(`companies/${companyId}/projects/${p.id}`),{
+            transferred:true,
+            transferredTo:transferTo,
+            transferredFrom:{uid:member.uid,email:member.email},
+            createdBy:transferTo,
+          });
+        });
+        await batch.commit();
+      }
+      await fbFunctions.httpsCallable("removeTeamMember")({targetUid:member.uid,companyId});
+      onRemoved(member.uid);
+    }catch(ex){setErr(ex.message);}
+    setRemoving(false);
+  }
+
+  const recipients=members.filter(m=>m.uid!==member.uid);
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div style={{...card(),width:"100%",maxWidth:480}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>Remove Member</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Removing <strong style={{color:C.text}}>{member.email}</strong> from the workspace.</div>
+        {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:10,marginBottom:12,fontSize:13,color:C.red}}>{err}</div>}
+        {loadingProjects?(
+          <div style={{color:C.muted,fontSize:13,padding:"20px 0",textAlign:"center"}}>Checking projects…</div>
+        ):(
+          <>
+            {memberProjects.length>0?(
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:12,color:C.sub,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Their Projects ({memberProjects.length})</div>
+                <div style={{background:"#0a0a12",borderRadius:8,padding:10,marginBottom:14,maxHeight:130,overflow:"auto"}}>
+                  {memberProjects.map(p=>(
+                    <div key={p.id} style={{fontSize:13,color:C.text,padding:"5px 0",borderBottom:`1px solid ${C.border}22`}}>{p.name}</div>
+                  ))}
+                </div>
+                <div style={{fontSize:13,color:C.sub,marginBottom:8}}>Transfer projects to:</div>
+                <select value={transferTo} onChange={e=>setTransferTo(e.target.value)}
+                  style={{width:"100%",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",color:transferTo?C.text:C.muted,fontSize:14,marginBottom:6}}>
+                  <option value="">Leave in workspace (no specific owner)</option>
+                  {recipients.map(m=>(
+                    <option key={m.uid} value={m.uid}>{m.email} ({m.role})</option>
+                  ))}
+                </select>
+                {transferTo&&<div style={{fontSize:11,color:C.muted}}>Projects will appear in the recipient's Transferred Projects section.</div>}
+              </div>
+            ):(
+              <div style={{background:"#0a0a12",borderRadius:8,padding:14,marginBottom:20,fontSize:13,color:C.muted}}>This member has no projects.</div>
+            )}
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <button onClick={onClose} disabled={removing} style={btn(C.border,C.sub)}>Cancel</button>
+              <button onClick={doRemove} disabled={removing} style={btn(C.red,"#fff",{opacity:removing?0.6:1})}>
+                {removing?"Removing…":transferTo?"Transfer & Remove":"Remove Member"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── TEAM MODAL ──
 function TeamModal({uid,companyId,userRole,onClose}){
   const [members,setMembers]=useState([]);
@@ -412,6 +494,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
   const [generatedLinks,setGeneratedLinks]=useState([]); // [{email,role,url}]
   const [copied,setCopied]=useState("");
   const [err,setErr]=useState("");
+  const [removingMember,setRemovingMember]=useState(null);
 
   useEffect(()=>{
     if(!companyId){setLoading(false);return;}
@@ -442,12 +525,9 @@ function TeamModal({uid,companyId,userRole,onClose}){
     setInviting(false);
   }
 
-  async function removeMember(targetUid){
-    if(!confirm("Remove this member from the company? They will lose access immediately."))return;
-    try{
-      await fbFunctions.httpsCallable("removeTeamMember")({targetUid,companyId});
-      setMembers(m=>m.filter(x=>x.uid!==targetUid));
-    }catch(ex){setErr(ex.message);}
+  function handleMemberRemoved(targetUid){
+    setMembers(m=>m.filter(x=>x.uid!==targetUid));
+    setRemovingMember(null);
   }
 
   async function changeRole(targetUid,role){
@@ -460,7 +540,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
   const admin=userRole==="admin";
   const roleBadge={admin:[C.accentDim,C.accent],edit:[C.greenDim,C.green],view:[C.border,C.muted]};
 
-  return(
+  return(<>
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
       <div style={{...card(),width:"100%",maxWidth:560,maxHeight:"80vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
         <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>👥 Team</div>
@@ -489,7 +569,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
                       <span style={{background:bg,color:col,borderRadius:10,padding:"2px 10px",fontSize:11,fontWeight:700}}>{m.role}</span>
                     )}
                     {admin&&m.uid!==uid&&(
-                      <button onClick={()=>removeMember(m.uid)} style={{background:C.redDim,color:C.red,border:"none",borderRadius:6,padding:"4px 8px",fontSize:12,cursor:"pointer"}}>Remove</button>
+                      <button onClick={()=>setRemovingMember(m)} style={{background:C.redDim,color:C.red,border:"none",borderRadius:6,padding:"4px 8px",fontSize:12,cursor:"pointer"}}>Remove</button>
                     )}
                   </div>
                 );
@@ -546,7 +626,12 @@ function TeamModal({uid,companyId,userRole,onClose}){
         </div>
       </div>
     </div>
-  );
+    {removingMember&&(
+      <RemoveMemberModal
+        uid={uid} companyId={companyId} member={removingMember} members={members}
+        onRemoved={handleMemberRemoved} onClose={()=>setRemovingMember(null)}/>
+    )}
+  </>);
 }
 
 // ── LOGIN ──
@@ -2268,7 +2353,7 @@ function NewProjectModal({uid,onCreated,onClose}){
 }
 
 // ── DASHBOARD ──
-function Dashboard({uid,projects,loading,onOpen,onNew,onDelete}){
+function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
   return(
     <div style={{maxWidth:1100,margin:"0 auto",padding:32}}>
 
@@ -2299,36 +2384,71 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete}){
         </div>
       )}
 
-      {!loading&&projects.length===0&&(
-        <div style={{textAlign:"center",padding:80,color:C.muted}}>
-          <div style={{fontSize:52,marginBottom:16,opacity:0.2}}>⬡</div>
-          <div style={{fontSize:18,fontWeight:700,color:C.sub,marginBottom:8}}>No projects yet</div>
-          <div style={{fontSize:13,marginBottom:24,lineHeight:1.7}}>Upload scanned UL508A drawings to extract<br/>BOM data, validate schematics, and generate quotes.</div>
-          <button onClick={onNew} style={btn(C.accent,"#fff")}>Create First Project</button>
-        </div>
-      )}
-
-      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:16}}>
-        {projects.map(p=>(
-          <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
-            style={{...card(),cursor:"pointer",transition:"border-color 0.15s,transform 0.15s"}}
-            onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"66";e.currentTarget.style.transform="translateY(-2px)";}}
-            onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="none";}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-              <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{p.name}</div>
-              <Badge status={p.status||"draft"}/>
+      {(()=>{
+        const myProjects=projects.filter(p=>!p.transferred||p.transferredTo!==uid);
+        const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
+        return(<>
+          {!loading&&myProjects.length===0&&transferred.length===0&&(
+            <div style={{textAlign:"center",padding:80,color:C.muted}}>
+              <div style={{fontSize:52,marginBottom:16,opacity:0.2}}>⬡</div>
+              <div style={{fontSize:18,fontWeight:700,color:C.sub,marginBottom:8}}>No projects yet</div>
+              <div style={{fontSize:13,marginBottom:24,lineHeight:1.7}}>Upload scanned UL508A drawings to extract<br/>BOM data, validate schematics, and generate quotes.</div>
+              <button onClick={onNew} style={btn(C.accent,"#fff")}>Create First Project</button>
             </div>
-            <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14}}>
-              <span>📋 {p.bom?.length||0} items</span>
-              <span>🖼️ {p.pages?.length||0} pages</span>
-            </div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontSize:11,color:C.muted}}>{p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
-              <button onClick={e=>{e.stopPropagation();onDelete(p.id);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"4px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>
-            </div>
+          )}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:16}}>
+            {myProjects.map(p=>(
+              <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
+                style={{...card(),cursor:"pointer",transition:"border-color 0.15s,transform 0.15s"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"66";e.currentTarget.style.transform="translateY(-2px)";}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="none";}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                  <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{p.name}</div>
+                  <Badge status={p.status||"draft"}/>
+                </div>
+                <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14}}>
+                  <span>📋 {p.bom?.length||0} items</span>
+                  <span>🖼️ {p.pages?.length||0} pages</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <div style={{fontSize:11,color:C.muted}}>{p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+                  <button onClick={e=>{e.stopPropagation();onDelete(p.id);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"4px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+          {transferred.length>0&&(
+            <div style={{marginTop:48}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.yellow,marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Transferred Projects</div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:20}}>These projects were transferred to you. Accept them to add them to your project list.</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:16}}>
+                {transferred.map(p=>(
+                  <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
+                    style={{...card(),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor=C.yellow;e.currentTarget.style.transform="translateY(-2px)";}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor=C.yellow+"44";e.currentTarget.style.transform="none";}}>
+                    <div style={{fontSize:10,color:C.yellow,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>
+                      Transferred from {p.transferredFrom?.email||"a removed member"}
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                      <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{p.name}</div>
+                      <Badge status={p.status||"draft"}/>
+                    </div>
+                    <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14}}>
+                      <span>📋 {p.bom?.length||0} items</span>
+                      <span>🖼️ {p.pages?.length||0} pages</span>
+                    </div>
+                    <button onClick={e=>{e.stopPropagation();onAccept(p.id);}}
+                      style={btn(C.yellow,"#000",{width:"100%",fontSize:12,padding:"6px 0",fontWeight:700})}>
+                      Accept into My Projects
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>);
+      })()}
     </div>
   );
 }
@@ -2377,6 +2497,16 @@ function App({user}){
   function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");}
   function handleChange(p){setProjects(ps=>ps.map(x=>x.id===p.id?p:x));setOpenProject(p);}
   function handleDelete(id){if(!confirm("Delete this project?"))return;deleteProject(user.uid,id);setProjects(ps=>ps.filter(x=>x.id!==id));}
+  async function handleAccept(id){
+    const path=_appCtx.projectsPath||`users/${user.uid}/projects`;
+    await fbDb.doc(`${path}/${id}`).update({
+      transferred:firebase.firestore.FieldValue.delete(),
+      transferredTo:firebase.firestore.FieldValue.delete(),
+      transferredFrom:firebase.firestore.FieldValue.delete(),
+      createdBy:user.uid,
+    });
+    setProjects(ps=>ps.map(p=>p.id===id?{...p,transferred:undefined,transferredTo:undefined,transferredFrom:undefined,createdBy:user.uid}:p));
+  }
 
   return(
     <div style={{minHeight:"100vh",background:C.bg}}>
@@ -2409,7 +2539,7 @@ function App({user}){
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete}/>
+          <Dashboard uid={user.uid} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept}/>
         </>
       )}
       {view==="project"&&openProject&&(
