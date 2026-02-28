@@ -15,6 +15,7 @@ input,textarea,select,button{font-family:inherit;font-size:inherit}
 @keyframes spin{to{transform:rotate(360deg)}}
 .fade-in{animation:fadeIn 0.25s ease-out both}
 .spin{animation:spin 1s linear infinite;display:inline-block}
+@media print{.no-print{display:none!important}body{background:#fff!important}#quote-doc,#quote-doc *{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style>
 </head>
 <body>
@@ -73,6 +74,16 @@ const card=(x={})=>({background:C.card,border:`1px solid ${C.border}`,borderRadi
 let _apiKey=null;
 async function loadApiKey(uid){
   try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists)_apiKey=d.data().key||null;}catch(e){}
+}
+
+// ── PRICING CONFIG (loaded from Firestore) ──
+let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400};
+async function loadPricingConfig(uid){
+  try{const d=await fbDb.doc(`users/${uid}/config/pricing`).get();if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400};}}catch(e){}
+}
+async function savePricingConfig(uid,cfg){
+  _pricingConfig=cfg;
+  await fbDb.doc(`users/${uid}/config/pricing`).set(cfg);
 }
 async function apiCall(body){
   if(!_apiKey)throw new Error("API key not set. Open Settings and add your Anthropic key.");
@@ -187,6 +198,37 @@ async function analyzeSchematicPage(dataUrl){
   }catch(e){console.error("Schematic JSON parse error:",e,raw);return{tags:[],wireCount:0};}
 }
 
+// ── PRICING PROMPT ──
+const PRICING_PROMPT=`You are a pricing assistant for industrial electrical control panel components.
+Estimate US distributor market prices (Grainger, AutomationDirect, Allied, DigiKey, etc.)
+Return ONLY a valid JSON array, same order as input:
+[{"id":"...","unitPrice":12.50},...]
+Use null for any item you cannot price. No explanation, JSON only.
+
+Items:`;
+
+async function estimatePrices(items){
+  const BATCH=20;
+  const result={};
+  for(let i=0;i<items.length;i+=BATCH){
+    const batch=items.slice(i,i+BATCH);
+    const payload=batch.map(r=>({id:String(r.id),partNumber:r.partNumber||"",description:r.description||"",manufacturer:r.manufacturer||""}));
+    try{
+      const raw=await apiCall({
+        max_tokens:2000,
+        messages:[{role:"user",content:`${PRICING_PROMPT}\n${JSON.stringify(payload)}`}]
+      });
+      const cleaned=raw.replace(/```json|```/g,"").trim();
+      const m=cleaned.match(/\[[\s\S]*\]/);
+      if(m){
+        const arr=JSON.parse(m[0]);
+        arr.forEach(r=>{result[r.id]=r.unitPrice??null;});
+      }
+    }catch(e){console.error("Pricing batch error:",e);}
+  }
+  return result;
+}
+
 // ── COMPONENTS ──
 
 function Badge({status}){
@@ -209,6 +251,48 @@ function PageTypePill({type,onChange}){
     <button onClick={()=>onChange(next)} style={{background:colors[type]+"22",color:colors[type],border:`1px solid ${colors[type]}55`,borderRadius:20,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
       {labels[type]}
     </button>
+  );
+}
+
+// ── PRICING CONFIG MODAL ──
+function PricingConfigModal({uid,onClose}){
+  const [bomVal,setBomVal]=useState(_pricingConfig.contingencyBOM);
+  const [consVal,setConsVal]=useState(_pricingConfig.contingencyConsumables);
+  const [saving,setSaving]=useState(false);
+  const [saved,setSaved]=useState(false);
+
+  async function save(){
+    setSaving(true);
+    await savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal});
+    setSaving(false);setSaved(true);setTimeout(()=>setSaved(false),2000);
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div style={{...card(),width:"100%",maxWidth:420}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>⚙ Pricing Configuration</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Default contingencies applied when opening a new project</div>
+        {[
+          ["BOM Contingency","Default amount added to every quote for miscellaneous BOM items",bomVal,setBomVal],
+          ["Wire / Zip Ties / etc.","Default amount for consumables (wire, zip ties, sticky backs, etc.)",consVal,setConsVal],
+        ].map(([label,desc,val,setter])=>(
+          <div key={label} style={{marginBottom:16}}>
+            <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>{label}</label>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{color:C.muted,fontSize:14}}>$</span>
+              <input type="number" min="0" step="50" value={val} onChange={e=>setter(Math.max(0,+e.target.value||0))} style={{...inp(),width:140,textAlign:"right"}}/>
+            </div>
+            <div style={{fontSize:11,color:C.muted,marginTop:4}}>{desc}</div>
+          </div>
+        ))}
+        <div style={{display:"flex",gap:10,marginTop:4}}>
+          <button onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
+          <button onClick={save} disabled={saving} style={btn(saved?C.green:C.accent,"#fff",{flex:2,opacity:saving?0.6:1})}>
+            {saving?"Saving…":saved?"✓ Saved":"Save Defaults"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -269,9 +353,13 @@ function LoginScreen(){
 function DrawingsTab({project,onUpdate}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
+  const [pendingFiles,setPendingFiles]=useState(null);
   const fileRef=useRef(null);
 
-  async function addFiles(files){
+  const pages=project.pages||[];
+  const nextLineItemNum=Math.max(0,...pages.map(p=>p.lineItem||0))+1;
+
+  async function addFiles(files,lineItem){
     setProcessing(true);
     const items=[];
     for(const f of Array.from(files)){
@@ -289,32 +377,59 @@ function DrawingsTab({project,onUpdate}){
           const dataUrl=canvas.toDataURL("image/jpeg",0.95);
           canvas.width=0;canvas.height=0;
           const resized=await resizeImage(dataUrl,2800);
-          items.push({id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,type:"untagged"});
+          items.push({id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,type:"untagged",lineItem:lineItem||null});
         }
       } else if(f.type.startsWith("image/")){
         const reader=new FileReader();
         const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
         const resized=await resizeImage(dataUrl,1400);
-        items.push({id:Date.now()+Math.random(),name:f.name,dataUrl:resized,type:"untagged"});
+        items.push({id:Date.now()+Math.random(),name:f.name,dataUrl:resized,type:"untagged",lineItem:lineItem||null});
       }
     }
     onUpdate({...project,pages:[...(project.pages||[]),...items]});
     setProcessing(false);
   }
 
-  function drop(e){e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files);}
+  function stageFiles(files){setPendingFiles(files);}
+  function confirmLineItem(one){
+    const f=pendingFiles;setPendingFiles(null);
+    addFiles(f,one?nextLineItemNum:null);
+  }
+
+  function drop(e){e.preventDefault();setDragging(false);stageFiles(e.dataTransfer.files);}
   function tagPage(id,type){onUpdate({...project,pages:project.pages.map(p=>p.id===id?{...p,type}:p)});}
   function removePage(id){onUpdate({...project,pages:project.pages.filter(p=>p.id!==id)});}
   function movePage(id,dir){
-    const pages=[...(project.pages||[])];
-    const i=pages.findIndex(p=>p.id===id);const ni=i+dir;
-    if(ni<0||ni>=pages.length)return;
-    [pages[i],pages[ni]]=[pages[ni],pages[i]];
-    onUpdate({...project,pages});
+    const arr=[...(project.pages||[])];
+    const i=arr.findIndex(p=>p.id===id);const ni=i+dir;
+    if(ni<0||ni>=arr.length)return;
+    [arr[i],arr[ni]]=[arr[ni],arr[i]];
+    onUpdate({...project,pages:arr});
   }
 
-  const pages=project.pages||[];
   const counts={bom:pages.filter(p=>p.type==="bom").length,schematic:pages.filter(p=>p.type==="schematic").length,layout:pages.filter(p=>p.type==="layout").length};
+
+  // Build display groups: numbered line items in order, then ungrouped
+  const lineItemNums=[...new Set(pages.map(p=>p.lineItem).filter(Boolean))].sort((a,b)=>a-b);
+  const ungrouped=pages.filter(p=>!p.lineItem);
+
+  function PageCard({p,allPages}){
+    const i=allPages.findIndex(x=>x.id===p.id);
+    return(
+      <div key={p.id} className="fade-in" style={{...card({padding:10})}}>
+        <img src={p.dataUrl} alt={p.name} style={{width:"100%",aspectRatio:"8.5/11",objectFit:"cover",borderRadius:6,marginBottom:8,background:"#080810"}}/>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+          <PageTypePill type={p.type} onChange={t=>tagPage(p.id,t)}/>
+          <div style={{display:"flex",gap:3}}>
+            {i>0&&<button onClick={()=>movePage(p.id,-1)} style={{background:C.border,color:C.muted,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>↑</button>}
+            {i<allPages.length-1&&<button onClick={()=>movePage(p.id,1)} style={{background:C.border,color:C.muted,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>↓</button>}
+            <button onClick={()=>removePage(p.id)} style={{background:C.redDim,color:C.red,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>✕</button>
+          </div>
+        </div>
+        <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+      </div>
+    );
+  }
 
   return(
     <div>
@@ -331,35 +446,71 @@ function DrawingsTab({project,onUpdate}){
         onDragOver={e=>{e.preventDefault();setDragging(true);}}
         onDragLeave={()=>setDragging(false)}
         onDrop={drop}
-        onClick={()=>fileRef.current?.click()}
-        style={{border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:12,padding:36,textAlign:"center",marginBottom:20,cursor:"pointer",transition:"all 0.15s",background:dragging?C.accentDim+"33":"transparent"}}>
-        <input ref={fileRef} type="file" multiple accept="image/*,application/pdf" onChange={e=>{addFiles(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+        onClick={()=>!pendingFiles&&!processing&&fileRef.current?.click()}
+        style={{border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:12,padding:36,textAlign:"center",marginBottom:20,cursor:pendingFiles||processing?"default":"pointer",transition:"all 0.15s",background:dragging?C.accentDim+"33":"transparent"}}>
+        <input ref={fileRef} type="file" multiple accept="image/*,application/pdf" onChange={e=>{stageFiles(e.target.files);e.target.value="";}} style={{display:"none"}}/>
         <div style={{fontSize:40,marginBottom:10,opacity:0.6}}>{processing?"⏳":"📄"}</div>
         <div style={{fontSize:15,fontWeight:600,color:C.sub,marginBottom:6}}>{processing?"Processing pages…":"Drop drawings here"}</div>
         <div style={{fontSize:13,color:C.muted}}>{processing?"Converting PDF pages to images, please wait…":"or click to browse · PDF, JPG, PNG supported · multi-page PDFs auto-split"}</div>
       </div>
+
+      {/* Line item prompt */}
+      {pendingFiles&&(
+        <div style={{...card({padding:20}),marginBottom:20,borderColor:C.accent+"66"}} className="fade-in">
+          <div style={{fontSize:15,fontWeight:700,marginBottom:4}}>
+            📄 {pendingFiles.length} file{pendingFiles.length!==1?"s":""} ready to import
+          </div>
+          <div style={{fontSize:13,color:C.muted,marginBottom:16}}>Are these drawings for one panel (line item) or multiple separate line items?</div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            <button onClick={()=>confirmLineItem(true)} style={btn(C.accent,"#fff",{fontSize:13})}>
+              One Line Item → Group as Line Item {nextLineItemNum}
+            </button>
+            <button onClick={()=>confirmLineItem(false)} style={btn(C.border,C.sub,{fontSize:13})}>
+              Multiple Line Items (no grouping)
+            </button>
+            <button onClick={()=>setPendingFiles(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"9px 12px"}}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       {pages.length>0&&(
         <div>
           <div style={{fontSize:12,color:C.muted,marginBottom:14}}>
             Tap each badge to cycle page type: <span style={{color:C.accent}}>BOM</span> · <span style={{color:C.green}}>Schematic</span> · <span style={{color:C.purple}}>Layout</span> · then go to <strong style={{color:C.text}}>Extract</strong>.
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:12}}>
-            {pages.map((p,i)=>(
-              <div key={p.id} className="fade-in" style={{...card({padding:10})}}>
-                <img src={p.dataUrl} alt={p.name} style={{width:"100%",aspectRatio:"8.5/11",objectFit:"cover",borderRadius:6,marginBottom:8,background:"#080810"}}/>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-                  <PageTypePill type={p.type} onChange={t=>tagPage(p.id,t)}/>
-                  <div style={{display:"flex",gap:3}}>
-                    {i>0&&<button onClick={()=>movePage(p.id,-1)} style={{background:C.border,color:C.muted,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>↑</button>}
-                    {i<pages.length-1&&<button onClick={()=>movePage(p.id,1)} style={{background:C.border,color:C.muted,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>↓</button>}
-                    <button onClick={()=>removePage(p.id)} style={{background:C.redDim,color:C.red,border:"none",borderRadius:4,padding:"2px 6px",cursor:"pointer",fontSize:11}}>✕</button>
-                  </div>
+
+          {/* Grouped line items */}
+          {lineItemNums.map(num=>{
+            const group=pages.filter(p=>p.lineItem===num);
+            return(
+              <div key={num} style={{marginBottom:24}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                  <div style={{height:1,flex:1,background:C.border}}/>
+                  <span style={{background:C.accentDim,color:C.accent,borderRadius:20,padding:"3px 14px",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>Line Item {num}</span>
+                  <div style={{height:1,flex:1,background:C.border}}/>
                 </div>
-                <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:12}}>
+                  {group.map(p=><PageCard key={p.id} p={p} allPages={pages}/>)}
+                </div>
               </div>
-            ))}
-          </div>
+            );
+          })}
+
+          {/* Ungrouped pages */}
+          {ungrouped.length>0&&(
+            <div>
+              {lineItemNums.length>0&&(
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                  <div style={{height:1,flex:1,background:C.border}}/>
+                  <span style={{color:C.muted,fontSize:12,fontWeight:600}}>Ungrouped</span>
+                  <div style={{height:1,flex:1,background:C.border}}/>
+                </div>
+              )}
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:12}}>
+                {ungrouped.map(p=><PageCard key={p.id} p={p} allPages={pages}/>)}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -564,6 +715,51 @@ function ValidateTab({project,uid,onUpdate}){
 
   const confColor={high:C.green,medium:C.yellow,low:C.red};
 
+  // ── Validation actions ──
+  const liveBom=project.bom||[];
+  const actionOf=id=>liveBom.find(r=>r.id===id)?.validationAction||null;
+  const tagActionOf=tag=>project.validation?.tagActions?.[tag]||null;
+
+  function actionMissing(item,action){
+    const bom=liveBom.map(r=>r.id===item.id?{...r,validationAction:action}:r);
+    let quote=project.quote||{};
+    if(action==="noted"){
+      const note=`⚠ ${item.partNumber||item.description||"Item"} (${item.notes||"no ref"}) — in BOM but not found in schematic`;
+      quote={...quote,notes:[quote.notes,note].filter(Boolean).join("\n")};
+    }
+    onUpdate({...project,bom,quote});
+  }
+
+  function actionTag(tag,action){
+    const tagActions={...(project.validation?.tagActions||{}),[tag]:action};
+    const validation={...project.validation,tagActions};
+    let bom=liveBom;
+    let quote=project.quote||{};
+    if(action==="accepted"){
+      bom=[...bom,{id:Date.now()+Math.random(),qty:1,partNumber:"",description:tag,manufacturer:"",notes:tag}];
+    }
+    if(action==="noted"){
+      const note=`⚠ Tag ${tag} — found in schematic but not in BOM, requires review`;
+      quote={...quote,notes:[quote.notes,note].filter(Boolean).join("\n")};
+    }
+    onUpdate({...project,bom,validation,quote});
+  }
+
+  function ActionBtns({action,onAction}){
+    if(action){
+      const map={accepted:[C.greenDim,C.green,"✓ Accepted"],ignored:[C.border,C.muted,"— Ignored"],noted:[C.yellowDim,C.yellow,"📝 Noted"]};
+      const [bg,col,label]=map[action]||map.ignored;
+      return<span style={{background:bg,color:col,borderRadius:10,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{label}</span>;
+    }
+    return(
+      <div style={{display:"flex",gap:4,flexWrap:"nowrap"}}>
+        <button onClick={()=>onAction("accepted")} style={btn(C.greenDim,C.green,{fontSize:11,padding:"3px 8px",borderRadius:6})}>✓ Accept</button>
+        <button onClick={()=>onAction("ignored")}  style={btn(C.border,C.muted,{fontSize:11,padding:"3px 8px",borderRadius:6})}>— Ignore</button>
+        <button onClick={()=>onAction("noted")}    style={btn(C.yellowDim,C.yellow,{fontSize:11,padding:"3px 8px",borderRadius:6})}>📝 Note</button>
+      </div>
+    );
+  }
+
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
@@ -647,19 +843,23 @@ function ValidateTab({project,uid,onUpdate}){
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
                 <thead>
                   <tr style={{background:"#0a0a12"}}>
-                    {["Part Number","Description","Notes (Ref Tags)"].map(h=>(
+                    {["Part Number","Description","Notes (Ref Tags)","Action"].map(h=>(
                       <th key={h} style={{padding:"8px 12px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,borderBottom:`1px solid ${C.border}`}}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {v.missingFromSchematic.map((item,i)=>(
-                    <tr key={item.id||i} style={{borderBottom:i<v.missingFromSchematic.length-1?`1px solid ${C.border}22`:"none"}}>
-                      <td style={{padding:"8px 12px",color:C.sub,whiteSpace:"nowrap"}}>{item.partNumber||"—"}</td>
-                      <td style={{padding:"8px 12px",color:C.text}}>{item.description||"—"}</td>
-                      <td style={{padding:"8px 12px",color:C.yellow,fontFamily:"monospace",fontSize:12}}>{item.notes||"—"}</td>
-                    </tr>
-                  ))}
+                  {v.missingFromSchematic.map((item,i)=>{
+                    const action=actionOf(item.id);
+                    return(
+                      <tr key={item.id||i} style={{borderBottom:i<v.missingFromSchematic.length-1?`1px solid ${C.border}22`:"none",opacity:action==="ignored"?0.4:1}}>
+                        <td style={{padding:"8px 12px",color:C.sub,whiteSpace:"nowrap"}}>{item.partNumber||"—"}</td>
+                        <td style={{padding:"8px 12px",color:C.text}}>{item.description||"—"}</td>
+                        <td style={{padding:"8px 12px",color:C.yellow}}>{item.notes||"—"}</td>
+                        <td style={{padding:"6px 12px",whiteSpace:"nowrap"}}><ActionBtns action={action} onAction={a=>actionMissing(item,a)}/></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -703,15 +903,529 @@ function ValidateTab({project,uid,onUpdate}){
                 <span style={{fontSize:14,fontWeight:700}}>Unaccounted Tags</span>
                 <span style={{fontSize:12,color:C.muted,marginLeft:"auto"}}>{v.unaccountedTags.length} tag{v.unaccountedTags.length!==1?"s":""} in schematic not found in BOM</span>
               </div>
-              <div style={{padding:"12px 16px",display:"flex",flexWrap:"wrap",gap:8}}>
-                {v.unaccountedTags.map((t,i)=>(
-                  <span key={i} style={{background:C.border,color:C.sub,borderRadius:6,padding:"3px 10px",fontSize:12,fontFamily:"monospace"}}>{t}</span>
-                ))}
+              <div style={{padding:"8px 16px",background:C.border+"22",borderBottom:`1px solid ${C.border}`,fontSize:12,color:C.sub}}>
+                Accept → adds a new BOM row for pricing · Ignore → dismisses · Note → flags in quote
               </div>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead>
+                  <tr style={{background:"#0a0a12"}}>
+                    {["Tag","Action"].map(h=>(
+                      <th key={h} style={{padding:"8px 12px",textAlign:"left",color:C.muted,fontWeight:600,fontSize:11,borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {v.unaccountedTags.map((t,i)=>{
+                    const action=tagActionOf(t);
+                    return(
+                      <tr key={i} style={{borderBottom:i<v.unaccountedTags.length-1?`1px solid ${C.border}22`:"none",opacity:action==="ignored"?0.4:1}}>
+                        <td style={{padding:"8px 12px",color:action==="accepted"?C.green:action==="noted"?C.yellow:C.sub}}>{t}</td>
+                        <td style={{padding:"6px 12px"}}><ActionBtns action={action} onAction={a=>actionTag(t,a)}/></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── PRICE TAB ──
+function PriceTab({project,uid,onUpdate}){
+  const [running,setRunning]=useState(false);
+  const [progress,setProgress]=useState(null);
+  const [err,setErr]=useState("");
+  const [showConfig,setShowConfig]=useState(false);
+  const pr=project.pricing||{};
+  function setPr(updates){onUpdate({...project,pricing:{...pr,...updates}});}
+  const markup=pr.markup??30;
+  const laborRate=pr.laborRate??45;
+  const contingencyBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
+  const contingencyConsumables=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
+
+  const bom=project.bom||[];
+  const wireCount=project.validation?.wireCount||0;
+  const defaultHours=wireCount?Math.round((Math.ceil(wireCount/12)+Math.ceil(wireCount/8))/2):0;
+  const laborHours=(pr.laborHoursOverride??null)??defaultHours;
+
+  const totalCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+  const laborCost=laborHours*laborRate;
+  const grandTotal=totalCost+laborCost+contingencyBOM+contingencyConsumables;
+  const sellPrice=grandTotal*(1+markup/100);
+  const pricedCount=bom.filter(r=>r.unitPrice!=null).length;
+
+  async function runPricing(){
+    if(!bom.length){setErr("No BOM items to price. Run extraction first.");return;}
+    setRunning(true);setErr("");
+    const BATCH=20;
+    let updatedBom=[...bom];
+    const total=Math.ceil(bom.length/BATCH);
+    for(let i=0;i<bom.length;i+=BATCH){
+      const batchIdx=Math.floor(i/BATCH);
+      setProgress({msg:`Pricing items ${i+1}–${Math.min(i+BATCH,bom.length)} of ${bom.length}…`,pct:Math.round((batchIdx/total)*90)+5});
+      const batch=bom.slice(i,i+BATCH);
+      try{
+        const map=await estimatePrices(batch);
+        updatedBom=updatedBom.map(r=>{
+          const key=String(r.id);
+          if(key in map){return{...r,unitPrice:map[key],priceSource:map[key]!=null?"ai":r.priceSource||null};}
+          return r;
+        });
+      }catch(ex){setErr(`Pricing failed: ${ex.message}`);setRunning(false);return;}
+    }
+    setProgress({msg:"Saving prices…",pct:97});
+    const updated={...project,bom:updatedBom,updatedAt:Date.now()};
+    try{await saveProject(uid,updated);}catch(ex){setErr(`Save failed: ${ex.message}`);}
+    onUpdate(updated);
+    setProgress({msg:`Done — ${updatedBom.filter(r=>r.unitPrice!=null).length} of ${bom.length} items priced.`,pct:100});
+    setRunning(false);
+  }
+
+  function updatePrice(id,val){
+    const parsed=val===""?null:parseFloat(val);
+    const updatedBom=bom.map(r=>r.id===id?{...r,unitPrice:isNaN(parsed)?null:parsed,priceSource:isNaN(parsed)||parsed===null?null:"manual"}:r);
+    onUpdate({...project,bom:updatedBom,updatedAt:Date.now()});
+  }
+
+  function SourceBadge({src}){
+    if(src==="ai")return<span style={{background:C.teal+"22",color:C.teal,borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>AI Est.</span>;
+    if(src==="manual")return<span style={{background:C.accentDim,color:C.accent,borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>Manual</span>;
+    return<span style={{color:C.muted,fontSize:12}}>—</span>;
+  }
+
+  const fmt=n=>n==null?"—":"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  return(
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:20,flexWrap:"wrap",gap:12}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>Pricing</div>
+          <div style={{fontSize:13,color:C.muted}}>{bom.length} BOM items · {pricedCount} priced</div>
+        </div>
+        <button onClick={runPricing} disabled={running||!bom.length} style={btn(C.accent,"#fff",{fontSize:13,opacity:running||!bom.length?0.5:1})}>
+          {running?"Estimating…":"✨ Get AI Estimates"}
+        </button>
+      </div>
+
+      {progress&&(
+        <div style={{...card({padding:16}),marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:8}}>
+            <span style={{fontSize:13,color:C.sub}}>{progress.msg}</span>
+            <span style={{fontSize:13,fontWeight:700,color:C.accent}}>{progress.pct}%</span>
+          </div>
+          <div style={{background:C.border,borderRadius:4,height:6,overflow:"hidden"}}>
+            <div style={{width:`${progress.pct}%`,height:"100%",background:C.accent,borderRadius:4,transition:"width 0.4s"}}/>
+          </div>
+        </div>
+      )}
+
+      {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:10,padding:12,marginBottom:16,fontSize:13,color:C.red}}>{err}</div>}
+
+      {pricedCount>0&&(
+        <div style={{...card({padding:"12px 16px"}),marginBottom:16,display:"flex",gap:20,flexWrap:"wrap",alignItems:"center"}}>
+          <span style={{fontSize:13,color:C.sub}}><strong style={{color:C.text}}>{pricedCount}</strong> of {bom.length} items priced</span>
+          <div style={{width:1,height:16,background:C.border}}/>
+          <span style={{fontSize:13,color:C.sub}}>Total cost: <strong style={{color:C.green}}>{fmt(totalCost)}</strong></span>
+          {bom.length-pricedCount>0&&<><div style={{width:1,height:16,background:C.border}}/><span style={{fontSize:13,color:C.yellow}}>{bom.length-pricedCount} unpriced</span></>}
+        </div>
+      )}
+
+      {bom.length>0?(
+        <div>
+          <div style={{overflowX:"auto",borderRadius:10,border:`1px solid ${C.border}`,marginBottom:16}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead>
+                <tr style={{background:"#0a0a12"}}>
+                  {[["Qty",50],["Part #",130],["Description",0],["Unit Price",110],["Source",90],["Ext. Price",100]].map(([h,w])=>(
+                    <th key={h} style={{padding:"10px 12px",textAlign:h==="Unit Price"||h==="Ext. Price"?"right":"left",color:C.muted,fontWeight:600,fontSize:11,whiteSpace:"nowrap",width:w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bom.map((row,i)=>{
+                  const ext=(row.unitPrice||0)*(row.qty||1);
+                  return(
+                    <tr key={row.id} style={{borderBottom:i<bom.length-1?`1px solid ${C.border}22`:"none"}}>
+                      <td style={{padding:"6px 12px",color:C.muted,whiteSpace:"nowrap"}}>{row.qty||1}</td>
+                      <td style={{padding:"6px 12px",color:C.sub,whiteSpace:"nowrap"}}>{row.partNumber||"—"}</td>
+                      <td style={{padding:"6px 12px",color:C.text}}>{row.description||"—"}</td>
+                      <td style={{padding:"4px 8px",textAlign:"right"}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:2}}>
+                          <span style={{color:C.muted,fontSize:13}}>$</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
+                            onChange={e=>updatePrice(row.id,e.target.value)}
+                            placeholder="0.00"
+                            style={{...inp({padding:"5px 6px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:6,textAlign:"right",width:80}),minWidth:80}}
+                            onFocus={e=>{e.target.style.borderColor=C.accent;e.target.value=row.unitPrice??""}}
+                            onBlur={e=>{e.target.style.borderColor="transparent";if(e.target.value!=="")e.target.value=parseFloat(e.target.value).toFixed(2);}}
+                          />
+                        </div>
+                      </td>
+                      <td style={{padding:"6px 12px",textAlign:"center"}}><SourceBadge src={row.priceSource}/></td>
+                      <td style={{padding:"6px 12px",textAlign:"right",color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums"}}>
+                        {row.unitPrice!=null?fmt(ext):"—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {(totalCost>0||laborCost>0)&&(
+            <div style={{...card({padding:20}),maxWidth:420}}>
+              <div style={{fontSize:15,fontWeight:700,marginBottom:16}}>Cost Summary</div>
+
+              {/* Materials */}
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,fontSize:14}}>
+                <span style={{color:C.sub}}>Materials</span>
+                <span style={{fontWeight:600,color:C.green,fontVariantNumeric:"tabular-nums"}}>{fmt(totalCost)}</span>
+              </div>
+
+              {/* Labor */}
+              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>
+                <div style={{fontSize:12,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Labor</div>
+                <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13,color:C.sub,whiteSpace:"nowrap",minWidth:36}}>Hrs</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={laborHours}
+                    onChange={e=>setPr({laborHoursOverride:Math.max(0,+e.target.value||0)})}
+                    style={{...inp({padding:"5px 8px",fontSize:13,width:80,textAlign:"right"})}}
+                  />
+                  <span style={{fontSize:13,color:C.muted}}>×</span>
+                  <span style={{fontSize:13,color:C.sub,whiteSpace:"nowrap"}}>$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={laborRate}
+                    onChange={e=>setPr({laborRate:Math.max(0,+e.target.value||0)})}
+                    style={{...inp({padding:"5px 8px",fontSize:13,width:80,textAlign:"right"})}}
+                  />
+                  <span style={{fontSize:13,color:C.muted}}>/hr</span>
+                </div>
+                {wireCount>0&&(pr.laborHoursOverride??null)===null&&(
+                  <div style={{fontSize:11,color:C.muted}}>
+                    Estimated from {wireCount} wires ({Math.ceil(wireCount/12)}–{Math.ceil(wireCount/8)} hrs range) · edit to override
+                  </div>
+                )}
+                <div style={{display:"flex",justifyContent:"flex-end",marginTop:4,fontSize:13,color:C.sub}}>
+                  Labor cost: <strong style={{color:C.text,marginLeft:6,fontVariantNumeric:"tabular-nums"}}>{fmt(laborCost)}</strong>
+                </div>
+              </div>
+
+              {/* Contingencies */}
+              {[
+                ["BOM Contingency","$",contingencyBOM,"contingencyBOM"],
+                ["Wire / Zip Ties / etc.","$",contingencyConsumables,"contingencyConsumables"]
+              ].map(([label,prefix,val,key])=>(
+                <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,gap:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:4,flex:1}}>
+                    <span style={{fontSize:13,color:C.sub}}>{label}</span>
+                    <button onClick={()=>setShowConfig(true)} title="Edit defaults" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,padding:"1px 4px",opacity:0.6,lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>⚙</button>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{fontSize:13,color:C.muted}}>{prefix}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="50"
+                      value={val}
+                      onChange={e=>setPr({[key]:Math.max(0,+e.target.value||0)})}
+                      style={{...inp({padding:"5px 8px",fontSize:13,width:90,textAlign:"right"})}}
+                    />
+                  </div>
+                </div>
+              ))}
+
+              {/* Grand total + markup */}
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:10,fontSize:14}}>
+                <span style={{color:C.sub}}>Total (mat. + labor)</span>
+                <span style={{fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmt(grandTotal)}</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+                <span style={{fontSize:14,color:C.sub,whiteSpace:"nowrap"}}>Markup %</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={markup}
+                  onChange={e=>setPr({markup:Math.max(0,+e.target.value||0)})}
+                  style={{...inp({padding:"6px 10px",fontSize:14,width:90,textAlign:"right"})}}
+                />
+              </div>
+              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,display:"flex",justifyContent:"space-between",fontSize:15}}>
+                <span style={{fontWeight:700}}>Sell Price</span>
+                <span style={{fontWeight:800,color:C.accent,fontVariantNumeric:"tabular-nums"}}>{fmt(sellPrice)}</span>
+              </div>
+            </div>
+          )}
+        </div>
+      ):(
+        !running&&(
+          <div style={{textAlign:"center",padding:60,color:C.muted}}>
+            <div style={{fontSize:44,marginBottom:12,opacity:0.3}}>💲</div>
+            <div style={{fontSize:16,fontWeight:600,color:C.sub,marginBottom:8}}>No BOM items to price</div>
+            <div style={{fontSize:13,lineHeight:1.7}}>Run extraction first to populate the BOM, then return here.</div>
+          </div>
+        )
+      )}
+      {showConfig&&<PricingConfigModal uid={uid} onClose={()=>setShowConfig(false)}/>}
+    </div>
+  );
+}
+
+// ── QUOTE TAB ──
+function QuoteTab({project,onUpdate}){
+  const pr=project.pricing||{};
+  const bom=project.bom||[];
+  const wireCount=project.validation?.wireCount||0;
+  const defaultHours=wireCount?Math.round((Math.ceil(wireCount/12)+Math.ceil(wireCount/8))/2):0;
+  const laborHours=(pr.laborHoursOverride??null)??defaultHours;
+  const laborRate=pr.laborRate??45;
+  const markup=pr.markup??30;
+  const contingencyBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
+  const contingencyConsumables=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
+  const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+  const laborCost=laborHours*laborRate;
+  const grandTotal=materialCost+laborCost+contingencyBOM+contingencyConsumables;
+  const sellPrice=grandTotal*(1+markup/100);
+  const hasSellPrice=sellPrice>0;
+
+  const q=project.quote||{};
+  function setQ(updates){onUpdate({...project,quote:{...q,...updates}});}
+
+  const today=new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+  const defaultValidUntil=new Date(Date.now()+30*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+  const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  // Light-theme palette for the printable document
+  const W={bg:"#fff",text:"#111",sub:"#333",muted:"#666",faint:"#999",border:"#ccc",light:"#f4f4f4",accent:"#1a56db"};
+  const qInp=(x={})=>({background:"transparent",border:"none",borderBottom:`1px dashed ${W.border}`,outline:"none",color:W.text,fontSize:"inherit",fontFamily:"inherit",padding:"1px 2px",width:"100%",...x});
+
+  return(
+    <div>
+      {/* Toolbar */}
+      <div className="no-print" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
+        <div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>Quote</div>
+          <div style={{fontSize:13,color:C.muted}}>
+            {hasSellPrice?`Sell price: ${fmtMoney(sellPrice)}`:"Complete pricing first to populate sell price."}
+          </div>
+        </div>
+        <button onClick={()=>window.print()} style={btn(C.accent,"#fff",{fontSize:13})}>🖨 Print / Save PDF</button>
+      </div>
+
+      {/* Quote document */}
+      <div id="quote-doc" style={{background:W.bg,color:W.text,maxWidth:860,margin:"0 auto",padding:"28px 32px",borderRadius:8,border:`1px solid ${C.border}`,fontFamily:"Arial,sans-serif",fontSize:13,lineHeight:1.5}}>
+
+        {/* Header box */}
+        <div style={{border:`2px solid ${W.border}`,borderRadius:6,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
+          <div style={{display:"flex",alignItems:"center",gap:14}}>
+            <div style={{fontSize:36,lineHeight:1}}>⚙</div>
+            <div>
+              <div style={{fontSize:18,fontWeight:800,color:W.accent,letterSpacing:-0.3}}>Matrix Systems</div>
+              <div style={{fontSize:12,color:W.sub}}>5591 Leo Park Road</div>
+              <div style={{fontSize:12,color:W.sub}}>West Jordan, UT  84081  US</div>
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>
+              Quote:&nbsp;&nbsp;
+              <input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="######" style={{...qInp({width:100,fontSize:18,fontWeight:700,textAlign:"right"})}}/>
+            </div>
+            <div style={{fontSize:13,color:W.sub,marginBottom:2}}>{q.date||today}</div>
+            <div style={{fontSize:12,color:W.faint}}>Page 1 of 1</div>
+          </div>
+        </div>
+
+        {/* Attention / Customer */}
+        <table style={{width:"100%",marginBottom:14,fontSize:13,borderCollapse:"collapse"}}>
+          <tbody>
+            <tr>
+              <td style={{width:90,verticalAlign:"top",fontStyle:"italic",fontWeight:600,paddingTop:2,color:W.sub}}>Attention:</td>
+              <td style={{verticalAlign:"top"}}>
+                <input value={q.contact||""} onChange={e=>setQ({contact:e.target.value})} placeholder="Contact name" style={{...qInp({fontWeight:600,marginBottom:4})}}/>
+                <input value={q.company||""} onChange={e=>setQ({company:e.target.value})} placeholder="Company" style={{...qInp({fontWeight:700,fontSize:14,marginBottom:3})}}/>
+                <input value={q.address||""} onChange={e=>setQ({address:e.target.value})} placeholder="Address" style={{...qInp({marginBottom:3})}}/>
+                <div style={{display:"flex",gap:6}}>
+                  <span style={{color:W.sub}}>Phone:</span>
+                  <input value={q.phone||""} onChange={e=>setQ({phone:e.target.value})} placeholder="—" style={{...qInp({flex:1})}}/>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        {/* Project details */}
+        <table style={{marginBottom:14,fontSize:13,borderCollapse:"collapse"}}>
+          <tbody>
+            {[
+              ["Project #:",q.projectNumber,v=>setQ({projectNumber:v}),project.name],
+              ["Pmt. Terms:",q.paymentTerms,v=>setQ({paymentTerms:v}),"Net 30 Days"],
+              ["Shipping Method:",q.shippingMethod,v=>setQ({shippingMethod:v}),"Customer Handles Shipping"],
+            ].map(([label,val,setter,ph])=>(
+              <tr key={label}>
+                <td style={{width:130,fontWeight:700,paddingRight:10,paddingBottom:3,color:W.sub,whiteSpace:"nowrap"}}>{label}</td>
+                <td style={{paddingBottom:3}}><input value={val||""} onChange={e=>setter(e.target.value)} placeholder={ph} style={qInp({width:260})}/></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {/* Terms */}
+        <div style={{borderTop:`1px solid ${W.border}`,borderBottom:`1px solid ${W.border}`,padding:"8px 0",marginBottom:14,fontSize:11,color:W.muted,lineHeight:1.6}}>
+          Standard Payment Terms for Panel Builds (Order Total over $30,000): 30% ARO; 40% @ Procurement, 30% @ Readiness To Ship<br/>
+          Standard Payment Terms for Engineering / Programming: 50% ARO / 50% due @ Completion of Work<br/>
+          <strong style={{color:W.text}}>All quotes expire 30 days from date of issue unless otherwise noted. Prices subject to change without notice.</strong>
+        </div>
+
+        {/* Line item */}
+        <div style={{marginBottom:14}}>
+          <div style={{display:"flex",gap:12,marginBottom:8}}>
+            <span style={{fontStyle:"italic",fontWeight:700,color:W.sub,whiteSpace:"nowrap"}}>Line:&nbsp;1</span>
+            <div style={{flex:1}}>
+              <div style={{marginBottom:3}}>
+                <span style={{fontWeight:700}}>Part #: </span>
+                <input value={q.panelId||""} onChange={e=>setQ({panelId:e.target.value})} placeholder={project.name} style={{...qInp({display:"inline",width:200,fontWeight:700})}}/>
+              </div>
+              {[
+                ["Description",q.description,v=>setQ({description:v}),project.name],
+                ["Project",q.projectNumber,v=>setQ({projectNumber:v}),project.name],
+                ["Drawing Rev",q.drawingRev,v=>setQ({drawingRev:v}),"A"],
+                ["Panel ID",q.panelId,v=>setQ({panelId:v}),project.name],
+                ["Plant Name",q.plantName,v=>setQ({plantName:v}),""],
+                ["Supply Voltage",q.supplyVoltage,v=>setQ({supplyVoltage:v}),"480VAC"],
+                ["Control Voltage",q.controlVoltage,v=>setQ({controlVoltage:v}),"120VAC"],
+              ].map(([label,val,setter,ph])=>(
+                <div key={label} style={{marginBottom:2}}>
+                  <span style={{color:W.sub}}>{label}: </span>
+                  <input value={val||""} onChange={e=>setter(e.target.value)} placeholder={ph} style={{...qInp({display:"inline",width:220})}}/>
+                </div>
+              ))}
+              <div style={{marginTop:6}}>
+                <div style={{color:W.sub,marginBottom:2}}>NOTES:</div>
+                <textarea value={q.lineNotes||""} onChange={e=>setQ({lineNotes:e.target.value})} placeholder="e.g. Grey duct quoted instead of white." rows={2} style={{...qInp({display:"block",width:"100%",resize:"vertical",borderBottom:"none",border:`1px dashed ${W.border}`,borderRadius:3,padding:"4px 6px"})}}/>
+              </div>
+            </div>
+          </div>
+
+          {/* Missing Data — auto-populated from validation */}
+          {(()=>{
+            const v=project.validation;
+            if(!v)return null;
+            const lb=project.bom||[];
+            const missing=(v.missingFromSchematic||[]).filter(i=>lb.find(r=>r.id===i.id)?.validationAction!=="ignored");
+            const noId=(v.notTraceable||[]).filter(i=>lb.find(r=>r.id===i.id)?.validationAction!=="ignored");
+            if(!missing.length&&!noId.length)return null;
+            const th={padding:"1px 6px",textAlign:"left",color:W.muted,fontWeight:600,fontSize:8,textTransform:"uppercase",letterSpacing:0.3};
+            const td={padding:"0px 6px",fontSize:8,lineHeight:1.4};
+            return(
+              <div style={{marginTop:6,borderTop:`1px solid ${W.border}`,paddingTop:4}}>
+                <div style={{fontSize:8,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,color:W.text,marginBottom:2}}>Missing Data</div>
+                {missing.length>0&&(
+                  <div style={{marginBottom:2}}>
+                    <div style={{fontSize:7,fontWeight:600,color:W.muted,textTransform:"uppercase",letterSpacing:0.3,marginBottom:1}}>In BOM — not found in schematic</div>
+                    <table style={{width:"100%",borderCollapse:"collapse"}}>
+                      <thead><tr>{["Part Number","Description","Ref Tags"].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                      <tbody>
+                        {missing.map((item,i)=>(
+                          <tr key={item.id||i}>
+                            <td style={{...td,color:W.sub}}>{item.partNumber||"—"}</td>
+                            <td style={{...td,color:W.text}}>{item.description||"—"}</td>
+                            <td style={{...td,color:W.muted}}>{item.notes||"—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {noId.length>0&&(
+                  <div>
+                    <div style={{fontSize:7,fontWeight:600,color:W.muted,textTransform:"uppercase",letterSpacing:0.3,marginBottom:1}}>No device ID (AS SHOWN — field verification required)</div>
+                    <table style={{width:"100%",borderCollapse:"collapse"}}>
+                      <thead><tr>{["Part Number","Description","Qty"].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
+                      <tbody>
+                        {noId.map((item,i)=>(
+                          <tr key={item.id||i}>
+                            <td style={{...td,color:W.sub}}>{item.partNumber||"—"}</td>
+                            <td style={{...td,color:W.text}}>{item.description||"—"}</td>
+                            <td style={{...td,color:W.muted}}>{item.qty||1}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Pricing table */}
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,marginTop:10}}>
+            <thead>
+              <tr style={{borderBottom:`1px solid ${W.border}`}}>
+                {[["Quantity","left"],["U/M","left"],["Unit Price","left"],["Lead Time (Days)","left"],["Total Price","right"]].map(([h,a])=>(
+                  <th key={h} style={{padding:"6px 10px",textAlign:a,fontStyle:"italic",fontWeight:600,color:W.sub,fontSize:12}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr style={{borderBottom:`1px solid ${W.border}`}}>
+                <td style={{padding:"8px 10px"}}>
+                  <input value={q.qty||"1.00"} onChange={e=>setQ({qty:e.target.value})} style={{...qInp({width:60})}}/>
+                </td>
+                <td style={{padding:"8px 10px"}}>EA</td>
+                <td style={{padding:"8px 10px"}}>{hasSellPrice?fmtMoney(sellPrice):<span style={{color:W.faint}}>—</span>}</td>
+                <td style={{padding:"8px 10px"}}>
+                  <input value={q.leadTime||""} onChange={e=>setQ({leadTime:e.target.value})} placeholder="45-60" style={{...qInp({width:80})}}/>
+                </td>
+                <td style={{padding:"8px 10px",textAlign:"right",fontWeight:700}}>{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):<span style={{color:W.faint}}>—</span>} {hasSellPrice&&<span style={{fontWeight:400,color:W.muted}}>*</span>}</td>
+              </tr>
+              <tr>
+                <td colSpan={3} style={{padding:"6px 10px",fontSize:11,color:W.faint,fontStyle:"italic"}}>* Indicates which quantity price is included in the Total</td>
+                <td style={{padding:"6px 10px",textAlign:"right",fontWeight:600,color:W.sub}}>Total:</td>
+                <td style={{padding:"6px 10px",textAlign:"right",fontWeight:700}}>{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):"—"}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Notes */}
+        <div style={{marginTop:18,borderTop:`1px solid ${W.border}`,paddingTop:14}}>
+          <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,color:W.text,marginBottom:8}}>Notes</div>
+          <textarea
+            value={q.notes||""}
+            onChange={e=>setQ({notes:e.target.value})}
+            placeholder="Quote terms, lead time, exclusions, etc."
+            rows={3}
+            style={{...qInp({display:"block",width:"100%",resize:"vertical",border:`1px dashed ${W.border}`,borderRadius:3,padding:"6px 8px",lineHeight:1.6,fontSize:13})}}
+          />
+        </div>
+
+        {/* Footer */}
+        <div style={{borderTop:`1px solid ${W.border}`,paddingTop:12,marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:12}}>
+          <div style={{fontSize:13,color:W.sub}}>
+            Salesperson:&nbsp;
+            <input value={q.salesperson||""} onChange={e=>setQ({salesperson:e.target.value})} placeholder="—" style={{...qInp({display:"inline",width:160})}}/>
+          </div>
+          <div style={{fontSize:13,color:W.sub}}>
+            Prices are Valid Until&nbsp;
+            <input value={q.validUntil||""} onChange={e=>setQ({validUntil:e.target.value})} placeholder={defaultValidUntil} style={{...qInp({display:"inline",width:140})}}/>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -785,16 +1499,8 @@ function ProjectView({project:init,uid,onBack,onChange}){
           {tab==="drawings"&&<DrawingsTab project={project} onUpdate={update}/>}
           {tab==="extract"&&<ExtractTab project={project} uid={uid} onUpdate={update}/>}
           {tab==="validate"&&<ValidateTab project={project} uid={uid} onUpdate={update}/>}
-          {tab==="price"&&(
-            <PlaceholderTab icon="💲" title="Pricing"
-              desc="Look up pricing from Business Central. Items not found in BC fall back to web pricing, flagged for supplier confirmation."
-              coming={["Business Central price lookup","Web pricing fallback with source flag","Manual unit price override","Cost rollup and margin calculation"]}/>
-          )}
-          {tab==="quote"&&(
-            <PlaceholderTab icon="📊" title="Quote Generation"
-              desc="Generate a complete control panel quote ready for Business Central import, including wire count labor."
-              coming={["Business Central import format export","Wire count → labor cost estimate","Full quote document with line totals","PDF export"]}/>
-          )}
+          {tab==="price"&&<PriceTab project={project} uid={uid} onUpdate={update}/>}
+          {tab==="quote"&&<QuoteTab project={project} onUpdate={update}/>}
         </div>
       </div>
     </div>
@@ -876,6 +1582,17 @@ function NewProjectModal({uid,onCreated,onClose}){
 function Dashboard({uid,projects,loading,onOpen,onNew,onDelete}){
   return(
     <div style={{maxWidth:1100,margin:"0 auto",padding:32}}>
+
+      {/* Hero logo */}
+      <div style={{textAlign:"center",padding:"48px 0 52px",background:`radial-gradient(ellipse at 50% 0%,#1a1a3e 0%,transparent 70%)`,borderRadius:16,marginBottom:40}}>
+        <div style={{fontSize:110,lineHeight:1,marginBottom:16}}>⬡</div>
+        <div style={{fontSize:80,fontWeight:800,letterSpacing:-3,lineHeight:1,marginBottom:12}}>
+          Matrix <span style={{color:C.accent}}>ARC</span>
+        </div>
+        <div style={{fontSize:16,color:C.muted,letterSpacing:1}}>AI Recognition &amp; Capture · Control Panel Quoting</div>
+        <div style={{fontSize:14,color:C.sub,marginTop:8}}>AI assisted Industrial Control Panel extraction and Quoting assistant</div>
+      </div>
+
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:32}}>
         <div>
           <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
@@ -935,9 +1652,11 @@ function App({user}){
   const [openProject,setOpenProject]=useState(null);
   const [showNew,setShowNew]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
+  const [showConfig,setShowConfig]=useState(false);
 
   useEffect(()=>{
     loadApiKey(user.uid);
+    loadPricingConfig(user.uid);
     loadProjects(user.uid).then(p=>{setProjects(p);setLoading(false);});
   },[user.uid]);
 
@@ -957,6 +1676,7 @@ function App({user}){
               <span style={{fontSize:11,color:C.muted,marginLeft:4}}>AI Recognition &amp; Capture</span>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Config</button>
               <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Settings</button>
               <div style={{width:1,height:18,background:C.border}}/>
               <span style={{fontSize:12,color:C.muted}}>{user.email}</span>
@@ -971,6 +1691,7 @@ function App({user}){
       )}
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)}/>}
+      {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)}/>}
     </div>
   );
 }
