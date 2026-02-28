@@ -26,6 +26,7 @@ input,textarea,select,button{font-family:inherit;font-size:inherit}
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
 <script>
 // PDF.js setup — load via importShim after DOM ready
@@ -50,6 +51,7 @@ const firebaseConfig={
 firebase.initializeApp(firebaseConfig);
 const fbAuth=firebase.auth();
 const fbDb=firebase.firestore();
+const fbFunctions=firebase.functions();
 </script>
 <script type="text/babel">
 const {useState,useEffect,useRef}=React;
@@ -76,14 +78,24 @@ async function loadApiKey(uid){
   try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists)_apiKey=d.data().key||null;}catch(e){}
 }
 
+// ── APP CONTEXT ──
+let _appCtx={uid:null,companyId:null,role:null,projectsPath:null,configPath:null};
+function isReadOnly(){return _appCtx.role==="view";}
+function isAdmin(){return !!_appCtx.companyId&&_appCtx.role==="admin";}
+
 // ── PRICING CONFIG (loaded from Firestore) ──
-let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400};
+let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20};
 async function loadPricingConfig(uid){
-  try{const d=await fbDb.doc(`users/${uid}/config/pricing`).get();if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400};}}catch(e){}
+  try{
+    const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
+    const d=await fbDb.doc(path).get();
+    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20};}
+  }catch(e){}
 }
 async function savePricingConfig(uid,cfg){
   _pricingConfig=cfg;
-  await fbDb.doc(`users/${uid}/config/pricing`).set(cfg);
+  const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
+  await fbDb.doc(path).set(cfg);
 }
 async function apiCall(body){
   if(!_apiKey)throw new Error("API key not set. Open Settings and add your Anthropic key.");
@@ -99,7 +111,8 @@ async function apiCall(body){
 
 // ── IMAGE RESIZE ──
 function resizeImage(dataUrl,maxW=2800){
-  return new Promise(res=>{
+  return new Promise((res,rej)=>{
+    if(!dataUrl){return rej(new Error("resizeImage: empty dataUrl"));}
     const img=new Image();
     img.onload=()=>{
       let w=img.width,h=img.height;
@@ -107,13 +120,16 @@ function resizeImage(dataUrl,maxW=2800){
       const c=document.createElement("canvas");c.width=w;c.height=h;
       c.getContext("2d").drawImage(img,0,0,w,h);
       res(c.toDataURL("image/jpeg",0.75));c.width=0;c.height=0;
-    };img.src=dataUrl;
+    };
+    img.onerror=()=>rej(new Error("resizeImage: failed to load image"));
+    img.src=dataUrl;
   });
 }
 
 // ── FIRESTORE ──
 async function saveProject(uid,project){
-  const col=fbDb.collection(`users/${uid}/projects`);
+  const path=_appCtx.projectsPath||`users/${uid}/projects`;
+  const col=fbDb.collection(path);
   const ref=project.id?col.doc(project.id):col.doc();
   const data={...project,id:ref.id,updatedAt:Date.now()};
   // Don't store page images in Firestore — keep only metadata + bom
@@ -124,11 +140,52 @@ async function saveProject(uid,project){
   return data; // return with dataUrls intact for in-memory use
 }
 async function loadProjects(uid){
-  const snap=await fbDb.collection(`users/${uid}/projects`).orderBy("updatedAt","desc").get();
+  const path=_appCtx.projectsPath||`users/${uid}/projects`;
+  const snap=await fbDb.collection(path).orderBy("updatedAt","desc").get();
   return snap.docs.map(d=>d.data());
 }
 async function deleteProject(uid,id){
-  await fbDb.doc(`users/${uid}/projects/${id}`).delete();
+  const path=_appCtx.projectsPath||`users/${uid}/projects`;
+  await fbDb.doc(`${path}/${id}`).delete();
+}
+
+// ── FIRESTORE TEAM HELPERS ──
+async function loadUserProfile(uid){
+  try{const d=await fbDb.doc(`users/${uid}/config/profile`).get();return d.exists?d.data():null;}catch(e){return null;}
+}
+async function createCompany(uid,email,name){
+  const cid=fbDb.collection("companies").doc().id;
+  // Step 1: create the company doc first (rule: createdBy == auth.uid)
+  await fbDb.doc(`companies/${cid}`).set({name,createdAt:Date.now(),createdBy:uid});
+  // Step 2: now that the company doc exists, write member + profile in a batch
+  // (member rule does get() on company to verify createdBy)
+  const batch=fbDb.batch();
+  batch.set(fbDb.doc(`companies/${cid}/members/${uid}`),{email,role:"admin",addedAt:Date.now()});
+  batch.set(fbDb.doc(`users/${uid}/config/profile`),{companyId:cid,role:"admin"});
+  await batch.commit();
+  return cid;
+}
+async function loadCompanyMembers(companyId){
+  const snap=await fbDb.collection(`companies/${companyId}/members`).get();
+  return snap.docs.map(d=>({uid:d.id,...d.data()}));
+}
+async function loadPendingInvites(companyId){
+  const snap=await fbDb.collection(`companies/${companyId}/pendingInvites`).get();
+  return snap.docs.map(d=>({token:d.id,...d.data()}));
+}
+
+// ── FIREBASE CALLABLE WRAPPERS ──
+async function callInviteTeamMember(email,role,companyId){
+  return(await fbFunctions.httpsCallable("inviteTeamMember")({email,role,companyId})).data;
+}
+async function callAcceptTeamInvite(token){
+  return(await fbFunctions.httpsCallable("acceptTeamInvite")({token})).data;
+}
+async function callRemoveTeamMember(targetUid,companyId){
+  return(await fbFunctions.httpsCallable("removeTeamMember")({targetUid,companyId})).data;
+}
+async function callUpdateMemberRole(targetUid,role,companyId){
+  return(await fbFunctions.httpsCallable("updateMemberRole")({targetUid,role,companyId})).data;
 }
 
 // ── BOM EXTRACTION PROMPT ──
@@ -148,7 +205,8 @@ Rules:
 - Return the JSON array only — no explanation, no markdown`;
 
 async function extractBomPage(dataUrl){
-  const b64=dataUrl.split(",")[1];
+  const b64=dataUrl&&dataUrl.split(",")[1];
+  if(!b64){console.warn("extractBomPage: skipping — empty or invalid dataUrl");return[];}
   const raw=await apiCall({
     max_tokens:4000,
     messages:[{role:"user",content:[
@@ -180,7 +238,8 @@ Rules:
 - Return JSON only, no explanation`;
 
 async function analyzeSchematicPage(dataUrl){
-  const b64=dataUrl.split(",")[1];
+  const b64=dataUrl&&dataUrl.split(",")[1];
+  if(!b64){console.warn("analyzeSchematicPage: skipping — empty or invalid dataUrl");return{tags:[],wireCount:0};}
   const raw=await apiCall({
     max_tokens:4000,
     messages:[{role:"user",content:[
@@ -258,12 +317,13 @@ function PageTypePill({type,onChange}){
 function PricingConfigModal({uid,onClose}){
   const [bomVal,setBomVal]=useState(_pricingConfig.contingencyBOM);
   const [consVal,setConsVal]=useState(_pricingConfig.contingencyConsumables);
+  const [budgPct,setBudgPct]=useState(_pricingConfig.budgetaryContingencyPct??20);
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
 
   async function save(){
     setSaving(true);
-    await savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal});
+    await savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct});
     setSaving(false);setSaved(true);setTimeout(()=>setSaved(false),2000);
   }
 
@@ -273,18 +333,26 @@ function PricingConfigModal({uid,onClose}){
         <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>⚙ Pricing Configuration</div>
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Default contingencies applied when opening a new project</div>
         {[
-          ["BOM Contingency","Default amount added to every quote for miscellaneous BOM items",bomVal,setBomVal],
-          ["Wire / Zip Ties / etc.","Default amount for consumables (wire, zip ties, sticky backs, etc.)",consVal,setConsVal],
-        ].map(([label,desc,val,setter])=>(
+          ["BOM Contingency","Default amount added to every quote for miscellaneous BOM items","$",bomVal,setBomVal,"number","50"],
+          ["Wire / Zip Ties / etc.","Default amount for consumables (wire, zip ties, sticky backs, etc.)","$",consVal,setConsVal,"number","50"],
+        ].map(([label,desc,prefix,val,setter,type,step])=>(
           <div key={label} style={{marginBottom:16}}>
             <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>{label}</label>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{color:C.muted,fontSize:14}}>$</span>
-              <input type="number" min="0" step="50" value={val} onChange={e=>setter(Math.max(0,+e.target.value||0))} style={{...inp(),width:140,textAlign:"right"}}/>
+              <span style={{color:C.muted,fontSize:14}}>{prefix}</span>
+              <input type={type} min="0" step={step} value={val} onChange={e=>setter(Math.max(0,+e.target.value||0))} style={{...inp(),width:140,textAlign:"right"}}/>
             </div>
             <div style={{fontSize:11,color:C.muted,marginTop:4}}>{desc}</div>
           </div>
         ))}
+        <div style={{marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Budgetary Contingency %</label>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <input type="number" min="0" max="100" step="1" value={budgPct} onChange={e=>setBudgPct(Math.max(0,+e.target.value||0))} style={{...inp(),width:140,textAlign:"right"}}/>
+            <span style={{color:C.muted,fontSize:14}}>%</span>
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Hidden buffer added to budgetary sell price (default 20%)</div>
+        </div>
         <div style={{display:"flex",gap:10,marginTop:4}}>
           <button onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
           <button onClick={save} disabled={saving} style={btn(saved?C.green:C.accent,"#fff",{flex:2,opacity:saving?0.6:1})}>
@@ -296,20 +364,206 @@ function PricingConfigModal({uid,onClose}){
   );
 }
 
-// ── LOGIN ──
-function LoginScreen(){
-  const [email,setEmail]=useState("");
-  const [pass,setPass]=useState("");
-  const [mode,setMode]=useState("login");
-  const [err,setErr]=useState("");
+// ── COMPANY SETUP MODAL ──
+function CompanySetupModal({uid,email,onDone,onClose}){
+  const [name,setName]=useState("");
   const [loading,setLoading]=useState(false);
+  const [err,setErr]=useState("");
+
+  async function create(e){
+    e.preventDefault();if(!name.trim())return;setLoading(true);setErr("");
+    try{
+      const cid=await createCompany(uid,email,name.trim());
+      _appCtx.companyId=cid;_appCtx.role="admin";
+      _appCtx.projectsPath=`companies/${cid}/projects`;
+      _appCtx.configPath=`companies/${cid}/config`;
+      onDone(cid,"admin",name.trim());
+    }catch(ex){setErr(ex.message);setLoading(false);}
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div style={{...card(),width:"100%",maxWidth:440}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:20,fontWeight:700,marginBottom:4}}>Set Up Company Workspace</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Create a shared workspace so your team can collaborate on projects.</div>
+        <form onSubmit={create}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Company Name</label>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Matrix Systems, Inc." style={{...inp(),marginBottom:16}} autoFocus/>
+          {err&&<div style={{color:C.red,fontSize:12,marginBottom:12}}>{err}</div>}
+          <div style={{display:"flex",gap:10}}>
+            <button type="button" onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
+            <button type="submit" disabled={!name.trim()||loading} style={btn(C.accent,"#fff",{flex:2,opacity:!name.trim()||loading?0.5:1})}>
+              {loading?"Creating…":"Create Company"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── TEAM MODAL ──
+function TeamModal({uid,companyId,userRole,onClose}){
+  const [members,setMembers]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [inviteEmail,setInviteEmail]=useState("");
+  const [inviteRole,setInviteRole]=useState("edit");
+  const [inviting,setInviting]=useState(false);
+  const [generatedLinks,setGeneratedLinks]=useState([]); // [{email,role,url}]
+  const [copied,setCopied]=useState("");
+  const [err,setErr]=useState("");
+
+  useEffect(()=>{
+    if(!companyId){setLoading(false);return;}
+    loadCompanyMembers(companyId)
+      .then(m=>{setMembers(m);setLoading(false);})
+      .catch(()=>setLoading(false));
+  },[companyId]);
+
+  async function sendInvite(e){
+    e.preventDefault();if(!inviteEmail.trim())return;
+    setInviting(true);setErr("");
+    try{
+      const email=inviteEmail.trim();
+      const payload=btoa(JSON.stringify({c:companyId,r:inviteRole,e:email}));
+      const url=`${window.location.origin}${window.location.pathname}?join=${payload}`;
+      await fbFunctions.httpsCallable("sendInviteEmail")({to:email,inviteUrl:url,role:inviteRole});
+      setGeneratedLinks(l=>[...l,{email,role:inviteRole,url,sent:true}]);
+      setInviteEmail("");
+    }catch(ex){setErr(ex.message);}
+    setInviting(false);
+  }
+
+  async function removeMember(targetUid){
+    if(!confirm("Remove this member from the company?"))return;
+    try{
+      await fbDb.doc(`companies/${companyId}/members/${targetUid}`).delete();
+      setMembers(m=>m.filter(x=>x.uid!==targetUid));
+    }catch(ex){setErr(ex.message);}
+  }
+
+  async function changeRole(targetUid,role){
+    try{
+      await fbDb.doc(`companies/${companyId}/members/${targetUid}`).update({role});
+      setMembers(m=>m.map(x=>x.uid===targetUid?{...x,role}:x));
+    }catch(ex){setErr(ex.message);}
+  }
+
+  const admin=userRole==="admin";
+  const roleBadge={admin:[C.accentDim,C.accent],edit:[C.greenDim,C.green],view:[C.border,C.muted]};
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div style={{...card(),width:"100%",maxWidth:560,maxHeight:"80vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>👥 Team</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Manage company workspace members</div>
+        {loading&&<div style={{color:C.muted,fontSize:13,padding:"20px 0",textAlign:"center"}}>Loading…</div>}
+        {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:10,marginBottom:12,fontSize:13,color:C.red}}>{err}</div>}
+
+        {!loading&&(
+          <>
+            {/* Members */}
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:12,color:C.sub,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Members ({members.length})</div>
+              {members.map(m=>{
+                const [bg,col]=roleBadge[m.role]||roleBadge.view;
+                return(
+                  <div key={m.uid} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,padding:"8px 12px",background:"#0a0a12",borderRadius:8}}>
+                    <div style={{flex:1,fontSize:13,color:C.text}}>{m.email}</div>
+                    {admin&&m.uid!==uid?(
+                      <select value={m.role} onChange={e=>changeRole(m.uid,e.target.value)}
+                        style={{background:C.card,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 8px",fontSize:12,cursor:"pointer"}}>
+                        <option value="admin">admin</option>
+                        <option value="edit">edit</option>
+                        <option value="view">view</option>
+                      </select>
+                    ):(
+                      <span style={{background:bg,color:col,borderRadius:10,padding:"2px 10px",fontSize:11,fontWeight:700}}>{m.role}</span>
+                    )}
+                    {admin&&m.uid!==uid&&(
+                      <button onClick={()=>removeMember(m.uid)} style={{background:C.redDim,color:C.red,border:"none",borderRadius:6,padding:"4px 8px",fontSize:12,cursor:"pointer"}}>Remove</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Generated invite links (this session) */}
+            {generatedLinks.length>0&&(
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:12,color:C.sub,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Invite Links</div>
+                {generatedLinks.map((inv,i)=>(
+                  <div key={i} style={{marginBottom:8,padding:"8px 12px",background:"#0a0a12",borderRadius:8}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{flex:1,fontSize:13,color:C.text}}>{inv.email}</div>
+                      <span style={{background:C.yellowDim,color:C.yellow,borderRadius:10,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{inv.role}</span>
+                      {inv.sent&&<span style={{color:C.green,fontSize:11,fontWeight:700}}>✓ Email sent</span>}
+                      <button
+                        onClick={()=>{navigator.clipboard.writeText(inv.url);setCopied(i);setTimeout(()=>setCopied(""),2000);}}
+                        style={btn(copied===i?C.greenDim:C.border,copied===i?C.green:C.muted,{fontSize:11,padding:"3px 10px"})}>
+                        {copied===i?"✓ Copied":"Copy Link"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Invite form — admin only */}
+            {admin&&(
+              <div>
+                <div style={{fontSize:12,color:C.sub,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Invite Member</div>
+                <form onSubmit={sendInvite}>
+                  <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                    <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} type="email" placeholder="email@company.com" style={{...inp(),flex:"2 1 180px"}}/>
+                    <select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}
+                      style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",color:C.text,fontSize:14}}>
+                      <option value="admin">Admin</option>
+                      <option value="edit">Edit</option>
+                      <option value="view">View</option>
+                    </select>
+                    <button type="submit" disabled={!inviteEmail.trim()||inviting} style={btn(C.accent,"#fff",{opacity:!inviteEmail.trim()||inviting?0.5:1})}>
+                      {inviting?"Sending…":"Send Invite"}
+                    </button>
+                  </div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:4}}>Sends an invite email automatically. Link also appears below if you need to share it manually.</div>
+                </form>
+              </div>
+            )}
+          </>
+        )}
+
+        <div style={{marginTop:20,display:"flex",justifyContent:"flex-end"}}>
+          <button onClick={onClose} style={btn(C.border,C.sub)}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── LOGIN ──
+function LoginScreen({invite,redirectErr,redirectEmail}){
+  const [email,setEmail]=useState(invite?.e||redirectEmail||"");
+  const [pass,setPass]=useState("");
+  const [mode,setMode]=useState(invite?"register":"login");
+  const [err,setErr]=useState(redirectErr||"");
+  const [loading,setLoading]=useState(false);
+  const [resetSent,setResetSent]=useState(false);
+  const emailRef=useRef(null);
 
   async function submit(e){
     e.preventDefault();setErr("");setLoading(true);
     try{
       if(mode==="login")await fbAuth.signInWithEmailAndPassword(email,pass);
       else await fbAuth.createUserWithEmailAndPassword(email,pass);
-    }catch(ex){setErr(ex.message);}
+    }catch(ex){
+      if(ex.code==="auth/email-already-in-use"){
+        setMode("login");
+        setErr("That email already has an account — sign in below, or use Forgot Password to reset it.");
+      } else {
+        setErr(ex.message);
+      }
+    }
     setLoading(false);
   }
   async function google(){
@@ -318,6 +572,29 @@ function LoginScreen(){
     catch(ex){setErr(ex.message);}
     setLoading(false);
   }
+  async function microsoft(){
+    setLoading(true);
+    try{
+      const provider=new firebase.auth.OAuthProvider("microsoft.com");
+      provider.setCustomParameters({prompt:"select_account"});
+      await fbAuth.signInWithRedirect(provider);
+    }catch(ex){setErr(ex.message);setLoading(false);}
+    // page will redirect — no need to setLoading(false) on success
+  }
+  async function sendReset(e){
+    e.preventDefault();setErr("");setLoading(true);
+    try{
+      await fbAuth.sendPasswordResetEmail(email);
+      setResetSent(true);
+    }catch(ex){setErr(ex.message);}
+    setLoading(false);
+  }
+  function switchMode(m){
+    // Capture actual DOM value first — browser autocomplete may not fire onChange
+    if(emailRef.current)setEmail(emailRef.current.value);
+    setMode(m);setErr("");setResetSent(false);
+  }
+
   return(
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 50% 0%,#1a1a3e 0%,${C.bg} 60%)`}}>
       <div style={{textAlign:"center",marginBottom:32}}>
@@ -325,35 +602,198 @@ function LoginScreen(){
         <div style={{fontSize:34,fontWeight:800,letterSpacing:-1}}>Matrix <span style={{color:C.accent}}>ARC</span></div>
         <div style={{fontSize:14,color:C.muted,marginTop:6}}>AI Recognition &amp; Capture · Control Panel Quoting</div>
       </div>
-      <div style={{...card(),width:"100%",maxWidth:400}}>
-        <div style={{fontSize:18,fontWeight:700,marginBottom:20}}>{mode==="login"?"Sign In":"Create Account"}</div>
-        <form onSubmit={submit}>
-          <div style={{marginBottom:10}}><input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email" style={inp()} required/></div>
-          <div style={{marginBottom:16}}><input value={pass} onChange={e=>setPass(e.target.value)} type="password" placeholder="Password" style={inp()} required/></div>
-          {err&&<div style={{color:C.red,fontSize:12,marginBottom:12,lineHeight:1.5}}>{err}</div>}
-          <button type="submit" disabled={loading} style={btn(C.accent,"#fff",{width:"100%",opacity:loading?0.6:1})}>{loading?"Please wait…":mode==="login"?"Sign In":"Create Account"}</button>
-        </form>
-        <div style={{textAlign:"center",margin:"14px 0",color:C.muted,fontSize:12}}>or</div>
-        <button onClick={google} disabled={loading} style={btn("#fff","#1a1a1a",{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})}>
-          <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-          Continue with Google
-        </button>
-        <div style={{textAlign:"center",marginTop:14,fontSize:12,color:C.muted}}>
-          {mode==="login"?"No account? ":"Have an account? "}
-          <button onClick={()=>setMode(m=>m==="login"?"register":"login")} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontWeight:600,fontSize:12}}>
-            {mode==="login"?"Register":"Sign In"}
-          </button>
+      {invite&&(
+        <div style={{background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:12,padding:"14px 20px",marginBottom:20,textAlign:"center",width:"100%",maxWidth:400}}>
+          <div style={{fontSize:15,fontWeight:700,color:C.accent,marginBottom:4}}>You've been invited to Matrix ARC</div>
+          <div style={{fontSize:13,color:C.sub}}>Create an account or sign in to join your team workspace.</div>
         </div>
+      )}
+      <div style={{...card(),width:"100%",maxWidth:400}}>
+        {mode==="reset"?(
+          resetSent?(
+            <div>
+              <div style={{fontSize:18,fontWeight:700,marginBottom:12}}>Check your email</div>
+              <div style={{fontSize:13,color:C.muted,marginBottom:20,lineHeight:1.6}}>A password reset link was sent to <strong style={{color:C.fg}}>{email}</strong>. Check your inbox and follow the link to set a new password.</div>
+              <button onClick={()=>switchMode("login")} style={btn(C.accent,"#fff",{width:"100%"})}>Back to Sign In</button>
+            </div>
+          ):(
+            <div>
+              <div style={{fontSize:18,fontWeight:700,marginBottom:6}}>Reset Password</div>
+              <div style={{fontSize:13,color:C.muted,marginBottom:16}}>Enter your email and we'll send a reset link.</div>
+              <form onSubmit={sendReset}>
+                <div style={{marginBottom:16}}><input value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email" style={inp()} required/></div>
+                {err&&<div style={{color:C.red,fontSize:12,marginBottom:12,lineHeight:1.5}}>{err}</div>}
+                <button type="submit" disabled={loading} style={btn(C.accent,"#fff",{width:"100%",opacity:loading?0.6:1})}>{loading?"Sending…":"Send Reset Link"}</button>
+              </form>
+              <div style={{textAlign:"center",marginTop:14,fontSize:12,color:C.muted}}>
+                <button onClick={()=>switchMode("login")} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontWeight:600,fontSize:12}}>Back to Sign In</button>
+              </div>
+            </div>
+          )
+        ):(
+          <div>
+            <div style={{fontSize:18,fontWeight:700,marginBottom:20}}>{mode==="login"?"Sign In":"Create Account"}</div>
+            <form onSubmit={submit}>
+              <div style={{marginBottom:10}}><input ref={emailRef} value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="Email" style={inp()} required/></div>
+              <div style={{marginBottom:6}}><input value={pass} onChange={e=>setPass(e.target.value)} type="password" placeholder="Password" style={inp()} required/></div>
+              <div style={{textAlign:"right",marginBottom:14}}>
+                <button type="button" onClick={()=>switchMode("reset")} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12}}>Forgot password?</button>
+              </div>
+              {err&&<div style={{color:C.red,fontSize:12,marginBottom:12,lineHeight:1.5}}>{err}</div>}
+              <button type="submit" disabled={loading} style={btn(C.accent,"#fff",{width:"100%",opacity:loading?0.6:1})}>{loading?"Please wait…":mode==="login"?"Sign In":"Create Account"}</button>
+            </form>
+            <div style={{textAlign:"center",margin:"14px 0",color:C.muted,fontSize:12}}>or</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              <button onClick={google} disabled={loading} style={btn("#fff","#1a1a1a",{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})}>
+                <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+                Continue with Google
+              </button>
+              <button onClick={microsoft} disabled={loading} style={btn("#2f2f2f","#fff",{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})}>
+                <svg width="16" height="16" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
+                Continue with Microsoft
+              </button>
+            </div>
+            <div style={{textAlign:"center",marginTop:14,fontSize:12,color:C.muted}}>
+              {mode==="login"?"No account? ":"Have an account? "}
+              <button onClick={()=>switchMode(mode==="login"?"register":"login")} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontWeight:600,fontSize:12}}>
+                {mode==="login"?"Register":"Sign In"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── FAST QUOTE OVERLAY ──
+function FastQuoteOverlay({project,uid,onUpdate,onClose,onDone}){
+  const [progress,setProgress]=useState(0);
+  const [stepLabel,setStepLabel]=useState("Starting…");
+  const [status,setStatus]=useState("running"); // running | done | error
+  const [err,setErr]=useState("");
+
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        let proj={...project};
+
+        // Step 1: Extract BOM (0–33%)
+        setStepLabel("Extracting BOM…");
+        const bomPages=(proj.pages||[]).filter(p=>p.type==="bom");
+        let all=[];
+        for(let i=0;i<bomPages.length;i++){
+          if(cancelled)return;
+          const pg=bomPages[i];
+          if(!pg.dataUrl)continue;
+          setProgress(Math.round((i/Math.max(bomPages.length,1))*33));
+          const items=await extractBomPage(pg.dataUrl);
+          all=[...all,...items];
+        }
+        // Dedup by part number
+        const map={};
+        all.forEach(item=>{
+          const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));
+          if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
+          else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
+        });
+        const bom=all.length?Object.values(map):(proj.bom||[]);
+        proj={...proj,bom,status:"extracted"};
+        setProgress(33);
+
+        // Step 2: Validate schematics (33–66%)
+        setStepLabel("Analyzing schematics…");
+        const schPages=(proj.pages||[]).filter(p=>p.type==="schematic");
+        let allTags=[];let totalWires=0;
+        for(let i=0;i<schPages.length;i++){
+          if(cancelled)return;
+          const pg=schPages[i];
+          if(!pg.dataUrl)continue;
+          setProgress(33+Math.round((i/Math.max(schPages.length,1))*33));
+          const result=await analyzeSchematicPage(pg.dataUrl);
+          allTags=[...allTags,...result.tags];
+          totalWires+=result.wireCount;
+        }
+        const schematicTags=[...new Set(allTags.map(t=>t.trim()).filter(Boolean))];
+        const validation={runAt:Date.now(),schematicTags,wireCount:totalWires,matched:[],missingFromSchematic:[],notTraceable:[],unaccountedTags:[],confidence:"medium"};
+        proj={...proj,validation,status:"validated"};
+        setProgress(66);
+
+        // Step 3: Price BOM (66–90%)
+        setStepLabel("Estimating prices…");
+        if(proj.bom&&proj.bom.length){
+          const priceMap=await estimatePrices(proj.bom);
+          const pricedBom=proj.bom.map(r=>{
+            const key=String(r.id);
+            if(key in priceMap)return{...r,unitPrice:priceMap[key],priceSource:priceMap[key]!=null?"ai":null};
+            return r;
+          });
+          proj={...proj,bom:pricedBom};
+        }
+        setProgress(90);
+
+        // Step 4: Budgetary quote calculation (90–100%)
+        setStepLabel("Computing budgetary estimate…");
+        const pr=proj.pricing||{};
+        const currentBom=proj.bom||[];
+        const totalCost=currentBom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+        const wireCount=proj.validation?.wireCount||0;
+        const defaultHours=wireCount?Math.round((Math.ceil(wireCount/12)+Math.ceil(wireCount/8))/2):0;
+        const laborRate=pr.laborRate??45;
+        const contingencyBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
+        const contingencyConsumables=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
+        const grandTotal=totalCost+defaultHours*laborRate+contingencyBOM+contingencyConsumables;
+        const budgetaryPct=pr.budgetaryContingencyPct??_pricingConfig.budgetaryContingencyPct??20;
+        const markup=pr.markup??30;
+        const budgetarySellPrice=grandTotal*(1+budgetaryPct/100)*(1+markup/100);
+        proj={...proj,budgetaryQuote:{generatedAt:Date.now(),contingencyPct:budgetaryPct,baseGrandTotal:grandTotal,budgetarySellPrice}};
+
+        if(cancelled)return;
+        setProgress(97);
+        await saveProject(uid,proj);
+        onUpdate(proj);
+        setProgress(100);
+        setStepLabel("Complete!");
+        setStatus("done");
+        setTimeout(()=>onDone("quote"),900);
+      }catch(ex){
+        setErr(ex.message);
+        setStatus("error");
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[]);
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{...card(),width:"100%",maxWidth:480,textAlign:"center"}}>
+        <div style={{fontSize:40,marginBottom:12}}>⚡</div>
+        <div style={{fontSize:20,fontWeight:700,marginBottom:4}}>Fast Quote</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:24}}>Running full pipeline: Extract → Validate → Price → Budgetary Quote</div>
+        <div style={{background:C.border,borderRadius:4,height:8,overflow:"hidden",marginBottom:12}}>
+          <div style={{width:`${progress}%`,height:"100%",background:status==="error"?C.red:C.yellow,borderRadius:4,transition:"width 0.4s"}}/>
+        </div>
+        <div style={{fontSize:13,color:C.sub,minHeight:20,marginBottom:status==="error"?16:0}}>
+          {status==="done"?"✓ Complete — opening Budgetary Quote…":status==="error"?"":stepLabel}
+        </div>
+        {err&&(
+          <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:12,marginBottom:16,fontSize:13,color:C.red,textAlign:"left"}}>{err}</div>
+        )}
+        {status==="error"&&(
+          <button onClick={onClose} style={btn(C.border,C.sub)}>Close</button>
+        )}
       </div>
     </div>
   );
 }
 
 // ── DRAWINGS TAB ──
-function DrawingsTab({project,onUpdate}){
+function DrawingsTab({project,uid,onUpdate,readOnly,onNavigateTab}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [pendingFiles,setPendingFiles]=useState(null);
+  const [showFastQuote,setShowFastQuote]=useState(false);
   const fileRef=useRef(null);
 
   const pages=project.pages||[];
@@ -475,8 +915,15 @@ function DrawingsTab({project,onUpdate}){
 
       {pages.length>0&&(
         <div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:14}}>
-            Tap each badge to cycle page type: <span style={{color:C.accent}}>BOM</span> · <span style={{color:C.green}}>Schematic</span> · <span style={{color:C.purple}}>Layout</span> · then go to <strong style={{color:C.text}}>Extract</strong>.
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14,flexWrap:"wrap",gap:8}}>
+            <div style={{fontSize:12,color:C.muted}}>
+              Tap each badge to cycle page type: <span style={{color:C.accent}}>BOM</span> · <span style={{color:C.green}}>Schematic</span> · <span style={{color:C.purple}}>Layout</span> · then go to <strong style={{color:C.text}}>Extract</strong>.
+            </div>
+            {pages.some(p=>p.type==="bom"||p.type==="schematic")&&(
+              <button onClick={()=>setShowFastQuote(true)} disabled={readOnly} style={btn(C.yellowDim,C.yellow,{fontSize:13,border:`1px solid ${C.yellow}44`,opacity:readOnly?0.5:1})}>
+                ⚡ Fast Quote
+              </button>
+            )}
           </div>
 
           {/* Grouped line items */}
@@ -513,12 +960,21 @@ function DrawingsTab({project,onUpdate}){
           )}
         </div>
       )}
+      {showFastQuote&&(
+        <FastQuoteOverlay
+          project={project}
+          uid={uid}
+          onUpdate={onUpdate}
+          onClose={()=>setShowFastQuote(false)}
+          onDone={tab=>{setShowFastQuote(false);onNavigateTab&&onNavigateTab(tab);}}
+        />
+      )}
     </div>
   );
 }
 
 // ── EXTRACT TAB ──
-function ExtractTab({project,uid,onUpdate}){
+function ExtractTab({project,uid,onUpdate,readOnly}){
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(null);
   const [err,setErr]=useState("");
@@ -586,7 +1042,7 @@ function ExtractTab({project,uid,onUpdate}){
           {bom.length>0&&(
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:13})}>⬇ Export CSV</button>
           )}
-          <button onClick={runExtraction} disabled={running||!bomPages.length} style={btn(C.accent,"#fff",{fontSize:13,opacity:running||!bomPages.length?0.5:1})}>
+          <button onClick={runExtraction} disabled={running||!bomPages.length||readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:running||!bomPages.length||readOnly?0.5:1})}>
             {running?"Extracting…":"🔍 Run Extraction"}
           </button>
         </div>
@@ -661,7 +1117,7 @@ function ExtractTab({project,uid,onUpdate}){
 }
 
 // ── VALIDATE TAB ──
-function ValidateTab({project,uid,onUpdate}){
+function ValidateTab({project,uid,onUpdate,readOnly}){
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(null);
   const [err,setErr]=useState("");
@@ -767,7 +1223,7 @@ function ValidateTab({project,uid,onUpdate}){
           <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>Schematic Validation</div>
           <div style={{fontSize:13,color:C.muted}}>{schematicPages.length} schematic page{schematicPages.length!==1?"s":""} tagged{v?` · last run ${new Date(v.runAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}`:""}</div>
         </div>
-        <button onClick={runValidation} disabled={running||!schematicPages.length} style={btn(C.accent,"#fff",{fontSize:13,opacity:running||!schematicPages.length?0.5:1})}>
+        <button onClick={runValidation} disabled={running||!schematicPages.length||readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:running||!schematicPages.length||readOnly?0.5:1})}>
           {running?"Analyzing…":"✅ Run Validation"}
         </button>
       </div>
@@ -935,7 +1391,7 @@ function ValidateTab({project,uid,onUpdate}){
 }
 
 // ── PRICE TAB ──
-function PriceTab({project,uid,onUpdate}){
+function PriceTab({project,uid,onUpdate,readOnly}){
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(null);
   const [err,setErr]=useState("");
@@ -946,6 +1402,7 @@ function PriceTab({project,uid,onUpdate}){
   const laborRate=pr.laborRate??45;
   const contingencyBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
   const contingencyConsumables=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
+  const budgetaryPct=pr.budgetaryContingencyPct??_pricingConfig.budgetaryContingencyPct??20;
 
   const bom=project.bom||[];
   const wireCount=project.validation?.wireCount||0;
@@ -1006,7 +1463,7 @@ function PriceTab({project,uid,onUpdate}){
           <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>Pricing</div>
           <div style={{fontSize:13,color:C.muted}}>{bom.length} BOM items · {pricedCount} priced</div>
         </div>
-        <button onClick={runPricing} disabled={running||!bom.length} style={btn(C.accent,"#fff",{fontSize:13,opacity:running||!bom.length?0.5:1})}>
+        <button onClick={runPricing} disabled={running||!bom.length||readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:running||!bom.length||readOnly?0.5:1})}>
           {running?"Estimating…":"✨ Get AI Estimates"}
         </button>
       </div>
@@ -1165,9 +1622,31 @@ function PriceTab({project,uid,onUpdate}){
                   style={{...inp({padding:"6px 10px",fontSize:14,width:90,textAlign:"right"})}}
                 />
               </div>
-              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,display:"flex",justifyContent:"space-between",fontSize:15}}>
+              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,display:"flex",justifyContent:"space-between",fontSize:15,marginBottom:12}}>
                 <span style={{fontWeight:700}}>Sell Price</span>
                 <span style={{fontWeight:800,color:C.accent,fontVariantNumeric:"tabular-nums"}}>{fmt(sellPrice)}</span>
+              </div>
+
+              {/* Budgetary contingency */}
+              <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12}}>
+                <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Budgetary Estimate</div>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <span style={{fontSize:13,color:C.sub,flex:1}}>Budgetary Contingency %</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={budgetaryPct}
+                    onChange={e=>setPr({budgetaryContingencyPct:Math.max(0,+e.target.value||0)})}
+                    style={{...inp({padding:"5px 8px",fontSize:13,width:80,textAlign:"right"})}}
+                    disabled={readOnly}
+                  />
+                  <span style={{fontSize:13,color:C.muted}}>%</span>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:14}}>
+                  <span style={{color:C.sub}}>Budgetary Sell Price</span>
+                  <span style={{fontWeight:700,color:C.yellow,fontVariantNumeric:"tabular-nums"}}>{fmt(sellPrice*(1+budgetaryPct/100))}</span>
+                </div>
               </div>
             </div>
           )}
@@ -1186,8 +1665,117 @@ function PriceTab({project,uid,onUpdate}){
   );
 }
 
+// ── BUDGETARY QUOTE TAB ──
+function BudgetaryQuoteTab({project,onUpdate}){
+  const bq=project.budgetaryQuote;
+  const q=project.quote||{};
+  const pages=project.pages||[];
+  const [desc,setDesc]=useState(()=>
+    `Based on preliminary review of ${pages.length} drawing page${pages.length!==1?"s":""}, this budgetary estimate covers a UL508A industrial control panel as described in the uploaded drawings.`
+  );
+
+  const W={bg:"#fff",text:"#111",sub:"#333",muted:"#666",faint:"#999",border:"#ccc",light:"#f4f4f4",accent:"#1a56db",amber:"#92400e",amberBg:"#fef3c7",amberBorder:"#d97706"};
+  const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const today=new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+
+  if(!bq){
+    return(
+      <div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
+        <div style={{fontSize:44,marginBottom:12,opacity:0.3}}>⚡</div>
+        <div style={{fontSize:16,fontWeight:600,color:C.sub,marginBottom:8}}>No Budgetary Quote Yet</div>
+        <div style={{fontSize:13,lineHeight:1.7}}>
+          Go to the <strong style={{color:C.text}}>Drawings</strong> tab and click <strong style={{color:C.yellow}}>⚡ Fast Quote</strong> to auto-generate a budgetary estimate from your uploaded drawings.
+        </div>
+      </div>
+    );
+  }
+
+  return(
+    <div>
+      <div className="no-print" style={{display:"flex",justifyContent:"flex-end",marginBottom:16}}>
+        <button onClick={()=>window.print()} style={btn(C.accent,"#fff",{fontSize:13})}>🖨 Print / Save PDF</button>
+      </div>
+
+      <div style={{background:W.bg,color:W.text,maxWidth:860,margin:"0 auto",padding:"28px 32px",borderRadius:8,border:`1px solid ${C.border}`,fontFamily:"Arial,sans-serif",fontSize:13,lineHeight:1.5}}>
+
+        {/* Amber warning banner */}
+        <div style={{background:W.amberBg,border:`2px solid ${W.amberBorder}`,borderRadius:6,padding:"10px 16px",marginBottom:20,textAlign:"center"}}>
+          <div style={{fontWeight:800,color:W.amber,fontSize:13,letterSpacing:0.5}}>BUDGETARY ESTIMATE — NOT FOR PURCHASE ORDER USE</div>
+        </div>
+
+        {/* Letterhead */}
+        <div style={{borderBottom:`2px solid ${W.border}`,paddingBottom:14,marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+          <div style={{display:"flex",alignItems:"center",gap:14}}>
+            <div style={{fontSize:34,lineHeight:1}}>⚙</div>
+            <div>
+              <div style={{fontSize:18,fontWeight:800,color:W.accent,letterSpacing:-0.3}}>Matrix Systems</div>
+              <div style={{fontSize:12,color:W.sub}}>5591 Leo Park Road · West Jordan, UT 84081</div>
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:14,fontWeight:700,color:W.text,marginBottom:2}}>Budgetary Estimate</div>
+            <div style={{fontSize:12,color:W.muted}}>{today}</div>
+          </div>
+        </div>
+
+        {/* Customer info */}
+        {(q.contact||q.company||q.address)&&(
+          <div style={{marginBottom:16}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <tbody>
+                <tr>
+                  <td style={{width:90,verticalAlign:"top",fontStyle:"italic",fontWeight:600,paddingTop:2,color:W.sub}}>Attention:</td>
+                  <td>
+                    {q.contact&&<div style={{fontWeight:600}}>{q.contact}</div>}
+                    {q.company&&<div style={{fontWeight:700,fontSize:14}}>{q.company}</div>}
+                    {q.address&&<div style={{color:W.sub}}>{q.address}</div>}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* RE: project */}
+        <div style={{marginBottom:18,fontSize:13}}>
+          <span style={{fontWeight:700,color:W.sub}}>RE:&nbsp;</span>
+          <span style={{fontWeight:700}}>{project.name}</span>
+        </div>
+
+        {/* Description */}
+        <div style={{marginBottom:18}}>
+          <textarea
+            value={desc}
+            onChange={e=>setDesc(e.target.value)}
+            rows={3}
+            style={{width:"100%",background:"transparent",border:`1px dashed ${W.border}`,borderRadius:4,padding:"8px 10px",fontFamily:"Arial,sans-serif",fontSize:13,color:W.text,lineHeight:1.6,resize:"vertical",outline:"none"}}
+          />
+        </div>
+
+        {/* Budgetary price — hero */}
+        <div style={{background:W.light,border:`1px solid ${W.border}`,borderRadius:8,padding:"20px 24px",marginBottom:20,textAlign:"center"}}>
+          <div style={{fontSize:11,color:W.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:6}}>Budgetary Estimate Total</div>
+          <div style={{fontSize:44,fontWeight:800,color:W.accent,fontVariantNumeric:"tabular-nums",letterSpacing:-1}}>{fmtMoney(bq.budgetarySellPrice)}</div>
+          <div style={{fontSize:11,color:W.muted,marginTop:6}}>Includes materials, labor, and applicable contingencies.</div>
+        </div>
+
+        {/* Legal disclaimer */}
+        <div style={{background:W.light,border:`1px solid ${W.border}`,borderRadius:6,padding:"12px 16px",fontSize:11,color:W.muted,lineHeight:1.8,fontStyle:"italic"}}>
+          This budgetary estimate is provided for planning and preliminary budget purposes only, based on a high-level review of the provided drawings and specifications. It is NOT a formal quotation, does NOT constitute an offer to sell, and CANNOT be accepted as the basis for a Purchase Order or contract. Actual pricing is subject to change upon detailed engineering review, final specifications, material and labor costs at time of order, and other factors. Matrix Systems, Inc. makes no representation or warranty, express or implied, as to the accuracy or completeness of this estimate. To request a formal quotation, please contact Matrix Systems, Inc.
+        </div>
+
+        {/* Generated-at note */}
+        <div style={{marginTop:14,fontSize:10,color:W.faint,textAlign:"right"}}>
+          Generated {new Date(bq.generatedAt).toLocaleString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"})} · {bq.contingencyPct}% budgetary contingency applied
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── QUOTE TAB ──
 function QuoteTab({project,onUpdate}){
+  const [quoteTab,setQuoteTab]=useState("formal");
   const pr=project.pricing||{};
   const bom=project.bom||[];
   const wireCount=project.validation?.wireCount||0;
@@ -1216,10 +1804,25 @@ function QuoteTab({project,onUpdate}){
 
   return(
     <div>
+      {/* Sub-tab bar */}
+      <div className="no-print" style={{display:"flex",gap:4,marginBottom:20,borderBottom:`1px solid ${C.border}`}}>
+        {[["formal","📄 Formal Quote"],["budgetary","⚡ Budgetary Quote"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setQuoteTab(id)}
+            style={{background:"none",border:"none",borderBottom:`2px solid ${quoteTab===id?C.accent:"transparent"}`,color:quoteTab===id?C.accent:C.muted,padding:"10px 16px",fontSize:13,fontWeight:600,cursor:"pointer",marginBottom:-1,transition:"color 0.15s"}}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Budgetary Quote sub-tab */}
+      {quoteTab==="budgetary"&&<BudgetaryQuoteTab project={project} onUpdate={onUpdate}/>}
+
+      {/* Formal Quote sub-tab */}
+      {quoteTab==="formal"&&<div>
       {/* Toolbar */}
       <div className="no-print" style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20,flexWrap:"wrap",gap:12}}>
         <div>
-          <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>Quote</div>
+          <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>Formal Quote</div>
           <div style={{fontSize:13,color:C.muted}}>
             {hasSellPrice?`Sell price: ${fmtMoney(sellPrice)}`:"Complete pricing first to populate sell price."}
           </div>
@@ -1426,6 +2029,7 @@ function QuoteTab({project,onUpdate}){
           </div>
         </div>
       </div>
+      </div>}
     </div>
   );
 }
@@ -1455,6 +2059,7 @@ function ProjectView({project:init,uid,onBack,onChange}){
   const [project,setProject]=useState(init);
   const [tab,setTab]=useState("drawings");
   const saveTimer=useRef(null);
+  const readOnly=isReadOnly();
 
   function update(p){
     setProject(p);onChange(p);
@@ -1480,6 +2085,7 @@ function ProjectView({project:init,uid,onBack,onChange}){
         <div style={{width:1,height:18,background:C.border}}/>
         <div style={{fontSize:15,fontWeight:700,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{project.name}</div>
         <Badge status={project.status||"draft"}/>
+        {readOnly&&<span style={{background:C.border,color:C.muted,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}}>VIEW ONLY</span>}
         <div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{(project.bom||[]).length} items · {(project.pages||[]).length} pages</div>
       </div>
 
@@ -1496,10 +2102,10 @@ function ProjectView({project:init,uid,onBack,onChange}){
       {/* Content */}
       <div style={{flex:1,overflowY:"auto",padding:24}}>
         <div style={{maxWidth:1200,margin:"0 auto"}}>
-          {tab==="drawings"&&<DrawingsTab project={project} onUpdate={update}/>}
-          {tab==="extract"&&<ExtractTab project={project} uid={uid} onUpdate={update}/>}
-          {tab==="validate"&&<ValidateTab project={project} uid={uid} onUpdate={update}/>}
-          {tab==="price"&&<PriceTab project={project} uid={uid} onUpdate={update}/>}
+          {tab==="drawings"&&<DrawingsTab project={project} uid={uid} onUpdate={update} readOnly={readOnly} onNavigateTab={t=>{setTab(t);}}/>}
+          {tab==="extract"&&<ExtractTab project={project} uid={uid} onUpdate={update} readOnly={readOnly}/>}
+          {tab==="validate"&&<ValidateTab project={project} uid={uid} onUpdate={update} readOnly={readOnly}/>}
+          {tab==="price"&&<PriceTab project={project} uid={uid} onUpdate={update} readOnly={readOnly}/>}
           {tab==="quote"&&<QuoteTab project={project} onUpdate={update}/>}
         </div>
       </div>
@@ -1513,6 +2119,14 @@ function SettingsModal({uid,onClose}){
   const [loading,setLoading]=useState(true);
   const [saved,setSaved]=useState(false);
 
+  const [curPass,setCurPass]=useState("");
+  const [newPass,setNewPass]=useState("");
+  const [confPass,setConfPass]=useState("");
+  const [pwLoading,setPwLoading]=useState(false);
+  const [pwErr,setPwErr]=useState("");
+  const [pwOk,setPwOk]=useState(false);
+  const [resetSent,setResetSent]=useState(false);
+
   useEffect(()=>{
     fbDb.doc(`users/${uid}/config/api`).get()
       .then(d=>{if(d.exists)setKey(d.data().key||"");})
@@ -1524,11 +2138,43 @@ function SettingsModal({uid,onClose}){
     _apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);
   }
 
+  async function sendReset(){
+    setPwErr("");setPwLoading(true);
+    try{
+      await fbAuth.sendPasswordResetEmail(fbAuth.currentUser.email);
+      setResetSent(true);
+    }catch(ex){setPwErr(ex.message);}
+    setPwLoading(false);
+  }
+
+  async function changePassword(e){
+    e.preventDefault();setPwErr("");
+    if(newPass.length<6){setPwErr("New password must be at least 6 characters.");return;}
+    if(newPass!==confPass){setPwErr("Passwords do not match.");return;}
+    setPwLoading(true);
+    try{
+      const user=fbAuth.currentUser;
+      const cred=firebase.auth.EmailAuthProvider.credential(user.email,curPass);
+      await user.reauthenticateWithCredential(cred);
+      await user.updatePassword(newPass);
+      setPwOk(true);setCurPass("");setNewPass("");setConfPass("");
+      setTimeout(()=>setPwOk(false),3000);
+    }catch(ex){
+      if(ex.code==="auth/wrong-password"||ex.code==="auth/invalid-credential")setPwErr("Current password is incorrect.");
+      else if(ex.code==="auth/operation-not-allowed")setPwErr("Password sign-in is not enabled for this account.");
+      else setPwErr(ex.message);
+    }
+    setPwLoading(false);
+  }
+
+  const isEmailProvider=fbAuth.currentUser?.providerData?.some(p=>p.providerId==="password");
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
       <div style={{...card(),width:"100%",maxWidth:460}} onClick={e=>e.stopPropagation()}>
         <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>⚙ Settings</div>
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Matrix ARC configuration</div>
+
         <div style={{marginBottom:20}}>
           <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Anthropic API Key</label>
           {loading
@@ -1537,11 +2183,37 @@ function SettingsModal({uid,onClose}){
           }
           <div style={{fontSize:11,color:C.muted,marginTop:6}}>Stored in your Firebase project. Shared across all team members.</div>
         </div>
-        <div style={{display:"flex",gap:10}}>
+        <div style={{display:"flex",gap:10,marginBottom:24}}>
           <button onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Close</button>
           <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:2,opacity:loading||!key.trim()?0.5:1})}>
             {saved?"✓ Saved":"Save Key"}
           </button>
+        </div>
+
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:12,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Change Password</label>
+          {!isEmailProvider?(
+            <div style={{fontSize:13,color:C.muted,padding:"10px 12px",background:C.surface,borderRadius:8}}>
+              Your account uses Google Sign-In and does not have a password. Use "Forgot password?" on the login screen to set one.
+            </div>
+          ):(
+            <form onSubmit={changePassword}>
+              <div style={{marginBottom:4}}><input value={curPass} onChange={e=>setCurPass(e.target.value)} type="password" placeholder="Current password" style={inp()} required/></div>
+              <div style={{textAlign:"right",marginBottom:10}}>
+                {resetSent
+                  ?<span style={{fontSize:12,color:C.green}}>✓ Reset link sent to {fbAuth.currentUser?.email}</span>
+                  :<button type="button" onClick={sendReset} disabled={pwLoading} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:0}}>Forgot password?</button>
+                }
+              </div>
+              <div style={{marginBottom:8}}><input value={newPass} onChange={e=>setNewPass(e.target.value)} type="password" placeholder="New password (min 6 chars)" style={inp()} required/></div>
+              <div style={{marginBottom:10}}><input value={confPass} onChange={e=>setConfPass(e.target.value)} type="password" placeholder="Confirm new password" style={inp()} required/></div>
+              {pwErr&&<div style={{color:C.red,fontSize:12,marginBottom:10,lineHeight:1.5}}>{pwErr}</div>}
+              {pwOk&&<div style={{color:C.green,fontSize:12,marginBottom:10}}>✓ Password updated successfully.</div>}
+              <button type="submit" disabled={pwLoading} style={btn(C.accent,"#fff",{width:"100%",opacity:pwLoading?0.6:1})}>
+                {pwLoading?"Updating…":"Update Password"}
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>
@@ -1653,11 +2325,35 @@ function App({user}){
   const [showNew,setShowNew]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
   const [showConfig,setShowConfig]=useState(false);
+  const [companyId,setCompanyId]=useState(null);
+  const [userRole,setUserRole]=useState(null);
+  const [companyName,setCompanyName]=useState(null);
+  const [showTeam,setShowTeam]=useState(false);
+  const [showSetup,setShowSetup]=useState(false);
+  const [setupDismissed,setSetupDismissed]=useState(false);
 
   useEffect(()=>{
-    loadApiKey(user.uid);
-    loadPricingConfig(user.uid);
-    loadProjects(user.uid).then(p=>{setProjects(p);setLoading(false);});
+    (async()=>{
+      _appCtx.uid=user.uid;
+      const profile=await loadUserProfile(user.uid);
+      if(profile?.companyId){
+        _appCtx.companyId=profile.companyId;
+        _appCtx.role=profile.role;
+        _appCtx.projectsPath=`companies/${profile.companyId}/projects`;
+        _appCtx.configPath=`companies/${profile.companyId}/config`;
+        setCompanyId(profile.companyId);
+        setUserRole(profile.role);
+        try{
+          const cd=await fbDb.doc(`companies/${profile.companyId}`).get();
+          if(cd.exists)setCompanyName(cd.data().name||null);
+        }catch(e){}
+      } else {
+        _appCtx.projectsPath=`users/${user.uid}/projects`;
+      }
+      await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid)]);
+      setProjects(await loadProjects(user.uid));
+      setLoading(false);
+    })();
   },[user.uid]);
 
   function handleOpen(p){setOpenProject(p);setView("project");}
@@ -1674,8 +2370,12 @@ function App({user}){
               <span style={{fontSize:22}}>⬡</span>
               <span style={{fontSize:16,fontWeight:800,letterSpacing:-0.5}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
               <span style={{fontSize:11,color:C.muted,marginLeft:4}}>AI Recognition &amp; Capture</span>
+              {companyName&&(
+                <span style={{color:C.accent,fontSize:12,fontWeight:700,marginLeft:8}}>⬡ {companyName}</span>
+              )}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <button onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>👥 Team</button>
               <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Config</button>
               <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Settings</button>
               <div style={{width:1,height:18,background:C.border}}/>
@@ -1683,6 +2383,14 @@ function App({user}){
               <button onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"6px 10px"}}>Sign out</button>
             </div>
           </div>
+          {/* Company setup banner */}
+          {!companyId&&!setupDismissed&&(
+            <div style={{background:"#1a1a3e",borderBottom:`1px solid ${C.accent}44`,padding:"8px 32px",display:"flex",alignItems:"center",gap:12,fontSize:13,flexWrap:"wrap"}}>
+              <span style={{color:C.sub,flex:1}}>Set up a Company workspace to collaborate with your team.</span>
+              <button onClick={()=>setShowSetup(true)} style={btn(C.accent,"#fff",{fontSize:12,padding:"5px 14px"})}>Set up Company</button>
+              <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
+            </div>
+          )}
           <Dashboard uid={user.uid} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete}/>
         </>
       )}
@@ -1692,6 +2400,8 @@ function App({user}){
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)}/>}
+      {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
+      {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
     </div>
   );
 }
@@ -1699,13 +2409,71 @@ function App({user}){
 // ── ROOT ──
 function Root(){
   const [user,setUser]=useState(undefined);
-  useEffect(()=>{return fbAuth.onAuthStateChanged(u=>setUser(u));},[]);
-  if(user===undefined)return(
+  const [redirectErr,setRedirectErr]=useState("");
+  const [redirectEmail,setRedirectEmail]=useState("");
+  const [redirectDone,setRedirectDone]=useState(false);
+
+  // Process redirect sign-in result (Microsoft etc.) before showing login screen
+  useEffect(()=>{
+    fbAuth.getRedirectResult()
+      .then(()=>setRedirectDone(true))
+      .catch(e=>{
+        if(e.code==="auth/account-exists-with-different-credential"){
+          const em=e.email||"";
+          if(em)setRedirectEmail(em);
+          setRedirectErr(`An account with ${em||"this email"} already exists — sign in with your password instead${em?", or use Forgot Password to reset it":""}.`);
+        } else if(e.code!=="auth/no-auth-event"){
+          setRedirectErr(e.message);
+        }
+        setRedirectDone(true);
+      });
+  },[]);
+  const [joinPayload]=useState(()=>{
+    try{
+      const params=new URLSearchParams(window.location.search);
+      const j=params.get("join");
+      if(!j)return null;
+      return JSON.parse(atob(j));
+    }catch(e){return null;}
+  });
+
+  useEffect(()=>{
+    return fbAuth.onAuthStateChanged(u=>{
+      if(u&&joinPayload){
+        // If signed in as a different user, sign out and show the invite login screen
+        if(u.email.toLowerCase()!==joinPayload.e.toLowerCase()){
+          fbAuth.signOut();
+          return; // onAuthStateChanged will fire again with null → shows LoginScreen
+        }
+        const{c:companyId,r:role}=joinPayload;
+        const batch=fbDb.batch();
+        batch.set(fbDb.doc(`companies/${companyId}/members/${u.uid}`),{email:u.email,role,addedAt:Date.now()});
+        batch.set(fbDb.doc(`users/${u.uid}/config/profile`),{companyId,role},{merge:true});
+        batch.commit()
+          .then(()=>{
+            try{
+              const url=new URL(window.location.href);
+              url.searchParams.delete("join");
+              window.history.replaceState({},"",url.toString());
+            }catch(e){}
+            setUser(u);
+          })
+          .catch(e=>{
+            console.error("Failed to accept invite:",e);
+            setUser(u);
+          });
+      } else {
+        setUser(u);
+      }
+    });
+  },[joinPayload]);
+
+  if(user===undefined||!redirectDone)return(
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}>
       <div style={{color:C.muted,fontSize:14}}>Loading…</div>
     </div>
   );
-  if(!user)return<LoginScreen/>;
+  if(!user)return<LoginScreen invite={joinPayload} redirectErr={redirectErr} redirectEmail={redirectEmail}/>;
   return<App user={user}/>;
 }
 
