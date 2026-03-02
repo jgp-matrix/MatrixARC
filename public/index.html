@@ -1582,17 +1582,20 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
         const bomPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("bom"));
         const schPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("schematic"));
         const layPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("layout"));
-        let bomDone=0,valDone=0;
+        let bomStarted=0,bomDone=0,valStarted=0,valDone=0;
         const totalValPages=schPages.length+layPages.length;
+        const bomTicks=bomPages.length*2;
+        const valTicks=totalValPages*2;
         const updateProgress=()=>{
-          const bomPct=bomPages.length?bomDone/bomPages.length:1;
-          const valPct=totalValPages?valDone/totalValPages:1;
+          const bomPct=bomTicks?(bomStarted+bomDone)/bomTicks:1;
+          const valPct=valTicks?(valStarted+valDone)/valTicks:1;
           setProgress(Math.round((bomPct*33)+(valPct*33)));
         };
 
         const [bomResults,[schResults,layResults]]=await Promise.all([
           // BOM extraction (concurrency 3)
           parallelMap(bomPages.filter(p=>p.dataUrl),async(pg)=>{
+            bomStarted++;updateProgress();
             const items=await extractBomPage(pg.dataUrl);
             bomDone++;updateProgress();
             return items;
@@ -1600,11 +1603,13 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
           // Schematic + layout analysis (concurrency 4)
           Promise.all([
             parallelMap(schPages.filter(p=>p.dataUrl),async(pg)=>{
+              valStarted++;updateProgress();
               const result=await analyzeSchematicPage(pg.dataUrl);
               valDone++;updateProgress();
               return result;
             },4),
             parallelMap(layPages.filter(p=>p.dataUrl),async(pg)=>{
+              valStarted++;updateProgress();
               const lr=await analyzeLayoutPage(pg.dataUrl);
               valDone++;updateProgress();
               return lr;
@@ -2516,11 +2521,13 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
     let latestPanel=updated;
     if(_apiKey&&bomPages.length>0){
       setExtracting(true);setExtractProgress({msg:"Auto-extracting BOM…",pct:2});
-      let all=[];let ok=true;let bomDone=0;
+      let all=[];let ok=true;let bomStarted=0;let bomDone=0;
+      const bomTicks=bomPages.length*2;
       try{
         const bomResults=await parallelMap(bomPages,async(pg)=>{
+          bomStarted++;setExtractProgress({msg:`BOM page ${bomStarted}/${bomPages.length}…`,pct:5+Math.round(((bomStarted+bomDone)/bomTicks)*88)});
           const items=await extractBomPage(pg.dataUrl);
-          bomDone++;setExtractProgress({msg:`BOM page ${bomDone}/${bomPages.length}…`,pct:5+Math.round((bomDone/bomPages.length)*88)});
+          bomDone++;setExtractProgress({msg:`BOM page ${bomDone}/${bomPages.length} done`,pct:5+Math.round(((bomStarted+bomDone)/bomTicks)*88)});
           return items;
         },3);
         all=bomResults.flat();
@@ -2629,11 +2636,13 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
     setExtracting(true);setErr("");setExtractProgress({msg:"Starting…",pct:5});
     const noData=bomPages.find(pg=>!pg.dataUrl);
     if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);return;}
-    let all=[];let bomDone=0;
+    let all=[];let bomStarted=0;let bomDone=0;
+    const bomTicks=bomPages.length*2;
     try{
       const bomResults=await parallelMap(bomPages,async(pg)=>{
+        bomStarted++;setExtractProgress({msg:`Analyzing page ${bomStarted}/${bomPages.length}…`,pct:10+Math.round(((bomStarted+bomDone)/bomTicks)*80)});
         const items=await extractBomPage(pg.dataUrl);
-        bomDone++;setExtractProgress({msg:`Analyzing page ${bomDone}/${bomPages.length}…`,pct:10+Math.round((bomDone/bomPages.length)*80)});
+        bomDone++;setExtractProgress({msg:`Page ${bomDone}/${bomPages.length} done`,pct:10+Math.round(((bomStarted+bomDone)/bomTicks)*80)});
         return items;
       },3);
       all=bomResults.flat();
@@ -2711,11 +2720,13 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
     }
 
     setReExtracting(true);setErr("");setExtractProgress({msg:"Re-extracting with your feedback…",pct:3});
-    let all=[];let bomDone=0;
+    let all=[];let bomStarted=0;let bomDone=0;
+    const bomTicks=bomPages.length*2;
     try{
       const bomResults=await parallelMap(bomPages,async(pg)=>{
+        bomStarted++;setExtractProgress({msg:`Page ${bomStarted}/${bomPages.length}…`,pct:8+Math.round(((bomStarted+bomDone)/bomTicks)*85)});
         const items=await extractBomPage(pg.dataUrl,aiFeedback);
-        bomDone++;setExtractProgress({msg:`Page ${bomDone}/${bomPages.length}…`,pct:8+Math.round((bomDone/bomPages.length)*85)});
+        bomDone++;setExtractProgress({msg:`Page ${bomDone}/${bomPages.length} done`,pct:8+Math.round(((bomStarted+bomDone)/bomTicks)*85)});
         return items;
       },3);
       all=bomResults.flat();
