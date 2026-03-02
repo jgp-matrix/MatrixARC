@@ -66,8 +66,10 @@ function useSmoothProgress(estSeconds=15){
 
   const tick=useCallback(()=>{
     const elapsed=(Date.now()-startTime.current)/1000;
-    const pct=Math.min(92,92*(1-Math.exp(-2.5*elapsed/est.current)));
-    setState({msg:msgRef.current,pct:Math.round(pct)});
+    const t=Math.min(elapsed/est.current,1);
+    // Slow start, steady middle, keeps moving near end — reaches ~97% at est time
+    const pct=97*Math.pow(t,0.6)*(2-Math.pow(t,0.6));
+    setState({msg:msgRef.current,pct:Math.min(97,Math.round(pct))});
     timer.current=requestAnimationFrame(tick);
   },[]);
 
