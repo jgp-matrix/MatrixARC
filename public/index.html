@@ -27,6 +27,7 @@ input,textarea,select,button{font-family:inherit;font-size:inherit}
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
 <script>
 // PDF.js setup — load via importShim after DOM ready
@@ -52,6 +53,7 @@ firebase.initializeApp(firebaseConfig);
 const fbAuth=firebase.auth();
 const fbDb=firebase.firestore();
 const fbFunctions=firebase.functions();
+const fbStorage=firebase.storage();
 </script>
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback}=React;
@@ -575,6 +577,27 @@ async function deleteProject(uid,id){
   await fbDb.doc(`${path}/${id}`).delete();
 }
 
+// ── FIREBASE STORAGE HELPERS ──
+async function uploadPageImage(uid,projectId,pageId,dataUrl){
+  const ref=fbStorage.ref(`pageImages/${uid}/${projectId}/${pageId}.jpg`);
+  const resp=await fetch(dataUrl);
+  const blob=await resp.blob();
+  await ref.put(blob,{contentType:"image/jpeg"});
+  return await ref.getDownloadURL();
+}
+async function ensureDataUrl(page){
+  if(page.dataUrl)return page;
+  if(!page.storageUrl)return page;
+  const resp=await fetch(page.storageUrl);
+  const blob=await resp.blob();
+  const dataUrl=await new Promise(res=>{
+    const reader=new FileReader();
+    reader.onload=()=>res(reader.result);
+    reader.readAsDataURL(blob);
+  });
+  return{...page,dataUrl};
+}
+
 // ── PROJECT MIGRATION (flat → panels) ──
 function migrateProject(p){
   if(p.panels) return p;
@@ -915,9 +938,12 @@ function mergeLayoutResults(layouts){
 
 // ── PANEL VALIDATION ──
 async function runPanelValidation(panel){
-  const schematicPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("schematic")&&p.dataUrl);
-  const layoutPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("layout")&&p.dataUrl);
+  let schematicPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl));
+  let layoutPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("layout")&&(p.dataUrl||p.storageUrl));
   if(!schematicPages.length&&!layoutPages.length)return{validation:null,laborData:null};
+  // Ensure dataUrls for pages loaded from Storage
+  schematicPages=await Promise.all(schematicPages.map(ensureDataUrl));
+  layoutPages=await Promise.all(layoutPages.map(ensureDataUrl));
 
   // 1. Schematic + layout analysis (parallel)
   let allTags=[],totalWires=0,totalTerminations=0;
@@ -1625,9 +1651,13 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
 
         // Steps 1+2: Extract BOM & Analyze schematics/layout (concurrent, 0–66%)
         setStepLabel("Extracting BOM & analyzing drawings…");
-        const bomPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("bom"));
-        const schPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("schematic"));
-        const layPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("layout"));
+        let bomPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("bom"));
+        let schPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("schematic"));
+        let layPages=(proj.pages||[]).filter(p=>getPageTypes(p).includes("layout"));
+        // Ensure dataUrls for pages loaded from Storage
+        bomPages=await Promise.all(bomPages.map(ensureDataUrl));
+        schPages=await Promise.all(schPages.map(ensureDataUrl));
+        layPages=await Promise.all(layPages.map(ensureDataUrl));
         let bomStarted=0,bomDone=0,valStarted=0,valDone=0;
         const totalValPages=schPages.length+layPages.length;
         const bomTicks=bomPages.length*2;
@@ -2215,7 +2245,7 @@ function DrawingLightbox({pages,startId,onClose}){
 
       {/* Image area */}
       <div onClick={onClose} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",padding:"16px 64px"}}>
-        <img onClick={e=>e.stopPropagation()} src={pg.dataUrl} alt={pg.name}
+        <img onClick={e=>e.stopPropagation()} src={pg.dataUrl||pg.storageUrl} alt={pg.name}
           style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:6,boxShadow:"0 4px 40px rgba(0,0,0,0.8)"}}/>
 
         {idx>0&&(
@@ -2236,7 +2266,7 @@ function DrawingLightbox({pages,startId,onClose}){
       {hasFilmstrip&&(
         <div style={{flexShrink:0,display:"flex",gap:8,padding:"10px 16px",overflowX:"auto",background:"#0d0d14",borderTop:`1px solid ${C.border}`}}>
           {pages.map((p,i)=>(
-            <img key={p.id} src={p.dataUrl} alt={p.name} onClick={()=>setIdx(i)}
+            <img key={p.id} src={p.dataUrl||p.storageUrl} alt={p.name} onClick={()=>setIdx(i)}
               style={{height:64,width:104,objectFit:"contain",borderRadius:4,cursor:"pointer",border:`2px solid ${i===idx?C.accent:C.border}`,background:"#080810",flexShrink:0,opacity:i===idx?1:0.55,transition:"all 0.15s"}}/>
           ))}
         </div>
@@ -2449,7 +2479,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote}){
+function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -2609,6 +2639,20 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
       setValidatingPanel(false);
       ep.stop();
     }
+    // Upload page images to Firebase Storage in background, save storageUrls
+    const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
+    if(pagesNeedingUpload.length>0&&projectId){
+      try{
+        const urlMap={};
+        await parallelMap(pagesNeedingUpload,async pg=>{
+          urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,pg.dataUrl);
+        },4);
+        const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
+        latestPanel={...latestPanel,pages:pagesWithUrls};
+        onUpdate(latestPanel);
+        try{await onSaveImmediate(latestPanel);}catch(e){}
+      }catch(e){console.warn("Storage upload failed:",e);}
+    }
     }catch(ex){
       console.error("addFiles error:",ex);
       setErr(`Error processing files: ${ex.message}`);
@@ -2618,10 +2662,11 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
   }
 
   async function autoExtractTitle(){
-    const firstWithData=pages.find(p=>p.dataUrl);
+    const firstWithData=pages.find(p=>p.dataUrl||p.storageUrl);
     if(!firstWithData||!_apiKey)return;
     setExtractingTitle(true);
-    const tb=await extractTitleBlock(firstWithData.dataUrl);
+    const ensured=await ensureDataUrl(firstWithData);
+    const tb=await extractTitleBlock(ensured.dataUrl);
     setExtractingTitle(false);
     if(tb){
       setDraftNo(tb.drawingNo||"");setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
@@ -2660,9 +2705,10 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
 
   async function autoDetect(){
     if(!_apiKey)return;
-    const untagged=pages.filter(p=>getPageTypes(p).length===0&&p.dataUrl);
+    let untagged=pages.filter(p=>getPageTypes(p).length===0&&(p.dataUrl||p.storageUrl));
     if(!untagged.length)return;
     setDetecting(true);
+    untagged=await Promise.all(untagged.map(ensureDataUrl));
     let updatedPages=[...pages];
     let done=0;
     await parallelMap(untagged,async(page)=>{
@@ -2676,11 +2722,12 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
   }
 
   async function runExtraction(){
-    const bomPages=pages.filter(p=>getPageTypes(p).includes("bom"));
+    let bomPages=pages.filter(p=>getPageTypes(p).includes("bom"));
     if(!bomPages.length){setErr("No pages tagged BOM yet.");return;}
     setExtracting(true);setErr("");ep.start("Starting…",bomPages.length*12);
-    const noData=bomPages.find(pg=>!pg.dataUrl);
+    const noData=bomPages.find(pg=>!pg.dataUrl&&!pg.storageUrl);
     if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();return;}
+    bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     let all=[];let bomDone=0;
     try{
       const bomResults=await parallelMap(bomPages,async(pg)=>{
@@ -2734,7 +2781,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
   }
 
   async function reExtractWithFeedback(){
-    const bomPages=pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
+    let bomPages=pages.filter(p=>getPageTypes(p).includes("bom")&&(p.dataUrl||p.storageUrl));
     if(!aiFeedback.trim())return;
 
     // Apply labor corrections immediately regardless of whether BOM re-extraction runs
@@ -2763,6 +2810,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
     }
 
     setReExtracting(true);setErr("");ep.start("Re-extracting with your feedback…",bomPages.length*12);
+    bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     let all=[];let bomDone=0;
     try{
       const bomResults=await parallelMap(bomPages,async(pg)=>{
@@ -3032,7 +3080,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
           <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7}}>DRAWINGS</div>
           {detecting&&<span style={{fontSize:12,color:C.yellow,fontWeight:600}}>{detectProgress||"🤖 Detecting…"}</span>}
-          {!detecting&&_apiKey&&pages.some(p=>getPageTypes(p).length===0&&p.dataUrl)&&!readOnly&&(
+          {!detecting&&_apiKey&&pages.some(p=>getPageTypes(p).length===0&&(p.dataUrl||p.storageUrl))&&!readOnly&&(
             <button onClick={autoDetect} style={{background:"none",border:"none",color:C.yellow,cursor:"pointer",fontSize:12,fontWeight:600,padding:"0 4px"}}>🤖 Auto-detect</button>
           )}
         </div>
@@ -3044,7 +3092,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
             return(
               <div key={pg.id} style={{flexShrink:0,width:420,display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
-                  <img src={pg.dataUrl} alt={pg.name} style={{width:420,height:272,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
+                  <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:272,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
                   {!readOnly&&<button onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
                 </div>
                 <div style={{lineHeight:1.4}}>
@@ -3594,7 +3642,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
     let panels=[...(project.panels||[])];
     for(let i=0;i<panels.length;i++){
       const p=panels[i];
-      const hasSchOrLayout=(p.pages||[]).some(pg=>(getPageTypes(pg).includes("schematic")||getPageTypes(pg).includes("layout"))&&pg.dataUrl);
+      const hasSchOrLayout=(p.pages||[]).some(pg=>(getPageTypes(pg).includes("schematic")||getPageTypes(pg).includes("layout"))&&(pg.dataUrl||pg.storageUrl));
       if(!hasSchOrLayout)continue;
       setValidateMsg(`Validating ${p.name||"Panel "+(i+1)}…`);
       const result=await runPanelValidation(p);
@@ -3656,6 +3704,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
                   panel={panel}
                   idx={idx}
                   uid={uid}
+                  projectId={project.id}
                   readOnly={readOnly}
                   onDelete={()=>deletePanel(panel.id)}
                   onUpdate={updatedPanel=>{
