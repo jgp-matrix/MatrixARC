@@ -54,7 +54,51 @@ const fbDb=firebase.firestore();
 const fbFunctions=firebase.functions();
 </script>
 <script type="text/babel">
-const {useState,useEffect,useRef}=React;
+const {useState,useEffect,useRef,useCallback}=React;
+
+// Smooth time-based progress bar: fills toward ~90% over estSeconds, snaps to 100% on finish
+function useSmoothProgress(estSeconds=15){
+  const [state,setState]=useState(null); // null | {msg,pct}
+  const timer=useRef(null);
+  const startTime=useRef(0);
+  const est=useRef(estSeconds);
+  const msgRef=useRef("");
+
+  const tick=useCallback(()=>{
+    const elapsed=(Date.now()-startTime.current)/1000;
+    const pct=Math.min(92,92*(1-Math.exp(-2.5*elapsed/est.current)));
+    setState({msg:msgRef.current,pct:Math.round(pct)});
+    timer.current=requestAnimationFrame(tick);
+  },[]);
+
+  const start=useCallback((msg,seconds)=>{
+    if(seconds)est.current=seconds;
+    msgRef.current=msg||"";
+    startTime.current=Date.now();
+    if(timer.current)cancelAnimationFrame(timer.current);
+    setState({msg:msgRef.current,pct:0});
+    timer.current=requestAnimationFrame(tick);
+  },[tick]);
+
+  const update=useCallback((msg)=>{
+    msgRef.current=msg||msgRef.current;
+    // don't change pct — timer handles it
+  },[]);
+
+  const finish=useCallback((msg)=>{
+    if(timer.current){cancelAnimationFrame(timer.current);timer.current=null;}
+    setState(msg?{msg,pct:100}:null);
+  },[]);
+
+  const stop=useCallback(()=>{
+    if(timer.current){cancelAnimationFrame(timer.current);timer.current=null;}
+    setState(null);
+  },[]);
+
+  useEffect(()=>()=>{if(timer.current)cancelAnimationFrame(timer.current);},[]);
+
+  return{progress:state,start,update,finish,stop};
+}
 
 // ── THEME ──
 const C={
@@ -2410,7 +2454,8 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
   const [detecting,setDetecting]=useState(false);
   const [detectProgress,setDetectProgress]=useState("");
   const [extracting,setExtracting]=useState(false);
-  const [extractProgress,setExtractProgress]=useState(null);
+  const ep=useSmoothProgress();
+  const extractProgress=ep.progress;
   const [showFastQuote,setShowFastQuote]=useState(false);
   const [lightboxId,setLightboxId]=useState(null);
   const [draftName,setDraftName]=useState(panel.name||"");
@@ -2520,14 +2565,12 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
     const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
     let latestPanel=updated;
     if(_apiKey&&bomPages.length>0){
-      setExtracting(true);setExtractProgress({msg:"Auto-extracting BOM…",pct:2});
-      let all=[];let ok=true;let bomStarted=0;let bomDone=0;
-      const bomTicks=bomPages.length*2;
+      setExtracting(true);ep.start("Auto-extracting BOM…",bomPages.length*12);
+      let all=[];let ok=true;let bomDone=0;
       try{
         const bomResults=await parallelMap(bomPages,async(pg)=>{
-          bomStarted++;setExtractProgress({msg:`BOM page ${bomStarted}/${bomPages.length}…`,pct:5+Math.round(((bomStarted+bomDone)/bomTicks)*88)});
+          ep.update(`BOM page ${++bomDone}/${bomPages.length}…`);
           const items=await extractBomPage(pg.dataUrl);
-          bomDone++;setExtractProgress({msg:`BOM page ${bomDone}/${bomPages.length} done`,pct:5+Math.round(((bomStarted+bomDone)/bomTicks)*88)});
           return items;
         },3);
         all=bomResults.flat();
@@ -2544,7 +2587,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
         latestPanel=withBom;
         onUpdate(withBom);
         try{await onSaveImmediate(withBom);}catch(e){}
-        setExtractProgress({msg:`✓ ${bom.length} items extracted`,pct:100});
+        ep.finish(`✓ ${bom.length} items extracted`);
       }
       setExtracting(false);
     }
@@ -2553,7 +2596,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
     const hasSchOrLayout=latestPanel.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout"))&&p.dataUrl);
     if(_apiKey&&hasSchOrLayout){
       setValidatingPanel(true);
-      setExtractProgress({msg:"Validating schematics & layout…",pct:null});
+      ep.start("Validating schematics & layout…",20);
       const result=await runPanelValidation(latestPanel);
       if(result.validation||result.laborData){
         const withVal={...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:latestPanel.status==="extracted"?"extracted":"validated",updatedAt:Date.now()};
@@ -2562,7 +2605,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
         try{await onSaveImmediate(withVal);}catch(e){}
       }
       setValidatingPanel(false);
-      setExtractProgress(null);
+      ep.stop();
     }
     }catch(ex){
       console.error("addFiles error:",ex);
@@ -2607,7 +2650,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
     let updated={...panel,pages:remaining};
     if(remaining.length===0){
       updated={...updated,drawingNo:"",drawingDesc:"",drawingRev:"",bom:[],validation:null,pricing:null,budgetaryQuote:null,status:"draft"};
-      setDraftNo("");setDraftDesc("");setDraftRev("");setExtractProgress(null);setErr("");
+      setDraftNo("");setDraftDesc("");setDraftRev("");ep.stop();setErr("");
     }
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
@@ -2633,16 +2676,14 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
   async function runExtraction(){
     const bomPages=pages.filter(p=>getPageTypes(p).includes("bom"));
     if(!bomPages.length){setErr("No pages tagged BOM yet.");return;}
-    setExtracting(true);setErr("");setExtractProgress({msg:"Starting…",pct:5});
+    setExtracting(true);setErr("");ep.start("Starting…",bomPages.length*12);
     const noData=bomPages.find(pg=>!pg.dataUrl);
-    if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);return;}
-    let all=[];let bomStarted=0;let bomDone=0;
-    const bomTicks=bomPages.length*2;
+    if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();return;}
+    let all=[];let bomDone=0;
     try{
       const bomResults=await parallelMap(bomPages,async(pg)=>{
-        bomStarted++;setExtractProgress({msg:`Analyzing page ${bomStarted}/${bomPages.length}…`,pct:10+Math.round(((bomStarted+bomDone)/bomTicks)*80)});
+        ep.update(`Analyzing page ${++bomDone}/${bomPages.length}…`);
         const items=await extractBomPage(pg.dataUrl);
-        bomDone++;setExtractProgress({msg:`Page ${bomDone}/${bomPages.length} done`,pct:10+Math.round(((bomStarted+bomDone)/bomTicks)*80)});
         return items;
       },3);
       all=bomResults.flat();
@@ -2660,7 +2701,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
     const updated={...panel,bom,status:"extracted",updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
-    setExtractProgress({msg:`✓ ${bom.length} items extracted`,pct:100});
+    ep.finish(`✓ ${bom.length} items extracted`);
     setTagsChanged(false);
     setExtracting(false);
   }
@@ -2710,7 +2751,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
         const msg=laborResult.wires!=null
           ?`✓ Labor updated — using ${laborResult.wires} wires → ${laborResult.pricingUpdates.laborHoursOverride} hrs`
           :"✓ Labor settings updated";
-        setExtractProgress({msg,pct:100});
+        ep.finish(msg);
         setFeedbackSaved(true);setTimeout(()=>setFeedbackSaved(false),3000);
         setAiFeedback("");
       } else {
@@ -2719,14 +2760,12 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
       return;
     }
 
-    setReExtracting(true);setErr("");setExtractProgress({msg:"Re-extracting with your feedback…",pct:3});
-    let all=[];let bomStarted=0;let bomDone=0;
-    const bomTicks=bomPages.length*2;
+    setReExtracting(true);setErr("");ep.start("Re-extracting with your feedback…",bomPages.length*12);
+    let all=[];let bomDone=0;
     try{
       const bomResults=await parallelMap(bomPages,async(pg)=>{
-        bomStarted++;setExtractProgress({msg:`Page ${bomStarted}/${bomPages.length}…`,pct:8+Math.round(((bomStarted+bomDone)/bomTicks)*85)});
+        ep.update(`Page ${++bomDone}/${bomPages.length}…`);
         const items=await extractBomPage(pg.dataUrl,aiFeedback);
-        bomDone++;setExtractProgress({msg:`Page ${bomDone}/${bomPages.length} done`,pct:8+Math.round(((bomStarted+bomDone)/bomTicks)*85)});
         return items;
       },3);
       all=bomResults.flat();
@@ -2747,7 +2786,7 @@ function PanelCard({panel,idx,uid,readOnly,onDelete,onUpdate,onSaveImmediate,onV
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     const laborMsg=laborResult?.wires!=null?` · labor set to ${updated.pricing?.laborHoursOverride} hrs`:"";
-    setExtractProgress({msg:`✓ ${bom.length} items extracted${laborMsg}`,pct:100});
+    ep.finish(`✓ ${bom.length} items extracted${laborMsg}`);
     setFeedbackSaved(true);setTimeout(()=>setFeedbackSaved(false),3000);
     setAiFeedback("");
     setReExtracting(false);
