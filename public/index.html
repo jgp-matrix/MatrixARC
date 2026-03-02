@@ -168,7 +168,7 @@ function computeLaborEstimate(panel){
   if((pr.laborHoursOverride??null)!==null){
     const hrs=pr.laborHoursOverride;
     const cost=hrs*laborRate;
-    return{lines:[{category:"Total Override",qty:hrs,unit:"hr",rate:laborRate,cost}],totalCost:cost,totalHours:hrs,inputs:{},hasLayoutData:false,isLegacy:false,isOverride:true};
+    return{lines:[{category:"Total Override",qty:hrs,unit:"hr",rate:laborRate,hours:hrs,cost}],totalCost:cost,totalHours:hrs,inputs:{},hasLayoutData:false,isLegacy:false,isOverride:true};
   }
 
   // Legacy fallback: no laborData
