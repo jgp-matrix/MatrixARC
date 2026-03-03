@@ -613,35 +613,25 @@ async function ensureDataUrl(page){
   if(page.dataUrl)return page;
   if(!page.storageUrl)return page;
   try{
-    // Extract storage path from the download URL and use SDK to get fresh URL + download
+    // Get a fresh download URL from Firebase Storage SDK
+    let url=page.storageUrl;
     const pathMatch=page.storageUrl.match(/\/o\/([^?]+)/);
     if(pathMatch){
       const storagePath=decodeURIComponent(pathMatch[1]);
-      const ref=fbStorage.ref(storagePath);
-      const url=await ref.getDownloadURL();
-      // Use XHR which Firebase Storage CORS allows by default for SDK-generated URLs
-      const blob=await new Promise((resolve,reject)=>{
-        const xhr=new XMLHttpRequest();
-        xhr.responseType="blob";
-        xhr.onload=()=>resolve(xhr.response);
-        xhr.onerror=()=>reject(new Error("XHR download failed"));
-        xhr.open("GET",url);
-        xhr.send();
-      });
-      const dataUrl=await new Promise(res=>{
-        const reader=new FileReader();
-        reader.onload=()=>res(reader.result);
-        reader.readAsDataURL(blob);
-      });
-      return{...page,dataUrl};
+      url=await fbStorage.ref(storagePath).getDownloadURL();
     }
-    // Fallback: direct fetch
-    const resp=await fetch(page.storageUrl);
-    const blob=await resp.blob();
-    const dataUrl=await new Promise(res=>{
-      const reader=new FileReader();
-      reader.onload=()=>res(reader.result);
-      reader.readAsDataURL(blob);
+    // Load via <img> + canvas to avoid CORS fetch issues
+    const dataUrl=await new Promise((resolve,reject)=>{
+      const img=new Image();
+      img.crossOrigin="anonymous";
+      img.onload=()=>{
+        const c=document.createElement("canvas");
+        c.width=img.naturalWidth;c.height=img.naturalHeight;
+        c.getContext("2d").drawImage(img,0,0);
+        resolve(c.toDataURL("image/jpeg",0.92));
+      };
+      img.onerror=()=>reject(new Error("Image load failed"));
+      img.src=url;
     });
     return{...page,dataUrl};
   }catch(e){
