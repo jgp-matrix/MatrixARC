@@ -3283,7 +3283,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0],["Manufacturer",0,"fit"],["Notes",160],["Unit $",90],["Ext $",80],["Val",44],["",90]].map(([h,w,mode],hi)=>(
+                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0],["Manufacturer",0,"fit"],["Notes",160],["Unit $",110],["Ext $",80],["Val",44],["",90]].map(([h,w,mode],hi)=>(
                     <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
@@ -3427,19 +3427,20 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         )}
                       </td>
                     ))}
-                    <td style={{padding:"3px 5px",textAlign:"right",width:90}}>
+                    <td style={{padding:"3px 5px",textAlign:"right",width:110}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
                         {row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
                         {row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>AI</span>}
                         {row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:10,fontWeight:700,whiteSpace:"nowrap"}}>M</span>}
                         <span style={{color:C.muted,fontSize:11}}>$</span>
-                        <input type="number" min="0" step="0.01" readOnly={readOnly}
-                          value={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
-                          onChange={e=>updatePrice(row.id,e.target.value)}
+                        <input type="text" inputMode="decimal" readOnly={readOnly}
+                          defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
+                          key={row.id+"-"+(row.priceSource||"")+(row.unitPrice??"")}
                           placeholder="—"
-                          style={{...inp({padding:"4px 4px",fontSize:12,borderColor:"transparent",background:"transparent",borderRadius:4,textAlign:"right",width:70}),minWidth:70}}
-                          onFocus={e=>{e.target.style.borderColor=C.accent;e.target.value=row.unitPrice??""}}
-                          onBlur={e=>{e.target.style.borderColor="transparent";if(e.target.value!=="")e.target.value=parseFloat(e.target.value).toFixed(2);}}
+                          style={{...inp({padding:"4px 6px",fontSize:12,borderColor:"transparent",background:"transparent",borderRadius:4,textAlign:"left",width:90}),minWidth:80}}
+                          onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;e.target.select();}}
+                          onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";const v=e.target.value.trim();if(v===""){updatePrice(row.id,"");}else{const n=parseFloat(v);if(!isNaN(n)){e.target.value=n.toFixed(2);updatePrice(row.id,String(n));}else{e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";}}}}
+                          onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";e.target.blur();}}}
                         />
                       </div>
                     </td>
