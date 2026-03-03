@@ -13,6 +13,7 @@ input,textarea,select,button{font-family:inherit;font-size:inherit}
 ::-webkit-scrollbar-thumb{background:#2a2a40;border-radius:3px}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
 .fade-in{animation:fadeIn 0.25s ease-out both}
 .spin{animation:spin 1s linear infinite;display:inline-block}
 @media print{.no-print{display:none!important}body{background:#fff!important}#quote-doc,#quote-doc *{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
@@ -3476,14 +3477,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       {/* Error */}
       {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.red,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>{err}<button onClick={()=>setErr("")} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:15,lineHeight:1}}>✕</button></div>}
 
-      {/* Extract progress bar */}
-      {extractProgress&&(()=>{const pct=extractProgress.pct;const txt=[extractProgress.msg,pct>0?pct+"%":""].filter(Boolean).join("  ");const centered=pct>=40;const base={position:"absolute",top:0,left:0,height:"100%",display:"flex",alignItems:"center",fontSize:13,fontWeight:700,pointerEvents:"none",whiteSpace:"nowrap",transition:"opacity 0.3s"};return(
-        <div style={{marginBottom:12}}>
-          <div style={{background:C.border,borderRadius:7,height:28,overflow:"hidden",position:"relative"}}>
-            <div style={{width:`${pct}%`,height:"100%",background:C.accent,borderRadius:7,transition:"width 0.3s"}}/>
-            <div style={{...base,width:"100%",paddingLeft:10,color:"#fff",opacity:centered?0:1}}>{txt}</div>
-            <div style={{...base,width:`${pct}%`,justifyContent:"center",color:"#fff",overflow:"hidden",opacity:centered?1:0,transition:"width 0.3s, opacity 0.3s"}}>{txt}</div>
-          </div>
+      {/* Extract / validate progress */}
+      {extractProgress&&(()=>{const pct=extractProgress.pct;return(
+        <div style={{marginBottom:12,display:"flex",alignItems:"center",gap:12,padding:"10px 0"}}>
+          <span style={{fontSize:14,fontWeight:700,color:C.accent,animation:"pulse 1.2s ease-in-out infinite"}}>{extractProgress.msg||"Processing…"}</span>
+          <span style={{fontSize:18,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums",minWidth:48,textAlign:"right"}}>{pct}%</span>
         </div>);})()}
 
       {/* BOM Table */}
