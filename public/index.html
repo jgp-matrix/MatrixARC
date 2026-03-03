@@ -1606,7 +1606,7 @@ function PricingConfigModal({uid,onClose}){
           <div style={{fontSize:11,color:C.muted,marginBottom:12}}>Items below are automatically added to every BOM after extraction</div>
 
           {/* BC search */}
-          <div style={{position:"relative",marginBottom:10}}>
+          <div style={{marginBottom:10}}>
             <input value={bcQuery} onChange={e=>onBcQueryChange(e.target.value)}
               placeholder={_bcToken?"Search BC items (min 3 chars)…":"Connect BC to search items"}
               disabled={!_bcToken}
@@ -1614,8 +1614,8 @@ function PricingConfigModal({uid,onClose}){
               style={{...inp(),width:"100%",boxSizing:"border-box",fontSize:13,opacity:_bcToken?1:0.5}}/>
             {bcSearching&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Searching…</div>}
             {bcResults.length>0&&(
-              <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:10,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,marginTop:4,maxHeight:220,overflowY:"auto",boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
-                <div style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,fontSize:11,color:C.muted,fontWeight:600,padding:"6px 10px",borderBottom:`1px solid ${C.border}`,textTransform:"uppercase",letterSpacing:0.3}}>
+              <div style={{border:`1px solid ${C.border}`,borderRadius:8,marginTop:6,maxHeight:200,overflowY:"auto",background:C.bg}}>
+                <div style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,fontSize:10,color:C.muted,fontWeight:600,padding:"5px 10px",borderBottom:`1px solid ${C.border}`,textTransform:"uppercase",letterSpacing:0.3,position:"sticky",top:0,background:C.bg}}>
                   <div>Part #</div><div>Description</div><div style={{textAlign:"right"}}>Unit Cost</div><div style={{textAlign:"right"}}>Modified</div>
                 </div>
                 {bcResults.map((item,i)=>(
