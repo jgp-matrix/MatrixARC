@@ -915,6 +915,7 @@ async function analyzeSchematicPage(dataUrl){
   const b64=dataUrl&&dataUrl.split(",")[1];
   if(!b64){console.warn("analyzeSchematicPage: skipping — empty or invalid dataUrl");return{tags:[],wireCount:0,wireTerminations:0};}
   const raw=await apiCall({
+    model:"claude-sonnet-4-6",
     max_tokens:4000,
     messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -974,6 +975,7 @@ async function analyzeLayoutPage(dataUrl){
   const b64=dataUrl&&dataUrl.split(",")[1];
   if(!b64){console.warn("analyzeLayoutPage: skipping — empty or invalid dataUrl");return null;}
   const raw=await apiCall({
+    model:"claude-sonnet-4-6",
     max_tokens:4000,
     messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -1136,6 +1138,7 @@ async function estimatePrices(items){
     const payload=batch.map(r=>({id:String(r.id),partNumber:r.partNumber||"",description:r.description||"",manufacturer:r.manufacturer||""}));
     try{
       const raw=await apiCall({
+        model:"claude-sonnet-4-6",
         max_tokens:2000,
         messages:[{role:"user",content:`${PRICING_PROMPT}\n${JSON.stringify(payload)}`}]
       });
