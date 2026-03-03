@@ -4616,7 +4616,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
               <button onClick={onNew} style={btn(C.accent,"#fff")}>Create First Project</button>
             </div>
           )}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:16}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16}}>
             {myProjects.map(p=>(
               <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
                 style={{...card(),cursor:"pointer",transition:"border-color 0.15s,transform 0.15s"}}
@@ -4642,7 +4642,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
             <div style={{marginTop:48}}>
               <div style={{fontSize:14,fontWeight:700,color:C.yellow,marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Transferred Projects</div>
               <div style={{fontSize:12,color:C.muted,marginBottom:20}}>These projects were transferred to you. Accept them to add them to your project list.</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(290px,1fr))",gap:16}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:16}}>
                 {transferred.map(p=>(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
                     style={{...card(),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s"}}
