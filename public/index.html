@@ -375,40 +375,52 @@ async function bcGetCompanyId(){
 }
 
 async function bcCreateProject(displayName, customerNumber){
-  if(!_bcToken)return null;
+  if(!_bcToken)throw new Error("Not connected to Business Central");
+  if(!customerNumber)throw new Error("A customer must be selected");
   const compId=await bcGetCompanyId();
-  if(!compId)return null;
+  if(!compId)throw new Error("Could not resolve Business Central company");
+  let projectId=null;
   try{
-    // Step 1: Create project with name only
+    // Step 1: Create project (name only)
     const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify({displayName})
     });
-    if(!r.ok){const txt=await r.text();console.warn("bcCreateProject POST failed:",r.status,txt);return null;}
+    if(!r.ok){const txt=await r.text();throw new Error(`BC project creation failed (${r.status}): ${txt}`);}
     const d=await r.json();
-    const result={id:d.id,number:d.number,displayName:d.displayName,customerNumber:null,customerName:null};
+    projectId=d.id;
 
-    // Step 2: If customer selected, PATCH the new project with customer
-    if(customerNumber&&result.id){
+    // Step 2: GET for ETag
+    const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${projectId})`,{
+      headers:{"Authorization":`Bearer ${_bcToken}`}
+    });
+    if(!g.ok)throw new Error(`Could not retrieve BC project for customer linking (${g.status})`);
+    const etag=g.headers.get("ETag");
+
+    // Step 3: PATCH customer onto project
+    const p=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${projectId})`,{
+      method:"PATCH",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
+      body:JSON.stringify({sellToCustomerNumber:customerNumber})
+    });
+    if(!p.ok){const txt=await p.text();throw new Error(`Could not link customer to BC project (${p.status}): ${txt}`);}
+    const pd=await p.json();
+    return{id:pd.id,number:pd.number,displayName:pd.displayName,customerNumber:pd.sellToCustomerNumber||customerNumber,customerName:pd.sellToCustomerName||null};
+  }catch(e){
+    // Rollback: delete the BC project if it was created
+    if(projectId){
       try{
-        const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${result.id})`,{
-          headers:{"Authorization":`Bearer ${_bcToken}`}
-        });
+        const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${projectId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(g.ok){
           const etag=g.headers.get("ETag");
-          const p=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${result.id})`,{
-            method:"PATCH",
-            headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
-            body:JSON.stringify({sellToCustomerNumber:customerNumber})
-          });
-          if(p.ok){const pd=await p.json();result.customerNumber=pd.sellToCustomerNumber||customerNumber;result.customerName=pd.sellToCustomerName||null;}
-          else{console.warn("bcCreateProject customer PATCH failed:",p.status,await p.text());}
+          await fetch(`${BC_API_BASE}/companies(${compId})/projects(${projectId})`,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}});
+          console.log("bcCreateProject: rolled back BC project",projectId);
         }
-      }catch(e){console.warn("bcCreateProject customer PATCH error:",e);}
+      }catch(re){console.warn("bcCreateProject: rollback failed",re);}
     }
-    return result;
-  }catch(e){console.warn("bcCreateProject error:",e);return null;}
+    throw e;
+  }
 }
 
 async function bcSearchCustomers(query){
@@ -4690,6 +4702,7 @@ function NewProjectModal({uid,onCreated,onClose}){
   const [name,setName]=useState("");
   const [loading,setLoading]=useState(false);
   const [bcStatus,setBcStatus]=useState(null);
+  const [createErr,setCreateErr]=useState("");
   const [customerQuery,setCustomerQuery]=useState("");
   const [customerResults,setCustomerResults]=useState([]);
   const [customerSearching,setCustomerSearching]=useState(false);
@@ -4734,25 +4747,32 @@ function NewProjectModal({uid,onCreated,onClose}){
   }
 
   async function create(e){
-    e.preventDefault();if(!name.trim())return;setLoading(true);
+    e.preventDefault();
+    if(!name.trim()||!selectedCustomer)return;
+    setLoading(true);setCreateErr("");
     const trimmed=name.trim();
-    let bcFields={};
     if(!_bcToken){setBcStatus("connecting");await acquireBcToken(true);}
-    if(_bcToken){
+    if(!_bcToken){setCreateErr("Could not connect to Business Central. Please try again.");setLoading(false);return;}
+    try{
       setBcStatus("creating");
-      const bc=await bcCreateProject(trimmed,selectedCustomer?.number||null);
-      if(bc){
-        bcFields={
-          bcProjectId:bc.id,
-          bcProjectNumber:bc.number,
-          bcCustomerNumber:bc.customerNumber||selectedCustomer?.number||null,
-          bcCustomerName:bc.customerName||selectedCustomer?.displayName||null
-        };
-        setBcStatus("ok");
-      }else setBcStatus("failed");
+      const bc=await bcCreateProject(trimmed,selectedCustomer.number);
+      setBcStatus("ok");
+      const p=await saveProject(uid,{
+        name:trimmed,
+        bcProjectId:bc.id,
+        bcProjectNumber:bc.number,
+        bcCustomerNumber:bc.customerNumber,
+        bcCustomerName:bc.customerName||selectedCustomer.displayName,
+        status:"draft",
+        panels:[{id:'panel-1',name:'Panel 1',pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'}],
+        createdAt:Date.now(),updatedAt:Date.now()
+      });
+      onCreated(p);
+    }catch(e){
+      setBcStatus(null);
+      setCreateErr(e.message||"Failed to create project in Business Central.");
+      setLoading(false);
     }
-    const p=await saveProject(uid,{name:trimmed,...bcFields,status:"draft",panels:[{id:'panel-1',name:'Panel 1',pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'}],createdAt:Date.now(),updatedAt:Date.now()});
-    onCreated(p);
   }
 
   return(
@@ -4802,11 +4822,12 @@ function NewProjectModal({uid,onCreated,onClose}){
             </div>
           )}
           {bcStatus==="connecting"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Connecting to Business Central...</div>}
-          {bcStatus==="creating"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Creating BC project...</div>}
-          {bcStatus==="failed"&&<div style={{fontSize:12,color:C.red,marginBottom:10}}>BC project creation failed — project saved without BC link</div>}
+          {bcStatus==="creating"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Creating BC project and linking customer...</div>}
+          {createErr&&<div style={{fontSize:12,color:C.red,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>{createErr}</div>}
+          {!selectedCustomer&&name.trim()&&<div style={{fontSize:12,color:C.yellow,marginBottom:10}}>A customer is required to create a project.</div>}
           <div style={{display:"flex",gap:10,marginTop:4}}>
             <button type="button" onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
-            <button type="submit" disabled={!name.trim()||loading} style={btn(C.accent,"#fff",{flex:2,opacity:!name.trim()||loading?0.5:1})}>
+            <button type="submit" disabled={!name.trim()||!selectedCustomer||loading} style={btn(C.accent,"#fff",{flex:2,opacity:!name.trim()||!selectedCustomer||loading?0.5:1})}>
               {loading?"Creating…":"Create Project"}
             </button>
           </div>
