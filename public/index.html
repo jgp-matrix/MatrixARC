@@ -630,16 +630,15 @@ async function bcPatchItemOData(itemNo,fields){
 
 async function bcPatchJobOData(jobNo,fields){
   if(!_bcToken||!jobNo||!fields||!Object.keys(fields).length)return;
-  // Try common BC OData page names for the Job/Project card
-  const pages=["Job","Jobs","JobCard","Job_Card","ProjectCard","Project"];
+  const pages=["ProjectCard","Project"];
   for(const page of pages){
     const filterUrl=`${BC_ODATA_BASE}/${page}?$filter=No eq '${encodeURIComponent(jobNo)}'`;
     const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-    if(gr.status===404)continue; // page not published, try next
+    if(gr.status===404)continue;
     if(!gr.ok){const txt=await gr.text();throw new Error(`OData ${page} GET failed (${gr.status}): ${txt}`);}
     const gd=await gr.json();
     const rec=(gd.value||[])[0];
-    if(!rec)throw new Error(`Job '${jobNo}' not found in OData page '${page}'`);
+    if(!rec)throw new Error(`Project '${jobNo}' not found in OData page '${page}'`);
     const etag=rec["@odata.etag"];
     const patchUrl=`${BC_ODATA_BASE}/${page}('${encodeURIComponent(jobNo)}')`;
     const pr=await fetch(patchUrl,{
@@ -648,10 +647,10 @@ async function bcPatchJobOData(jobNo,fields){
       body:JSON.stringify(fields)
     });
     if(!pr.ok){const txt=await pr.text();throw new Error(`OData ${page} PATCH failed (${pr.status}): ${txt}`);}
-    console.log("OData PATCH on job",jobNo,"via page",page,"→",JSON.stringify(fields));
+    console.log("OData PATCH on project",jobNo,"via",page,"→",JSON.stringify(fields));
     return;
   }
-  throw new Error("Could not find a Job OData page. Please publish the 'Job Card' page as a web service in BC (Settings → Web Services).");
+  throw new Error("Could not reach ProjectCard or Project OData page in Business Central.");
 }
 
 async function bcListItemCategories(){
