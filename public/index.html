@@ -612,14 +612,42 @@ async function uploadPageImage(uid,projectId,pageId,dataUrl){
 async function ensureDataUrl(page){
   if(page.dataUrl)return page;
   if(!page.storageUrl)return page;
-  const resp=await fetch(page.storageUrl);
-  const blob=await resp.blob();
-  const dataUrl=await new Promise(res=>{
-    const reader=new FileReader();
-    reader.onload=()=>res(reader.result);
-    reader.readAsDataURL(blob);
-  });
-  return{...page,dataUrl};
+  try{
+    // Extract storage path from the download URL and use SDK to get fresh URL + download
+    const pathMatch=page.storageUrl.match(/\/o\/([^?]+)/);
+    if(pathMatch){
+      const storagePath=decodeURIComponent(pathMatch[1]);
+      const ref=fbStorage.ref(storagePath);
+      const url=await ref.getDownloadURL();
+      // Use XHR which Firebase Storage CORS allows by default for SDK-generated URLs
+      const blob=await new Promise((resolve,reject)=>{
+        const xhr=new XMLHttpRequest();
+        xhr.responseType="blob";
+        xhr.onload=()=>resolve(xhr.response);
+        xhr.onerror=()=>reject(new Error("XHR download failed"));
+        xhr.open("GET",url);
+        xhr.send();
+      });
+      const dataUrl=await new Promise(res=>{
+        const reader=new FileReader();
+        reader.onload=()=>res(reader.result);
+        reader.readAsDataURL(blob);
+      });
+      return{...page,dataUrl};
+    }
+    // Fallback: direct fetch
+    const resp=await fetch(page.storageUrl);
+    const blob=await resp.blob();
+    const dataUrl=await new Promise(res=>{
+      const reader=new FileReader();
+      reader.onload=()=>res(reader.result);
+      reader.readAsDataURL(blob);
+    });
+    return{...page,dataUrl};
+  }catch(e){
+    console.warn("ensureDataUrl failed for page",page.id,e);
+    return page;
+  }
 }
 
 // ── PROJECT MIGRATION (flat → panels) ──
