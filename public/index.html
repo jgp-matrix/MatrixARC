@@ -3555,33 +3555,33 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   const allAccepted=laborEst.lines.length>0&&acceptedCount===laborEst.lines.length;
                   return <>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                  <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
-                  <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"1px 7px",fontSize:10,fontWeight:700}}>
+                  <div style={{fontSize:22,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
+                  <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"2px 10px",fontSize:20,fontWeight:700}}>
                     {laborEst.isOverride?"Manual Override":laborEst.isLegacy?"Legacy":laborEst.hasLayoutData?"Auto (schematic + layout)":"Schematic only"}
                   </span>
-                  {allAccepted&&<span style={{background:C.greenDim,color:C.green,borderRadius:10,padding:"1px 7px",fontSize:10,fontWeight:700}}>All Accepted</span>}
+                  {allAccepted&&<span style={{background:C.greenDim,color:C.green,borderRadius:10,padding:"2px 10px",fontSize:20,fontWeight:700}}>All Accepted</span>}
                 </div>
                 {laborEst.lines.length>0&&(
-                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginBottom:6}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:22,marginBottom:6}}>
                     <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
-                      <th style={{textAlign:"center",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10,width:22}}>&#10003;</th>
-                      <th style={{textAlign:"left",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Category</th>
-                      <th style={{textAlign:"right",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Qty</th>
-                      <th style={{textAlign:"right",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Hours</th>
-                      <th style={{textAlign:"right",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Cost</th>
+                      <th style={{textAlign:"center",padding:"4px 5px",color:C.muted,fontWeight:600,fontSize:20,width:30}}>&#10003;</th>
+                      <th style={{textAlign:"left",padding:"4px 5px",color:C.muted,fontWeight:600,fontSize:20}}>Category</th>
+                      <th style={{textAlign:"right",padding:"4px 5px",color:C.muted,fontWeight:600,fontSize:20}}>Qty</th>
+                      <th style={{textAlign:"right",padding:"4px 5px",color:C.muted,fontWeight:600,fontSize:20}}>Hours</th>
+                      <th style={{textAlign:"right",padding:"4px 5px",color:C.muted,fontWeight:600,fontSize:20}}>Cost</th>
                     </tr></thead>
                     <tbody>
                       {laborEst.lines.map((l,i)=>{
                         const isAccepted=!!laborAccepted[l.category];
                         return(
                         <tr key={i} style={{borderBottom:`1px solid ${C.border}22`,background:isAccepted?"#0a1a0a":"transparent"}}>
-                          <td style={{padding:"2px 3px",textAlign:"center"}}>
+                          <td style={{padding:"4px 5px",textAlign:"center"}}>
                             <input type="checkbox" checked={isAccepted} disabled={readOnly}
                               onChange={e=>saveLaborAccepted(l.category,e.target.checked)}
-                              style={{accentColor:C.green,cursor:readOnly?"default":"pointer",margin:0}}/>
+                              style={{accentColor:C.green,cursor:readOnly?"default":"pointer",margin:0,width:18,height:18}}/>
                           </td>
-                          <td style={{padding:"2px 3px",color:isAccepted?C.green:C.sub,whiteSpace:"nowrap"}}>{l.category}</td>
-                          <td style={{padding:"2px 3px",textAlign:"right",whiteSpace:"nowrap"}}>
+                          <td style={{padding:"4px 5px",color:isAccepted?C.green:C.sub,whiteSpace:"nowrap"}}>{l.category}</td>
+                          <td style={{padding:"4px 5px",textAlign:"right",whiteSpace:"nowrap"}}>
                             {l.field&&!readOnly?(
                               <input type="text" inputMode="decimal"
                                 defaultValue={l.qty}
@@ -3591,22 +3591,22 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                                   if(!isNaN(v)&&v!==l.qty)saveLaborOverride(l.field,Math.max(0,v));
                                 }}
                                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
-                                style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,padding:"1px 4px",fontSize:11,width:42,textAlign:"right"}}/>
+                                style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,padding:"2px 6px",fontSize:22,width:70,textAlign:"right"}}/>
                             ):(
                               <span style={{color:C.text}}>{l.qty}</span>
                             )}
-                            {" "}<span style={{color:C.muted,fontSize:10}}>{l.unit}</span>
+                            {" "}<span style={{color:C.muted,fontSize:20}}>{l.unit}</span>
                           </td>
-                          <td style={{padding:"2px 3px",textAlign:"right",color:C.muted,fontSize:10}}>{l.hours.toFixed(1)}</td>
-                          <td style={{padding:"2px 3px",textAlign:"right",color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmt(l.cost)}</td>
+                          <td style={{padding:"4px 5px",textAlign:"right",color:C.muted,fontSize:20}}>{l.hours.toFixed(1)}</td>
+                          <td style={{padding:"4px 5px",textAlign:"right",color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmt(l.cost)}</td>
                         </tr>);
                       })}
                       <tr style={{borderTop:`1px solid ${C.border}`}}>
-                        <td style={{padding:"3px 3px",textAlign:"center",fontSize:9,color:C.muted}}>{acceptedCount}/{laborEst.lines.length}</td>
-                        <td style={{padding:"3px 3px",fontWeight:700,color:C.text}}>TOTAL</td>
+                        <td style={{padding:"5px 5px",textAlign:"center",fontSize:18,color:C.muted}}>{acceptedCount}/{laborEst.lines.length}</td>
+                        <td style={{padding:"5px 5px",fontWeight:700,color:C.text}}>TOTAL</td>
                         <td></td>
-                        <td style={{padding:"3px 3px",textAlign:"right",fontWeight:700,color:C.text}}>{laborEst.totalHours.toFixed(1)}</td>
-                        <td style={{padding:"3px 3px",textAlign:"right",fontWeight:700,color:C.accent,fontVariantNumeric:"tabular-nums"}}>{fmt(laborEst.totalCost)}</td>
+                        <td style={{padding:"5px 5px",textAlign:"right",fontWeight:700,color:C.text}}>{laborEst.totalHours.toFixed(1)}</td>
+                        <td style={{padding:"5px 5px",textAlign:"right",fontWeight:700,color:C.accent,fontVariantNumeric:"tabular-nums"}}>{fmt(laborEst.totalCost)}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -3614,8 +3614,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                 </>;})()}
                 {!laborEst.isOverride&&!laborEst.isLegacy&&laborEst.inputs&&(
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:4,marginBottom:6}}>
-                    <div style={{fontSize:9,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3}}>Detected Inputs</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"2px 12px",fontSize:10}}>
+                    <div style={{fontSize:18,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3}}>Detected Inputs</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 16px",fontSize:20}}>
                       {[
                         ["Wire terminations",laborEst.inputs.wireTerminations||laborEst.inputs.wireCount||0],
                         ["Total wires",laborEst.inputs.wireCount||0],
@@ -3634,15 +3634,15 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     </div>
                   </div>
                 )}
-                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-                  <span style={{fontSize:11,color:C.muted}}>$/hr</span>
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                  <span style={{fontSize:22,color:C.muted}}>$/hr</span>
                   <input type="number" min="0" step="1" readOnly={readOnly} value={laborRate}
                     onChange={e=>savePricing({laborRate:Math.max(0,+e.target.value||0)})}
-                    style={{...inp({padding:"2px 5px",fontSize:12,width:55,textAlign:"right"})}}/>
-                  <span style={{fontSize:11,color:C.muted,marginLeft:6}}>Override hrs</span>
+                    style={{...inp({padding:"4px 8px",fontSize:24,width:90,textAlign:"right"})}}/>
+                  <span style={{fontSize:22,color:C.muted,marginLeft:6}}>Override hrs</span>
                   <input type="number" min="0" step="0.5" readOnly={readOnly} value={pr.laborHoursOverride??""} placeholder="auto"
                     onChange={e=>savePricing({laborHoursOverride:e.target.value===""?null:Math.max(0,+e.target.value||0)})}
-                    style={{...inp({padding:"2px 5px",fontSize:12,width:55,textAlign:"right"})}}/>
+                    style={{...inp({padding:"4px 8px",fontSize:24,width:90,textAlign:"right"})}}/>
                 </div>
               </div>
               {/* RIGHT: Price breakdown */}
