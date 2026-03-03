@@ -374,20 +374,38 @@ async function bcGetCompanyId(){
   }catch(e){console.warn("BC company lookup failed:",e);return null;}
 }
 
-async function bcCreateProject(displayName){
+async function bcCreateProject(displayName, customerNumber){
   if(!_bcToken)return null;
   const compId=await bcGetCompanyId();
   if(!compId)return null;
   try{
+    const body={displayName};
+    if(customerNumber)body.sellToCustomerNumber=customerNumber;
     const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-      body:JSON.stringify({displayName})
+      body:JSON.stringify(body)
     });
     if(!r.ok){console.warn("bcCreateProject failed:",r.status);return null;}
     const d=await r.json();
-    return {id:d.id, number:d.number, displayName:d.displayName};
+    return{id:d.id,number:d.number,displayName:d.displayName,customerNumber:d.sellToCustomerNumber||null,customerName:d.sellToCustomerName||null};
   }catch(e){console.warn("bcCreateProject error:",e);return null;}
+}
+
+async function bcSearchCustomers(query){
+  if(!_bcToken)return[];
+  const compId=await bcGetCompanyId();
+  if(!compId)return[];
+  try{
+    const q=(query||"").trim().replace(/'/g,"''");
+    const filter=q?`$filter=contains(displayName,'${q}') or contains(number,'${q}')&`:"";
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers?${filter}$top=25&$orderby=displayName`,{
+      headers:{"Authorization":`Bearer ${_bcToken}`}
+    });
+    if(!r.ok)return[];
+    const d=await r.json();
+    return(d.value||[]).map(c=>({number:c.number,displayName:c.displayName}));
+  }catch(e){console.warn("bcSearchCustomers error:",e);return[];}
 }
 
 async function bcUpdateProject(bcProjectId, displayName){
@@ -4635,6 +4653,38 @@ function NewProjectModal({uid,onCreated,onClose}){
   const [name,setName]=useState("");
   const [loading,setLoading]=useState(false);
   const [bcStatus,setBcStatus]=useState(null);
+  const [customerQuery,setCustomerQuery]=useState("");
+  const [customerResults,setCustomerResults]=useState([]);
+  const [customerSearching,setCustomerSearching]=useState(false);
+  const [selectedCustomer,setSelectedCustomer]=useState(null);
+  const [showDropdown,setShowDropdown]=useState(false);
+  const searchTimer=useRef(null);
+
+  useEffect(()=>{
+    // Try silent BC connect and pre-load customers
+    acquireBcToken(false).then(t=>{
+      if(t){setCustomerSearching(true);bcSearchCustomers("").then(r=>{setCustomerResults(r);setCustomerSearching(false);});}
+    }).catch(()=>{});
+  },[]);
+
+  function handleCustomerInput(val){
+    setCustomerQuery(val);
+    setSelectedCustomer(null);
+    setShowDropdown(true);
+    if(searchTimer.current)clearTimeout(searchTimer.current);
+    searchTimer.current=setTimeout(async()=>{
+      setCustomerSearching(true);
+      const r=await bcSearchCustomers(val);
+      setCustomerResults(r);
+      setCustomerSearching(false);
+    },300);
+  }
+
+  function selectCustomer(c){
+    setSelectedCustomer(c);
+    setCustomerQuery(c.displayName);
+    setShowDropdown(false);
+  }
 
   async function create(e){
     e.preventDefault();if(!name.trim())return;setLoading(true);
@@ -4643,9 +4693,16 @@ function NewProjectModal({uid,onCreated,onClose}){
     if(!_bcToken){setBcStatus("connecting");await acquireBcToken(true);}
     if(_bcToken){
       setBcStatus("creating");
-      const bc=await bcCreateProject(trimmed);
-      if(bc){bcFields={bcProjectId:bc.id,bcProjectNumber:bc.number};setBcStatus("ok");}
-      else setBcStatus("failed");
+      const bc=await bcCreateProject(trimmed,selectedCustomer?.number||null);
+      if(bc){
+        bcFields={
+          bcProjectId:bc.id,
+          bcProjectNumber:bc.number,
+          bcCustomerNumber:bc.customerNumber||selectedCustomer?.number||null,
+          bcCustomerName:bc.customerName||selectedCustomer?.displayName||null
+        };
+        setBcStatus("ok");
+      }else setBcStatus("failed");
     }
     const p=await saveProject(uid,{name:trimmed,...bcFields,status:"draft",panels:[{id:'panel-1',name:'Panel 1',pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'}],createdAt:Date.now(),updatedAt:Date.now()});
     onCreated(p);
@@ -4653,15 +4710,44 @@ function NewProjectModal({uid,onCreated,onClose}){
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
-      <div style={{...card(),width:"100%",maxWidth:440}} onClick={e=>e.stopPropagation()}>
+      <div style={{...card(),width:"100%",maxWidth:460}} onClick={e=>e.stopPropagation()}>
         <div style={{fontSize:20,fontWeight:700,marginBottom:4}}>New Project</div>
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Name this control panel quote</div>
         <form onSubmit={create}>
-          <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Panel 2024-001 — Conveyor Control" style={{...inp(),marginBottom:16}} autoFocus/>
+          <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Project Name</div>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Conveyor Control Panel" style={{...inp(),marginBottom:16}} autoFocus/>
+          <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Customer <span style={{color:C.border,fontWeight:400,textTransform:"none",letterSpacing:0}}>(from Business Central)</span></div>
+          <div style={{position:"relative",marginBottom:16}}>
+            <input
+              value={customerQuery}
+              onChange={e=>handleCustomerInput(e.target.value)}
+              onFocus={()=>setShowDropdown(true)}
+              onBlur={()=>setTimeout(()=>setShowDropdown(false),150)}
+              placeholder={customerSearching?"Loading customers…":"Search by name or number…"}
+              style={{...inp()}}
+            />
+            {selectedCustomer&&<div style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:C.green,fontSize:14}}>✓</div>}
+            {showDropdown&&customerResults.length>0&&(
+              <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,zIndex:10,maxHeight:200,overflowY:"auto",marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,0.4)"}}>
+                {customerResults.map(c=>(
+                  <div key={c.number} onMouseDown={()=>selectCustomer(c)}
+                    style={{padding:"9px 12px",cursor:"pointer",display:"flex",gap:10,alignItems:"center"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.border}
+                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <span style={{fontSize:11,color:C.muted,minWidth:60,fontFamily:"monospace"}}>{c.number}</span>
+                    <span style={{fontSize:13,color:C.text}}>{c.displayName}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {showDropdown&&!customerSearching&&customerResults.length===0&&customerQuery&&(
+              <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,zIndex:10,padding:"10px 12px",marginTop:4,fontSize:12,color:C.muted}}>No customers found</div>
+            )}
+          </div>
           {bcStatus==="connecting"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Connecting to Business Central...</div>}
           {bcStatus==="creating"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Creating BC project...</div>}
-          {bcStatus==="failed"&&<div style={{fontSize:12,color:"#e57373",marginBottom:10}}>BC project creation failed — project will be created without BC link</div>}
-          <div style={{display:"flex",gap:10}}>
+          {bcStatus==="failed"&&<div style={{fontSize:12,color:C.red,marginBottom:10}}>BC project creation failed — project saved without BC link</div>}
+          <div style={{display:"flex",gap:10,marginTop:4}}>
             <button type="button" onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
             <button type="submit" disabled={!name.trim()||loading} style={btn(C.accent,"#fff",{flex:2,opacity:!name.trim()||loading?0.5:1})}>
               {loading?"Creating…":"Create Project"}
@@ -4720,6 +4806,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                   onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
                 {p.bcProjectNumber&&<div style={{fontSize:18,fontWeight:800,color:C.accent,marginBottom:4}}>{p.bcProjectNumber}</div>}
                 <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:20}}>{p.name}</div>
+                {p.bcCustomerName&&<div style={{fontSize:11,color:C.teal,marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.bcCustomerName}</div>}
                 <div style={{fontSize:11,color:C.muted}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
               </div>
             ))}
