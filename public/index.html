@@ -1239,7 +1239,8 @@ function calcConfidence(panel){
       let pts=100;const issues=[];
       const pn=(r.partNumber||"").trim();
       const desc=(r.description||"").trim();
-      if(!pn){pts-=40;issues.push("no part #");}
+      if(!pn&&desc){pts=0;issues.push("no part # with description");}
+      else if(!pn){pts-=40;issues.push("no part #");}
       else{
         if(pn.length<=2){pts-=30;issues.push("part # very short");}
         else if(/^\d{1,3}$/.test(pn)){pts-=20;issues.push("part # looks numeric");}
