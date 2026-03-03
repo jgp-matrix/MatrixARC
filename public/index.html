@@ -3437,7 +3437,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
                           key={row.id+"-"+(row.priceSource||"")+(row.unitPrice??"")}
                           placeholder="—"
-                          style={{...inp({padding:"4px 6px",fontSize:12,borderColor:"transparent",background:"transparent",borderRadius:4,textAlign:"left",width:90}),minWidth:80}}
+                          style={{...inp({padding:"4px 6px",fontSize:12,borderColor:"transparent",background:"transparent",borderRadius:4,textAlign:"right",width:90}),minWidth:80}}
                           onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;e.target.select();}}
                           onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";const v=e.target.value.trim();if(v===""){updatePrice(row.id,"");}else{const n=parseFloat(v);if(!isNaN(n)){e.target.value=n.toFixed(2);updatePrice(row.id,String(n));}else{e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";}}}}
                           onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";e.target.blur();}}}
