@@ -1676,6 +1676,7 @@ function PricingConfigModal({uid,onClose}){
             {saving?"Saving…":saved?"✓ Saved":"Save Defaults"}
           </button>
         </div>
+        <button onClick={onClose} style={{display:"block",width:"100%",marginTop:10,background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 0",color:C.muted,cursor:"pointer",fontSize:13}}>Close</button>
       </div>
     </div>
   );
