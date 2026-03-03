@@ -1342,6 +1342,13 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate}){
   const validation=panel.validation||null;
   const [expanded,setExpanded]=React.useState(null);
   const [verifying,setVerifying]=React.useState(false);
+  const barRef=React.useRef(null);
+  React.useEffect(()=>{
+    if(!expanded)return;
+    function handleClick(e){if(barRef.current&&!barRef.current.contains(e.target))setExpanded(null);}
+    document.addEventListener("mousedown",handleClick);
+    return()=>document.removeEventListener("mousedown",handleClick);
+  },[expanded]);
   async function runVerify(){
     if(verifying||!bom.length)return;
     setVerifying(true);
@@ -1373,7 +1380,7 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate}){
   }
   const acceptedSet=new Set((panel.wiringAccepted||[]).map(String));
   return(
-    <div style={{background:C.card,border:`1px solid #3a3a55`,borderRadius:10,padding:"14px 20px"}}>
+    <div ref={barRef} style={{background:C.card,border:`1px solid #3a3a55`,borderRadius:10,padding:"14px 20px"}}>
       <div style={{display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
         <span style={{fontSize:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap",borderRight:`1px solid #3a3a55`,paddingRight:16}}>Level Of Confidence</span>
         {items.map(it=>(
