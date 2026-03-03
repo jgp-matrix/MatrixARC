@@ -4238,14 +4238,10 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
   }
   const panels=project.panels||[];
   return(
-    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:C.bg}}>
-      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 24px",display:"flex",alignItems:"center",gap:16,minHeight:52,flexShrink:0,position:"relative"}}>
-        <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",pointerEvents:"none"}}>
-          <span style={{fontSize:28,fontWeight:800,letterSpacing:-0.5,whiteSpace:"nowrap"}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
-          <span style={{fontSize:10,color:C.muted}}>{APP_VERSION}</span>
-        </div>
-        <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>← Projects</button>
-        <div style={{width:1,height:18,background:C.border}}/>
+    <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:C.bg,borderBottom:`1px solid ${C.border}`,padding:"6px 24px",display:"flex",alignItems:"center",gap:12,minHeight:40,flexShrink:0}}>
+        <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>← Projects</button>
+        <div style={{width:1,height:16,background:C.border}}/>
         {editingName?(
           <div style={{flex:1,display:"flex",alignItems:"center",gap:8}}>
             <input value={draftName} onChange={e=>setDraftName(e.target.value)} autoFocus
@@ -4256,7 +4252,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
           </div>
         ):(
           <div style={{flex:1,display:"flex",alignItems:"center",gap:8,minWidth:0}}>
-            <div style={{fontSize:16,fontWeight:700,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{project.name}</div>
+            <div style={{fontSize:15,fontWeight:700,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{project.name}</div>
             {!readOnly&&<button onClick={()=>{setDraftName(project.name);setEditingName(true);}} title="Edit project name"
               style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"0 4px",flexShrink:0}}>✏️</button>}
           </div>
@@ -4348,14 +4344,10 @@ function QuoteView({project,uid,onBack,onUpdate}){
   }
   const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
   return(
-    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:C.bg}}>
-      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 24px",display:"flex",alignItems:"center",gap:16,minHeight:52,flexShrink:0,position:"relative"}}>
-        <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",pointerEvents:"none"}}>
-          <span style={{fontSize:28,fontWeight:800,letterSpacing:-0.5,whiteSpace:"nowrap"}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
-          <span style={{fontSize:10,color:C.muted}}>{APP_VERSION}</span>
-        </div>
+    <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
+      <div style={{background:C.bg,borderBottom:`1px solid ${C.border}`,padding:"6px 24px",display:"flex",alignItems:"center",gap:12,minHeight:40,flexShrink:0}}>
         <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>← Panels</button>
-        <div style={{width:1,height:18,background:C.border}}/>
+        <div style={{width:1,height:16,background:C.border}}/>
         <div style={{fontSize:15,fontWeight:700,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{project.name}</div>
         <span style={{background:C.greenDim,color:C.green,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>COMBINED QUOTE</span>
         <div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>{allBom.length} items · {totalWireCount} wires</div>
@@ -4742,33 +4734,34 @@ function App({user}){
   }
 
   return(
-    <div style={{minHeight:"100vh",background:C.bg}}>
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column"}}>
+      {/* ── TOP MENU BAR (always visible) ── */}
+      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:64,position:"relative"}}>
+        <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",pointerEvents:"none"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",pointerEvents:"auto"}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
+            <span style={{fontSize:44}}>⬡</span>
+            <span style={{fontSize:32,fontWeight:800,letterSpacing:-1}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
+          </div>
+          <span style={{fontSize:10,color:C.muted}}>{APP_VERSION}</span>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+          <span style={{fontSize:11,color:C.muted}}>AI Recognition &amp; Capture</span>
+          {companyName&&(
+            <span style={{color:C.accent,fontSize:12,fontWeight:700,marginLeft:8}}>⬡ {companyName}</span>
+          )}
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>👥 Team</button>
+          <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Config</button>
+          <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Settings</button>
+          <div style={{width:1,height:18,background:C.border}}/>
+          <span style={{fontSize:12,color:C.muted}}>{user.email}</span>
+          {userRole&&<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?C.accent:userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
+          <button onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"6px 10px"}}>Sign out</button>
+        </div>
+      </div>
       {view==="dashboard"&&(
         <>
-          <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:64,position:"relative"}}>
-            <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",pointerEvents:"none"}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <span style={{fontSize:44}}>⬡</span>
-                <span style={{fontSize:32,fontWeight:800,letterSpacing:-1}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
-              </div>
-              <span style={{fontSize:10,color:C.muted}}>{APP_VERSION}</span>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
-              <span style={{fontSize:11,color:C.muted}}>AI Recognition &amp; Capture</span>
-              {companyName&&(
-                <span style={{color:C.accent,fontSize:12,fontWeight:700,marginLeft:8}}>⬡ {companyName}</span>
-              )}
-            </div>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <button onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>👥 Team</button>
-              <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Config</button>
-              <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Settings</button>
-              <div style={{width:1,height:18,background:C.border}}/>
-              <span style={{fontSize:12,color:C.muted}}>{user.email}</span>
-              {userRole&&<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?C.accent:userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
-              <button onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"6px 10px"}}>Sign out</button>
-            </div>
-          </div>
           {/* Company setup banner */}
           {!companyId&&!setupDismissed&&(
             <div style={{background:"#1a1a3e",borderBottom:`1px solid ${C.accent}44`,padding:"8px 32px",display:"flex",alignItems:"center",gap:12,fontSize:13,flexWrap:"wrap"}}>
