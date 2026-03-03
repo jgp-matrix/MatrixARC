@@ -3304,7 +3304,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   const ntIds=valData?new Set((valData.notTraceable||[]).map(m=>String(m.id))):null;
                   return sortedBom.map((row,i)=>(
                   <tr key={row.id} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:(+row.qty===0||+row.unitPrice===0)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
-                    <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:12,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
+                    <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
                       {row.itemNo||i+1}
                     </td>
                     {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",0],["manufacturer",0,"fit"],["notes",160]].map(([f,w,mode])=>(
@@ -3437,14 +3437,14 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
                           key={row.id+"-"+(row.priceSource||"")+(row.unitPrice??"")}
                           placeholder="—"
-                          style={{...inp({padding:"4px 6px",fontSize:12,borderColor:"transparent",background:"transparent",borderRadius:4,textAlign:"right",width:90}),minWidth:80}}
+                          style={{...inp({padding:"5px 7px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5,textAlign:"right",width:90}),minWidth:80}}
                           onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;e.target.select();}}
                           onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";const v=e.target.value.trim();if(v===""){updatePrice(row.id,"");}else{const n=parseFloat(v);if(!isNaN(n)){e.target.value=n.toFixed(2);updatePrice(row.id,String(n));}else{e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";}}}}
                           onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";e.target.blur();}}}
                         />
                       </div>
                     </td>
-                    <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:12,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
+                    <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                       {row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:44}}>
