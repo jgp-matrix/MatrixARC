@@ -379,16 +379,35 @@ async function bcCreateProject(displayName, customerNumber){
   const compId=await bcGetCompanyId();
   if(!compId)return null;
   try{
-    const body={displayName};
-    if(customerNumber)body.sellToCustomerNumber=customerNumber;
+    // Step 1: Create project with name only
     const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-      body:JSON.stringify(body)
+      body:JSON.stringify({displayName})
     });
-    if(!r.ok){console.warn("bcCreateProject failed:",r.status);return null;}
+    if(!r.ok){const txt=await r.text();console.warn("bcCreateProject POST failed:",r.status,txt);return null;}
     const d=await r.json();
-    return{id:d.id,number:d.number,displayName:d.displayName,customerNumber:d.sellToCustomerNumber||null,customerName:d.sellToCustomerName||null};
+    const result={id:d.id,number:d.number,displayName:d.displayName,customerNumber:null,customerName:null};
+
+    // Step 2: If customer selected, PATCH the new project with customer
+    if(customerNumber&&result.id){
+      try{
+        const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${result.id})`,{
+          headers:{"Authorization":`Bearer ${_bcToken}`}
+        });
+        if(g.ok){
+          const etag=g.headers.get("ETag");
+          const p=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${result.id})`,{
+            method:"PATCH",
+            headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
+            body:JSON.stringify({sellToCustomerNumber:customerNumber})
+          });
+          if(p.ok){const pd=await p.json();result.customerNumber=pd.sellToCustomerNumber||customerNumber;result.customerName=pd.sellToCustomerName||null;}
+          else{console.warn("bcCreateProject customer PATCH failed:",p.status,await p.text());}
+        }
+      }catch(e){console.warn("bcCreateProject customer PATCH error:",e);}
+    }
+    return result;
   }catch(e){console.warn("bcCreateProject error:",e);return null;}
 }
 
