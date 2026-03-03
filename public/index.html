@@ -4679,6 +4679,24 @@ function App({user}){
   const [showSetup,setShowSetup]=useState(false);
   const [setupDismissed,setSetupDismissed]=useState(false);
 
+  // Splash screen state: "loading" → "shrinking" → "done"
+  const [splash,setSplash]=useState("loading");
+  const [splashPct,setSplashPct]=useState(0);
+  const splashStartRef=useRef(Date.now());
+  useEffect(()=>{
+    const duration=3000;
+    let raf;
+    function tick(){
+      const elapsed=Date.now()-splashStartRef.current;
+      const pct=Math.min(100,Math.round((elapsed/duration)*100));
+      setSplashPct(pct);
+      if(elapsed<duration){raf=requestAnimationFrame(tick);}
+      else{setSplash("shrinking");setTimeout(()=>setSplash("done"),800);}
+    }
+    raf=requestAnimationFrame(tick);
+    return()=>cancelAnimationFrame(raf);
+  },[]);
+
   useEffect(()=>{
     (async()=>{
       _appCtx.uid=user.uid;
@@ -4730,6 +4748,24 @@ function App({user}){
 
   return(
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column"}}>
+      {/* ── SPLASH SCREEN ── */}
+      {splash!=="done"&&(
+        <div style={{position:"fixed",inset:0,zIndex:9999,background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
+          transition:"opacity 0.5s ease",opacity:splash==="shrinking"?0:1,pointerEvents:splash==="shrinking"?"none":"auto"}}>
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",
+            transition:"all 0.7s cubic-bezier(0.4,0,0.2,1)",
+            transform:splash==="shrinking"?"translateY(-44vh) scale(0.38)":"translateY(0) scale(1)"}}>
+            <span style={{fontSize:120,lineHeight:1,marginBottom:12}}>⬡</span>
+            <span style={{fontSize:72,fontWeight:800,letterSpacing:-3,marginBottom:8}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
+            <span style={{fontSize:13,color:C.muted,letterSpacing:1,marginBottom:32}}>AI Recognition &amp; Capture</span>
+          </div>
+          {splash==="loading"&&(
+            <div style={{width:280,height:4,background:C.border,borderRadius:4,overflow:"hidden",transition:"opacity 0.3s",opacity:splash==="loading"?1:0}}>
+              <div style={{height:"100%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.15s linear",width:splashPct+"%"}}/>
+            </div>
+          )}
+        </div>
+      )}
       {/* ── TOP MENU BAR (always visible) ── */}
       <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:64,position:"relative"}}>
         <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",pointerEvents:"none"}}>
