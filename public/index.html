@@ -65,12 +65,14 @@ function useSmoothProgress(estSeconds=15){
   const startTime=useRef(0);
   const est=useRef(estSeconds);
   const msgRef=useRef("");
+  const baseRef=useRef(0); // base pct offset for phase transitions
 
   const tick=useCallback(()=>{
     const elapsed=(Date.now()-startTime.current)/1000;
     const t=Math.min(elapsed/est.current,1);
-    // Slow start, steady middle, keeps moving near end — reaches ~97% at est time
-    const pct=97*Math.pow(t,0.6)*(2-Math.pow(t,0.6));
+    // Steady progression — nearly linear with gentle ease near end
+    const curve=Math.pow(t,0.9);
+    const pct=baseRef.current+(97-baseRef.current)*curve;
     setState({msg:msgRef.current,pct:Math.min(97,Math.round(pct))});
     timer.current=requestAnimationFrame(tick);
   },[]);
@@ -78,11 +80,22 @@ function useSmoothProgress(estSeconds=15){
   const start=useCallback((msg,seconds)=>{
     if(seconds)est.current=seconds;
     msgRef.current=msg||"";
+    baseRef.current=0;
     startTime.current=Date.now();
     if(timer.current)cancelAnimationFrame(timer.current);
     setState({msg:msgRef.current,pct:0});
     timer.current=requestAnimationFrame(tick);
   },[tick]);
+
+  // Transition to a new phase — continues smoothly from current pct
+  const phase=useCallback((msg,seconds)=>{
+    const elapsed=(Date.now()-startTime.current)/1000;
+    const t=Math.min(elapsed/est.current,1);
+    baseRef.current=Math.min(97,Math.round(baseRef.current+(97-baseRef.current)*Math.pow(t,0.9)));
+    est.current=seconds||est.current;
+    msgRef.current=msg||msgRef.current;
+    startTime.current=Date.now();
+  },[]);
 
   const update=useCallback((msg)=>{
     msgRef.current=msg||msgRef.current;
@@ -91,17 +104,21 @@ function useSmoothProgress(estSeconds=15){
 
   const finish=useCallback((msg)=>{
     if(timer.current){cancelAnimationFrame(timer.current);timer.current=null;}
+    baseRef.current=0;
     setState(msg?{msg,pct:100}:null);
   },[]);
 
   const stop=useCallback(()=>{
     if(timer.current){cancelAnimationFrame(timer.current);timer.current=null;}
+    baseRef.current=0;
     setState(null);
   },[]);
 
+  const running=useCallback(()=>!!timer.current,[]);
+
   useEffect(()=>()=>{if(timer.current)cancelAnimationFrame(timer.current);},[]);
 
-  return{progress:state,start,update,finish,stop};
+  return{progress:state,start,phase,update,finish,stop,running};
 }
 
 // ── THEME ──
@@ -207,16 +224,16 @@ function computeLaborEstimate(panel){
     lines.push({category,qty,unit,minPerUnit,hours,cost});
   };
 
-  addLine("Wire Time",wireTerminations||wireCount,LABOR_RATES.wireMinPerPoint,"pts");
-  addLine("Door Wiring",doorDevices,LABOR_RATES.doorDeviceMinPerDevice,"dev");
-  addLine("Device Mounting",allDevices,LABOR_RATES.mountingMinPerDevice,"dev");
-  addLine("Duct & DIN Rail",ductDinFeet,LABOR_RATES.ductDinMinPerFoot,"ft");
+  addLine("Wire Time",wireCount,LABOR_RATES.wireMinPerPoint,"wires");
+  addLine("Door Wiring",doorDevices,LABOR_RATES.doorDeviceMinPerDevice,"devices");
+  addLine("Device Mounting",allDevices,LABOR_RATES.mountingMinPerDevice,"devices");
+  addLine("Duct & DIN Rail",ductDinFeet,LABOR_RATES.ductDinMinPerFoot,"feet");
   addLine("Panel Holes",panelHoles,LABOR_RATES.holesMinPerHole,"holes");
   // Labels: stored as hours directly
-  lines.push({category:"Labels",qty:labelHours,unit:"hr",minPerUnit:60,hours:labelHours,cost:labelHours*laborRate});
-  addLine("Project Mgmt",pmUnits,LABOR_RATES.pmMinPerUnit,"sess");
-  addLine("Buyoff / QC",buyoffUnits,LABOR_RATES.buyoffMinPerUnit,"sess");
-  addLine("Crating",cratingUnits,LABOR_RATES.cratingMinPerUnit,"crate");
+  lines.push({category:"Labels",qty:labelHours,unit:"hours",minPerUnit:60,hours:labelHours,cost:labelHours*laborRate});
+  addLine("Project Mgmt",pmUnits,LABOR_RATES.pmMinPerUnit,"sessions");
+
+  addLine("Crating Time",cratingUnits,LABOR_RATES.cratingMinPerUnit,"crates");
 
   const totalHours=lines.reduce((s,l)=>s+l.hours,0);
   const totalCost=totalHours*laborRate;
@@ -304,7 +321,7 @@ async function apiCall(body){
     body:JSON.stringify({model:"claude-opus-4-6",...body})
   });
   const d=await r.json();
-  if(!r.ok)throw new Error(d.error?.message||"API error");
+  if(!r.ok){console.error("API ERROR:",r.status,d.error?.type,d.error?.message);throw new Error(d.error?.message||"API error");}
   return d.content?.[0]?.text||"";
 }
 
@@ -580,10 +597,13 @@ async function deleteProject(uid,id){
 // ── FIREBASE STORAGE HELPERS ──
 async function uploadPageImage(uid,projectId,pageId,dataUrl){
   const ref=fbStorage.ref(`pageImages/${uid}/${projectId}/${pageId}.jpg`);
-  const resp=await fetch(dataUrl);
-  const blob=await resp.blob();
-  await ref.put(blob,{contentType:"image/jpeg"});
-  return await ref.getDownloadURL();
+  console.log("UPLOAD IMAGE: starting",pageId,"to",ref.fullPath);
+  // Use putString with data_url format — avoids blob conversion issues
+  const snap=await ref.putString(dataUrl,"data_url");
+  console.log("UPLOAD IMAGE: uploaded",pageId,"state="+snap.state);
+  const url=await ref.getDownloadURL();
+  console.log("UPLOAD IMAGE: got URL",pageId);
+  return url;
 }
 async function ensureDataUrl(page){
   if(page.dataUrl)return page;
@@ -836,14 +856,29 @@ const SCHEMATIC_PROMPT=`You are reading a UL508A electrical control panel schema
 Extract and return ONLY valid JSON:
 {
   "tags": [{"tag":"CB100","type":"breaker"}, {"tag":"PB1","type":"pushbutton"}],
-  "wireCount": 42,
-  "wireTerminations": 84
+  "wires": [
+    {"w":"L1 bus to CB1 top","internal":true},
+    {"w":"CB1 bottom to T1 H1","internal":true},
+    {"w":"TB1-3 to output signal","internal":false}
+  ]
 }
 
 Rules:
 - tags: array of objects with "tag" (alphanumeric device ID) and "type" (one of: breaker, contactor, overload, relay, transformer, fuse, disconnect, drive, plc_io, terminal_block, pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, power_supply, surge, meter, other)
-- wireCount: count individual wires (each wire counted once)
-- wireTerminations: count total wire termination points (each wire has 2 ends, so typically ~2× wireCount)
+
+Wire listing rules (CRITICAL — follow exactly):
+- List every solid-line connection as an object with "w" (description) and "internal" (boolean).
+- "internal": true means BOTH endpoints are devices, terminal blocks, or busses INSIDE the panel.
+- "internal": false means one or both endpoints leave the panel (output signals, incoming supplies, field wires, external destinations).
+
+Examples of internal=TRUE: bus to breaker, breaker to contactor, switch to terminal block, bus to switch.
+Examples of internal=FALSE: terminal block to "output signal", "incoming supply" to terminal block, anything to/from a named signal like "high torque shutdown", "clarifier start", "alarm output", anything described as an output or external signal.
+
+- The vertical bus lines themselves (L1, L2, L3, N) are NOT wires — do not list them.
+- Dashed lines are NOT wires — do not list them.
+- Ground symbols and internal device connections are NOT wires.
+- If a line branches at a junction, each branch is a separate wire.
+- Be conservative. When in doubt, mark internal: false.
 - Return JSON only, no explanation`;
 
 async function analyzeSchematicPage(dataUrl){
@@ -865,7 +900,15 @@ async function analyzeSchematicPage(dataUrl){
     // Normalize tags: accept both old ["CB100",...] and new [{tag,type},...] formats
     const rawTags=Array.isArray(parsed.tags)?parsed.tags:[];
     const tags=rawTags.map(t=>typeof t==="string"?{tag:t,type:"other"}:({tag:t.tag||"",type:t.type||"other"}));
-    return{tags,wireCount:+parsed.wireCount||0,wireTerminations:+parsed.wireTerminations||0};
+    const wires=Array.isArray(parsed.wires)?parsed.wires:[];
+    const internalWires=wires.filter(w=>typeof w==="object"?w.internal:true);
+    const externalWires=wires.filter(w=>typeof w==="object"&&!w.internal);
+    const wireCount=internalWires.length||+parsed.wireCount||0;
+    const wireTerminations=wireCount*2;
+    console.log(`WIRE COUNT: ${internalWires.length} internal, ${externalWires.length} external, ${wires.length} total`);
+    console.log("Wires INTERNAL (counted):",internalWires.map(w=>w.w||w));
+    console.log("Wires EXTERNAL (excluded):",externalWires.map(w=>w.w||w));
+    return{tags,wireCount,wireTerminations};
   }catch(e){console.error("Schematic JSON parse error:",e,raw);return{tags:[],wireCount:0,wireTerminations:0};}
 }
 
@@ -889,10 +932,11 @@ Extract and return ONLY valid JSON:
 
 Rules:
 - enclosure: overall panel dimensions if visible
-- doorCutouts: devices mounted on the enclosure door (pushbuttons, pilot lights, selector switches, HMIs, e-stops, horns, meters). Include tag if visible, type, and approximate cutout size in inches.
-- backpanelDevices: devices mounted on the backpanel (breakers, contactors, relays, PLCs, terminal blocks, power supplies, etc). Include tag and type.
+- doorCutouts: ONLY devices that are mounted through the enclosure DOOR with cutout holes — these are operator-interface devices like pushbuttons, pilot lights, selector switches, HMIs, e-stops, horns, meters. The door layout typically shows circular or rectangular cutout holes. If you see a flat panel with DIN rails, wire duct, breakers, terminal blocks, contactors, relays — that is a BACKPANEL, not a door.
+- backpanelDevices: devices mounted on the backpanel/mounting plate inside the enclosure — breakers, contactors, relays, overloads, PLCs, terminal blocks, power supplies, transformers, drives, fuses, DIN-rail mounted devices. If the drawing shows DIN rails, wire duct, or devices arranged on a flat mounting plate, ALL those devices go here — NOT in doorCutouts.
 - ductRuns: each wire duct run with estimated length in feet
 - dinRails: each DIN rail with estimated length in feet
+- IMPORTANT: Most layout pages show the backpanel. Only put devices in doorCutouts if you can clearly see they are door-mounted operator interface devices with cutout holes. When in doubt, put devices in backpanelDevices.
 - Use device types: breaker, contactor, overload, relay, transformer, fuse, disconnect, drive, plc_io, terminal_block, pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, power_supply, surge, meter, other
 - Return JSON only, no explanation`;
 
@@ -916,6 +960,8 @@ async function analyzeLayoutPage(dataUrl){
 }
 
 function mergeLayoutResults(layouts){
+  console.log("MERGE LAYOUTS: "+layouts.length+" layout results to merge");
+  layouts.forEach((l,i)=>console.log("Layout result "+i+":",JSON.stringify({doorCutouts:l?.doorCutouts?.length,backpanelDevices:l?.backpanelDevices?.length})));
   const merged={doorCutouts:[],backpanelDevices:[],ductRuns:[],dinRails:[],enclosure:null};
   for(const l of layouts){
     if(!l)continue;
@@ -925,6 +971,21 @@ function mergeLayoutResults(layouts){
     if(Array.isArray(l.ductRuns))merged.ductRuns.push(...l.ductRuns);
     if(Array.isArray(l.dinRails))merged.dinRails.push(...l.dinRails);
   }
+  // Deduplicate door cutouts by tag (same device may appear on multiple layout pages)
+  const seenDoor=new Set();
+  merged.doorCutouts=merged.doorCutouts.filter(d=>{
+    const key=(d.tag||"").toUpperCase();
+    if(!key||seenDoor.has(key))return false;
+    seenDoor.add(key);return true;
+  });
+  // Deduplicate backpanel devices by tag
+  const seenBack=new Set();
+  merged.backpanelDevices=merged.backpanelDevices.filter(d=>{
+    const key=(d.tag||"").toUpperCase();
+    if(!key||seenBack.has(key))return false;
+    seenBack.add(key);return true;
+  });
+  console.log("AFTER DEDUP: doorCutouts="+merged.doorCutouts.length+", backpanelDevices="+merged.backpanelDevices.length);
   // Compute derived counts
   const ductFeet=merged.ductRuns.reduce((s,r)=>s+(r.lengthFt||0),0);
   const dinFeet=merged.dinRails.reduce((s,r)=>s+(r.lengthFt||0),0);
@@ -975,12 +1036,23 @@ async function runPanelValidation(panel){
   });
 
   // 4. Build laborData counts
-  const doorDevices=layoutMerged?layoutMerged.doorDeviceCount:doorDevicesFromSchematic.length;
-  const allDevices=layoutMerged?(layoutMerged.doorDeviceCount+layoutMerged.backpanelDeviceCount):allDevicesFromSchematic.length;
-  const panelHoles=layoutMerged?layoutMerged.panelHoles:0;
+  // Use schematic as authority for door device count — layout often misclassifies backpanel devices as door devices
+  const schDoorCount=doorDevicesFromSchematic.length;
+  const layDoorCount=layoutMerged?layoutMerged.doorDeviceCount:0;
+  const layBackCount=layoutMerged?layoutMerged.backpanelDeviceCount:0;
+  // If schematic found door devices, trust that count. Otherwise fall back to layout.
+  const doorDevices=schDoorCount>0?schDoorCount:layDoorCount;
+  // Total devices: door (from schematic) + backpanel (from layout if available, else schematic total minus door)
+  const allDevices=layoutMerged?(doorDevices+layBackCount):allDevicesFromSchematic.length;
+  // Panel holes: use door count from schematic as cap on layout's panel holes
+  const layoutPanelHoles=layoutMerged?layoutMerged.panelHoles:0;
+  const panelHoles=schDoorCount>0?Math.min(layoutPanelHoles,schDoorCount):layoutPanelHoles;
+  console.log("DOOR DEVICES: schematic="+schDoorCount+", layout="+layDoorCount+", using="+doorDevices);
+  console.log("ALL DEVICES: "+allDevices+", panelHoles="+panelHoles);
   const ductDinFeet=layoutMerged?layoutMerged.ductDinFeet:0;
   const hasLayoutData=!!layoutMerged;
 
+  console.log("LABOR COUNTS: doorDevices="+doorDevices+", allDevices="+allDevices+", panelHoles="+panelHoles+", ductDinFeet="+ductDinFeet+", wireCount="+totalWires);
   const laborData={
     counts:{wireCount:totalWires,wireTerminations:totalTerminations,doorDevices,allDevices,panelHoles,ductDinFeet},
     overrides:{},
@@ -1099,10 +1171,19 @@ function calcConfidence(panel){
     pricing=Math.round(total/bom.length);
   }
 
-  // Wiring: based on validation confidence
+  // Wiring: based on validation confidence (fallback: derive from match data)
   let wiring=0;
   if(validation){
-    const conf=validation.confidence;
+    let conf=validation.confidence;
+    if(!conf){
+      // Derive from match data if confidence string is missing
+      const matched=Array.isArray(validation.matched)?validation.matched.length:0;
+      const missing=Array.isArray(validation.missingFromSchematic)?validation.missingFromSchematic.length:0;
+      const nt=Array.isArray(validation.notTraceable)?validation.notTraceable.length:0;
+      const traceable=matched+missing;
+      const matchPct=traceable>0?matched/traceable:1;
+      conf=matchPct>=0.9?"high":matchPct>=0.7?"medium":"low";
+    }
     wiring=conf==="high"?100:conf==="medium"?70:conf==="low"?40:0;
   }
 
@@ -1717,11 +1798,19 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
         const tagStrings=allTags.map(t=>typeof t==="string"?t:t.tag||"");
         const schematicTags=[...new Set(tagStrings.map(t=>t.trim()).filter(Boolean))];
         const validation={runAt:Date.now(),schematicTags,wireCount:totalWires,matched:[],missingFromSchematic:[],notTraceable:[],unaccountedTags:[],confidence:"medium"};
-        // Build laborData
+        // Build laborData — use schematic as authority for door device count
         const doorDevicesFromSch=allTags.filter(t=>{const type=typeof t==="string"?"other":(t.type||"other");return DOOR_DEVICE_TYPES.has(type);});
         const allDevicesFromSch=allTags.filter(t=>{const tag=typeof t==="string"?t:(t.tag||"");return tag.trim().length>0;});
+        const schDoorCount2=doorDevicesFromSch.length;
+        const layDoorCount2=layoutMerged?layoutMerged.doorDeviceCount:0;
+        const layBackCount2=layoutMerged?layoutMerged.backpanelDeviceCount:0;
+        const doorDevices2=schDoorCount2>0?schDoorCount2:layDoorCount2;
+        const allDevices2=layoutMerged?(doorDevices2+layBackCount2):allDevicesFromSch.length;
+        const layoutPanelHoles2=layoutMerged?layoutMerged.panelHoles:0;
+        const panelHoles2=schDoorCount2>0?Math.min(layoutPanelHoles2,schDoorCount2):layoutPanelHoles2;
+        console.log("FQ DOOR DEVICES: schematic="+schDoorCount2+", layout="+layDoorCount2+", using="+doorDevices2);
         const laborData={
-          counts:{wireCount:totalWires,wireTerminations:totalTerminations,doorDevices:layoutMerged?layoutMerged.doorDeviceCount:doorDevicesFromSch.length,allDevices:layoutMerged?(layoutMerged.doorDeviceCount+layoutMerged.backpanelDeviceCount):allDevicesFromSch.length,panelHoles:layoutMerged?layoutMerged.panelHoles:0,ductDinFeet:layoutMerged?layoutMerged.ductDinFeet:0},
+          counts:{wireCount:totalWires,wireTerminations:totalTerminations,doorDevices:doorDevices2,allDevices:allDevices2,panelHoles:panelHoles2,ductDinFeet:layoutMerged?layoutMerged.ductDinFeet:0},
           overrides:{},defaults:{pmUnits:2,buyoffUnits:2,cratingUnits:1,labelHours:4},hasLayoutData:!!layoutMerged,layoutAnalysis:layoutMerged,deviceClassification:allTags
         };
         proj={...proj,validation,laborData,status:"validated"};
@@ -2512,6 +2601,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
   const [bcNewlyCreated,setBcNewlyCreated]=useState(new Set());
   const [bcBrowserQuery,setBcBrowserQuery]=useState("");
+  const [pendingPages,setPendingPages]=useState([]);
   const feedbackRef=useRef(null);
   const fileRef=useRef(null);
   const autoSaveTimer=useRef(null);
@@ -2522,7 +2612,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   },[uid]);
   useEffect(()=>()=>{if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);},[]);
 
-  const pages=panel.pages||[];
+  const savedPages=panel.pages||[];
+  const pages=pendingPages.length>0?pendingPages:savedPages;
   const typeColors={bom:C.accent,schematic:C.green,layout:C.purple};
   const SHORT={bom:"BOM",schematic:"SCH",layout:"LAY"};
   const bomCount=pages.filter(p=>getPageTypes(p).includes("bom")).length;
@@ -2530,10 +2621,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const layoutCount=pages.filter(p=>getPageTypes(p).includes("layout")).length;
 
   async function addFiles(files){
+    console.log("ADDFILES: start, files="+files.length+", apiKey="+(!!_apiKey));
     setProcessing(true);setErr("");
-    console.log("addFiles started:",files.length,"files, _apiKey:",_apiKey?"set":"NOT SET");
     try{
-    const items=[];
+    const newItems=[];
+    let livePages=[...savedPages];
     for(const f of Array.from(files)){
       if(f.type==="application/pdf"){
         await window.pdfjsReady;
@@ -2556,31 +2648,39 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           const dataUrl=srcCanvas.toDataURL("image/jpeg",0.95);
           srcCanvas.width=0;srcCanvas.height=0;
           const resized=await resizeImage(dataUrl,3800);
-          items.push({id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,types:[]});
+          const item={id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,types:[]};
+          newItems.push(item);
+          livePages=[...livePages,item];
+          setPendingPages([...livePages]);
         }
       } else if(f.type.startsWith("image/")){
         setProcessingMsg(f.name);
         const reader=new FileReader();
         const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
         const resized=await resizeImage(dataUrl,3800);
-        items.push({id:Date.now()+Math.random(),name:f.name,dataUrl:resized,types:[]});
+        const item={id:Date.now()+Math.random(),name:f.name,dataUrl:resized,types:[]};
+        newItems.push(item);
+        livePages=[...livePages,item];
+        setPendingPages([...livePages]);
       }
     }
     setProcessing(false);setProcessingMsg("");
-    if(_apiKey&&items.length){
+    if(_apiKey&&newItems.length){
       setDetecting(true);
       let done=0;
-      await parallelMap(items,async(item,i)=>{
+      await parallelMap(newItems,async(item,i)=>{
         const info=await detectPageTypes(item.dataUrl);
-        items[i].types=info.types;items[i].sheetNo=info.sheetNo;
-        done++;setDetectProgress(`Detecting ${done}/${items.length}…`);
+        newItems[i].types=info.types;newItems[i].sheetNo=info.sheetNo;
+        done++;setDetectProgress(`Detecting ${done}/${newItems.length}…`);
+        livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,sheetNo:info.sheetNo}:p);
+        setPendingPages([...livePages]);
       },4);
       setDetecting(false);setDetectProgress("");
     }
-    let updated={...panel,pages:[...pages,...items]};
+    let updated={...panel,pages:livePages};
     // Auto-extract title block from first drawing if panel has none yet
-    if(_apiKey&&items.length>0&&!panel.drawingNo){
-      const firstWithData=items.find(i=>i.dataUrl);
+    if(_apiKey&&newItems.length>0&&!panel.drawingNo){
+      const firstWithData=newItems.find(i=>i.dataUrl);
       if(firstWithData){
         const tb=await extractTitleBlock(firstWithData.dataUrl);
         if(tb){
@@ -2589,19 +2689,25 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         }
       }
     }
-    // Show drawings immediately
     onUpdate(updated);
+    setPendingPages([]);
     try{await onSaveImmediate(updated);}catch(e){}
+
+
 
     // Auto-extract BOM from any BOM-tagged pages
     const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
     let latestPanel=updated;
+    const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout"))&&p.dataUrl);
+    const willValidate=_apiKey&&hasSchOrLayout;
+    console.log("ADDFILES: bomPages="+bomPages.length+", hasSchOrLayout="+hasSchOrLayout+", willValidate="+willValidate+", totalPages="+updated.pages.length);
     if(_apiKey&&bomPages.length>0){
-      setExtracting(true);ep.start("Auto-extracting BOM…",bomPages.length*12);
+      const totalEst=bomPages.length*15+(willValidate?25:0);
+      setExtracting(true);ep.start("Extracting BOM…",totalEst);
       let all=[];let ok=true;let bomDone=0;
       try{
         const bomResults=await parallelMap(bomPages,async(pg)=>{
-          ep.update(`BOM page ${++bomDone}/${bomPages.length}…`);
+          ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
           const items=await extractBomPage(pg.dataUrl);
           return items;
         },3);
@@ -2619,28 +2725,32 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         latestPanel=withBom;
         onUpdate(withBom);
         try{await onSaveImmediate(withBom);}catch(e){}
-        ep.finish(`✓ ${bom.length} items extracted`);
-      }
+        if(!willValidate)ep.finish(`✓ ${bom.length} items extracted`);
+      }else if(!willValidate){ep.stop();}
+      if(willValidate)ep.update("Validating…");
       setExtracting(false);
     }
     // Auto-validate if schematic pages exist
-    const schPages=latestPanel.pages.filter(p=>getPageTypes(p).includes("schematic")&&p.dataUrl);
-    const hasSchOrLayout=latestPanel.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout"))&&p.dataUrl);
-    if(_apiKey&&hasSchOrLayout){
+    if(willValidate){
       setValidatingPanel(true);
-      ep.start("Validating schematics & layout…",20);
-      const result=await runPanelValidation(latestPanel);
-      if(result.validation||result.laborData){
-        const withVal={...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:latestPanel.status==="extracted"?"extracted":"validated",updatedAt:Date.now()};
-        latestPanel=withVal;
-        onUpdate(withVal);
-        try{await onSaveImmediate(withVal);}catch(e){}
-      }
+      if(!ep.running())ep.start("Validating…",25);
+      try{
+        const result=await runPanelValidation(latestPanel);
+        if(result.validation||result.laborData){
+          const withVal={...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:latestPanel.status==="extracted"?"extracted":"validated",updatedAt:Date.now()};
+          latestPanel=withVal;
+          onUpdate(withVal);
+          try{await onSaveImmediate(withVal);}catch(e){}
+        }
+        console.log("VALIDATION RESULT: confidence="+((result.validation||{}).confidence)+", wireCount="+((result.validation||{}).wireCount));
+      }catch(valEx){console.error("Validation failed:",valEx);}
+      const itemCount=(latestPanel.bom||[]).length;
       setValidatingPanel(false);
-      ep.stop();
+      ep.finish(itemCount>0?`✓ ${itemCount} items · validated`:"✓ Validated");
     }
-    // Upload page images to Firebase Storage in background, save storageUrls
+    // Upload page images to Firebase Storage (inside try so latestPanel is in scope)
     const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
+    console.log("STORAGE UPLOAD: "+pagesNeedingUpload.length+" pages need upload, projectId="+projectId);
     if(pagesNeedingUpload.length>0&&projectId){
       try{
         const urlMap={};
@@ -2651,13 +2761,14 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         latestPanel={...latestPanel,pages:pagesWithUrls};
         onUpdate(latestPanel);
         try{await onSaveImmediate(latestPanel);}catch(e){}
+        console.log("STORAGE UPLOAD: complete, "+Object.keys(urlMap).length+" images uploaded");
       }catch(e){console.warn("Storage upload failed:",e);}
     }
     }catch(ex){
       console.error("addFiles error:",ex);
       setErr(`Error processing files: ${ex.message}`);
     }finally{
-      setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setExtracting(false);setValidatingPanel(false);
+      setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setExtracting(false);setValidatingPanel(false);setPendingPages([]);
     }
   }
 
@@ -2724,14 +2835,14 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   async function runExtraction(){
     let bomPages=pages.filter(p=>getPageTypes(p).includes("bom"));
     if(!bomPages.length){setErr("No pages tagged BOM yet.");return;}
-    setExtracting(true);setErr("");ep.start("Starting…",bomPages.length*12);
+    setExtracting(true);setErr("");ep.start("Extracting BOM…",bomPages.length*12);
     const noData=bomPages.find(pg=>!pg.dataUrl&&!pg.storageUrl);
     if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();return;}
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     let all=[];let bomDone=0;
     try{
       const bomResults=await parallelMap(bomPages,async(pg)=>{
-        ep.update(`Analyzing page ${++bomDone}/${bomPages.length}…`);
+        ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
         const items=await extractBomPage(pg.dataUrl);
         return items;
       },3);
@@ -2809,12 +2920,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       return;
     }
 
-    setReExtracting(true);setErr("");ep.start("Re-extracting with your feedback…",bomPages.length*12);
+    setReExtracting(true);setErr("");ep.start("Extracting BOM — applying feedback…",bomPages.length*12);
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     let all=[];let bomDone=0;
     try{
       const bomResults=await parallelMap(bomPages,async(pg)=>{
-        ep.update(`Page ${++bomDone}/${bomPages.length}…`);
+        ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
         const items=await extractBomPage(pg.dataUrl,aiFeedback);
         return items;
       },3);
@@ -3143,15 +3254,14 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.red,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>{err}<button onClick={()=>setErr("")} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:15,lineHeight:1}}>✕</button></div>}
 
       {/* Extract progress bar */}
-      {extractProgress&&(
+      {extractProgress&&(()=>{const pct=extractProgress.pct;const txt=[extractProgress.msg,pct>0?pct+"%":""].filter(Boolean).join("  ");const centered=pct>=40;const base={position:"absolute",top:0,left:0,height:"100%",display:"flex",alignItems:"center",fontSize:13,fontWeight:700,pointerEvents:"none",whiteSpace:"nowrap",transition:"opacity 0.3s"};return(
         <div style={{marginBottom:12}}>
-          <div style={{background:C.border,borderRadius:7,height:22,overflow:"hidden",marginBottom:6,position:"relative"}}>
-            <div style={{width:`${extractProgress.pct}%`,height:"100%",background:C.accent,borderRadius:7,transition:"width 0.3s"}}/>
-            {extractProgress.pct>0&&<div style={{position:"absolute",top:0,left:0,width:`${extractProgress.pct}%`,height:"100%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,fontWeight:700,color:"#fff",pointerEvents:"none",minWidth:32}}>{extractProgress.pct}%</div>}
+          <div style={{background:C.border,borderRadius:7,height:28,overflow:"hidden",position:"relative"}}>
+            <div style={{width:`${pct}%`,height:"100%",background:C.accent,borderRadius:7,transition:"width 0.3s"}}/>
+            <div style={{...base,width:"100%",paddingLeft:10,color:"#fff",opacity:centered?0:1}}>{txt}</div>
+            <div style={{...base,width:`${pct}%`,justifyContent:"center",color:"#fff",overflow:"hidden",opacity:centered?1:0,transition:"width 0.3s, opacity 0.3s"}}>{txt}</div>
           </div>
-          <div style={{fontSize:13,color:C.sub}}>{extractProgress.msg}</div>
-        </div>
-      )}
+        </div>);})()}
 
       {/* BOM Table */}
       {(panel.bom||[]).length>0&&(
@@ -3162,12 +3272,17 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             </div>
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
           </div>
+          {panel.validation&&<div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:18,marginBottom:8,fontSize:13,color:C.muted}}>
+            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{color:C.green,fontSize:12}}>⬤</span> Matched</span>
+            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{color:"#cc0000",fontSize:12}}>⬤</span> Missing</span>
+            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{color:"#ffe033",fontSize:12}}>⬤</span> Not Traceable</span>
+          </div>}
           <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["Description",0],["Manufacturer",0,"fit"],["Notes",160],["Unit $",90],["Ext $",80],["Val",44],["",90]].map(([h,w,mode])=>(
-                    <th key={h} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0],["Manufacturer",0,"fit"],["Notes",160],["Unit $",90],["Ext $",80],["Val",44],["",90]].map(([h,w,mode],hi)=>(
+                    <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -3186,15 +3301,35 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   const missingIds=valData?new Set((valData.missingFromSchematic||[]).map(m=>String(m.id))):null;
                   const ntIds=valData?new Set((valData.notTraceable||[]).map(m=>String(m.id))):null;
                   return sortedBom.map((row,i)=>(
-                  <tr key={row.id} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
+                  <tr key={row.id} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:(+row.qty===0||+row.unitPrice===0)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:12,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
                       {row.itemNo||i+1}
                     </td>
-                    {[["qty",56],["partNumber",0,"fit"],["description",0],["manufacturer",0,"fit"],["notes",160]].map(([f,w,mode])=>(
+                    {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",0],["manufacturer",0,"fit"],["notes",160]].map(([f,w,mode])=>(
+                      f==="_bc"?(
+                        <td key="_bc" style={{padding:"3px 2px",width:32,textAlign:"center"}}>
+                          {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
+                            <button title="Fuzzy BC lookup" onClick={async()=>{
+                              const pn=(row.partNumber||"").trim();
+                              if(!pn)return;
+                              const result=await bcFuzzyLookup(pn);
+                              if(result.match)applyBcItem(row.id,result.match);
+                              else if(result.suggestions.length>0)setBcFuzzySuggestions(prev=>({...prev,[row.id]:result.suggestions}));
+                              else{setBcBrowserTarget(row.id);setBcBrowserQuery(pn);setBcBrowserOpen(true);}
+                            }} style={{background:"#2563eb",border:"none",color:"#fff",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}>BC</button>
+                          )}
+                        </td>
+                      ):
                       <td key={f} style={{padding:"3px 5px",width:mode==="fit"?"1%":w||"auto",whiteSpace:mode==="fit"?"nowrap":"normal",overflow:"visible"}}>
                         {mode==="fit"?(
                           <div>
-                          <div style={{position:"relative",display:"inline-block",minWidth:80}}>
+                          <div style={{display:"flex",alignItems:"center"}}>
+                          {f==="partNumber"&&!readOnly&&_bcToken&&(
+                            <button title="Browse BC items" onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
+                              style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"2px 4px",lineHeight:1,opacity:0.85,flexShrink:0,filter:"brightness(1.8)"}}
+                              onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
+                          )}
+                          <div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>
                             <span style={{visibility:"hidden",whiteSpace:"pre",fontSize:13,fontFamily:"inherit",padding:"5px 20px 5px 7px",display:"block",pointerEvents:"none"}}>{row[f]||"\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"}</span>
                             <input value={row[f]||""} readOnly={readOnly}
                               onChange={e=>updateBomRow(row.id,f,e.target.value)}
@@ -3241,6 +3376,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                               <span style={{position:"absolute",top:3,right:3,fontSize:9,color:row.correctedByLibrary?C.yellow:C.teal,pointerEvents:"none",fontWeight:800}}>{row.correctedByLibrary?"🔧":"📚"}</span>
                             )}
                           </div>
+                          </div>
                           {f==="partNumber"&&row.suggestedPartNumber&&!row.partNumber&&!readOnly&&(
                             <div style={{display:"flex",alignItems:"center",gap:4,marginTop:3,paddingLeft:2,flexWrap:"nowrap"}}>
                               <span style={{fontSize:10,color:C.teal}}>📚</span>
@@ -3251,7 +3387,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           )}
                           {f==="partNumber"&&bcFuzzySuggestions[row.id]&&!readOnly&&(
                             <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}44`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto"}}>
-                              <div style={{fontSize:10,color:C.accent,fontWeight:700,marginBottom:4}}>BC FUZZY MATCHES</div>
+                              <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
+                                <div style={{fontSize:10,color:C.accent,fontWeight:700,flex:1}}>BC FUZZY MATCHES</div>
+                                <button onClick={()=>setBcFuzzySuggestions(prev=>{const next={...prev};delete next[row.id];return next;})}
+                                  style={{fontSize:10,color:C.text,background:C.border,border:"none",cursor:"pointer",padding:"2px 10px",lineHeight:1,fontWeight:600,borderRadius:20}}
+                                  onMouseEnter={e=>e.target.style.background=C.muted} onMouseLeave={e=>e.target.style.background=C.border}>Close</button>
+                              </div>
                               {bcFuzzySuggestions[row.id].map((s,si)=>(
                                 <div key={s.number+si} onClick={()=>applyBcItem(row.id,s)}
                                   style={{display:"flex",alignItems:"center",gap:6,padding:"3px 4px",cursor:"pointer",borderRadius:4,fontSize:11}}
@@ -3262,8 +3403,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                                   <span style={{color:C.green,fontWeight:600,whiteSpace:"nowrap"}}>{s.unitCost!=null?"$"+s.unitCost.toFixed(2):""}</span>
                                 </div>
                               ))}
-                              <button onClick={()=>setBcFuzzySuggestions(prev=>{const next={...prev};delete next[row.id];return next;})}
-                                style={{fontSize:10,color:C.muted,background:"none",border:"none",cursor:"pointer",marginTop:2,padding:"2px 4px"}}>Dismiss</button>
                             </div>
                           )}
                           </div>
@@ -3280,7 +3419,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                                   .then(()=>loadPartLibrary(uid).then(setPartLibrary)).catch(()=>{});
                               }
                             }}
-                            style={{...inp({padding:"5px 14px 5px 7px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5}),width:w?w-10+"px":"100%",minWidth:w?w-10+"px":"100px"}}
+                            style={{...inp({padding:"5px 14px 5px 7px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5}),width:w?w-10+"px":"100%",minWidth:w?w-10+"px":"100px",flex:1}}
                             onFocus={e=>e.target.style.borderColor=C.accent}
                           />
                         )}
@@ -3307,30 +3446,15 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:44}}>
                       {valData&&(
-                        matchedIds.has(String(row.id))?<span style={{color:C.green,fontWeight:800,fontSize:14}}>✓</span>
-                        :missingIds.has(String(row.id))?<span style={{color:C.red,fontWeight:800,fontSize:14}} title="Not found in schematic">✗</span>
-                        :ntIds.has(String(row.id))?<span style={{color:C.muted,fontSize:13}} title="As shown / not traceable">📋</span>
+                        matchedIds.has(String(row.id))?<span style={{color:C.green,fontSize:13}} title="Matched in schematic">⬤</span>
+                        :missingIds.has(String(row.id))?<span style={{color:"#cc0000",fontSize:13}} title="Not found in schematic">⬤</span>
+                        :ntIds.has(String(row.id))?<span style={{color:"#ffe033",fontSize:13}} title="As shown / not traceable">⬤</span>
                         :<span style={{color:C.border,fontSize:11}}>—</span>
                       )}
                     </td>
                     <td style={{padding:"3px 3px",textAlign:"center",width:90}}>
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:2}}>
-                        {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
-                          <button title="Fuzzy BC lookup" onClick={async()=>{
-                            const pn=(row.partNumber||"").trim();
-                            if(!pn)return;
-                            const result=await bcFuzzyLookup(pn);
-                            if(result.match)applyBcItem(row.id,result.match);
-                            else if(result.suggestions.length>0)setBcFuzzySuggestions(prev=>({...prev,[row.id]:result.suggestions}));
-                            else{setBcBrowserTarget(row.id);setBcBrowserQuery(pn);setBcBrowserOpen(true);}
-                          }} style={{background:"#2563eb22",border:"none",color:"#5b9aff",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:3,padding:"2px 5px",lineHeight:1}}>BC</button>
-                        )}
-                        {!readOnly&&_bcToken&&(
-                          <button title="Browse BC items" onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
-                            style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"2px 4px",lineHeight:1,opacity:0.6}}
-                            onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>🔍</button>
-                        )}
-                        {!readOnly&&<button onClick={()=>deleteBomRow(row.id)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,opacity:0.45,padding:"2px 4px"}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.45}>✕</button>}
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:0}}>
+                        {!readOnly&&<button onClick={()=>deleteBomRow(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"2px 4px",width:28,textAlign:"center"}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
                       </div>
                     </td>
                   </tr>
@@ -3364,7 +3488,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
               <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,flex:1}}>PRICING SUMMARY</div>
               <span style={{fontSize:12,color:C.sub}}>{pricedCount}/{bom.length} priced</span>
-              {_apiKey&&pages.some(p=>getPageTypes(p).includes("schematic")&&p.dataUrl)&&(
+              {_apiKey&&pages.some(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl))&&(
                 <button onClick={validatePanel} disabled={validatingPanel||readOnly}
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:validatingPanel||readOnly?0.5:1,border:`1px solid ${C.accent}55`})}>
                   {validatingPanel?"Validating…":"🔄 Re-Validate"}
@@ -3403,7 +3527,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             )}
             <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-start"}}>
               {/* LEFT: Labor breakdown */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",minWidth:280,maxWidth:420}}>
+              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",minWidth:280}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                   <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
                   <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"1px 7px",fontSize:10,fontWeight:700}}>
@@ -3421,8 +3545,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     <tbody>
                       {laborEst.lines.map((l,i)=>(
                         <tr key={i} style={{borderBottom:`1px solid ${C.border}22`}}>
-                          <td style={{padding:"2px 3px",color:C.sub}}>{l.category}</td>
-                          <td style={{padding:"2px 3px",textAlign:"right",color:C.text}}>{l.qty} {l.unit}</td>
+                          <td style={{padding:"2px 3px",color:C.sub,whiteSpace:"nowrap"}}>{l.category}</td>
+                          <td style={{padding:"2px 3px",textAlign:"right",color:C.text,whiteSpace:"nowrap"}}>{l.qty} {l.unit}</td>
                           <td style={{padding:"2px 3px",textAlign:"right",color:C.muted,fontSize:10}}>{l.hours.toFixed(1)}</td>
                           <td style={{padding:"2px 3px",textAlign:"right",color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmt(l.cost)}</td>
                         </tr>
