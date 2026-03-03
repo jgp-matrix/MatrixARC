@@ -396,15 +396,33 @@ async function bcSearchCustomers(query){
   if(!_bcToken)return[];
   const compId=await bcGetCompanyId();
   if(!compId)return[];
+  const q=(query||"").trim().replace(/'/g,"''");
+  const toCustomer=r=>({number:r.number||"",displayName:r.displayName||""});
   try{
-    const q=(query||"").trim().replace(/'/g,"''");
-    const filter=q?`$filter=contains(displayName,'${q}') or contains(number,'${q}')&`:"";
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers?${filter}$top=25&$orderby=displayName`,{
-      headers:{"Authorization":`Bearer ${_bcToken}`}
-    });
-    if(!r.ok)return[];
-    const d=await r.json();
-    return(d.value||[]).map(c=>({number:c.number,displayName:c.displayName}));
+    if(!q){
+      // No query — return top 25 alphabetically
+      const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$top=25&$orderby=displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(r.status===401){_bcToken=null;return[];}
+      if(!r.ok){console.warn("bcSearchCustomers failed:",r.status,await r.text());return[];}
+      const d=await r.json();
+      return(d.value||[]).map(toCustomer);
+    }
+    // Two separate calls — BC does not support 'or' with contains()
+    const [byName,byNum]=await Promise.all([
+      fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=contains(displayName,'${q}')&$top=25&$orderby=displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}}),
+      fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=contains(number,'${q}')&$top=10&$orderby=number`,{headers:{"Authorization":`Bearer ${_bcToken}`}})
+    ]);
+    if(byName.status===401){_bcToken=null;return[];}
+    const dName=byName.ok?await byName.json():{value:[]};
+    const dNum=byNum.ok?await byNum.json():{value:[]};
+    const seen=new Set();
+    const merged=[];
+    for(const c of[...(dName.value||[]),...(dNum.value||[])]){
+      if(!seen.has(c.number)){seen.add(c.number);merged.push(toCustomer(c));}
+    }
+    merged.sort((a,b)=>a.displayName.localeCompare(b.displayName));
+    console.log("bcSearchCustomers:",merged.length,"results for",q);
+    return merged.slice(0,25);
   }catch(e){console.warn("bcSearchCustomers error:",e);return[];}
 }
 
@@ -4658,26 +4676,36 @@ function NewProjectModal({uid,onCreated,onClose}){
   const [customerSearching,setCustomerSearching]=useState(false);
   const [selectedCustomer,setSelectedCustomer]=useState(null);
   const [showDropdown,setShowDropdown]=useState(false);
+  const [bcConnected,setBcConnected]=useState(!!_bcToken);
   const searchTimer=useRef(null);
 
   useEffect(()=>{
-    // Try silent BC connect and pre-load customers
+    if(_bcToken){loadCustomers("");return;}
     acquireBcToken(false).then(t=>{
-      if(t){setCustomerSearching(true);bcSearchCustomers("").then(r=>{setCustomerResults(r);setCustomerSearching(false);});}
+      if(t){setBcConnected(true);loadCustomers("");}
     }).catch(()=>{});
   },[]);
+
+  async function loadCustomers(q){
+    setCustomerSearching(true);
+    const r=await bcSearchCustomers(q);
+    setCustomerResults(r);
+    setCustomerSearching(false);
+  }
+
+  async function connectBC(){
+    setCustomerSearching(true);
+    const t=await acquireBcToken(true);
+    if(t){setBcConnected(true);await loadCustomers("");}
+    setCustomerSearching(false);
+  }
 
   function handleCustomerInput(val){
     setCustomerQuery(val);
     setSelectedCustomer(null);
     setShowDropdown(true);
     if(searchTimer.current)clearTimeout(searchTimer.current);
-    searchTimer.current=setTimeout(async()=>{
-      setCustomerSearching(true);
-      const r=await bcSearchCustomers(val);
-      setCustomerResults(r);
-      setCustomerSearching(false);
-    },300);
+    searchTimer.current=setTimeout(()=>loadCustomers(val),300);
   }
 
   function selectCustomer(c){
@@ -4717,33 +4745,43 @@ function NewProjectModal({uid,onCreated,onClose}){
           <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Project Name</div>
           <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Conveyor Control Panel" style={{...inp(),marginBottom:16}} autoFocus/>
           <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Customer <span style={{color:C.border,fontWeight:400,textTransform:"none",letterSpacing:0}}>(from Business Central)</span></div>
-          <div style={{position:"relative",marginBottom:16}}>
-            <input
-              value={customerQuery}
-              onChange={e=>handleCustomerInput(e.target.value)}
-              onFocus={()=>setShowDropdown(true)}
-              onBlur={()=>setTimeout(()=>setShowDropdown(false),150)}
-              placeholder={customerSearching?"Loading customers…":"Search by name or number…"}
-              style={{...inp()}}
-            />
-            {selectedCustomer&&<div style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:C.green,fontSize:14}}>✓</div>}
-            {showDropdown&&customerResults.length>0&&(
-              <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,zIndex:10,maxHeight:200,overflowY:"auto",marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,0.4)"}}>
-                {customerResults.map(c=>(
-                  <div key={c.number} onMouseDown={()=>selectCustomer(c)}
-                    style={{padding:"9px 12px",cursor:"pointer",display:"flex",gap:10,alignItems:"center"}}
-                    onMouseEnter={e=>e.currentTarget.style.background=C.border}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <span style={{fontSize:11,color:C.muted,minWidth:60,fontFamily:"monospace"}}>{c.number}</span>
-                    <span style={{fontSize:13,color:C.text}}>{c.displayName}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {showDropdown&&!customerSearching&&customerResults.length===0&&customerQuery&&(
-              <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,zIndex:10,padding:"10px 12px",marginTop:4,fontSize:12,color:C.muted}}>No customers found</div>
-            )}
-          </div>
+          {!bcConnected?(
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,background:C.border,borderRadius:8,padding:"10px 14px"}}>
+              <span style={{fontSize:12,color:C.muted,flex:1}}>Connect to BC to pick a customer</span>
+              <button type="button" onClick={connectBC} disabled={customerSearching}
+                style={btn(C.accent,"#fff",{fontSize:12,padding:"6px 14px",opacity:customerSearching?0.5:1})}>
+                {customerSearching?"Connecting…":"Connect BC"}
+              </button>
+            </div>
+          ):(
+            <div style={{position:"relative",marginBottom:16}}>
+              <input
+                value={customerQuery}
+                onChange={e=>handleCustomerInput(e.target.value)}
+                onFocus={()=>setShowDropdown(true)}
+                onBlur={()=>setTimeout(()=>setShowDropdown(false),150)}
+                placeholder={customerSearching?"Loading customers…":"Search by name or number…"}
+                style={{...inp()}}
+              />
+              {selectedCustomer&&<div style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:C.green,fontSize:14}}>✓</div>}
+              {showDropdown&&customerResults.length>0&&(
+                <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,zIndex:10,maxHeight:200,overflowY:"auto",marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,0.4)"}}>
+                  {customerResults.map(c=>(
+                    <div key={c.number} onMouseDown={()=>selectCustomer(c)}
+                      style={{padding:"9px 12px",cursor:"pointer",display:"flex",gap:10,alignItems:"center"}}
+                      onMouseEnter={e=>e.currentTarget.style.background=C.border}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <span style={{fontSize:11,color:C.muted,minWidth:60,fontFamily:"monospace"}}>{c.number}</span>
+                      <span style={{fontSize:13,color:C.text}}>{c.displayName}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {showDropdown&&!customerSearching&&customerResults.length===0&&customerQuery&&(
+                <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,zIndex:10,padding:"10px 12px",marginTop:4,fontSize:12,color:C.muted}}>No customers found</div>
+              )}
+            </div>
+          )}
           {bcStatus==="connecting"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Connecting to Business Central...</div>}
           {bcStatus==="creating"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Creating BC project...</div>}
           {bcStatus==="failed"&&<div style={{fontSize:12,color:C.red,marginBottom:10}}>BC project creation failed — project saved without BC link</div>}
