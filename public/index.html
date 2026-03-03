@@ -1484,9 +1484,21 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate}){
   );
 }
 
+function projectStatus(project){
+  const panels=project.panels||[];
+  if(!panels.length)return project.status||"draft";
+  const statuses=panels.map(p=>p.status||"draft");
+  const rank={draft:0,extracted:1,validated:2,costed:3,quoted:4};
+  const allCosted=statuses.every(s=>rank[s]>=3);
+  if(allCosted)return"costed";
+  const anyWork=statuses.some(s=>rank[s]>=1);
+  if(anyWork)return"in_progress";
+  return"draft";
+}
 function Badge({status}){
   const map={
     draft:[C.border,C.muted,"Draft"],
+    in_progress:[C.yellowDim,C.yellow,"In Progress"],
     extracted:[C.greenDim,C.green,"Extracted"],
     validated:[C.accentDim,C.accent,"Validated"],
     costed:["#052e1c",C.green,"Costed and Ready"],
@@ -4633,7 +4645,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="none";}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                   <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{p.name}</div>
-                  <Badge status={p.status||"draft"}/>
+                  <Badge status={projectStatus(p)}/>
                 </div>
                 <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14,flexWrap:"wrap"}}>
                   <span>📋 {p.panels?p.panels.reduce((s,pl)=>s+(pl.bom||[]).length,0):(p.bom||[]).length} items</span>
@@ -4662,7 +4674,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                     </div>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
                       <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{p.name}</div>
-                      <Badge status={p.status||"draft"}/>
+                      <Badge status={projectStatus(p)}/>
                     </div>
                     <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14,flexWrap:"wrap"}}>
                       <span>📋 {p.panels?p.panels.reduce((s,pl)=>s+(pl.bom||[]).length,0):(p.bom||[]).length} items</span>
