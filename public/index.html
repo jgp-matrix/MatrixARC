@@ -853,6 +853,32 @@ async function extractBomPage(dataUrl,feedback=""){
   }catch(e){console.error("JSON parse error:",e,raw);return[];}
 }
 
+// ── PART NUMBER VERIFICATION ──
+async function verifyPartNumbers(bomRows){
+  const toCheck=bomRows.filter(r=>(r.partNumber||"").trim().length>=3).slice(0,60);
+  if(!toCheck.length||!_apiKey)return[];
+  const list=toCheck.map(r=>({id:String(r.id),pn:(r.partNumber||"").trim(),mfr:(r.manufacturer||"").trim(),desc:(r.description||"").trim().slice(0,60)}));
+  const prompt=`You are verifying industrial/electrical part numbers. For each part number below, determine if it is a real, recognized part number from a known manufacturer.
+
+Rate each as:
+- "verified" — recognized real part number (you are confident this exists)
+- "plausible" — follows a valid manufacturer part number pattern, likely real
+- "suspect" — does not match known part number patterns, may be an OCR misread or invalid
+
+Use the manufacturer and description as context clues. Be strict — if you are not confident the exact part number exists, rate it "plausible" not "verified".
+
+Part numbers to check:
+${JSON.stringify(list)}
+
+Return ONLY a JSON array: [{"id":"...","status":"verified|plausible|suspect","note":"brief reason"}]`;
+  try{
+    const raw=await apiCall({model:"claude-haiku-4-5-20251001",max_tokens:4000,messages:[{role:"user",content:prompt}]});
+    const m=raw.replace(/```json|```/g,"").trim().match(/\[[\s\S]*\]/);
+    if(!m)return[];
+    return JSON.parse(m[0]);
+  }catch(e){console.error("Part verification failed:",e);return[];}
+}
+
 // ── SCHEMATIC ANALYSIS PROMPT ──
 const SCHEMATIC_PROMPT=`You are reading a UL508A electrical control panel schematic page.
 
@@ -1199,11 +1225,14 @@ function calcConfidence(panel){
     wiring=conf==="high"?100:conf==="medium"?70:conf==="low"?40:0;
   }
 
-  // BOM Extraction: quality-scored per row
+  // BOM Extraction: quality-scored per row + part number verification
   let bomExt=0;
   const bomPages=pages.filter(p=>getPageTypes(p).includes("bom"));
   const ocrBadChars=/[|{}~`\\^]/;
+  const verif=panel.bomVerification||[];
+  const verifMap={};verif.forEach(v=>{verifMap[String(v.id)]=v;});
   let cleanCount=0,flaggedRows=[];
+  let verifiedCount=0,plausibleCount=0,suspectCount=0,uncheckedCount=0;
   if(bom.length>0){
     let totalPts=0;
     bom.forEach(r=>{
@@ -1218,9 +1247,16 @@ function calcConfidence(panel){
       }
       if(!desc){pts-=15;issues.push("no description");}
       if(!r.qty||+r.qty===0){pts-=10;issues.push("missing qty");}
+      // Part number verification scoring
+      const vr=verifMap[String(r.id)];
+      if(vr){
+        if(vr.status==="verified"){verifiedCount++;}
+        else if(vr.status==="plausible"){plausibleCount++;pts-=10;issues.push("part # plausible but unverified");}
+        else if(vr.status==="suspect"){suspectCount++;pts-=30;issues.push("part # not recognized");}
+      }else if(pn.length>=3){uncheckedCount++;}
       pts=Math.max(pts,0);
       totalPts+=pts;
-      if(issues.length)flaggedRows.push({id:r.id,partNumber:pn,issues,score:pts});
+      if(issues.length)flaggedRows.push({id:r.id,partNumber:pn,issues,score:pts,verifStatus:vr?.status||null});
       else cleanCount++;
     });
     bomExt=Math.round(totalPts/bom.length);
@@ -1232,7 +1268,7 @@ function calcConfidence(panel){
   return{pricing,wiring,bomExt,overall,
     pricingDetail:{bcCount,manualCount,aiCount,unpricedCount,total:bom.length},
     wiringDetail:{matched:matchedCount,missing:missingArr,accepted:acceptedInMissing,notTraceable:ntCount,total:wiringTotal},
-    bomDetail:{bomPages:bomPages.length,itemCount:bom.length,cleanCount,flaggedRows}
+    bomDetail:{bomPages:bomPages.length,itemCount:bom.length,cleanCount,flaggedRows,verifiedCount,plausibleCount,suspectCount,uncheckedCount}
   };
 }
 
@@ -1332,18 +1368,31 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate}){
             {bomDetail.cleanCount>0&&<div style={{color:C.green}}>{bomDetail.cleanCount} item{bomDetail.cleanCount!==1?"s":""} clean ✓</div>}
             {bomDetail.flaggedRows.length>0&&<div style={{color:C.yellow}}>{bomDetail.flaggedRows.length} item{bomDetail.flaggedRows.length!==1?"s":""} flagged ⚠</div>}
           </div>
+          {(bomDetail.verifiedCount>0||bomDetail.plausibleCount>0||bomDetail.suspectCount>0||bomDetail.uncheckedCount>0)&&(
+            <div style={{display:"flex",gap:12,flexWrap:"wrap",marginTop:8,paddingTop:6,borderTop:`1px solid ${C.border}`}}>
+              <span style={{fontSize:12,color:C.muted,fontWeight:600}}>Part # Check:</span>
+              {bomDetail.verifiedCount>0&&<span style={{color:C.green,fontSize:12}}>{bomDetail.verifiedCount} verified ✓</span>}
+              {bomDetail.plausibleCount>0&&<span style={{color:C.yellow,fontSize:12}}>{bomDetail.plausibleCount} plausible ~</span>}
+              {bomDetail.suspectCount>0&&<span style={{color:C.red,fontSize:12}}>{bomDetail.suspectCount} not found ✗</span>}
+              {bomDetail.uncheckedCount>0&&<span style={{color:C.muted,fontSize:12}}>{bomDetail.uncheckedCount} unchecked</span>}
+            </div>
+          )}
           {bomDetail.flaggedRows.length>0&&(
             <div style={{maxHeight:180,overflowY:"auto",borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:8}}>
-              {bomDetail.flaggedRows.map(f=>(
+              {bomDetail.flaggedRows.map(f=>{
+                const vColor=f.verifStatus==="verified"?C.green:f.verifStatus==="plausible"?C.yellow:f.verifStatus==="suspect"?C.red:null;
+                return(
                 <div key={f.id} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",borderBottom:`1px solid ${C.border}33`}}>
-                  <span style={{color:C.yellow,fontWeight:600,fontSize:12,minWidth:0,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.partNumber||"(empty)"}</span>
+                  <span style={{color:f.score>=70?C.yellow:C.red,fontWeight:600,fontSize:12,minWidth:0,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.partNumber||"(empty)"}</span>
+                  {vColor&&<span style={{color:vColor,fontSize:10,fontWeight:700}}>{f.verifStatus==="verified"?"✓":f.verifStatus==="plausible"?"~":"✗"}</span>}
                   <span style={{color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{f.issues.join(", ")}</span>
                   <span style={{color:f.score>=70?C.yellow:C.red,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{f.score}%</span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
-          <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Review flagged items and correct part numbers to improve this score</div>
+          <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Part numbers are verified against known manufacturers. Correct suspect items to improve score.</div>
         </div>
       )}
     </div>
@@ -1937,6 +1986,12 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
         };
         proj={...proj,validation,laborData,status:"validated"};
         setProgress(66);
+
+        // Verify part numbers
+        if(proj.bom&&proj.bom.length){
+          const verifResults=await verifyPartNumbers(proj.bom);
+          if(verifResults.length>0)proj={...proj,bomVerification:verifResults};
+        }
 
         // Step 3: Price BOM (66–90%)
         setStepLabel("Estimating prices…");
@@ -2854,6 +2909,14 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(willValidate)ep.update("Validating…");
       setExtracting(false);
     }
+    // Verify part numbers (runs in parallel with validation)
+    const bomToVerify=(latestPanel.bom||[]).slice();
+    const verifyPromise=(bomToVerify.length>0&&_apiKey)?(async()=>{
+      try{
+        console.log("PART VERIFY: starting for "+bomToVerify.length+" items");
+        return await verifyPartNumbers(bomToVerify);
+      }catch(e){console.warn("Part verification failed:",e);return[];}
+    })():Promise.resolve([]);
     // Auto-validate if schematic pages exist
     if(willValidate){
       setValidatingPanel(true);
@@ -2871,6 +2934,14 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       const itemCount=(latestPanel.bom||[]).length;
       setValidatingPanel(false);
       ep.finish(itemCount>0?`✓ ${itemCount} items · validated`:"✓ Validated");
+    }
+    // Wait for part verification to finish and merge into latestPanel
+    const verifResults=await verifyPromise;
+    if(verifResults&&verifResults.length>0){
+      latestPanel={...latestPanel,bomVerification:verifResults,updatedAt:Date.now()};
+      onUpdate(latestPanel);
+      try{await onSaveImmediate(latestPanel);}catch(e){}
+      console.log("PART VERIFY: complete, "+verifResults.length+" items checked");
     }
     // Upload page images to Firebase Storage (inside try so latestPanel is in scope)
     const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
