@@ -3702,7 +3702,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const header=["Qty","Part Number","Description","Manufacturer","Unit $","Cost Source","Notes"];
     const rows=[header,...(panel.bom||[]).map(r=>[
       r.qty,r.partNumber,r.description,r.manufacturer,
-      r.unitPrice!=null?Number(r.unitPrice).toFixed(2):"",
+      r.unitPrice!=null?"$"+Number(r.unitPrice).toFixed(2):"",
       sourceLabel(r.priceSource),
       r.notes
     ])];
