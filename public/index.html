@@ -390,6 +390,8 @@ async function bcCreateProject(displayName, customerNumber){
     if(!r.ok){const txt=await r.text();throw new Error(`BC project creation failed (${r.status}): ${txt}`);}
     const d=await r.json();
     projectId=d.id;
+    console.log("BC project created — available fields:",Object.keys(d).join(", "));
+    console.log("BC project full response:",JSON.stringify(d));
 
     // Step 2: PATCH Bill_to_Customer_No via OData (REST API v2.0 doesn't expose customer fields on project)
     await bcPatchJobOData(d.number,{Bill_to_Customer_No:customerNumber});
@@ -632,11 +634,15 @@ async function bcDiscoverODataPages(){
   if(!_bcToken)return[];
   try{
     const r=await fetch(BC_ODATA_BASE,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-    if(!r.ok)return[];
-    const d=await r.json();
-    const names=(d.value||[]).map(e=>e.name||e.url||"").filter(Boolean);
-    console.log("BC OData published pages:",names.join(", "));
-    return names;
+    if(!r.ok){console.warn("bcDiscoverODataPages failed:",r.status);return[];}
+    const txt=await r.text();
+    console.log("BC OData root raw response:",txt.slice(0,2000));
+    try{
+      const d=JSON.parse(txt);
+      const names=(d.value||[]).map(e=>e.name||e.url||"").filter(Boolean);
+      console.log("BC OData published pages:",names.join(", ")||"(none found in value array)");
+      return names;
+    }catch(pe){console.warn("bcDiscoverODataPages JSON parse error:",pe);return[];}
   }catch(e){console.warn("bcDiscoverODataPages error:",e);return[];}
 }
 
