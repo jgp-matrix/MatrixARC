@@ -3698,8 +3698,14 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     setTimeout(()=>{setValidatingPanel(false);setValPct(0);},600);
   }
   function exportCSV(){
-    const header=["Qty","Part Number","Description","Manufacturer","Notes"];
-    const rows=[header,...(panel.bom||[]).map(r=>[r.qty,r.partNumber,r.description,r.manufacturer,r.notes])];
+    const sourceLabel=s=>s==="bc"?"BC":s==="ai"?"AI":s==="manual"?"Manual":"";
+    const header=["Qty","Part Number","Description","Manufacturer","Unit $","Cost Source","Notes"];
+    const rows=[header,...(panel.bom||[]).map(r=>[
+      r.qty,r.partNumber,r.description,r.manufacturer,
+      r.unitPrice!=null?Number(r.unitPrice).toFixed(2):"",
+      sourceLabel(r.priceSource),
+      r.notes
+    ])];
     const csv=rows.map(r=>r.map(c=>`"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
     const a=document.createElement("a");
     a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
