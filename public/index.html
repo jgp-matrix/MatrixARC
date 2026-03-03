@@ -719,6 +719,19 @@ function applyPartCorrections(corrections,bom){
   });
 }
 
+// ── DEFAULT BOM ITEMS (appended after extraction if not already present) ──
+function appendDefaultBomItems(bom){
+  const lower=new Set(bom.map(r=>(r.description||"").trim().toLowerCase()));
+  const items=[];
+  if(!lower.has("job buyoff")){
+    items.push({id:Date.now()+Math.random(),qty:1,partNumber:"JOB-BUYOFF",description:"Job Buyoff",manufacturer:"",notes:"",unitPrice:0,priceSource:null});
+  }
+  if(!lower.has("crate")){
+    items.push({id:Date.now()+Math.random()+1,qty:1,partNumber:"",description:"Crate",manufacturer:"",notes:"",unitPrice:0,priceSource:null});
+  }
+  return items.length?[...bom,...items]:bom;
+}
+
 // ── BOM MERGER (combine by partNumber, sum qty) ──
 function mergeBoms(bomArrays){
   const map={};
@@ -1999,7 +2012,7 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
           if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
           else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
         });
-        const bom=all.length?Object.values(map):(proj.bom||[]);
+        const bom=appendDefaultBomItems(all.length?Object.values(map):(proj.bom||[]));
         proj={...proj,bom,status:"extracted"};
         // Schematic results
         let allTags=[];let totalWires=0;let totalTerminations=0;
@@ -2947,7 +2960,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
           else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
         });
-        const bom=Object.values(map);
+        const bom=appendDefaultBomItems(Object.values(map));
         const withBom={...updated,bom,status:"extracted",updatedAt:Date.now()};
         latestPanel=withBom;
         onUpdate(withBom);
@@ -3097,10 +3110,10 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
-    const bom=applyPartCorrections(partCorrections,Object.values(map).map(row=>{
+    const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,Object.values(map).map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
-    }));
+    })));
     const updated={...panel,bom,status:"extracted",updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
@@ -3180,10 +3193,10 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
-    const bom=applyPartCorrections(partCorrections,Object.values(map).map(row=>{
+    const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,Object.values(map).map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
-    }));
+    })));
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
     const feedbackLog=[...((latestPanel.extractionFeedbackLog)||[]),logEntry];
     const updated={...latestPanel,bom,status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
