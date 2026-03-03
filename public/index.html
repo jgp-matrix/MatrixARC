@@ -3715,10 +3715,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,flex:1}}>PRICING SUMMARY</div>
               <span style={{fontSize:12,color:C.sub}}>{pricedCount}/{bom.length} priced</span>
               {_apiKey&&pages.some(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl))&&(
-                <button onClick={validatePanel} disabled={validatingPanel||readOnly}
-                  style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:validatingPanel||readOnly?0.5:1,border:`1px solid ${C.accent}55`})}>
-                  {validatingPanel?"Validating…":"🔄 Re-Validate"}
-                </button>
+                validatingPanel
+                  ?<span style={{fontSize:13,fontWeight:700,color:C.accent,animation:"pulse 1.2s ease-in-out infinite",padding:"4px 12px"}}>Validating…</span>
+                  :<button onClick={validatePanel} disabled={readOnly}
+                    style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:readOnly?0.5:1,border:`1px solid ${C.accent}55`})}>
+                    🔄 Re-Validate
+                  </button>
               )}
               {!readOnly&&bom.length>0&&(
                 <>
