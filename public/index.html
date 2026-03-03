@@ -1997,7 +1997,9 @@ function QuoteTab({project,onUpdate}){
   const [quoteTab,setQuoteTab]=useState("formal");
   const pr=project.pricing||{};
   const bom=project.bom||[];
-  const laborEst=computeLaborEstimate(project);
+  // Use pre-computed labor from QuoteView (sums each panel individually, preserving overrides)
+  // Fall back to computing from project directly for single-panel or non-aggregated use
+  const laborEst=project._quoteLabor||computeLaborEstimate(project);
   const laborHours=laborEst.totalHours;
   const laborRate=pr.laborRate??45;
   const markup=pr.markup??30;
@@ -2008,6 +2010,7 @@ function QuoteTab({project,onUpdate}){
   const grandTotal=materialCost+laborCost+contingencyBOM+contingencyConsumables;
   const sellPrice=grandTotal*(1+markup/100);
   const hasSellPrice=sellPrice>0;
+  console.log("QUOTE TAB: bom="+bom.length+", materials="+materialCost.toFixed(2)+", labor="+laborCost.toFixed(2)+", contingencyBOM="+contingencyBOM+", contingencyConsumables="+contingencyConsumables+", grandTotal="+grandTotal.toFixed(2)+", markup="+markup+", sellPrice="+sellPrice.toFixed(2));
 
   const q=project.quote||{};
   function setQ(updates){onUpdate({...project,quote:{...q,...updates}});}
@@ -3482,6 +3485,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         const totalCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
         const grandTotal=totalCost+laborCost+contingencyBOM+contingencyConsumables;
         const sellPrice=grandTotal*(1+markup/100);
+        console.log("PANEL CARD: bom="+bom.length+", materials="+totalCost.toFixed(2)+", labor="+laborCost.toFixed(2)+", contingencyBOM="+contingencyBOM+", contingencyConsumables="+contingencyConsumables+", grandTotal="+grandTotal.toFixed(2)+", markup="+markup+", sellPrice="+sellPrice.toFixed(2));
         const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
         return(
           <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
@@ -3853,31 +3857,36 @@ function QuoteView({project,uid,onBack,onUpdate}){
   const panels=project.panels||[];
   const allBom=mergeBoms(panels.map(p=>p.bom||[]));
   const totalWireCount=panels.reduce((s,p)=>s+(p.validation?.wireCount||0),0);
-  // Aggregate laborData from all panels
-  const panelsWithLabor=panels.filter(p=>p.laborData);
-  const aggregatedLaborData=panelsWithLabor.length>0?{
-    counts:{
-      wireCount:panelsWithLabor.reduce((s,p)=>s+(p.laborData.counts?.wireCount||0),0),
-      wireTerminations:panelsWithLabor.reduce((s,p)=>s+(p.laborData.counts?.wireTerminations||0),0),
-      doorDevices:panelsWithLabor.reduce((s,p)=>s+(p.laborData.counts?.doorDevices||0),0),
-      allDevices:panelsWithLabor.reduce((s,p)=>s+(p.laborData.counts?.allDevices||0),0),
-      panelHoles:panelsWithLabor.reduce((s,p)=>s+(p.laborData.counts?.panelHoles||0),0),
-      ductDinFeet:panelsWithLabor.reduce((s,p)=>s+(p.laborData.counts?.ductDinFeet||0),0),
-    },
-    overrides:{},
-    defaults:{pmUnits:2*panels.length,buyoffUnits:2*panels.length,cratingUnits:panels.length,labelHours:4*panels.length},
-    hasLayoutData:panelsWithLabor.some(p=>p.laborData.hasLayoutData),
-  }:null;
+  // Compute labor for each panel individually (preserves overrides), then sum
+  const perPanelLabor=panels.map(p=>computeLaborEstimate(p));
+  const totalLaborHours=perPanelLabor.reduce((s,l)=>s+l.totalHours,0);
+  const totalLaborCost=perPanelLabor.reduce((s,l)=>s+l.totalCost,0);
+  const hasLayoutData=perPanelLabor.some(l=>l.hasLayoutData);
+  // Merge labor lines by category
+  const laborLineMap={};
+  perPanelLabor.forEach(l=>l.lines.forEach(line=>{
+    if(laborLineMap[line.category]){laborLineMap[line.category].qty+=line.qty;laborLineMap[line.category].hours+=line.hours;laborLineMap[line.category].cost+=line.cost;}
+    else{laborLineMap[line.category]={...line};}
+  }));
+  const aggregatedLaborLines=Object.values(laborLineMap);
+  // Use first panel's pricing as source of truth (that's where user edits markup/contingency)
+  const firstPanelPricing=panels.find(p=>p.pricing)?.pricing||{};
+  const derivedPricing={...firstPanelPricing};
+  // Build a fake laborData so computeLaborEstimate produces matching results for QuoteTab
+  // But actually override QuoteTab's computation — pass pre-computed values via pricing
   const aggregated={
     ...project,
     bom:allBom,
     validation:{wireCount:totalWireCount},
-    laborData:aggregatedLaborData,
-    pricing:project.pricing||{},
+    laborData:null, // null triggers legacy path, but we override via _quoteLabor
+    pricing:derivedPricing,
     pages:panels.flatMap(p=>p.pages||[]),
+    _quoteLabor:{lines:aggregatedLaborLines,totalHours:totalLaborHours,totalCost:totalLaborCost,hasLayoutData,isLegacy:false,isOverride:false},
   };
   function handleQuoteUpdate(upd){
-    onUpdate({...project,quote:upd.quote,pricing:upd.pricing,budgetaryQuote:upd.budgetaryQuote});
+    // Sync pricing back to all panels so panel cards stay consistent with quote
+    const updatedPanels=(project.panels||[]).map(p=>({...p,pricing:{...(p.pricing||{}),...(upd.pricing||{})}}));
+    onUpdate({...project,panels:updatedPanels,quote:upd.quote,pricing:upd.pricing,budgetaryQuote:upd.budgetaryQuote});
   }
   const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
   return(
