@@ -3591,7 +3591,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                                   if(!isNaN(v)&&v!==l.qty)saveLaborOverride(l.field,Math.max(0,v));
                                 }}
                                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
-                                style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,padding:"1px 4px",fontSize:13,width:48,textAlign:"right"}}/>
+                                style={{background:"transparent",border:"1px solid #fff",borderRadius:4,color:C.text,padding:"1px 4px",fontSize:13,width:48,textAlign:"right"}}/>
                             ):(
                               <span style={{color:C.text}}>{l.qty}</span>
                             )}
@@ -3638,11 +3638,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   <span style={{fontSize:12,color:C.muted}}>$/hr</span>
                   <input type="number" min="0" step="1" readOnly={readOnly} value={laborRate}
                     onChange={e=>savePricing({laborRate:Math.max(0,+e.target.value||0)})}
-                    style={{...inp({padding:"3px 5px",fontSize:13,width:65,textAlign:"right"})}}/>
+                    style={{...inp({padding:"3px 5px",fontSize:13,width:65,textAlign:"right",border:"1px solid #fff"})}}/>
                   <span style={{fontSize:12,color:C.muted,marginLeft:6}}>Override hrs</span>
                   <input type="number" min="0" step="0.5" readOnly={readOnly} value={pr.laborHoursOverride??""} placeholder="auto"
                     onChange={e=>savePricing({laborHoursOverride:e.target.value===""?null:Math.max(0,+e.target.value||0)})}
-                    style={{...inp({padding:"3px 5px",fontSize:13,width:65,textAlign:"right"})}}/>
+                    style={{...inp({padding:"3px 5px",fontSize:13,width:65,textAlign:"right",border:"1px solid #fff"})}}/>
                 </div>
               </div>
               {/* RIGHT: Price breakdown */}
