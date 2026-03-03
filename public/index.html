@@ -737,14 +737,18 @@ function applyPartCorrections(corrections,bom){
 
 // ── DEFAULT BOM ITEMS (appended after extraction if not already present) ──
 function appendDefaultBomItems(bom){
-  if(!_defaultBomItems.length)return bom;
+  console.log("APPEND DEFAULTS: _defaultBomItems=",_defaultBomItems.length,"items:",_defaultBomItems.map(d=>d.description));
+  if(!_defaultBomItems.length){console.log("APPEND DEFAULTS: skipped — no defaults configured");return bom;}
   const lower=new Set(bom.map(r=>(r.description||"").trim().toLowerCase()));
+  console.log("APPEND DEFAULTS: existing BOM descriptions:",[...lower]);
   const items=[];
   for(const tpl of _defaultBomItems){
     const desc=(tpl.description||"").trim().toLowerCase();
-    if(desc&&lower.has(desc))continue;
+    if(desc&&lower.has(desc)){console.log("APPEND DEFAULTS: skipped (duplicate):",tpl.description);continue;}
     items.push({id:Date.now()+Math.random(),qty:tpl.qty||1,partNumber:tpl.partNumber||"",description:tpl.description||"",manufacturer:tpl.manufacturer||"",notes:"",unitPrice:tpl.unitPrice||0,priceSource:tpl.priceSource||null});
+    console.log("APPEND DEFAULTS: adding:",tpl.description,"$"+tpl.unitPrice);
   }
+  console.log("APPEND DEFAULTS: appended",items.length,"of",_defaultBomItems.length,"defaults. BOM total:",bom.length+items.length);
   return items.length?[...bom,...items]:bom;
 }
 
@@ -3524,7 +3528,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(valRaf.current){cancelAnimationFrame(valRaf.current);valRaf.current=null;}
       setValPct(100);
       if(result.validation||result.laborData){
-        const updated={...panel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
+        const bom=appendDefaultBomItems(panel.bom||[]);
+        const updated={...panel,bom,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
         onUpdate(updated);
         try{await onSaveImmediate(updated);}catch(e){}
       }
@@ -4234,7 +4239,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
       if(!hasSchOrLayout)continue;
       setValidateMsg(`Validating ${p.name||"Panel "+(i+1)}…`);
       const result=await runPanelValidation(p);
-      if(result.validation||result.laborData){panels[i]={...p,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};}
+      if(result.validation||result.laborData){const bom=appendDefaultBomItems(p.bom||[]);panels[i]={...p,bom,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};}
     }
     const updatedProject={...project,panels};
     onUpdate(updatedProject);
