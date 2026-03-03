@@ -2801,6 +2801,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [bcError,setBcError]=useState("");
   const [validatingPanel,setValidatingPanel]=useState(false);
   const [valPct,setValPct]=useState(0);
+  const valTarget=useRef(0);
+  const valRaf=useRef(null);
   const [bcFuzzySuggestions,setBcFuzzySuggestions]=useState({});
   const [bcBrowserOpen,setBcBrowserOpen]=useState(false);
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
@@ -3332,8 +3334,21 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   }
   async function validatePanel(){
     if(!_apiKey)return;
-    setValidatingPanel(true);setValPct(0);
-    const result=await runPanelValidation(panel,pct=>setValPct(pct));
+    setValidatingPanel(true);setValPct(0);valTarget.current=0;
+    // Smooth ticker: creeps toward target, never sits still
+    let current=0;
+    function tick(){
+      const target=valTarget.current;
+      // Always creep forward slowly even if target hasn't moved (max to target-1 so it doesn't overshoot)
+      const ceiling=Math.max(target,Math.min(current+0.15,97));
+      current+=(ceiling-current)*0.08+0.05;
+      current=Math.min(current,97);
+      setValPct(Math.round(current));
+      valRaf.current=requestAnimationFrame(tick);
+    }
+    valRaf.current=requestAnimationFrame(tick);
+    const result=await runPanelValidation(panel,pct=>{valTarget.current=pct;});
+    if(valRaf.current){cancelAnimationFrame(valRaf.current);valRaf.current=null;}
     setValPct(100);
     if(result.validation||result.laborData){
       const updated={...panel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
