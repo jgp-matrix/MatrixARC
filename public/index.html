@@ -1116,7 +1116,9 @@ async function runPanelValidation(panel,onProgress){
   const matchPct=traceable>0?matched.length/traceable:1;
   const confidence=matchPct>=0.9?"high":matchPct>=0.7?"medium":"low";
 
+  if(onProgress)onProgress(98);
   const validation={runAt:Date.now(),schematicTags,wireCount:totalWires,matched,missingFromSchematic:missing,notTraceable,unaccountedTags:unaccounted,confidence};
+  console.log("VALIDATION COMPLETE: pages="+totalPages+", tags="+schematicTags.length+", wires="+totalWires+", matched="+matched.length+", missing="+missing.length);
   return{validation,laborData};
 }
 
@@ -3335,25 +3337,28 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   async function validatePanel(){
     if(!_apiKey)return;
     setValidatingPanel(true);setValPct(0);valTarget.current=0;
-    // Smooth ticker: creeps toward target, never sits still
     let current=0;
     function tick(){
       const target=valTarget.current;
-      // Always creep forward slowly even if target hasn't moved (max to target-1 so it doesn't overshoot)
-      const ceiling=Math.max(target,Math.min(current+0.15,97));
-      current+=(ceiling-current)*0.08+0.05;
-      current=Math.min(current,97);
+      const ceiling=Math.max(target,Math.min(current+0.08,99));
+      current+=(ceiling-current)*0.06+0.02;
+      current=Math.min(current,99);
       setValPct(Math.round(current));
       valRaf.current=requestAnimationFrame(tick);
     }
     valRaf.current=requestAnimationFrame(tick);
-    const result=await runPanelValidation(panel,pct=>{valTarget.current=pct;});
-    if(valRaf.current){cancelAnimationFrame(valRaf.current);valRaf.current=null;}
-    setValPct(100);
-    if(result.validation||result.laborData){
-      const updated={...panel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
-      onUpdate(updated);
-      try{await onSaveImmediate(updated);}catch(e){}
+    try{
+      const result=await runPanelValidation(panel,pct=>{valTarget.current=pct;});
+      if(valRaf.current){cancelAnimationFrame(valRaf.current);valRaf.current=null;}
+      setValPct(100);
+      if(result.validation||result.laborData){
+        const updated={...panel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
+        onUpdate(updated);
+        try{await onSaveImmediate(updated);}catch(e){}
+      }
+    }catch(e){
+      console.error("Validation error:",e);
+      if(valRaf.current){cancelAnimationFrame(valRaf.current);valRaf.current=null;}
     }
     setTimeout(()=>{setValidatingPanel(false);setValPct(0);},600);
   }
