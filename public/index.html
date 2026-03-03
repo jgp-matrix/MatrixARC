@@ -632,15 +632,17 @@ async function bcPatchItemOData(itemNo,fields){
 
 async function bcDiscoverODataPages(){
   if(!_bcToken)return[];
+  // The service list is at the ODataV4 root, not the company-level URL
+  const rootUrl=`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/ODataV4/`;
   try{
-    const r=await fetch(BC_ODATA_BASE,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await fetch(rootUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok){console.warn("bcDiscoverODataPages failed:",r.status);return[];}
     const txt=await r.text();
-    console.log("BC OData root raw response:",txt.slice(0,2000));
+    console.log("BC OData service list raw response:",txt.slice(0,3000));
     try{
       const d=JSON.parse(txt);
       const names=(d.value||[]).map(e=>e.name||e.url||"").filter(Boolean);
-      console.log("BC OData published pages:",names.join(", ")||"(none found in value array)");
+      console.log("BC OData published services:",names.join(", ")||"(none)");
       return names;
     }catch(pe){console.warn("bcDiscoverODataPages JSON parse error:",pe);return[];}
   }catch(e){console.warn("bcDiscoverODataPages error:",e);return[];}
