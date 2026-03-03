@@ -1165,28 +1165,37 @@ function calcConfidence(panel){
 
   // Pricing: BC/Manual=100%, AI=50%, Unpriced=0%
   let pricing=0;
+  let bcCount=0,manualCount=0,aiCount=0,unpricedCount=0;
   if(bom.length){
-    const total=bom.reduce((s,r)=>{
-      if(r.priceSource==="bc"||r.priceSource==="manual")return s+100;
-      if(r.priceSource==="ai")return s+50;
-      return s;
-    },0);
+    bom.forEach(r=>{
+      if(r.priceSource==="bc"){bcCount++;}
+      else if(r.priceSource==="manual"){manualCount++;}
+      else if(r.priceSource==="ai"){aiCount++;}
+      else{unpricedCount++;}
+    });
+    const total=bcCount*100+manualCount*100+aiCount*50;
     pricing=Math.round(total/bom.length);
   }
 
-  // Wiring: based on validation confidence (fallback: derive from match data)
+  // Wiring: derive from match data, factoring in accepted items
   let wiring=0;
+  const acceptedArr=panel.wiringAccepted||[];
+  const acceptedSet=new Set(acceptedArr.map(String));
+  let matchedCount=0,missingArr=[],acceptedInMissing=0,ntCount=0,wiringTotal=0;
   if(validation){
-    let conf=validation.confidence;
-    if(!conf){
-      // Derive from match data if confidence string is missing
-      const matched=Array.isArray(validation.matched)?validation.matched.length:0;
-      const missing=Array.isArray(validation.missingFromSchematic)?validation.missingFromSchematic.length:0;
-      const nt=Array.isArray(validation.notTraceable)?validation.notTraceable.length:0;
-      const traceable=matched+missing;
-      const matchPct=traceable>0?matched/traceable:1;
-      conf=matchPct>=0.9?"high":matchPct>=0.7?"medium":"low";
-    }
+    const matched=Array.isArray(validation.matched)?validation.matched:[];
+    const missing=Array.isArray(validation.missingFromSchematic)?validation.missingFromSchematic:[];
+    const nt=Array.isArray(validation.notTraceable)?validation.notTraceable:[];
+    matchedCount=matched.length;
+    missingArr=missing;
+    ntCount=nt.length;
+    acceptedInMissing=missing.filter(m=>acceptedSet.has(String(m.id))).length;
+    const effectiveMatched=matchedCount+acceptedInMissing;
+    const effectiveMissing=missing.length-acceptedInMissing;
+    const traceable=effectiveMatched+effectiveMissing;
+    wiringTotal=traceable+ntCount;
+    const matchPct=traceable>0?effectiveMatched/traceable:1;
+    const conf=matchPct>=0.9?"high":matchPct>=0.7?"medium":"low";
     wiring=conf==="high"?100:conf==="medium"?70:conf==="low"?40:0;
   }
 
@@ -1198,36 +1207,110 @@ function calcConfidence(panel){
   else if(bomPages.length===0&&bom.length>0)bomExt=100;
 
   const overall=Math.round((pricing+wiring+bomExt)/3);
-  return{pricing,wiring,bomExt,overall};
+  return{pricing,wiring,bomExt,overall,
+    pricingDetail:{bcCount,manualCount,aiCount,unpricedCount,total:bom.length},
+    wiringDetail:{matched:matchedCount,missing:missingArr,accepted:acceptedInMissing,notTraceable:ntCount,total:wiringTotal},
+    bomDetail:{bomPages:bomPages.length,itemCount:bom.length}
+  };
 }
 
-function ConfidenceBar({panel}){
-  const {pricing,wiring,bomExt,overall}=calcConfidence(panel);
+function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate}){
+  const conf=calcConfidence(panel);
+  const {pricing,wiring,bomExt,overall,pricingDetail,wiringDetail,bomDetail}=conf;
   const bom=panel.bom||[];
   const validation=panel.validation||null;
+  const [expanded,setExpanded]=React.useState(null);
   if(!bom.length&&!validation)return null;
   const barColor=v=>v>=80?C.green:v>=50?C.yellow:v>0?C.red:C.border;
   const items=[
-    {label:"Pricing",val:pricing},
-    {label:"Wiring",val:wiring},
-    {label:"BOM",val:bomExt}
+    {label:"Pricing",val:pricing,key:"pricing"},
+    {label:"Wiring",val:wiring,key:"wiring"},
+    {label:"BOM",val:bomExt,key:"bom"}
   ];
+  function toggleWiringAccepted(itemId){
+    if(readOnly||!onUpdate)return;
+    const arr=panel.wiringAccepted||[];
+    const id=String(itemId);
+    const updated=arr.includes(id)?arr.filter(x=>x!==id):[...arr,id];
+    const newPanel={...panel,wiringAccepted:updated};
+    onUpdate(newPanel);
+    if(onSaveImmediate)try{onSaveImmediate(newPanel);}catch(e){}
+  }
+  const acceptedSet=new Set((panel.wiringAccepted||[]).map(String));
   return(
-    <div style={{display:"flex",alignItems:"center",gap:20,background:C.card,border:`1px solid #3a3a55`,borderRadius:10,padding:"14px 20px",flexWrap:"wrap"}}>
-      <span style={{fontSize:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap",borderRight:`1px solid #3a3a55`,paddingRight:16}}>Level Of Confidence</span>
-      {items.map(it=>(
-        <div key={it.label} style={{display:"flex",alignItems:"center",gap:8}} title={`${it.label}: ${it.val}%`}>
-          <span style={{fontSize:15,color:C.muted,fontWeight:600}}>{it.label}</span>
-          <div style={{width:70,height:10,background:"#2a2a40",borderRadius:5,overflow:"hidden",border:"1px solid #3a3a55"}}>
-            <div style={{width:`${it.val}%`,height:"100%",background:barColor(it.val),borderRadius:5,transition:"width 0.3s"}}/>
+    <div style={{background:C.card,border:`1px solid #3a3a55`,borderRadius:10,padding:"14px 20px"}}>
+      <div style={{display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
+        <span style={{fontSize:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap",borderRight:`1px solid #3a3a55`,paddingRight:16}}>Level Of Confidence</span>
+        {items.map(it=>(
+          <div key={it.key} onClick={()=>setExpanded(expanded===it.key?null:it.key)}
+            style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",userSelect:"none"}} title={`${it.label}: ${it.val}% — click for details`}>
+            <span style={{fontSize:12,color:C.muted,transition:"transform 0.15s",display:"inline-block",transform:expanded===it.key?"rotate(90deg)":"none"}}>▸</span>
+            <span style={{fontSize:15,color:expanded===it.key?C.text:C.muted,fontWeight:600}}>{it.label}</span>
+            <div style={{width:70,height:10,background:"#2a2a40",borderRadius:5,overflow:"hidden",border:"1px solid #3a3a55"}}>
+              <div style={{width:`${it.val}%`,height:"100%",background:barColor(it.val),borderRadius:5,transition:"width 0.3s"}}/>
+            </div>
+            <span style={{fontSize:15,color:barColor(it.val),fontWeight:700}}>{it.val}%</span>
           </div>
-          <span style={{fontSize:15,color:barColor(it.val),fontWeight:700}}>{it.val}%</span>
+        ))}
+        <div style={{display:"flex",alignItems:"center",gap:6,borderLeft:`1px solid #3a3a55`,paddingLeft:16}}>
+          <span style={{fontSize:18,color:barColor(overall),fontWeight:800}}>{overall}%</span>
+          <span style={{fontSize:14,color:C.muted}}>overall</span>
         </div>
-      ))}
-      <div style={{display:"flex",alignItems:"center",gap:6,borderLeft:`1px solid #3a3a55`,paddingLeft:16}}>
-        <span style={{fontSize:18,color:barColor(overall),fontWeight:800}}>{overall}%</span>
-        <span style={{fontSize:14,color:C.muted}}>overall</span>
       </div>
+      {expanded==="pricing"&&(
+        <div style={{marginTop:12,padding:"10px 14px",background:"#0d0d14",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            {pricingDetail.bcCount>0&&<div style={{color:C.green}}>{pricingDetail.bcCount} item{pricingDetail.bcCount!==1?"s":""} BC-priced ✓</div>}
+            {pricingDetail.manualCount>0&&<div style={{color:C.green}}>{pricingDetail.manualCount} item{pricingDetail.manualCount!==1?"s":""} manual ✓</div>}
+            {pricingDetail.aiCount>0&&<div style={{color:C.yellow}}>{pricingDetail.aiCount} item{pricingDetail.aiCount!==1?"s":""} AI-priced ⚠</div>}
+            {pricingDetail.unpricedCount>0&&<div style={{color:C.red}}>{pricingDetail.unpricedCount} item{pricingDetail.unpricedCount!==1?"s":""} unpriced ✗</div>}
+            {pricingDetail.total===0&&<div style={{color:C.muted}}>No BOM items yet</div>}
+          </div>
+          <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Set prices manually or run Get Prices to improve this score</div>
+        </div>
+      )}
+      {expanded==="wiring"&&(
+        <div style={{marginTop:12,padding:"10px 14px",background:"#0d0d14",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
+          {!validation?<div style={{color:C.muted}}>No validation data — run Re-Validate</div>:(
+            <div>
+              <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8}}>
+                <span style={{color:C.green}}>{wiringDetail.matched} matched ✓</span>
+                <span style={{color:wiringDetail.missing.length-wiringDetail.accepted>0?C.red:C.green}}>{wiringDetail.missing.length-wiringDetail.accepted} missing ✗</span>
+                {wiringDetail.accepted>0&&<span style={{color:C.accent}}>{wiringDetail.accepted} accepted</span>}
+                <span style={{color:C.muted}}>{wiringDetail.notTraceable} not traceable —</span>
+              </div>
+              {wiringDetail.missing.length>0&&(
+                <div style={{maxHeight:180,overflowY:"auto",borderTop:`1px solid ${C.border}`,paddingTop:6}}>
+                  {wiringDetail.missing.map(m=>{
+                    const id=String(m.id);
+                    const isAccepted=acceptedSet.has(id);
+                    return(
+                      <div key={id} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",borderBottom:`1px solid ${C.border}33`}}>
+                        <span style={{color:isAccepted?C.accent:C.red,fontWeight:600,flex:1,fontSize:12}}>{m.partNumber||m.description||"Item #"+m.id}</span>
+                        {m.notes&&<span style={{color:C.muted,fontSize:11}}>{m.notes}</span>}
+                        <button onClick={()=>toggleWiringAccepted(m.id)} disabled={readOnly}
+                          style={{background:isAccepted?C.accentDim:"transparent",color:isAccepted?C.accent:C.muted,border:`1px solid ${isAccepted?C.accent:C.border}`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:600,cursor:readOnly?"default":"pointer",opacity:readOnly?0.5:1,whiteSpace:"nowrap"}}>
+                          {isAccepted?"Accepted ✓":"Accept ✓"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Accept items you've verified or Re-Validate to rescan</div>
+            </div>
+          )}
+        </div>
+      )}
+      {expanded==="bom"&&(
+        <div style={{marginTop:12,padding:"10px 14px",background:"#0d0d14",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            <div style={{color:C.text}}>{bomDetail.bomPages} BOM page{bomDetail.bomPages!==1?"s":""} detected</div>
+            <div style={{color:C.text}}>{bomDetail.itemCount} item{bomDetail.itemCount!==1?"s":""} extracted</div>
+          </div>
+          <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Tag pages as BOM and re-extract if items are missing</div>
+        </div>
+      )}
     </div>
   );
 }
@@ -3318,6 +3401,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   const matchedIds=valData?new Set((valData.matched||[]).map(m=>String(m.item.id))):null;
                   const missingIds=valData?new Set((valData.missingFromSchematic||[]).map(m=>String(m.id))):null;
                   const ntIds=valData?new Set((valData.notTraceable||[]).map(m=>String(m.id))):null;
+                  const wAccepted=new Set((panel.wiringAccepted||[]).map(String));
                   return sortedBom.map((row,i)=>(
                   <tr key={row.id} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:(+row.qty===0||+row.unitPrice===0)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
@@ -3468,6 +3552,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     <td style={{padding:"3px 5px",textAlign:"center",width:44}}>
                       {valData&&(
                         matchedIds.has(String(row.id))?<span style={{color:C.green,fontSize:13}} title="Matched in schematic">⬤</span>
+                        :missingIds.has(String(row.id))&&wAccepted.has(String(row.id))?<span style={{color:C.accent,fontSize:13}} title="Accepted (not in schematic)">⬤</span>
                         :missingIds.has(String(row.id))?<span style={{color:"#cc0000",fontSize:13}} title="Not found in schematic">⬤</span>
                         :ntIds.has(String(row.id))?<span style={{color:"#ffe033",fontSize:13}} title="As shown / not traceable">⬤</span>
                         :<span style={{color:C.border,fontSize:11}}>—</span>
@@ -3682,7 +3767,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   <span style={{fontWeight:800,color:C.accent,fontSize:16,fontVariantNumeric:"tabular-nums",minWidth:90,textAlign:"right"}}>{fmt(sellPrice)}</span>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",marginTop:10,gap:8}}>
-                  <ConfidenceBar panel={panel}/>
+                  <ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>
                   <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px"})}>📊 View Quote</button>
                 </div>
               </div>
