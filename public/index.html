@@ -1199,18 +1199,40 @@ function calcConfidence(panel){
     wiring=conf==="high"?100:conf==="medium"?70:conf==="low"?40:0;
   }
 
-  // BOM Extraction: have items been extracted from tagged BOM pages?
+  // BOM Extraction: quality-scored per row
   let bomExt=0;
   const bomPages=pages.filter(p=>getPageTypes(p).includes("bom"));
-  if(bomPages.length>0&&bom.length>0)bomExt=100;
-  else if(bomPages.length>0&&bom.length===0)bomExt=0;
-  else if(bomPages.length===0&&bom.length>0)bomExt=100;
+  const ocrBadChars=/[|{}~`\\^]/;
+  let cleanCount=0,flaggedRows=[];
+  if(bom.length>0){
+    let totalPts=0;
+    bom.forEach(r=>{
+      let pts=100;const issues=[];
+      const pn=(r.partNumber||"").trim();
+      const desc=(r.description||"").trim();
+      if(!pn){pts-=40;issues.push("no part #");}
+      else{
+        if(pn.length<=2){pts-=30;issues.push("part # very short");}
+        else if(/^\d{1,3}$/.test(pn)){pts-=20;issues.push("part # looks numeric");}
+        if(ocrBadChars.test(pn)){pts-=20;issues.push("suspect OCR chars");}
+      }
+      if(!desc){pts-=15;issues.push("no description");}
+      if(!r.qty||+r.qty===0){pts-=10;issues.push("missing qty");}
+      pts=Math.max(pts,0);
+      totalPts+=pts;
+      if(issues.length)flaggedRows.push({id:r.id,partNumber:pn,issues,score:pts});
+      else cleanCount++;
+    });
+    bomExt=Math.round(totalPts/bom.length);
+  }else if(bomPages.length>0){
+    bomExt=0;
+  }
 
   const overall=Math.round((pricing+wiring+bomExt)/3);
   return{pricing,wiring,bomExt,overall,
     pricingDetail:{bcCount,manualCount,aiCount,unpricedCount,total:bom.length},
     wiringDetail:{matched:matchedCount,missing:missingArr,accepted:acceptedInMissing,notTraceable:ntCount,total:wiringTotal},
-    bomDetail:{bomPages:bomPages.length,itemCount:bom.length}
+    bomDetail:{bomPages:bomPages.length,itemCount:bom.length,cleanCount,flaggedRows}
   };
 }
 
@@ -1307,8 +1329,21 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate}){
           <div style={{display:"flex",flexDirection:"column",gap:5}}>
             <div style={{color:C.text}}>{bomDetail.bomPages} BOM page{bomDetail.bomPages!==1?"s":""} detected</div>
             <div style={{color:C.text}}>{bomDetail.itemCount} item{bomDetail.itemCount!==1?"s":""} extracted</div>
+            {bomDetail.cleanCount>0&&<div style={{color:C.green}}>{bomDetail.cleanCount} item{bomDetail.cleanCount!==1?"s":""} clean ✓</div>}
+            {bomDetail.flaggedRows.length>0&&<div style={{color:C.yellow}}>{bomDetail.flaggedRows.length} item{bomDetail.flaggedRows.length!==1?"s":""} flagged ⚠</div>}
           </div>
-          <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Tag pages as BOM and re-extract if items are missing</div>
+          {bomDetail.flaggedRows.length>0&&(
+            <div style={{maxHeight:180,overflowY:"auto",borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:8}}>
+              {bomDetail.flaggedRows.map(f=>(
+                <div key={f.id} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",borderBottom:`1px solid ${C.border}33`}}>
+                  <span style={{color:C.yellow,fontWeight:600,fontSize:12,minWidth:0,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.partNumber||"(empty)"}</span>
+                  <span style={{color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{f.issues.join(", ")}</span>
+                  <span style={{color:f.score>=70?C.yellow:C.red,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{f.score}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Review flagged items and correct part numbers to improve this score</div>
         </div>
       )}
     </div>
