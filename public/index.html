@@ -390,6 +390,26 @@ async function bcCreateProject(displayName){
   }catch(e){console.warn("bcCreateProject error:",e);return null;}
 }
 
+async function bcUpdateProject(bcProjectId, displayName){
+  if(!_bcToken||!bcProjectId)return false;
+  const compId=await bcGetCompanyId();
+  if(!compId)return false;
+  try{
+    const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
+      headers:{"Authorization":`Bearer ${_bcToken}`}
+    });
+    if(!g.ok){console.warn("bcUpdateProject GET failed:",g.status);return false;}
+    const etag=g.headers.get("ETag");
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
+      method:"PATCH",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},
+      body:JSON.stringify({displayName})
+    });
+    if(!r.ok){console.warn("bcUpdateProject PATCH failed:",r.status);return false;}
+    return true;
+  }catch(e){console.warn("bcUpdateProject error:",e);return false;}
+}
+
 async function bcLookupItem(partNumber){
   if(!_bcToken||!partNumber||!partNumber.trim())return null;
   const compId=await bcGetCompanyId();
@@ -4272,6 +4292,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
     onUpdate(updated);
     await saveProject(uid,updated);
     setEditingName(false);
+    if(_bcToken&&project.bcProjectId) bcUpdateProject(project.bcProjectId,draftName.trim());
   }
   async function validateAll(){
     if(!_apiKey)return;
