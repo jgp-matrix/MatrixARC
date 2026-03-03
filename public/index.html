@@ -2010,7 +2010,6 @@ function QuoteTab({project,onUpdate}){
   const grandTotal=materialCost+laborCost+contingencyBOM+contingencyConsumables;
   const sellPrice=grandTotal*(1+markup/100);
   const hasSellPrice=sellPrice>0;
-  console.log("QUOTE TAB: bom="+bom.length+", materials="+materialCost.toFixed(2)+", labor="+laborCost.toFixed(2)+", contingencyBOM="+contingencyBOM+", contingencyConsumables="+contingencyConsumables+", grandTotal="+grandTotal.toFixed(2)+", markup="+markup+", sellPrice="+sellPrice.toFixed(2));
 
   const q=project.quote||{};
   function setQ(updates){onUpdate({...project,quote:{...q,...updates}});}
@@ -3485,7 +3484,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         const totalCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
         const grandTotal=totalCost+laborCost+contingencyBOM+contingencyConsumables;
         const sellPrice=grandTotal*(1+markup/100);
-        console.log("PANEL CARD: bom="+bom.length+", materials="+totalCost.toFixed(2)+", labor="+laborCost.toFixed(2)+", contingencyBOM="+contingencyBOM+", contingencyConsumables="+contingencyConsumables+", grandTotal="+grandTotal.toFixed(2)+", markup="+markup+", sellPrice="+sellPrice.toFixed(2));
         const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
         return(
           <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
