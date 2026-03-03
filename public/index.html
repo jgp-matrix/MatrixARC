@@ -221,22 +221,22 @@ function computeLaborEstimate(panel){
   const labelHours=val("labelHours",4);
 
   const lines=[];
-  const addLine=(category,qty,minPerUnit,unit)=>{
+  const addLine=(category,qty,minPerUnit,unit,field)=>{
     const hours=qty*minPerUnit/60;
     const cost=hours*laborRate;
-    lines.push({category,qty,unit,minPerUnit,hours,cost});
+    lines.push({category,qty,unit,minPerUnit,hours,cost,field});
   };
 
-  addLine("Wire Time",wireCount,LABOR_RATES.wireMinPerPoint,"wires");
-  addLine("Door Wiring",doorDevices,LABOR_RATES.doorDeviceMinPerDevice,"devices");
-  addLine("Device Mounting",allDevices,LABOR_RATES.mountingMinPerDevice,"devices");
-  addLine("Duct & DIN Rail",ductDinFeet,LABOR_RATES.ductDinMinPerFoot,"feet");
-  addLine("Panel Holes",panelHoles,LABOR_RATES.holesMinPerHole,"holes");
+  addLine("Wire Time",wireCount,LABOR_RATES.wireMinPerPoint,"wires","wireCount");
+  addLine("Door Wiring",doorDevices,LABOR_RATES.doorDeviceMinPerDevice,"devices","doorDevices");
+  addLine("Device Mounting",allDevices,LABOR_RATES.mountingMinPerDevice,"devices","allDevices");
+  addLine("Duct & DIN Rail",ductDinFeet,LABOR_RATES.ductDinMinPerFoot,"feet","ductDinFeet");
+  addLine("Panel Holes",panelHoles,LABOR_RATES.holesMinPerHole,"holes","panelHoles");
   // Labels: stored as hours directly
-  lines.push({category:"Labels",qty:labelHours,unit:"hours",minPerUnit:60,hours:labelHours,cost:labelHours*laborRate});
-  addLine("Project Mgmt",pmUnits,LABOR_RATES.pmMinPerUnit,"sessions");
+  lines.push({category:"Labels",qty:labelHours,unit:"hours",minPerUnit:60,hours:labelHours,cost:labelHours*laborRate,field:"labelHours"});
+  addLine("Project Mgmt",pmUnits,LABOR_RATES.pmMinPerUnit,"sessions","pmUnits");
 
-  addLine("Crating Time",cratingUnits,LABOR_RATES.cratingMinPerUnit,"crates");
+  addLine("Crating Time",cratingUnits,LABOR_RATES.cratingMinPerUnit,"crates","cratingUnits");
 
   const totalHours=lines.reduce((s,l)=>s+l.hours,0);
   const totalCost=totalHours*laborRate;
@@ -3018,6 +3018,18 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
   }
+  function saveLaborOverride(field,value){
+    const ld=panel.laborData||{};
+    const updated={...panel,laborData:{...ld,overrides:{...(ld.overrides||{}),[field]:value}}};
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+  }
+  function saveLaborAccepted(category,accepted){
+    const ld=panel.laborData||{};
+    const updated={...panel,laborData:{...ld,accepted:{...(ld.accepted||{}),[category]:accepted}}};
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+  }
   async function runPricingOnPanel(){
     const bom=panel.bom||[];
     if(!bom.length||!_apiKey)return;
@@ -3537,30 +3549,60 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-start"}}>
               {/* LEFT: Labor breakdown */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",minWidth:280}}>
+                {(()=>{
+                  const laborAccepted=panel.laborData?.accepted||{};
+                  const acceptedCount=laborEst.lines.filter(l=>laborAccepted[l.category]).length;
+                  const allAccepted=laborEst.lines.length>0&&acceptedCount===laborEst.lines.length;
+                  return <>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                   <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
                   <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"1px 7px",fontSize:10,fontWeight:700}}>
                     {laborEst.isOverride?"Manual Override":laborEst.isLegacy?"Legacy":laborEst.hasLayoutData?"Auto (schematic + layout)":"Schematic only"}
                   </span>
+                  {allAccepted&&<span style={{background:C.greenDim,color:C.green,borderRadius:10,padding:"1px 7px",fontSize:10,fontWeight:700}}>All Accepted</span>}
                 </div>
                 {laborEst.lines.length>0&&(
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginBottom:6}}>
                     <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
+                      <th style={{textAlign:"center",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10,width:22}}>&#10003;</th>
                       <th style={{textAlign:"left",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Category</th>
                       <th style={{textAlign:"right",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Qty</th>
                       <th style={{textAlign:"right",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Hours</th>
                       <th style={{textAlign:"right",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Cost</th>
                     </tr></thead>
                     <tbody>
-                      {laborEst.lines.map((l,i)=>(
-                        <tr key={i} style={{borderBottom:`1px solid ${C.border}22`}}>
-                          <td style={{padding:"2px 3px",color:C.sub,whiteSpace:"nowrap"}}>{l.category}</td>
-                          <td style={{padding:"2px 3px",textAlign:"right",color:C.text,whiteSpace:"nowrap"}}>{l.qty} {l.unit}</td>
+                      {laborEst.lines.map((l,i)=>{
+                        const isAccepted=!!laborAccepted[l.category];
+                        return(
+                        <tr key={i} style={{borderBottom:`1px solid ${C.border}22`,background:isAccepted?"#0a1a0a":"transparent"}}>
+                          <td style={{padding:"2px 3px",textAlign:"center"}}>
+                            <input type="checkbox" checked={isAccepted} disabled={readOnly}
+                              onChange={e=>saveLaborAccepted(l.category,e.target.checked)}
+                              style={{accentColor:C.green,cursor:readOnly?"default":"pointer",margin:0}}/>
+                          </td>
+                          <td style={{padding:"2px 3px",color:isAccepted?C.green:C.sub,whiteSpace:"nowrap"}}>{l.category}</td>
+                          <td style={{padding:"2px 3px",textAlign:"right",whiteSpace:"nowrap"}}>
+                            {l.field&&!readOnly?(
+                              <input type="text" inputMode="decimal"
+                                defaultValue={l.qty}
+                                key={l.field+"-"+(l.qty)}
+                                onBlur={e=>{
+                                  const v=parseFloat(e.target.value);
+                                  if(!isNaN(v)&&v!==l.qty)saveLaborOverride(l.field,Math.max(0,v));
+                                }}
+                                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                                style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,padding:"1px 4px",fontSize:11,width:42,textAlign:"right"}}/>
+                            ):(
+                              <span style={{color:C.text}}>{l.qty}</span>
+                            )}
+                            {" "}<span style={{color:C.muted,fontSize:10}}>{l.unit}</span>
+                          </td>
                           <td style={{padding:"2px 3px",textAlign:"right",color:C.muted,fontSize:10}}>{l.hours.toFixed(1)}</td>
                           <td style={{padding:"2px 3px",textAlign:"right",color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmt(l.cost)}</td>
-                        </tr>
-                      ))}
+                        </tr>);
+                      })}
                       <tr style={{borderTop:`1px solid ${C.border}`}}>
+                        <td style={{padding:"3px 3px",textAlign:"center",fontSize:9,color:C.muted}}>{acceptedCount}/{laborEst.lines.length}</td>
                         <td style={{padding:"3px 3px",fontWeight:700,color:C.text}}>TOTAL</td>
                         <td></td>
                         <td style={{padding:"3px 3px",textAlign:"right",fontWeight:700,color:C.text}}>{laborEst.totalHours.toFixed(1)}</td>
@@ -3569,6 +3611,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     </tbody>
                   </table>
                 )}
+                </>;})()}
                 {!laborEst.isOverride&&!laborEst.isLegacy&&laborEst.inputs&&(
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:4,marginBottom:6}}>
                     <div style={{fontSize:9,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3}}>Detected Inputs</div>
