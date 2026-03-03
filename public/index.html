@@ -3432,13 +3432,13 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         {row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
                         {row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>AI</span>}
                         {row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>M</span>}
-                        <div style={{display:"flex",alignItems:"center",gap:0,flex:1,justifyContent:"flex-end"}}>
-                        <span style={{color:C.muted,fontSize:13}}>$</span>
+                        <div style={{display:"flex",alignItems:"center",gap:1,flex:1,justifyContent:"flex-end"}}>
+                        <span style={{color:C.muted,fontSize:13,flexShrink:0}}>$</span>
                         <input type="text" inputMode="decimal" readOnly={readOnly}
                           defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
                           key={row.id+"-"+(row.priceSource||"")+(row.unitPrice??"")}
                           placeholder="—"
-                          style={{...inp({padding:"5px 7px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5,textAlign:"right",width:90}),minWidth:80}}
+                          style={{...inp({padding:"5px 2px 5px 1px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5,textAlign:"right",width:80}),minWidth:60}}
                           onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;e.target.select();}}
                           onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";const v=e.target.value.trim();if(v===""){updatePrice(row.id,"");}else{const n=parseFloat(v);if(!isNaN(n)){e.target.value=n.toFixed(2);updatePrice(row.id,String(n));}else{e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";}}}}
                           onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";e.target.blur();}}}
