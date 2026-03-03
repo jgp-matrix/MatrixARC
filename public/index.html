@@ -317,6 +317,22 @@ async function savePricingConfig(uid,cfg){
   const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
   await fbDb.doc(path).set(cfg);
 }
+
+// ── DEFAULT BOM ITEMS (configurable via Pricing Config) ──
+let _defaultBomItems=[];
+async function loadDefaultBomItems(uid){
+  try{
+    const path=_appCtx.configPath?`${_appCtx.configPath}/defaultBomItems`:`users/${uid}/config/defaultBomItems`;
+    const d=await fbDb.doc(path).get();
+    if(d.exists&&Array.isArray(d.data().items)){_defaultBomItems=d.data().items;}
+    else{_defaultBomItems=[];}
+  }catch(e){_defaultBomItems=[];}
+}
+async function saveDefaultBomItems(uid,items){
+  _defaultBomItems=items;
+  const path=_appCtx.configPath?`${_appCtx.configPath}/defaultBomItems`:`users/${uid}/config/defaultBomItems`;
+  await fbDb.doc(path).set({items});
+}
 async function apiCall(body){
   if(!_apiKey)throw new Error("API key not set. Open Settings and add your Anthropic key.");
   const r=await fetch("https://api.anthropic.com/v1/messages",{
@@ -721,13 +737,13 @@ function applyPartCorrections(corrections,bom){
 
 // ── DEFAULT BOM ITEMS (appended after extraction if not already present) ──
 function appendDefaultBomItems(bom){
+  if(!_defaultBomItems.length)return bom;
   const lower=new Set(bom.map(r=>(r.description||"").trim().toLowerCase()));
   const items=[];
-  if(!lower.has("job buyoff")){
-    items.push({id:Date.now()+Math.random(),qty:1,partNumber:"JOB-BUYOFF",description:"Job Buyoff",manufacturer:"",notes:"",unitPrice:0,priceSource:null});
-  }
-  if(!lower.has("crate")){
-    items.push({id:Date.now()+Math.random()+1,qty:1,partNumber:"",description:"Crate",manufacturer:"",notes:"",unitPrice:0,priceSource:null});
+  for(const tpl of _defaultBomItems){
+    const desc=(tpl.description||"").trim().toLowerCase();
+    if(desc&&lower.has(desc))continue;
+    items.push({id:Date.now()+Math.random(),qty:tpl.qty||1,partNumber:tpl.partNumber||"",description:tpl.description||"",manufacturer:tpl.manufacturer||"",notes:"",unitPrice:tpl.unitPrice||0,priceSource:tpl.priceSource||null});
   }
   return items.length?[...bom,...items]:bom;
 }
@@ -1498,16 +1514,69 @@ function PricingConfigModal({uid,onClose}){
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
 
+  // Auto-Add BOM Items state
+  const [defaultItems,setDefaultItems]=useState(()=>[..._defaultBomItems]);
+  const [bcQuery,setBcQuery]=useState("");
+  const [bcResults,setBcResults]=useState([]);
+  const [bcSearching,setBcSearching]=useState(false);
+  const bcDebounce=useRef(null);
+  const [manualDesc,setManualDesc]=useState("");
+  const [manualPrice,setManualPrice]=useState("");
+
+  function fmtDate(iso){
+    if(!iso)return"—";
+    try{const d=new Date(iso);return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});}catch(e){return"—";}
+  }
+
+  async function doBcSearch(q){
+    if(!q||q.trim().length<3){setBcResults([]);return;}
+    setBcSearching(true);
+    const r=await bcSearchItems(q.trim(),{top:10});
+    setBcResults(r.items||[]);
+    setBcSearching(false);
+  }
+
+  function onBcQueryChange(val){
+    setBcQuery(val);
+    if(bcDebounce.current)clearTimeout(bcDebounce.current);
+    if(val.trim().length>=3){
+      bcDebounce.current=setTimeout(()=>doBcSearch(val),350);
+    } else {setBcResults([]);}
+  }
+
+  function addBcItem(item){
+    const exists=defaultItems.some(d=>(d.description||"").toLowerCase()===((item.displayName||"").toLowerCase()));
+    if(exists)return;
+    setDefaultItems(prev=>[...prev,{partNumber:item.number||"",description:item.displayName||"",manufacturer:"",qty:1,unitPrice:item.unitCost??item.unitPrice??0,priceSource:"bc"}]);
+    setBcQuery("");setBcResults([]);
+  }
+
+  function addManualItem(){
+    const desc=manualDesc.trim();
+    if(!desc)return;
+    const exists=defaultItems.some(d=>(d.description||"").toLowerCase()===desc.toLowerCase());
+    if(exists)return;
+    setDefaultItems(prev=>[...prev,{partNumber:"",description:desc,manufacturer:"",qty:1,unitPrice:+manualPrice||0,priceSource:null}]);
+    setManualDesc("");setManualPrice("");
+  }
+
+  function removeItem(idx){setDefaultItems(prev=>prev.filter((_,i)=>i!==idx));}
+
   async function save(){
     setSaving(true);
-    await savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct});
+    await Promise.all([
+      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct}),
+      saveDefaultBomItems(uid,defaultItems)
+    ]);
     setSaving(false);setSaved(true);setTimeout(()=>setSaved(false),2000);
   }
 
+  useEffect(()=>()=>{if(bcDebounce.current)clearTimeout(bcDebounce.current);},[]);
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
-      <div style={{...card(),width:"100%",maxWidth:420}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>⚙ Pricing Configuration</div>
+      <div style={{...card(),width:"100%",maxWidth:540,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>Pricing Configuration</div>
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Default contingencies applied when opening a new project</div>
         {[
           ["BOM Contingency","Default amount added to every quote for miscellaneous BOM items","$",bomVal,setBomVal,"number","50"],
@@ -1530,6 +1599,72 @@ function PricingConfigModal({uid,onClose}){
           </div>
           <div style={{fontSize:11,color:C.muted,marginTop:4}}>Hidden buffer added to budgetary sell price (default 20%)</div>
         </div>
+
+        {/* ── AUTO-ADD BOM ITEMS ── */}
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Auto-Add BOM Items</label>
+          <div style={{fontSize:11,color:C.muted,marginBottom:12}}>Items below are automatically added to every BOM after extraction</div>
+
+          {/* BC search */}
+          <div style={{position:"relative",marginBottom:10}}>
+            <input value={bcQuery} onChange={e=>onBcQueryChange(e.target.value)}
+              placeholder={_bcToken?"Search BC items (min 3 chars)…":"Connect BC to search items"}
+              disabled={!_bcToken}
+              onKeyDown={e=>{if(e.key==="Enter"&&bcQuery.trim().length>=3){if(bcDebounce.current)clearTimeout(bcDebounce.current);doBcSearch(bcQuery);}}}
+              style={{...inp(),width:"100%",boxSizing:"border-box",fontSize:13,opacity:_bcToken?1:0.5}}/>
+            {bcSearching&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Searching…</div>}
+            {bcResults.length>0&&(
+              <div style={{position:"absolute",top:"100%",left:0,right:0,zIndex:10,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,marginTop:4,maxHeight:220,overflowY:"auto",boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
+                <div style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,fontSize:11,color:C.muted,fontWeight:600,padding:"6px 10px",borderBottom:`1px solid ${C.border}`,textTransform:"uppercase",letterSpacing:0.3}}>
+                  <div>Part #</div><div>Description</div><div style={{textAlign:"right"}}>Unit Cost</div><div style={{textAlign:"right"}}>Modified</div>
+                </div>
+                {bcResults.map((item,i)=>(
+                  <div key={i} onClick={()=>addBcItem(item)} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,padding:"7px 10px",cursor:"pointer",borderBottom:`1px solid ${C.border}22`,fontSize:12,transition:"background 0.1s"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.accent+"22"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.number}</div>
+                    <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:8}}>{item.displayName}</div>
+                    <div style={{textAlign:"right",color:C.green}}>{item.unitCost!=null?"$"+item.unitCost.toFixed(2):"—"}</div>
+                    <div style={{textAlign:"right",color:C.muted}}>{fmtDate(item.lastModifiedDateTime)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Manual add */}
+          <div style={{display:"flex",gap:6,marginBottom:12}}>
+            <input value={manualDesc} onChange={e=>setManualDesc(e.target.value)} placeholder="Description (manual)" style={{...inp(),flex:1,fontSize:12}}
+              onKeyDown={e=>{if(e.key==="Enter")addManualItem();}}/>
+            <div style={{display:"flex",alignItems:"center",gap:2}}>
+              <span style={{color:C.muted,fontSize:12}}>$</span>
+              <input type="number" min="0" step="0.01" value={manualPrice} onChange={e=>setManualPrice(e.target.value)} placeholder="0.00" style={{...inp(),width:80,fontSize:12,textAlign:"right"}}
+                onKeyDown={e=>{if(e.key==="Enter")addManualItem();}}/>
+            </div>
+            <button onClick={addManualItem} disabled={!manualDesc.trim()} style={btn(C.accent,"#fff",{padding:"6px 14px",fontSize:12,opacity:manualDesc.trim()?1:0.4})}>Add</button>
+          </div>
+
+          {/* Saved defaults list */}
+          {defaultItems.length>0&&(
+            <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+              <div style={{display:"grid",gridTemplateColumns:"100px 1fr 80px 32px",gap:0,fontSize:10,color:C.muted,fontWeight:600,padding:"5px 10px",background:C.bg,textTransform:"uppercase",letterSpacing:0.3,borderBottom:`1px solid ${C.border}`}}>
+                <div>Part #</div><div>Description</div><div style={{textAlign:"right"}}>Price</div><div></div>
+              </div>
+              {defaultItems.map((item,i)=>{
+                const zeroPrice=!item.unitPrice;
+                return(
+                  <div key={i} style={{display:"grid",gridTemplateColumns:"100px 1fr 80px 32px",gap:0,padding:"6px 10px",fontSize:12,borderBottom:i<defaultItems.length-1?`1px solid ${C.border}22`:"none",background:zeroPrice?"#ff000011":"transparent"}}>
+                    <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.partNumber||"—"}</div>
+                    <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.description}</div>
+                    <div style={{textAlign:"right",color:zeroPrice?C.red:C.green}}>{item.unitPrice?"$"+Number(item.unitPrice).toFixed(2):"$0.00"}</div>
+                    <button onClick={()=>removeItem(i)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:0,lineHeight:1}} title="Remove">✕</button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {defaultItems.length===0&&<div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>No auto-add items configured</div>}
+        </div>
+
         <div style={{display:"flex",gap:10,marginTop:4}}>
           <button onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
           <button onClick={save} disabled={saving} style={btn(saved?C.green:C.accent,"#fff",{flex:2,opacity:saving?0.6:1})}>
@@ -4575,7 +4710,14 @@ function App({user}){
       } else {
         _appCtx.projectsPath=`users/${user.uid}/projects`;
       }
-      await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid)]);
+      await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid),loadDefaultBomItems(user.uid)]);
+      if(!_defaultBomItems.length){
+        _defaultBomItems=[
+          {partNumber:"JOB-BUYOFF",description:"Job Buyoff",manufacturer:"",qty:1,unitPrice:0,priceSource:null},
+          {partNumber:"",description:"Crate",manufacturer:"",qty:1,unitPrice:0,priceSource:null}
+        ];
+        saveDefaultBomItems(user.uid,_defaultBomItems).catch(()=>{});
+      }
       console.log("API key loaded:",_apiKey?"YES ("+_apiKey.slice(0,8)+"…)":"NO — set in Settings");
       setProjects(await loadProjects(user.uid));
       setLoading(false);
