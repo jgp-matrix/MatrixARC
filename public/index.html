@@ -1028,7 +1028,7 @@ function mergeLayoutResults(layouts){
 }
 
 // ── PANEL VALIDATION ──
-async function runPanelValidation(panel){
+async function runPanelValidation(panel,onProgress){
   let schematicPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl));
   let layoutPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("layout")&&(p.dataUrl||p.storageUrl));
   if(!schematicPages.length&&!layoutPages.length)return{validation:null,laborData:null};
@@ -1036,13 +1036,18 @@ async function runPanelValidation(panel){
   schematicPages=await Promise.all(schematicPages.map(ensureDataUrl));
   layoutPages=await Promise.all(layoutPages.map(ensureDataUrl));
 
-  // 1. Schematic + layout analysis (parallel)
+  // 1. Schematic + layout analysis (parallel) — with real progress tracking
   let allTags=[],totalWires=0,totalTerminations=0;
   let layoutMerged=null;
+  const totalPages=schematicPages.length+layoutPages.length;
+  let donePages=0;
+  const reportProgress=()=>{if(onProgress&&totalPages>0)onProgress(Math.round((donePages/totalPages)*90));};
+  if(onProgress)onProgress(0);
   const [schResults,layResults]=await Promise.all([
-    parallelMap(schematicPages,async pg=>{return await analyzeSchematicPage(pg.dataUrl);},4),
-    parallelMap(layoutPages,async pg=>{return await analyzeLayoutPage(pg.dataUrl);},4)
+    parallelMap(schematicPages,async pg=>{const r=await analyzeSchematicPage(pg.dataUrl);donePages++;reportProgress();return r;},4),
+    parallelMap(layoutPages,async pg=>{const r=await analyzeLayoutPage(pg.dataUrl);donePages++;reportProgress();return r;},4)
   ]);
+  if(onProgress)onProgress(92);
   for(const result of schResults){
     allTags=[...allTags,...result.tags];
     totalWires+=result.wireCount;
@@ -2793,8 +2798,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [bcError,setBcError]=useState("");
   const [validatingPanel,setValidatingPanel]=useState(false);
   const [valPct,setValPct]=useState(0);
-  const valTimer=useRef(null);
-  const valStart=useRef(0);
   const [bcFuzzySuggestions,setBcFuzzySuggestions]=useState({});
   const [bcBrowserOpen,setBcBrowserOpen]=useState(false);
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
@@ -3327,17 +3330,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   async function validatePanel(){
     if(!_apiKey)return;
     setValidatingPanel(true);setValPct(0);
-    valStart.current=Date.now();
-    const estMs=25000;
-    function tick(){
-      const elapsed=Date.now()-valStart.current;
-      const t=Math.min(elapsed/estMs,1);
-      setValPct(Math.min(97,Math.round(97*Math.pow(t,0.85))));
-      valTimer.current=requestAnimationFrame(tick);
-    }
-    valTimer.current=requestAnimationFrame(tick);
-    const result=await runPanelValidation(panel);
-    if(valTimer.current){cancelAnimationFrame(valTimer.current);valTimer.current=null;}
+    const result=await runPanelValidation(panel,pct=>setValPct(pct));
     setValPct(100);
     if(result.validation||result.laborData){
       const updated={...panel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
