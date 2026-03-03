@@ -40,6 +40,9 @@ window.pdfjsReady=new Promise(res=>{
 });
 </script>
 <script>
+// ── APP VERSION ──
+const APP_VERSION="v1.5.0";
+
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
   apiKey:"AIzaSyCGgcsb-pV7ZpDDfUd6KQKaDetXUZPCTVw",
@@ -1650,7 +1653,7 @@ function LoginScreen({invite}){
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 50% 0%,#1a1a3e 0%,${C.bg} 60%)`}}>
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{fontSize:52,marginBottom:10}}>⬡</div>
-        <div style={{fontSize:34,fontWeight:800,letterSpacing:-1}}>Matrix <span style={{color:C.accent}}>ARC</span></div>
+        <div style={{fontSize:34,fontWeight:800,letterSpacing:-1}}>Matrix <span style={{color:C.accent}}>ARC</span> <span style={{fontSize:11,color:C.muted,fontWeight:400,letterSpacing:0}}>{APP_VERSION}</span></div>
         <div style={{fontSize:14,color:C.muted,marginTop:6}}>AI Recognition &amp; Capture · Control Panel Quoting</div>
       </div>
       {invite&&(
@@ -3787,6 +3790,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
   return(
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:C.bg}}>
       <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",gap:16,minHeight:52,flexShrink:0}}>
+        <span style={{fontSize:14,fontWeight:800,letterSpacing:-0.3,whiteSpace:"nowrap"}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
+        <span style={{fontSize:10,color:C.muted}}>{APP_VERSION}</span>
+        <div style={{width:1,height:18,background:C.border}}/>
         <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>← Projects</button>
         <div style={{width:1,height:18,background:C.border}}/>
         {editingName?(
@@ -3893,6 +3899,9 @@ function QuoteView({project,uid,onBack,onUpdate}){
   return(
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:C.bg}}>
       <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",gap:16,minHeight:52,flexShrink:0}}>
+        <span style={{fontSize:14,fontWeight:800,letterSpacing:-0.3,whiteSpace:"nowrap"}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
+        <span style={{fontSize:10,color:C.muted}}>{APP_VERSION}</span>
+        <div style={{width:1,height:18,background:C.border}}/>
         <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>← Panels</button>
         <div style={{width:1,height:18,background:C.border}}/>
         <div style={{fontSize:15,fontWeight:700,color:C.text,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{project.name}</div>
@@ -4121,7 +4130,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
       <div style={{textAlign:"center",padding:"48px 0 52px",background:`radial-gradient(ellipse at 50% 0%,#1a1a3e 0%,transparent 70%)`,borderRadius:16,marginBottom:40}}>
         <div style={{fontSize:110,lineHeight:1,marginBottom:16}}>⬡</div>
         <div style={{fontSize:80,fontWeight:800,letterSpacing:-3,lineHeight:1,marginBottom:12}}>
-          Matrix <span style={{color:C.accent}}>ARC</span>
+          Matrix <span style={{color:C.accent}}>ARC</span> <span style={{fontSize:14,color:C.muted,fontWeight:400,letterSpacing:0}}>{APP_VERSION}</span>
         </div>
         <div style={{fontSize:16,color:C.muted,letterSpacing:1}}>AI Recognition &amp; Capture · Control Panel Quoting</div>
         <div style={{fontSize:14,color:C.sub,marginTop:8}}>AI assisted Industrial Control Panel extraction and Quoting assistant</div>
@@ -4280,6 +4289,7 @@ function App({user}){
             <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
               <span style={{fontSize:22}}>⬡</span>
               <span style={{fontSize:16,fontWeight:800,letterSpacing:-0.5}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
+              <span style={{fontSize:10,color:C.muted,marginLeft:2}}>{APP_VERSION}</span>
               <span style={{fontSize:11,color:C.muted,marginLeft:4}}>AI Recognition &amp; Capture</span>
               {companyName&&(
                 <span style={{color:C.accent,fontSize:12,fontWeight:700,marginLeft:8}}>⬡ {companyName}</span>
