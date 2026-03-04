@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.42";
+const APP_VERSION="v1.9.43";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4747,6 +4747,7 @@ function DeleteConfirmModal({projectName,onConfirm,onCancel}){
 // ── NEW PROJECT MODAL ──
 function NewProjectModal({uid,onCreated,onClose}){
   const [name,setName]=useState("");
+  const [panelCount,setPanelCount]=useState(1);
   const [loading,setLoading]=useState(false);
   const [bcStatus,setBcStatus]=useState(null);
   const [createErr,setCreateErr]=useState("");
@@ -4830,7 +4831,7 @@ function NewProjectModal({uid,onCreated,onClose}){
         bcCustomerNumber:bc.customerNumber,
         bcCustomerName:bc.customerName||selectedCustomer.displayName,
         status:"draft",
-        panels:[{id:'panel-1',name:'Panel 1',pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'}],
+        panels:Array.from({length:Math.max(1,panelCount)},(_,i)=>({id:`panel-${i+1}`,name:`Panel ${i+1}`,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'})),
         createdAt:Date.now(),updatedAt:Date.now()
       });
       onCreated(p);
@@ -4849,6 +4850,13 @@ function NewProjectModal({uid,onCreated,onClose}){
         <form onSubmit={create}>
           <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Project Name</div>
           <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Conveyor Control Panel" style={{...inp(),marginBottom:16}} autoFocus/>
+          <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Number of Panels</div>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+            <button type="button" onClick={()=>setPanelCount(c=>Math.max(1,c-1))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:C.border,color:C.text,fontSize:18,cursor:"pointer",lineHeight:1}}>−</button>
+            <span style={{fontSize:20,fontWeight:700,minWidth:32,textAlign:"center"}}>{panelCount}</span>
+            <button type="button" onClick={()=>setPanelCount(c=>Math.min(20,c+1))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:C.border,color:C.text,fontSize:18,cursor:"pointer",lineHeight:1}}>+</button>
+            <span style={{fontSize:12,color:C.muted}}>{panelCount===1?"1 panel will be created":`${panelCount} panels will be created`}</span>
+          </div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
             <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Customer <span style={{color:C.border,fontWeight:400,textTransform:"none",letterSpacing:0}}>(from Business Central)</span></div>
             {bcConnected&&!showNewCust&&<button type="button" onClick={()=>setShowNewCust(true)} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:12,padding:0,fontWeight:600}}>+ New Customer</button>}
