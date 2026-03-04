@@ -410,40 +410,26 @@ async function bcCreateProject(displayName, customerNumber){
   }
 }
 
-async function bcSearchCustomers(query){
+async function bcLoadAllCustomers(){
+  // Load all customers once — filtered client-side for case-insensitive search
   if(!_bcToken)return[];
   const compId=await bcGetCompanyId();
   if(!compId)return[];
-  const q=(query||"").trim().replace(/'/g,"''");
-  const toCustomer=r=>({number:r.number||"",displayName:r.displayName||""});
   try{
-    if(!q){
-      // No query — return top 25 alphabetically
-      const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$top=25&$orderby=displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(r.status===401){_bcToken=null;return[];}
-      if(!r.ok){console.warn("bcSearchCustomers failed:",r.status,await r.text());return[];}
-      const d=await r.json();
-      return(d.value||[]).map(toCustomer);
-    }
-    // Two separate calls — BC does not support 'or' with contains()
-    // tolower() on both sides for case-insensitive matching
-    const ql=q.toLowerCase();
-    const [byName,byNum]=await Promise.all([
-      fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=contains(tolower(displayName),'${ql}')&$top=25&$orderby=displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}}),
-      fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=contains(tolower(number),'${ql}')&$top=10&$orderby=number`,{headers:{"Authorization":`Bearer ${_bcToken}`}})
-    ]);
-    if(byName.status===401){_bcToken=null;return[];}
-    const dName=byName.ok?await byName.json():{value:[]};
-    const dNum=byNum.ok?await byNum.json():{value:[]};
-    const seen=new Set();
-    const merged=[];
-    for(const c of[...(dName.value||[]),...(dNum.value||[])]){
-      if(!seen.has(c.number)){seen.add(c.number);merged.push(toCustomer(c));}
-    }
-    merged.sort((a,b)=>a.displayName.localeCompare(b.displayName));
-    console.log("bcSearchCustomers:",merged.length,"results for",q);
-    return merged.slice(0,25);
-  }catch(e){console.warn("bcSearchCustomers error:",e);return[];}
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$top=500&$orderby=displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.status===401){_bcToken=null;return[];}
+    if(!r.ok){console.warn("bcLoadAllCustomers failed:",r.status);return[];}
+    const d=await r.json();
+    return(d.value||[]).map(r=>({number:r.number||"",displayName:r.displayName||""}));
+  }catch(e){console.warn("bcLoadAllCustomers error:",e);return[];}
+}
+
+function bcFilterCustomers(allCustomers,query){
+  if(!query.trim())return allCustomers.slice(0,25);
+  const q=query.trim().toLowerCase();
+  return allCustomers.filter(c=>
+    c.displayName.toLowerCase().includes(q)||c.number.toLowerCase().includes(q)
+  ).slice(0,25);
 }
 
 async function bcUpdateProject(bcProjectId, displayName){
@@ -4748,31 +4734,32 @@ function NewProjectModal({uid,onCreated,onClose}){
   const [bcStatus,setBcStatus]=useState(null);
   const [createErr,setCreateErr]=useState("");
   const [customerQuery,setCustomerQuery]=useState("");
+  const [allCustomers,setAllCustomers]=useState([]);
   const [customerResults,setCustomerResults]=useState([]);
   const [customerSearching,setCustomerSearching]=useState(false);
   const [selectedCustomer,setSelectedCustomer]=useState(null);
   const [showDropdown,setShowDropdown]=useState(false);
   const [bcConnected,setBcConnected]=useState(!!_bcToken);
-  const searchTimer=useRef(null);
 
   useEffect(()=>{
-    if(_bcToken){loadCustomers("");return;}
+    if(_bcToken){loadCustomers();return;}
     acquireBcToken(false).then(t=>{
-      if(t){setBcConnected(true);loadCustomers("");}
+      if(t){setBcConnected(true);loadCustomers();}
     }).catch(()=>{});
   },[]);
 
-  async function loadCustomers(q){
+  async function loadCustomers(){
     setCustomerSearching(true);
-    const r=await bcSearchCustomers(q);
-    setCustomerResults(r);
+    const all=await bcLoadAllCustomers();
+    setAllCustomers(all);
+    setCustomerResults(all.slice(0,25));
     setCustomerSearching(false);
   }
 
   async function connectBC(){
     setCustomerSearching(true);
     const t=await acquireBcToken(true);
-    if(t){setBcConnected(true);await loadCustomers("");}
+    if(t){setBcConnected(true);await loadCustomers();}
     setCustomerSearching(false);
   }
 
@@ -4780,8 +4767,7 @@ function NewProjectModal({uid,onCreated,onClose}){
     setCustomerQuery(val);
     setSelectedCustomer(null);
     setShowDropdown(true);
-    if(searchTimer.current)clearTimeout(searchTimer.current);
-    searchTimer.current=setTimeout(()=>loadCustomers(val),300);
+    setCustomerResults(bcFilterCustomers(allCustomers,val));
   }
 
   function selectCustomer(c){
