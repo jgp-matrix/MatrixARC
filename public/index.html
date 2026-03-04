@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.53";
+const APP_VERSION="v1.9.54";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4493,7 +4493,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
   return(
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
       <div style={{background:C.bg,borderBottom:`1px solid ${C.border}`,padding:"6px 24px",display:"flex",alignItems:"center",gap:12,minHeight:40,flexShrink:0}}>
-        <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,padding:"0",whiteSpace:"nowrap"}}>← Projects</button>
+        <button onClick={onBack} style={{background:C.border,border:"none",color:C.sub,cursor:"pointer",fontSize:16,fontWeight:600,display:"flex",alignItems:"center",gap:8,padding:"6px 16px",borderRadius:8,whiteSpace:"nowrap"}}>← Back to Projects</button>
         <div style={{width:1,height:16,background:C.border}}/>
         {editingName?(
           <div style={{flex:1,display:"flex",alignItems:"center",gap:8}}>
