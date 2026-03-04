@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.43";
+const APP_VERSION="v1.9.44";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -151,6 +151,7 @@ async function loadApiKey(uid){
 const BC_TENANT="d1f2c7f7-fab2-40b5-85c1-06a715e6a157";
 const BC_ENV="MATR_SndBx_01152026";
 const BC_COMPANY_NAME="Matrix Systems LLC";
+const BC_PROJECT_TEMPLATE="PRJ40210"; // Template project to copy tasks from when creating new projects
 const BC_CLIENT_ID="75b9ff22-488d-4d4c-88ec-f803f7038716";
 const BC_API_BASE=`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/api/v2.0`;
 const BC_ODATA_BASE=`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/ODataV4/Company('${encodeURIComponent(BC_COMPANY_NAME)}')`;
@@ -374,6 +375,37 @@ async function bcGetCompanyId(){
   }catch(e){console.warn("BC company lookup failed:",e);return null;}
 }
 
+async function bcCopyProjectTasks(compId, fromProjectNumber, toProjectId){
+  // Find template project by number
+  const sr=await fetch(`${BC_API_BASE}/companies(${compId})/projects?$filter=number eq '${fromProjectNumber}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  if(!sr.ok)throw new Error(`Could not find template project ${fromProjectNumber} (${sr.status})`);
+  const sd=await sr.json();
+  if(!sd.value||!sd.value.length)throw new Error(`Template project ${fromProjectNumber} not found in BC`);
+  const templateId=sd.value[0].id;
+
+  // Get tasks from template
+  const tr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${templateId})/projectTasks`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  if(!tr.ok)throw new Error(`Could not load tasks from template ${fromProjectNumber} (${tr.status})`);
+  const tasks=(await tr.json()).value||[];
+
+  // Copy each task to the new project
+  for(const task of tasks){
+    const body={};
+    if(task.jobTaskNumber)body.jobTaskNumber=task.jobTaskNumber;
+    if(task.description)body.description=task.description;
+    if(task.jobTaskType)body.jobTaskType=task.jobTaskType;
+    if(task.indentation!==undefined)body.indentation=task.indentation;
+    if(task.totaling)body.totaling=task.totaling;
+    if(task.newPage!==undefined)body.newPage=task.newPage;
+    await fetch(`${BC_API_BASE}/companies(${compId})/projects(${toProjectId})/projectTasks`,{
+      method:"POST",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+      body:JSON.stringify(body)
+    });
+  }
+  return tasks.length;
+}
+
 async function bcCreateProject(displayName, customerNumber){
   if(!_bcToken)throw new Error("Not connected to Business Central");
   if(!customerNumber)throw new Error("A customer must be selected");
@@ -391,7 +423,10 @@ async function bcCreateProject(displayName, customerNumber){
     const d=await r.json();
     projectId=d.id;
 
-    // Step 2: PATCH Bill_to_Customer_No via OData (REST API v2.0 doesn't expose customer fields on project)
+    // Step 2: Copy tasks from template project
+    await bcCopyProjectTasks(compId, BC_PROJECT_TEMPLATE, projectId);
+
+    // Step 3: PATCH Bill_to_Customer_No via OData
     await bcPatchJobOData(d.number,{Bill_to_Customer_No:customerNumber});
     return{id:d.id,number:d.number,displayName:d.displayName,customerNumber:customerNumber,customerName:null};
   }catch(e){
@@ -4913,7 +4948,7 @@ function NewProjectModal({uid,onCreated,onClose}){
             </div>
           )}
           {bcStatus==="connecting"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Connecting to Business Central...</div>}
-          {bcStatus==="creating"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Creating BC project and linking customer...</div>}
+          {bcStatus==="creating"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Creating BC project, copying template tasks, and linking customer…</div>}
           {createErr&&<div style={{fontSize:12,color:C.red,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>{createErr}</div>}
           {!selectedCustomer&&name.trim()&&<div style={{fontSize:12,color:C.yellow,marginBottom:10}}>A customer is required to create a project.</div>}
           <div style={{display:"flex",gap:10,marginTop:4}}>
