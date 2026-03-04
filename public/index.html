@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.68";
+const APP_VERSION="v1.9.69";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5380,8 +5380,8 @@ function App({user}){
           <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Config</button>
           <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Settings</button>
           <div style={{width:1,height:24,background:C.border,alignSelf:"center"}}/>
-          <span style={{fontSize:15,color:C.muted,lineHeight:"36px"}}>{user.email}</span>
-          {userRole&&<span style={{fontSize:14,fontWeight:700,padding:"0 8px",height:24,lineHeight:"24px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted,display:"inline-flex",alignItems:"center"}}>{userRole}</span>}
+          <span style={{fontSize:15,color:C.muted}}>{user.email}</span>
+          {userRole&&<span style={{fontSize:14,fontWeight:700,padding:"4px 10px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
           <button onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36}}>Sign out</button>
         </div>
       </div>
