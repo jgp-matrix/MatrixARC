@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.9";
+const APP_VERSION="v1.10.10";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1495,18 +1495,19 @@ async function runPanelValidation(panel,onProgress){
   });
 
   // 4. Build laborData counts
-  // Use schematic as authority for door device count — layout often misclassifies backpanel devices as door devices
   const schDoorCount=doorDevicesFromSchematic.length;
   const layDoorCount=layoutMerged?layoutMerged.doorDeviceCount:0;
   const layBackCount=layoutMerged?layoutMerged.backpanelDeviceCount:0;
-  // If schematic found door devices, trust that count. Otherwise fall back to layout.
-  const doorDevices=schDoorCount>0?schDoorCount:layDoorCount;
-  // Total devices: door (from schematic) + backpanel (from layout if available, else schematic total minus door)
-  const allDevices=layoutMerged?(doorDevices+layBackCount):allDevicesFromSchematic.length;
-  // Panel holes: use door count from schematic as cap on layout's panel holes
   const layoutPanelHoles=layoutMerged?layoutMerged.panelHoles:0;
-  const panelHoles=schDoorCount>0?Math.min(layoutPanelHoles,schDoorCount):layoutPanelHoles;
-  console.log("DOOR DEVICES: schematic="+schDoorCount+", layout="+layDoorCount+", using="+doorDevices);
+  // When a dedicated enclosure page was analyzed, trust its physical door cutout count.
+  // Schematic overcounts: it finds all door-type device symbols including remote stations and external devices.
+  // Legacy layout pages (no enclosure page) may undercount, so fall back to schematic in that case.
+  const hasEnclosureData=enclosurePages.length>0&&encResults.some(Boolean)&&layDoorCount>0;
+  const doorDevices=hasEnclosureData?layDoorCount:(schDoorCount>0?schDoorCount:layDoorCount);
+  const panelHoles=hasEnclosureData?layoutPanelHoles:(schDoorCount>0?Math.min(layoutPanelHoles,schDoorCount):layoutPanelHoles);
+  // Total devices: door + backpanel (from layout if available, else schematic total)
+  const allDevices=layoutMerged?(doorDevices+layBackCount):allDevicesFromSchematic.length;
+  console.log("DOOR DEVICES: schematic="+schDoorCount+", enclosure/layout="+layDoorCount+", hasEnclosureData="+hasEnclosureData+", using="+doorDevices);
   console.log("ALL DEVICES: "+allDevices+", panelHoles="+panelHoles);
   const ductDinFeet=layoutMerged?layoutMerged.ductDinFeet:0;
   const hasLayoutData=!!layoutMerged;
