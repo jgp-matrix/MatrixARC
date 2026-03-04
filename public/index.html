@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.34";
+const APP_VERSION="v1.9.35";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4884,16 +4884,18 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
     }
     if(groupBy==="date"){
       const map={};
+      const maxTs={};
       list.forEach(p=>{
-        const d=p.createdAt||p.updatedAt;
+        const d=p.createdAt||p.updatedAt||0;
         const key=d?new Date(d).toLocaleDateString("en-US",{month:"long",year:"numeric"}):"Unknown Date";
         if(!map[key])map[key]=[];
         map[key].push(p);
+        if(d>=(maxTs[key]||0))maxTs[key]=d;
       });
       return Object.keys(map).sort((a,b)=>{
         if(a==="Unknown Date")return 1;
         if(b==="Unknown Date")return -1;
-        return new Date(b)-new Date(a);
+        return (maxTs[b]||0)-(maxTs[a]||0);
       }).map(k=>({label:k,items:map[k]}));
     }
     return [{label:null,items:list}];
