@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.28";
+const APP_VERSION="v1.9.29";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5062,14 +5062,14 @@ function App({user}){
         </div>
       )}
       {/* ── TOP MENU BAR (always visible) ── */}
-      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:80,position:"relative"}}>
-        <div style={{position:"absolute",left:"50%",top:"50%",transform:"translateX(-50%) translateY(-50%)",display:"flex",flexDirection:"column",alignItems:"center",pointerEvents:"none"}}>
+      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:88,position:"relative"}}>
+        <div style={{position:"absolute",left:"50%",top:"50%",transform:"translateX(-50%) translateY(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:5,pointerEvents:"none"}}>
           <div style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",pointerEvents:"auto"}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
             <span style={{fontSize:44}}>⬡</span>
             <span style={{fontSize:32,fontWeight:800,letterSpacing:-1}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
           </div>
-          <span style={{fontSize:10,color:C.muted,letterSpacing:0.5,marginTop:2}}>AI Recognition &amp; Capture</span>
-          <span style={{fontSize:9,color:C.muted,opacity:0.6,marginTop:1}}>{APP_VERSION}</span>
+          <span style={{fontSize:10,color:C.muted,letterSpacing:0.5}}>AI Recognition &amp; Capture</span>
+          <span style={{fontSize:9,color:C.muted,opacity:0.6}}>{APP_VERSION}</span>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
           {companyName&&(
