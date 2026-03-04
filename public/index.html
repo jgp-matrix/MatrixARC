@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.62";
+const APP_VERSION="v1.9.63";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5320,13 +5320,13 @@ function App({user}){
             <div style={{width:7,height:7,borderRadius:"50%",background:bcOnline?"#3b82f6":"#ef4444",boxShadow:bcOnline?"0 0 5px #3b82f6":"0 0 5px #ef4444"}}/>
             <span style={{fontSize:11,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline"}</span>
           </div>
-          <button onClick={()=>setShowTeam(true)} style={{background:"#383850",border:"1.5px solid #7a7a9a",color:C.muted,cursor:"pointer",fontSize:16,padding:"6px 10px",borderRadius:6,fontWeight:600}}>👥 Team</button>
-          <button onClick={()=>setShowConfig(true)} style={{background:"#383850",border:"1.5px solid #7a7a9a",color:C.muted,cursor:"pointer",fontSize:16,padding:"6px 10px",borderRadius:6,fontWeight:600}}>⚙ Config</button>
-          <button onClick={()=>setShowSettings(true)} style={{background:"#383850",border:"1.5px solid #7a7a9a",color:C.muted,cursor:"pointer",fontSize:16,padding:"6px 10px",borderRadius:6,fontWeight:600}}>⚙ Settings</button>
+          <button onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"6px 10px",borderRadius:6}}>👥 Team</button>
+          <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"6px 10px",borderRadius:6}}>⚙ Config</button>
+          <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"6px 10px",borderRadius:6}}>⚙ Settings</button>
           <div style={{width:1,height:18,background:C.border}}/>
           <span style={{fontSize:15,color:C.muted}}>{user.email}</span>
           {userRole&&<span style={{fontSize:14,fontWeight:700,padding:"2px 8px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
-          <button onClick={()=>fbAuth.signOut()} style={{background:"#383850",border:"1.5px solid #7a7a9a",color:C.muted,cursor:"pointer",fontSize:15,padding:"6px 10px",borderRadius:6,fontWeight:600}}>Sign out</button>
+          <button onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"6px 10px"}}>Sign out</button>
         </div>
       </div>
       {/* BC Connection Lost popup */}
