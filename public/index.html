@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.31";
+const APP_VERSION="v1.9.32";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5077,13 +5077,13 @@ function App({user}){
           )}
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <button onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>👥 Team</button>
-          <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Config</button>
-          <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"6px 10px",borderRadius:6}}>⚙ Settings</button>
+          <button onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"6px 10px",borderRadius:6}}>👥 Team</button>
+          <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"6px 10px",borderRadius:6}}>⚙ Config</button>
+          <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"6px 10px",borderRadius:6}}>⚙ Settings</button>
           <div style={{width:1,height:18,background:C.border}}/>
-          <span style={{fontSize:12,color:C.muted}}>{user.email}</span>
-          {userRole&&<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?C.accent:userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
-          <button onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"6px 10px"}}>Sign out</button>
+          <span style={{fontSize:15,color:C.muted}}>{user.email}</span>
+          {userRole&&<span style={{fontSize:14,fontWeight:700,padding:"2px 8px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?C.accent:userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
+          <button onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"6px 10px"}}>Sign out</button>
         </div>
       </div>
       {view==="dashboard"&&(
