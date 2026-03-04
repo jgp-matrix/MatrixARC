@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.44";
+const APP_VERSION="v1.9.45";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -375,20 +375,18 @@ async function bcGetCompanyId(){
   }catch(e){console.warn("BC company lookup failed:",e);return null;}
 }
 
-async function bcCopyProjectTasks(compId, fromProjectNumber, toProjectId){
-  // Find template project by number
+async function bcCopyProjectFromTemplate(compId, fromProjectNumber, toProjectId, toProjectNumber){
+  // 1. Find template project by number
   const sr=await fetch(`${BC_API_BASE}/companies(${compId})/projects?$filter=number eq '${fromProjectNumber}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(!sr.ok)throw new Error(`Could not find template project ${fromProjectNumber} (${sr.status})`);
   const sd=await sr.json();
   if(!sd.value||!sd.value.length)throw new Error(`Template project ${fromProjectNumber} not found in BC`);
   const templateId=sd.value[0].id;
 
-  // Get tasks from template
+  // 2. Copy project tasks
   const tr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${templateId})/projectTasks`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(!tr.ok)throw new Error(`Could not load tasks from template ${fromProjectNumber} (${tr.status})`);
   const tasks=(await tr.json()).value||[];
-
-  // Copy each task to the new project
   for(const task of tasks){
     const body={};
     if(task.jobTaskNumber)body.jobTaskNumber=task.jobTaskNumber;
@@ -403,6 +401,31 @@ async function bcCopyProjectTasks(compId, fromProjectNumber, toProjectId){
       body:JSON.stringify(body)
     });
   }
+
+  // 3. Copy project planning lines (budget/billable lines under each task)
+  try{
+    const pr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${templateId})/projectPlanningLines`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(pr.ok){
+      const planningLines=(await pr.json()).value||[];
+      for(const line of planningLines){
+        const body={};
+        if(line.jobTaskNumber)body.jobTaskNumber=line.jobTaskNumber;
+        if(line.lineType)body.lineType=line.lineType;
+        if(line.type)body.type=line.type;
+        if(line.number)body.number=line.number;
+        if(line.description)body.description=line.description;
+        if(line.quantity!==undefined)body.quantity=line.quantity;
+        if(line.unitCost!==undefined)body.unitCost=line.unitCost;
+        if(line.unitPrice!==undefined)body.unitPrice=line.unitPrice;
+        await fetch(`${BC_API_BASE}/companies(${compId})/projects(${toProjectId})/projectPlanningLines`,{
+          method:"POST",
+          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+          body:JSON.stringify(body)
+        });
+      }
+    }
+  }catch(e){console.warn("bcCopyProjectFromTemplate: planning lines copy skipped:",e.message);}
+
   return tasks.length;
 }
 
@@ -423,8 +446,8 @@ async function bcCreateProject(displayName, customerNumber){
     const d=await r.json();
     projectId=d.id;
 
-    // Step 2: Copy tasks from template project
-    await bcCopyProjectTasks(compId, BC_PROJECT_TEMPLATE, projectId);
+    // Step 2: Copy project tasks + planning lines from template
+    await bcCopyProjectFromTemplate(compId, BC_PROJECT_TEMPLATE, projectId, d.number);
 
     // Step 3: PATCH Bill_to_Customer_No via OData
     await bcPatchJobOData(d.number,{Bill_to_Customer_No:customerNumber});
