@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.65";
+const APP_VERSION="v1.9.66";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5123,7 +5123,6 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <div>
           <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
-          <div style={{fontSize:13,color:C.muted,marginTop:4}}>Control panel quote extraction</div>
         </div>
         <button onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
           <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
