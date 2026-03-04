@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.4";
+const APP_VERSION="v1.10.5";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1571,10 +1571,11 @@ async function estimatePrices(items){
 // ── PAGE TYPE DETECTION ──
 const PAGE_TYPE_DETECT_PROMPT=`You are analyzing a page from a UL508A industrial control panel drawing set.
 Return ONLY a JSON object with exactly these two fields:
-- "types": array of content types present on this page, using only: "bom", "schematic", "layout"
+- "types": array of content types present on this page, using only: "bom", "schematic", "backpanel", "enclosure"
   "bom"       — page contains a Bill of Materials table (columns for qty, part numbers, descriptions)
   "schematic" — page contains electrical schematic diagrams (wires, symbols, terminal numbers, device tags)
-  "layout"    — page contains physical layout, dimensional drawings, panel arrangement, or assembly view
+  "backpanel" — page shows the interior mounting plate with DIN rails, wire duct, breakers, contactors, drives, PLCs, terminal blocks, etc.
+  "enclosure" — page shows the enclosure door (pushbuttons, pilot lights, HMIs, e-stops) or side/top (fans, AC units) or overall enclosure dimensions
   Use [] for title sheets, revision history, or pages with none of the above.
 - "sheetNo": string — the sheet number as printed in the title block (e.g. "1 of 5", "2/8", "SHT 3"). Empty string "" if not found.
 
@@ -1595,7 +1596,7 @@ async function detectPageTypes(dataUrl){
     const m=raw.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
     if(!m)return{types:[],sheetNo:""};
     const obj=JSON.parse(m[0]);
-    return{types:(obj.types||[]).filter(t=>["bom","schematic","layout"].includes(t)),sheetNo:obj.sheetNo||""};
+    return{types:(obj.types||[]).filter(t=>["bom","schematic","backpanel","enclosure"].includes(t)),sheetNo:obj.sheetNo||""};
   }catch(e){return{types:[],sheetNo:""};}
 }
 
@@ -3116,8 +3117,8 @@ Return ONLY valid JSON, no extra text: {"drawingNo":"...","drawingDesc":"...","d
 function DrawingLightbox({pages,startId,onClose}){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex(p=>p.id===startId);return i>=0?i:0;});
   const pg=pages[idx]||pages[0];
-  const typeColors={bom:C.accent,schematic:C.green,layout:C.purple};
-  const typeLabels={bom:"BOM",schematic:"Schematic",layout:"Layout"};
+  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple};
+  const typeLabels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout"};
 
   useEffect(()=>{
     function onKey(e){
@@ -4103,7 +4104,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   {pg.sheetNo&&<div style={{fontSize:11,color:C.teal,fontWeight:700,marginTop:1}}>Sht {pg.sheetNo}</div>}
                 </div>
                 <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
-                  {["bom","schematic","layout"].map(t=>{
+                  {["bom","schematic","backpanel","enclosure"].map(t=>{
                     const active=types.includes(t);
                     return(
                       <button key={t} disabled={readOnly} onClick={()=>tagPage(pg.id,active?types.filter(x=>x!==t):[...types,t])}
