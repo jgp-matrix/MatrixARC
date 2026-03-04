@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.49";
+const APP_VERSION="v1.9.50";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -397,21 +397,22 @@ async function bcCopyProjectFromTemplate(compId, fromProjectNumber, toProjectId)
     console.log(`bcCopy: found template via list — ${match.number} id=${templateId}`);
   }
 
-  // 2. GET tasks from template
-  const tr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${templateId})/projectTasks`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  // 2. GET tasks from template — projectTasks is a root entity filtered by jobId
+  const tr=await fetch(`${BC_API_BASE}/companies(${compId})/projectTasks?$filter=jobId eq ${templateId}`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(!tr.ok)throw new Error(`Could not read template tasks (${tr.status}): ${await tr.text()}`);
   const tasks=(await tr.json()).value||[];
   console.log(`bcCopy: ${tasks.length} tasks to copy`);
 
-  // 3. POST each task — only send fields BC accepts on create
+  // 3. POST each task to the new project (jobId links it)
   const taskErrors=[];
   for(const task of tasks){
     const body={
+      jobId:toProjectId,
       jobTaskNumber:task.jobTaskNumber,
       description:task.description||"",
       jobTaskType:task.jobTaskType||"Posting"
     };
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${toProjectId})/projectTasks`,{
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projectTasks`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(body)
@@ -426,21 +427,21 @@ async function bcCopyProjectFromTemplate(compId, fromProjectNumber, toProjectId)
   }
   if(taskErrors.length)throw new Error(`Some tasks failed to copy:\n${taskErrors.join("\n")}`);
 
-  // 4. Copy planning lines (graceful — not all BC setups expose this)
+  // 4. Copy planning lines (graceful — root entity filtered by jobId)
   try{
-    const pr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${templateId})/projectPlanningLines`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const pr=await fetch(`${BC_API_BASE}/companies(${compId})/projectPlanningLines?$filter=jobId eq ${templateId}`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(pr.ok){
       const lines=(await pr.json()).value||[];
       console.log(`bcCopy: ${lines.length} planning lines to copy`);
       for(const line of lines){
-        const body={jobTaskNumber:line.jobTaskNumber,lineType:line.lineType};
+        const body={jobId:toProjectId,jobTaskNumber:line.jobTaskNumber,lineType:line.lineType};
         if(line.type)body.type=line.type;
         if(line.number)body.number=line.number;
         if(line.description)body.description=line.description;
         if(line.quantity!=null)body.quantity=line.quantity;
         if(line.unitCost!=null)body.unitCost=line.unitCost;
         if(line.unitPrice!=null)body.unitPrice=line.unitPrice;
-        const lr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${toProjectId})/projectPlanningLines`,{
+        const lr=await fetch(`${BC_API_BASE}/companies(${compId})/projectPlanningLines`,{
           method:"POST",
           headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
           body:JSON.stringify(body)
