@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.40";
+const APP_VERSION="v1.9.41";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4965,9 +4965,9 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
               <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
                 {g.items.map(p=>(
               <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
-                style={{...card({padding:"10px 14px"}),cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative"}}
-                onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"66";e.currentTarget.style.transform="translateY(-2px)";}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="none";}}>
+                style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
                 <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name);}}
                   title="Delete project"
                   style={{position:"absolute",top:8,right:8,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"2px 5px",borderRadius:4,transition:"color 0.15s"}}
