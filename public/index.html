@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.47";
+const APP_VERSION="v1.9.48";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -529,6 +529,20 @@ async function bcCreateCustomer(displayName,phone,email){
   if(!r.ok){const txt=await r.text();throw new Error(`BC customer creation failed (${r.status}): ${txt}`);}
   const d=await r.json();
   return{number:d.number||"",displayName:d.displayName||displayName};
+}
+
+async function bcDeleteProject(bcProjectId){
+  if(!_bcToken||!bcProjectId)throw new Error("Not connected to Business Central");
+  const compId=await bcGetCompanyId();
+  if(!compId)throw new Error("Could not resolve Business Central company");
+  const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  if(!g.ok)throw new Error(`BC project not found (${g.status})`);
+  const etag=g.headers.get("ETag");
+  const d=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
+    method:"DELETE",
+    headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}
+  });
+  if(!d.ok)throw new Error(`BC delete failed (${d.status}): ${await d.text()}`);
 }
 
 async function bcUpdateProject(bcProjectId, displayName){
@@ -4809,17 +4823,39 @@ function SettingsModal({uid,onClose}){
 }
 
 // ── DELETE CONFIRM MODAL ──
-function DeleteConfirmModal({projectName,onConfirm,onCancel}){
+function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,onConfirm,onCancel}){
+  const [deleteBC,setDeleteBC]=useState(false);
+  const [deleting,setDeleting]=useState(false);
+  const [bcErr,setBcErr]=useState("");
+  async function handleConfirm(){
+    setDeleting(true);setBcErr("");
+    await onConfirm(deleteBC);
+    setDeleting(false);
+  }
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onCancel}>
-      <div style={{...card(),width:"100%",maxWidth:400}} onClick={e=>e.stopPropagation()}>
+      <div style={{...card(),width:"100%",maxWidth:420}} onClick={e=>e.stopPropagation()}>
         <div style={{fontSize:18,fontWeight:700,color:C.red,marginBottom:8}}>Delete Project?</div>
-        <div style={{fontSize:13,color:C.sub,marginBottom:6}}>This will permanently delete:</div>
+        <div style={{fontSize:13,color:C.sub,marginBottom:6}}>This will permanently delete from ARC:</div>
         <div style={{fontSize:14,fontWeight:600,color:C.text,background:C.border,borderRadius:8,padding:"10px 14px",marginBottom:16}}>{projectName}</div>
+        {isAdmin&&bcProjectNumber&&(
+          <div onClick={()=>setDeleteBC(v=>!v)} style={{display:"flex",alignItems:"center",gap:10,background:deleteBC?C.redDim:"transparent",border:`1px solid ${deleteBC?C.red+"66":C.border}`,borderRadius:8,padding:"10px 14px",marginBottom:12,cursor:"pointer"}}>
+            <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${deleteBC?C.red:C.muted}`,background:deleteBC?C.red:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              {deleteBC&&<span style={{color:"#fff",fontSize:11,fontWeight:700,lineHeight:1}}>✓</span>}
+            </div>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:deleteBC?C.red:C.sub}}>Also delete from Business Central</div>
+              <div style={{fontSize:11,color:C.muted}}>Project {bcProjectNumber} will be permanently removed from BC</div>
+            </div>
+          </div>
+        )}
+        {bcErr&&<div style={{fontSize:12,color:C.red,background:C.redDim,borderRadius:8,padding:"8px 12px",marginBottom:12}}>{bcErr}</div>}
         <div style={{fontSize:12,color:C.muted,marginBottom:20}}>This action cannot be undone.</div>
         <div style={{display:"flex",gap:10}}>
-          <button onClick={onCancel} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
-          <button onClick={onConfirm} style={btn(C.red,"#fff",{flex:1,fontWeight:700})}>Delete</button>
+          <button onClick={onCancel} disabled={deleting} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
+          <button onClick={handleConfirm} disabled={deleting} style={btn(C.red,"#fff",{flex:1,fontWeight:700,opacity:deleting?0.6:1})}>
+            {deleting?"Deleting…":"Delete"}
+          </button>
         </div>
       </div>
     </div>
@@ -5110,7 +5146,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                 style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
-                <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name);}}
+                <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
                   title="Delete project"
                   style={{position:"absolute",top:8,right:8,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"2px 5px",borderRadius:4,transition:"color 0.15s"}}
                   onMouseEnter={e=>e.currentTarget.style.color=C.red}
@@ -5233,8 +5269,16 @@ function App({user}){
   function handleOpen(p){setOpenProject(p);setView("project");}
   function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");}
   function handleChange(p){setProjects(ps=>ps.map(x=>x.id===p.id?p:x));setOpenProject(p);}
-  function handleDelete(id,name){setDeleteConfirm({id,name});}
-  function confirmDelete(){if(!deleteConfirm)return;deleteProject(user.uid,deleteConfirm.id);setProjects(ps=>ps.filter(x=>x.id!==deleteConfirm.id));setDeleteConfirm(null);}
+  function handleDelete(id,name,bcProjectId,bcProjectNumber){setDeleteConfirm({id,name,bcProjectId,bcProjectNumber});}
+  async function confirmDelete(deleteFromBC){
+    if(!deleteConfirm)return;
+    if(deleteFromBC&&deleteConfirm.bcProjectId){
+      await bcDeleteProject(deleteConfirm.bcProjectId);
+    }
+    await deleteProject(user.uid,deleteConfirm.id);
+    setProjects(ps=>ps.filter(x=>x.id!==deleteConfirm.id));
+    setDeleteConfirm(null);
+  }
   async function handleAccept(id){
     const path=_appCtx.projectsPath||`users/${user.uid}/projects`;
     await fbDb.doc(`${path}/${id}`).update({
@@ -5308,7 +5352,7 @@ function App({user}){
         <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange}/>
       )}
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
-      {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
+      {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)}/>}
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
