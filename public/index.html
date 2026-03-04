@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.48";
+const APP_VERSION="v1.9.49";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -151,7 +151,7 @@ async function loadApiKey(uid){
 const BC_TENANT="d1f2c7f7-fab2-40b5-85c1-06a715e6a157";
 const BC_ENV="MATR_SndBx_01152026";
 const BC_COMPANY_NAME="Matrix Systems LLC";
-const BC_PROJECT_TEMPLATE="PRJ40210"; // Template project to copy tasks from when creating new projects
+const BC_PROJECT_TEMPLATE="PRJ402010"; // Template project to copy tasks from when creating new projects
 const BC_CLIENT_ID="75b9ff22-488d-4d4c-88ec-f803f7038716";
 const BC_API_BASE=`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/api/v2.0`;
 const BC_ODATA_BASE=`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/ODataV4/Company('${encodeURIComponent(BC_COMPANY_NAME)}')`;
