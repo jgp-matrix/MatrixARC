@@ -4829,6 +4829,7 @@ function NewProjectModal({uid,onCreated,onClose}){
                 onChange={e=>handleCustomerInput(e.target.value)}
                 onFocus={()=>setShowDropdown(true)}
                 onBlur={()=>setTimeout(()=>setShowDropdown(false),150)}
+                onKeyDown={e=>{if(e.key==="Tab"&&customerResults.length===1){e.preventDefault();selectCustomer(customerResults[0]);}}}
                 placeholder={customerSearching?"Loading customers…":"Search by name or number…"}
                 style={{...inp()}}
               />
