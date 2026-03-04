@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.35";
+const APP_VERSION="v1.9.36";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4898,6 +4898,17 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
         return (maxTs[b]||0)-(maxTs[a]||0);
       }).map(k=>({label:k,items:map[k]}));
     }
+    if(groupBy==="projectnum"){
+      const sorted=[...list].sort((a,b)=>{
+        const an=a.bcProjectNumber||"";
+        const bn=b.bcProjectNumber||"";
+        if(!an&&!bn)return 0;
+        if(!an)return 1;
+        if(!bn)return -1;
+        return an.localeCompare(bn,undefined,{numeric:true});
+      });
+      return [{label:null,items:sorted}];
+    }
     return [{label:null,items:list}];
   }
 
@@ -4924,6 +4935,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
         {filterBtn("All","all")}
         {filterBtn("By Customer","customer")}
         {filterBtn("By Date","date")}
+        {filterBtn("By Project #","projectnum")}
       </div>
 
       {loading&&(
