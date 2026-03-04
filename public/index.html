@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.55";
+const APP_VERSION="v1.9.56";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4493,7 +4493,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
   return(
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
       <div style={{background:C.bg,borderBottom:`1px solid ${C.border}`,padding:"6px 24px",display:"flex",alignItems:"center",gap:12,minHeight:40,flexShrink:0}}>
-        <button onClick={onBack} style={{background:C.border,border:"none",color:C.sub,cursor:"pointer",fontSize:16,fontWeight:600,display:"flex",alignItems:"center",gap:8,padding:"6px 16px",borderRadius:8,whiteSpace:"nowrap"}}>← Back to Projects</button>
+        <button onClick={onBack} style={{background:C.border,border:"none",color:C.sub,cursor:"pointer",fontSize:19,fontWeight:600,display:"flex",alignItems:"center",gap:8,padding:"6px 16px",borderRadius:8,whiteSpace:"nowrap"}}>← Back to Projects</button>
         {readOnly&&<><div style={{width:1,height:16,background:C.border}}/><span style={{background:C.border,color:C.muted,borderRadius:20,padding:"2px 10px",fontSize:13,fontWeight:700}}>VIEW ONLY</span></>}
       </div>
       <div style={{flex:1,overflowY:"auto",padding:24}}>
