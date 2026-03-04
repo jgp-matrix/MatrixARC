@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.73";
+const APP_VERSION="v1.9.74";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -125,6 +125,17 @@ function useSmoothProgress(estSeconds=15){
   return{progress:state,start,phase,update,finish,stop,running};
 }
 
+// Subscribe to background task registry updates
+function useBgTasks(){
+  const [tasks,setTasks]=useState({..._bgTasks});
+  useEffect(()=>{
+    const fn=t=>setTasks(t);
+    _bgListeners.add(fn);
+    return()=>_bgListeners.delete(fn);
+  },[]);
+  return tasks;
+}
+
 // ── THEME ──
 const C={
   bg:"#0d0d14",card:"#13131e",border:"#1e2030",
@@ -159,6 +170,32 @@ let _bcToken=null;
 let _bcCompanyId=null;
 let _msalInstance=null;
 let _msalReady=false;
+
+// ── BACKGROUND TASK REGISTRY ──
+let _bgTasks={};           // { [taskId]: { taskId, panelName, projectId, status, msg } }
+let _bgListeners=new Set();
+function _bgNotify(){_bgListeners.forEach(fn=>fn({..._bgTasks}));}
+function bgStart(taskId,panelName,projectId,msg){
+  _bgTasks[taskId]={taskId,panelName,projectId,status:"running",msg:msg||"Processing…",startedAt:Date.now()};
+  _bgNotify();
+}
+function bgUpdate(taskId,msg){
+  if(!_bgTasks[taskId])return;
+  _bgTasks[taskId]={..._bgTasks[taskId],msg};
+  _bgNotify();
+}
+function bgDone(taskId,msg){
+  if(!_bgTasks[taskId])return;
+  _bgTasks[taskId]={..._bgTasks[taskId],status:"done",msg:msg||"Complete"};
+  _bgNotify();
+  setTimeout(()=>{delete _bgTasks[taskId];_bgNotify();},4000);
+}
+function bgError(taskId,msg){
+  if(!_bgTasks[taskId])return;
+  _bgTasks[taskId]={..._bgTasks[taskId],status:"error",msg:msg||"Error"};
+  _bgNotify();
+  setTimeout(()=>{delete _bgTasks[taskId];_bgNotify();},6000);
+}
 
 // ── LABOR RATE CONSTANTS ──
 const LABOR_RATES={
@@ -3310,6 +3347,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   async function addFiles(files){
     console.log("ADDFILES: start, files="+files.length+", apiKey="+(!!_apiKey));
     setProcessing(true);setErr("");
+    let _bgErr=false;
+    bgStart(panel.id, panel.name||("Panel "+(idx+1)), projectId);
     try{
     const newItems=[];
     let livePages=[...savedPages];
@@ -3390,6 +3429,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     console.log("ADDFILES: bomPages="+bomPages.length+", hasSchOrLayout="+hasSchOrLayout+", willValidate="+willValidate+", totalPages="+updated.pages.length);
     if(_apiKey&&bomPages.length>0){
       const totalEst=bomPages.length*15+(willValidate?25:0);
+      bgUpdate(panel.id,"Extracting BOM…");
       setExtracting(true);ep.start("Extracting BOM…",totalEst);
       let all=[];let ok=true;let bomDone=0;
       try{
@@ -3427,6 +3467,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     })():Promise.resolve([]);
     // Auto-validate if schematic pages exist
     if(willValidate){
+      bgUpdate(panel.id,"Validating…");
       setValidatingPanel(true);
       if(!ep.running())ep.start("Validating…",25);
       try{
@@ -3470,8 +3511,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     }catch(ex){
       console.error("addFiles error:",ex);
       setErr(`Error processing files: ${ex.message}`);
+      _bgErr=true;
+      bgError(panel.id, ex.message.slice(0,60));
     }finally{
       setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setExtracting(false);setValidatingPanel(false);setPendingPages([]);
+      if(!_bgErr) bgDone(panel.id,"Complete");
     }
   }
 
@@ -5284,6 +5328,8 @@ function App({user}){
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
   const [bcLostAlert,setBcLostAlert]=useState(false);
   const bcOnlinePrev=useRef(!!_bcToken);
+  const bgTasks=useBgTasks();
+  const bgRunning=Object.values(bgTasks).filter(t=>t.status==="running");
 
   // Periodic BC connectivity ping every 2 minutes
   useEffect(()=>{
@@ -5419,6 +5465,13 @@ function App({user}){
           ):null}
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center",height:36}}>
+          {bgRunning.length>0&&(
+            <div title={bgRunning.map(t=>t.panelName+": "+t.msg).join("\n")}
+              style={{display:"flex",alignItems:"center",gap:6,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,background:"#0d2a0d",border:"1px solid #22c55e99",cursor:"default"}}>
+              <span className="spin" style={{fontSize:12,color:"#86efac",lineHeight:1}}>◌</span>
+              <span style={{fontSize:11,fontWeight:600,color:"#86efac",whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
+            </div>
+          )}
           <div title={bcOnline?"Business Central is connected":"Business Central is offline"} style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,background:bcOnline?"#1e4a8a55":"#3a1a1a44",border:`1px solid ${bcOnline?"#3b82f699":"#7f1d1d88"}`}}>
             <div style={{width:7,height:7,borderRadius:"50%",flexShrink:0,background:bcOnline?"#3b82f6":"#ef4444",boxShadow:bcOnline?"0 0 5px #3b82f6":"0 0 5px #ef4444"}}/>
             <span style={{fontSize:11,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline"}</span>
