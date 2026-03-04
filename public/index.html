@@ -390,8 +390,6 @@ async function bcCreateProject(displayName, customerNumber){
     if(!r.ok){const txt=await r.text();throw new Error(`BC project creation failed (${r.status}): ${txt}`);}
     const d=await r.json();
     projectId=d.id;
-    console.log("BC project created — available fields:",Object.keys(d).join(", "));
-    console.log("BC project full response:",JSON.stringify(d));
 
     // Step 2: PATCH Bill_to_Customer_No via OData (REST API v2.0 doesn't expose customer fields on project)
     await bcPatchJobOData(d.number,{Bill_to_Customer_No:customerNumber});
@@ -638,11 +636,9 @@ async function bcDiscoverODataPages(){
     const r=await fetch(rootUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok){console.warn("bcDiscoverODataPages failed:",r.status);return[];}
     const txt=await r.text();
-    console.log("BC OData service list raw response:",txt.slice(0,3000));
     try{
       const d=JSON.parse(txt);
       const names=(d.value||[]).map(e=>e.name||e.url||"").filter(Boolean);
-      console.log("BC OData published services:",names.join(", ")||"(none)");
       return names;
     }catch(pe){console.warn("bcDiscoverODataPages JSON parse error:",pe);return[];}
   }catch(e){console.warn("bcDiscoverODataPages error:",e);return[];}
@@ -656,7 +652,7 @@ async function bcPatchJobOData(jobNo,fields){
   const projectPage=allPages.find(n=>/^project(card)?$/i.test(n))||null;
   if(!projectPage){
     console.warn("BC OData published pages available:",allPages.join(", "));
-    throw new Error(`No Project Card OData page found in Business Central. Please publish the Project Card page as a web service in BC (Settings → Web Services → New → Object Type: Page, Object ID: 89, Service Name: ProjectCard).`);
+    throw new Error(`No Project Card OData page found in Business Central. Please publish the Project Card page as a web service in BC (Settings → Web Services → New → Object Type: Page, Object ID: 88, Service Name: ProjectCard).`);
   }
   const pages=[projectPage];
   for(const page of pages){
