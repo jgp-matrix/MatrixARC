@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.46";
+const APP_VERSION="v1.9.47";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -376,13 +376,26 @@ async function bcGetCompanyId(){
 }
 
 async function bcCopyProjectFromTemplate(compId, fromProjectNumber, toProjectId){
-  // 1. Find template project by number
-  const sr=await fetch(`${BC_API_BASE}/companies(${compId})/projects?$filter=number eq '${fromProjectNumber}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  // 1. Find template project by number — try exact filter first, fall back to client-side search
+  let templateId=null;
+  const sr=await fetch(`${BC_API_BASE}/companies(${compId})/projects?$filter=number eq '${fromProjectNumber}'&$top=5`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(!sr.ok)throw new Error(`Template lookup failed (${sr.status}): ${await sr.text()}`);
   const sd=await sr.json();
-  if(!sd.value||!sd.value.length)throw new Error(`Template project ${fromProjectNumber} not found in BC`);
-  const templateId=sd.value[0].id;
-  console.log(`bcCopy: found template ${fromProjectNumber} id=${templateId}`);
+  if(sd.value&&sd.value.length){
+    templateId=sd.value[0].id;
+    console.log(`bcCopy: found template via filter — ${sd.value[0].number} id=${templateId}`);
+  }else{
+    // Filter returned nothing — fetch all projects and search client-side
+    console.warn(`bcCopy: filter found nothing for "${fromProjectNumber}", fetching full project list…`);
+    const allR=await fetch(`${BC_API_BASE}/companies(${compId})/projects?$top=500&$select=id,number,displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!allR.ok)throw new Error(`Could not fetch project list (${allR.status})`);
+    const allProjects=(await allR.json()).value||[];
+    console.log(`bcCopy: ${allProjects.length} projects in BC. Numbers:`,allProjects.map(p=>p.number));
+    const match=allProjects.find(p=>p.number.trim().toLowerCase()===fromProjectNumber.trim().toLowerCase());
+    if(!match)throw new Error(`Template project "${fromProjectNumber}" not found. Available: ${allProjects.map(p=>p.number).join(", ")}`);
+    templateId=match.id;
+    console.log(`bcCopy: found template via list — ${match.number} id=${templateId}`);
+  }
 
   // 2. GET tasks from template
   const tr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${templateId})/projectTasks`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
