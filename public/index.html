@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.8";
+const APP_VERSION="v1.10.9";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1591,6 +1591,8 @@ Return ONLY a JSON object with exactly these two fields:
 
   "enclosure" — THE SINGLE MOST RELIABLE INDICATOR IS A SIDE VIEW. If you see a side view of the enclosure drawn beside or below the front view, it is ALWAYS an enclosure drawing — never a backpanel. Other enclosure indicators: overall width x height x depth dimensions labeled, enclosure shell outline with knockout or conduit hub locations, door cutout layout with pushbuttons/pilot lights/HMIs, top panel with fans or AC units, title block says "Enclosure", "Cabinet", "Door Layout", or "Panel Arrangement".
 
+  "pid" — P&ID (Process & Instrumentation Diagram). Key indicators: process flow lines representing pipes, process equipment symbols (tanks, vessels, pumps, heat exchangers, reactors, columns), instrument bubbles (circles with tag numbers like FT-101, PT-202, LIC-301), control loops, flow arrows. P&IDs show a SYSTEM or PROCESS layout — NOT electrical wiring or panel internals. If you see pipes, vessels, and instrument bubbles, it is ALWAYS a P&ID. Tag as "pid" so it is skipped during extraction.
+
   Use [] for title sheets, revision history, or pages with none of the above.
 
 - "sheetNo": string — the sheet number as printed in the title block (e.g. "1 of 5", "2/8", "SHT 3"). Empty string "" if not found.
@@ -1612,7 +1614,7 @@ async function detectPageTypes(dataUrl){
     const m=raw.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
     if(!m)return{types:[],sheetNo:""};
     const obj=JSON.parse(m[0]);
-    return{types:(obj.types||[]).filter(t=>["bom","schematic","backpanel","enclosure"].includes(t)),sheetNo:obj.sheetNo||""};
+    return{types:(obj.types||[]).filter(t=>["bom","schematic","backpanel","enclosure","pid"].includes(t)),sheetNo:obj.sheetNo||""};
   }catch(e){return{types:[],sheetNo:""};}
 }
 
@@ -1888,9 +1890,9 @@ function Badge({status}){
 }
 
 function PageTags({types,onChange,detecting}){
-  const all=["bom","schematic","backpanel","enclosure"];
-  const colors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488"};
-  const labels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure"};
+  const all=["bom","schematic","backpanel","enclosure","pid"];
+  const colors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",pid:C.muted};
+  const labels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",pid:"P&ID"};
   if(detecting)return<span style={{fontSize:10,color:C.yellow,fontWeight:600}}>🤖 Detecting…</span>;
   return(
     <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
@@ -3133,8 +3135,8 @@ Return ONLY valid JSON, no extra text: {"drawingNo":"...","drawingDesc":"...","d
 function DrawingLightbox({pages,startId,onClose}){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex(p=>p.id===startId);return i>=0?i:0;});
   const pg=pages[idx]||pages[0];
-  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple};
-  const typeLabels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout"};
+  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted};
+  const typeLabels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout",pid:"P&ID"};
 
   useEffect(()=>{
     function onKey(e){
@@ -3452,8 +3454,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
 
   const savedPages=panel.pages||[];
   const pages=pendingPages.length>0?pendingPages:savedPages;
-  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple};
-  const SHORT={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",layout:"LAY"};
+  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted};
+  const SHORT={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",layout:"LAY",pid:"P&ID"};
   const bomCount=pages.filter(p=>getPageTypes(p).includes("bom")).length;
   const schCount=pages.filter(p=>getPageTypes(p).includes("schematic")).length;
   const backpanelCount=pages.filter(p=>getPageTypes(p).includes("backpanel")).length;
@@ -4123,7 +4125,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   {pg.sheetNo&&<div style={{fontSize:11,color:C.teal,fontWeight:700,marginTop:1}}>Sht {pg.sheetNo}</div>}
                 </div>
                 <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
-                  {["bom","schematic","backpanel","enclosure"].map(t=>{
+                  {["bom","schematic","backpanel","enclosure","pid"].map(t=>{
                     const active=types.includes(t);
                     return(
                       <button key={t} disabled={readOnly} onClick={()=>tagPage(pg.id,active?types.filter(x=>x!==t):[...types,t])}
