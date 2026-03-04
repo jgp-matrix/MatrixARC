@@ -42,7 +42,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.9.71";
+const APP_VERSION="v1.9.72";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -169,7 +169,7 @@ const LABOR_RATES={
   doorDeviceMinPerDevice:11,  // Door-mounted device wiring: 11 min
   mountingMinPerDevice:4,     // Device mounting: 4 min
   ductDinMinPerFoot:10,       // Duct & DIN rail: 10 min/ft
-  holesMinPerHole:10,         // Panel holes: 10 min/hole
+  holesMinPerHole:15,         // Panel holes: 15 min/hole
   hmiHoleEquivalent:25,       // 1 HMI cutout = 25 standard holes
 };
 const DOOR_DEVICE_TYPES=new Set(["pushbutton","pilot_light","selector_switch","hmi","e_stop","horn","meter"]);
