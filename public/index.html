@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.5";
+const APP_VERSION="v1.10.6";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1572,11 +1572,19 @@ async function estimatePrices(items){
 const PAGE_TYPE_DETECT_PROMPT=`You are analyzing a page from a UL508A industrial control panel drawing set.
 Return ONLY a JSON object with exactly these two fields:
 - "types": array of content types present on this page, using only: "bom", "schematic", "backpanel", "enclosure"
+
   "bom"       — page contains a Bill of Materials table (columns for qty, part numbers, descriptions)
+
   "schematic" — page contains electrical schematic diagrams (wires, symbols, terminal numbers, device tags)
-  "backpanel" — page shows the interior mounting plate with DIN rails, wire duct, breakers, contactors, drives, PLCs, terminal blocks, etc.
-  "enclosure" — page shows the enclosure door (pushbuttons, pilot lights, HMIs, e-stops) or side/top (fans, AC units) or overall enclosure dimensions
+
+  "backpanel" — page shows ONLY the interior mounting plate as a single front view. Key indicators:
+    DIN rails (horizontal channels), wire duct / wireways (rectangular channels), devices in rows (breakers, contactors, relays, overloads, drives, PLCs, terminal blocks, power supplies). A backpanel drawing has NO overall enclosure outline with dimensions, NO side/top views, and NO door cutout holes.
+
+  "enclosure" — page shows the enclosure as a physical product with external details. Key indicators:
+    Overall width x height x depth dimensions labeled on the drawing. Multiple views present (front + side, front + top, or isometric). Enclosure shell outline showing knockout locations, conduit hub positions, or mounting hole patterns. Door cutout layout with pushbuttons, pilot lights, HMIs, e-stops, or selector switches. Side/top panels showing fans, air conditioners, or vents. Title block says "Enclosure", "Cabinet", "Door Layout", or "Panel Arrangement". If you see labeled overall dimensions AND side views, it is ALWAYS enclosure, not backpanel.
+
   Use [] for title sheets, revision history, or pages with none of the above.
+
 - "sheetNo": string — the sheet number as printed in the title block (e.g. "1 of 5", "2/8", "SHT 3"). Empty string "" if not found.
 
 JSON object only — no explanation, no markdown. Example: {"types":["bom"],"sheetNo":"1 of 5"}`;
