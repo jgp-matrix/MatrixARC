@@ -8,9 +8,10 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#0d0d14;color:#e8e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}
 input,textarea,select,button{font-family:inherit;font-size:inherit}
-::-webkit-scrollbar{width:6px;height:6px}
-::-webkit-scrollbar-track{background:#13131e}
-::-webkit-scrollbar-thumb{background:#2a2a40;border-radius:3px}
+::-webkit-scrollbar{width:6px;height:10px}
+::-webkit-scrollbar-track{background:#1e1e2e}
+::-webkit-scrollbar-thumb{background:#5a5a78;border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:#7a7a9a}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
@@ -42,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.2";
+const APP_VERSION="v1.10.3";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
