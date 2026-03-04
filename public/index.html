@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.10";
+const APP_VERSION="v1.10.11";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1592,7 +1592,17 @@ Return ONLY a JSON object with exactly these two fields:
 
   "enclosure" — THE SINGLE MOST RELIABLE INDICATOR IS A SIDE VIEW. If you see a side view of the enclosure drawn beside or below the front view, it is ALWAYS an enclosure drawing — never a backpanel. Other enclosure indicators: overall width x height x depth dimensions labeled, enclosure shell outline with knockout or conduit hub locations, door cutout layout with pushbuttons/pilot lights/HMIs, top panel with fans or AC units, title block says "Enclosure", "Cabinet", "Door Layout", or "Panel Arrangement".
 
-  "pid" — P&ID (Process & Instrumentation Diagram). Key indicators: process flow lines representing pipes, process equipment symbols (tanks, vessels, pumps, heat exchangers, reactors, columns), instrument bubbles (circles with tag numbers like FT-101, PT-202, LIC-301), control loops, flow arrows. P&IDs show a SYSTEM or PROCESS layout — NOT electrical wiring or panel internals. If you see pipes, vessels, and instrument bubbles, it is ALWAYS a P&ID. Tag as "pid" so it is skipped during extraction.
+  "pid" — P&ID / Process & Instrumentation Diagram or Instrument Loop Diagram. These must be skipped — do NOT extract BOM or wiring from them. Identify by ANY of these dead-giveaway visual signatures:
+    • "DI" or "DO" text inside a rotated square (diamond shape) or regular square — these are discrete input/output function blocks
+    • Two-letter ISA instrument codes inside circles or bubbles: YA, HS, ZS, SA, FT, PT, LT, TT, AT, FIC, LIC, PIC, TIC, ZSO, ZSC, etc. Usually paired with a tag number below (e.g. GT-0°, FT-101)
+    • Single letters inside diamonds: "I" (indicator), "M" (motor) inside a square or diamond
+    • An "INSTRUMENT & FUNCTION LEGEND" or "LINE SYMBOL LEGEND" box on the page
+    • Dashed lines representing signal types (software/data link, discrete instrument signal 120VAC/24VDC, analog 4-20mA)
+    • Triangle arrow symbols (▲ ▽) representing discrete or analog input/output signal directions
+    • SCADA, MCC, DCS, or PLC control function references with signal flow lines
+    • "NOT IN SCOPE" or "NOT IN [COMPANY] SCOPE" notes
+    • Equipment ID tables with columns for Equipment ID and Description referencing field instruments
+    A P&ID does NOT contain terminal numbers, wire numbers, DIN rails, or panel device wiring. If you see ISA bubbles or DI/DO diamonds, it is ALWAYS a P&ID.
 
   Use [] for title sheets, revision history, or pages with none of the above.
 
