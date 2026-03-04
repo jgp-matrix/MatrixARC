@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.7";
+const APP_VERSION="v1.10.8";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -107,6 +107,15 @@ function useSmoothProgress(estSeconds=15){
     // don't change pct — timer handles it
   },[]);
 
+  // Jump to a real progress checkpoint and continue smooth animation from there
+  const set=useCallback((pct,msg)=>{
+    baseRef.current=Math.min(97,pct);
+    startTime.current=Date.now();
+    if(msg)msgRef.current=msg;
+    setState({msg:msgRef.current,pct:Math.min(97,Math.round(pct))});
+    if(!timer.current)timer.current=requestAnimationFrame(tick);
+  },[tick]);
+
   const finish=useCallback((msg)=>{
     if(timer.current){cancelAnimationFrame(timer.current);timer.current=null;}
     baseRef.current=0;
@@ -123,7 +132,7 @@ function useSmoothProgress(estSeconds=15){
 
   useEffect(()=>()=>{if(timer.current)cancelAnimationFrame(timer.current);},[]);
 
-  return{progress:state,start,phase,update,finish,stop,running};
+  return{progress:state,start,phase,update,set,finish,stop,running};
 }
 
 // Subscribe to background task registry updates
@@ -3576,9 +3585,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     if(willValidate){
       bgUpdate(panel.id,"Validating…");
       setValidatingPanel(true);
-      if(!ep.running())ep.start("Validating…",25);
+      const valPageCount=(latestPanel.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl)).length;
+      const valEstSec=Math.max(30,valPageCount*20);
+      if(!ep.running())ep.start("Validating…",valEstSec);
+      else ep.phase("Validating…",valEstSec);
       try{
-        const result=await runPanelValidation(latestPanel);
+        const result=await runPanelValidation(latestPanel,pct=>{ep.set(pct,"Validating…");});
         if(result.validation||result.laborData){
           const withVal={...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:latestPanel.status==="extracted"?"extracted":"validated",updatedAt:Date.now()};
           latestPanel=withVal;
