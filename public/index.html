@@ -652,8 +652,13 @@ async function bcPatchJobOData(jobNo,fields){
   if(!_bcToken||!jobNo||!fields||!Object.keys(fields).length)return;
   // Discover published OData pages and find a project-related one
   const allPages=await bcDiscoverODataPages();
-  const projectPage=allPages.find(n=>/project/i.test(n))||null;
-  const pages=projectPage?[projectPage]:["ProjectCard","Project"];
+  // Match project card/header pages only — exclude planning lines, tasks, etc.
+  const projectPage=allPages.find(n=>/^project(card)?$/i.test(n))||null;
+  if(!projectPage){
+    console.warn("BC OData published pages available:",allPages.join(", "));
+    throw new Error(`No Project Card OData page found in Business Central. Please publish the Project Card page as a web service in BC (Settings → Web Services → New → Object Type: Page, Object ID: 89, Service Name: ProjectCard).`);
+  }
+  const pages=[projectPage];
   for(const page of pages){
     const filterUrl=`${BC_ODATA_BASE}/${page}?$filter=No eq '${encodeURIComponent(jobNo)}'`;
     const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
