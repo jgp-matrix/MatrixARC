@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.45";
+const APP_VERSION="v1.10.46";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5426,7 +5426,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
       const rank={draft:0,extracted:1,validated:2,costed:3,quoted:4};
       const labels={draft:"Draft",extracted:"Extracted",validated:"Validated",costed:"Costed",quoted:"Quoted"};
       const map={};
-      list.forEach(p=>{const st=projectStatus(p);if(\!map[st])map[st]=[];map[st].push(p);});
+      list.forEach(p=>{const st=projectStatus(p);if(!map[st])map[st]=[];map[st].push(p);});
       return Object.keys(map).sort((a,b)=>(rank[b]||0)-(rank[a]||0)).map(k=>({label:labels[k]||k,items:map[k]}));
     }
     return [{label:null,items:list}];
