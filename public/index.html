@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.98";
+const APP_VERSION="v1.10.99";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4992,6 +4992,18 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
   const [progress,setProgress]=useState("");
   const [result,setResult]=useState(null);
   const [missingItems,setMissingItems]=useState([]);
+  const [itemNumber,setItemNumber]=useState("");
+  const [unitPriceStr,setUnitPriceStr]=useState(()=>{
+    const pr=panel.pricing||{};
+    const laborEst=computeLaborEstimate(panel);
+    const markup=pr.markup??30;
+    const contingencyBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
+    const contingencyConsumables=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
+    const materialCost=(panel.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+    const grandTotal=materialCost+laborEst.totalCost+contingencyBOM+contingencyConsumables;
+    const sell=grandTotal*(1+markup/100);
+    return sell>0?sell.toFixed(2):"";
+  });
 
   // This panel's BOM only, rows with a part number
   const mergedBom=React.useMemo(()=>
@@ -5011,6 +5023,21 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
   useEffect(()=>{
     bcListItemCategories().then(setCategories).catch(()=>{});
     bcListUnitsOfMeasure().then(setUoms).catch(()=>{});
+    // Suggest next item number from BC
+    (async()=>{
+      try{
+        if(!_bcToken){await acquireBcToken(false);}
+        if(!_bcToken)return;
+        const compId=await bcGetCompanyId();
+        if(!compId)return;
+        const r=await fetch(`${BC_API_BASE}/companies(${compId})/items?$orderby=number desc&$top=1&$select=number`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(!r.ok)return;
+        const d=await r.json();
+        const last=((d.value||[])[0]||{}).number||"";
+        const n=parseInt(last,10);
+        if(!isNaN(n))setItemNumber(String(n+1));
+      }catch(e){}
+    })();
   },[]);
 
   async function handleCreate(){
@@ -5040,16 +5067,18 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
       }
 
       // Step 1: Create the Item via REST API (UoM only — other fields set via OData PATCH)
-      const created=await bcCreateItem({baseUnitOfMeasureCode:uomCode||undefined});
+      const created=await bcCreateItem({number:itemNumber.trim()||undefined,baseUnitOfMeasureCode:uomCode||undefined});
       setProgress(`Item ${created.number} created. Patching fields via OData…`);
 
-      // Step 2: Comprehensive OData PATCH — Description, Category, Vendor Item No, Replenishment System
+      // Step 2: Comprehensive OData PATCH — Description, Category, Vendor Item No, Replenishment System, Unit Price
       const odataFields={
         Description:description.trim(),
         Replenishment_System:"Assembly"
       };
       if(categoryCode)odataFields.Item_Category_Code=categoryCode;
       if(vendorItemNo.trim())odataFields.Vendor_Item_No=vendorItemNo.trim();
+      const parsedUnitPrice=parseFloat(unitPriceStr);
+      if(!isNaN(parsedUnitPrice)&&parsedUnitPrice>0)odataFields.Unit_Price=parsedUnitPrice;
       try{
         await bcPatchItemOData(created.number,odataFields);
       }catch(pe){
@@ -5141,6 +5170,16 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
                 <option value="">— Select Unit of Measure —</option>
                 {uoms.map(u=><option key={u.code} value={u.code}>{u.code}{u.displayName&&u.displayName!==u.code?" – "+u.displayName:""}</option>)}
               </select>
+            </div>
+            <div style={{display:"flex",gap:12}}>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Item Number <span style={{fontWeight:400,textTransform:"none"}}>(leave blank for auto-assign)</span></div>
+                <input value={itemNumber} onChange={e=>setItemNumber(e.target.value)} style={inp()} placeholder="Auto-assigned by BC"/>
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Unit Price ($)</div>
+                <input type="number" min="0" step="0.01" value={unitPriceStr} onChange={e=>setUnitPriceStr(e.target.value)} style={inp()} placeholder="0.00"/>
+              </div>
             </div>
           </div>
 
