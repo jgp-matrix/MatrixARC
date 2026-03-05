@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.19";
+const APP_VERSION="v1.10.20";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -189,7 +189,12 @@ let _bgTasks={};           // { [taskId]: { taskId, panelName, projectId, status
 let _bgListeners=new Set();
 function _bgNotify(){_bgListeners.forEach(fn=>fn({..._bgTasks}));}
 function bgStart(taskId,panelName,projectId,msg){
-  _bgTasks[taskId]={taskId,panelName,projectId,status:"running",msg:msg||"Processing…",startedAt:Date.now()};
+  _bgTasks[taskId]={taskId,panelName,projectId,status:"running",msg:msg||"Processing…",pct:0,startedAt:Date.now()};
+  _bgNotify();
+}
+function bgSetPct(taskId,pct,msg){
+  if(!_bgTasks[taskId])return;
+  _bgTasks[taskId]={..._bgTasks[taskId],pct,...(msg&&{msg})};
   _bgNotify();
 }
 function bgUpdate(taskId,msg){
@@ -199,7 +204,7 @@ function bgUpdate(taskId,msg){
 }
 function bgDone(taskId,msg){
   if(!_bgTasks[taskId])return;
-  _bgTasks[taskId]={..._bgTasks[taskId],status:"done",msg:msg||"Complete"};
+  _bgTasks[taskId]={..._bgTasks[taskId],status:"done",pct:100,msg:msg||"Complete"};
   _bgNotify();
   setTimeout(()=>{delete _bgTasks[taskId];_bgNotify();},4000);
 }
@@ -1589,8 +1594,7 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
 
 // ── BACKGROUND EXTRACTION TASK (module-level — survives React component unmount / navigation) ──
 async function runExtractionTask(uid,projectId,panel,cbs={}){
-  const {onBomProgress,onProgress,onDone}=cbs;
-  const report=(pct,msg)=>{try{if(onProgress)onProgress(pct,msg);}catch(e){}};
+  const {onDone}=cbs;
   let latestPanel={...panel};
   const bomPages=panel.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
   const hasSchOrLayout=panel.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
@@ -1603,7 +1607,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       bgUpdate(panel.id,"Extracting BOM…");
       let bomDone=0;
       bomMergePromise=parallelMap(bomPages,async pg=>{
-        bomDone++;try{if(onBomProgress)onBomProgress(bomDone,bomPages.length);}catch(e){}
+        bomDone++;
+        bgSetPct(panel.id,Math.round((bomDone/bomPages.length)*40),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
         return extractBomPage(pg.dataUrl);
       },3).then(results=>{
         const all=results.flat();if(!all.length)return[];
@@ -1616,7 +1621,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     let valPromise=Promise.resolve(null);
     if(willValidate){
       bgUpdate(panel.id,"Validating…");
-      valPromise=runPanelValidation(latestPanel,pct=>report(pct,"Validating…"),bomMergePromise);
+      valPromise=runPanelValidation(latestPanel,pct=>{bgSetPct(panel.id,40+Math.round(pct*0.5),"Validating…");},bomMergePromise);
     }
     // Await BOM and save
     const mergedBom=await bomMergePromise;
@@ -3517,7 +3522,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [detectProgress,setDetectProgress]=useState("");
   const [extracting,setExtracting]=useState(false);
   const ep=useSmoothProgress();
-  const extractProgress=ep.progress;
+  const bgTasks=useBgTasks();
+  const bgTask=bgTasks[panel.id];
+  // Restore extracting spinner if a bg task is still running when this panel mounts
+  useEffect(()=>{if(bgTask?.status==="running")setExtracting(true);},[]);
+  // Progress bar: use bgTask (persists navigation) or ep (for re-extract/validate flows)
+  const extractProgress=(bgTask?.status==="running"||bgTask?.status==="done")?{pct:bgTask.pct||0,msg:bgTask.msg}:ep.progress;
   const [showFastQuote,setShowFastQuote]=useState(false);
   const [lightboxId,setLightboxId]=useState(null);
   const [draftName,setDraftName]=useState(panel.name||"");
@@ -3655,14 +3665,10 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     if(!_apiKey||(!bomPages.length&&!willValidate)){bgDone(panel.id,"Complete");return;}
     const valPageCount=(updated.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl)).length;
     const totalEst=Math.max(30,bomPages.length*15+valPageCount*20);
-    ep.start(bomPages.length>0?"Extracting & Validating…":"Validating…",totalEst);
     setExtracting(bomPages.length>0);setValidatingPanel(willValidate);
     runExtractionTask(uid,projectId,updated,{
-      onBomProgress:(done,total)=>{try{ep.update(`Extracting BOM — page ${done}/${total}…`);}catch(e){}},
-      onProgress:(pct,msg)=>{try{ep.set(pct,msg||"Validating…");}catch(e){}},
       onDone:(finalPanel)=>{
         try{onUpdate(finalPanel);}catch(e){}
-        try{const n=(finalPanel.bom||[]).length;ep.finish(n>0?`✓ ${n} items · validated`:"✓ Validated");}catch(e){}
         try{setExtracting(false);setValidatingPanel(false);}catch(e){}
       }
     });
@@ -5314,6 +5320,7 @@ function NewProjectModal({uid,onCreated,onClose}){
 // ── DASHBOARD ──
 function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
   const [groupBy,setGroupBy]=useState("all");
+  const bgTasks=useBgTasks();
 
   function groupProjects(list){
     if(groupBy==="customer"){
@@ -5406,20 +5413,37 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
               <div style={{background:groupBy==="customer"?"#1c1c2e":"none",border:groupBy==="customer"?`2px solid #4a5080`:"none",borderRadius:groupBy==="customer"?12:0,padding:groupBy==="customer"?16:0}}>
               <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:12}}>
                 {g.items.map(p=>(
-              <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
-                style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative"}}
-                onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
-                onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
-                <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
-                  title="Delete project"
-                  style={{position:"absolute",top:8,right:8,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"2px 5px",borderRadius:4,transition:"color 0.15s"}}
-                  onMouseEnter={e=>e.currentTarget.style.color=C.red}
-                  onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
-                {p.bcProjectNumber&&<div style={{fontSize:18,fontWeight:800,color:C.accent,marginBottom:4}}>{p.bcProjectNumber}</div>}
-                <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:20}}>{p.name}</div>
-                {p.bcCustomerName&&<div style={{fontSize:11,color:C.teal,marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.bcCustomerName}</div>}
-                <div style={{fontSize:11,color:C.muted}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
-              </div>
+              {(()=>{
+                const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"));
+                const st=projectStatus(p);
+                const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,quoted:C.yellow};
+                const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
+                return(
+                <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
+                  style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
+                  <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
+                    title="Delete project"
+                    style={{position:"absolute",top:8,right:8,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"2px 5px",borderRadius:4,transition:"color 0.15s"}}
+                    onMouseEnter={e=>e.currentTarget.style.color=C.red}
+                    onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+                  {p.bcProjectNumber&&<div style={{fontSize:18,fontWeight:800,color:C.accent,marginBottom:4}}>{p.bcProjectNumber}</div>}
+                  <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:20}}>{p.name}</div>
+                  {p.bcCustomerName&&<div style={{fontSize:11,color:C.teal,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.bcCustomerName}</div>}
+                  <div style={{fontSize:10,color:statusColors[st]||C.muted,fontWeight:700,marginBottom:2}}>{statusLabels[st]||"DRAFT"}</div>
+                  <div style={{fontSize:11,color:C.muted}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+                  {activeTask&&(
+                    <div style={{marginTop:6}}>
+                      <div style={{fontSize:10,color:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
+                      <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
+                        <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                );
+              })()}
                 ))}
               </div>
               </div>
