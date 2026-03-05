@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.49";
+const APP_VERSION="v1.10.50";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -573,6 +573,18 @@ async function bcLoadAllCustomers(){
   }catch(e){console.warn("bcLoadAllCustomers error:",e);return[];}
 }
 
+async function bcLoadAllProjects(){
+  if(!_bcToken)return[];
+  const compId=await bcGetCompanyId();
+  if(!compId)return[];
+  try{
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects?$top=1000`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.status===401){_bcToken=null;return[];}
+    if(!r.ok){console.warn("bcLoadAllProjects failed:",r.status);return[];}
+    const d=await r.json();
+    return(d.value||[]);
+  }catch(e){console.warn("bcLoadAllProjects error:",e);return[];}
+}
 function bcFilterCustomers(allCustomers,query){
   if(!query.trim())return allCustomers.slice(0,25);
   const q=query.trim().toLowerCase();
@@ -5602,6 +5614,7 @@ function ProjectTile({p,onOpen,onDelete,draggable:isDraggable,onDragStart,onDrag
       style={{position:"absolute",top:8,right:8,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 5px",borderRadius:4,transition:"color 0.15s"}}
       onMouseEnter={e=>e.currentTarget.style.color=C.red}
       onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+    {p.importedFromBC&&<div style={{fontSize:10,fontWeight:700,color:C.yellow,background:C.yellowDim,borderRadius:4,padding:"2px 7px",marginBottom:6,alignSelf:"flex-start",letterSpacing:0.5,textTransform:"uppercase"}}>Imported • Future Feature</div>}
     {customerLogo&&<img src={customerLogo} alt="" style={{width:35,height:35,objectFit:"contain",borderRadius:4,background:"#fff",padding:2,marginBottom:6,alignSelf:"flex-start"}} onError={e=>e.target.style.display="none"}/>}
     {p.bcProjectNumber&&<div style={{fontSize:23,fontWeight:800,color:C.accent,marginBottom:4}}>{p.bcProjectNumber}</div>}
     <div style={{fontSize:18,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:20}}>{p.name}</div>
@@ -5729,6 +5742,40 @@ function App({user}){
     };
     return()=>{_appProjectUpdateFn=null;};
   },[]);
+
+  // Poll BC every 5 minutes and import any projects not yet in ARC
+  useEffect(()=>{
+    if(!user?.uid)return;
+    async function syncBcProjects(){
+      if(!_bcToken)return;
+      try{
+        const bcProjects=await bcLoadAllProjects();
+        setProjects(ps=>{
+          const existingBcIds=new Set(ps.map(p=>p.bcProjectId).filter(Boolean));
+          const toImport=bcProjects.filter(bp=>bp.id&&!existingBcIds.has(bp.id));
+          if(!toImport.length)return ps;
+          const newProjects=toImport.map(bp=>({
+            id:"arc-"+bp.id.replace(/-/g,""),
+            name:bp.displayName||bp.number||"Imported Project",
+            bcProjectId:bp.id,
+            bcProjectNumber:bp.number||"",
+            bcCustomerNumber:bp.billToCustomerNumber||bp.sell_to_Customer_No||"",
+            bcCustomerName:bp.billToName||bp.sell_to_Name||"",
+            importedFromBC:true,
+            status:"draft",
+            panels:[],
+            createdAt:Date.now(),
+            updatedAt:Date.now()
+          }));
+          console.log(`BC sync: importing ${newProjects.length} new project(s)`);
+          newProjects.forEach(p=>saveProject(user.uid,p).catch(e=>console.warn("BC import save failed:",e)));
+          return[...newProjects,...ps];
+        });
+      }catch(e){console.warn("BC project sync error:",e);}
+    }
+    const interval=setInterval(syncBcProjects,5*60*1000);
+    return()=>clearInterval(interval);
+  },[user?.uid]);
 
   function handleOpen(p){setOpenProject(p);setView("project");}
   function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");}
