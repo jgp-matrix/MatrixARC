@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.59";
+const APP_VERSION="v1.10.60";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5756,12 +5756,17 @@ function App({user}){
       try{
         const [bcProjects,bcCustomers]=await Promise.all([bcLoadAllProjects(),bcLoadAllCustomers()]);
         if(bcProjects.length)console.log("BC import sample fields:",Object.keys(bcProjects[0]));
+        // Log PRJ402014 specifically for debugging
+        const debugProj=bcProjects.find(bp=>bp.number==="PRJ402014");
+        if(debugProj)console.log("BC PRJ402014 full object:",JSON.stringify(debugProj));
+        console.log("BC customers loaded:",bcCustomers.length,"sample:",bcCustomers.slice(0,3));
         const bcById=Object.fromEntries(bcProjects.filter(bp=>bp.id).map(bp=>[bp.id,bp]));
         // Build customer number → name lookup
         const custByNumber=Object.fromEntries(bcCustomers.map(c=>[c.number,c.displayName]));
         function extractCustomer(bp){
           const custNo=bp.billToCustomerNumber||bp.billToCustomerNo||bp.sell_to_Customer_No||bp.Bill_to_Customer_No||"";
           const custName=bp.billToName||bp.billToCustomerName||bp.sell_to_Name||bp.Bill_to_Name||bp.customerName||(custNo?custByNumber[custNo]||"":"");
+          console.log(`extractCustomer ${bp.number}: custNo="${custNo}" custName="${custName}" custByNumber[custNo]="${custNo?custByNumber[custNo]||"(not found)":"(no number)"}`);
           return{bcCustomerNumber:custNo,bcCustomerName:custName};
         }
         setProjects(ps=>{
