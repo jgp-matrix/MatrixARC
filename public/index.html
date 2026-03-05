@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.93";
+const APP_VERSION="v1.10.94";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3743,6 +3743,23 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     loadPartCorrections(uid).then(setPartCorrections);
   },[uid]);
   useEffect(()=>()=>{if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);},[]);
+
+  // BC item pulse check — verify bcItemNumber still exists in BC on mount
+  useEffect(()=>{
+    if(!panel.bcItemNumber)return;
+    (async()=>{
+      try{
+        if(!_bcToken){await acquireBcToken(false);}
+        if(!_bcToken)return;
+        const item=await bcLookupItem(panel.bcItemNumber);
+        if(!item){
+          const updated={...panel,bcItemNumber:null,status:panel.status==="pushed_to_bc"?"costed":panel.status,updatedAt:Date.now()};
+          onUpdate(updated);
+          try{await onSaveImmediate(updated);}catch(e){}
+        }
+      }catch(e){console.warn("BC item pulse check failed:",e);}
+    })();
+  },[panel.bcItemNumber]);
 
   // Auto-sync labor BOM rows whenever labor data or pricing changes
   const _laborSyncKey=JSON.stringify([panel.laborData,panel.pricing?.laborRate,panel.pricing?.laborHoursOverride]);
