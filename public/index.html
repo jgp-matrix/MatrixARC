@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.101";
+const APP_VERSION="v1.10.102";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4688,7 +4688,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   </button>}
                 </>
               )}
-              <ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>
             </div>
             {pricingProgress&&(
               <div style={{marginBottom:10}}>
@@ -4698,6 +4697,33 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                 <div style={{fontSize:12,color:C.sub}}>{pricingProgress.msg}</div>
               </div>
             )}
+            {/* Labor Groups + Confidence Bar — same row */}
+            {!laborEst.isOverride&&laborEst.lines.length>0&&(()=>{
+              const GDEF=[
+                {label:"CUT",   color:"#f97316", cats:["Panel Holes","Side Devices","HVAC/Fans"]},
+                {label:"LAYOUT",color:"#a78bfa", cats:["Device Mounting","Duct & DIN Rail","Labels"]},
+                {label:"WIRE",  color:"#38bdf8", cats:["Wire Time","Door Wiring"]},
+              ];
+              return(
+                <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:10,flexWrap:"wrap"}}>
+                  <div style={{display:"flex",gap:8,flexWrap:"nowrap"}}>
+                    {GDEF.map(({label,color,cats})=>{
+                      const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
+                      return(
+                        <div key={label} style={{minWidth:70,background:"#0a0a12",border:`1px solid ${color}44`,borderRadius:8,padding:"6px 14px",textAlign:"center"}}>
+                          <div style={{fontSize:11,fontWeight:700,color,letterSpacing:0.8,marginBottom:2}}>{label}</div>
+                          <div style={{fontSize:16,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums"}}>{Math.ceil(hrs)}</div>
+                          <div style={{fontSize:10,color:C.muted}}>hrs</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{flex:1,display:"flex",justifyContent:"flex-end"}}>
+                    <ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>
+                  </div>
+                </div>
+              );
+            })()}
             <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"stretch"}}>
               {/* LEFT: Labor breakdown */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",minWidth:280}}>
@@ -4718,24 +4744,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   </span>
                   {allAccepted&&<span style={{background:C.greenDim,color:C.green,borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:700}}>All Accepted</span>}
                 </div>
-
-                {/* Labor Groups — always at top */}
-                {!laborEst.isOverride&&laborEst.lines.length>0&&(
-                  <div style={{marginBottom:8}}>
-                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                      {GROUPS.map(({label,color,cats})=>{
-                        const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
-                        return(
-                          <div key={label} style={{flex:1,minWidth:70,background:"#0a0a12",border:`1px solid ${color}44`,borderRadius:8,padding:"6px 10px",textAlign:"center"}}>
-                            <div style={{fontSize:11,fontWeight:700,color,letterSpacing:0.8,marginBottom:2}}>{label}</div>
-                            <div style={{fontSize:16,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums"}}>{Math.ceil(hrs)}</div>
-                            <div style={{fontSize:10,color:C.muted}}>hrs</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
 
                 {/* More Info toggle */}
                 {laborEst.lines.length>0&&(
