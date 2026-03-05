@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.18";
+const APP_VERSION="v1.10.19";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -208,6 +208,15 @@ function bgError(taskId,msg){
   _bgTasks[taskId]={..._bgTasks[taskId],status:"error",msg:msg||"Error"};
   _bgNotify();
   setTimeout(()=>{delete _bgTasks[taskId];_bgNotify();},6000);
+}
+
+// ── PROJECT LIVE UPDATE SYSTEM (for background extraction notifications) ──
+const _projectListeners={};
+function onProjectUpdated(projectId,fn){_projectListeners[projectId]=fn;return()=>{delete _projectListeners[projectId];};}
+let _appProjectUpdateFn=null;
+function notifyProjectListeners(projectId,liveProject){
+  if(_projectListeners[projectId])_projectListeners[projectId](liveProject);
+  if(_appProjectUpdateFn)_appProjectUpdateFn(liveProject);
 }
 
 // ── LABOR RATE CONSTANTS ──
@@ -870,6 +879,19 @@ async function saveProject(uid,project){
   const toSave=JSON.parse(JSON.stringify(stripped));
   await ref.set(toSave);
   return data; // return with dataUrls intact for in-memory use
+}
+// Save a single panel into its project in Firestore (used by background extraction tasks)
+async function saveProjectPanel(uid,projectId,panelId,updatedPanel){
+  const path=_appCtx.projectsPath||`users/${uid}/projects`;
+  const ref=fbDb.collection(path).doc(projectId);
+  const snap=await ref.get();
+  if(!snap.exists)return;
+  const proj={id:ref.id,...snap.data()};
+  const panels=(proj.panels||[]).map(p=>p.id===panelId?updatedPanel:p);
+  const liveProject={...proj,panels,updatedAt:Date.now()};
+  const stripped=JSON.parse(JSON.stringify({...liveProject,panels:panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
+  await ref.set(stripped);
+  notifyProjectListeners(projectId,liveProject);
 }
 async function loadProjects(uid){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
@@ -1563,6 +1585,74 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
   const validation={runAt:Date.now(),schematicTags,wireCount:totalWires,matched,missingFromSchematic:missing,notTraceable,unaccountedTags:unaccounted,confidence};
   console.log("VALIDATION COMPLETE: pages="+totalPages+", tags="+schematicTags.length+", wires="+totalWires+", matched="+matched.length+", missing="+missing.length);
   return{validation,laborData};
+}
+
+// ── BACKGROUND EXTRACTION TASK (module-level — survives React component unmount / navigation) ──
+async function runExtractionTask(uid,projectId,panel,cbs={}){
+  const {onBomProgress,onProgress,onDone}=cbs;
+  const report=(pct,msg)=>{try{if(onProgress)onProgress(pct,msg);}catch(e){}};
+  let latestPanel={...panel};
+  const bomPages=panel.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
+  const hasSchOrLayout=panel.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
+  const willValidate=!!_apiKey&&hasSchOrLayout;
+  const save=async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));};
+  try{
+    // BOM extraction
+    let bomMergePromise=Promise.resolve([]);
+    if(_apiKey&&bomPages.length>0){
+      bgUpdate(panel.id,"Extracting BOM…");
+      let bomDone=0;
+      bomMergePromise=parallelMap(bomPages,async pg=>{
+        bomDone++;try{if(onBomProgress)onBomProgress(bomDone,bomPages.length);}catch(e){}
+        return extractBomPage(pg.dataUrl);
+      },3).then(results=>{
+        const all=results.flat();if(!all.length)return[];
+        const map={};
+        all.forEach(item=>{const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));if(map[key])map[key].qty=(+map[key].qty||1)+(+item.qty||1);else map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};});
+        return appendDefaultBomItems(Object.values(map));
+      }).catch(ex=>{console.error("BOM extraction failed:",ex);return[];});
+    }
+    // Validation (parallel with BOM)
+    let valPromise=Promise.resolve(null);
+    if(willValidate){
+      bgUpdate(panel.id,"Validating…");
+      valPromise=runPanelValidation(latestPanel,pct=>report(pct,"Validating…"),bomMergePromise);
+    }
+    // Await BOM and save
+    const mergedBom=await bomMergePromise;
+    if(mergedBom.length>0)await save({...latestPanel,bom:mergedBom,status:"extracted",updatedAt:Date.now()});
+    // Await validation and save
+    if(willValidate){
+      try{
+        const result=await valPromise;
+        if(result?.validation||result?.laborData)
+          await save({...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:latestPanel.status==="extracted"?"extracted":"validated",updatedAt:Date.now()});
+      }catch(valEx){console.error("Validation failed:",valEx);}
+    }
+    // Part number verification
+    const bomToVerify=(latestPanel.bom||[]).slice();
+    if(bomToVerify.length>0&&_apiKey){
+      try{const vr=await verifyPartNumbers(bomToVerify);if(vr?.length>0)await save({...latestPanel,bomVerification:vr,updatedAt:Date.now()});}
+      catch(e){console.warn("Part verification failed:",e);}
+    }
+    // Upload page images to Firebase Storage
+    const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
+    if(pagesNeedingUpload.length>0&&projectId){
+      try{
+        const urlMap={};
+        await parallelMap(pagesNeedingUpload,async pg=>{urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,pg.dataUrl);},4);
+        const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
+        await save({...latestPanel,pages:pagesWithUrls});
+      }catch(e){console.warn("Storage upload failed:",e);}
+    }
+    const itemCount=(latestPanel.bom||[]).length;
+    bgDone(panel.id,itemCount>0?`✓ ${itemCount} items`:"✓ Complete");
+  }catch(ex){
+    console.error("runExtractionTask error:",ex);
+    bgError(panel.id,ex.message.slice(0,60));
+  }finally{
+    try{if(onDone)onDone(latestPanel);}catch(e){}
+  }
 }
 
 // ── PRICING PROMPT ──
@@ -3479,8 +3569,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   async function addFiles(files){
     console.log("ADDFILES: start, files="+files.length+", apiKey="+(!!_apiKey));
     setProcessing(true);setErr("");
-    let _bgErr=false;
     bgStart(panel.id, panel.name||("Panel "+(idx+1)), projectId);
+    let updated;
     try{
     const newItems=[];
     let livePages=[...savedPages];
@@ -3535,7 +3625,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       },4);
       setDetecting(false);setDetectProgress("");
     }
-    let updated={...panel,pages:livePages};
+    updated={...panel,pages:livePages};
     // Auto-extract title block from first drawing if panel has none yet
     if(_apiKey&&newItems.length>0&&!panel.drawingNo){
       const firstWithData=newItems.find(i=>i.dataUrl);
@@ -3550,115 +3640,32 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     onUpdate(updated);
     setPendingPages([]);
     try{await onSaveImmediate(updated);}catch(e){}
-
-
-
-    // Auto-extract BOM from any BOM-tagged pages
-    const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
-    let latestPanel=updated;
-    const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
-    const willValidate=_apiKey&&hasSchOrLayout;
-    console.log("ADDFILES: bomPages="+bomPages.length+", hasSchOrLayout="+hasSchOrLayout+", willValidate="+willValidate+", totalPages="+updated.pages.length);
-    // ── BOM extraction + validation run in PARALLEL ──
-    const valPageCount=(updated.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl)).length;
-    const totalEst=Math.max(30,bomPages.length*15+valPageCount*20);
-    if(_apiKey&&(bomPages.length>0||willValidate)){
-      ep.start(bomPages.length>0?"Extracting & Validating…":"Validating…",totalEst);
-    }
-    // Start BOM extraction immediately (don't await — runs in background)
-    let bomMergePromise=Promise.resolve([]);
-    if(_apiKey&&bomPages.length>0){
-      bgUpdate(panel.id,"Extracting BOM…");
-      setExtracting(true);
-      let bomDone=0;
-      bomMergePromise=parallelMap(bomPages,async(pg)=>{
-        ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
-        return extractBomPage(pg.dataUrl);
-      },3).then(results=>{
-        const all=results.flat();
-        if(!all.length)return[];
-        const map={};
-        all.forEach(item=>{
-          const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));
-          if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
-          else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
-        });
-        return appendDefaultBomItems(Object.values(map));
-      }).catch(ex=>{setErr(`BOM extraction failed: ${ex.message}`);return[];});
-    }
-    // Start validation immediately in parallel — passes bomMergePromise for cross-reference
-    let valPromise=Promise.resolve(null);
-    if(willValidate){
-      bgUpdate(panel.id,"Validating…");
-      setValidatingPanel(true);
-      valPromise=runPanelValidation(latestPanel,pct=>{ep.set(pct,"Validating…");},bomMergePromise);
-    }
-    // Await BOM completion and save
-    const mergedBom=await bomMergePromise;
-    setExtracting(false);
-    if(mergedBom.length>0){
-      const withBom={...latestPanel,bom:mergedBom,status:"extracted",updatedAt:Date.now()};
-      latestPanel=withBom;onUpdate(withBom);
-      try{await onSaveImmediate(withBom);}catch(e){}
-    }else if(!willValidate){ep.stop();}
-    // Await validation completion and save
-    if(willValidate){
-      try{
-        const result=await valPromise;
-        if(result?.validation||result?.laborData){
-          const withVal={...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:latestPanel.status==="extracted"?"extracted":"validated",updatedAt:Date.now()};
-          latestPanel=withVal;onUpdate(withVal);
-          try{await onSaveImmediate(withVal);}catch(e){}
-        }
-        console.log("VALIDATION RESULT: confidence="+((result?.validation||{}).confidence)+", wireCount="+((result?.validation||{}).wireCount));
-      }catch(valEx){console.error("Validation failed:",valEx);}
-      setValidatingPanel(false);
-      const itemCount=(latestPanel.bom||[]).length;
-      ep.finish(itemCount>0?`✓ ${itemCount} items · validated`:"✓ Validated");
-    }else if(mergedBom.length>0){
-      ep.finish(`✓ ${mergedBom.length} items extracted`);
-    }
-    // Verify part numbers (runs after BOM is done)
-    const bomToVerify=(latestPanel.bom||[]).slice();
-    const verifyPromise=(bomToVerify.length>0&&_apiKey)?(async()=>{
-      try{
-        console.log("PART VERIFY: starting for "+bomToVerify.length+" items");
-        return await verifyPartNumbers(bomToVerify);
-      }catch(e){console.warn("Part verification failed:",e);return[];}
-    })():Promise.resolve([]);
-    // Wait for part verification to finish and merge into latestPanel
-    const verifResults=await verifyPromise;
-    if(verifResults&&verifResults.length>0){
-      latestPanel={...latestPanel,bomVerification:verifResults,updatedAt:Date.now()};
-      onUpdate(latestPanel);
-      try{await onSaveImmediate(latestPanel);}catch(e){}
-      console.log("PART VERIFY: complete, "+verifResults.length+" items checked");
-    }
-    // Upload page images to Firebase Storage (inside try so latestPanel is in scope)
-    const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
-    console.log("STORAGE UPLOAD: "+pagesNeedingUpload.length+" pages need upload, projectId="+projectId);
-    if(pagesNeedingUpload.length>0&&projectId){
-      try{
-        const urlMap={};
-        await parallelMap(pagesNeedingUpload,async pg=>{
-          urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,pg.dataUrl);
-        },4);
-        const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
-        latestPanel={...latestPanel,pages:pagesWithUrls};
-        onUpdate(latestPanel);
-        try{await onSaveImmediate(latestPanel);}catch(e){}
-        console.log("STORAGE UPLOAD: complete, "+Object.keys(urlMap).length+" images uploaded");
-      }catch(e){console.warn("Storage upload failed:",e);}
-    }
     }catch(ex){
       console.error("addFiles error:",ex);
       setErr(`Error processing files: ${ex.message}`);
-      _bgErr=true;
-      bgError(panel.id, ex.message.slice(0,60));
-    }finally{
+      bgError(panel.id,ex.message.slice(0,60));
       setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setExtracting(false);setValidatingPanel(false);setPendingPages([]);
-      if(!_bgErr) bgDone(panel.id,"Complete");
+      bgDone(panel.id,"Error");return;
     }
+    setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setPendingPages([]);
+    // Start background extraction — runs at module level, continues even if user navigates away
+    const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
+    const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
+    const willValidate=_apiKey&&hasSchOrLayout;
+    if(!_apiKey||(!bomPages.length&&!willValidate)){bgDone(panel.id,"Complete");return;}
+    const valPageCount=(updated.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl)).length;
+    const totalEst=Math.max(30,bomPages.length*15+valPageCount*20);
+    ep.start(bomPages.length>0?"Extracting & Validating…":"Validating…",totalEst);
+    setExtracting(bomPages.length>0);setValidatingPanel(willValidate);
+    runExtractionTask(uid,projectId,updated,{
+      onBomProgress:(done,total)=>{try{ep.update(`Extracting BOM — page ${done}/${total}…`);}catch(e){}},
+      onProgress:(pct,msg)=>{try{ep.set(pct,msg||"Validating…");}catch(e){}},
+      onDone:(finalPanel)=>{
+        try{onUpdate(finalPanel);}catch(e){}
+        try{const n=(finalPanel.bom||[]).length;ep.finish(n>0?`✓ ${n} items · validated`:"✓ Validated");}catch(e){}
+        try{setExtracting(false);setValidatingPanel(false);}catch(e){}
+      }
+    });
   }
 
   async function autoExtractTitle(){
@@ -4941,6 +4948,9 @@ function ProjectView({project:init,uid,onBack,onChange}){
     }
   },[]);
 
+  // Listen for live updates from background extraction tasks (survives navigation)
+  useEffect(()=>onProjectUpdated(project.id,p=>{setProject(p);projectRef.current=p;onChange(p);}),[project.id]);
+
   function update(p){
     setProject(p);projectRef.current=p;onChange(p);
     clearTimeout(saveTimer.current);
@@ -5545,6 +5555,15 @@ function App({user}){
       if(!_bcToken){acquireBcToken(false).then(t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;setProjects(ps=>[...ps]);}}).catch(()=>{});}
     })();
   },[user.uid]);
+
+  // Register handler so background extraction tasks can update App state after navigation
+  useEffect(()=>{
+    _appProjectUpdateFn=(liveProject)=>{
+      setProjects(ps=>ps.map(x=>x.id===liveProject.id?liveProject:x));
+      setOpenProject(prev=>prev?.id===liveProject.id?liveProject:prev);
+    };
+    return()=>{_appProjectUpdateFn=null;};
+  },[]);
 
   function handleOpen(p){setOpenProject(p);setView("project");}
   function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");}
