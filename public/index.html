@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.25";
+const APP_VERSION="v1.10.28";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1652,7 +1652,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       try{
         const result=await valPromise;
         if(result?.validation||result?.laborData)
-          await save({...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:latestPanel.status==="extracted"?"extracted":"validated",updatedAt:Date.now()});
+          await save({...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated",updatedAt:Date.now()});
       }catch(valEx){console.error("Validation failed:",valEx);}
     }
     // Part number verification
@@ -2000,11 +2000,9 @@ function projectStatus(project){
   if(!panels.length)return project.status||"draft";
   const statuses=panels.map(p=>p.status||"draft");
   const rank={draft:0,extracted:1,validated:2,costed:3,quoted:4};
-  const allCosted=statuses.every(s=>rank[s]>=3);
-  if(allCosted)return"costed";
-  const anyWork=statuses.some(s=>rank[s]>=1);
-  if(anyWork)return"in_progress";
-  return"draft";
+  const rankToStatus=["draft","extracted","validated","costed","quoted"];
+  const maxRank=Math.max(...statuses.map(s=>rank[s]||0));
+  return rankToStatus[maxRank]||"draft";
 }
 function Badge({status}){
   const map={
@@ -4958,6 +4956,27 @@ function QuoteView({project,uid,onBack,onUpdate}){
   );
 }
 
+// ── ERROR BOUNDARY ──
+class ErrorBoundary extends React.Component{
+  constructor(props){super(props);this.state={error:null};}
+  static getDerivedStateFromError(e){return{error:e};}
+  componentDidCatch(e,info){console.error("ErrorBoundary caught:",e,info);}
+  render(){
+    if(this.state.error){
+      return(
+        <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:32}}>
+          <div style={{fontSize:40,marginBottom:16}}>⚠️</div>
+          <div style={{fontSize:18,fontWeight:700,color:C.red,marginBottom:8}}>Something went wrong</div>
+          <div style={{fontSize:13,color:C.muted,marginBottom:24,maxWidth:600,textAlign:"center",wordBreak:"break-all"}}>{this.state.error?.message||String(this.state.error)}</div>
+          <button onClick={()=>{this.setState({error:null});if(this.props.onBack)this.props.onBack();}}
+            style={{background:"#383850",border:"1.5px solid #7a7a9a",color:"#d4d8e0",cursor:"pointer",fontSize:15,fontWeight:600,padding:"8px 20px",borderRadius:8}}>← Back to Projects</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // ── PROJECT VIEW ──
 function ProjectView({project:init,uid,onBack,onChange}){
   const [project,setProject]=useState(()=>migrateProject(init));
@@ -5451,7 +5470,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
               <div style={{fontSize:12,color:C.muted,marginBottom:20}}>These projects were transferred to you. Accept them to add them to your project list.</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:12}}>
                 {transferred.map(p=>{
-                  const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"));
+                  const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
                   const st=projectStatus(p);
                   const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,quoted:C.yellow};
                   const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
@@ -5466,10 +5485,12 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                     <div style={{fontSize:11,color:C.muted,marginBottom:"auto"}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
                     {activeTask&&(
                       <div style={{marginTop:6}}>
-                        <div style={{fontSize:10,color:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
-                        <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
-                          <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
-                        </div>
+                        <div style={{fontSize:10,color:activeTask.status==="error"?C.red:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
+                        {activeTask.status!=="error"?(
+                          <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
+                            <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+                          </div>
+                        ):null}
                       </div>
                     )}
                     <div style={{fontSize:10,color:statusColors[st]||C.muted,fontWeight:700,marginTop:5,marginBottom:6}}>{statusLabels[st]||"DRAFT"}</div>
@@ -5493,7 +5514,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
 function ProjectTile({p,onOpen,onDelete}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
-  const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"));
+  const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
   const st=projectStatus(p);
   const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,quoted:C.yellow};
   const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
@@ -5514,10 +5535,12 @@ function ProjectTile({p,onOpen,onDelete}){
     <div style={{fontSize:11,color:C.muted,marginBottom:"auto"}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
     {activeTask&&(
       <div style={{marginTop:6}}>
-        <div style={{fontSize:10,color:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
-        <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
-          <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
-        </div>
+        <div style={{fontSize:10,color:activeTask.status==="error"?C.red:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
+        {activeTask.status!=="error"?(
+          <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
+            <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+          </div>
+        ):null}
       </div>
     )}
     <div style={{fontSize:10,color:statusColors[st]||C.muted,fontWeight:700,marginTop:5}}>{statusLabels[st]||"DRAFT"}</div>
@@ -5744,7 +5767,9 @@ function App({user}){
         </>
       )}
       {view==="project"&&openProject&&(
-        <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange}/>
+        <ErrorBoundary onBack={()=>setView("dashboard")}>
+          <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange}/>
+        </ErrorBoundary>
       )}
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
       {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
