@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.96";
+const APP_VERSION="v1.10.97";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4988,9 +4988,10 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
   const [categories,setCategories]=useState([]);
   const [uomCode,setUomCode]=useState("EA");
   const [uoms,setUoms]=useState([]);
-  const [phase,setPhase]=useState("setup"); // setup | creating | done | error
+  const [phase,setPhase]=useState("setup"); // setup | creating | done | error | missing_items
   const [progress,setProgress]=useState("");
   const [result,setResult]=useState(null);
+  const [missingItems,setMissingItems]=useState([]);
 
   // This panel's BOM only, rows with a part number
   const mergedBom=React.useMemo(()=>
@@ -5010,11 +5011,28 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
   async function handleCreate(){
     if(!description.trim()||!categoryCode||!uomCode||pendingBcCount>0)return;
     setPhase("creating");
-    setProgress("Creating item in Business Central…");
+    setProgress("Connecting to Business Central…");
     try{
       if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
       if(!_bcToken){_bcToken=await acquireBcToken(true)||null;}
       if(!_bcToken)throw new Error("Not connected to Business Central");
+
+      // Pre-validate: all BOM part numbers must exist in BC
+      if(mergedBom.length>0){
+        setProgress("Validating BOM items exist in BC…");
+        const missing=[];
+        for(const row of mergedBom){
+          const pn=(row.partNumber||"").trim();
+          if(!pn)continue;
+          const found=await bcLookupItem(pn);
+          if(!found)missing.push(pn);
+        }
+        if(missing.length>0){
+          setMissingItems(missing);
+          setPhase("missing_items");
+          return;
+        }
+      }
 
       // Step 1: Create the Item via REST API (UoM only — other fields set via OData PATCH)
       const created=await bcCreateItem({baseUnitOfMeasureCode:uomCode||undefined});
@@ -5045,11 +5063,8 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
       }
 
       // Determine if push was fully successful (item created, BOM lines added with no errors)
-      // Labor item errors (1012/1013/1014 not in BC yet) are non-blocking — treat as skipped
-      const laborItemNos=LABOR_BOM_GROUPS.map(g=>g.partNumber);
-      const blockingErrors=(bomResult.errors||[]).filter(e=>!laborItemNos.some(pn=>e.startsWith(pn+":")));
       const itemCreated=!!created.number;
-      const bomFullyPushed=mergedBom.length===0||(bomResult.added>0&&blockingErrors.length===0);
+      const bomFullyPushed=mergedBom.length===0||(bomResult.added>0&&bomResult.errors.length===0);
       const pushSuccess=itemCreated&&bomFullyPushed&&!bomResult.warning;
 
       const resultData={
@@ -5218,6 +5233,21 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
             </div>
           </div>
         )}
+
+        {phase==="missing_items"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:16}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.red,marginBottom:6}}>⛔ Missing Items in BC</div>
+              <div style={{fontSize:13,color:C.sub,marginBottom:10}}>The following item{missingItems.length>1?"s":""} must be added to Business Central before you can create this item:</div>
+              <div style={{fontFamily:"monospace",fontSize:13,display:"flex",flexDirection:"column",gap:4}}>
+                {missingItems.map(pn=><div key={pn} style={{color:C.red}}>• {pn}</div>)}
+              </div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Close</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -5225,10 +5255,11 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
 
 // ── UPDATE BOM IN BC MODAL ──
 function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewItem}){
-  const [phase,setPhase]=useState("checking"); // checking | confirm | in_use | updating | done | error
+  const [phase,setPhase]=useState("checking"); // checking | confirm | in_use | updating | done | error | missing_items
   const [progress,setProgress]=useState("");
   const [result,setResult]=useState(null);
   const [projectWarning,setProjectWarning]=useState([]);
+  const [missingItems,setMissingItems]=useState([]);
   const itemNo=panel.bcItemNumber||"";
   const mergedBom=(panel.bom||[]).filter(r=>(r.partNumber||"").trim());
   const pendingBcCount=mergedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual").length;
@@ -5256,13 +5287,29 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
       if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
       if(!_bcToken){_bcToken=await acquireBcToken(true)||null;}
       if(!_bcToken)throw new Error("Not connected to Business Central");
+
+      // Pre-validate: all BOM part numbers must exist in BC
+      if(mergedBom.length>0){
+        setProgress("Validating BOM items exist in BC…");
+        const missing=[];
+        for(const row of mergedBom){
+          const pn=(row.partNumber||"").trim();
+          if(!pn)continue;
+          const found=await bcLookupItem(pn);
+          if(!found)missing.push(pn);
+        }
+        if(missing.length>0){
+          setMissingItems(missing);
+          setPhase("missing_items");
+          return;
+        }
+      }
+
       const res=await bcReplaceAssemblyBOMLines(
         itemNo,mergedBom,
         (i,total,pn)=>setProgress(i===-1?"Clearing existing BOM lines…":`Adding BOM line ${i+1}/${total}: ${pn}…`)
       );
-      const laborNos=LABOR_BOM_GROUPS.map(g=>g.partNumber);
-      const blockingErrs=(res.errors||[]).filter(e=>!laborNos.some(pn=>e.startsWith(pn+":")));
-      const success=res.added>0&&blockingErrs.length===0&&!res.warning;
+      const success=res.added>0&&res.errors.length===0&&!res.warning;
       setResult({...res,success});
       if(success&&onUpdate&&onSaveImmediate){
         const updated={...panel,status:"pushed_to_bc",updatedAt:Date.now()};
@@ -5383,6 +5430,21 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
               <div style={{fontSize:13,color:C.sub}}>{result.error}</div>
             </div>
             <div style={{textAlign:"right"}}><button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Close</button></div>
+          </div>
+        )}
+
+        {phase==="missing_items"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:16}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.red,marginBottom:6}}>⛔ Missing Items in BC</div>
+              <div style={{fontSize:13,color:C.sub,marginBottom:10}}>The following item{missingItems.length>1?"s":""} must be added to Business Central before you can update this BOM:</div>
+              <div style={{fontFamily:"monospace",fontSize:13,display:"flex",flexDirection:"column",gap:4}}>
+                {missingItems.map(pn=><div key={pn} style={{color:C.red}}>• {pn}</div>)}
+              </div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Close</button>
+            </div>
           </div>
         )}
       </div>
