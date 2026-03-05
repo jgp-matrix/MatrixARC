@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.67";
+const APP_VERSION="v1.10.68";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5411,6 +5411,7 @@ function NewProjectModal({uid,onCreated,onClose}){
 // ── DASHBOARD ──
 function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdateProject}){
   const [groupBy,setGroupBy]=useState("status");
+  const [hideImported,setHideImported]=useState({});
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
   const bgTasks=useBgTasks();
@@ -5496,7 +5497,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
         </button>
       </div>
 
-      <div style={{display:"flex",gap:8,marginBottom:24}}>
+      <div style={{display:"flex",gap:8,marginBottom:groupBy!=="imported"?8:24}}>
         {filterBtn("By Status","status")}
         {filterBtn("By Customer","customer")}
         {filterBtn("By Date","date")}
@@ -5504,6 +5505,15 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
         {filterBtn("Imported","imported")}
         {filterBtn("All","all")}
       </div>
+      {groupBy!=="imported"&&(
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",userSelect:"none",fontSize:13,color:C.muted}}>
+            <input type="checkbox" checked={!!hideImported[groupBy]} onChange={e=>setHideImported(h=>({...h,[groupBy]:e.target.checked}))}
+              style={{accentColor:C.accent,width:14,height:14,cursor:"pointer"}}/>
+            Hide Imported
+          </label>
+        </div>
+      )}
 
       {loading&&(
         <div style={{textAlign:"center",padding:80,color:C.muted}}>
@@ -5513,7 +5523,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
       )}
 
       {(()=>{
-        const myProjects=projects.filter(p=>!p.transferred||p.transferredTo!==uid);
+        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||!hideImported[groupBy]||!p.importedFromBC));
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         return(<>
