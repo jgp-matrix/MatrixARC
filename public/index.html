@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.105";
+const APP_VERSION="v1.10.106";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4650,121 +4650,113 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         const sellPrice=grandTotal*(1+markup/100);
         const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
         const pendingBcCount=bom.filter(r=>(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual").length;
+        const GDEF=[
+          {label:"CUT",   color:"#f97316", cats:["Panel Holes","Side Devices","HVAC/Fans"]},
+          {label:"LAYOUT",color:"#a78bfa", cats:["Device Mounting","Duct & DIN Rail","Labels"]},
+          {label:"WIRE",  color:"#38bdf8", cats:["Wire Time","Door Wiring"]},
+        ];
+        const laborAccepted=panel.laborData?.accepted||{};
+        const acceptedCount=laborEst.lines.filter(l=>laborAccepted[l.category]).length;
+        const allAccepted=laborEst.lines.length>0&&acceptedCount===laborEst.lines.length;
         return(
           <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexWrap:"wrap"}}>
-              <span style={{fontSize:12,color:C.sub}}>{pricedCount}/{bom.length} priced</span>
+
+            {/* ── Top action bar ── */}
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap",justifyContent:"flex-end"}}>
+              <span style={{fontSize:12,color:C.sub,marginRight:"auto"}}>{pricedCount}/{bom.length} priced</span>
               {_apiKey&&pages.some(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl))&&(
                 validatingPanel
                   ?<span style={{display:"inline-flex",alignItems:"center",gap:8,padding:"4px 12px"}}>
                     <span style={{fontSize:13,fontWeight:700,color:C.accent,animation:"pulse 1.2s ease-in-out infinite"}}>Validating…</span>
                     <span style={{fontSize:15,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums"}}>{valPct}%</span>
                   </span>
-                  :<button onClick={validatePanel} disabled={readOnly}
-                    style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:readOnly?0.5:1,border:`1px solid ${C.accent}55`})}>
-                    🔄 Re-Validate
+                  :<button onClick={validatePanel} disabled={readOnly} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:readOnly?0.5:1,border:`1px solid ${C.accent}55`})}>🔄 Re-Validate</button>
+              )}
+              {!readOnly&&bom.length>0&&(<>
+                {_bcToken
+                  ?<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:10,padding:"3px 10px",fontSize:11,fontWeight:700}}>BC Connected</span>
+                  :<button disabled={bcConnecting} onClick={async()=>{
+                    setBcConnecting(true);setBcError("");
+                    try{await acquireBcToken();if(_bcToken){setBcError("");}else{setBcError("BC login failed — no token received");}}
+                    catch(e){setBcError("BC error: "+(e.message||e));}
+                    setBcConnecting(false);onUpdate({...panel});
+                  }} style={btn(C.border,C.muted,{fontSize:11,padding:"3px 10px",borderRadius:10,opacity:bcConnecting?0.5:1})}>
+                    {bcConnecting?"Connecting…":"Connect BC"}
                   </button>
-              )}
-              {!readOnly&&bom.length>0&&(
-                <>
-                  {_bcToken
-                    ?<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:10,padding:"3px 10px",fontSize:11,fontWeight:700}}>BC Connected</span>
-                    :<button disabled={bcConnecting} onClick={async()=>{
-                      setBcConnecting(true);setBcError("");
-                      try{
-                        await acquireBcToken();
-                        if(_bcToken){setBcError("");}else{setBcError("BC login failed — no token received");}
-                      }catch(e){setBcError("BC error: "+(e.message||e));}
-                      setBcConnecting(false);onUpdate({...panel});
-                    }} style={btn(C.border,C.muted,{fontSize:11,padding:"3px 10px",borderRadius:10,opacity:bcConnecting?0.5:1})}>
-                      {bcConnecting?"Connecting…":"Connect BC"}
-                    </button>
-                  }
-                  {bcError&&<span style={{fontSize:11,color:C.red}}>{bcError}</span>}
-                  {_apiKey&&<button onClick={runPricingOnPanel} disabled={aiPricing}
-                    style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,border:`1px solid ${C.accent}55`})}>
-                    {aiPricing?"Pricing…":"💲 Get Prices (BC + AI)"}
-                  </button>}
-                </>
-              )}
+                }
+                {bcError&&<span style={{fontSize:11,color:C.red}}>{bcError}</span>}
+                {_apiKey&&<button onClick={runPricingOnPanel} disabled={aiPricing} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,border:`1px solid ${C.accent}55`})}>
+                  {aiPricing?"Pricing…":"💲 Get Prices (BC + AI)"}
+                </button>}
+              </>)}
             </div>
             {pricingProgress&&(
-              <div style={{marginBottom:10}}>
+              <div style={{marginBottom:12}}>
                 <div style={{background:C.border,borderRadius:4,height:5,overflow:"hidden",marginBottom:5}}>
                   <div style={{width:`${pricingProgress.pct}%`,height:"100%",background:C.accent,borderRadius:4,transition:"width 0.3s"}}/>
                 </div>
                 <div style={{fontSize:12,color:C.sub}}>{pricingProgress.msg}</div>
               </div>
             )}
-            {/* Labor Groups + Confidence Bar — same row */}
-            {!laborEst.isOverride&&laborEst.lines.length>0&&(()=>{
-              const GDEF=[
-                {label:"CUT",   color:"#f97316", cats:["Panel Holes","Side Devices","HVAC/Fans"]},
-                {label:"LAYOUT",color:"#a78bfa", cats:["Device Mounting","Duct & DIN Rail","Labels"]},
-                {label:"WIRE",  color:"#38bdf8", cats:["Wire Time","Door Wiring"]},
-              ];
-              return(
-                <div style={{display:"flex",alignItems:"stretch",gap:0,marginBottom:10,flexWrap:"wrap"}}>
-                  <div style={{display:"flex",flexDirection:"column",gap:4,flexShrink:0}}>
-                    <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:1,textTransform:"uppercase"}}>Estimated Hrs</div>
-                    <div style={{display:"flex",gap:6,flexWrap:"nowrap"}}>
-                    {GDEF.map(({label,color,cats},gi)=>{
-                      const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
-                      return(
-                        <div key={label} style={{minWidth:90,background:"#0a0a12",border:`1px solid ${color}55`,borderRadius:gi===0?`10px 0 0 10px`:`${gi===GDEF.length-1?"0 10px 10px 0":"0"}`,borderRight:gi<GDEF.length-1?"none":undefined,padding:"14px 18px",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
-                          <div style={{fontSize:12,fontWeight:700,color,letterSpacing:0.8,marginBottom:3}}>{label}</div>
-                          <div style={{fontSize:22,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums",lineHeight:1}}>{Math.ceil(hrs)}</div>
-                          <div style={{fontSize:11,color:C.muted,marginTop:2}}>hrs</div>
-                        </div>
-                      );
-                    })}
-                    </div>
-                  </div>
-                  <div style={{flex:1,display:"flex",justifyContent:"flex-end"}}>
-                    <ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>
-                  </div>
-                </div>
-              );
-            })()}
-            <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"stretch"}}>
-              {/* LEFT: Labor breakdown */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",minWidth:280}}>
-                {(()=>{
-                  const laborAccepted=panel.laborData?.accepted||{};
-                  const acceptedCount=laborEst.lines.filter(l=>laborAccepted[l.category]).length;
-                  const allAccepted=laborEst.lines.length>0&&acceptedCount===laborEst.lines.length;
-                  const GROUPS=[
-                    {label:"CUT",   color:"#f97316", cats:["Panel Holes","Side Devices","HVAC/Fans"]},
-                    {label:"LAYOUT",color:"#a78bfa", cats:["Device Mounting","Duct & DIN Rail","Labels"]},
-                    {label:"WIRE",  color:"#38bdf8", cats:["Wire Time","Door Wiring"]},
-                  ];
-                  return <>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+
+            {/* ── Two-column: Labor | Pricing Summary ── */}
+            <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-start",marginBottom:12}}>
+
+              {/* LEFT: Labor */}
+              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px",minWidth:300,flexShrink:0}}>
+                {/* Header */}
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
                   <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
                   <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:700}}>
                     {laborEst.isOverride?"Manual Override":laborEst.isLegacy?"Legacy":laborEst.hasLayoutData?"Auto (schematic + layout)":"Schematic only"}
                   </span>
                   {allAccepted&&<span style={{background:C.greenDim,color:C.green,borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:700}}>All Accepted</span>}
                 </div>
-
+                {/* Estimated Hrs tiles */}
+                {!laborEst.isOverride&&laborEst.lines.length>0&&(
+                  <div style={{marginBottom:10}}>
+                    <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Estimated Hrs</div>
+                    <div style={{display:"flex",gap:0}}>
+                      {GDEF.map(({label,color,cats},gi)=>{
+                        const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
+                        return(
+                          <div key={label} style={{flex:1,background:"#060610",border:`1px solid ${color}55`,borderRadius:gi===0?"8px 0 0 8px":gi===GDEF.length-1?"0 8px 8px 0":"0",borderRight:gi<GDEF.length-1?"none":undefined,padding:"10px 8px",textAlign:"center"}}>
+                            <div style={{fontSize:11,fontWeight:700,color,letterSpacing:0.8,marginBottom:2}}>{label}</div>
+                            <div style={{fontSize:20,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums",lineHeight:1}}>{Math.ceil(hrs)}</div>
+                            <div style={{fontSize:10,color:C.muted,marginTop:2}}>hrs</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {/* Rate controls */}
+                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+                  <span style={{fontSize:12,color:C.muted}}>$/hr</span>
+                  <input type="number" min="0" step="1" readOnly={readOnly} value={laborRate}
+                    onChange={e=>savePricing({laborRate:Math.max(0,+e.target.value||0)})}
+                    style={{...inp({padding:"3px 5px",fontSize:13,width:60,textAlign:"right",border:"1px solid #888"})}}/>
+                  <span style={{fontSize:12,color:C.muted}}>Override hrs</span>
+                  <input type="number" min="0" step="0.5" readOnly={readOnly} value={pr.laborHoursOverride??""} placeholder="auto"
+                    onChange={e=>savePricing({laborHoursOverride:e.target.value===""?null:Math.max(0,+e.target.value||0)})}
+                    style={{...inp({padding:"3px 5px",fontSize:13,width:60,textAlign:"right",border:"1px solid #888"})}}/>
+                </div>
                 {/* More Info toggle */}
                 {laborEst.lines.length>0&&(
                   <button onClick={()=>setLaborMoreInfo(v=>!v)}
-                    style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,cursor:"pointer",fontSize:11,padding:"3px 10px",marginBottom:laborMoreInfo?8:0,width:"100%",textAlign:"left",display:"flex",alignItems:"center",gap:6}}>
+                    style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,cursor:"pointer",fontSize:11,padding:"3px 10px",width:"100%",textAlign:"left",display:"flex",alignItems:"center",gap:6}}>
                     <span style={{fontSize:10}}>{laborMoreInfo?"▲":"▼"}</span>
                     {laborMoreInfo?"Hide Detail":"More Info"}
                   </button>
                 )}
-
-                {/* Collapsible detail: labor lines table + detected inputs */}
+                {/* Collapsible detail */}
                 {laborMoreInfo&&(<>
-                {laborEst.lines.length>0&&(
-                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,marginBottom:6}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,marginTop:8,marginBottom:6}}>
                     <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
                       <th style={{textAlign:"center",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:12,width:24}}>&#10003;</th>
                       <th style={{textAlign:"left",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:12}}>Category</th>
                       <th style={{textAlign:"right",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:12}}>Qty</th>
-                      <th style={{textAlign:"right",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:12}}>Hours</th>
+                      <th style={{textAlign:"right",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:12}}>Hrs</th>
                       <th style={{textAlign:"right",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:12}}>Cost</th>
                     </tr></thead>
                     <tbody>
@@ -4780,13 +4772,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           <td style={{padding:"3px 4px",color:isAccepted?C.green:C.sub,whiteSpace:"nowrap"}}>{l.category}</td>
                           <td style={{padding:"3px 4px",textAlign:"right",whiteSpace:"nowrap"}}>
                             {l.field&&!readOnly?(
-                              <input type="text" inputMode="decimal"
-                                defaultValue={l.qty}
-                                key={l.field+"-"+(l.qty)}
-                                onBlur={e=>{
-                                  const v=parseFloat(e.target.value);
-                                  if(!isNaN(v)&&v!==l.qty)saveLaborOverride(l.field,Math.max(0,v));
-                                }}
+                              <input type="text" inputMode="decimal" defaultValue={l.qty} key={l.field+"-"+l.qty}
+                                onBlur={e=>{const v=parseFloat(e.target.value);if(!isNaN(v)&&v!==l.qty)saveLaborOverride(l.field,Math.max(0,v));}}
                                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
                                 style={{background:"transparent",border:"1px solid #888",borderRadius:4,color:C.text,padding:"1px 4px",fontSize:13,width:48,textAlign:"right"}}/>
                             ):(
@@ -4807,47 +4794,36 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                       </tr>
                     </tbody>
                   </table>
-                )}
-                {!laborEst.isOverride&&!laborEst.isLegacy&&laborEst.inputs&&(
-                  <div style={{borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:4,marginBottom:6}}>
-                    <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3}}>Detected Inputs</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"2px 12px",fontSize:12}}>
-                      {[
-                        ["Wire terminations",laborEst.inputs.wireTerminations||laborEst.inputs.wireCount||0],
-                        ["Total wires",laborEst.inputs.wireCount||0],
-                        ["Door-mounted devices",laborEst.inputs.doorDevices||0],
-                        ["Total devices",laborEst.inputs.allDevices||0],
-                        ["Panel holes",laborEst.inputs.panelHoles||0],
-                        ["Duct & DIN rail",`${laborEst.inputs.ductDinFeet||0} ft`],
-                        ["Side devices (small)",laborEst.inputs.sideTopSmallCount||0],
-                        ["Side devices (AC/Fan)",laborEst.inputs.sideTopLargeCount||0],
-                        ["Label hours",laborEst.inputs.labelHours||0],
-                        ["PM sessions",laborEst.inputs.pmUnits||0],
-                      ].map(([label,val])=>(
-                        <div key={label} style={{display:"flex",justifyContent:"space-between"}}>
-                          <span style={{color:C.muted}}>{label}</span>
-                          <span style={{color:C.text,fontVariantNumeric:"tabular-nums"}}>{val}</span>
-                        </div>
-                      ))}
+                  {!laborEst.isOverride&&!laborEst.isLegacy&&laborEst.inputs&&(
+                    <div style={{borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:4}}>
+                      <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3}}>Detected Inputs</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"2px 12px",fontSize:12}}>
+                        {[
+                          ["Wire terminations",laborEst.inputs.wireTerminations||laborEst.inputs.wireCount||0],
+                          ["Total wires",laborEst.inputs.wireCount||0],
+                          ["Door-mounted devices",laborEst.inputs.doorDevices||0],
+                          ["Total devices",laborEst.inputs.allDevices||0],
+                          ["Panel holes",laborEst.inputs.panelHoles||0],
+                          ["Duct & DIN rail",`${laborEst.inputs.ductDinFeet||0} ft`],
+                          ["Side devices (small)",laborEst.inputs.sideTopSmallCount||0],
+                          ["Side devices (AC/Fan)",laborEst.inputs.sideTopLargeCount||0],
+                          ["Label hours",laborEst.inputs.labelHours||0],
+                          ["PM sessions",laborEst.inputs.pmUnits||0],
+                        ].map(([label,val])=>(
+                          <div key={label} style={{display:"flex",justifyContent:"space-between"}}>
+                            <span style={{color:C.muted}}>{label}</span>
+                            <span style={{color:C.text,fontVariantNumeric:"tabular-nums"}}>{val}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
                 </>)}
-                </>;})()}
-                <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-                  <span style={{fontSize:12,color:C.muted}}>$/hr</span>
-                  <input type="number" min="0" step="1" readOnly={readOnly} value={laborRate}
-                    onChange={e=>savePricing({laborRate:Math.max(0,+e.target.value||0)})}
-                    style={{...inp({padding:"3px 5px",fontSize:13,width:65,textAlign:"right",border:"1px solid #888"})}}/>
-                  <span style={{fontSize:12,color:C.muted,marginLeft:6}}>Override hrs</span>
-                  <input type="number" min="0" step="0.5" readOnly={readOnly} value={pr.laborHoursOverride??""} placeholder="auto"
-                    onChange={e=>savePricing({laborHoursOverride:e.target.value===""?null:Math.max(0,+e.target.value||0)})}
-                    style={{...inp({padding:"3px 5px",fontSize:13,width:65,textAlign:"right",border:"1px solid #888"})}}/>
-                </div>
               </div>
-              {/* RIGHT: Price breakdown */}
-              <div style={{flex:1,minWidth:280}}>
-                <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:8}}>PRICING SUMMARY</div>
+
+              {/* RIGHT: Pricing Summary */}
+              <div style={{flex:1,minWidth:260,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+                <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
                 {[
                   ["Materials",fmt(totalCost),C.green,null,null],
                   ["BOM Contingency",null,C.sub,contingencyBOM,"contingencyBOM"],
@@ -4855,57 +4831,57 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   ["Labor",fmt(laborCost),C.sub,null,null],
                   ["Total",fmt(grandTotal),C.text,null,null],
                 ].map(([label,val,color,numVal,key])=>(
-                  <div key={label} style={{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:20,marginBottom:6,fontSize:13}}>
-                    <span style={{color:C.muted,textAlign:"right"}}>{label}</span>
+                  <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:13}}>
+                    <span style={{color:C.muted}}>{label}</span>
                     {key?(
-                      <div style={{display:"flex",alignItems:"center",gap:2,minWidth:90,justifyContent:"flex-end"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:2}}>
                         <span style={{color:C.muted,fontSize:12}}>$</span>
-                        <input type="number" min="0" step="50" readOnly={readOnly}
-                          value={numVal}
+                        <input type="number" min="0" step="50" readOnly={readOnly} value={numVal}
                           onChange={e=>savePricing({[key]:Math.max(0,+e.target.value||0)})}
                           style={{...inp({padding:"3px 5px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:4,width:80,textAlign:"right"}),color}}
                           onFocus={e=>e.target.style.borderColor=C.accent}
                           onBlur={e=>e.target.style.borderColor="transparent"}/>
                       </div>
                     ):(
-                      <span style={{color,fontWeight:label==="Total"?700:400,fontVariantNumeric:"tabular-nums",minWidth:90,textAlign:"right"}}>{val}</span>
+                      <span style={{color,fontWeight:label==="Total"?700:400,fontVariantNumeric:"tabular-nums"}}>{val}</span>
                     )}
                   </div>
                 ))}
-                <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,display:"flex",justifyContent:"flex-end",alignItems:"center",gap:20,fontSize:14}}>
+                <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:4,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:14}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{color:C.sub}}>Margin</span>
+                    <span style={{color:C.sub,fontSize:13}}>Margin</span>
                     <input type="number" min="0" step="1" value={markup} readOnly={readOnly}
                       onChange={e=>savePricing({markup:Math.max(0,+e.target.value||0)})}
-                      style={{...inp({padding:"3px 6px",fontSize:13,width:60,textAlign:"right"})}}/>
+                      style={{...inp({padding:"3px 6px",fontSize:13,width:55,textAlign:"right"})}}/>
                     <span style={{color:C.muted,fontSize:13}}>%</span>
                   </div>
-                  <span style={{fontWeight:800,color:C.accent,fontSize:16,fontVariantNumeric:"tabular-nums",minWidth:90,textAlign:"right"}}>{fmt(sellPrice)}</span>
+                  <span style={{fontWeight:800,color:C.accent,fontSize:18,fontVariantNumeric:"tabular-nums"}}>{fmt(sellPrice)}</span>
                 </div>
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",marginTop:10,gap:8}}>
-                  <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px"})}>📊 View Quote</button>
-                  {!readOnly&&(
-                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
-                      {panel.bcItemNumber&&(
-                        <button onClick={()=>!pendingBcCount&&setShowUpdateBom(true)} disabled={pendingBcCount>0}
-                          title={pendingBcCount>0?`${pendingBcCount} unverified BC parts — resolve blue circles first`:`Update Assembly BOM for item ${panel.bcItemNumber}`}
-                          style={{background:pendingBcCount>0?"#111":"#0d1f3c",border:'1px solid '+(pendingBcCount>0?"#444":"#38bdf866"),color:pendingBcCount>0?"#555":"#38bdf8",cursor:pendingBcCount>0?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:pendingBcCount>0?0.5:1}}>
-                          🔄 Update BOM in BC (Item# {panel.bcItemNumber})
-                        </button>
-                      )}
-                      <button
-                        onClick={()=>!panel.bcItemNumber&&!pendingBcCount&&setShowCreateItem(true)}
-                        disabled={!!panel.bcItemNumber||pendingBcCount>0}
-                        title={panel.bcItemNumber?`Item ${panel.bcItemNumber} already created in BC`:pendingBcCount>0?`${pendingBcCount} part${pendingBcCount>1?"s":""} not yet verified in BC — resolve all blue BC circles first`:undefined}
-                        style={{background:(!panel.bcItemNumber&&!pendingBcCount)?"#1a1040":"#111",border:"1px solid "+(!panel.bcItemNumber&&!pendingBcCount?"#7c3aed":"#444"),color:panel.bcItemNumber?"#38bdf8":(!pendingBcCount?"#c4b5fd":"#555"),cursor:(!panel.bcItemNumber&&!pendingBcCount)?"pointer":"not-allowed",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:panel.bcItemNumber?0.7:pendingBcCount>0?0.5:1}}>
-                        {panel.bcItemNumber?`✓ Item ${panel.bcItemNumber} Already In BC`:"⚙ Create Item in BC"}
+                <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+                  <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>📊 View Quote</button>
+                  {!readOnly&&(<>
+                    {panel.bcItemNumber&&(
+                      <button onClick={()=>!pendingBcCount&&setShowUpdateBom(true)} disabled={pendingBcCount>0}
+                        title={pendingBcCount>0?`${pendingBcCount} unverified BC parts — resolve blue circles first`:`Update Assembly BOM for item ${panel.bcItemNumber}`}
+                        style={{background:pendingBcCount>0?"#111":"#0d1f3c",border:'1px solid '+(pendingBcCount>0?"#444":"#38bdf866"),color:pendingBcCount>0?"#555":"#38bdf8",cursor:pendingBcCount>0?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:pendingBcCount>0?0.5:1,textAlign:"center"}}>
+                        🔄 Update BOM in BC (Item# {panel.bcItemNumber})
                       </button>
-                      {pendingBcCount>0&&<span style={{fontSize:10,color:"#f87171",textAlign:"right"}}>{pendingBcCount} unverified BC part{pendingBcCount>1?"s":""}</span>}
-                    </div>
-                  )}
+                    )}
+                    <button
+                      onClick={()=>!panel.bcItemNumber&&!pendingBcCount&&setShowCreateItem(true)}
+                      disabled={!!panel.bcItemNumber||pendingBcCount>0}
+                      title={panel.bcItemNumber?`Item ${panel.bcItemNumber} already created in BC`:pendingBcCount>0?`${pendingBcCount} part${pendingBcCount>1?"s":""} not yet verified in BC — resolve all blue BC circles first`:undefined}
+                      style={{background:(!panel.bcItemNumber&&!pendingBcCount)?"#1a1040":"#111",border:"1px solid "+(!panel.bcItemNumber&&!pendingBcCount?"#7c3aed":"#444"),color:panel.bcItemNumber?"#38bdf8":(!pendingBcCount?"#c4b5fd":"#555"),cursor:(!panel.bcItemNumber&&!pendingBcCount)?"pointer":"not-allowed",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:panel.bcItemNumber?0.7:pendingBcCount>0?0.5:1,textAlign:"center"}}>
+                      {panel.bcItemNumber?`✓ Item ${panel.bcItemNumber} Already In BC`:"⚙ Create Item in BC"}
+                    </button>
+                    {pendingBcCount>0&&<span style={{fontSize:10,color:"#f87171",textAlign:"center"}}>{pendingBcCount} unverified BC part{pendingBcCount>1?"s":""}</span>}
+                  </>)}
                 </div>
               </div>
             </div>
+
+            {/* ── Full-width: Level of Confidence ── */}
+            <ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>
           </div>
         );
       })()}
