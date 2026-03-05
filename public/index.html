@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.99";
+const APP_VERSION="v1.10.100";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3728,6 +3728,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const valRaf=useRef(null);
   const [bcFuzzySuggestions,setBcFuzzySuggestions]=useState({});
   const [bcBrowserOpen,setBcBrowserOpen]=useState(false);
+  const [laborMoreInfo,setLaborMoreInfo]=useState(false);
   const [showCreateItem,setShowCreateItem]=useState(false);
   const [showUpdateBom,setShowUpdateBom]=useState(false);
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
@@ -4704,6 +4705,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   const laborAccepted=panel.laborData?.accepted||{};
                   const acceptedCount=laborEst.lines.filter(l=>laborAccepted[l.category]).length;
                   const allAccepted=laborEst.lines.length>0&&acceptedCount===laborEst.lines.length;
+                  const GROUPS=[
+                    {label:"CUT",   color:"#f97316", cats:["Panel Holes","Side Devices","HVAC/Fans"]},
+                    {label:"LAYOUT",color:"#a78bfa", cats:["Device Mounting","Duct & DIN Rail","Labels"]},
+                    {label:"WIRE",  color:"#38bdf8", cats:["Wire Time","Door Wiring"]},
+                  ];
                   return <>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                   <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
@@ -4712,6 +4718,36 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   </span>
                   {allAccepted&&<span style={{background:C.greenDim,color:C.green,borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:700}}>All Accepted</span>}
                 </div>
+
+                {/* Labor Groups — always at top */}
+                {!laborEst.isOverride&&laborEst.lines.length>0&&(
+                  <div style={{marginBottom:8}}>
+                    <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                      {GROUPS.map(({label,color,cats})=>{
+                        const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
+                        return(
+                          <div key={label} style={{flex:1,minWidth:70,background:"#0a0a12",border:`1px solid ${color}44`,borderRadius:8,padding:"6px 10px",textAlign:"center"}}>
+                            <div style={{fontSize:11,fontWeight:700,color,letterSpacing:0.8,marginBottom:2}}>{label}</div>
+                            <div style={{fontSize:16,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums"}}>{Math.ceil(hrs)}</div>
+                            <div style={{fontSize:10,color:C.muted}}>hrs</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* More Info toggle */}
+                {laborEst.lines.length>0&&(
+                  <button onClick={()=>setLaborMoreInfo(v=>!v)}
+                    style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,cursor:"pointer",fontSize:11,padding:"3px 10px",marginBottom:laborMoreInfo?8:0,width:"100%",textAlign:"left",display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:10}}>{laborMoreInfo?"▲":"▼"}</span>
+                    {laborMoreInfo?"Hide Detail":"More Info"}
+                  </button>
+                )}
+
+                {/* Collapsible detail: labor lines table + detected inputs */}
+                {laborMoreInfo&&(<>
                 {laborEst.lines.length>0&&(
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,marginBottom:6}}>
                     <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
@@ -4762,31 +4798,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     </tbody>
                   </table>
                 )}
-                </>;})()}
-                {!laborEst.isOverride&&laborEst.lines.length>0&&(()=>{
-                  const GROUPS=[
-                    {label:"CUT",   color:"#f97316", cats:["Panel Holes","Side Devices","HVAC/Fans"]},
-                    {label:"LAYOUT",color:"#a78bfa", cats:["Device Mounting","Duct & DIN Rail","Labels"]},
-                    {label:"WIRE",  color:"#38bdf8", cats:["Wire Time","Door Wiring"]},
-                  ];
-                  return(
-                    <div style={{borderTop:`1px solid ${C.border}`,paddingTop:8,marginTop:4,marginBottom:6}}>
-                      <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Labor Groups</div>
-                      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                        {GROUPS.map(({label,color,cats})=>{
-                          const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
-                          return(
-                            <div key={label} style={{flex:1,minWidth:70,background:"#0a0a12",border:`1px solid ${color}44`,borderRadius:8,padding:"6px 10px",textAlign:"center"}}>
-                              <div style={{fontSize:11,fontWeight:700,color,letterSpacing:0.8,marginBottom:2}}>{label}</div>
-                              <div style={{fontSize:16,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums"}}>{Math.ceil(hrs)}</div>
-                              <div style={{fontSize:10,color:C.muted}}>hrs</div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })()}
                 {!laborEst.isOverride&&!laborEst.isLegacy&&laborEst.inputs&&(
                   <div style={{borderTop:`1px solid ${C.border}`,paddingTop:6,marginTop:4,marginBottom:6}}>
                     <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3}}>Detected Inputs</div>
@@ -4811,6 +4822,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     </div>
                   </div>
                 )}
+                </>)}
+                </>;})()}
                 <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
                   <span style={{fontSize:12,color:C.muted}}>$/hr</span>
                   <input type="number" min="0" step="1" readOnly={readOnly} value={laborRate}
