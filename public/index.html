@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.58";
+const APP_VERSION="v1.10.59";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5754,14 +5754,15 @@ function App({user}){
       if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
       if(!_bcToken)return;
       try{
-        const bcProjects=await bcLoadAllProjects();
+        const [bcProjects,bcCustomers]=await Promise.all([bcLoadAllProjects(),bcLoadAllCustomers()]);
         if(bcProjects.length)console.log("BC import sample fields:",Object.keys(bcProjects[0]));
         const bcById=Object.fromEntries(bcProjects.filter(bp=>bp.id).map(bp=>[bp.id,bp]));
+        // Build customer number → name lookup
+        const custByNumber=Object.fromEntries(bcCustomers.map(c=>[c.number,c.displayName]));
         function extractCustomer(bp){
-          return{
-            bcCustomerNumber:bp.billToCustomerNumber||bp.billToCustomerNo||bp.sell_to_Customer_No||bp.Bill_to_Customer_No||"",
-            bcCustomerName:bp.billToName||bp.billToCustomerName||bp.sell_to_Name||bp.Bill_to_Name||bp.customerName||""
-          };
+          const custNo=bp.billToCustomerNumber||bp.billToCustomerNo||bp.sell_to_Customer_No||bp.Bill_to_Customer_No||"";
+          const custName=bp.billToName||bp.billToCustomerName||bp.sell_to_Name||bp.Bill_to_Name||bp.customerName||(custNo?custByNumber[custNo]||"":"");
+          return{bcCustomerNumber:custNo,bcCustomerName:custName};
         }
         setProjects(ps=>{
           const existingBcIds=new Set(ps.map(p=>p.bcProjectId).filter(Boolean));
@@ -5780,13 +5781,16 @@ function App({user}){
             updatedAt:Date.now()
           }));
           if(newProjects.length){console.log(`BC sync: importing ${newProjects.length} new project(s)`);newProjects.forEach(p=>saveProject(user.uid,p).catch(e=>console.warn("BC import save failed:",e)));}
-          // Re-sync customer name on existing imported projects missing it
+          // Re-sync customer name on imported projects missing it (including those with number but no name)
           const toUpdate=ps.filter(p=>p.importedFromBC&&p.bcProjectId&&!p.bcCustomerName&&bcById[p.bcProjectId]);
           const updatedPs=ps.map(p=>{
             if(!p.importedFromBC||!p.bcProjectId||p.bcCustomerName)return p;
             const bp=bcById[p.bcProjectId];
-            if(!bp)return p;
-            const cust=extractCustomer(bp);
+            // Also try direct customer number lookup even without a bp match
+            const custNo=p.bcCustomerNumber||"";
+            const nameFromCustomers=custNo?custByNumber[custNo]||"":"";
+            if(!bp&&!nameFromCustomers)return p;
+            const cust=bp?extractCustomer(bp):{bcCustomerNumber:custNo,bcCustomerName:nameFromCustomers};
             if(!cust.bcCustomerName)return p;
             const updated={...p,...cust,updatedAt:Date.now()};
             saveProject(user.uid,updated).catch(e=>console.warn("BC customer resync failed:",e));
