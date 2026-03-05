@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.21";
+const APP_VERSION="v1.10.22";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5419,7 +5419,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                 const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
                 return(
                 <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
-                  style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative"}}
+                  style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column"}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
                   <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
@@ -5428,10 +5428,9 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                     onMouseEnter={e=>e.currentTarget.style.color=C.red}
                     onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
                   {p.bcProjectNumber&&<div style={{fontSize:18,fontWeight:800,color:C.accent,marginBottom:4}}>{p.bcProjectNumber}</div>}
-                  <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:20}}>{p.name}</div>
+                  <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:20}}>{p.name}</div>
                   {p.bcCustomerName&&<div style={{fontSize:11,color:C.teal,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.bcCustomerName}</div>}
-                  <div style={{fontSize:10,color:statusColors[st]||C.muted,fontWeight:700,marginBottom:2}}>{statusLabels[st]||"DRAFT"}</div>
-                  <div style={{fontSize:11,color:C.muted}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:"auto"}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
                   {activeTask&&(
                     <div style={{marginTop:6}}>
                       <div style={{fontSize:10,color:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
@@ -5440,6 +5439,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                       </div>
                     </div>
                   )}
+                  <div style={{fontSize:10,color:statusColors[st]||C.muted,fontWeight:700,marginTop:5}}>{statusLabels[st]||"DRAFT"}</div>
                 </div>
                 );
               })}
@@ -5451,29 +5451,37 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
             <div style={{marginTop:48}}>
               <div style={{fontSize:14,fontWeight:700,color:C.yellow,marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Transferred Projects</div>
               <div style={{fontSize:12,color:C.muted,marginBottom:20}}>These projects were transferred to you. Accept them to add them to your project list.</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:16}}>
-                {transferred.map(p=>(
+              <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:12}}>
+                {transferred.map(p=>{
+                  const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"));
+                  const st=projectStatus(p);
+                  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,quoted:C.yellow};
+                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
+                  return(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
-                    style={{...card(),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s"}}
+                    style={{...card({padding:"10px 14px"}),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s",display:"flex",flexDirection:"column"}}
                     onMouseEnter={e=>{e.currentTarget.style.borderColor=C.yellow;e.currentTarget.style.transform="translateY(-2px)";}}
                     onMouseLeave={e=>{e.currentTarget.style.borderColor=C.yellow+"44";e.currentTarget.style.transform="none";}}>
-                    <div style={{fontSize:10,color:C.yellow,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>
-                      Transferred from {p.transferredFrom?.email||"a removed member"}
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
-                      <div style={{fontSize:15,fontWeight:700,flex:1,marginRight:10,color:C.text,lineHeight:1.3}}>{p.name}</div>
-                      <Badge status={projectStatus(p)}/>
-                    </div>
-                    <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,marginBottom:14,flexWrap:"wrap"}}>
-                      <span>📋 {p.panels?p.panels.reduce((s,pl)=>s+(pl.bom||[]).length,0):(p.bom||[]).length} items</span>
-                      <span>🖼️ {p.panels?p.panels.reduce((s,pl)=>s+(pl.pages||[]).length,0):(p.pages||[]).length} pages</span>
-                    </div>
+                    <div style={{fontSize:10,color:C.yellow,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>From {p.transferredFrom?.email||"a removed member"}</div>
+                    <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                    {p.bcCustomerName&&<div style={{fontSize:11,color:C.teal,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.bcCustomerName}</div>}
+                    <div style={{fontSize:11,color:C.muted,marginBottom:"auto"}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+                    {activeTask&&(
+                      <div style={{marginTop:6}}>
+                        <div style={{fontSize:10,color:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
+                        <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
+                          <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+                        </div>
+                      </div>
+                    )}
+                    <div style={{fontSize:10,color:statusColors[st]||C.muted,fontWeight:700,marginTop:5,marginBottom:6}}>{statusLabels[st]||"DRAFT"}</div>
                     <button onClick={e=>{e.stopPropagation();onAccept(p.id);}}
                       style={btn(C.accentDim,C.accent,{width:"100%",fontSize:12,padding:"6px 0",fontWeight:700,border:`1px solid ${C.accent}88`})}>
                       Accept into My Projects
                     </button>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
