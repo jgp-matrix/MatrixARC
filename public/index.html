@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.97";
+const APP_VERSION="v1.10.98";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4998,7 +4998,12 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
     (panel.bom||[])
       .filter(r=>(r.partNumber||"").trim())
       .slice()
-      .sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""))
+      .sort((a,b)=>{
+        if(a.isLaborRow&&!b.isLaborRow)return -1;
+        if(!a.isLaborRow&&b.isLaborRow)return 1;
+        if(a.isLaborRow&&b.isLaborRow)return (a.partNumber||"").localeCompare(b.partNumber||"");
+        return (a.partNumber||"").localeCompare(b.partNumber||"");
+      })
   ,[panel]);
   const pendingBcRows=mergedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual");
   const pendingBcCount=pendingBcRows.length;
@@ -5261,7 +5266,11 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
   const [projectWarning,setProjectWarning]=useState([]);
   const [missingItems,setMissingItems]=useState([]);
   const itemNo=panel.bcItemNumber||"";
-  const mergedBom=(panel.bom||[]).filter(r=>(r.partNumber||"").trim());
+  const mergedBom=(panel.bom||[]).filter(r=>(r.partNumber||"").trim()).slice().sort((a,b)=>{
+    if(a.isLaborRow&&!b.isLaborRow)return -1;
+    if(!a.isLaborRow&&b.isLaborRow)return 1;
+    return (a.partNumber||"").localeCompare(b.partNumber||"");
+  });
   const pendingBcCount=mergedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual").length;
   const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999,padding:24};
   const modalCard={...card({padding:28}),width:"100%",maxWidth:560,display:"flex",flexDirection:"column",gap:16};
