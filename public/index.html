@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.74";
+const APP_VERSION="v1.10.75";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3636,6 +3636,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const valRaf=useRef(null);
   const [bcFuzzySuggestions,setBcFuzzySuggestions]=useState({});
   const [bcBrowserOpen,setBcBrowserOpen]=useState(false);
+  const [showCreateItem,setShowCreateItem]=useState(false);
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
   const [bcNewlyCreated,setBcNewlyCreated]=useState(new Set());
   const [bcBrowserQuery,setBcBrowserQuery]=useState("");
@@ -4189,6 +4190,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             </button>
           )}
           <Badge status={panel.status||"draft"}/>
+          {!readOnly&&<button onClick={()=>setShowCreateItem(true)} title="Create Item in BC" style={{background:"#1a1040",border:"1px solid #a78bfa44",color:"#a78bfa",cursor:"pointer",borderRadius:5,padding:"2px 10px",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>⚙ Create Item in BC</button>}
           {!readOnly&&<button onClick={onDelete} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
         </div>
       </div>
@@ -4822,26 +4824,28 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           }}
         />
       )}
+      {showCreateItem&&<CreateItemInBCModal panel={panel} onClose={()=>setShowCreateItem(false)}/>}
     </div>
   );
 }
 
 // ── CREATE ITEM IN BC MODAL ──
-function CreateItemInBCModal({project,onClose}){
-  const [description,setDescription]=useState(project.name||"");
-  const [vendorItemNo,setVendorItemNo]=useState([project.dwgNumber,project.dwgRevision].filter(Boolean).join(" ")||"");
+function CreateItemInBCModal({panel,onClose}){
+  const [description,setDescription]=useState(panel.drawingDesc||panel.name||"");
+  const [vendorItemNo,setVendorItemNo]=useState([panel.drawingNo,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join(" ")||"");
   const [categoryCode,setCategoryCode]=useState("");
   const [categories,setCategories]=useState([]);
   const [phase,setPhase]=useState("setup"); // setup | creating | done | error
   const [progress,setProgress]=useState("");
   const [result,setResult]=useState(null);
 
-  // Merge all panel BOMs, keep only rows with a part number
+  // This panel's BOM only, rows with a part number
   const mergedBom=React.useMemo(()=>
-    mergeBoms((project.panels||[]).map(p=>p.bom||[]).filter(b=>b.length))
+    (panel.bom||[])
       .filter(r=>(r.partNumber||"").trim())
+      .slice()
       .sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""))
-  ,[project]);
+  ,[panel]);
 
   useEffect(()=>{
     bcListItemCategories().then(setCategories).catch(()=>{});
@@ -5006,16 +5010,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
   const [validating,setValidating]=useState(false);
   const [validateMsg,setValidateMsg]=useState("");
-  const [showCreateItem,setShowCreateItem]=useState(false);
-  const [editingDwg,setEditingDwg]=useState(false);
-  const [draftDwgNumber,setDraftDwgNumber]=useState(project.dwgNumber||"");
-  const [draftDwgRevision,setDraftDwgRevision]=useState(project.dwgRevision||"");
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
-
-  function saveDwg(){
-    onUpdate({...project,dwgNumber:draftDwgNumber.trim(),dwgRevision:draftDwgRevision.trim().toUpperCase()});
-    setEditingDwg(false);
-  }
 
   function addPanel(){
     const n=(project.panels||[]).length+1;
@@ -5093,26 +5088,6 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
                       {project.importedFromBC&&<Badge status="imported"/>}
                     </div>
                     {project.bcCustomerName&&<span style={{fontSize:18,fontWeight:700,color:C.teal}}>{project.bcCustomerName}</span>}
-                    {editingDwg?(
-                      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
-                        <input value={draftDwgNumber} onChange={e=>setDraftDwgNumber(e.target.value)} placeholder="DWG #"
-                          style={{...inp(),fontSize:13,padding:"3px 8px",width:130}}
-                          onKeyDown={e=>{if(e.key==="Enter")saveDwg();if(e.key==="Escape")setEditingDwg(false);}}/>
-                        <input value={draftDwgRevision} onChange={e=>setDraftDwgRevision(e.target.value)} placeholder="Rev"
-                          style={{...inp(),fontSize:13,padding:"3px 8px",width:60}}
-                          onKeyDown={e=>{if(e.key==="Enter")saveDwg();if(e.key==="Escape")setEditingDwg(false);}}/>
-                        <button onClick={saveDwg} style={btn(C.accent,"#fff",{fontSize:12,padding:"3px 10px"})}>✓</button>
-                        <button onClick={()=>setEditingDwg(false)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12}}>Cancel</button>
-                      </div>
-                    ):(
-                      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2}}>
-                        <span style={{fontSize:13,color:C.muted}}>
-                          DWG: <span style={{color:project.dwgNumber?C.sub:C.border,fontFamily:"monospace"}}>{project.dwgNumber||"—"}</span>
-                          {project.dwgRevision&&<span style={{color:C.sub}}> Rev {project.dwgRevision}</span>}
-                        </span>
-                        {!readOnly&&<button onClick={()=>{setDraftDwgNumber(project.dwgNumber||"");setDraftDwgRevision(project.dwgRevision||"");setEditingDwg(true);}} title="Edit DWG # and Rev" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"0 3px"}}>✏️</button>}
-                      </div>
-                    )}
                     <span style={{fontSize:13,color:C.muted}}>Created: {project.createdAt?new Date(project.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):project.updatedAt?new Date(project.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</span>
                   </div>
                 </div>
@@ -5123,7 +5098,6 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
               {panels.length>0&&<button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13})}>📊 View Quote</button>}
-              {!readOnly&&<button onClick={()=>setShowCreateItem(true)} style={btn("#1a1040","#a78bfa",{fontSize:13,border:"1px solid #a78bfa44"})}>⚙ Create Item in BC</button>}
             </div>
           </div>
           {panels.length===0?(
@@ -5157,8 +5131,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
         </div>
       </div>
     </div>
-    {showCreateItem&&<CreateItemInBCModal project={project} onClose={()=>setShowCreateItem(false)}/>}
-  </>);
+  );
 }
 
 
