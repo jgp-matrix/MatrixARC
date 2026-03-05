@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.108";
+const APP_VERSION="v1.10.109";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4699,8 +4699,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               </div>
             )}
 
-            {/* ── Two-column: Labor | Pricing Summary ── */}
-            <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-start",marginBottom:12}}>
+            {/* ── Three-column: Labor | Confidence | Pricing Summary ── */}
+            <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"stretch",marginBottom:12}}>
 
               {/* LEFT: Labor */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px",minWidth:300,flexShrink:0}}>
@@ -4822,7 +4822,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               </div>
 
               {/* RIGHT: Pricing Summary */}
-              <div style={{flex:"0 0 auto",width:"30%",minWidth:200,marginLeft:"auto",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+              {/* MIDDLE: Level of Confidence */}
+              <div style={{flex:1,minWidth:180,display:"flex",flexDirection:"column"}}>
+                <ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>
+              </div>
+
+              <div style={{flex:"0 0 auto",width:"30%",minWidth:200,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
                 <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
                 {[
                   ["Materials",fmt(totalCost),C.green,null,null],
@@ -4880,8 +4885,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               </div>
             </div>
 
-            {/* ── Full-width: Level of Confidence ── */}
-            <ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>
           </div>
         );
       })()}
