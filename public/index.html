@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.22";
+const APP_VERSION="v1.10.24";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -147,6 +147,27 @@ function useBgTasks(){
     return()=>_bgListeners.delete(fn);
   },[]);
   return tasks;
+}
+
+// ── CUSTOMER LOGO ──
+const _logoCache={};
+function useCustomerLogo(name){
+  const [logo,setLogo]=useState(()=>{
+    if(!name)return null;
+    const k=name.toLowerCase().trim();
+    return k in _logoCache?_logoCache[k]:undefined;
+  });
+  useEffect(()=>{
+    if(!name)return;
+    const k=name.toLowerCase().trim();
+    if(k in _logoCache){setLogo(_logoCache[k]);return;}
+    setLogo(undefined);
+    fetch(`https://autocomplete.clearbit.com/v1/companies/suggest?query=${encodeURIComponent(k)}`)
+      .then(r=>r.json())
+      .then(d=>{const url=d&&d[0]?.logo||null;_logoCache[k]=url;setLogo(url);})
+      .catch(()=>{_logoCache[k]=null;setLogo(null);});
+  },[name]);
+  return logo||null;
 }
 
 // ── THEME ──
@@ -4810,13 +4831,16 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
                   <button onClick={()=>setEditingName(false)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13}}>Cancel</button>
                 </div>
               ):(
-                <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:4}}>
-                  {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:C.accent}}>{project.bcProjectNumber}</span>}
-                  {project.bcProjectNumber&&(project.bcCustomerName||project.name)&&<span style={{fontSize:22,color:C.border,fontWeight:400}}>—</span>}
-                  {project.bcCustomerName&&<span style={{fontSize:20,fontWeight:700,color:C.sub}}>{project.bcCustomerName}</span>}
-                  {project.bcCustomerName&&project.name&&<span style={{fontSize:22,color:C.border,fontWeight:400}}>—</span>}
-                  <span style={{fontSize:20,fontWeight:700,color:C.text}}>{project.name}</span>
-                  {!readOnly&&<button onClick={()=>{setDraftName(project.name);setEditingName(true);}} title="Edit project name" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:"0 4px",alignSelf:"center"}}>✏️</button>}
+                <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:4}}>
+                  {customerLogo&&<img src={customerLogo} alt="" style={{width:36,height:36,objectFit:"contain",borderRadius:6,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
+                  <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
+                    {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:C.accent}}>{project.bcProjectNumber}</span>}
+                    {project.bcProjectNumber&&(project.bcCustomerName||project.name)&&<span style={{fontSize:22,color:C.border,fontWeight:400}}>—</span>}
+                    {project.bcCustomerName&&<span style={{fontSize:20,fontWeight:700,color:C.sub}}>{project.bcCustomerName}</span>}
+                    {project.bcCustomerName&&project.name&&<span style={{fontSize:22,color:C.border,fontWeight:400}}>—</span>}
+                    <span style={{fontSize:20,fontWeight:700,color:C.text}}>{project.name}</span>
+                    {!readOnly&&<button onClick={()=>{setDraftName(project.name);setEditingName(true);}} title="Edit project name" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:"0 4px",alignSelf:"center"}}>✏️</button>}
+                  </div>
                 </div>
               )}
               <div style={{fontSize:13,color:C.muted}}>{panels.length} panel{panels.length!==1?"s":""}</div>
@@ -4942,6 +4966,8 @@ function ProjectView({project:init,uid,onBack,onChange}){
   const saveTimer=useRef(null);
   const readOnly=isReadOnly();
   const didMigrate=useRef(!init.panels);
+
+  const customerLogo=useCustomerLogo(project.bcCustomerName||null);
 
   // Keep ref in sync with state for use in callbacks
   useEffect(()=>{projectRef.current=project;},[project]);
@@ -5412,37 +5438,9 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
               {g.label&&<div style={{fontSize:groupBy==="customer"?20:12,fontWeight:700,color:groupBy==="customer"?C.text:C.muted,textTransform:groupBy==="customer"?"none":"uppercase",letterSpacing:groupBy==="customer"?-0.3:0.8,marginBottom:12,paddingBottom:groupBy==="customer"?0:6,borderBottom:groupBy==="customer"?"none":`1px solid ${C.border}`}}>{g.label}</div>}
               <div style={{background:groupBy==="customer"?"#1c1c2e":"none",border:groupBy==="customer"?`2px solid #4a5080`:"none",borderRadius:groupBy==="customer"?12:0,padding:groupBy==="customer"?16:0}}>
               <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:12}}>
-                {g.items.map(p=>{
-                const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"));
-                const st=projectStatus(p);
-                const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,quoted:C.yellow};
-                const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
-                return(
-                <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
-                  style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column"}}
-                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
-                  onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
-                  <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
-                    title="Delete project"
-                    style={{position:"absolute",top:8,right:8,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"2px 5px",borderRadius:4,transition:"color 0.15s"}}
-                    onMouseEnter={e=>e.currentTarget.style.color=C.red}
-                    onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
-                  {p.bcProjectNumber&&<div style={{fontSize:18,fontWeight:800,color:C.accent,marginBottom:4}}>{p.bcProjectNumber}</div>}
-                  <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:20}}>{p.name}</div>
-                  {p.bcCustomerName&&<div style={{fontSize:11,color:C.teal,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.bcCustomerName}</div>}
-                  <div style={{fontSize:11,color:C.muted,marginBottom:"auto"}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
-                  {activeTask&&(
-                    <div style={{marginTop:6}}>
-                      <div style={{fontSize:10,color:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
-                      <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
-                        <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
-                      </div>
-                    </div>
-                  )}
-                  <div style={{fontSize:10,color:statusColors[st]||C.muted,fontWeight:700,marginTop:5}}>{statusLabels[st]||"DRAFT"}</div>
-                </div>
-                );
-              })}
+                {g.items.map(p=>(
+                  <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete}/>
+                ))}
               </div>
               </div>
             </div>
@@ -5488,6 +5486,42 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
         </>);
       })()}
     </div>
+  );
+}
+
+// ── PROJECT TILE ──
+function ProjectTile({p,onOpen,onDelete}){
+  const bgTasks=useBgTasks();
+  const customerLogo=useCustomerLogo(p.bcCustomerName||null);
+  const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"));
+  const st=projectStatus(p);
+  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,quoted:C.yellow};
+  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
+  return(
+  <div className="fade-in" onClick={()=>onOpen(p)}
+    style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column"}}
+    onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
+    onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
+    <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
+      title="Delete project"
+      style={{position:"absolute",top:8,right:8,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"2px 5px",borderRadius:4,transition:"color 0.15s"}}
+      onMouseEnter={e=>e.currentTarget.style.color=C.red}
+      onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+    {customerLogo&&<img src={customerLogo} alt="" style={{width:28,height:28,objectFit:"contain",borderRadius:4,background:"#fff",padding:2,marginBottom:6,alignSelf:"flex-start"}} onError={e=>e.target.style.display="none"}/>}
+    {p.bcProjectNumber&&<div style={{fontSize:18,fontWeight:800,color:C.accent,marginBottom:4}}>{p.bcProjectNumber}</div>}
+    <div style={{fontSize:14,fontWeight:700,color:C.text,lineHeight:1.3,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:20}}>{p.name}</div>
+    {p.bcCustomerName&&<div style={{fontSize:11,color:C.teal,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.bcCustomerName}</div>}
+    <div style={{fontSize:11,color:C.muted,marginBottom:"auto"}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+    {activeTask&&(
+      <div style={{marginTop:6}}>
+        <div style={{fontSize:10,color:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
+        <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
+          <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+        </div>
+      </div>
+    )}
+    <div style={{fontSize:10,color:statusColors[st]||C.muted,fontWeight:700,marginTop:5}}>{statusLabels[st]||"DRAFT"}</div>
+  </div>
   );
 }
 
