@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.54";
+const APP_VERSION="v1.10.55";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5497,7 +5497,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
       )}
 
       {(()=>{
-        const myProjects=projects.filter(p=>!p.transferred||p.transferredTo!==uid);
+        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||!p.importedFromBC));
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         return(<>
