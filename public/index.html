@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.115";
+const APP_VERSION="v1.10.116";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5520,7 +5520,7 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
 }
 
 // ── PANEL LIST VIEW ──
-function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate,onDelete}){
+function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate,onDelete,onTransfer}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -5644,12 +5644,24 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate,onDelet
               ))}
             </div>
           )}
-          {!readOnly&&onDelete&&(
-            <div style={{marginTop:40,paddingTop:24,borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"flex-end"}}>
-              <button onClick={onDelete}
-                style={{...btn(C.redDim,C.red,{border:`1px solid ${C.red}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"8px 20px"})}}>
-                🗑 Delete Project
-              </button>
+          {!readOnly&&(onDelete||onTransfer)&&(
+            <div style={{marginTop:40,paddingTop:24,borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+              <div>
+                {onTransfer&&(
+                  <button onClick={onTransfer}
+                    style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"8px 20px"})}>
+                    ⇄ Transfer Ownership
+                  </button>
+                )}
+              </div>
+              <div>
+                {onDelete&&(
+                  <button onClick={onDelete}
+                    style={btn(C.redDim,C.red,{border:`1px solid ${C.red}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"8px 20px"})}>
+                    🗑 Delete Project
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -5754,7 +5766,7 @@ class ErrorBoundary extends React.Component{
 }
 
 // ── PROJECT VIEW ──
-function ProjectView({project:init,uid,onBack,onChange,onDelete}){
+function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
   const [project,setProject]=useState(()=>migrateProject(init));
   const projectRef=useRef(migrateProject(init));
   const [view,setView]=useState("panels"); // "panels"|"quote"
@@ -5802,6 +5814,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete}){
       onViewQuote={()=>setView("quote")}
       onUpdate={update}
       onDelete={onDelete}
+      onTransfer={onTransfer}
     />
   );
 }
@@ -6481,16 +6494,9 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,userFirstName,draggable:isDra
     style={{...card({padding:"8px 10px"}),border:"1px solid #4a5080",cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column"}}
     onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
     onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
-    <div style={{position:"absolute",top:4,right:4,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:1}}>
-      {userFirstName&&<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:64,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",lineHeight:1}}>{userFirstName}</div>}
-      {onTransfer&&(
-        <button onClick={e=>{e.stopPropagation();onTransfer(p);}}
-          title="Transfer project to another owner"
-          style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,lineHeight:1,padding:"1px 3px",borderRadius:4,transition:"color 0.15s"}}
-          onMouseEnter={e=>e.currentTarget.style.color=C.accent}
-          onMouseLeave={e=>e.currentTarget.style.color=C.muted}>⇄</button>
-      )}
-    </div>
+    {userFirstName&&(
+      <div style={{position:"absolute",top:4,right:4,fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:64,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",lineHeight:1}}>{userFirstName}</div>
+    )}
     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,paddingRight:16,minWidth:0}}>
       {customerLogo&&<img src={customerLogo} alt="" style={{width:22,height:22,objectFit:"contain",borderRadius:3,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
       <div style={{fontSize:17,fontWeight:800,color:C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>{p.bcProjectNumber||"–"}</div>
@@ -6703,6 +6709,7 @@ function App({user}){
   }
   function handleTransferDone(id){
     setProjects(ps=>ps.filter(p=>p.id!==id));
+    if(view==="project"&&openProject?.id===id){setView("dashboard");setOpenProject(null);}
     setTransferProject(null);
   }
 
@@ -6809,7 +6816,7 @@ function App({user}){
       )}
       {view==="project"&&openProject&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber)}/>
+          <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber)} onTransfer={companyId?()=>setTransferProject(openProject):undefined}/>
         </ErrorBoundary>
       )}
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
