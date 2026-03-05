@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.40";
+const APP_VERSION="v1.10.41";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -615,6 +615,7 @@ async function bcDeleteProject(bcProjectId){
 async function bcUpdateProject(bcProjectId, displayName){
   if(!bcProjectId)return false;
   if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
+  if(!_bcToken){_bcToken=await acquireBcToken(true)||null;}
   if(!_bcToken)return false;
   const compId=await bcGetCompanyId();
   if(!compId)return false;
@@ -622,14 +623,15 @@ async function bcUpdateProject(bcProjectId, displayName){
     const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
+    if(g.status===401){_bcToken=await acquireBcToken(true)||null;if(!_bcToken)return false;}
     if(!g.ok){console.warn("bcUpdateProject GET failed:",g.status);return false;}
     const etag=g.headers.get("ETag");
     const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
       method:"PATCH",
-      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
       body:JSON.stringify({displayName})
     });
-    if(!r.ok){console.warn("bcUpdateProject PATCH failed:",r.status);return false;}
+    if(!r.ok){console.warn("bcUpdateProject PATCH failed:",r.status,await r.text());return false;}
     return true;
   }catch(e){console.warn("bcUpdateProject error:",e);return false;}
 }
@@ -4774,6 +4776,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
 function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
+  const [bcSyncMsg,setBcSyncMsg]=useState(null);
   const [validating,setValidating]=useState(false);
   const [validateMsg,setValidateMsg]=useState("");
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
@@ -4799,7 +4802,12 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
     onUpdate(updated);
     await saveProject(uid,updated);
     setEditingName(false);
-    if(project.bcProjectId) bcUpdateProject(project.bcProjectId,draftName.trim());
+    if(project.bcProjectId){
+      setBcSyncMsg({ok:null,text:"Syncing to BC…"});
+      const ok=await bcUpdateProject(project.bcProjectId,draftName.trim());
+      setBcSyncMsg({ok,text:ok?"✓ Name synced to Business Central":"⚠ BC sync failed — check connection"});
+      setTimeout(()=>setBcSyncMsg(null),4000);
+    }
   }
   async function validateAll(){
     if(!_apiKey)return;
@@ -4851,6 +4859,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
                   </div>
                 </div>
               )}
+              {bcSyncMsg&&<div style={{fontSize:12,color:bcSyncMsg.ok===null?C.muted:bcSyncMsg.ok?C.green:C.yellow,marginBottom:2}}>{bcSyncMsg.text}</div>}
               <div style={{fontSize:13,color:C.muted}}>{panels.length} panel{panels.length!==1?"s":""}</div>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center"}}>
