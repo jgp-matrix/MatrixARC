@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.53";
+const APP_VERSION="v1.10.54";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5755,27 +5755,45 @@ function App({user}){
       if(!_bcToken)return;
       try{
         const bcProjects=await bcLoadAllProjects();
+        if(bcProjects.length)console.log("BC import sample fields:",Object.keys(bcProjects[0]));
+        const bcById=Object.fromEntries(bcProjects.filter(bp=>bp.id).map(bp=>[bp.id,bp]));
+        function extractCustomer(bp){
+          return{
+            bcCustomerNumber:bp.billToCustomerNumber||bp.billToCustomerNo||bp.sell_to_Customer_No||bp.Bill_to_Customer_No||"",
+            bcCustomerName:bp.billToName||bp.billToCustomerName||bp.sell_to_Name||bp.Bill_to_Name||bp.customerName||""
+          };
+        }
         setProjects(ps=>{
           const existingBcIds=new Set(ps.map(p=>p.bcProjectId).filter(Boolean));
+          // Import new projects
           const toImport=bcProjects.filter(bp=>bp.id&&!existingBcIds.has(bp.id));
-          if(!toImport.length)return ps;
-          if(toImport.length)console.log("BC import sample fields:",Object.keys(toImport[0]));
           const newProjects=toImport.map(bp=>({
             id:"arc-"+bp.id.replace(/-/g,""),
             name:bp.displayName||bp.number||"Imported Project",
             bcProjectId:bp.id,
             bcProjectNumber:bp.number||"",
-            bcCustomerNumber:bp.billToCustomerNumber||bp.billToCustomerNo||bp.sell_to_Customer_No||bp.Bill_to_Customer_No||"",
-            bcCustomerName:bp.billToName||bp.billToCustomerName||bp.sell_to_Name||bp.Bill_to_Name||bp.customerName||"",
+            ...extractCustomer(bp),
             importedFromBC:true,
             status:"draft",
             panels:[],
             createdAt:Date.now(),
             updatedAt:Date.now()
           }));
-          console.log(`BC sync: importing ${newProjects.length} new project(s)`);
-          newProjects.forEach(p=>saveProject(user.uid,p).catch(e=>console.warn("BC import save failed:",e)));
-          return[...newProjects,...ps];
+          if(newProjects.length){console.log(`BC sync: importing ${newProjects.length} new project(s)`);newProjects.forEach(p=>saveProject(user.uid,p).catch(e=>console.warn("BC import save failed:",e)));}
+          // Re-sync customer name on existing imported projects missing it
+          const toUpdate=ps.filter(p=>p.importedFromBC&&p.bcProjectId&&!p.bcCustomerName&&bcById[p.bcProjectId]);
+          const updatedPs=ps.map(p=>{
+            if(!p.importedFromBC||!p.bcProjectId||p.bcCustomerName)return p;
+            const bp=bcById[p.bcProjectId];
+            if(!bp)return p;
+            const cust=extractCustomer(bp);
+            if(!cust.bcCustomerName)return p;
+            const updated={...p,...cust,updatedAt:Date.now()};
+            saveProject(user.uid,updated).catch(e=>console.warn("BC customer resync failed:",e));
+            return updated;
+          });
+          if(toUpdate.length)console.log(`BC sync: re-synced customer on ${toUpdate.length} project(s)`);
+          return newProjects.length||toUpdate.length?[...newProjects,...updatedPs]:ps;
         });
       }catch(e){console.warn("BC project sync error:",e);}
     }
