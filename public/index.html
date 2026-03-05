@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.12";
+const APP_VERSION="v1.10.13";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1323,17 +1323,20 @@ Extract and return ONLY valid JSON:
   ],
   "sideTopDevices": [
     {"tag":"AC1","type":"air_conditioner","widthIn":14,"heightIn":14},
-    {"tag":"FAN1","type":"fan","widthIn":4,"heightIn":4}
+    {"tag":"FAN1","type":"fan","widthIn":4,"heightIn":4},
+    {"tag":"BEA1","type":"beacon","widthIn":3,"heightIn":3}
   ]
 }
 
 Rules:
 - enclosure: overall panel dimensions if visible
-- doorCutouts: ONLY devices mounted through the enclosure DOOR with cutout holes — operator-interface devices: pushbuttons, pilot lights, selector switches, HMIs, e-stops, horns, meters. Each has a circular or rectangular hole cut in the door.
-- sideTopDevices: devices mounted on SIDE PANELS or TOP of the enclosure. Common examples: air conditioners, exhaust fans, conduit hubs, gland plates. Estimate widthIn and heightIn in inches.
+- doorCutouts: ONLY devices mounted through the DOOR FACE with cutout holes — pushbuttons, pilot lights, selector switches, HMIs, e-stops, horns, meters. These appear as circular or rectangular cutouts on the front face of the door. Do NOT include beacons or stack lights here — those go in sideTopDevices.
+- sideTopDevices: ALL devices mounted on side panels, top of enclosure, or on top of/above the front view. Capture two categories:
+    1. SIDE-MOUNTED: Square or rectangular devices on the left or right side panel — these are typically fans (smaller, e.g. 4"×4") or air conditioners (larger, e.g. 10"×14" or bigger). Estimate widthIn and heightIn in inches from relative scale.
+    2. TOP-MOUNTED: Any small device shown on top of the front view or on top of a side view — these are almost always beacons, stack lights, or warning lights. Use type "beacon" for these.
 - IGNORE the backpanel entirely — do NOT list breakers, contactors, relays, PLCs, drives, terminal blocks, or DIN-rail devices
 - IGNORE wire duct and DIN rails — those are backpanel items
-- Use device types: pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, meter, air_conditioner, fan, conduit_hub, other
+- Use device types: pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, meter, air_conditioner, fan, beacon, conduit_hub, other
 - Return JSON only, no explanation`;
 
 async function analyzeLayoutPage(dataUrl){
@@ -1590,7 +1593,7 @@ Return ONLY a JSON object with exactly these two fields:
   "backpanel" — page shows ONLY the interior mounting plate as a single front view with NO side views. Key indicators:
     DIN rails (horizontal channels), wire duct / wireways (rectangular channels), devices in rows (breakers, contactors, relays, overloads, drives, PLCs, terminal blocks, power supplies). Only one view on the page.
 
-  "enclosure" — THE SINGLE MOST RELIABLE INDICATOR IS A SIDE VIEW. If you see a side view of the enclosure drawn beside or below the front view, it is ALWAYS an enclosure drawing — never a backpanel. Other enclosure indicators: overall width x height x depth dimensions labeled, enclosure shell outline with knockout or conduit hub locations, door cutout layout with pushbuttons/pilot lights/HMIs, top panel with fans or AC units, title block says "Enclosure", "Cabinet", "Door Layout", or "Panel Arrangement".
+  "enclosure" — THE SINGLE MOST RELIABLE INDICATOR IS A SIDE VIEW. If you see a side view of the enclosure drawn beside or below the front view, it is ALWAYS an enclosure drawing — never a backpanel. Side views often show square or rectangular devices mounted on the side panel — these are typically fans or air conditioners. Any small square or rectangular device shown mounted on top of the front view or on top of a side view is likely a beacon or stack light. Other enclosure indicators: overall width x height x depth dimensions labeled, enclosure shell outline with knockout or conduit hub locations, door cutout layout with pushbuttons/pilot lights/HMIs, title block says "Enclosure", "Cabinet", "Door Layout", or "Panel Arrangement".
 
   "pid" — P&ID / Process & Instrumentation Diagram or Instrument Loop Diagram. These must be skipped — do NOT extract BOM or wiring from them. Identify by ANY of these dead-giveaway visual signatures:
     • "DI" or "DO" text inside a rotated square (diamond shape) or regular square — these are discrete input/output function blocks
