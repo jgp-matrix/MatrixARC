@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.17";
+const APP_VERSION="v1.10.18";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -221,6 +221,7 @@ const LABOR_RATES={
   ductDinMinPerFoot:10,       // Duct & DIN rail: 10 min/ft
   holesMinPerHole:15,         // Panel holes: 15 min/hole
   hmiHoleEquivalent:25,       // 1 HMI cutout = 25 standard holes
+  squareCutoutMinPerCut:180,  // Square side cutout (horn, etc.): 3 hrs each
 };
 const DOOR_DEVICE_TYPES=new Set(["pushbutton","pilot_light","selector_switch","hmi","e_stop","horn","meter"]);
 
@@ -269,6 +270,7 @@ function computeLaborEstimate(panel){
   const ductDinFeet=val("ductDinFeet",0);
   const sideTopSmallCount=val("sideTopSmallCount",0);
   const sideTopLargeCount=val("sideTopLargeCount",0);
+  const squareCutoutCount=val("squareCutoutCount",0);
   const pmUnits=val("pmUnits",2);
   const buyoffUnits=val("buyoffUnits",2);
   const cratingUnits=val("cratingUnits",1);
@@ -286,9 +288,10 @@ function computeLaborEstimate(panel){
   addLine("Device Mounting",allDevices,LABOR_RATES.mountingMinPerDevice,"devices","allDevices");
   addLine("Duct & DIN Rail",ductDinFeet,LABOR_RATES.ductDinMinPerFoot,"feet","ductDinFeet");
   addLine("Panel Holes",panelHoles,LABOR_RATES.holesMinPerHole,"holes","panelHoles");
-  // Side/top-mounted devices: small <6" sq = 2 hrs, large >=6" sq (AC/Fan) = 4 hrs
-  if(sideTopSmallCount>0)addLine("Side Devices",sideTopSmallCount,120,"devices","sideTopSmallCount");
+  // Side/top-mounted devices
+  if(sideTopSmallCount>0)addLine("Side Fans",sideTopSmallCount,120,"devices","sideTopSmallCount");
   if(sideTopLargeCount>0)addLine("HVAC/Fans",sideTopLargeCount,240,"devices","sideTopLargeCount");
+  if(squareCutoutCount>0)addLine("Square Cutouts",squareCutoutCount,LABOR_RATES.squareCutoutMinPerCut,"cutouts","squareCutoutCount");
   // Labels: stored as hours directly
   lines.push({category:"Labels",qty:labelHours,unit:"hours",minPerUnit:60,hours:labelHours,cost:labelHours*laborRate,field:"labelHours"});
   addLine("Project Mgmt",pmUnits,LABOR_RATES.pmMinPerUnit,"sessions","pmUnits");
@@ -300,7 +303,7 @@ function computeLaborEstimate(panel){
 
   return{
     lines,totalCost,totalHours,
-    inputs:{wireCount,wireTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount,sideTopLargeCount,pmUnits,buyoffUnits,cratingUnits,labelHours},
+    inputs:{wireCount,wireTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,pmUnits,buyoffUnits,cratingUnits,labelHours},
     hasLayoutData:hasLayout,
     isLegacy:false,
     isOverride:false
@@ -1329,18 +1332,19 @@ Extract and return ONLY valid JSON:
     {"tag":"HMI1","type":"hmi","widthIn":6,"heightIn":4}
   ],
   "sideTopDevices": [
-    {"tag":"AC1","type":"air_conditioner","widthIn":14,"heightIn":14},
-    {"tag":"FAN1","type":"fan","widthIn":4,"heightIn":4},
-    {"tag":"BEA1","type":"beacon","widthIn":3,"heightIn":3}
+    {"tag":"AC1","type":"air_conditioner","location":"side","widthIn":14,"heightIn":14},
+    {"tag":"FAN1","type":"fan","location":"side","widthIn":4,"heightIn":4},
+    {"tag":"HRN1","type":"horn","location":"side","widthIn":4,"heightIn":4},
+    {"tag":"BEA1","type":"beacon","location":"top","widthIn":3,"heightIn":3}
   ]
 }
 
 Rules:
 - enclosure: overall panel dimensions if visible
 - doorCutouts: ONLY devices mounted through the DOOR FACE with cutout holes — pushbuttons, pilot lights, selector switches, HMIs, e-stops, horns, meters. These appear as circular or rectangular cutouts on the front face of the door. Do NOT include beacons or stack lights here — those go in sideTopDevices.
-- sideTopDevices: ALL devices mounted on side panels, top of enclosure, or on top of/above the front view. Capture two categories:
-    1. SIDE-MOUNTED: Square or rectangular devices on the left or right side panel — these are typically fans (smaller, e.g. 4"×4") or air conditioners (larger, e.g. 10"×14" or bigger). Estimate widthIn and heightIn in inches from relative scale.
-    2. TOP-MOUNTED: Any small device shown on top of the front view or on top of a side view — these are almost always beacons, stack lights, or warning lights. Use type "beacon" for these.
+- sideTopDevices: ALL devices on side panels or top. Always include a "location" field:
+    1. location "side": Square or rectangular devices on the left or right side panel — fans (e.g. 4"×4"), air conditioners (e.g. 10"×14" or bigger), horns or alarm boxes (square cutout). Estimate widthIn and heightIn in inches.
+    2. location "top": Any device shown on top of the front view or on the roof of the enclosure — beacons, stack lights, warning lights. Each requires ONE hole through the top panel. Use type "beacon".
 - IGNORE the backpanel entirely — do NOT list breakers, contactors, relays, PLCs, drives, terminal blocks, or DIN-rail devices
 - IGNORE wire duct and DIN rails — those are backpanel items
 - Use device types: pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, meter, air_conditioner, fan, beacon, conduit_hub, other
@@ -1447,14 +1451,17 @@ function mergeLayoutResults(layouts){
   const ductFeet=merged.ductRuns.reduce((s,r)=>s+(r.lengthFt||0),0);
   const dinFeet=merged.dinRails.reduce((s,r)=>s+(r.lengthFt||0),0);
   const ductDinFeet=Math.round((ductFeet+dinFeet)*10)/10;
-  // Panel holes: each cutout = 1 hole, HMI = 25 equivalent
-  const panelHoles=merged.doorCutouts.reduce((s,c)=>s+(c.type==="hmi"?LABOR_RATES.hmiHoleEquivalent:1),0);
+  // Categorize side/top devices by location and type
+  const topBeaconCount=merged.sideTopDevices.filter(d=>d.location==="top"||d.type==="beacon").length;
+  const squareCutoutCount=merged.sideTopDevices.filter(d=>d.location!=="top"&&d.type!=="beacon"&&d.type!=="fan"&&d.type!=="air_conditioner").length;
+  const sideTopSmallCount=merged.sideTopDevices.filter(d=>d.type==="fan").length;
+  const sideTopLargeCount=merged.sideTopDevices.filter(d=>d.type==="air_conditioner").length;
+  // Panel holes: door cutouts (HMI=25 eq) + top beacons (1 hole each)
+  const doorHoles=merged.doorCutouts.reduce((s,c)=>s+(c.type==="hmi"?LABOR_RATES.hmiHoleEquivalent:1),0);
+  const panelHoles=doorHoles+topBeaconCount;
   const doorDeviceCount=merged.doorCutouts.length;
   const backpanelDeviceCount=merged.backpanelDevices.length;
-  // Side/top devices: small (<6" sq) = 2 hrs each, large (>=6" sq, AC/fan) = 4 hrs each
-  const sideTopSmallCount=merged.sideTopDevices.filter(d=>Math.max(d.widthIn||0,d.heightIn||0)<6).length;
-  const sideTopLargeCount=merged.sideTopDevices.filter(d=>Math.max(d.widthIn||0,d.heightIn||0)>=6).length;
-  return{...merged,ductDinFeet,panelHoles,doorDeviceCount,backpanelDeviceCount,sideTopSmallCount,sideTopLargeCount};
+  return{...merged,ductDinFeet,panelHoles,doorDeviceCount,backpanelDeviceCount,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,topBeaconCount};
 }
 
 // ── PANEL VALIDATION ──
