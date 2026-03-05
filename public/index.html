@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.83";
+const APP_VERSION="v1.10.84";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -929,11 +929,53 @@ async function bcListVendors(){
   }catch(e){console.warn("bcListVendors error:",e);return[];}
 }
 
-async function bcAddAssemblyBOMLines(parentItemNo,bomRows,onProgress){
-  const result={added:0,skipped:0,errors:[],warning:""};
-  if(!bomRows||!bomRows.length)return result;
+async function bcClearAssemblyBOMLines(parentItemNo,bomPage){
+  const getUrl=`${BC_ODATA_BASE}/${bomPage}?$filter=Parent_Item_No eq '${encodeURIComponent(parentItemNo)}'`;
+  const gr=await fetch(getUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  if(!gr.ok)throw new Error(`Failed to read existing BOM lines: ${gr.status}`);
+  const lines=(await gr.json()).value||[];
+  let deleted=0;const errors=[];
+  for(const line of lines){
+    const lineNo=line.Line_No;
+    const etag=line["@odata.etag"];
+    const delUrl=`${BC_ODATA_BASE}/${bomPage}(Parent_Item_No='${encodeURIComponent(parentItemNo)}',Line_No=${lineNo})`;
+    const dr=await fetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}});
+    if(dr.ok||dr.status===204){deleted++;}
+    else{const t=await dr.text();errors.push(`Line ${lineNo}: ${t.slice(0,80)}`);}
+  }
+  return{deleted,total:lines.length,errors};
+}
+
+async function bcReplaceAssemblyBOMLines(parentItemNo,bomRows,onProgress){
+  const result={deleted:0,added:0,skipped:0,errors:[],warning:""};
   const allPages=await bcDiscoverODataPages();
   const bomPage=allPages.find(n=>/assembly.*bom|bom.*comp/i.test(n))||null;
+  if(!bomPage){
+    result.warning="No Assembly BOM OData page found. In BC, go to Web Services → New → Object Type: Page, Object ID: 36, Service Name: AssemblyBOM, Published: true.";
+    return result;
+  }
+  if(onProgress)onProgress(-1,bomRows.length,"Clearing existing BOM lines…");
+  try{
+    const clear=await bcClearAssemblyBOMLines(parentItemNo,bomPage);
+    result.deleted=clear.deleted;
+    if(clear.errors.length)result.errors.push(...clear.errors.map(e=>"[clear] "+e));
+  }catch(ce){result.errors.push("[clear] "+ce.message);}
+  const addResult=await bcAddAssemblyBOMLines(parentItemNo,bomRows,onProgress,bomPage);
+  result.added=addResult.added;
+  result.skipped=addResult.skipped;
+  result.errors.push(...addResult.errors);
+  result.warning=addResult.warning;
+  return result;
+}
+
+async function bcAddAssemblyBOMLines(parentItemNo,bomRows,onProgress,_bomPage){
+  const result={added:0,skipped:0,errors:[],warning:""};
+  if(!bomRows||!bomRows.length)return result;
+  let bomPage=_bomPage||null;
+  if(!bomPage){
+    const allPages=await bcDiscoverODataPages();
+    bomPage=allPages.find(n=>/assembly.*bom|bom.*comp/i.test(n))||null;
+  }
   if(!bomPage){
     result.warning="No Assembly BOM OData page found. In BC, go to Web Services → New → Object Type: Page, Object ID: 36, Service Name: AssemblyBOM, Published: true.";
     return result;
@@ -3658,6 +3700,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [bcFuzzySuggestions,setBcFuzzySuggestions]=useState({});
   const [bcBrowserOpen,setBcBrowserOpen]=useState(false);
   const [showCreateItem,setShowCreateItem]=useState(false);
+  const [showUpdateBom,setShowUpdateBom]=useState(false);
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
   const [bcNewlyCreated,setBcNewlyCreated]=useState(new Set());
   const [bcBrowserQuery,setBcBrowserQuery]=useState("");
@@ -4772,7 +4815,14 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   <ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>
                   <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px"})}>📊 View Quote</button>
                   {!readOnly&&(
-                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:3}}>
+                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+                      {panel.bcItemNumber&&(
+                        <button onClick={()=>!pendingBcCount&&setShowUpdateBom(true)} disabled={pendingBcCount>0}
+                          title={pendingBcCount>0?`${pendingBcCount} unverified BC parts — resolve blue circles first`:`Update Assembly BOM for item ${panel.bcItemNumber}`}
+                          style={{background:pendingBcCount>0?"#111":"#0d1f3c",border:'1px solid '+(pendingBcCount>0?"#444":"#38bdf866"),color:pendingBcCount>0?"#555":"#38bdf8",cursor:pendingBcCount>0?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:pendingBcCount>0?0.5:1}}>
+                          🔄 Update BOM in BC ({panel.bcItemNumber})
+                        </button>
+                      )}
                       <button onClick={()=>!pendingBcCount&&setShowCreateItem(true)} disabled={pendingBcCount>0}
                         title={pendingBcCount>0?`${pendingBcCount} part${pendingBcCount>1?"s":""} not yet verified in BC — resolve all blue BC circles first`:undefined}
                         style={{background:pendingBcCount>0?"#111":"#1a1040",border:'1px solid '+(pendingBcCount>0?"#444":"#a78bfa66"),color:pendingBcCount>0?"#555":"#a78bfa",cursor:pendingBcCount>0?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:pendingBcCount>0?0.5:1}}>
@@ -4877,6 +4927,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         />
       )}
       {showCreateItem&&<CreateItemInBCModal panel={panel} onClose={()=>setShowCreateItem(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
+      {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
     </div>
   );
 }
@@ -5114,6 +5165,118 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
               <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
               <button onClick={()=>setPhase("setup")} style={btn(C.accent,"#fff",{fontSize:13})}>Try Again</button>
             </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── UPDATE BOM IN BC MODAL ──
+function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
+  const [phase,setPhase]=useState("confirm"); // confirm | updating | done | error
+  const [progress,setProgress]=useState("");
+  const [result,setResult]=useState(null);
+  const itemNo=panel.bcItemNumber||"";
+  const mergedBom=(panel.bom||[]).filter(r=>(r.partNumber||"").trim());
+  const pendingBcCount=mergedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual").length;
+  const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999,padding:24};
+  const modalCard={...card({padding:28}),width:"100%",maxWidth:560,display:"flex",flexDirection:"column",gap:16};
+
+  async function handleUpdate(){
+    setPhase("updating");
+    setProgress("Connecting to Business Central…");
+    try{
+      if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
+      if(!_bcToken){_bcToken=await acquireBcToken(true)||null;}
+      if(!_bcToken)throw new Error("Not connected to Business Central");
+      const res=await bcReplaceAssemblyBOMLines(
+        itemNo,mergedBom,
+        (i,total,pn)=>setProgress(i===-1?"Clearing existing BOM lines…":`Adding BOM line ${i+1}/${total}: ${pn}…`)
+      );
+      const success=res.added>0&&res.errors.length===0&&!res.warning;
+      setResult({...res,success});
+      if(success&&onUpdate&&onSaveImmediate){
+        const updated={...panel,status:"pushed_to_bc",updatedAt:Date.now()};
+        onUpdate(updated);
+        try{await onSaveImmediate(updated);}catch(se){console.warn("Status save failed:",se);}
+      }
+      setPhase("done");
+    }catch(e){
+      setResult({error:e.message});
+      setPhase("error");
+    }
+  }
+
+  return(
+    <div style={overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={modalCard}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:18,fontWeight:700}}>Update BOM in BC</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
+        </div>
+
+        {phase==="confirm"&&(<>
+          {pendingBcCount>0&&(
+            <div style={{background:"#450a0a55",border:"1px solid #ef444466",borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"flex-start",gap:10}}>
+              <span style={{fontSize:18,flexShrink:0}}>🚫</span>
+              <div>
+                <div style={{fontWeight:700,color:"#f87171",fontSize:13,marginBottom:3}}>{pendingBcCount} part{pendingBcCount>1?"s":""} not yet verified in BC</div>
+                <div style={{fontSize:12,color:C.sub}}>Resolve all blue BC circles before updating.</div>
+              </div>
+            </div>
+          )}
+          <div style={{background:"#0d1f3c",border:"1px solid #38bdf844",borderRadius:8,padding:"14px 16px"}}>
+            <div style={{fontSize:13,color:C.sub,marginBottom:4}}>BC Item: <span style={{fontFamily:"monospace",color:"#38bdf8",fontWeight:700}}>{itemNo}</span></div>
+            <div style={{fontSize:13,color:C.sub}}>This will <strong style={{color:"#f87171"}}>delete all existing Assembly BOM lines</strong> for this item and replace them with the current ARC BOM ({mergedBom.length} component{mergedBom.length!==1?"s":""}).</div>
+          </div>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
+            <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
+            <button onClick={handleUpdate} disabled={pendingBcCount>0}
+              style={btn("#0d1f3c","#38bdf8",{fontSize:13,opacity:pendingBcCount>0?0.4:1,border:"1px solid #38bdf866"})}>
+              Replace BOM in BC
+            </button>
+          </div>
+        </>)}
+
+        {phase==="updating"&&(
+          <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:16,padding:"20px 0"}}>
+            <div style={{width:40,height:40,border:`3px solid ${"#38bdf8"}44`,borderTop:`3px solid ${"#38bdf8"}`,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+            <div style={{fontSize:14,color:C.sub,textAlign:"center"}}>{progress}</div>
+          </div>
+        )}
+
+        {phase==="done"&&result&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            {result.success?(
+              <div style={{background:"#0d1f3c",border:"1px solid #38bdf844",borderRadius:8,padding:16}}>
+                <div style={{fontSize:15,fontWeight:700,color:"#38bdf8",marginBottom:6}}>✓ BOM Updated Successfully</div>
+                <div style={{fontSize:13,color:C.sub}}>Removed <strong>{result.deleted}</strong> old line{result.deleted!==1?"s":""} · Added <strong>{result.added}</strong> new line{result.added!==1?"s":""}</div>
+              </div>
+            ):(
+              <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}44`,borderRadius:8,padding:16}}>
+                <div style={{fontSize:15,fontWeight:700,color:C.yellow,marginBottom:6}}>⚠ Partial Update</div>
+                <div style={{fontSize:13,color:C.sub}}>Removed {result.deleted} · Added {result.added} · {result.skipped} skipped</div>
+              </div>
+            )}
+            {result.warning&&<div style={{fontSize:12,color:C.yellow,background:C.yellowDim,borderRadius:6,padding:"8px 12px"}}>{result.warning}</div>}
+            {result.errors&&result.errors.length>0&&(
+              <div style={{fontSize:12,color:C.red,background:C.redDim,borderRadius:6,padding:"8px 12px",maxHeight:120,overflowY:"auto"}}>
+                <div style={{fontWeight:700,marginBottom:4}}>Errors ({result.errors.length}):</div>
+                {result.errors.map((e,i)=><div key={i} style={{marginBottom:2}}>• {e}</div>)}
+              </div>
+            )}
+            <div style={{textAlign:"right"}}><button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Close</button></div>
+          </div>
+        )}
+
+        {phase==="error"&&result&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:16}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.red,marginBottom:6}}>✗ Update Failed</div>
+              <div style={{fontSize:13,color:C.sub}}>{result.error}</div>
+            </div>
+            <div style={{textAlign:"right"}}><button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Close</button></div>
           </div>
         )}
       </div>
