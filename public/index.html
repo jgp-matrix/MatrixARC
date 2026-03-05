@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.16";
+const APP_VERSION="v1.10.17";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1120,7 +1120,8 @@ Output ONLY a valid JSON array — no markdown, no explanation. Each object must
 If no BOM table exists on this page, return [].`;
 
 async function extractBomPage(dataUrl,feedback=""){
-  const b64=dataUrl&&dataUrl.split(",")[1];
+  const small=await resizeForAnalysis(dataUrl,2000); // BOM needs higher res for small text
+  const b64=small&&small.split(",")[1];
   if(!b64){console.warn("extractBomPage: skipping — empty or invalid dataUrl");return[];}
   const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
   // Use extended thinking so Claude reasons through the table structure before extracting
@@ -1128,9 +1129,9 @@ async function extractBomPage(dataUrl,feedback=""){
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
     body:JSON.stringify({
-      model:"claude-opus-4-6",
-      max_tokens:12000,
-      thinking:{type:"enabled",budget_tokens:5000},
+      model:"claude-sonnet-4-6",
+      max_tokens:10000,
+      thinking:{type:"enabled",budget_tokens:4000},
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
         {type:"text",text:BOM_PROMPT+feedbackSection}
@@ -1457,7 +1458,7 @@ function mergeLayoutResults(layouts){
 }
 
 // ── PANEL VALIDATION ──
-async function runPanelValidation(panel,onProgress){
+async function runPanelValidation(panel,onProgress,bomPromise=null){
   let schematicPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl));
   let backpanelPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("backpanel")&&(p.dataUrl||p.storageUrl));
   let enclosurePages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("enclosure")&&(p.dataUrl||p.storageUrl));
@@ -1533,10 +1534,11 @@ async function runPanelValidation(panel,onProgress){
     deviceClassification:allTags
   };
 
-  // 5. BOM cross-reference (existing logic, updated for object tags)
+  // 5. BOM cross-reference — await bomPromise if BOM is being extracted in parallel
+  const resolvedBom=bomPromise?(await bomPromise):(panel.bom||[]);
   const isAsShown=notes=>/^(as\s+shown|enclosure)$/i.test((notes||"").trim());
   const matched=[],missing=[],notTraceable=[];
-  for(const item of (panel.bom||[])){
+  for(const item of resolvedBom){
     const notes=(item.notes||"").trim();
     if(isAsShown(notes)){notTraceable.push(item);continue;}
     const itemTags=notes.split(/[\s,;]+/).filter(Boolean);
@@ -1544,9 +1546,9 @@ async function runPanelValidation(panel,onProgress){
     if(found.length>0||itemTags.length===0)matched.push({item,found});
     else missing.push(item);
   }
-  const allBomTags=new Set((panel.bom||[]).flatMap(i=>(i.notes||"").split(/[\s,;]+/).filter(Boolean).map(t=>t.toUpperCase())));
+  const allBomTags=new Set(resolvedBom.flatMap(i=>(i.notes||"").split(/[\s,;]+/).filter(Boolean).map(t=>t.toUpperCase())));
   const unaccounted=schematicTags.filter(t=>!allBomTags.has(t.toUpperCase()));
-  const traceable=(panel.bom||[]).length-notTraceable.length;
+  const traceable=resolvedBom.length-notTraceable.length;
   const matchPct=traceable>0?matched.length/traceable:1;
   const confidence=matchPct>=0.9?"high":matchPct>=0.7?"medium":"low";
 
@@ -3550,37 +3552,66 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
     const willValidate=_apiKey&&hasSchOrLayout;
     console.log("ADDFILES: bomPages="+bomPages.length+", hasSchOrLayout="+hasSchOrLayout+", willValidate="+willValidate+", totalPages="+updated.pages.length);
+    // ── BOM extraction + validation run in PARALLEL ──
+    const valPageCount=(updated.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl)).length;
+    const totalEst=Math.max(30,bomPages.length*15+valPageCount*20);
+    if(_apiKey&&(bomPages.length>0||willValidate)){
+      ep.start(bomPages.length>0?"Extracting & Validating…":"Validating…",totalEst);
+    }
+    // Start BOM extraction immediately (don't await — runs in background)
+    let bomMergePromise=Promise.resolve([]);
     if(_apiKey&&bomPages.length>0){
-      const totalEst=bomPages.length*15+(willValidate?25:0);
       bgUpdate(panel.id,"Extracting BOM…");
-      setExtracting(true);ep.start("Extracting BOM…",totalEst);
-      let all=[];let ok=true;let bomDone=0;
-      try{
-        const bomResults=await parallelMap(bomPages,async(pg)=>{
-          ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
-          const items=await extractBomPage(pg.dataUrl);
-          return items;
-        },3);
-        all=bomResults.flat();
-      }catch(ex){setErr(`BOM extraction failed: ${ex.message}`);ok=false;}
-      if(ok&&all.length>0){
+      setExtracting(true);
+      let bomDone=0;
+      bomMergePromise=parallelMap(bomPages,async(pg)=>{
+        ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
+        return extractBomPage(pg.dataUrl);
+      },3).then(results=>{
+        const all=results.flat();
+        if(!all.length)return[];
         const map={};
         all.forEach(item=>{
           const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));
           if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
           else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
         });
-        const bom=appendDefaultBomItems(Object.values(map));
-        const withBom={...updated,bom,status:"extracted",updatedAt:Date.now()};
-        latestPanel=withBom;
-        onUpdate(withBom);
-        try{await onSaveImmediate(withBom);}catch(e){}
-        if(!willValidate)ep.finish(`✓ ${bom.length} items extracted`);
-      }else if(!willValidate){ep.stop();}
-      if(willValidate)ep.update("Validating…");
-      setExtracting(false);
+        return appendDefaultBomItems(Object.values(map));
+      }).catch(ex=>{setErr(`BOM extraction failed: ${ex.message}`);return[];});
     }
-    // Verify part numbers (runs in parallel with validation)
+    // Start validation immediately in parallel — passes bomMergePromise for cross-reference
+    let valPromise=Promise.resolve(null);
+    if(willValidate){
+      bgUpdate(panel.id,"Validating…");
+      setValidatingPanel(true);
+      valPromise=runPanelValidation(latestPanel,pct=>{ep.set(pct,"Validating…");},bomMergePromise);
+    }
+    // Await BOM completion and save
+    const mergedBom=await bomMergePromise;
+    setExtracting(false);
+    if(mergedBom.length>0){
+      const withBom={...latestPanel,bom:mergedBom,status:"extracted",updatedAt:Date.now()};
+      latestPanel=withBom;onUpdate(withBom);
+      try{await onSaveImmediate(withBom);}catch(e){}
+    }else if(!willValidate){ep.stop();}
+    // Await validation completion and save
+    if(willValidate){
+      try{
+        const result=await valPromise;
+        if(result?.validation||result?.laborData){
+          const withVal={...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:latestPanel.status==="extracted"?"extracted":"validated",updatedAt:Date.now()};
+          latestPanel=withVal;onUpdate(withVal);
+          try{await onSaveImmediate(withVal);}catch(e){}
+        }
+        console.log("VALIDATION RESULT: confidence="+((result?.validation||{}).confidence)+", wireCount="+((result?.validation||{}).wireCount));
+      }catch(valEx){console.error("Validation failed:",valEx);}
+      setValidatingPanel(false);
+      const itemCount=(latestPanel.bom||[]).length;
+      ep.finish(itemCount>0?`✓ ${itemCount} items · validated`:"✓ Validated");
+    }else if(mergedBom.length>0){
+      ep.finish(`✓ ${mergedBom.length} items extracted`);
+    }
+    // Verify part numbers (runs after BOM is done)
     const bomToVerify=(latestPanel.bom||[]).slice();
     const verifyPromise=(bomToVerify.length>0&&_apiKey)?(async()=>{
       try{
@@ -3588,28 +3619,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         return await verifyPartNumbers(bomToVerify);
       }catch(e){console.warn("Part verification failed:",e);return[];}
     })():Promise.resolve([]);
-    // Auto-validate if schematic pages exist
-    if(willValidate){
-      bgUpdate(panel.id,"Validating…");
-      setValidatingPanel(true);
-      const valPageCount=(latestPanel.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl)).length;
-      const valEstSec=Math.max(30,valPageCount*20);
-      if(!ep.running())ep.start("Validating…",valEstSec);
-      else ep.phase("Validating…",valEstSec);
-      try{
-        const result=await runPanelValidation(latestPanel,pct=>{ep.set(pct,"Validating…");});
-        if(result.validation||result.laborData){
-          const withVal={...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:latestPanel.status==="extracted"?"extracted":"validated",updatedAt:Date.now()};
-          latestPanel=withVal;
-          onUpdate(withVal);
-          try{await onSaveImmediate(withVal);}catch(e){}
-        }
-        console.log("VALIDATION RESULT: confidence="+((result.validation||{}).confidence)+", wireCount="+((result.validation||{}).wireCount));
-      }catch(valEx){console.error("Validation failed:",valEx);}
-      const itemCount=(latestPanel.bom||[]).length;
-      setValidatingPanel(false);
-      ep.finish(itemCount>0?`✓ ${itemCount} items · validated`:"✓ Validated");
-    }
     // Wait for part verification to finish and merge into latestPanel
     const verifResults=await verifyPromise;
     if(verifResults&&verifResults.length>0){
