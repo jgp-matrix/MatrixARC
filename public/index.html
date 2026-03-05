@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.30";
+const APP_VERSION="v1.10.31";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -375,6 +375,7 @@ async function acquireBcToken(interactive=true){
   const inst=await ensureMsal();
   if(!inst)return null;
   const scopes=["https://api.businesscentral.dynamics.com/.default"];
+  // Try silent with cached accounts first
   try{
     const accounts=inst.getAllAccounts();
     if(accounts.length>0){
@@ -382,8 +383,14 @@ async function acquireBcToken(interactive=true){
       _bcToken=resp.accessToken;
       return _bcToken;
     }
-  }catch(e){console.log("Silent BC token failed…");}
-  // Only show popup if user explicitly requested it
+  }catch(e){console.log("Silent BC token failed, trying ssoSilent…");}
+  // Try SSO silent — works if the user already has an active Microsoft browser session
+  try{
+    const hint=fbAuth.currentUser?.email;
+    const resp=await inst.ssoSilent({scopes,...(hint?{loginHint:hint}:{})});
+    _bcToken=resp.accessToken;
+    return _bcToken;
+  }catch(e){}
   if(!interactive)return null;
   try{
     const resp=await inst.acquireTokenPopup({scopes});
@@ -5725,9 +5732,11 @@ function App({user}){
               <span style={{fontSize:11,fontWeight:600,color:"#86efac",whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
             </div>
           )}
-          <div title={bcOnline?"Business Central is connected":"Business Central is offline"} style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,background:bcOnline?"#1e4a8a55":"#3a1a1a44",border:`1px solid ${bcOnline?"#3b82f699":"#7f1d1d88"}`}}>
+          <div title={bcOnline?"Business Central is connected":"Click to connect to Business Central"}
+            onClick={bcOnline?undefined:async()=>{const t=await acquireBcToken(true);if(t){setBcOnline(true);bcOnlinePrev.current=true;}}}
+            style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,background:bcOnline?"#1e4a8a55":"#3a1a1a44",border:`1px solid ${bcOnline?"#3b82f699":"#7f1d1d88"}`,cursor:bcOnline?"default":"pointer"}}>
             <div style={{width:7,height:7,borderRadius:"50%",flexShrink:0,background:bcOnline?"#3b82f6":"#ef4444",boxShadow:bcOnline?"0 0 5px #3b82f6":"0 0 5px #ef4444"}}/>
-            <span style={{fontSize:11,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline"}</span>
+            <span style={{fontSize:11,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline — Click to connect"}</span>
           </div>
           <button onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>👥 Team</button>
           <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Config</button>
