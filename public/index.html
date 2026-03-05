@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.15";
+const APP_VERSION="v1.10.16";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1590,35 +1590,19 @@ async function estimatePrices(items){
 }
 
 // ── PAGE TYPE DETECTION ──
-const PAGE_TYPE_DETECT_PROMPT=`You are analyzing a page from a UL508A industrial control panel drawing set.
-Return ONLY a JSON object with exactly these two fields:
-- "types": array of content types present on this page, using only: "bom", "schematic", "backpanel", "enclosure"
+const PAGE_TYPE_DETECT_PROMPT=`Classify this page from a UL508A industrial control panel drawing set.
+Return ONLY a JSON object: {"types":[...],"sheetNo":"..."}
 
-  "bom"       — page contains a Bill of Materials table (columns for qty, part numbers, descriptions)
+Types (use only these values):
+"bom"       — Bill of Materials table with columns for qty, part number, description
+"schematic" — Electrical ladder diagram or wiring schematic: ladder rungs, wire numbers, terminal numbers, coil/contact symbols, device tags like CB1, CR1, PB1
+"backpanel" — Interior mounting plate, single front view only: DIN rails, wire duct, rows of breakers/contactors/relays/drives/PLCs/terminal blocks. NO side views, NO enclosure outline with dimensions
+"enclosure" — Enclosure/cabinet drawing. MOST RELIABLE SIGN: a side view drawn beside or below the front view. Also: overall W×H×D dimensions labeled, door cutout holes for pushbuttons/HMIs, side-panel fans or AC units, title says Enclosure/Cabinet/Door Layout
+"pid"       — Process & Instrumentation Diagram. UNIQUE SIGNS not found in schematics: two-letter ISA instrument codes (YA, HS, ZS, SA, FT, PT, LIC, PIC) inside circles paired with a tag number, OR "DI"/"DO" text inside diamond shapes, OR a box labeled "INSTRUMENT & FUNCTION LEGEND". A P&ID has NO wire numbers, NO terminal numbers, NO ladder rungs.
 
-  "schematic" — page contains electrical schematic diagrams (wires, symbols, terminal numbers, device tags)
-
-  "backpanel" — page shows ONLY the interior mounting plate as a single front view with NO side views. Key indicators:
-    DIN rails (horizontal channels), wire duct / wireways (rectangular channels), devices in rows (breakers, contactors, relays, overloads, drives, PLCs, terminal blocks, power supplies). Only one view on the page.
-
-  "enclosure" — THE SINGLE MOST RELIABLE INDICATOR IS A SIDE VIEW. If you see a side view of the enclosure drawn beside or below the front view, it is ALWAYS an enclosure drawing — never a backpanel. Side views often show square or rectangular devices mounted on the side panel — these are typically fans or air conditioners. Any small square or rectangular device shown mounted on top of the front view or on top of a side view is likely a beacon or stack light. Other enclosure indicators: overall width x height x depth dimensions labeled, enclosure shell outline with knockout or conduit hub locations, door cutout layout with pushbuttons/pilot lights/HMIs, title block says "Enclosure", "Cabinet", "Door Layout", or "Panel Arrangement".
-
-  "pid" — P&ID / Process & Instrumentation Diagram or Instrument Loop Diagram. These must be skipped — do NOT extract BOM or wiring from them. Identify by ANY of these dead-giveaway visual signatures:
-    • "DI" or "DO" text inside a rotated square (diamond shape) or regular square — these are discrete input/output function blocks
-    • Two-letter ISA instrument codes inside circles or bubbles: YA, HS, ZS, SA, FT, PT, LT, TT, AT, FIC, LIC, PIC, TIC, ZSO, ZSC, etc. Usually paired with a tag number below (e.g. GT-0°, FT-101)
-    • Single letters inside diamonds: "I" (indicator), "M" (motor) inside a square or diamond
-    • An "INSTRUMENT & FUNCTION LEGEND" or "LINE SYMBOL LEGEND" box on the page
-    • Triangle arrow symbols (▲ ▽) representing discrete or analog input/output signal directions
-    • SCADA, MCC, DCS, or PLC control function references with signal flow lines
-    • "NOT IN SCOPE" or "NOT IN [COMPANY] SCOPE" notes
-    • Equipment ID tables with columns for Equipment ID and Description referencing field instruments
-    A P&ID does NOT contain terminal numbers, wire numbers, DIN rails, or panel device wiring. If you see ISA bubbles or DI/DO diamonds, it is ALWAYS a P&ID.
-
-  Use [] for title sheets, revision history, or pages with none of the above.
-
-- "sheetNo": string — the sheet number as printed in the title block (e.g. "1 of 5", "2/8", "SHT 3"). Empty string "" if not found.
-
-JSON object only — no explanation, no markdown. Example: {"types":["bom"],"sheetNo":"1 of 5"}`;
+Use [] for title sheets, rev blocks, or unrecognized pages.
+"sheetNo": sheet number from title block (e.g. "1 of 5"). "" if not found.
+Example: {"types":["schematic"],"sheetNo":"3 of 8"}`;
 
 async function detectPageTypes(dataUrl){
   const b64=dataUrl&&dataUrl.split(",")[1];
@@ -1626,7 +1610,7 @@ async function detectPageTypes(dataUrl){
   try{
     const raw=await apiCall({
       model:"claude-haiku-4-5-20251001",
-      max_tokens:80,
+      max_tokens:120,
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
         {type:"text",text:PAGE_TYPE_DETECT_PROMPT}
