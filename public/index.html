@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.92";
+const APP_VERSION="v1.10.93";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -939,6 +939,20 @@ async function bcCheckItemInUse(itemNo){
     const d=await r.json();
     return{inUse:(d.value||[]).length>0,count:(d.value||[]).length};
   }catch(e){console.warn("bcCheckItemInUse error:",e);return{inUse:false,count:0};}
+}
+
+async function bcCheckItemOnProjects(itemNo){
+  if(!_bcToken||!itemNo)return{onProjects:false,projects:[]};
+  const compId=await bcGetCompanyId();
+  if(!compId)return{onProjects:false,projects:[]};
+  try{
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/jobPlanningLines?$filter=No eq '${encodeURIComponent(itemNo)}'&$top=10&$select=No,jobNumber,description`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok)return{onProjects:false,projects:[]};
+    const d=await r.json();
+    const lines=d.value||[];
+    const projects=[...new Set(lines.map(l=>l.jobNumber).filter(Boolean))];
+    return{onProjects:projects.length>0,projects};
+  }catch(e){console.warn("bcCheckItemOnProjects error:",e);return{onProjects:false,projects:[]};}
 }
 
 async function bcClearAssemblyBOMLines(parentItemNo,bomPage){
@@ -5194,6 +5208,7 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
   const [phase,setPhase]=useState("checking"); // checking | confirm | in_use | updating | done | error
   const [progress,setProgress]=useState("");
   const [result,setResult]=useState(null);
+  const [projectWarning,setProjectWarning]=useState([]);
   const itemNo=panel.bcItemNumber||"";
   const mergedBom=(panel.bom||[]).filter(r=>(r.partNumber||"").trim());
   const pendingBcCount=mergedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual").length;
@@ -5204,7 +5219,11 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
     (async()=>{
       try{
         if(!_bcToken){await acquireBcToken(false);}
-        const{inUse}=await bcCheckItemInUse(itemNo);
+        const[{inUse},{onProjects,projects}]=await Promise.all([
+          bcCheckItemInUse(itemNo),
+          bcCheckItemOnProjects(itemNo)
+        ]);
+        if(onProjects)setProjectWarning(projects);
         setPhase(inUse?"in_use":"confirm");
       }catch(e){setPhase("confirm");}
     })();
@@ -5276,6 +5295,18 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
               <div>
                 <div style={{fontWeight:700,color:"#f87171",fontSize:13,marginBottom:3}}>{pendingBcCount} part{pendingBcCount>1?"s":""} not yet verified in BC</div>
                 <div style={{fontSize:12,color:C.sub}}>Resolve all blue BC circles before updating.</div>
+              </div>
+            </div>
+          )}
+          {projectWarning.length>0&&(
+            <div style={{background:"#422006aa",border:"1px solid #f9731655",borderRadius:8,padding:"12px 14px",display:"flex",alignItems:"flex-start",gap:10}}>
+              <span style={{fontSize:18,flexShrink:0}}>⚠️</span>
+              <div>
+                <div style={{fontWeight:700,color:"#fb923c",fontSize:13,marginBottom:4}}>Item {itemNo} is assigned to {projectWarning.length} BC Project{projectWarning.length>1?"s":""}</div>
+                <div style={{fontSize:12,color:C.sub,marginBottom:6,lineHeight:1.5}}>Updating the Assembly BOM will affect this item on the following project{projectWarning.length>1?"s":""}. Only proceed if you are sure the change is intentional.</div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                  {projectWarning.map(p=><span key={p} style={{background:"#f9731622",color:"#fb923c",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,fontFamily:"monospace"}}>{p}</span>)}
+                </div>
               </div>
             </div>
           )}
