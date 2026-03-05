@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.68";
+const APP_VERSION="v1.10.69";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5486,7 +5486,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
   );
 
   return(
-    <div style={{maxWidth:2100,margin:"0 auto",padding:32}}>
+    <div style={{maxWidth:2100,margin:"0 auto",padding:32,minWidth:0,width:"100%",boxSizing:"border-box"}}>
 
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
         <div>
@@ -5536,7 +5536,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
             </div>
           )}
           {(groupBy==="customer"||groupBy==="status")?(
-            <div style={{display:"flex",gap:16,alignItems:"flex-start",overflowX:"auto",paddingBottom:8}}>
+            <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
                 const statusColColors={Draft:C.muted,Extracted:C.green,Validated:C.accent,Costed:C.green,Quoted:C.yellow};
                 const statusColBg={Draft:C.border,Extracted:C.greenDim,Validated:C.accentDim,Costed:"#052e1c",Quoted:C.yellowDim};
@@ -5546,7 +5546,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
                 const isDropTarget=groupBy==="customer"&&!isNoCustomer&&!!g.customerNumber&&!!dragProjectId;
                 const isOver=dropTarget===gi;
                 return(
-                <div key={gi} style={{flex:"0 0 220px",minWidth:220}}
+                <div key={gi} style={{flex:"1 1 0",minWidth:180}}
                   onDragOver={isDropTarget?e=>{e.preventDefault();setDropTarget(gi);}:undefined}
                   onDragLeave={isDropTarget?e=>{if(!e.currentTarget.contains(e.relatedTarget))setDropTarget(null);}:undefined}
                   onDrop={isDropTarget?e=>{e.preventDefault();setDropTarget(null);if(dragProjectId)assignCustomer(dragProjectId,g.label,g.customerNumber);setDragProjectId(null);}:undefined}>
