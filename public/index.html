@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.111";
+const APP_VERSION="v1.10.112";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3707,9 +3707,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [showFastQuote,setShowFastQuote]=useState(false);
   const [lightboxId,setLightboxId]=useState(null);
   const [draftName,setDraftName]=useState(panel.name||"");
-  const [draftNo,setDraftNo]=useState(panel.drawingNo||"");
+  const [draftNo,setDraftNo]=useState((panel.drawingNo||"").slice(0,25));
   const [draftDesc,setDraftDesc]=useState(panel.drawingDesc||"");
   const [draftRev,setDraftRev]=useState(panel.drawingRev||"");
+  const [draftNoWarn,setDraftNoWarn]=useState(false);
+  const draftNoWarnTimer=useRef(null);
   const [extractingTitle,setExtractingTitle]=useState(false);
   const [tagsChanged,setTagsChanged]=useState(false);
   const [aiFeedback,setAiFeedback]=useState("");
@@ -3853,8 +3855,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(firstWithData){
         const tb=await extractTitleBlock(firstWithData.dataUrl);
         if(tb){
-          updated={...updated,drawingNo:tb.drawingNo||"",drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
-          setDraftNo(tb.drawingNo||"");setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
+          updated={...updated,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+          setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
         }
       }
     }
@@ -3893,8 +3895,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const tb=await extractTitleBlock(ensured.dataUrl);
     setExtractingTitle(false);
     if(tb){
-      setDraftNo(tb.drawingNo||"");setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
-      const updated={...panel,drawingNo:tb.drawingNo||"",drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+      setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
+      const updated={...panel,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
     }
@@ -4282,13 +4284,25 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftName(panel.name||"");e.target.blur();}}}
               style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:Math.max(8,(draftName||"").length+2)+"ch",fontFamily:"inherit"}}/>
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
+          <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,position:"relative"}}>
             <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>DWG #</div>
-            <input value={draftNo} onChange={e=>setDraftNo(e.target.value)} placeholder="—" readOnly={readOnly}
+            <input value={draftNo} onChange={e=>{
+                const v=e.target.value;
+                if(v.length>25){
+                  setDraftNo(v.slice(0,25));
+                  setDraftNoWarn(true);
+                  clearTimeout(draftNoWarnTimer.current);
+                  draftNoWarnTimer.current=setTimeout(()=>setDraftNoWarn(false),3000);
+                }else{
+                  setDraftNo(v);
+                  if(draftNoWarn){setDraftNoWarn(false);clearTimeout(draftNoWarnTimer.current);}
+                }
+              }} placeholder="—" readOnly={readOnly}
               onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
               onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";saveTitleFields();}}
               onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftNo(panel.drawingNo||"");e.target.blur();}}}
               style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:Math.max(5,(draftNo||"").length+2)+"ch",fontFamily:"inherit"}}/>
+            {draftNoWarn&&<div style={{position:"absolute",top:"100%",left:0,marginTop:4,background:"#1a0a0a",border:"1px solid "+C.red,borderRadius:6,padding:"5px 10px",fontSize:12,color:C.red,whiteSpace:"nowrap",zIndex:100}}>Max 25 characters (BC limit)</div>}
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,minWidth:40}}>
             <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Rev</div>
