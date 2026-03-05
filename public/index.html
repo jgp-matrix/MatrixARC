@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.28";
+const APP_VERSION="v1.10.29";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4767,6 +4767,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
   const [draftName,setDraftName]=useState(project.name||"");
   const [validating,setValidating]=useState(false);
   const [validateMsg,setValidateMsg]=useState("");
+  const customerLogo=useCustomerLogo(project.bcCustomerName||null);
 
   function addPanel(){
     const n=(project.panels||[]).length+1;
@@ -4985,8 +4986,6 @@ function ProjectView({project:init,uid,onBack,onChange}){
   const saveTimer=useRef(null);
   const readOnly=isReadOnly();
   const didMigrate=useRef(!init.panels);
-
-  const customerLogo=useCustomerLogo(project.bcCustomerName||null);
 
   // Keep ref in sync with state for use in callbacks
   useEffect(()=>{projectRef.current=project;},[project]);
