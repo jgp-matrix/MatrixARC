@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.100";
+const APP_VERSION="v1.10.101";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4630,11 +4630,10 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             </table>
           </div>
           {!readOnly&&<button onClick={addBomRow} style={btn("transparent",C.accent,{fontSize:12,padding:"8px 12px",border:`1px dashed ${C.accent}66`,width:"100%",marginTop:8})}>+ Add Row</button>}
-          <div style={{display:"flex",justifyContent:"flex-end",marginTop:4}}><ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/></div>
         </div>
       )}
 
-      {/* Pricing Summary */}
+      {/* Pricing Summary — directly under Add Row */}
       {(panel.bom||[]).length>0&&(()=>{
         const pr=panel.pricing||{};
         const markup=pr.markup??30;
@@ -4689,6 +4688,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   </button>}
                 </>
               )}
+              <ConfidenceBar panel={panel} readOnly={readOnly} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>
             </div>
             {pricingProgress&&(
               <div style={{marginBottom:10}}>
@@ -4698,7 +4698,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                 <div style={{fontSize:12,color:C.sub}}>{pricingProgress.msg}</div>
               </div>
             )}
-            <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"flex-start"}}>
+            <div style={{display:"flex",gap:20,flexWrap:"wrap",alignItems:"stretch"}}>
               {/* LEFT: Labor breakdown */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",minWidth:280}}>
                 {(()=>{
