@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.52";
+const APP_VERSION="v1.10.53";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5759,13 +5759,14 @@ function App({user}){
           const existingBcIds=new Set(ps.map(p=>p.bcProjectId).filter(Boolean));
           const toImport=bcProjects.filter(bp=>bp.id&&!existingBcIds.has(bp.id));
           if(!toImport.length)return ps;
+          if(toImport.length)console.log("BC import sample fields:",Object.keys(toImport[0]));
           const newProjects=toImport.map(bp=>({
             id:"arc-"+bp.id.replace(/-/g,""),
             name:bp.displayName||bp.number||"Imported Project",
             bcProjectId:bp.id,
             bcProjectNumber:bp.number||"",
-            bcCustomerNumber:bp.billToCustomerNumber||bp.sell_to_Customer_No||"",
-            bcCustomerName:bp.billToName||bp.sell_to_Name||"",
+            bcCustomerNumber:bp.billToCustomerNumber||bp.billToCustomerNo||bp.sell_to_Customer_No||bp.Bill_to_Customer_No||"",
+            bcCustomerName:bp.billToName||bp.billToCustomerName||bp.sell_to_Name||bp.Bill_to_Name||bp.customerName||"",
             importedFromBC:true,
             status:"draft",
             panels:[],
