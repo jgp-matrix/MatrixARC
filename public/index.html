@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.31";
+const APP_VERSION="v1.10.32";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5526,7 +5526,7 @@ function ProjectTile({p,onOpen,onDelete}){
   const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
   return(
   <div className="fade-in" onClick={()=>onOpen(p)}
-    style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column"}}
+    style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column",minHeight:115}}
     onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
     onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
     <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
