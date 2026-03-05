@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.39";
+const APP_VERSION="v1.10.40";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -613,7 +613,9 @@ async function bcDeleteProject(bcProjectId){
 }
 
 async function bcUpdateProject(bcProjectId, displayName){
-  if(!_bcToken||!bcProjectId)return false;
+  if(!bcProjectId)return false;
+  if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
+  if(!_bcToken)return false;
   const compId=await bcGetCompanyId();
   if(!compId)return false;
   try{
@@ -4797,7 +4799,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
     onUpdate(updated);
     await saveProject(uid,updated);
     setEditingName(false);
-    if(_bcToken&&project.bcProjectId) bcUpdateProject(project.bcProjectId,draftName.trim());
+    if(project.bcProjectId) bcUpdateProject(project.bcProjectId,draftName.trim());
   }
   async function validateAll(){
     if(!_apiKey)return;
