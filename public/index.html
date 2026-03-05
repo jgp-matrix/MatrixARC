@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.48";
+const APP_VERSION="v1.10.49";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5381,8 +5381,10 @@ function NewProjectModal({uid,onCreated,onClose}){
 }
 
 // ── DASHBOARD ──
-function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
+function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdateProject}){
   const [groupBy,setGroupBy]=useState("all");
+  const [dragProjectId,setDragProjectId]=useState(null);
+  const [dropTarget,setDropTarget]=useState(null);
   const bgTasks=useBgTasks();
 
   function groupProjects(list){
@@ -5393,7 +5395,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
         if(!map[key])map[key]=[];
         map[key].push(p);
       });
-      return Object.keys(map).sort((a,b)=>a==="No Customer"?1:b==="No Customer"?-1:a.localeCompare(b)).map(k=>({label:k,items:map[k]}));
+      return Object.keys(map).sort((a,b)=>a==="No Customer"?1:b==="No Customer"?-1:a.localeCompare(b)).map(k=>({label:k,items:map[k],customerNumber:map[k].find(p=>p.bcCustomerNumber)?.bcCustomerNumber||null}));
     }
     if(groupBy==="date"){
       const map={};
@@ -5432,6 +5434,19 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
     return [{label:null,items:list}];
   }
 
+  async function assignCustomer(projectId,customerName,customerNumber){
+    const proj=projects.find(p=>p.id===projectId);
+    if(!proj||proj.bcCustomerName)return;
+    const updated={...proj,bcCustomerName:customerName,bcCustomerNumber:customerNumber,updatedAt:Date.now()};
+    await onUpdateProject(updated);
+    if(proj.bcProjectNumber&&customerNumber){
+      try{
+        if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
+        if(!_bcToken){_bcToken=await acquireBcToken(true)||null;}
+        await bcPatchJobOData(proj.bcProjectNumber,{Bill_to_Customer_No:customerNumber});
+      }catch(e){console.warn("BC customer assign failed:",e);}
+    }
+  }
   const filterBtn=(label,val)=>(
     <button key={val} onClick={()=>setGroupBy(val)} style={{background:groupBy===val?C.accent:"#383850",color:groupBy===val?"#fff":C.muted,border:groupBy===val?`1.5px solid ${C.accent}`:"1.5px solid #7a7a9a",borderRadius:8,padding:"8px 20px",fontSize:14,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>
       {label}
@@ -5485,12 +5500,21 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
                 const statusColBg={Draft:C.border,Extracted:C.greenDim,Validated:C.accentDim,Costed:"#052e1c",Quoted:C.yellowDim};
                 const colColor=groupBy==="status"?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=groupBy==="status"?(statusColBg[g.label]||C.border):"#2a2a3e";
+                const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
+                const isDropTarget=groupBy==="customer"&&!isNoCustomer&&!!g.customerNumber&&!!dragProjectId;
+                const isOver=dropTarget===gi;
                 return(
-                <div key={gi} style={{flex:"0 0 220px",minWidth:220}}>
-                  {g.label&&<div style={{background:colBg,color:colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%"}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
-                  <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                <div key={gi} style={{flex:"0 0 220px",minWidth:220}}
+                  onDragOver={isDropTarget?e=>{e.preventDefault();setDropTarget(gi);}:undefined}
+                  onDragLeave={isDropTarget?e=>{if(!e.currentTarget.contains(e.relatedTarget))setDropTarget(null);}:undefined}
+                  onDrop={isDropTarget?e=>{e.preventDefault();setDropTarget(null);if(dragProjectId)assignCustomer(dragProjectId,g.label,g.customerNumber);setDragProjectId(null);}:undefined}>
+                  {g.label&&<div style={{background:isOver?C.accent:colBg,color:isOver?"#fff":colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",transition:"background 0.15s,color 0.15s",outline:isDropTarget&&dragProjectId?(isOver?"2px solid "+C.accent:"2px dashed "+C.accent+"66"):"none",outlineOffset:2}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
+                  <div style={{display:"flex",flexDirection:"column",gap:8,borderRadius:8,padding:isOver?"6px":"0",background:isOver?"#1e2e1e":"transparent",transition:"background 0.15s,padding 0.15s"}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete}/>
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete}
+                        draggable={isNoCustomer}
+                        onDragStart={isNoCustomer?e=>{e.dataTransfer.effectAllowed="move";setDragProjectId(p.id);}:undefined}
+                        onDragEnd={isNoCustomer?()=>{setDragProjectId(null);setDropTarget(null);}:undefined}/>
                     ))}
                   </div>
                 </div>
@@ -5558,7 +5582,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
 }
 
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete}){
+function ProjectTile({p,onOpen,onDelete,draggable:isDraggable,onDragStart,onDragEnd}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
@@ -5567,7 +5591,10 @@ function ProjectTile({p,onOpen,onDelete}){
   const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
   return(
   <div className="fade-in" onClick={()=>onOpen(p)}
-    style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column"}}
+    draggable={isDraggable||false}
+    onDragStart={onDragStart}
+    onDragEnd={onDragEnd}
+    style={{...card({padding:"10px 14px"}),border:"1px solid #4a5080",cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column"}}
     onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
     onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
     <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
@@ -5814,7 +5841,7 @@ function App({user}){
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept}/>
+          <Dashboard uid={user.uid} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}}/>
         </>
       )}
       {view==="project"&&openProject&&(
