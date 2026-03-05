@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.62";
+const APP_VERSION="v1.10.63";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5800,6 +5800,8 @@ function App({user}){
           }));
           if(newProjects.length){console.log(`BC sync: importing ${newProjects.length} new project(s)`);newProjects.forEach(p=>saveProject(user.uid,p).catch(e=>console.warn("BC import save failed:",e)));}
           // Re-sync customer name on imported projects missing it (including those with number but no name)
+          const prj=ps.find(p=>p.bcProjectNumber==="PRJ402014");
+          if(prj)console.log("DEBUG PRJ402014 Firestore:",JSON.stringify({importedFromBC:prj.importedFromBC,bcProjectId:prj.bcProjectId,bcCustomerName:prj.bcCustomerName,bcCustomerNumber:prj.bcCustomerNumber}));
           const toUpdate=ps.filter(p=>p.importedFromBC&&p.bcProjectId&&!p.bcCustomerName&&bcById[p.bcProjectId]);
           const updatedPs=ps.map(p=>{
             if(!p.importedFromBC||!p.bcProjectId||p.bcCustomerName)return p;
