@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.60";
+const APP_VERSION="v1.10.61";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -584,6 +584,20 @@ async function bcLoadAllProjects(){
     const d=await r.json();
     return(d.value||[]);
   }catch(e){console.warn("bcLoadAllProjects error:",e);return[];}
+}
+async function bcLoadAllProjectsOData(){
+  // Fetches project cards from OData which includes Bill_to_Customer_No, Bill_to_Name etc.
+  if(!_bcToken)return[];
+  try{
+    const allPages=await bcDiscoverODataPages();
+    const projectPage=allPages.find(n=>/^project(card)?$/i.test(n))||null;
+    if(!projectPage){console.warn("bcLoadAllProjectsOData: no project OData page found");return[];}
+    const r=await fetch(`${BC_ODATA_BASE}/${projectPage}`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok){console.warn("bcLoadAllProjectsOData failed:",r.status);return[];}
+    const d=await r.json();
+    console.log("OData project fields:",(d.value||[])[0]?Object.keys((d.value||[])[0]):[])
+    return(d.value||[]);
+  }catch(e){console.warn("bcLoadAllProjectsOData error:",e);return[];}
 }
 function bcFilterCustomers(allCustomers,query){
   if(!query.trim())return allCustomers.slice(0,25);
@@ -5754,19 +5768,15 @@ function App({user}){
       if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
       if(!_bcToken)return;
       try{
-        const [bcProjects,bcCustomers]=await Promise.all([bcLoadAllProjects(),bcLoadAllCustomers()]);
-        if(bcProjects.length)console.log("BC import sample fields:",Object.keys(bcProjects[0]));
-        // Log PRJ402014 specifically for debugging
-        const debugProj=bcProjects.find(bp=>bp.number==="PRJ402014");
-        if(debugProj)console.log("BC PRJ402014 full object:",JSON.stringify(debugProj));
-        console.log("BC customers loaded:",bcCustomers.length,"sample:",bcCustomers.slice(0,3));
+        const [bcProjects,bcCustomers,odataProjects]=await Promise.all([bcLoadAllProjects(),bcLoadAllCustomers(),bcLoadAllProjectsOData()]);
+        // Build OData lookup by project No for rich customer fields
+        const odataByNo=Object.fromEntries(odataProjects.filter(op=>op.No).map(op=>[op.No,op]));
         const bcById=Object.fromEntries(bcProjects.filter(bp=>bp.id).map(bp=>[bp.id,bp]));
-        // Build customer number → name lookup
         const custByNumber=Object.fromEntries(bcCustomers.map(c=>[c.number,c.displayName]));
         function extractCustomer(bp){
-          const custNo=bp.billToCustomerNumber||bp.billToCustomerNo||bp.sell_to_Customer_No||bp.Bill_to_Customer_No||"";
-          const custName=bp.billToName||bp.billToCustomerName||bp.sell_to_Name||bp.Bill_to_Name||bp.customerName||(custNo?custByNumber[custNo]||"":"");
-          console.log(`extractCustomer ${bp.number}: custNo="${custNo}" custName="${custName}" custByNumber[custNo]="${custNo?custByNumber[custNo]||"(not found)":"(no number)"}`);
+          const odata=odataByNo[bp.number]||{};
+          const custNo=odata.Bill_to_Customer_No||odata.Sell_to_Customer_No||bp.billToCustomerNumber||bp.billToCustomerNo||"";
+          const custName=odata.Bill_to_Name||odata.Sell_to_Customer_Name||bp.billToName||bp.billToCustomerName||(custNo?custByNumber[custNo]||"":"");
           return{bcCustomerNumber:custNo,bcCustomerName:custName};
         }
         setProjects(ps=>{
