@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.41";
+const APP_VERSION="v1.10.42";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4849,13 +4849,13 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
               ):(
                 <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:4}}>
                   {customerLogo&&<img src={customerLogo} alt="" style={{width:36,height:36,objectFit:"contain",borderRadius:6,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
-                  <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap"}}>
-                    {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:C.accent}}>{project.bcProjectNumber}</span>}
-                    {project.bcProjectNumber&&(project.bcCustomerName||project.name)&&<span style={{fontSize:22,color:C.border,fontWeight:400}}>—</span>}
-                    {project.bcCustomerName&&<span style={{fontSize:20,fontWeight:700,color:C.sub}}>{project.bcCustomerName}</span>}
-                    {project.bcCustomerName&&project.name&&<span style={{fontSize:22,color:C.border,fontWeight:400}}>—</span>}
-                    <span style={{fontSize:20,fontWeight:700,color:C.text}}>{project.name}</span>
-                    {!readOnly&&<button onClick={()=>{setDraftName(project.name);setEditingName(true);}} title="Edit project name" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:"0 4px",alignSelf:"center"}}>✏️</button>}
+                  <div style={{display:"flex",flexDirection:"column",gap:2}}>
+                    {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:C.accent,lineHeight:1}}>{project.bcProjectNumber}</span>}
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:20,fontWeight:700,color:C.text}}>{project.name}</span>
+                      {!readOnly&&<button onClick={()=>{setDraftName(project.name);setEditingName(true);}} title="Edit project name" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:"0 4px"}}>✏️</button>}
+                    </div>
+                    {project.bcCustomerName&&<span style={{fontSize:18,fontWeight:700,color:C.teal}}>{project.bcCustomerName}</span>}
                   </div>
                 </div>
               )}
