@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.78";
+const APP_VERSION="v1.10.79";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -2063,8 +2063,8 @@ function projectStatus(project){
   const panels=project.panels||[];
   if(!panels.length)return project.status||"draft";
   const statuses=panels.map(p=>p.status||"draft");
-  const rank={draft:0,extracted:1,validated:2,costed:3,quoted:4};
-  const rankToStatus=["draft","extracted","validated","costed","quoted"];
+  const rank={draft:0,extracted:1,validated:2,costed:3,pushed_to_bc:4,quoted:5};
+  const rankToStatus=["draft","extracted","validated","costed","pushed_to_bc","quoted"];
   const maxRank=Math.max(...statuses.map(s=>rank[s]||0));
   return rankToStatus[maxRank]||"draft";
 }
@@ -2074,7 +2074,8 @@ function Badge({status}){
     in_progress:[C.yellowDim,C.yellow,"In Progress"],
     extracted:[C.greenDim,C.green,"Extracted"],
     validated:[C.accentDim,C.accent,"Validated"],
-    costed:["#052e1c",C.green,"Costed and Ready"],
+    costed:["#052e1c",C.green,"Costed"],
+    pushed_to_bc:["#0d1f3c","#38bdf8","Pushed to BC"],
     quoted:[C.yellowDim,C.yellow,"Quoted"],
     imported:["#1a1040","#a78bfa","Imported"]
   };
@@ -4834,13 +4835,13 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           }}
         />
       )}
-      {showCreateItem&&<CreateItemInBCModal panel={panel} onClose={()=>setShowCreateItem(false)}/>}
+      {showCreateItem&&<CreateItemInBCModal panel={panel} onClose={()=>setShowCreateItem(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
     </div>
   );
 }
 
 // ── CREATE ITEM IN BC MODAL ──
-function CreateItemInBCModal({panel,onClose}){
+function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
   const [description,setDescription]=useState(panel.drawingDesc||panel.name||"");
   const [vendorItemNo,setVendorItemNo]=useState([panel.drawingNo,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join(" ")||"");
   const [categoryCode,setCategoryCode]=useState("");
@@ -4892,7 +4893,29 @@ function CreateItemInBCModal({panel,onClose}){
           (i,total,pn)=>setProgress(`Adding BOM line ${i+1}/${total}: ${pn}…`)
         );
       }
-      setResult({itemNumber:created.number,bomAdded:bomResult.added,bomSkipped:bomResult.skipped,bomErrors:bomResult.errors,bomWarning:bomResult.warning});
+
+      // Determine if push was fully successful (item created, BOM lines added with no errors)
+      const itemCreated=!!created.number;
+      const bomFullyPushed=mergedBom.length===0||(bomResult.added>0&&bomResult.errors.length===0);
+      const pushSuccess=itemCreated&&bomFullyPushed&&!bomResult.warning;
+
+      const resultData={
+        itemNumber:created.number,
+        bomAdded:bomResult.added,
+        bomSkipped:bomResult.skipped,
+        bomErrors:bomResult.errors,
+        bomWarning:bomResult.warning,
+        pushSuccess
+      };
+      setResult(resultData);
+
+      // Only set pushed_to_bc status if item was fully created and all BOM lines pushed without errors
+      if(pushSuccess&&onUpdate&&onSaveImmediate){
+        const updated={...panel,status:"pushed_to_bc",bcItemNumber:created.number,updatedAt:Date.now()};
+        onUpdate(updated);
+        try{await onSaveImmediate(updated);}catch(se){console.warn("Status save failed:",se);}
+      }
+
       setPhase("done");
     }catch(e){
       setResult({error:e.message});
@@ -4992,10 +5015,19 @@ function CreateItemInBCModal({panel,onClose}){
 
         {phase==="done"&&(
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            <div style={{background:C.greenDim,border:`1px solid ${C.green}44`,borderRadius:8,padding:16}}>
-              <div style={{fontSize:15,fontWeight:700,color:C.green,marginBottom:4}}>✓ Item Created Successfully</div>
-              <div style={{fontSize:13,color:C.sub}}>BC Item Number: <span style={{fontFamily:"monospace",color:C.accent,fontWeight:700}}>{result.itemNumber}</span></div>
-            </div>
+            {result.pushSuccess?(
+              <div style={{background:"#0d1f3c",border:"1px solid #38bdf844",borderRadius:8,padding:16}}>
+                <div style={{fontSize:15,fontWeight:700,color:"#38bdf8",marginBottom:6}}>✓ Pushed to BC — Status Updated</div>
+                <div style={{fontSize:13,color:C.sub,marginBottom:4}}>BC Item Number: <span style={{fontFamily:"monospace",color:C.accent,fontWeight:700}}>{result.itemNumber}</span></div>
+                <div style={{fontSize:12,color:"#38bdf8aa"}}>Panel status set to <strong>PUSHED TO BC</strong></div>
+              </div>
+            ):(
+              <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}44`,borderRadius:8,padding:16}}>
+                <div style={{fontSize:15,fontWeight:700,color:C.yellow,marginBottom:6}}>⚠ Item Created — Partial Push</div>
+                <div style={{fontSize:13,color:C.sub,marginBottom:4}}>BC Item Number: <span style={{fontFamily:"monospace",color:C.accent,fontWeight:700}}>{result.itemNumber}</span></div>
+                <div style={{fontSize:12,color:C.yellow}}>BOM had errors or warnings — status not updated to Pushed to BC. Resolve issues and retry.</div>
+              </div>
+            )}
             <div style={{fontSize:13,color:C.muted}}>
               Assembly BOM: <span style={{color:C.green}}>{result.bomAdded} component{result.bomAdded!==1?"s":""} added</span>
               {result.bomSkipped>0&&<span style={{color:C.yellow}}> · {result.bomSkipped} skipped</span>}
@@ -5685,8 +5717,8 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
       return [{label:null,items:sorted}];
     }
     if(groupBy==="status"){
-      const order=["draft","extracted","validated","costed","quoted"];
-      const labels={draft:"Draft",extracted:"Extracted",validated:"Validated",costed:"Costed",quoted:"Quoted"};
+      const order=["draft","extracted","validated","costed","pushed_to_bc","quoted"];
+      const labels={draft:"Draft",extracted:"Extracted",validated:"Validated",costed:"Costed",pushed_to_bc:"Pushed to BC",quoted:"Quoted"};
       const map={};
       list.forEach(p=>{const st=projectStatus(p);if(!map[st])map[st]=[];map[st].push(p);});
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
@@ -5769,8 +5801,8 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
           {(groupBy==="customer"||groupBy==="status")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,Extracted:C.green,Validated:C.accent,Costed:C.green,Quoted:C.yellow};
-                const statusColBg={Draft:C.border,Extracted:C.greenDim,Validated:C.accentDim,Costed:"#052e1c",Quoted:C.yellowDim};
+                const statusColColors={Draft:C.muted,Extracted:C.green,Validated:C.accent,Costed:C.green,"Pushed to BC":"#38bdf8",Quoted:C.yellow};
+                const statusColBg={Draft:C.border,Extracted:C.greenDim,Validated:C.accentDim,Costed:"#052e1c","Pushed to BC":"#0d1f3c",Quoted:C.yellowDim};
                 const colColor=groupBy==="status"?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=groupBy==="status"?(statusColBg[g.label]||C.border):"#2a2a3e";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
@@ -5816,8 +5848,8 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
                 {transferred.map(p=>{
                   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
                   const st=projectStatus(p);
-                  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,quoted:C.yellow};
-                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
+                  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,pushed_to_bc:"#38bdf8",quoted:C.yellow};
+                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",pushed_to_bc:"PUSHED TO BC",quoted:"QUOTED"};
                   return(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
                     style={{...card({padding:"10px 14px"}),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s",display:"flex",flexDirection:"column"}}
