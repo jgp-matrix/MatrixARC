@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.61";
+const APP_VERSION="v1.10.62";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5771,12 +5771,15 @@ function App({user}){
         const [bcProjects,bcCustomers,odataProjects]=await Promise.all([bcLoadAllProjects(),bcLoadAllCustomers(),bcLoadAllProjectsOData()]);
         // Build OData lookup by project No for rich customer fields
         const odataByNo=Object.fromEntries(odataProjects.filter(op=>op.No).map(op=>[op.No,op]));
+        console.log("DEBUG OData keys sample:",Object.keys(odataByNo).slice(0,10),"has PRJ402014:",!!odataByNo["PRJ402014"]);
         const bcById=Object.fromEntries(bcProjects.filter(bp=>bp.id).map(bp=>[bp.id,bp]));
         const custByNumber=Object.fromEntries(bcCustomers.map(c=>[c.number,c.displayName]));
         function extractCustomer(bp){
           const odata=odataByNo[bp.number]||{};
-          const custNo=odata.Bill_to_Customer_No||odata.Sell_to_Customer_No||bp.billToCustomerNumber||bp.billToCustomerNo||"";
-          const custName=odata.Bill_to_Name||odata.Sell_to_Customer_Name||bp.billToName||bp.billToCustomerName||(custNo?custByNumber[custNo]||"":"");
+          if(bp.number==="PRJ402014")console.log("DEBUG PRJ402014 odata keys:",Object.keys(odata).join(","),"Sell_to_Customer_No:",odata.Sell_to_Customer_No,"Sell_to_Customer_Name:",odata.Sell_to_Customer_Name);
+          const custNo=odata.Sell_to_Customer_No||odata.CCS_Sell_to_Customer_No||odata.Bill_to_Customer_No||bp.billToCustomerNumber||bp.billToCustomerNo||"";
+          const custName=odata.Sell_to_Customer_Name||odata.Bill_to_Name||bp.billToName||bp.billToCustomerName||(custNo?custByNumber[custNo]||"":"");
+          if(bp.number==="PRJ402014")console.log("DEBUG PRJ402014 result custNo:",custNo,"custName:",custName);
           return{bcCustomerNumber:custNo,bcCustomerName:custName};
         }
         setProjects(ps=>{
