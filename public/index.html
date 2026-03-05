@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.72";
+const APP_VERSION="v1.10.73";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -909,6 +909,33 @@ async function bcListVendors(){
     const d=await r.json();
     return(d.value||[]).map(v=>({number:v.number||"",displayName:v.displayName||""}));
   }catch(e){console.warn("bcListVendors error:",e);return[];}
+}
+
+async function bcAddAssemblyBOMLines(parentItemNo,bomRows,onProgress){
+  const result={added:0,skipped:0,errors:[],warning:""};
+  if(!bomRows||!bomRows.length)return result;
+  const allPages=await bcDiscoverODataPages();
+  const bomPage=allPages.find(n=>/assembly.*bom|bom.*comp/i.test(n))||null;
+  if(!bomPage){
+    result.warning="No Assembly BOM OData page found. In BC, go to Web Services → New → Object Type: Page, Object ID: 36, Service Name: AssemblyBOM, Published: true.";
+    return result;
+  }
+  for(let i=0;i<bomRows.length;i++){
+    const row=bomRows[i];
+    const pn=(row.partNumber||"").trim();
+    if(!pn){result.skipped++;continue;}
+    if(onProgress)onProgress(i,bomRows.length,pn);
+    try{
+      const r=await fetch(`${BC_ODATA_BASE}/${bomPage}`,{
+        method:"POST",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+        body:JSON.stringify({Parent_Item_No:parentItemNo,Type:"Item",No:pn,Quantity_per:+(row.qty||1)})
+      });
+      if(r.ok){result.added++;}
+      else{const t=await r.text();result.errors.push(`${pn}: ${t.slice(0,120)}`);result.skipped++;}
+    }catch(e){result.errors.push(`${pn}: ${e.message}`);result.skipped++;}
+  }
+  return result;
 }
 
 // ── IMAGE RESIZE ──
@@ -4799,6 +4826,179 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   );
 }
 
+// ── CREATE ITEM IN BC MODAL ──
+function CreateItemInBCModal({project,onClose}){
+  const [description,setDescription]=useState(project.name||"");
+  const [vendorItemNo,setVendorItemNo]=useState([project.dwgNumber,project.dwgRevision].filter(Boolean).join(" ")||"");
+  const [categoryCode,setCategoryCode]=useState("");
+  const [categories,setCategories]=useState([]);
+  const [phase,setPhase]=useState("setup"); // setup | creating | done | error
+  const [progress,setProgress]=useState("");
+  const [result,setResult]=useState(null);
+
+  // Merge all panel BOMs, keep only rows with a part number
+  const mergedBom=React.useMemo(()=>
+    mergeBoms((project.panels||[]).map(p=>p.bom||[]).filter(b=>b.length))
+      .filter(r=>(r.partNumber||"").trim())
+      .sort((a,b)=>(a.partNumber||"").localeCompare(b.partNumber||""))
+  ,[project]);
+
+  useEffect(()=>{
+    bcListItemCategories().then(setCategories).catch(()=>{});
+  },[]);
+
+  async function handleCreate(){
+    if(!description.trim())return;
+    setPhase("creating");
+    setProgress("Creating item in Business Central…");
+    try{
+      if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
+      if(!_bcToken){_bcToken=await acquireBcToken(true)||null;}
+      if(!_bcToken)throw new Error("Not connected to Business Central");
+
+      // Step 1: Create the Item via REST API
+      const created=await bcCreateItem({displayName:description.trim(),itemCategoryCode:categoryCode||undefined,type:"Assembly"});
+      setProgress(`Item ${created.number} created. Setting Vendor Item No…`);
+
+      // Step 2: Patch Vendor_Item_No via OData
+      if(vendorItemNo.trim()){
+        try{await bcPatchItemOData(created.number,{Vendor_Item_No:vendorItemNo.trim()});}
+        catch(ve){console.warn("Vendor_Item_No patch failed:",ve);}
+      }
+
+      // Step 3: Add Assembly BOM lines
+      let bomResult={added:0,skipped:0,errors:[],warning:""};
+      if(mergedBom.length>0){
+        setProgress(`Adding ${mergedBom.length} assembly BOM components…`);
+        bomResult=await bcAddAssemblyBOMLines(
+          created.number,
+          mergedBom,
+          (i,total,pn)=>setProgress(`Adding BOM line ${i+1}/${total}: ${pn}…`)
+        );
+      }
+      setResult({itemNumber:created.number,bomAdded:bomResult.added,bomSkipped:bomResult.skipped,bomErrors:bomResult.errors,bomWarning:bomResult.warning});
+      setPhase("done");
+    }catch(e){
+      setResult({error:e.message});
+      setPhase("error");
+    }
+  }
+
+  const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999,padding:24};
+  const modalCard={...card({padding:28}),width:"100%",maxWidth:680,maxHeight:"90vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:16};
+
+  return(
+    <div style={overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={modalCard}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:18,fontWeight:700}}>Create Item in BC</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
+        </div>
+
+        {phase==="setup"&&(<>
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Description</div>
+              <input value={description} onChange={e=>setDescription(e.target.value)} style={inp()} placeholder="Item description…"/>
+            </div>
+            <div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Vendor Item No. <span style={{fontWeight:400}}>(DWG # + Rev)</span></div>
+              <input value={vendorItemNo} onChange={e=>setVendorItemNo(e.target.value)} style={inp()} placeholder="e.g. DWG-1234 Rev B"/>
+            </div>
+            <div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Item Category Code <span style={{color:C.red}}>*</span></div>
+              <select value={categoryCode} onChange={e=>setCategoryCode(e.target.value)}
+                style={{...inp(),cursor:"pointer"}}>
+                <option value="">— Select Category —</option>
+                {categories.map(c=><option key={c.code} value={c.code}>{c.code}{c.description?" – "+c.description:""}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {mergedBom.length>0?(
+            <div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:8,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Assembly BOM — {mergedBom.length} component{mergedBom.length!==1?"s":""}</div>
+              <div style={{maxHeight:220,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:8}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                  <thead>
+                    <tr style={{background:C.border}}>
+                      <th style={{textAlign:"left",padding:"6px 10px",color:C.muted,fontWeight:600}}>Part #</th>
+                      <th style={{textAlign:"center",padding:"6px 10px",color:C.muted,fontWeight:600,width:60}}>Qty</th>
+                      <th style={{textAlign:"left",padding:"6px 10px",color:C.muted,fontWeight:600}}>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mergedBom.map((row,i)=>(
+                      <tr key={i} style={{borderTop:`1px solid ${C.border}`}}>
+                        <td style={{padding:"5px 10px",fontFamily:"monospace",color:C.accent}}>{row.partNumber}</td>
+                        <td style={{padding:"5px 10px",textAlign:"center",color:C.text}}>{row.qty||1}</td>
+                        <td style={{padding:"5px 10px",color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:240}}>{row.description||"—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ):(
+            <div style={{padding:16,background:C.border,borderRadius:8,fontSize:13,color:C.muted,textAlign:"center"}}>No BOM components with part numbers found in this project.</div>
+          )}
+
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
+            <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
+            <button onClick={handleCreate} disabled={!description.trim()||!categoryCode}
+              style={btn(C.accent,"#fff",{fontSize:13,opacity:!description.trim()||!categoryCode?0.4:1})}>
+              Create Item in BC
+            </button>
+          </div>
+        </>)}
+
+        {phase==="creating"&&(
+          <div style={{textAlign:"center",padding:"40px 20px"}}>
+            <div className="spin" style={{fontSize:28,marginBottom:16,color:C.accent}}>◌</div>
+            <div style={{fontSize:14,color:C.sub}}>{progress}</div>
+          </div>
+        )}
+
+        {phase==="done"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{background:C.greenDim,border:`1px solid ${C.green}44`,borderRadius:8,padding:16}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.green,marginBottom:4}}>✓ Item Created Successfully</div>
+              <div style={{fontSize:13,color:C.sub}}>BC Item Number: <span style={{fontFamily:"monospace",color:C.accent,fontWeight:700}}>{result.itemNumber}</span></div>
+            </div>
+            <div style={{fontSize:13,color:C.muted}}>
+              Assembly BOM: <span style={{color:C.green}}>{result.bomAdded} component{result.bomAdded!==1?"s":""} added</span>
+              {result.bomSkipped>0&&<span style={{color:C.yellow}}> · {result.bomSkipped} skipped</span>}
+            </div>
+            {result.bomWarning&&<div style={{fontSize:12,color:C.yellow,background:C.yellowDim,borderRadius:6,padding:"8px 12px"}}>{result.bomWarning}</div>}
+            {result.bomErrors.length>0&&(
+              <div style={{fontSize:12,color:C.red,background:C.redDim,borderRadius:6,padding:"8px 12px",maxHeight:120,overflowY:"auto"}}>
+                <div style={{fontWeight:700,marginBottom:4}}>BOM errors ({result.bomErrors.length}):</div>
+                {result.bomErrors.map((e,i)=><div key={i} style={{marginBottom:2}}>• {e}</div>)}
+              </div>
+            )}
+            <div style={{textAlign:"right"}}>
+              <button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Close</button>
+            </div>
+          </div>
+        )}
+
+        {phase==="error"&&(
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:16}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.red,marginBottom:4}}>✕ Creation Failed</div>
+              <div style={{fontSize:13,color:C.sub}}>{result.error}</div>
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
+              <button onClick={()=>setPhase("setup")} style={btn(C.accent,"#fff",{fontSize:13})}>Try Again</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── PANEL LIST VIEW ──
 function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
   const [editingName,setEditingName]=useState(false);
@@ -4806,7 +5006,16 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
   const [validating,setValidating]=useState(false);
   const [validateMsg,setValidateMsg]=useState("");
+  const [showCreateItem,setShowCreateItem]=useState(false);
+  const [editingDwg,setEditingDwg]=useState(false);
+  const [draftDwgNumber,setDraftDwgNumber]=useState(project.dwgNumber||"");
+  const [draftDwgRevision,setDraftDwgRevision]=useState(project.dwgRevision||"");
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
+
+  function saveDwg(){
+    onUpdate({...project,dwgNumber:draftDwgNumber.trim(),dwgRevision:draftDwgRevision.trim().toUpperCase()});
+    setEditingDwg(false);
+  }
 
   function addPanel(){
     const n=(project.panels||[]).length+1;
@@ -4884,6 +5093,26 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
                       {project.importedFromBC&&<Badge status="imported"/>}
                     </div>
                     {project.bcCustomerName&&<span style={{fontSize:18,fontWeight:700,color:C.teal}}>{project.bcCustomerName}</span>}
+                    {editingDwg?(
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
+                        <input value={draftDwgNumber} onChange={e=>setDraftDwgNumber(e.target.value)} placeholder="DWG #"
+                          style={{...inp(),fontSize:13,padding:"3px 8px",width:130}}
+                          onKeyDown={e=>{if(e.key==="Enter")saveDwg();if(e.key==="Escape")setEditingDwg(false);}}/>
+                        <input value={draftDwgRevision} onChange={e=>setDraftDwgRevision(e.target.value)} placeholder="Rev"
+                          style={{...inp(),fontSize:13,padding:"3px 8px",width:60}}
+                          onKeyDown={e=>{if(e.key==="Enter")saveDwg();if(e.key==="Escape")setEditingDwg(false);}}/>
+                        <button onClick={saveDwg} style={btn(C.accent,"#fff",{fontSize:12,padding:"3px 10px"})}>✓</button>
+                        <button onClick={()=>setEditingDwg(false)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12}}>Cancel</button>
+                      </div>
+                    ):(
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginTop:2}}>
+                        <span style={{fontSize:13,color:C.muted}}>
+                          DWG: <span style={{color:project.dwgNumber?C.sub:C.border,fontFamily:"monospace"}}>{project.dwgNumber||"—"}</span>
+                          {project.dwgRevision&&<span style={{color:C.sub}}> Rev {project.dwgRevision}</span>}
+                        </span>
+                        {!readOnly&&<button onClick={()=>{setDraftDwgNumber(project.dwgNumber||"");setDraftDwgRevision(project.dwgRevision||"");setEditingDwg(true);}} title="Edit DWG # and Rev" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"0 3px"}}>✏️</button>}
+                      </div>
+                    )}
                     <span style={{fontSize:13,color:C.muted}}>Created: {project.createdAt?new Date(project.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):project.updatedAt?new Date(project.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</span>
                   </div>
                 </div>
@@ -4891,9 +5120,10 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
               {bcSyncMsg&&<div style={{fontSize:12,color:bcSyncMsg.ok===null?C.muted:bcSyncMsg.ok?C.green:C.yellow,marginBottom:2}}>{bcSyncMsg.text}</div>}
               <div style={{fontSize:13,color:C.muted}}>{panels.length} panel{panels.length!==1?"s":""}</div>
             </div>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
               {panels.length>0&&<button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13})}>📊 View Quote</button>}
+              {!readOnly&&<button onClick={()=>setShowCreateItem(true)} style={btn("#1a1040","#a78bfa",{fontSize:13,border:"1px solid #a78bfa44"})}>⚙ Create Item in BC</button>}
             </div>
           </div>
           {panels.length===0?(
@@ -4927,6 +5157,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate}){
         </div>
       </div>
     </div>
+    {showCreateItem&&<CreateItemInBCModal project={project} onClose={()=>setShowCreateItem(false)}/>}
   );
 }
 
