@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.82";
+const APP_VERSION="v1.10.83";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -343,6 +343,27 @@ function computeLaborEstimate(panel){
     isLegacy:false,
     isOverride:false
   };
+}
+
+// ── LABOR BOM ROWS (auto-managed, always first 3 rows) ──
+const LABOR_BOM_GROUPS=[
+  {partNumber:"1012",description:"CUT",   cats:["Panel Holes","Side Devices","HVAC/Fans"]},
+  {partNumber:"1013",description:"LAYOUT",cats:["Device Mounting","Duct & DIN Rail","Labels"]},
+  {partNumber:"1014",description:"WIRE",  cats:["Wire Time","Door Wiring"]},
+];
+function buildLaborBomRows(panel){
+  const est=computeLaborEstimate(panel);
+  if(!est.lines.length)return[];
+  return LABOR_BOM_GROUPS.map(g=>{
+    const hrs=est.lines.filter(l=>g.cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
+    return{id:`labor-${g.partNumber}`,isLaborRow:true,partNumber:g.partNumber,description:g.description,qty:Math.ceil(hrs)||0,unitPrice:null,priceSource:"bc",manufacturer:"",notes:""};
+  });
+}
+function syncLaborBomRows(panel){
+  const laborRows=buildLaborBomRows(panel);
+  if(!laborRows.length)return panel;
+  const nonLabor=(panel.bom||[]).filter(r=>!r.isLaborRow);
+  return{...panel,bom:[...laborRows,...nonLabor]};
 }
 
 // Load MSAL on demand — not at page load (avoids conflict with Firebase Microsoft auth)
@@ -1117,8 +1138,10 @@ function appendDefaultBomItems(bom){
   if(!_defaultBomItems.length){console.log("APPEND DEFAULTS: skipped — no defaults configured");return bom;}
   const lower=new Set(bom.map(r=>(r.description||"").trim().toLowerCase()));
   console.log("APPEND DEFAULTS: existing BOM descriptions:",[...lower]);
+  const _laborPns=new Set(LABOR_BOM_GROUPS.map(g=>g.partNumber));
   const items=[];
   for(const tpl of _defaultBomItems){
+    if(_laborPns.has((tpl.partNumber||"").trim()))continue;
     const desc=(tpl.description||"").trim().toLowerCase();
     if(desc&&lower.has(desc)){console.log("APPEND DEFAULTS: skipped (duplicate):",tpl.description);continue;}
     items.push({id:Date.now()+Math.random(),qty:tpl.qty||1,partNumber:tpl.partNumber||"",description:tpl.description||"",manufacturer:tpl.manufacturer||"",notes:"",unitPrice:tpl.unitPrice||0,priceSource:tpl.priceSource||null,autoLoaded:true});
@@ -3649,6 +3672,21 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   },[uid]);
   useEffect(()=>()=>{if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);},[]);
 
+  // Auto-sync labor BOM rows whenever labor data or pricing changes
+  const _laborSyncKey=JSON.stringify([panel.laborData,panel.pricing?.laborRate,panel.pricing?.laborHoursOverride]);
+  useEffect(()=>{
+    const laborRows=buildLaborBomRows(panel);
+    if(!laborRows.length)return;
+    const curLabor=(panel.bom||[]).filter(r=>r.isLaborRow);
+    const same=laborRows.length===curLabor.length&&laborRows.every((lr,i)=>curLabor[i]&&curLabor[i].qty===lr.qty&&curLabor[i].partNumber===lr.partNumber);
+    if(same)return;
+    const nonLabor=(panel.bom||[]).filter(r=>!r.isLaborRow);
+    const updated={...panel,bom:[...laborRows,...nonLabor]};
+    onUpdate(updated);
+    const t=setTimeout(()=>onSaveImmediate(updated).catch(()=>{}),800);
+    return()=>clearTimeout(t);
+  },[_laborSyncKey]);
+
   const savedPages=panel.pages||[];
   const pages=pendingPages.length>0?pendingPages:savedPages;
   const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted};
@@ -4313,6 +4351,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               <tbody>
                 {(()=>{
                   const sortedBom=(panel.bom||[]).slice().sort((a,b)=>{
+                    if(a.isLaborRow&&!b.isLaborRow)return -1;
+                    if(!a.isLaborRow&&b.isLaborRow)return 1;
+                    if(a.isLaborRow&&b.isLaborRow)return(a.partNumber||"").localeCompare(b.partNumber||"");
                     if(!a.itemNo&&!b.itemNo)return 0;
                     if(!a.itemNo)return 1;
                     if(!b.itemNo)return -1;
@@ -4326,7 +4367,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   const ntIds=valData?new Set((valData.notTraceable||[]).map(m=>String(m.id))):null;
                   const wAccepted=new Set((panel.wiringAccepted||[]).map(String));
                   return sortedBom.map((row,i)=>(
-                  <tr key={row.id} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:(+row.qty===0||+row.unitPrice===0)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
+                  <tr key={row.id} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:row.isLaborRow?"#0a1628":(!row.isLaborRow&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
                       {row.itemNo||i+1}
                     </td>
@@ -4349,15 +4390,15 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         {mode==="fit"?(
                           <div>
                           <div style={{display:"flex",alignItems:"center"}}>
-                          {f==="partNumber"&&!readOnly&&_bcToken&&(
+                          {f==="partNumber"&&!readOnly&&!row.isLaborRow&&_bcToken&&(
                             <button title="Browse BC items" onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
                               style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"2px 4px",lineHeight:1,opacity:0.85,flexShrink:0,filter:"brightness(1.8)"}}
                               onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
                           )}
                           <div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>
                             <span style={{visibility:"hidden",whiteSpace:"pre",fontSize:13,fontFamily:"inherit",padding:"5px 20px 5px 7px",display:"block",pointerEvents:"none"}}>{row[f]||"\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"}</span>
-                            <input value={row[f]||""} readOnly={readOnly}
-                              onChange={e=>updateBomRow(row.id,f,e.target.value)}
+                            <input value={row[f]||""} readOnly={readOnly||row.isLaborRow}
+                              onChange={e=>!row.isLaborRow&&updateBomRow(row.id,f,e.target.value)}
                               onBlur={e=>{
                                 e.target.style.borderColor="transparent";
                                 const val=e.target.value;
@@ -4435,8 +4476,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           )}
                           </div>
                         ):(
-                          <input value={row[f]||""} readOnly={readOnly}
-                            onChange={e=>updateBomRow(row.id,f,e.target.value)}
+                          <input value={row[f]||""} readOnly={readOnly||row.isLaborRow}
+                            onChange={e=>!row.isLaborRow&&updateBomRow(row.id,f,e.target.value)}
                             onBlur={e=>{
                               e.target.style.borderColor="transparent";
                               const val=e.target.value;
@@ -4455,10 +4496,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     ))}
                     <td style={{padding:"3px 5px",textAlign:"right",width:110}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
-                        {row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
-                        {row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>AI</span>}
-                        {row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>M</span>}
+                        {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>LABOR</span>}
+                        {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
+                        {!row.isLaborRow&&row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>AI</span>}
+                        {!row.isLaborRow&&row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>M</span>}
                         <div style={{display:"inline-flex",alignItems:"center",gap:0,marginLeft:"auto"}}>
+                        {row.isLaborRow?<span style={{color:C.muted,fontSize:13,minWidth:70,textAlign:"right"}}>— auto</span>:<>
                         <span style={{color:C.muted,fontSize:13,lineHeight:1}}>$</span>
                         <input type="text" inputMode="decimal" readOnly={readOnly}
                           defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
@@ -4469,11 +4512,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";const v=e.target.value.trim();if(v===""){updatePrice(row.id,"");}else{const n=parseFloat(v);if(!isNaN(n)){e.target.value=n.toFixed(2);updatePrice(row.id,String(n));}else{e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";}}}}
                           onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";e.target.blur();}}}
                         />
+                        </>}
                         </div>
                       </div>
                     </td>
                     <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
-                      {row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
+                      {row.isLaborRow?"—":row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:44}}>
                       {valData&&(
@@ -4486,7 +4530,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     </td>
                     <td style={{padding:"3px 3px",textAlign:"center",width:90}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:0}}>
-                        {!readOnly&&<button onClick={()=>deleteBomRow(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"2px 4px",width:28,textAlign:"center"}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
+                        {!readOnly&&!row.isLaborRow&&<button onClick={()=>deleteBomRow(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"2px 4px",width:28,textAlign:"center"}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
                       </div>
                     </td>
                   </tr>
