@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.89";
+const APP_VERSION="v1.10.90";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4831,7 +4831,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         disabled={!!panel.bcItemNumber||pendingBcCount>0}
                         title={panel.bcItemNumber?`Item ${panel.bcItemNumber} already created in BC`:pendingBcCount>0?`${pendingBcCount} part${pendingBcCount>1?"s":""} not yet verified in BC — resolve all blue BC circles first`:undefined}
                         style={{background:"#111",border:"1px solid #444",color:panel.bcItemNumber?"#38bdf8":"#555",cursor:"default",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:panel.bcItemNumber?0.7:pendingBcCount>0?0.5:1}}>
-                        {panel.bcItemNumber?`✓ Item Created (${panel.bcItemNumber})`:"⚙ Create Item in BC"}
+                        {panel.bcItemNumber?`✓ Item Already Created (Item# ${panel.bcItemNumber})`:"⚙ Create Item in BC"}
                       </button>
                       {pendingBcCount>0&&<span style={{fontSize:10,color:"#f87171",textAlign:"right"}}>{pendingBcCount} unverified BC part{pendingBcCount>1?"s":""}</span>}
                     </div>
