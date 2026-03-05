@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.112";
+const APP_VERSION="v1.10.113";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -6129,7 +6129,7 @@ function NewProjectModal({uid,onCreated,onClose}){
 }
 
 // ── DASHBOARD ──
-function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdateProject}){
+function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject}){
   const [groupBy,setGroupBy]=useState("status");
   const [hideImported,setHideImported]=useState({});
   const [dragProjectId,setDragProjectId]=useState(null);
@@ -6273,7 +6273,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
                   {g.label&&<div style={{background:isOver?C.accent:colBg,color:isOver?"#fff":colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",transition:"background 0.15s,color 0.15s",outline:isDropTarget&&dragProjectId?(isOver?"2px solid "+C.accent:"2px dashed "+C.accent+"66"):"none",outlineOffset:2}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
                   <div style={{display:"flex",flexDirection:"column",gap:8,borderRadius:8,padding:isOver?"6px":"0",background:isOver?"#1e2e1e":"transparent",transition:"background 0.15s,padding 0.15s"}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete}
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
                         draggable={isNoCustomer}
                         onDragStart={isNoCustomer?e=>{e.dataTransfer.effectAllowed="move";setDragProjectId(p.id);}:undefined}
                         onDragEnd={isNoCustomer?()=>{setDragProjectId(null);setDropTarget(null);}:undefined}/>
@@ -6290,7 +6290,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
                   {g.label&&<div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:12,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>{g.label}</div>}
                   <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete}/>
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}/>
                     ))}
                   </div>
                 </div>
@@ -6343,8 +6343,82 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onUpdate
   );
 }
 
+// ── TRANSFER PROJECT MODAL ──
+function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onClose}){
+  const [members,setMembers]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [recipientUid,setRecipientUid]=useState("");
+  const [saving,setSaving]=useState(false);
+  const [err,setErr]=useState("");
+
+  useEffect(()=>{
+    if(!companyId){setLoading(false);return;}
+    fbDb.collection(`companies/${companyId}/members`).get()
+      .then(snap=>{
+        const all=snap.docs.map(d=>({uid:d.id,...d.data()})).filter(m=>m.uid!==uid);
+        setMembers(all);setLoading(false);
+      })
+      .catch(e=>{setErr("Failed to load members: "+e.message);setLoading(false);});
+  },[companyId]);
+
+  async function doTransfer(){
+    if(!recipientUid)return;
+    setSaving(true);setErr("");
+    try{
+      const path=_appCtx.projectsPath||`users/${uid}/projects`;
+      await fbDb.doc(`${path}/${project.id}`).update({
+        transferred:true,
+        transferredTo:recipientUid,
+        transferredFrom:{uid,email:userEmail},
+        createdBy:recipientUid,
+      });
+      onTransferred(project.id);
+    }catch(e){setErr(e.message);setSaving(false);}
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:9999,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:12,padding:24,width:"100%",maxWidth:420,display:"flex",flexDirection:"column",gap:16}}>
+        <div style={{fontSize:16,fontWeight:700,color:C.text}}>Transfer Project</div>
+        <div style={{fontSize:13,color:C.sub}}>
+          Move <span style={{color:C.accent,fontWeight:600}}>{project.name}</span> to another team member. They'll receive it in their Transferred Projects section.
+        </div>
+        {loading?(
+          <div style={{fontSize:13,color:C.muted}}>Loading members…</div>
+        ):!companyId?(
+          <div style={{fontSize:13,color:C.red}}>You must be in a Company workspace to transfer projects.</div>
+        ):members.length===0?(
+          <div style={{fontSize:13,color:C.muted}}>No other team members found.</div>
+        ):(
+          <>
+            <div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Transfer To</div>
+              <select value={recipientUid} onChange={e=>setRecipientUid(e.target.value)}
+                style={{width:"100%",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",color:recipientUid?C.text:C.muted,fontSize:14}}>
+                <option value="">Select a team member…</option>
+                {members.map(m=>(
+                  <option key={m.uid} value={m.uid}>{m.email} ({m.role})</option>
+                ))}
+              </select>
+            </div>
+            {recipientUid&&<div style={{fontSize:11,color:C.muted}}>The project will move out of your list immediately. The recipient can accept it from their dashboard.</div>}
+          </>
+        )}
+        {err&&<div style={{fontSize:12,color:C.red}}>{err}</div>}
+        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <button onClick={onClose} disabled={saving} style={btn(C.border,C.sub)}>Cancel</button>
+          <button onClick={doTransfer} disabled={saving||!recipientUid||loading}
+            style={btn(C.accent,"#fff",{opacity:(saving||!recipientUid||loading)?0.5:1})}>
+            {saving?"Transferring…":"Transfer"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete,draggable:isDraggable,onDragStart,onDragEnd}){
+function ProjectTile({p,onOpen,onDelete,onTransfer,draggable:isDraggable,onDragStart,onDragEnd}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
@@ -6359,11 +6433,20 @@ function ProjectTile({p,onOpen,onDelete,draggable:isDraggable,onDragStart,onDrag
     style={{...card({padding:"8px 10px"}),border:"1px solid #4a5080",cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column"}}
     onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
     onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
-    <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
-      title="Delete project"
-      style={{position:"absolute",top:6,right:6,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"2px 4px",borderRadius:4,transition:"color 0.15s"}}
-      onMouseEnter={e=>e.currentTarget.style.color=C.red}
-      onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+    <div style={{position:"absolute",top:6,right:6,display:"flex",gap:2}}>
+      {onTransfer&&(
+        <button onClick={e=>{e.stopPropagation();onTransfer(p);}}
+          title="Transfer project to another owner"
+          style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,lineHeight:1,padding:"2px 4px",borderRadius:4,transition:"color 0.15s"}}
+          onMouseEnter={e=>e.currentTarget.style.color=C.accent}
+          onMouseLeave={e=>e.currentTarget.style.color=C.muted}>⇄</button>
+      )}
+      <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
+        title="Delete project"
+        style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"2px 4px",borderRadius:4,transition:"color 0.15s"}}
+        onMouseEnter={e=>e.currentTarget.style.color=C.red}
+        onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+    </div>
     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,paddingRight:16,minWidth:0}}>
       {customerLogo&&<img src={customerLogo} alt="" style={{width:22,height:22,objectFit:"contain",borderRadius:3,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
       <div style={{fontSize:17,fontWeight:800,color:C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>{p.bcProjectNumber||"–"}</div>
@@ -6404,6 +6487,7 @@ function App({user}){
   const [showSetup,setShowSetup]=useState(false);
   const [setupDismissed,setSetupDismissed]=useState(false);
   const [deleteConfirm,setDeleteConfirm]=useState(null); // {id, name}
+  const [transferProject,setTransferProject]=useState(null); // project object
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
   const [bcLostAlert,setBcLostAlert]=useState(false);
   const bcOnlinePrev=useRef(!!_bcToken);
@@ -6570,6 +6654,11 @@ function App({user}){
     setProjects(ps=>ps.filter(x=>x.id!==deleteConfirm.id));
     setDeleteConfirm(null);
   }
+  function handleTransferDone(id){
+    setProjects(ps=>ps.filter(p=>p.id!==id));
+    setTransferProject(null);
+  }
+
   async function handleAccept(id){
     const path=_appCtx.projectsPath||`users/${user.uid}/projects`;
     await fbDb.doc(`${path}/${id}`).update({
@@ -6668,7 +6757,7 @@ function App({user}){
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}}/>
+          <Dashboard uid={user.uid} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}}/>
         </>
       )}
       {view==="project"&&openProject&&(
@@ -6678,6 +6767,7 @@ function App({user}){
       )}
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
       {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
+      {transferProject&&<TransferProjectModal project={transferProject} companyId={companyId} uid={user.uid} userEmail={user.email} onTransferred={handleTransferDone} onClose={()=>setTransferProject(null)}/>}
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={url=>setCompanyLogo(url||null)}/>}
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
