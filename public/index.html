@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.81";
+const APP_VERSION="v1.10.82";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -790,11 +790,8 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
     if(!r.ok){const txt=await r.text();throw new Error(txt||`BC returned status ${r.status}`);}
     const item=await r.json();
     // PATCH extra fields via OData ItemCard (v2.0 API doesn't expose these)
-    if(item.number){
-      const odataFields={};
-      if(vendorNo)odataFields.Vendor_No=vendorNo;
-      odataFields.Vendor_Item_No=item.number;
-      try{await bcPatchItemOData(item.number,odataFields);}
+    if(item.number&&vendorNo){
+      try{await bcPatchItemOData(item.number,{Vendor_No:vendorNo});}
       catch(ve){console.warn("OData PATCH failed:",ve);}
     }
     return{number:item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||""};
@@ -4876,14 +4873,21 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
       if(!_bcToken){_bcToken=await acquireBcToken(true)||null;}
       if(!_bcToken)throw new Error("Not connected to Business Central");
 
-      // Step 1: Create the Item via REST API
-      const created=await bcCreateItem({displayName:description.trim(),itemCategoryCode:categoryCode||undefined,baseUnitOfMeasureCode:uomCode||undefined,type:"Assembly"});
-      setProgress(`Item ${created.number} created. Setting Vendor Item No…`);
+      // Step 1: Create the Item via REST API (UoM only — other fields set via OData PATCH)
+      const created=await bcCreateItem({baseUnitOfMeasureCode:uomCode||undefined});
+      setProgress(`Item ${created.number} created. Patching fields via OData…`);
 
-      // Step 2: Patch Vendor_Item_No via OData
-      if(vendorItemNo.trim()){
-        try{await bcPatchItemOData(created.number,{Vendor_Item_No:vendorItemNo.trim()});}
-        catch(ve){console.warn("Vendor_Item_No patch failed:",ve);}
+      // Step 2: Comprehensive OData PATCH — Description, Category, Vendor Item No, Replenishment System
+      const odataFields={
+        Description:description.trim(),
+        Replenishment_System:"Assembly"
+      };
+      if(categoryCode)odataFields.Item_Category_Code=categoryCode;
+      if(vendorItemNo.trim())odataFields.Vendor_Item_No=vendorItemNo.trim();
+      try{
+        await bcPatchItemOData(created.number,odataFields);
+      }catch(pe){
+        throw new Error(`Item ${created.number} created but field patch failed: ${pe.message}. Ensure the ItemCard OData web service is published (Page 30, Service Name: ItemCard).`);
       }
 
       // Step 3: Add Assembly BOM lines
