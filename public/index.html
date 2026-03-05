@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.50";
+const APP_VERSION="v1.10.51";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5730,7 +5730,7 @@ function App({user}){
       setProjects(await loadProjects(user.uid));
       setLoading(false);
       // Auto-connect BC silently in background
-      if(!_bcToken){acquireBcToken(false).then(t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;setProjects(ps=>[...ps]);}}).catch(()=>{});}
+      if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;setProjects(ps=>[...ps]);}}).catch(()=>{});}
     })();
   },[user.uid]);
 
@@ -5747,6 +5747,7 @@ function App({user}){
   useEffect(()=>{
     if(!user?.uid)return;
     async function syncBcProjects(){
+      if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
       if(!_bcToken)return;
       try{
         const bcProjects=await bcLoadAllProjects();
@@ -5773,8 +5774,10 @@ function App({user}){
         });
       }catch(e){console.warn("BC project sync error:",e);}
     }
+    // Run immediately on load (delay slightly to allow silent BC auth to complete)
+    const initialTimer=setTimeout(syncBcProjects,3000);
     const interval=setInterval(syncBcProjects,5*60*1000);
-    return()=>clearInterval(interval);
+    return()=>{clearTimeout(initialTimer);clearInterval(interval);};
   },[user?.uid]);
 
   function handleOpen(p){setOpenProject(p);setView("project");}
