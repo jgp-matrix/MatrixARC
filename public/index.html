@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.109";
+const APP_VERSION="v1.10.110";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4749,8 +4749,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     {laborMoreInfo?"Hide Detail":"More Info"}
                   </button>
                 )}
-                {/* Collapsible detail */}
-                {laborMoreInfo&&(<>
+                {/* Collapsible detail — always rendered to preserve box height */}
+                <div style={{visibility:laborMoreInfo?"visible":"hidden"}}>
+                <>
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,marginTop:8,marginBottom:6}}>
                     <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
                       <th style={{textAlign:"center",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:12,width:24}}>&#10003;</th>
@@ -4818,7 +4819,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                       </div>
                     </div>
                   )}
-                </>)}
+                </>
+                </div>
               </div>
 
               {/* RIGHT: Pricing Summary */}
