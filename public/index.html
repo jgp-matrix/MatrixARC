@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.113";
+const APP_VERSION="v1.10.114";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5798,10 +5798,12 @@ function ProjectView({project:init,uid,onBack,onChange}){
 }
 
 // ── SETTINGS MODAL ──
-function SettingsModal({uid,onClose}){
+function SettingsModal({uid,onClose,onNameChange}){
   const [key,setKey]=useState("");
   const [loading,setLoading]=useState(true);
   const [saved,setSaved]=useState(false);
+  const [firstName,setFirstName]=useState("");
+  const [nameSaved,setNameSaved]=useState(false);
 
   const [curPass,setCurPass]=useState("");
   const [newPass,setNewPass]=useState("");
@@ -5811,11 +5813,24 @@ function SettingsModal({uid,onClose}){
   const [pwOk,setPwOk]=useState(false);
   const [resetSent,setResetSent]=useState(false);
 
+  const email=fbAuth.currentUser?.email||"";
+
   useEffect(()=>{
-    fbDb.doc(`users/${uid}/config/api`).get()
-      .then(d=>{if(d.exists)setKey(d.data().key||"");})
-      .finally(()=>setLoading(false));
+    Promise.all([
+      fbDb.doc(`users/${uid}/config/api`).get(),
+      fbDb.doc(`users/${uid}/config/profile`).get(),
+    ]).then(([apiDoc,profileDoc])=>{
+      if(apiDoc.exists)setKey(apiDoc.data().key||"");
+      if(profileDoc.exists)setFirstName(profileDoc.data().firstName||"");
+    }).finally(()=>setLoading(false));
   },[uid]);
+
+  async function saveName(){
+    const name=firstName.trim();
+    await fbDb.doc(`users/${uid}/config/profile`).set({firstName:name},{merge:true});
+    if(onNameChange)onNameChange(name);
+    setNameSaved(true);setTimeout(()=>setNameSaved(false),2000);
+  }
 
   async function save(){
     await fbDb.doc(`users/${uid}/config/api`).set({key});
@@ -5856,8 +5871,32 @@ function SettingsModal({uid,onClose}){
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
       <div style={{...card(),width:"100%",maxWidth:460}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>⚙ Settings</div>
+        <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
+          <div style={{fontSize:18,fontWeight:700,flex:1}}>⚙ Settings</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+        </div>
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Matrix ARC configuration</div>
+
+        {/* Account */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Account</div>
+          <div style={{marginBottom:12}}>
+            <label style={{fontSize:12,color:C.muted,display:"block",marginBottom:4}}>Email</label>
+            <div style={{fontSize:14,color:C.text,padding:"8px 10px",background:C.surface,borderRadius:6,border:`1px solid ${C.border}`,userSelect:"all"}}>{email}</div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+            <div style={{flex:1}}>
+              <label style={{fontSize:12,color:C.muted,display:"block",marginBottom:4}}>First Name</label>
+              <input value={firstName} onChange={e=>setFirstName(e.target.value)} placeholder="Your first name"
+                onKeyDown={e=>{if(e.key==="Enter")saveName();}}
+                style={inp()}/>
+            </div>
+            <button onClick={saveName} disabled={loading}
+              style={btn(nameSaved?C.green:C.accent,"#fff",{opacity:loading?0.5:1,flexShrink:0,marginBottom:1})}>
+              {nameSaved?"✓ Saved":"Save"}
+            </button>
+          </div>
+        </div>
 
         <div style={{marginBottom:20}}>
           <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Anthropic API Key</label>
@@ -6129,7 +6168,7 @@ function NewProjectModal({uid,onCreated,onClose}){
 }
 
 // ── DASHBOARD ──
-function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject}){
+function Dashboard({uid,userFirstName,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject}){
   const [groupBy,setGroupBy]=useState("status");
   const [hideImported,setHideImported]=useState({});
   const [dragProjectId,setDragProjectId]=useState(null);
@@ -6273,7 +6312,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onTransf
                   {g.label&&<div style={{background:isOver?C.accent:colBg,color:isOver?"#fff":colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",transition:"background 0.15s,color 0.15s",outline:isDropTarget&&dragProjectId?(isOver?"2px solid "+C.accent:"2px dashed "+C.accent+"66"):"none",outlineOffset:2}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
                   <div style={{display:"flex",flexDirection:"column",gap:8,borderRadius:8,padding:isOver?"6px":"0",background:isOver?"#1e2e1e":"transparent",transition:"background 0.15s,padding 0.15s"}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName}
                         draggable={isNoCustomer}
                         onDragStart={isNoCustomer?e=>{e.dataTransfer.effectAllowed="move";setDragProjectId(p.id);}:undefined}
                         onDragEnd={isNoCustomer?()=>{setDragProjectId(null);setDropTarget(null);}:undefined}/>
@@ -6290,7 +6329,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept,onTransf
                   {g.label&&<div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:12,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>{g.label}</div>}
                   <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}/>
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName}/>
                     ))}
                   </div>
                 </div>
@@ -6418,7 +6457,7 @@ function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onC
 }
 
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete,onTransfer,draggable:isDraggable,onDragStart,onDragEnd}){
+function ProjectTile({p,onOpen,onDelete,onTransfer,userFirstName,draggable:isDraggable,onDragStart,onDragEnd}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
@@ -6433,19 +6472,22 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,draggable:isDraggable,onDragS
     style={{...card({padding:"8px 10px"}),border:"1px solid #4a5080",cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column"}}
     onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
     onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
-    <div style={{position:"absolute",top:6,right:6,display:"flex",gap:2}}>
-      {onTransfer&&(
-        <button onClick={e=>{e.stopPropagation();onTransfer(p);}}
-          title="Transfer project to another owner"
-          style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,lineHeight:1,padding:"2px 4px",borderRadius:4,transition:"color 0.15s"}}
-          onMouseEnter={e=>e.currentTarget.style.color=C.accent}
-          onMouseLeave={e=>e.currentTarget.style.color=C.muted}>⇄</button>
-      )}
-      <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
-        title="Delete project"
-        style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"2px 4px",borderRadius:4,transition:"color 0.15s"}}
-        onMouseEnter={e=>e.currentTarget.style.color=C.red}
-        onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+    <div style={{position:"absolute",top:4,right:4,display:"flex",flexDirection:"column",alignItems:"flex-end",gap:1}}>
+      {userFirstName&&<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:64,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",lineHeight:1}}>{userFirstName}</div>}
+      <div style={{display:"flex",gap:1}}>
+        {onTransfer&&(
+          <button onClick={e=>{e.stopPropagation();onTransfer(p);}}
+            title="Transfer project to another owner"
+            style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,lineHeight:1,padding:"1px 3px",borderRadius:4,transition:"color 0.15s"}}
+            onMouseEnter={e=>e.currentTarget.style.color=C.accent}
+            onMouseLeave={e=>e.currentTarget.style.color=C.muted}>⇄</button>
+        )}
+        <button onClick={e=>{e.stopPropagation();onDelete(p.id,p.name,p.bcProjectId,p.bcProjectNumber);}}
+          title="Delete project"
+          style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,lineHeight:1,padding:"1px 3px",borderRadius:4,transition:"color 0.15s"}}
+          onMouseEnter={e=>e.currentTarget.style.color=C.red}
+          onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+      </div>
     </div>
     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3,paddingRight:16,minWidth:0}}>
       {customerLogo&&<img src={customerLogo} alt="" style={{width:22,height:22,objectFit:"contain",borderRadius:3,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
@@ -6488,6 +6530,7 @@ function App({user}){
   const [setupDismissed,setSetupDismissed]=useState(false);
   const [deleteConfirm,setDeleteConfirm]=useState(null); // {id, name}
   const [transferProject,setTransferProject]=useState(null); // project object
+  const [userFirstName,setUserFirstName]=useState("");
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
   const [bcLostAlert,setBcLostAlert]=useState(false);
   const bcOnlinePrev=useRef(!!_bcToken);
@@ -6556,6 +6599,7 @@ function App({user}){
         _appCtx.projectsPath=`users/${user.uid}/projects`;
       }
       await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid),loadDefaultBomItems(user.uid)]);
+      fbDb.doc(`users/${user.uid}/config/profile`).get().then(d=>{if(d.exists)setUserFirstName(d.data().firstName||"");}).catch(()=>{});
       if(!_defaultBomItems.length){
         _defaultBomItems=[
           {partNumber:"JOB-BUYOFF",description:"Job Buyoff",manufacturer:"",qty:1,unitPrice:0,priceSource:null},
@@ -6757,7 +6801,7 @@ function App({user}){
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}}/>
         </>
       )}
       {view==="project"&&openProject&&(
@@ -6768,7 +6812,7 @@ function App({user}){
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
       {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
       {transferProject&&<TransferProjectModal project={transferProject} companyId={companyId} uid={user.uid} userEmail={user.email} onTransferred={handleTransferDone} onClose={()=>setTransferProject(null)}/>}
-      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)}/>}
+      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={url=>setCompanyLogo(url||null)}/>}
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
