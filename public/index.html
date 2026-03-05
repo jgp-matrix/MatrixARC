@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.79";
+const APP_VERSION="v1.10.80";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4846,6 +4846,8 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
   const [vendorItemNo,setVendorItemNo]=useState([panel.drawingNo,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join(" ")||"");
   const [categoryCode,setCategoryCode]=useState("");
   const [categories,setCategories]=useState([]);
+  const [uomCode,setUomCode]=useState("");
+  const [uoms,setUoms]=useState([]);
   const [phase,setPhase]=useState("setup"); // setup | creating | done | error
   const [progress,setProgress]=useState("");
   const [result,setResult]=useState(null);
@@ -4862,10 +4864,11 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
 
   useEffect(()=>{
     bcListItemCategories().then(setCategories).catch(()=>{});
+    bcListUnitsOfMeasure().then(setUoms).catch(()=>{});
   },[]);
 
   async function handleCreate(){
-    if(!description.trim()||pendingBcCount>0)return;
+    if(!description.trim()||!categoryCode||!uomCode||pendingBcCount>0)return;
     setPhase("creating");
     setProgress("Creating item in Business Central…");
     try{
@@ -4874,7 +4877,7 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
       if(!_bcToken)throw new Error("Not connected to Business Central");
 
       // Step 1: Create the Item via REST API
-      const created=await bcCreateItem({displayName:description.trim(),itemCategoryCode:categoryCode||undefined,type:"Assembly"});
+      const created=await bcCreateItem({displayName:description.trim(),itemCategoryCode:categoryCode||undefined,baseUnitOfMeasureCode:uomCode||undefined,type:"Assembly"});
       setProgress(`Item ${created.number} created. Setting Vendor Item No…`);
 
       // Step 2: Patch Vendor_Item_No via OData
@@ -4961,6 +4964,14 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
                 {categories.map(c=><option key={c.code} value={c.code}>{c.code}{c.description?" – "+c.description:""}</option>)}
               </select>
             </div>
+            <div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Unit of Measure <span style={{color:C.red}}>*</span></div>
+              <select value={uomCode} onChange={e=>setUomCode(e.target.value)}
+                style={{...inp(),cursor:"pointer"}}>
+                <option value="">— Select Unit of Measure —</option>
+                {uoms.map(u=><option key={u.code} value={u.code}>{u.code}{u.displayName&&u.displayName!==u.code?" – "+u.displayName:""}</option>)}
+              </select>
+            </div>
           </div>
 
           {mergedBom.length>0?(
@@ -4999,8 +5010,8 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
 
           <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
             <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
-            <button onClick={handleCreate} disabled={!description.trim()||!categoryCode||pendingBcCount>0}
-              style={btn(C.accent,"#fff",{fontSize:13,opacity:!description.trim()||!categoryCode||pendingBcCount>0?0.4:1})}>
+            <button onClick={handleCreate} disabled={!description.trim()||!categoryCode||!uomCode||pendingBcCount>0}
+              style={btn(C.accent,"#fff",{fontSize:13,opacity:!description.trim()||!categoryCode||!uomCode||pendingBcCount>0?0.4:1})}>
               Create Item in BC
             </button>
           </div>
