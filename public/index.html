@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.13";
+const APP_VERSION="v1.10.14";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -116,10 +116,13 @@ function useSmoothProgress(estSeconds=15){
     if(!timer.current)timer.current=requestAnimationFrame(tick);
   },[tick]);
 
+  const dismissTimer=useRef(null);
   const finish=useCallback((msg)=>{
     if(timer.current){cancelAnimationFrame(timer.current);timer.current=null;}
+    if(dismissTimer.current)clearTimeout(dismissTimer.current);
     baseRef.current=0;
     setState(msg?{msg,pct:100}:null);
+    if(msg)dismissTimer.current=setTimeout(()=>setState(null),3500);
   },[]);
 
   const stop=useCallback(()=>{
@@ -4177,7 +4180,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           <div style={{width:"100%",height:38,background:C.border,borderRadius:10,overflow:"hidden",position:"relative"}}>
             <div style={{height:"100%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:10,transition:"width 0.25s linear",width:pct+"%"}}/>
             <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 14px"}}>
-              <span style={{fontSize:14,fontWeight:700,color:"#fff",textShadow:"0 1px 3px rgba(0,0,0,0.5)",animation:"pulse 1.2s ease-in-out infinite"}}>{extractProgress.msg||"Processing…"}</span>
+              <span style={{fontSize:14,fontWeight:700,color:"#fff",textShadow:"0 1px 3px rgba(0,0,0,0.5)",animation:pct<100?"pulse 1.2s ease-in-out infinite":"none"}}>{extractProgress.msg||"Processing…"}</span>
               <span style={{fontSize:16,fontWeight:800,color:"#fff",textShadow:"0 1px 3px rgba(0,0,0,0.5)",fontVariantNumeric:"tabular-nums"}}>{pct}%</span>
             </div>
           </div>
