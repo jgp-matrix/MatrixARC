@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.33";
+const APP_VERSION="v1.10.34";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5462,7 +5462,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
             <div key={gi} style={{marginBottom:groups.length>1?32:0}}>
               {g.label&&<div style={{fontSize:groupBy==="customer"?20:12,fontWeight:700,color:groupBy==="customer"?C.text:C.muted,textTransform:groupBy==="customer"?"none":"uppercase",letterSpacing:groupBy==="customer"?-0.3:0.8,marginBottom:12,paddingBottom:groupBy==="customer"?0:6,borderBottom:groupBy==="customer"?"none":`1px solid ${C.border}`}}>{g.label}</div>}
               <div style={{background:groupBy==="customer"?"#1c1c2e":"none",border:groupBy==="customer"?`2px solid #4a5080`:"none",borderRadius:groupBy==="customer"?12:0,padding:groupBy==="customer"?16:0}}>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                 {g.items.map(p=>(
                   <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete}/>
                 ))}
@@ -5474,7 +5474,7 @@ function Dashboard({uid,projects,loading,onOpen,onNew,onDelete,onAccept}){
             <div style={{marginTop:48}}>
               <div style={{fontSize:14,fontWeight:700,color:C.yellow,marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Transferred Projects</div>
               <div style={{fontSize:12,color:C.muted,marginBottom:20}}>These projects were transferred to you. Accept them to add them to your project list.</div>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))",gap:12}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                 {transferred.map(p=>{
                   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
                   const st=projectStatus(p);
