@@ -2013,7 +2013,6 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   const save=async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));};
   // Always update immediately so the bar never stays on "Starting extraction…"
   bgUpdate(panel.id,bomPages.length>0?"Extracting BOM…":willValidate?"Validating…":"Uploading drawings…");
-  {
     // BOM extraction
     let bomMergePromise=Promise.resolve([]);
     if(_apiKey&&bomPages.length>0){
