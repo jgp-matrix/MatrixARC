@@ -47,7 +47,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.27";
+const APP_VERSION="v1.11.28";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3820,9 +3820,18 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow}){
       onMouseDown={e=>{backdropMdRef.current=e.target===e.currentTarget;}}
       onClick={e=>{if(backdropMdRef.current)onClose();}}>
       <div style={{...card(),width:"100%",maxWidth:860,maxHeight:"85vh",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
-          <div style={{fontSize:18,fontWeight:700}}>BC Item Browser</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18}}>✕</button>
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14,gap:12}}>
+          <div>
+            <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>BC Item Browser</div>
+            {targetRow&&(targetRow.partNumber||targetRow.description)&&(
+              <div style={{display:"flex",alignItems:"baseline",gap:10,background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:C.muted,fontWeight:600,letterSpacing:0.5,whiteSpace:"nowrap"}}>ORIGINAL</span>
+                {targetRow.partNumber&&<span style={{fontSize:13,fontWeight:700,color:C.yellow,fontFamily:"monospace"}}>{targetRow.partNumber}</span>}
+                {targetRow.description&&<span style={{fontSize:12,color:C.sub}}>{targetRow.description}</span>}
+              </div>
+            )}
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,flexShrink:0}}>✕</button>
         </div>
         <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
           <input value={query} onChange={e=>onQueryChange(e.target.value)} placeholder="Search items (min 3 chars)…"
