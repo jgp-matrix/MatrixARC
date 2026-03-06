@@ -47,7 +47,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.36";
+const APP_VERSION="v1.11.37";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4408,6 +4408,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       try{await onSaveImmediate(updated);}catch(e){}
       bgDone(panel.id,"Complete");
     }else{
+      bgUpdate(panel.id,"Awaiting confirmation…");
       setAwaitingConfirm(true);
     }
     }catch(ex){
@@ -5108,7 +5109,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.red,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>{err}<button onClick={()=>setErr("")} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:15,lineHeight:1}}>✕</button></div>}
 
       {/* Extract / validate progress */}
-      {extractProgress&&(()=>{const pct=extractProgress.pct;return(
+      {extractProgress&&!awaitingConfirm&&(()=>{const pct=extractProgress.pct;return(
         <div style={{marginBottom:12}}>
           <div style={{width:"100%",height:38,background:C.border,borderRadius:10,overflow:"hidden",position:"relative"}}>
             <div style={{height:"100%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:10,transition:"width 0.25s linear",width:pct+"%"}}/>
