@@ -11,10 +11,14 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#0d0d14;color:#e8e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}
 input,textarea,select,button{font-family:inherit;font-size:inherit}
-::-webkit-scrollbar{width:6px;height:10px}
+::-webkit-scrollbar{width:6px;height:20px}
 ::-webkit-scrollbar-track{background:#1e1e2e}
 ::-webkit-scrollbar-thumb{background:#5a5a78;border-radius:5px}
 ::-webkit-scrollbar-thumb:hover{background:#7a7a9a}
+[data-tip]{position:relative;}
+[data-tip]::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#1a1a2e;color:#e2e8f0;font-size:11px;font-weight:500;padding:5px 10px;border-radius:6px;white-space:nowrap;max-width:240px;white-space:normal;text-align:center;pointer-events:none;opacity:0;transition:opacity 0.18s;z-index:10000;border:1px solid rgba(255,255,255,0.12);box-shadow:0 4px 14px rgba(0,0,0,0.5);line-height:1.4;}
+[data-tip]:hover::after{opacity:1;}
+body.no-tips [data-tip]::after{opacity:0!important;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
@@ -47,7 +51,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.42";
+const APP_VERSION="v1.11.43";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -428,6 +432,11 @@ async function acquireBcToken(interactive=true){
 let _appCtx={uid:null,companyId:null,role:null,projectsPath:null,configPath:null};
 function isReadOnly(){return _appCtx.role==="view";}
 function isAdmin(){return !!_appCtx.companyId&&_appCtx.role==="admin";}
+
+// ── TOOLTIPS ──
+let _tooltipsEnabled=(()=>{const v=localStorage.getItem('arc_tooltips');return v===null?true:v!=='false';})();
+if(!_tooltipsEnabled)document.body.classList.add('no-tips');
+function setTooltipsEnabled(v){_tooltipsEnabled=v;localStorage.setItem('arc_tooltips',v?'true':'false');document.body.classList.toggle('no-tips',!v);}
 
 // ── PRICING CONFIG (loaded from Firestore) ──
 let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20};
@@ -2421,6 +2430,23 @@ function PageTags({types,onChange,detecting}){
   );
 }
 
+// ── TOOLTIP TOGGLE ──
+function TooltipToggle(){
+  const [on,setOn]=useState(_tooltipsEnabled);
+  return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0"}}>
+      <div>
+        <div style={{fontSize:13,fontWeight:600,color:C.text}}>Button Tooltips</div>
+        <div style={{fontSize:11,color:C.muted,marginTop:2}}>Show helpful hints when hovering over buttons</div>
+      </div>
+      <button onClick={()=>{const next=!on;setOn(next);setTooltipsEnabled(next);}}
+        style={{flexShrink:0,width:44,height:24,borderRadius:12,border:"none",cursor:"pointer",background:on?"#4f46e5":"#3a3a5a",position:"relative",transition:"background 0.2s"}}>
+        <div style={{position:"absolute",top:3,left:on?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.4)"}}/>
+      </button>
+    </div>
+  );
+}
+
 // ── PRICING CONFIG MODAL ──
 function PricingConfigModal({uid,onClose,onLogoChange}){
   const [bomVal,setBomVal]=useState(_pricingConfig.contingencyBOM);
@@ -2639,6 +2665,12 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             <div style={{fontSize:11,color:C.muted,marginTop:6}}>PNG, JPG, or SVG recommended. Displayed in the header top-left.</div>
           </div>
         )}
+
+        {/* ── UI PREFERENCES ── */}
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:4}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:8,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>UI Preferences</label>
+          <TooltipToggle/>
+        </div>
 
         <div style={{display:"flex",gap:10,marginTop:16}}>
           <button onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
@@ -4968,13 +5000,13 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         {/* Right-side controls */}
         <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
           {pages.length>0&&_apiKey&&!readOnly&&(
-            <button onClick={autoExtractTitle} disabled={extractingTitle} title="Re-extract title block from drawing"
+            <button data-tip="Re-extract drawing number, description, and revision from the title block" onClick={autoExtractTitle} disabled={extractingTitle} title="Re-extract title block from drawing"
               style={{background:"none",border:`1px solid ${C.border}`,color:C.yellow,cursor:"pointer",borderRadius:5,padding:"2px 8px",fontSize:12,fontWeight:600,opacity:extractingTitle?0.5:1}}>
               {extractingTitle?"🤖…":"🤖"}
             </button>
           )}
           <Badge status={panel.status||"draft"}/>
-          {!readOnly&&<button onClick={onDelete} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
+          {!readOnly&&<button data-tip="Delete this panel" onClick={onDelete} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
         </div>
       </div>
 
@@ -5018,7 +5050,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7}}>DRAWINGS</div>
           {detecting&&<span style={{fontSize:12,color:C.yellow,fontWeight:600}}>{detectProgress||"🤖 Detecting…"}</span>}
           {!detecting&&_apiKey&&pages.some(p=>getPageTypes(p).length===0&&(p.dataUrl||p.storageUrl))&&!readOnly&&(
-            <button onClick={autoDetect} style={{background:"none",border:"none",color:C.yellow,cursor:"pointer",fontSize:12,fontWeight:600,padding:"0 4px"}}>🤖 Auto-detect</button>
+            <button data-tip="Use AI to automatically detect the type of each drawing page (BOM, Schematic, Back Panel, etc.)" onClick={autoDetect} style={{background:"none",border:"none",color:C.yellow,cursor:"pointer",fontSize:12,fontWeight:600,padding:"0 4px"}}>🤖 Auto-detect</button>
           )}
         </div>
 
@@ -5030,7 +5062,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               <div key={pg.id} style={{flexShrink:0,width:420,display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
                   <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
-                  {!readOnly&&<button onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
+                  {!readOnly&&<button data-tip="Remove this drawing page" onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
                 </div>
                 <div style={{lineHeight:1.4}}>
                   {(panel.drawingNo||panel.drawingDesc)?(
@@ -5054,7 +5086,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   {["bom","schematic","backpanel","enclosure","pid"].map(t=>{
                     const active=types.includes(t);
                     return(
-                      <button key={t} disabled={readOnly} onClick={()=>tagPage(pg.id,active?types.filter(x=>x!==t):[...types,t])}
+                      <button key={t} data-tip={active?`Remove "${SHORT[t]}" tag from this page`:`Tag this page as ${SHORT[t]}`} disabled={readOnly} onClick={()=>tagPage(pg.id,active?types.filter(x=>x!==t):[...types,t])}
                         style={{background:active?typeColors[t]+"33":"transparent",color:active?typeColors[t]:C.muted,border:`1px solid ${active?typeColors[t]+"88":C.border}`,borderRadius:10,padding:"2px 8px",fontSize:12,fontWeight:700,cursor:readOnly?"default":"pointer",transition:"all 0.1s"}}>
                         {SHORT[t]}
                       </button>
@@ -5104,7 +5136,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             <div style={{fontSize:13,fontWeight:700,color:"#fde047",marginBottom:3,animation:"pulse 1.6s ease-in-out infinite"}}>⚠ Review drawing types before extracting</div>
             <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>Check that each page above is tagged correctly — <span style={{color:C.accent,fontWeight:600}}>BOM</span>, <span style={{color:C.green,fontWeight:600}}>SCH</span>, <span style={{color:C.purple,fontWeight:600}}>BP</span>, <span style={{color:C.teal||"#0d9488",fontWeight:600}}>ENC</span>, <span style={{color:C.muted,fontWeight:600}}>P&amp;ID</span>. Click a tag to add or remove it, then proceed.</div>
           </div>
-          <button onClick={confirmAndExtract} style={{flexShrink:0,background:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          <button data-tip="Confirm drawing types are correct and begin BOM extraction, validation, and pricing" onClick={confirmAndExtract} style={{flexShrink:0,background:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
             Proceed with Extraction
           </button>
         </div>
@@ -5178,7 +5210,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                       f==="_bc"?(
                         <td key="_bc" style={{padding:"3px 2px",width:32,textAlign:"center"}}>
                           {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
-                            <button title="Fuzzy BC lookup" onClick={async()=>{
+                            <button data-tip="Auto-match this part number in Business Central — click to find the best match or open the item browser" title="Fuzzy BC lookup" onClick={async()=>{
                               const pn=(row.partNumber||"").trim();
                               if(!pn)return;
                               const result=await bcFuzzyLookup(pn);
@@ -5194,7 +5226,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           <div>
                           <div style={{display:"flex",alignItems:"center"}}>
                           {f==="partNumber"&&!readOnly&&!row.isLaborRow&&_bcToken&&(
-                            <button title="Browse BC items" onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
+                            <button data-tip="Search and select a replacement part number from the Business Central catalog" title="Browse BC items" onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
                               style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"2px 4px",lineHeight:1,opacity:0.85,flexShrink:0,filter:"brightness(1.8)"}}
                               onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
                           )}
@@ -5479,7 +5511,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     <span style={{fontSize:13,fontWeight:700,color:C.accent,animation:"pulse 1.2s ease-in-out infinite"}}>Validating…</span>
                     <span style={{fontSize:15,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums"}}>{valPct}%</span>
                   </span>
-                  :<button onClick={validatePanel} disabled={readOnly} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:readOnly?0.5:1,border:`1px solid ${C.accent}55`})}>🔄 Re-Validate</button>
+                  :<button data-tip="Re-run AI validation against schematic/back-panel drawings to update wiring and layout checks" onClick={validatePanel} disabled={readOnly} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:readOnly?0.5:1,border:`1px solid ${C.accent}55`})}>🔄 Re-Validate</button>
               )}
               {!readOnly&&bom.length>0&&(<>
                 {_bcToken
@@ -5494,7 +5526,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   </button>
                 }
                 {bcError&&<span style={{fontSize:11,color:C.red}}>{bcError}</span>}
-                {_apiKey&&<button onClick={runPricingOnPanel} disabled={aiPricing} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,border:`1px solid ${C.accent}55`})}>
+                {_apiKey&&<button data-tip="Look up prices from Business Central, then fill remaining items with AI estimates" onClick={runPricingOnPanel} disabled={aiPricing} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,border:`1px solid ${C.accent}55`})}>
                   {aiPricing?"Pricing…":"💲 Get Prices (BC + AI)"}
                 </button>}
               </>)}
@@ -5721,7 +5753,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             style={{...inp(),width:"100%",resize:"vertical",lineHeight:1.6,fontSize:13,marginBottom:10}}
           />
           <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <button onClick={reExtractWithFeedback} disabled={!aiFeedback.trim()||reExtracting}
+            <button data-tip="Re-run BOM extraction using your correction notes above — fixes will be saved as training examples" onClick={reExtractWithFeedback} disabled={!aiFeedback.trim()||reExtracting}
               style={btn(C.accentDim,C.accent,{fontSize:14,padding:"7px 18px",opacity:!aiFeedback.trim()||reExtracting?0.45:1,border:`1px solid ${C.accent}55`})}>
               {reExtracting?"Re-extracting…":"🔄 Re-Extract with Feedback"}
             </button>
@@ -7523,7 +7555,7 @@ function Dashboard({uid,userFirstName,projects,loading,onOpen,onNew,onDelete,onA
         <div>
           <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
         </div>
-        <button onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
+        <button data-tip="Start a new panel extraction project" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
           <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
         </button>
       </div>
@@ -8035,14 +8067,14 @@ function App({user}){
             <div style={{width:7,height:7,borderRadius:"50%",flexShrink:0,background:bcOnline?"#3b82f6":"#ef4444",boxShadow:bcOnline?"0 0 5px #3b82f6":"0 0 5px #ef4444"}}/>
             <span style={{fontSize:11,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline — Click to connect"}</span>
           </div>
-          {userRole==="admin"&&<button onClick={()=>setView("aidb")} style={{background:view==="aidb"?"#1a0a2a":"none",border:view==="aidb"?`1px solid #a78bfa44`:"none",color:"#a78bfa",cursor:"pointer",fontSize:13,fontWeight:700,padding:"0 10px",height:36,borderRadius:6,letterSpacing:0.5}}>🧠 AI Database</button>}
-          <button onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>👥 Team</button>
-          <button onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Config</button>
-          <button onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Settings</button>
+          {userRole==="admin"&&<button data-tip="View AI learning database — extracted parts and panel history" onClick={()=>setView("aidb")} style={{background:view==="aidb"?"#1a0a2a":"none",border:view==="aidb"?`1px solid #a78bfa44`:"none",color:"#a78bfa",cursor:"pointer",fontSize:13,fontWeight:700,padding:"0 10px",height:36,borderRadius:6,letterSpacing:0.5}}>🧠 AI Database</button>}
+          <button data-tip="Manage team members and permissions" onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>👥 Team</button>
+          <button data-tip="Configure pricing defaults, contingencies, and auto-add BOM items" onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Config</button>
+          <button data-tip="App settings — API key, company, preferences" onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Settings</button>
           <div style={{width:1,height:24,background:C.border,alignSelf:"center"}}/>
           <span style={{fontSize:15,color:C.muted}}>{user.email}</span>
           {userRole&&<span style={{fontSize:14,fontWeight:700,padding:"4px 10px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
-          <button onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36}}>Sign out</button>
+          <button data-tip="Sign out of ARC" onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36}}>Sign out</button>
         </div>
       </div>
       {/* BC Connection Lost popup */}
