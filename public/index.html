@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.8";
+const APP_VERSION="v1.11.9";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -482,6 +482,36 @@ async function setAltAutoReplace(uid,originalPN,autoReplace){
   await fbDb.doc(_altPath(uid)).set({alternates:_altCache});
   return _altCache;
 }
+// ── CORRECTIONS DATABASE ──
+let _correctionsCache=null;
+function _correctionsPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/corrections";}
+async function loadCorrectionDB(uid){
+  if(_correctionsCache)return _correctionsCache;
+  try{const d=await fbDb.doc(_correctionsPath(uid)).get();_correctionsCache=d.exists?(d.data().corrections||[]):[];}
+  catch(e){_correctionsCache=[];}
+  return _correctionsCache;
+}
+async function saveCorrectionEntry(uid,badPN,correctedPN,type){
+  const corrs=await loadCorrectionDB(uid);
+  corrs.push({badPN,correctedPN,type,createdAt:Date.now()});
+  _correctionsCache=[...corrs];
+  await fbDb.doc(_correctionsPath(uid)).set({corrections:_correctionsCache});
+  return _correctionsCache;
+}
+// Heuristic: same chars different formatting = format; very different = extraction
+function guessCorrection(origPN,newPN){
+  const norm=s=>s.replace(/[-\s./\\()]/g,'').toUpperCase();
+  const a=norm(origPN),b=norm(newPN);
+  if(a===b)return'format';
+  // Count overlapping chars
+  let matches=0;
+  const shorter=a.length<=b.length?a:b;
+  const longer=a.length>b.length?a:b;
+  for(const c of shorter){if(longer.includes(c))matches++;}
+  const ratio=matches/Math.max(a.length,b.length,1);
+  return ratio>=0.55?'format':'extraction';
+}
+
 async function apiCall(body){
   if(!_apiKey)throw new Error("API key not set. Open Settings and add your Anthropic key.");
   const r=await fetch("https://api.anthropic.com/v1/messages",{
@@ -3302,6 +3332,20 @@ function QuoteTab({project,onUpdate}){
                   </div>
                 );
               })()}
+              {(()=>{
+                const formatCorrs=(bom||[]).filter(r=>r.isCorrection&&r.correctionType==='format'&&r.correctionFrom);
+                if(!formatCorrs.length)return null;
+                return(
+                  <div style={{marginTop:8,borderTop:`1px dashed ${W.border}`,paddingTop:6}}>
+                    <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:W.sub,marginBottom:4}}>Part Number Format Corrections</div>
+                    {formatCorrs.map((item,i)=>(
+                      <div key={item.id||i} style={{fontSize:11,color:W.text,marginBottom:2}}>
+                        {i+1}. <span style={{color:W.muted}}>Extracted as:</span> <strong>{item.correctionFrom}</strong> <span style={{color:W.muted}}>→ Corrected to:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:W.muted}}> ({item.description})</span>:null}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -3783,6 +3827,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [pendingPages,setPendingPages]=useState([]);
   const [alternates,setAlternates]=useState([]);
   const [crossOrCorrectPending,setCrossOrCorrectPending]=useState(null);
+  const [correctionSubtypePending,setCorrectionSubtypePending]=useState(null);
   const altAutoApplied=useRef(false);
   const feedbackRef=useRef(null);
   const fileRef=useRef(null);
@@ -4169,19 +4214,26 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const bom=(panel.bom||[]).map(r=>r.id===id?{...r,suggestedPartNumber:null}:r);
     onUpdate({...panel,bom});
   }
-  function commitBcItem(bomRowId,bcItem,asCross){
+  function commitBcItem(bomRowId,bcItem,asCross,correctionType=null){
     const bom=(panel.bom||[]).map(r=>{
       if(r.id!==bomRowId)return r;
-      const origPN=(r.crossedFrom||r.partNumber||"").trim();
+      const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
       const updates={...r,partNumber:newPN,unitPrice:bcItem.unitCost,priceSource:"bc"};
-      if(asCross){updates.isCrossed=true;updates.crossedFrom=origPN;delete updates.isCorrection;}
-      else{updates.isCorrection=true;delete updates.isCrossed;delete updates.crossedFrom;}
+      if(asCross){
+        updates.isCrossed=true;updates.crossedFrom=origPN;
+        delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
+      }else{
+        updates.isCorrection=true;updates.correctionType=correctionType;updates.correctionFrom=origPN;
+        delete updates.isCrossed;delete updates.crossedFrom;
+      }
       if(bcItem.displayName&&!r.description)updates.description=bcItem.displayName;
       if(bcItem._vendorName&&!r.manufacturer)updates.manufacturer=bcItem._vendorName;
       if(asCross){
         saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost})
           .then(alts=>setAlternates([...alts])).catch(()=>{});
+      }else if(correctionType){
+        saveCorrectionEntry(uid,origPN,newPN,correctionType).catch(()=>{});
       }
       return updates;
     });
@@ -4641,7 +4693,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>{row.autoReplaced?"auto-crossed":"crossed item"}</span>
                           )}
                           {f==="partNumber"&&row.isCorrection&&(
-                            <span style={{fontSize:10,color:"#f0c040",fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>corrected</span>
+                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>
+                              {row.correctionType==='extraction'?'extraction corrected':row.correctionType==='format'?'format corrected':'corrected'}
+                            </span>
                           )}
                           </div>
                           {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&!readOnly&&(()=>{
@@ -4779,6 +4833,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           {/* BOM Notes */}
           {(()=>{
             const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
+            const formatCorrections=(panel.bom||[]).filter(r=>r.isCorrection&&r.correctionType==='format'&&r.correctionFrom);
             return(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
                 {crossedItems.length>0&&(
@@ -4792,6 +4847,21 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         <span style={{color:C.muted}}> → </span>
                         <span style={{color:C.accent,fontWeight:600}}>{r.partNumber}</span>
                         {r.description&&<span style={{color:C.muted,fontSize:11}}> ({r.description})</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {formatCorrections.length>0&&(
+                  <div style={{marginBottom:8,background:"#0a0a12",border:"1px solid #f0c04044",borderRadius:6,padding:"8px 12px"}}>
+                    <div style={{fontSize:11,fontWeight:700,color:"#f0c040",textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Format Corrections</div>
+                    {formatCorrections.map((r,i)=>(
+                      <div key={r.id} style={{fontSize:12,color:C.sub,marginBottom:2}}>
+                        <span style={{color:C.muted}}>{i+1}.</span>{" "}
+                        <span style={{color:"#f0c040",fontWeight:600}}>{r.correctionFrom}</span>
+                        <span style={{color:C.muted}}> → </span>
+                        <span style={{color:C.accent,fontWeight:600}}>{r.partNumber}</span>
+                        {r.description&&<span style={{color:C.muted,fontSize:11}}> ({r.description})</span>}
+                        <span style={{color:C.muted,fontSize:10}}> — format corrected</span>
                       </div>
                     ))}
                   </div>
@@ -5179,8 +5249,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                 style={{flex:1,padding:"9px 0",background:C.accent,border:"none",borderRadius:6,color:"#000",fontWeight:800,fontSize:13,cursor:"pointer"}}>
                 Cross
               </button>
-              <button onClick={()=>{commitBcItem(crossOrCorrectPending.bomRowId,crossOrCorrectPending.bcItem,false);setCrossOrCorrectPending(null);}}
-                style={{flex:1,padding:"9px 0",background:"#2a2020",border:`1px solid #f0c040`,borderRadius:6,color:"#f0c040",fontWeight:700,fontSize:13,cursor:"pointer"}}>
+              <button onClick={()=>{
+                const aiSuggestion=guessCorrection(crossOrCorrectPending.origPN,crossOrCorrectPending.newPN);
+                setCorrectionSubtypePending({...crossOrCorrectPending,aiSuggestion});
+                setCrossOrCorrectPending(null);
+              }} style={{flex:1,padding:"9px 0",background:"#2a2020",border:`1px solid #f0c040`,borderRadius:6,color:"#f0c040",fontWeight:700,fontSize:13,cursor:"pointer"}}>
                 Correction
               </button>
               <button onClick={()=>setCrossOrCorrectPending(null)}
@@ -5188,6 +5261,43 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {correctionSubtypePending&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onMouseDown={e=>{if(e.target===e.currentTarget)setCorrectionSubtypePending(null);}}>
+          <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:380,maxWidth:500,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>Type of Correction</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
+              <span style={{color:C.red,fontWeight:700}}>{correctionSubtypePending.origPN}</span>
+              <span style={{color:C.muted}}> → </span>
+              <span style={{color:C.accent,fontWeight:700}}>{correctionSubtypePending.newPN}</span>
+            </div>
+            {correctionSubtypePending.aiSuggestion&&(
+              <div style={{fontSize:11,background:"#120a2a",border:"1px solid #a78bfa",borderRadius:6,padding:"7px 10px",marginBottom:14,display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:13}}>🤖</span>
+                <span style={{color:"#a78bfa",fontWeight:700}}>AI suggests: </span>
+                <span style={{color:C.text,fontWeight:600}}>{correctionSubtypePending.aiSuggestion==='format'?'Incorrect Format':'Bad Extraction'}</span>
+                <span style={{color:C.muted,fontSize:10,marginLeft:2}}>— based on part number similarity</span>
+              </div>
+            )}
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+              <button onClick={()=>{commitBcItem(correctionSubtypePending.bomRowId,correctionSubtypePending.bcItem,false,'extraction');setCorrectionSubtypePending(null);}}
+                style={{padding:"11px 14px",background:"#1a0a0a",border:`1px solid ${C.red}`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                <div style={{fontWeight:700,fontSize:13,color:C.red,marginBottom:3}}>Bad Extraction</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>The AI misread the part number entirely. Fix quietly — logged to extraction database for AI learning. No note on quote.</div>
+              </button>
+              <button onClick={()=>{commitBcItem(correctionSubtypePending.bomRowId,correctionSubtypePending.bcItem,false,'format');setCorrectionSubtypePending(null);}}
+                style={{padding:"11px 14px",background:"#1a1200",border:"1px solid #f0c040",borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#f0c040",marginBottom:3}}>Incorrect Format</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Part number exists but formatting is wrong (missing dashes, incomplete, etc). Correction noted on BOM and included in quote.</div>
+              </button>
+            </div>
+            <button onClick={()=>setCorrectionSubtypePending(null)}
+              style={{padding:"7px 14px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer"}}>
+              Cancel
+            </button>
           </div>
         </div>
       )}
