@@ -3,7 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Matrix ARC</title>
+<title>APEX ARC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet"/>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#0d0d14;color:#e8e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}
@@ -43,7 +46,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.16";
+const APP_VERSION="v1.11.17";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -2820,13 +2823,13 @@ function LoginScreen({invite}){
     <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 50% 0%,#1a1a3e 0%,${C.bg} 60%)`}}>
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{fontSize:104,marginBottom:10}}>⬡</div>
-        <div style={{fontSize:68,fontWeight:800,letterSpacing:-2}}>Matrix <span style={{color:C.accent}}>ARC</span></div>
+        <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:52,fontWeight:900,letterSpacing:4}}>APEX <span style={{color:C.accent}}>ARC</span></div>
         <div style={{fontSize:13,color:C.muted,fontWeight:400,marginTop:4}}>{APP_VERSION}</div>
         <div style={{fontSize:14,color:C.muted,marginTop:6}}>AI Recognition &amp; Capture · Control Panel Quoting</div>
       </div>
       {invite&&(
         <div style={{background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:12,padding:"14px 20px",marginBottom:20,textAlign:"center",width:"100%",maxWidth:400}}>
-          <div style={{fontSize:15,fontWeight:700,color:C.accent,marginBottom:4}}>You've been invited to Matrix ARC</div>
+          <div style={{fontSize:15,fontWeight:700,color:C.accent,marginBottom:4}}>You've been invited to APEX ARC</div>
           <div style={{fontSize:13,color:C.sub}}>Create an account or sign in to join your team workspace.</div>
         </div>
       )}
@@ -6207,7 +6210,7 @@ function SettingsModal({uid,onClose,onNameChange}){
           <div style={{fontSize:18,fontWeight:700,flex:1}}>⚙ Settings</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
         </div>
-        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Matrix ARC configuration</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>APEX ARC configuration</div>
 
         {/* Account */}
         <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
@@ -7041,8 +7044,13 @@ function App({user}){
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",
             transition:"all 0.7s cubic-bezier(0.4,0,0.2,1)",
             transform:splash==="shrinking"?"translateY(-44vh) scale(0.38)":"translateY(0) scale(1)"}}>
-            <span style={{fontSize:120,lineHeight:1,marginBottom:12}}>⬡</span>
-            <span style={{fontSize:72,fontWeight:800,letterSpacing:-3,marginBottom:8}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
+            <svg width="100" height="90" viewBox="0 0 100 90" fill="none" style={{marginBottom:12}}>
+              <polygon points="50,4 96,86 4,86" stroke={C.accent} strokeWidth="3.5" strokeLinejoin="round" fill={C.accentDim}/>
+              <polygon points="50,4 68,38 32,38" fill={C.accent} opacity="0.85"/>
+              <line x1="50" y1="38" x2="50" y2="86" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
+              <line x1="26" y1="62" x2="74" y2="62" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
+            </svg>
+            <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:68,fontWeight:900,letterSpacing:6,marginBottom:6,lineHeight:1}}>APEX <span style={{color:C.accent}}>ARC</span></span>
             <span style={{fontSize:13,color:C.muted,letterSpacing:1,marginBottom:32}}>AI Recognition &amp; Capture</span>
           </div>
           {splash==="loading"&&(
@@ -7055,11 +7063,16 @@ function App({user}){
       {/* ── TOP MENU BAR (always visible) ── */}
       <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:88,position:"relative"}}>
         <div style={{position:"absolute",left:"50%",top:"50%",transform:"translateX(-50%) translateY(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:5,pointerEvents:"none"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",pointerEvents:"auto"}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
-            <span style={{fontSize:44}}>⬡</span>
-            <span style={{fontSize:32,fontWeight:800,letterSpacing:-1}}>Matrix <span style={{color:C.accent}}>ARC</span></span>
+          <div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",pointerEvents:"auto"}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
+            <svg width="38" height="34" viewBox="0 0 100 90" fill="none">
+              <polygon points="50,4 96,86 4,86" stroke={C.accent} strokeWidth="3.5" strokeLinejoin="round" fill={C.accentDim}/>
+              <polygon points="50,4 68,38 32,38" fill={C.accent} opacity="0.85"/>
+              <line x1="50" y1="38" x2="50" y2="86" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
+              <line x1="26" y1="62" x2="74" y2="62" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
+            </svg>
+            <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:28,fontWeight:900,letterSpacing:4,lineHeight:1}}>APEX <span style={{color:C.accent}}>ARC</span></span>
           </div>
-          <span style={{fontSize:18,color:C.muted,letterSpacing:0.5}}>AI Recognition &amp; Capture</span>
+          <span style={{fontSize:13,color:C.muted,letterSpacing:0.5}}>AI Recognition &amp; Capture</span>
           <span style={{fontSize:14,color:C.muted,opacity:0.6}}>{APP_VERSION}</span>
         </div>
         <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
