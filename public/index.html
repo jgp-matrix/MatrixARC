@@ -51,7 +51,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.46";
+const APP_VERSION="v1.11.47";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -2006,6 +2006,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   const hasSchOrLayout=panel.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
   const willValidate=!!_apiKey&&hasSchOrLayout;
   const save=async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));};
+  // Always update immediately so the bar never stays on "Starting extraction…"
+  bgUpdate(panel.id,bomPages.length>0?"Extracting BOM…":willValidate?"Validating…":"Uploading drawings…");
   try{
     // BOM extraction
     let bomMergePromise=Promise.resolve([]);
@@ -4410,12 +4412,15 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         newItems[i].types=info.types;
         newItems[i].aiDetectedTypes=info.types; // store original AI result
         newItems[i].sheetNo=info.sheetNo;
-        done++;setDetectProgress(`Detecting ${done}/${newItems.length}…`);
+        done++;
+        const msg=`🤖 Detecting page types — ${done}/${newItems.length}…`;
+        setDetectProgress(msg);bgUpdate(panel.id,msg);
         livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,aiDetectedTypes:info.types,sheetNo:info.sheetNo}:p);
         setPendingPages([...livePages]);
       },4);
       // Zoomed-page cross-check for types with 2+ pages
-      setDetectProgress("Checking for duplicate/zoomed pages…");
+      const zoomMsg="🤖 Checking for zoomed/duplicate pages…";
+      setDetectProgress(zoomMsg);bgUpdate(panel.id,zoomMsg);
       for(const t of["backpanel","enclosure","bom"]){
         const ofType=livePages.filter(p=>getPageTypes(p).includes(t)&&p.dataUrl);
         if(ofType.length<2)continue;
@@ -5050,7 +5055,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,flexWrap:"wrap"}}>
           <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7}}>DRAWINGS</div>
-          {detecting&&<span style={{fontSize:12,color:C.yellow,fontWeight:600}}>{detectProgress||"🤖 Detecting…"}</span>}
           {!detecting&&_apiKey&&pages.some(p=>getPageTypes(p).length===0&&(p.dataUrl||p.storageUrl))&&!readOnly&&(
             <button data-tip="Use AI to automatically detect the type of each drawing page (BOM, Schematic, Back Panel, etc.)" onClick={autoDetect} style={{background:"none",border:"none",color:C.yellow,cursor:"pointer",fontSize:12,fontWeight:600,padding:"0 4px"}}>🤖 Auto-detect</button>
           )}
@@ -5125,7 +5129,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               style={{flexShrink:0,width:420,height:381,border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:6,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:processing||detecting?"default":"pointer",transition:"all 0.15s",background:dragging?C.accentDim+"33":"transparent",textAlign:"center",padding:12,gap:8}}>
               <input ref={fileRef} type="file" multiple accept="image/*,application/pdf" onChange={e=>{addFiles(e.target.files);e.target.value="";}} style={{display:"none"}}/>
               <div style={{fontSize:32,opacity:processing||detecting?1:0.35}}>{processing||detecting?"⏳":"+"}</div>
-              <div style={{fontSize:12,color:C.muted,lineHeight:1.6,whiteSpace:"pre-line"}}>{detecting?detectProgress:processing?processingMsg:"Drop or click\nPDF · JPG · PNG"}</div>
+              <div style={{fontSize:12,color:C.muted,lineHeight:1.6,whiteSpace:"pre-line"}}>{processing?processingMsg:"Drop or click\nPDF · JPG · PNG"}</div>
             </div>
           )}
         </div>
@@ -5147,8 +5151,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       {/* Error */}
       {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.red,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>{err}<button onClick={()=>setErr("")} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:15,lineHeight:1}}>✕</button></div>}
 
-      {/* Extract / validate progress */}
-      {extractProgress&&!awaitingConfirm&&(()=>{const pct=extractProgress.pct;return(
+      {/* Extract / validate progress — show during detection and extraction, hide only when awaiting confirm (yellow banner takes over) */}
+      {extractProgress&&(!awaitingConfirm||detecting)&&(()=>{const pct=extractProgress.pct;return(
         <div style={{marginBottom:12}}>
           <div style={{width:"100%",height:38,background:C.border,borderRadius:10,overflow:"hidden",position:"relative"}}>
             <div style={{height:"100%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:10,transition:"width 0.25s linear",width:pct+"%"}}/>
