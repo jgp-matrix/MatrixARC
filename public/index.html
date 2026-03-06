@@ -46,7 +46,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.19";
+const APP_VERSION="v1.11.20";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -550,7 +550,10 @@ async function logPanelToCPD(uid,panel,categorizedBom,metadata=null){
       voltages:metadata.voltages||prev.voltages||{},
       plcBrand:metadata.plcBrand||prev.plcBrand||'',
       enclosureType:metadata.enclosureType||prev.enclosureType||'',
-      additionalNotes:metadata.additionalNotes||prev.additionalNotes||''
+      additionalNotes:metadata.additionalNotes||prev.additionalNotes||'',
+      ...(metadata.inputCount>0?{specs:{...spec.specs,plcInputs:metadata.inputCount}}:{}),
+      ...(metadata.outputCount>0?{specs:{...spec.specs,plcOutputs:metadata.outputCount}}:{}),
+      ...(metadata.motorCount>0?{specs:{...spec.specs,motorCount:metadata.motorCount}}:{})
     }:{}),
     scannedAt:Date.now()
   };
@@ -3609,26 +3612,17 @@ Return ONLY valid JSON, no extra text: {"drawingNo":"...","drawingDesc":"...","d
 }
 
 // ── CPD PANEL METADATA EXTRACTION ──
+// Analyzes ALL pages in batches of 8, merges results into one metadata object
 async function extractPanelMetadata(pages){
   if(!_apiKey||!pages||!pages.length)return null;
-  // Use title/cover pages + first schematic page for context
-  const candidates=pages.filter(p=>(p.dataUrl||p.storageUrl)).slice(0,5);
-  if(!candidates.length)return null;
-  try{
-    const ensured=await Promise.all(candidates.map(ensureDataUrl));
-    const imageContents=ensured.filter(p=>p.dataUrl).slice(0,4).map(p=>({
-      type:"image",source:{type:"base64",media_type:"image/jpeg",data:p.dataUrl.split(",")[1]}
-    }));
-    if(!imageContents.length)return null;
-    const resp=await apiCall({
-      max_tokens:600,
-      messages:[{role:"user",content:[
-        ...imageContents,
-        {type:"text",text:`Analyze these control panel engineering drawings and extract as much information as possible.
+  const allPages=pages.filter(p=>(p.dataUrl||p.storageUrl));
+  if(!allPages.length)return null;
+  const BATCH=8;
+  const prompt=`Analyze these control panel engineering drawings (schematics, layouts, title blocks, BOM pages — all page types). Extract every detail you can find.
 Return ONLY valid JSON (no markdown):
 {
   "panelType": "e.g. Motor Control Panel / PLC Panel / Junction Box / Heater Control / Relay Panel / MCC / Automation Panel",
-  "controlledEquipment": "e.g. Clarifier, Thickener, Kiln, Generator, Pump, Conveyor, Trash Rake, Heater, Fan — list all mentioned",
+  "controlledEquipment": "comma-separated list of all equipment mentioned e.g. Clarifier, Thickener, Kiln, Generator, Pump, Conveyor, Trash Rake, Heater, Fan",
   "voltages": {
     "lineVoltage": "e.g. 480V 3PH or 208V 3PH or unknown",
     "controlVoltage": "e.g. 120VAC or 24VDC or unknown",
@@ -3636,13 +3630,55 @@ Return ONLY valid JSON (no markdown):
   },
   "plcBrand": "e.g. Allen-Bradley, Siemens, AutomationDirect, or none/unknown",
   "enclosureType": "e.g. NEMA 12, NEMA 4X, or unknown",
-  "additionalNotes": "any other relevant panel details found on drawings"
-}`}
-      ]}]
-    });
-    const raw=resp.content[0].text.replace(/```json|```/g,'').trim();
-    const m=raw.match(/\{[\s\S]*\}/);
-    return m?JSON.parse(m[0]):null;
+  "inputCount": 0,
+  "outputCount": 0,
+  "motorCount": 0,
+  "additionalNotes": "any other relevant details: customer name, project name, location, special requirements, certifications required, environmental conditions"
+}`;
+  try{
+    // Ensure all pages have dataUrl
+    const ensured=await Promise.all(allPages.map(ensureDataUrl));
+    const withData=ensured.filter(p=>p.dataUrl);
+    if(!withData.length)return null;
+    // Process in batches, collect partial results
+    const partials=[];
+    for(let i=0;i<withData.length;i+=BATCH){
+      const batch=withData.slice(i,i+BATCH);
+      const imageContents=batch.map(p=>({
+        type:"image",source:{type:"base64",media_type:"image/jpeg",data:p.dataUrl.split(",")[1]}
+      }));
+      try{
+        const resp=await apiCall({
+          max_tokens:700,
+          messages:[{role:"user",content:[...imageContents,{type:"text",text:prompt}]}]
+        });
+        const raw=resp.content[0].text.replace(/```json|```/g,'').trim();
+        const m=raw.match(/\{[\s\S]*\}/);
+        if(m)partials.push(JSON.parse(m[0]));
+      }catch(e){}
+    }
+    if(!partials.length)return null;
+    // Merge: prefer first non-unknown value for each field, sum counts, combine equipment lists
+    const merged=partials[0];
+    for(let i=1;i<partials.length;i++){
+      const p=partials[i];
+      if((!merged.panelType||merged.panelType==='unknown')&&p.panelType)merged.panelType=p.panelType;
+      if(p.controlledEquipment){
+        const existing=new Set((merged.controlledEquipment||'').split(/,\s*/).filter(Boolean));
+        p.controlledEquipment.split(/,\s*/).filter(Boolean).forEach(e=>existing.add(e.trim()));
+        merged.controlledEquipment=[...existing].join(', ');
+      }
+      if((!merged.voltages?.lineVoltage||merged.voltages.lineVoltage==='unknown')&&p.voltages?.lineVoltage&&p.voltages.lineVoltage!=='unknown')merged.voltages={...merged.voltages,...p.voltages};
+      if((!merged.plcBrand||merged.plcBrand==='unknown')&&p.plcBrand&&p.plcBrand!=='unknown')merged.plcBrand=p.plcBrand;
+      if((!merged.enclosureType||merged.enclosureType==='unknown')&&p.enclosureType&&p.enclosureType!=='unknown')merged.enclosureType=p.enclosureType;
+      if(p.inputCount>0&&(!merged.inputCount||merged.inputCount<p.inputCount))merged.inputCount=p.inputCount;
+      if(p.outputCount>0&&(!merged.outputCount||merged.outputCount<p.outputCount))merged.outputCount=p.outputCount;
+      if(p.motorCount>0&&(!merged.motorCount||merged.motorCount<p.motorCount))merged.motorCount=p.motorCount;
+      if(p.additionalNotes&&p.additionalNotes!==merged.additionalNotes){
+        merged.additionalNotes=[merged.additionalNotes,p.additionalNotes].filter(Boolean).join(' | ');
+      }
+    }
+    return merged;
   }catch(e){return null;}
 }
 
