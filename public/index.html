@@ -4525,7 +4525,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         try{setExtracting(false);setValidatingPanel(false);}catch(e){}
         // Auto-run pricing after extraction
         if((finalPanel.bom||[]).length>0&&_apiKey){
-          try{runPricingOnPanel(finalPanel.bom);}catch(e){}
+          try{runPricingOnPanel(finalPanel.bom,finalPanel);}catch(e){}
         }
       }
     });
@@ -4836,7 +4836,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
   }
-  async function runPricingOnPanel(bomOverride){
+  async function runPricingOnPanel(bomOverride,panelOverride){
     const bom=bomOverride||panel.bom||[];
     if(!bom.length||!_apiKey)return;
     setAiPricing(true);setPricingProgress({msg:"Starting…",pct:5});
@@ -4913,7 +4913,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       }
     }
 
-    const updated={...panel,bom:updatedBom,status:"costed"};
+    const panelBase=panelOverride||panel;
+    const updated={...panelBase,bom:updatedBom,status:"costed"};
     onUpdate(updated);
     try{await onSaveImmediate(updated);}catch(e){}
     const aiCount=updatedBom.filter(r=>r.priceSource==="ai").length;
