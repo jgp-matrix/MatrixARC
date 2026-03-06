@@ -46,7 +46,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.17";
+const APP_VERSION="v1.11.18";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -513,6 +513,68 @@ function guessCorrection(origPN,newPN){
   for(const c of shorter){if(longer.includes(c))matches++;}
   const ratio=matches/Math.max(a.length,b.length,1);
   return ratio>=0.55?'format':'extraction';
+}
+
+// ── CPD (Control Panel Design) DATABASE ──
+let _cpdCache=null;
+function _cpdPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/cpd_catalog";}
+async function loadCPD(uid){
+  if(_cpdCache)return _cpdCache;
+  try{const d=await fbDb.doc(_cpdPath(uid)).get();_cpdCache=d.exists?{products:[],panels:[],...d.data()}:{products:[],panels:[]};}
+  catch(e){_cpdCache={products:[],panels:[]};}
+  return _cpdCache;
+}
+async function saveCPD(uid,data){
+  _cpdCache={..._cpdCache,...data};
+  await fbDb.doc(_cpdPath(uid)).set(_cpdCache);
+}
+async function logPanelToCPD(uid,panel,categorizedBom){
+  const cpd=await loadCPD(uid);
+  const plcProc=categorizedBom.filter(r=>r.cpdCategory==='PLC Processor').length;
+  const plcIn=categorizedBom.filter(r=>r.cpdCategory==='PLC I/O Module'&&/(input|DI|AI)/i.test(r.description||'')).length;
+  const plcOut=categorizedBom.filter(r=>r.cpdCategory==='PLC I/O Module'&&/(output|DO|AO)/i.test(r.description||'')).length;
+  const motors=categorizedBom.filter(r=>['VFD','Contactor'].includes(r.cpdCategory)).length;
+  const spec={
+    panelId:panel.id,panelName:panel.name||panel.drawingNo||'Panel',
+    projectId:panel.projectId||'',
+    specs:{plcProcessors:plcProc,plcInputs:plcIn,plcOutputs:plcOut,motorCount:motors,
+      itemCount:categorizedBom.filter(r=>!r.isLaborRow).length},
+    bomSummary:categorizedBom.filter(r=>!r.isLaborRow).map(r=>({category:r.cpdCategory||'Other',partNumber:r.partNumber,description:r.description,qty:r.qty||1})),
+    scannedAt:Date.now()
+  };
+  const panels=[...(cpd.panels||[]).filter(p=>p.panelId!==panel.id),spec];
+  // Merge new products
+  const existing=cpd.products||[];
+  const newProds=[...existing];
+  categorizedBom.filter(r=>!r.isLaborRow&&r.partNumber).forEach(r=>{
+    const pn=(r.partNumber||'').trim();
+    if(!pn)return;
+    const idx=newProds.findIndex(p=>p.partNumber===pn);
+    if(idx>=0){newProds[idx]={...newProds[idx],seenCount:(newProds[idx].seenCount||1)+1,lastSeen:Date.now()};}
+    else{newProds.push({partNumber:pn,description:r.description||'',manufacturer:r.manufacturer||'',category:r.cpdCategory||'Other',approvals:{ul:'',ce:'',csa:''},seenCount:1,lastSeen:Date.now()});}
+  });
+  await saveCPD(uid,{panels,products:newProds});
+}
+// Keyword-based part categorizer
+function categorizePart(partNumber,description){
+  const t=((description||'')+(partNumber||'')).toLowerCase();
+  if(/controllogix|compactlogix|micrologix|1756-l|1769-l|s7-\d{3}|plc.*cpu|cpu.*plc|processor.*module/.test(t))return'PLC Processor';
+  if(/1756-[io]|1769-[io]|input.*module|output.*module|analog.*input|analog.*output|digital.*input|digital.*output|ai\d|ao\d|di\d|do\d|ib16|ob16|ia8|oa8/.test(t))return'PLC I/O Module';
+  if(/\bvfd\b|variable.freq|powerflex|altivar|optidrive|micromaster|g120|g110|sv0/.test(t))return'VFD';
+  if(/\bcontactor\b|iec.*motor|definite.purpose|dp.?contactor|100-[ccd]/.test(t))return'Contactor';
+  if(/\brelay\b|ice\d|700-|750-|intermediate.relay|plug.in.relay|cr\d\d/.test(t))return'Relay';
+  if(/mccb|molded.case|main.*breaker|hfd|hja|hjd|lal|main.*disconnect/.test(t))return'MCCB';
+  if(/\bbreaker\b|ul.?489|qo\d|qob|hom|faz|c60n|miniature.circuit/.test(t))return'Circuit Breaker';
+  if(/\bduct\b|wireway|panduit.*duct|wiring.duct|trunking/.test(t))return'Wire Duct';
+  if(/din.?rail|ts.?35|top.hat|omega.rail|g-rail/.test(t))return'DIN Rail';
+  if(/terminal|ptfix|sak\d|ut\d|pt \d|fence.*term|din.*term|terminal.*block/.test(t))return'Terminal Block';
+  if(/enclosure.*heat|cabinet.*heat|strip.heat|ptc.heat|\bheater\b/.test(t))return'Heater';
+  if(/air.cond|vortex|cooler|thermal.manag|cabinet.*cool/.test(t))return'Air Conditioner';
+  if(/\bhorn\b|\bbeacon\b|\bsiren\b|\bstrobe\b|signal.tower|stack.?light|xvbc|k80l/.test(t))return'Horn/Beacon';
+  if(/enclosure|nema.*\d|hoffman|rittal|junction.box|wireway.encl/.test(t))return'Enclosure';
+  if(/\bhmi\b|panelview|pro-face|touch.*screen|operator.*interface|weintek/.test(t))return'HMI';
+  if(/pilot.light|push.?button|selector|door.op|xb\d|800f|800h|illuminated/.test(t))return'Pilot Light/Operator';
+  return'Other';
 }
 
 async function apiCall(body){
@@ -3830,6 +3892,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [pendingPages,setPendingPages]=useState([]);
   const [alternates,setAlternates]=useState([]);
   const [crossOrCorrectPending,setCrossOrCorrectPending]=useState(null);
+  const [cpdQuery,setCpdQuery]=useState("");
+  const [showCpdSearch,setShowCpdSearch]=useState(false);
   const altAutoApplied=useRef(false);
   const feedbackRef=useRef(null);
   const fileRef=useRef(null);
@@ -3871,6 +3935,15 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(changed){const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}}
     }).catch(()=>{});
   },[uid]);
+
+  // Background CPD cataloging — runs when BOM has items, silently logs to CPD database
+  useEffect(()=>{
+    const bom=panel.bom||[];
+    const items=bom.filter(r=>!r.isLaborRow&&r.partNumber);
+    if(!items.length)return;
+    const categorized=items.map(r=>({...r,cpdCategory:r.cpdCategory||categorizePart(r.partNumber,r.description)}));
+    logPanelToCPD(uid,panel,categorized).catch(()=>{});
+  },[panel.id]);
 
   // BC item pulse check — verify bcItemNumber still exists in BC on mount
   useEffect(()=>{
@@ -4484,6 +4557,24 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           )}
           <Badge status={panel.status||"draft"}/>
           {!readOnly&&<button onClick={onDelete} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
+        </div>
+      </div>
+
+      {/* CPD Search bar */}
+      <div style={{marginBottom:12}}>
+        <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:`1px solid ${C.accent}55`,background:"#0a0a16"}}>
+          <input
+            value={cpdQuery}
+            onChange={e=>setCpdQuery(e.target.value)}
+            onKeyDown={e=>{if(e.key==="Enter"&&cpdQuery.trim())setShowCpdSearch(true);}}
+            placeholder="Type what you need in a panel and I will attempt to create a BOM for you without drawings"
+            style={{flex:1,background:"transparent",border:"none",outline:"none",padding:"10px 14px",fontSize:12,color:C.text,fontStyle:cpdQuery?"normal":"italic"}}
+          />
+          <button
+            onClick={()=>{if(cpdQuery.trim())setShowCpdSearch(true);}}
+            style={{background:C.accentDim,border:"none",borderLeft:`1px solid ${C.accent}55`,padding:"10px 16px",color:C.accent,fontWeight:700,fontSize:12,cursor:"pointer",whiteSpace:"nowrap",letterSpacing:0.5}}>
+            CPD Search
+          </button>
         </div>
       </div>
 
@@ -5242,6 +5333,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           }}
         />
       )}
+      {showCpdSearch&&<CPDSearchModal query={cpdQuery} uid={uid} panel={panel} onClose={()=>setShowCpdSearch(false)} onImportBom={rows=>{const newBom=[...(panel.bom||[]),...rows];const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}setShowCpdSearch(false);setCpdQuery("");}}/>}
       {showCreateItem&&<CreateItemInBCModal panel={panel} onClose={()=>setShowCreateItem(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
       {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate} onCreateNewItem={()=>{setShowUpdateBom(false);setShowCreateItem(true);}}/>}
       {crossOrCorrectPending&&(()=>{
@@ -5288,6 +5380,145 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           </div>
         );
       })()}
+    </div>
+  );
+}
+
+// ── CPD SEARCH MODAL ──
+function CPDSearchModal({query,uid,panel,onClose,onImportBom}){
+  const [phase,setPhase]=useState("thinking"); // thinking | result | error
+  const [result,setResult]=useState(null);
+  const [selected,setSelected]=useState(new Set());
+  const [errorMsg,setErrorMsg]=useState("");
+
+  useEffect(()=>{
+    let cancelled=false;
+    async function run(){
+      try{
+        const cpd=await loadCPD(uid);
+        // Build context from CPD catalog
+        const topCategories={};
+        (cpd.products||[]).forEach(p=>{topCategories[p.category]=(topCategories[p.category]||0)+1;});
+        const panelCount=(cpd.panels||[]).length;
+        const catalogContext=panelCount>0
+          ?`The system has cataloged ${panelCount} control panel(s). Common components in the database: ${Object.entries(topCategories).map(([k,v])=>`${k} (${v} unique parts)`).join(', ')}.`
+          :`No prior panel scans in the database yet — generating BOM from expert knowledge.`;
+
+        const systemPrompt=`You are an expert industrial control panel designer specializing in UL508A panels. You have deep knowledge of PLCs (Allen-Bradley, Siemens, Automation Direct), motor control, field instruments, and control panel BOM creation.
+
+${catalogContext}
+
+When given a panel description, generate a realistic preliminary Bill of Materials. Return ONLY valid JSON array, no markdown, no explanation. Each item: {"partNumber":"","description":"","qty":1,"manufacturer":"","category":"","unitPrice":0}
+
+Categories: PLC Processor, PLC I/O Module, VFD, Contactor, Relay, MCCB, Circuit Breaker, Wire Duct, DIN Rail, Terminal Block, Heater, Air Conditioner, Horn/Beacon, Enclosure, HMI, Pilot Light/Operator, Other
+
+Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) where confident. Set unitPrice to 0 if unknown.`;
+
+        const resp=await apiCall({
+          model:"claude-sonnet-4-6",
+          max_tokens:4096,
+          system:systemPrompt,
+          messages:[{role:"user",content:`Generate a BOM for: ${query}`}]
+        });
+        if(cancelled)return;
+        const raw=resp.content[0].text.trim();
+        const json=raw.replace(/^```json\s*/,'').replace(/^```\s*/,'').replace(/\s*```$/,'');
+        const rows=JSON.parse(json);
+        const bomRows=rows.map((r,i)=>({
+          id:`cpd-${Date.now()}-${i}`,
+          partNumber:r.partNumber||'',
+          description:r.description||'',
+          qty:r.qty||1,
+          manufacturer:r.manufacturer||'',
+          unitPrice:r.unitPrice||null,
+          priceSource:r.unitPrice?'ai':null,
+          cpdCategory:r.category||'Other',
+          cpdGenerated:true
+        }));
+        setResult(bomRows);
+        setSelected(new Set(bomRows.map(r=>r.id)));
+        setPhase("result");
+      }catch(e){
+        if(!cancelled){setErrorMsg(e.message||"Failed to generate BOM.");setPhase("error");}
+      }
+    }
+    run();
+    return()=>{cancelled=true;};
+  },[]);
+
+  const catColors={'PLC Processor':'#93c5fd','PLC I/O Module':'#818cf8','VFD':'#fb923c','Contactor':'#f472b6','Relay':'#a78bfa','MCCB':'#ef4444','Circuit Breaker':'#f87171','Wire Duct':'#6b7280','DIN Rail':'#9ca3af','Terminal Block':'#d1d5db','Heater':'#fb923c','Air Conditioner':'#22d3ee','Horn/Beacon':'#facc15','Enclosure':'#a3e635','HMI':'#34d399','Pilot Light/Operator':'#f9a8d4','Other':'#6b7280'};
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,width:"100%",maxWidth:780,maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 12px 60px rgba(0,0,0,0.8)"}}>
+        {/* Header */}
+        <div style={{padding:"18px 24px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,flexShrink:0}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:800,color:C.accent,letterSpacing:1,marginBottom:4}}>CPD SEARCH — AI BOM GENERATOR</div>
+            <div style={{fontSize:12,color:C.muted,fontStyle:"italic",lineHeight:1.5}}>"{query}"</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer",padding:"0 4px",flexShrink:0}}>✕</button>
+        </div>
+
+        {/* Body */}
+        <div style={{flex:1,overflowY:"auto",padding:"16px 24px"}}>
+          {phase==="thinking"&&(
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"48px 0",gap:14}}>
+              <div style={{fontSize:36,animation:"spin 1.2s linear infinite",display:"inline-block"}}>⚙</div>
+              <div style={{fontSize:13,color:C.muted}}>APEX is generating your preliminary BOM…</div>
+            </div>
+          )}
+          {phase==="error"&&(
+            <div style={{color:C.red,fontSize:13,padding:"24px 0"}}>{errorMsg}</div>
+          )}
+          {phase==="result"&&result&&(
+            <>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                <div style={{fontSize:12,color:C.muted}}>{result.length} items generated — check the items you want to import</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>setSelected(new Set(result.map(r=>r.id)))} style={{fontSize:11,background:"none",border:`1px solid ${C.accent}44`,borderRadius:4,color:C.accent,padding:"3px 8px",cursor:"pointer"}}>All</button>
+                  <button onClick={()=>setSelected(new Set())} style={{fontSize:11,background:"none",border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,padding:"3px 8px",cursor:"pointer"}}>None</button>
+                </div>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {result.map(r=>{
+                  const checked=selected.has(r.id);
+                  const col=catColors[r.cpdCategory]||'#6b7280';
+                  return(
+                    <div key={r.id} onClick={()=>setSelected(prev=>{const s=new Set(prev);checked?s.delete(r.id):s.add(r.id);return s;})}
+                      style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:6,background:checked?"#0d1a2a":"#0a0a12",border:`1px solid ${checked?C.accent+'44':C.border}`,cursor:"pointer"}}>
+                      <div style={{width:16,height:16,borderRadius:3,border:`2px solid ${checked?C.accent:C.muted}`,background:checked?C.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                        {checked&&<span style={{color:"#000",fontSize:10,fontWeight:800,lineHeight:1}}>✓</span>}
+                      </div>
+                      <div style={{fontSize:9,fontWeight:700,color:col,background:col+'22',borderRadius:3,padding:"2px 5px",whiteSpace:"nowrap",flexShrink:0}}>{r.cpdCategory}</div>
+                      <div style={{fontSize:12,fontWeight:700,color:C.accent,minWidth:120,flexShrink:0}}>{r.partNumber||<span style={{color:C.muted,fontStyle:"italic"}}>TBD</span>}</div>
+                      <div style={{fontSize:12,color:C.sub,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</div>
+                      <div style={{fontSize:11,color:C.muted,flexShrink:0}}>Qty: {r.qty}</div>
+                      {r.unitPrice>0&&<div style={{fontSize:11,color:C.green,flexShrink:0}}>${r.unitPrice.toFixed(2)}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{fontSize:11,color:C.muted,marginTop:12,padding:"8px 10px",background:"#0a0a12",borderRadius:6,border:`1px solid ${C.border}`,lineHeight:1.5}}>
+                ⚠ This is an AI-generated preliminary BOM. Part numbers and pricing should be verified before quoting. All items are marked as AI-generated in the BOM.
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        {phase==="result"&&(
+          <div style={{padding:"14px 24px",borderTop:`1px solid ${C.border}`,display:"flex",gap:10,justifyContent:"flex-end",flexShrink:0}}>
+            <button onClick={onClose} style={btn(C.border,C.muted,{fontSize:13})}>Cancel</button>
+            <button onClick={()=>onImportBom(result.filter(r=>selected.has(r.id)))}
+              disabled={selected.size===0}
+              style={btn(C.accentDim,C.accent,{fontSize:13,fontWeight:700,opacity:selected.size===0?0.4:1})}>
+              Import {selected.size} Item{selected.size!==1?"s":""} into BOM
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
