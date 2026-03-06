@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.2";
+const APP_VERSION="v1.11.3";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3515,7 +3515,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow}){
   async function doSearch(append=false,overrideQuery){
     const q=overrideQuery!==undefined?overrideQuery:query;
     const s=append?skip:0;
-    if(!q.trim()||q.trim().length<3){
+    if(!q.trim()||q.trim().length<2){
       if(!append){setResults([]);setSearched(false);setHasMore(false);}
       return;
     }
@@ -3532,14 +3532,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow}){
   function onQueryChange(val){
     setQuery(val);
     if(debounceRef.current)clearTimeout(debounceRef.current);
-    if(val.trim().length>=3){
+    if(val.trim().length>=2){
       debounceRef.current=setTimeout(()=>doSearch(false,val),350);
     } else {
       setResults([]);setSearched(false);setHasMore(false);
     }
   }
 
-  useEffect(()=>{if(initialQuery&&initialQuery.trim().length>=3)doSearch(false,initialQuery);},[]);
+  useEffect(()=>{if(initialQuery&&initialQuery.trim().length>=2)doSearch(false,initialQuery);},[]);
   useEffect(()=>()=>{if(debounceRef.current)clearTimeout(debounceRef.current);},[]);
 
   function fmtDate(iso){
@@ -3558,10 +3558,10 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow}){
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18}}>✕</button>
         </div>
         <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
-          <input value={query} onChange={e=>onQueryChange(e.target.value)} placeholder="Search items (min 3 chars)…"
+          <input value={query} onChange={e=>onQueryChange(e.target.value)} placeholder="Search items (min 2 chars)…"
             onKeyDown={e=>{if(e.key==="Enter"){if(debounceRef.current)clearTimeout(debounceRef.current);doSearch();}}}
             style={{...inp(),flex:1,minWidth:200}} autoFocus/>
-          <select value={field} onChange={e=>{setField(e.target.value);if(query.trim().length>=3)setTimeout(()=>doSearch(false),50);}}
+          <select value={field} onChange={e=>{setField(e.target.value);if(query.trim().length>=2)setTimeout(()=>doSearch(false),50);}}
             style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13}}>
             <option value="both">All Fields</option>
             <option value="number">Part # Only</option>
