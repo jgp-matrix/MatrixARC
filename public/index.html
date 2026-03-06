@@ -46,7 +46,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.18";
+const APP_VERSION="v1.11.19";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -528,18 +528,30 @@ async function saveCPD(uid,data){
   _cpdCache={..._cpdCache,...data};
   await fbDb.doc(_cpdPath(uid)).set(_cpdCache);
 }
-async function logPanelToCPD(uid,panel,categorizedBom){
+async function logPanelToCPD(uid,panel,categorizedBom,metadata=null){
   const cpd=await loadCPD(uid);
   const plcProc=categorizedBom.filter(r=>r.cpdCategory==='PLC Processor').length;
   const plcIn=categorizedBom.filter(r=>r.cpdCategory==='PLC I/O Module'&&/(input|DI|AI)/i.test(r.description||'')).length;
   const plcOut=categorizedBom.filter(r=>r.cpdCategory==='PLC I/O Module'&&/(output|DO|AO)/i.test(r.description||'')).length;
   const motors=categorizedBom.filter(r=>['VFD','Contactor'].includes(r.cpdCategory)).length;
+  const existing=cpd.panels||[];
+  const prev=existing.find(p=>p.panelId===panel.id)||{};
   const spec={
+    ...prev,
     panelId:panel.id,panelName:panel.name||panel.drawingNo||'Panel',
     projectId:panel.projectId||'',
+    drawingNo:panel.drawingNo||'',
     specs:{plcProcessors:plcProc,plcInputs:plcIn,plcOutputs:plcOut,motorCount:motors,
       itemCount:categorizedBom.filter(r=>!r.isLaborRow).length},
     bomSummary:categorizedBom.filter(r=>!r.isLaborRow).map(r=>({category:r.cpdCategory||'Other',partNumber:r.partNumber,description:r.description,qty:r.qty||1})),
+    ...(metadata?{
+      panelType:metadata.panelType||prev.panelType||'',
+      controlledEquipment:metadata.controlledEquipment||prev.controlledEquipment||'',
+      voltages:metadata.voltages||prev.voltages||{},
+      plcBrand:metadata.plcBrand||prev.plcBrand||'',
+      enclosureType:metadata.enclosureType||prev.enclosureType||'',
+      additionalNotes:metadata.additionalNotes||prev.additionalNotes||''
+    }:{}),
     scannedAt:Date.now()
   };
   const panels=[...(cpd.panels||[]).filter(p=>p.panelId!==panel.id),spec];
@@ -555,6 +567,36 @@ async function logPanelToCPD(uid,panel,categorizedBom){
   });
   await saveCPD(uid,{panels,products:newProds});
 }
+// Background product enrichment — looks up specs for parts without details
+// Throttled: max 4 parts per session to avoid excessive API usage
+let _enrichSessionCount=0;
+async function enrichProductDetails(uid,partNumber,description,category){
+  if(!_apiKey||_enrichSessionCount>=4)return;
+  _enrichSessionCount++;
+  try{
+    const resp=await apiCall({
+      max_tokens:300,
+      messages:[{role:"user",content:`You are an industrial parts expert. For this part: "${partNumber}" (${description||'no description'}, category: ${category||'unknown'}), provide technical specifications.
+Return ONLY valid JSON (no markdown):
+{"voltageRating":"","currentRating":"","brand":"","series":"","ul":"yes/no/unknown","ce":"yes/no/unknown","csa":"yes/no/unknown","shortSpec":"one sentence description of what this part is and its key specs"}`}]
+    });
+    const raw=resp.content[0].text.replace(/```json|```/g,'').trim();
+    const m=raw.match(/\{[\s\S]*\}/);
+    if(!m)return;
+    const specs=JSON.parse(m[0]);
+    const cpd=await loadCPD(uid);
+    const products=(cpd.products||[]).map(p=>p.partNumber===partNumber?{...p,
+      manufacturer:specs.brand||p.manufacturer,
+      approvals:{ul:specs.ul||'',ce:specs.ce||'',csa:specs.csa||''},
+      voltageRating:specs.voltageRating||'',
+      currentRating:specs.currentRating||'',
+      shortSpec:specs.shortSpec||'',
+      enriched:true,enrichedAt:Date.now()
+    }:p);
+    await saveCPD(uid,{products});
+  }catch(e){}
+}
+
 // Keyword-based part categorizer
 function categorizePart(partNumber,description){
   const t=((description||'')+(partNumber||'')).toLowerCase();
@@ -3566,6 +3608,44 @@ Return ONLY valid JSON, no extra text: {"drawingNo":"...","drawingDesc":"...","d
   }catch(e){return null;}
 }
 
+// ── CPD PANEL METADATA EXTRACTION ──
+async function extractPanelMetadata(pages){
+  if(!_apiKey||!pages||!pages.length)return null;
+  // Use title/cover pages + first schematic page for context
+  const candidates=pages.filter(p=>(p.dataUrl||p.storageUrl)).slice(0,5);
+  if(!candidates.length)return null;
+  try{
+    const ensured=await Promise.all(candidates.map(ensureDataUrl));
+    const imageContents=ensured.filter(p=>p.dataUrl).slice(0,4).map(p=>({
+      type:"image",source:{type:"base64",media_type:"image/jpeg",data:p.dataUrl.split(",")[1]}
+    }));
+    if(!imageContents.length)return null;
+    const resp=await apiCall({
+      max_tokens:600,
+      messages:[{role:"user",content:[
+        ...imageContents,
+        {type:"text",text:`Analyze these control panel engineering drawings and extract as much information as possible.
+Return ONLY valid JSON (no markdown):
+{
+  "panelType": "e.g. Motor Control Panel / PLC Panel / Junction Box / Heater Control / Relay Panel / MCC / Automation Panel",
+  "controlledEquipment": "e.g. Clarifier, Thickener, Kiln, Generator, Pump, Conveyor, Trash Rake, Heater, Fan — list all mentioned",
+  "voltages": {
+    "lineVoltage": "e.g. 480V 3PH or 208V 3PH or unknown",
+    "controlVoltage": "e.g. 120VAC or 24VDC or unknown",
+    "motorVoltage": "e.g. 460V or unknown"
+  },
+  "plcBrand": "e.g. Allen-Bradley, Siemens, AutomationDirect, or none/unknown",
+  "enclosureType": "e.g. NEMA 12, NEMA 4X, or unknown",
+  "additionalNotes": "any other relevant panel details found on drawings"
+}`}
+      ]}]
+    });
+    const raw=resp.content[0].text.replace(/```json|```/g,'').trim();
+    const m=raw.match(/\{[\s\S]*\}/);
+    return m?JSON.parse(m[0]):null;
+  }catch(e){return null;}
+}
+
 // ── DRAWING LIGHTBOX ──
 function DrawingLightbox({pages,startId,onClose}){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex(p=>p.id===startId);return i>=0?i:0;});
@@ -3936,13 +4016,31 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     }).catch(()=>{});
   },[uid]);
 
-  // Background CPD cataloging — runs when BOM has items, silently logs to CPD database
+  // Background CPD cataloging — runs on panel load, silently logs BOM + metadata to CPD database
   useEffect(()=>{
     const bom=panel.bom||[];
     const items=bom.filter(r=>!r.isLaborRow&&r.partNumber);
     if(!items.length)return;
+    const pgs=panel.pages||[];
     const categorized=items.map(r=>({...r,cpdCategory:r.cpdCategory||categorizePart(r.partNumber,r.description)}));
-    logPanelToCPD(uid,panel,categorized).catch(()=>{});
+    // Log BOM immediately (no metadata yet)
+    logPanelToCPD(uid,panel,categorized).then(async()=>{
+      // Extract metadata from drawings in background (only if API key + pages available)
+      if(_apiKey&&pgs.length){
+        const metadata=await extractPanelMetadata(pgs).catch(()=>null);
+        if(metadata)await logPanelToCPD(uid,panel,categorized,metadata).catch(()=>{});
+      }
+      // Enrich products that haven't been enriched yet
+      if(_apiKey){
+        const cpd=await loadCPD(uid).catch(()=>null);
+        if(cpd){
+          const unenriched=(cpd.products||[]).filter(p=>!p.enriched&&p.partNumber);
+          for(const p of unenriched.slice(0,4)){
+            await enrichProductDetails(uid,p.partNumber,p.description,p.category).catch(()=>{});
+          }
+        }
+      }
+    }).catch(()=>{});
   },[panel.id]);
 
   // BC item pulse check — verify bcItemNumber still exists in BC on mount
@@ -4177,6 +4275,13 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     ep.finish(`✓ ${bom.length} items extracted`);
     setTagsChanged(false);
     setExtracting(false);
+    // Background: extract panel metadata from drawings and log to CPD
+    if(_apiKey&&pages.length){
+      const categorized=bom.filter(r=>!r.isLaborRow&&r.partNumber).map(r=>({...r,cpdCategory:categorizePart(r.partNumber,r.description)}));
+      extractPanelMetadata(pages).then(metadata=>{
+        return logPanelToCPD(uid,updated,categorized,metadata||undefined);
+      }).catch(()=>{});
+    }
   }
 
   function parseLaborFeedback(text){
@@ -5391,17 +5496,40 @@ function CPDSearchModal({query,uid,panel,onClose,onImportBom}){
   const [selected,setSelected]=useState(new Set());
   const [errorMsg,setErrorMsg]=useState("");
 
+  const [similarPanels,setSimilarPanels]=useState([]);
+
+  // Find similar panels from CPD database
+  useEffect(()=>{
+    loadCPD(uid).then(cpd=>{
+      const panels=cpd.panels||[];
+      if(!panels.length)return;
+      const q=query.toLowerCase();
+      const scored=panels.map(p=>{
+        let score=0;
+        const haystack=((p.panelType||'')+(p.controlledEquipment||'')+(p.panelName||'')+(p.additionalNotes||'')).toLowerCase();
+        q.split(/\s+/).forEach(word=>{if(word.length>2&&haystack.includes(word))score++;});
+        // Bonus for voltage match
+        const vLine=(p.voltages?.lineVoltage||'').toLowerCase();
+        if(q.includes('480')&&vLine.includes('480'))score+=2;
+        if(q.includes('208')&&vLine.includes('208'))score+=2;
+        return{...p,_score:score};
+      }).filter(p=>p._score>0).sort((a,b)=>b._score-a._score).slice(0,3);
+      setSimilarPanels(scored);
+    }).catch(()=>{});
+  },[]);
+
   useEffect(()=>{
     let cancelled=false;
     async function run(){
       try{
         const cpd=await loadCPD(uid);
-        // Build context from CPD catalog
+        // Build context from CPD catalog including panel metadata
         const topCategories={};
         (cpd.products||[]).forEach(p=>{topCategories[p.category]=(topCategories[p.category]||0)+1;});
         const panelCount=(cpd.panels||[]).length;
+        const panelSummaries=(cpd.panels||[]).slice(-5).map(p=>`${p.panelType||'Panel'} for ${p.controlledEquipment||'unknown equipment'} (${p.specs?.motorCount||0} motors, PLC I/O: ${p.specs?.plcInputs||0}in/${p.specs?.plcOutputs||0}out, ${p.voltages?.lineVoltage||'unknown voltage'})`).join('; ');
         const catalogContext=panelCount>0
-          ?`The system has cataloged ${panelCount} control panel(s). Common components in the database: ${Object.entries(topCategories).map(([k,v])=>`${k} (${v} unique parts)`).join(', ')}.`
+          ?`The system has cataloged ${panelCount} control panel(s). Recent panels: ${panelSummaries}. Common components: ${Object.entries(topCategories).map(([k,v])=>`${k} (${v} unique parts)`).join(', ')}.`
           :`No prior panel scans in the database yet — generating BOM from expert knowledge.`;
 
         const systemPrompt=`You are an expert industrial control panel designer specializing in UL508A panels. You have deep knowledge of PLCs (Allen-Bradley, Siemens, Automation Direct), motor control, field instruments, and control panel BOM creation.
@@ -5463,6 +5591,27 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
 
         {/* Body */}
         <div style={{flex:1,overflowY:"auto",padding:"16px 24px"}}>
+          {similarPanels.length>0&&(
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",textTransform:"uppercase",letterSpacing:0.7,marginBottom:8}}>Similar Panels in Database</div>
+              {similarPanels.map((p,i)=>(
+                <div key={p.panelId||i} style={{background:"#120a2a",border:"1px solid #a78bfa44",borderRadius:7,padding:"9px 12px",marginBottom:6}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
+                    <span style={{fontSize:11,fontWeight:700,color:"#a78bfa"}}>{p.panelType||'Control Panel'}</span>
+                    {p.controlledEquipment&&<span style={{fontSize:10,color:C.muted}}>— {p.controlledEquipment}</span>}
+                  </div>
+                  <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                    {p.voltages?.lineVoltage&&<span style={{fontSize:10,color:C.sub}}>⚡ {p.voltages.lineVoltage}</span>}
+                    {p.specs?.motorCount>0&&<span style={{fontSize:10,color:C.sub}}>⚙ {p.specs.motorCount} motors</span>}
+                    {(p.specs?.plcInputs||p.specs?.plcOutputs)&&<span style={{fontSize:10,color:C.sub}}>PLC {p.specs.plcInputs||0}in/{p.specs.plcOutputs||0}out</span>}
+                    {p.plcBrand&&<span style={{fontSize:10,color:C.sub}}>{p.plcBrand}</span>}
+                    <span style={{fontSize:10,color:C.muted}}>{p.panelName}</span>
+                  </div>
+                  {p.additionalNotes&&<div style={{fontSize:10,color:C.muted,marginTop:3,fontStyle:"italic"}}>{p.additionalNotes.slice(0,120)}</div>}
+                </div>
+              ))}
+            </div>
+          )}
           {phase==="thinking"&&(
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"48px 0",gap:14}}>
               <div style={{fontSize:36,animation:"spin 1.2s linear infinite",display:"inline-block"}}>⚙</div>
