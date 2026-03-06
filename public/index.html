@@ -215,9 +215,12 @@ let _msalReady=false;
 
 // ── BACKGROUND TASK REGISTRY ──
 let _bgTasks={};           // { [taskId]: { taskId, panelName, projectId, status, msg } }
+let _bgDeleteTimers={};    // { [taskId]: timerHandle } — cancel stale timers on bgStart
 let _bgListeners=new Set();
 function _bgNotify(){_bgListeners.forEach(fn=>fn({..._bgTasks}));}
 function bgStart(taskId,panelName,projectId,msg){
+  // Cancel any pending delete timer so a re-upload within the cleanup window doesn't wipe the new task
+  if(_bgDeleteTimers[taskId]){clearTimeout(_bgDeleteTimers[taskId]);delete _bgDeleteTimers[taskId];}
   _bgTasks[taskId]={taskId,panelName,projectId,status:"running",msg:msg||"Processing…",pct:0,startedAt:Date.now()};
   _bgNotify();
 }
@@ -235,13 +238,13 @@ function bgDone(taskId,msg){
   if(!_bgTasks[taskId])return;
   _bgTasks[taskId]={..._bgTasks[taskId],status:"done",pct:100,msg:msg||"Complete"};
   _bgNotify();
-  setTimeout(()=>{delete _bgTasks[taskId];_bgNotify();},4000);
+  _bgDeleteTimers[taskId]=setTimeout(()=>{delete _bgTasks[taskId];delete _bgDeleteTimers[taskId];_bgNotify();},4000);
 }
 function bgError(taskId,msg){
   if(!_bgTasks[taskId])return;
   _bgTasks[taskId]={..._bgTasks[taskId],status:"error",msg:msg||"Error"};
   _bgNotify();
-  setTimeout(()=>{delete _bgTasks[taskId];_bgNotify();},6000);
+  _bgDeleteTimers[taskId]=setTimeout(()=>{delete _bgTasks[taskId];delete _bgDeleteTimers[taskId];_bgNotify();},6000);
 }
 
 // ── PROJECT LIVE UPDATE SYSTEM (for background extraction notifications) ──
@@ -2001,14 +2004,16 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
 // ── BACKGROUND EXTRACTION TASK (module-level — survives React component unmount / navigation) ──
 async function runExtractionTask(uid,projectId,panel,cbs={}){
   const {onDone}=cbs;
-  let latestPanel={...panel};
-  const bomPages=panel.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
-  const hasSchOrLayout=panel.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
+  let latestPanel=panel;
+  try{
+  latestPanel={...panel};
+  const bomPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
+  const hasSchOrLayout=(panel.pages||[]).some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
   const willValidate=!!_apiKey&&hasSchOrLayout;
   const save=async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));};
   // Always update immediately so the bar never stays on "Starting extraction…"
   bgUpdate(panel.id,bomPages.length>0?"Extracting BOM…":willValidate?"Validating…":"Uploading drawings…");
-  try{
+  {
     // BOM extraction
     let bomMergePromise=Promise.resolve([]);
     if(_apiKey&&bomPages.length>0){
