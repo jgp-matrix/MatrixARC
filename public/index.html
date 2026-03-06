@@ -46,7 +46,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.22";
+const APP_VERSION="v1.11.23";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3965,6 +3965,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [processingMsg,setProcessingMsg]=useState("");
   const [detecting,setDetecting]=useState(false);
   const [detectProgress,setDetectProgress]=useState("");
+  const [awaitingConfirm,setAwaitingConfirm]=useState(false);
+  const pendingNewItemsRef=useRef([]);
   const [extracting,setExtracting]=useState(false);
   const ep=useSmoothProgress();
   const bgTasks=useBgTasks();
@@ -4180,7 +4182,32 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       },4);
       setDetecting(false);setDetectProgress("");
     }
-    updated={...panel,pages:livePages};
+    // Pause for user to review detected page types before extraction begins
+    pendingNewItemsRef.current=newItems;
+    if(!_apiKey){
+      // No extraction possible — just save
+      updated={...panel,pages:livePages};
+      onUpdate(updated);setPendingPages([]);
+      try{await onSaveImmediate(updated);}catch(e){}
+      bgDone(panel.id,"Complete");
+    }else{
+      setAwaitingConfirm(true);
+    }
+    }catch(ex){
+      console.error("addFiles error:",ex);
+      setErr(`Error processing files: ${ex.message}`);
+      bgError(panel.id,ex.message.slice(0,60));
+      setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setExtracting(false);setValidatingPanel(false);setPendingPages([]);setAwaitingConfirm(false);
+      bgDone(panel.id,"Error");return;
+    }
+    setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");
+  }
+
+  async function confirmAndExtract(){
+    setAwaitingConfirm(false);
+    const livePages=pendingPages.length>0?pendingPages:(panel.pages||[]);
+    const newItems=pendingNewItemsRef.current||[];
+    let updated={...panel,pages:livePages};
     // Auto-extract title block from first drawing if panel has none yet
     if(_apiKey&&newItems.length>0&&!panel.drawingNo){
       const firstWithData=newItems.find(i=>i.dataUrl);
@@ -4195,19 +4222,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     onUpdate(updated);
     setPendingPages([]);
     try{await onSaveImmediate(updated);}catch(e){}
-    }catch(ex){
-      console.error("addFiles error:",ex);
-      setErr(`Error processing files: ${ex.message}`);
-      bgError(panel.id,ex.message.slice(0,60));
-      setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setExtracting(false);setValidatingPanel(false);setPendingPages([]);
-      bgDone(panel.id,"Error");return;
-    }
-    setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setPendingPages([]);
-    // Start background extraction — runs at module level, continues even if user navigates away
+    // Start background extraction
     const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
     const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
     const willValidate=_apiKey&&hasSchOrLayout;
-    if(!_apiKey||(!bomPages.length&&!willValidate)){bgDone(panel.id,"Complete");return;}
+    if(!bomPages.length&&!willValidate){bgDone(panel.id,"Complete");return;}
     const valPageCount=(updated.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl)).length;
     const totalEst=Math.max(30,bomPages.length*15+valPageCount*20);
     setExtracting(bomPages.length>0);setValidatingPanel(willValidate);
@@ -4247,6 +4266,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   }
 
   function tagPage(id,types){
+    if(pendingPages.length>0)setPendingPages(pp=>pp.map(p=>p.id===id?{...p,types}:p));
     onUpdate({...panel,pages:pages.map(p=>p.id===id?{...p,types}:p)});
     setTagsChanged(true);
   }
@@ -4788,8 +4808,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             <div
               onDragOver={e=>{e.preventDefault();setDragging(true);}}
               onDragLeave={()=>setDragging(false)}
-              onDrop={e=>{e.preventDefault();setDragging(false);addFiles(e.dataTransfer.files);}}
-              onClick={()=>!processing&&!detecting&&fileRef.current?.click()}
+              onDrop={e=>{e.preventDefault();setDragging(false);if(!awaitingConfirm)addFiles(e.dataTransfer.files);}}
+              onClick={()=>!processing&&!detecting&&!awaitingConfirm&&fileRef.current?.click()}
               style={{flexShrink:0,width:420,height:272,border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:6,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:processing||detecting?"default":"pointer",transition:"all 0.15s",background:dragging?C.accentDim+"33":"transparent",textAlign:"center",padding:12,gap:8}}>
               <input ref={fileRef} type="file" multiple accept="image/*,application/pdf" onChange={e=>{addFiles(e.target.files);e.target.value="";}} style={{display:"none"}}/>
               <div style={{fontSize:32,opacity:processing||detecting?1:0.35}}>{processing||detecting?"⏳":"+"}</div>
@@ -4798,6 +4818,19 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           )}
         </div>
       </div>
+
+      {/* Confirm page types banner */}
+      {awaitingConfirm&&!detecting&&(
+        <div style={{background:"#0e0e1e",border:`1px solid ${C.accent}66`,borderRadius:8,padding:"12px 16px",marginBottom:12,display:"flex",alignItems:"center",justifyContent:"space-between",gap:16}}>
+          <div>
+            <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:3}}>Review drawing types before extracting</div>
+            <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>Check that each page above is tagged correctly — <span style={{color:C.accent,fontWeight:600}}>BOM</span>, <span style={{color:C.green,fontWeight:600}}>SCH</span>, <span style={{color:C.purple,fontWeight:600}}>BP</span>, <span style={{color:C.teal||"#0d9488",fontWeight:600}}>ENC</span>, <span style={{color:C.muted,fontWeight:600}}>P&amp;ID</span>. Click a tag to add or remove it, then proceed.</div>
+          </div>
+          <button onClick={confirmAndExtract} style={{flexShrink:0,background:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+            Proceed with Extraction
+          </button>
+        </div>
+      )}
 
       {/* Error */}
       {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.red,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>{err}<button onClick={()=>setErr("")} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:15,lineHeight:1}}>✕</button></div>}
