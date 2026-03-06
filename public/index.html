@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.14";
+const APP_VERSION="v1.11.15";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4699,7 +4699,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>Auto-Loaded</span>
                           )}
                           {f==="partNumber"&&row.isCrossed&&(
-                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>{row.autoReplaced?"auto-crossed":"crossed item"}</span>
+                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>{row.autoReplaced?"APEX crossed":"crossed item"}</span>
                           )}
                           {f==="partNumber"&&row.isCorrection&&(
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>
@@ -4851,7 +4851,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     {crossedItems.map((r,i)=>(
                       <div key={r.id} style={{fontSize:12,color:C.sub,marginBottom:2}}>
                         <span style={{color:C.muted}}>{i+1}.</span>{" "}
-                        {r.autoReplaced&&<span style={{fontSize:10,color:"#a78bfa",fontWeight:700,marginRight:4}}>[auto]</span>}
+                        {r.autoReplaced&&<span style={{fontSize:10,color:"#a78bfa",fontWeight:700,marginRight:4}}>[APEX]</span>}
                         <span style={{color:C.red,fontWeight:600}}>{r.crossedFrom}</span>
                         <span style={{color:C.muted}}> → </span>
                         <span style={{color:C.accent,fontWeight:600}}>{r.partNumber}</span>
@@ -5247,7 +5247,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
             onMouseDown={e=>{if(e.target===e.currentTarget)dismiss();}}>
             <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
-              <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>Part Number Change Detected</div>
+              <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>APEX — Part Number Change Detected</div>
               <div style={{fontSize:13,color:C.muted,marginBottom:12}}>
                 <span style={{color:C.red,fontWeight:700}}>{crossOrCorrectPending.origPN}</span>
                 <span style={{color:C.muted}}> → </span>
@@ -5255,7 +5255,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               </div>
               <div style={{fontSize:11,background:"#120a2a",border:"1px solid #a78bfa",borderRadius:6,padding:"7px 10px",marginBottom:16,display:"flex",alignItems:"center",gap:6}}>
                 <span style={{fontSize:13}}>🤖</span>
-                <span style={{color:"#a78bfa",fontWeight:700}}>AI suggests: </span>
+                <span style={{color:"#a78bfa",fontWeight:700}}>APEX suggests: </span>
                 <span style={{color:C.text,fontWeight:600}}>{aiSug==='format'?'Formatting Error':'Bad Extraction'}</span>
                 <span style={{color:C.muted,fontSize:10,marginLeft:2}}>— based on part number similarity</span>
               </div>
