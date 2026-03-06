@@ -47,7 +47,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.31";
+const APP_VERSION="v1.11.32";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3798,9 +3798,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:100,messages:[{role:"user",content:[
+        body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:120,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42} where y_top and y_bottom are the top and bottom edges of that specific row as fractions of the total image height (0=top of image, 1=bottom). If not found return {"found":false}.`}
+          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42,"x_fraction":0.15} where y_top/y_bottom are the top and bottom of that row as fractions of image height, and x_fraction is the horizontal center of the part number cell as a fraction of image width. If not found return {"found":false}.`}
         ]}]})
       });
       const data=await resp.json();
@@ -3809,32 +3809,40 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
       if(m){
         const r=JSON.parse(m[0]);
         if(r.found&&r.y_top!=null&&r.y_bottom!=null){
-          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom);
+          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom,r.x_fraction??0.2);
         }
       }
     }catch(e){console.warn('locateInDrawing:',e);}
     finally{setLocating(false);}
   }
 
-  function cropRowFromImage(dataUrl,yTop,yBottom){
+  function cropRowFromImage(dataUrl,yTop,yBottom,xFrac){
     return new Promise(resolve=>{
       const img=new Image();
       img.onload=()=>{
         const W=img.naturalWidth,H=img.naturalHeight;
-        const pad=0.022;
-        const cropTop=Math.max(0,yTop-pad);
-        const cropBottom=Math.min(1,yBottom+pad);
+        // Vertical crop — row + padding
+        const vPad=0.018;
+        const cropTop=Math.max(0,yTop-vPad);
+        const cropBottom=Math.min(1,yBottom+vPad);
         const srcY=Math.round(cropTop*H);
+        const srcRowH=Math.round((yBottom-yTop)*H);
         const srcH=Math.round((cropBottom-cropTop)*H);
-        const targetW=880;
-        const scale=targetW/W;
-        const canvasW=targetW;
+        // Scale so the row itself renders at ~80px tall
+        const scale=Math.max(1,80/Math.max(srcRowH,1));
+        // Horizontal crop — window around the part number column (±30% of width, min 20%)
+        const hWin=0.30;
+        const xLeft=Math.max(0,xFrac-hWin);
+        const xRight=Math.min(1,xFrac+hWin);
+        const srcX=Math.round(xLeft*W);
+        const srcW=Math.round((xRight-xLeft)*W);
+        const canvasW=Math.round(srcW*scale);
         const canvasH=Math.round(srcH*scale);
         const canvas=document.createElement('canvas');
         canvas.width=canvasW;canvas.height=canvasH;
         const ctx=canvas.getContext('2d');
-        ctx.drawImage(img,0,srcY,W,srcH,0,0,canvasW,canvasH);
-        // Highlight band over the actual row
+        ctx.drawImage(img,srcX,srcY,srcW,srcH,0,0,canvasW,canvasH);
+        // Highlight the row
         const rowTopC=Math.round(((yTop-cropTop)/(cropBottom-cropTop))*canvasH);
         const rowBotC=Math.round(((yBottom-cropTop)/(cropBottom-cropTop))*canvasH);
         const rowH=Math.max(4,rowBotC-rowTopC);
@@ -3896,7 +3904,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onMouseDown={e=>{backdropMdRef.current=e.target===e.currentTarget;}}
       onClick={e=>{if(backdropMdRef.current)onClose();}}>
-      <div style={{...card(),width:"100%",maxWidth:bomPages.length>0?1340:860,maxHeight:"90vh",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
+      <div style={{...card(),width:"100%",maxWidth:860,maxHeight:"90vh",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14,gap:12}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>BC Item Browser</div>
@@ -3910,8 +3918,6 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,flexShrink:0}}>✕</button>
         </div>
-        <div style={{display:"flex",gap:14,flex:1,minHeight:0}}>
-        <div style={{display:"flex",flexDirection:"column",flex:1,minWidth:0}}>
         <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
           <input value={query} onChange={e=>onQueryChange(e.target.value)} placeholder="Search items (min 3 chars)…"
             onKeyDown={e=>{if(e.key==="Enter"){if(debounceRef.current)clearTimeout(debounceRef.current);doSearch();}}}
@@ -4041,19 +4047,16 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
             {loading?"Loading…":"Load More"}
           </button>
         )}
-        </div>{/* end search column */}
-
-        {/* Drawing reference panel — always visible when BOM pages exist */}
+        {/* Drawing reference — full-width strip at bottom */}
         {bomPages.length>0&&(
-          <div style={{width:460,flexShrink:0,borderLeft:`1px solid ${C.border}`,display:"flex",flexDirection:"column",minHeight:0}}>
-            <div style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.5}}>DRAWING REFERENCE</span>
-                {locating&&<span style={{fontSize:11,color:C.yellow,animation:"pulse 1s ease-in-out infinite"}}>🔍 Locating row…</span>}
-                {!locating&&croppedDataUrl&&<span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✓ Row found</span>}
-              </div>
+          <div style={{borderTop:`1px solid ${C.border}`,marginTop:10}}>
+            <div style={{padding:"6px 10px",display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.5}}>DRAWING REFERENCE</span>
+              {locating&&<span style={{fontSize:11,color:C.yellow,animation:"pulse 1s ease-in-out infinite"}}>🔍 Scanning for {targetRow?.partNumber||initialQuery}…</span>}
+              {!locating&&croppedDataUrl&&<span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✓ Row found</span>}
+              {!locating&&!croppedDataUrl&&_apiKey&&<span style={{fontSize:11,color:C.muted}}>Row not found in drawing</span>}
               {bomPages.length>1&&(
-                <div style={{display:"flex",gap:4}}>
+                <div style={{display:"flex",gap:4,marginLeft:"auto"}}>
                   {bomPages.map((_,i)=>(
                     <button key={i} onClick={()=>{setDrawingPageIdx(i);locateInDrawing(i);}}
                       style={{background:drawingPageIdx===i?C.accentDim:"transparent",border:`1px solid ${drawingPageIdx===i?C.accent:C.border}`,color:drawingPageIdx===i?C.accent:C.muted,borderRadius:4,padding:"2px 8px",fontSize:11,cursor:"pointer"}}>
@@ -4063,26 +4066,18 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
                 </div>
               )}
             </div>
-            <div style={{flex:1,overflowY:"auto",background:"#04040a",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{overflowX:"auto",background:"#020208",borderRadius:"0 0 8px 8px",minHeight:locating?60:croppedDataUrl?undefined:0}}>
               {locating&&!croppedDataUrl&&(
-                <div style={{color:C.muted,fontSize:13,textAlign:"center",padding:20}}>
-                  <div style={{fontSize:24,marginBottom:8}}>🔍</div>
-                  <div>Scanning drawing for</div>
-                  <div style={{color:C.yellow,fontWeight:700,fontFamily:"monospace",marginTop:4}}>{targetRow?.partNumber||initialQuery}</div>
-                </div>
-              )}
-              {!locating&&!croppedDataUrl&&(
-                <div style={{color:C.muted,fontSize:12,textAlign:"center",padding:20,lineHeight:1.6}}>
-                  {_apiKey?"Row not found in drawing.":"Add API key to enable drawing lookup."}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:60,color:C.muted,fontSize:12,gap:8}}>
+                  <span style={{animation:"pulse 1s ease-in-out infinite"}}>🔍</span> Locating row in drawing…
                 </div>
               )}
               {croppedDataUrl&&(
-                <img src={croppedDataUrl} alt="BOM row" style={{width:"100%",display:"block",imageRendering:"crisp-edges"}}/>
+                <img src={croppedDataUrl} alt="BOM row" style={{display:"block",height:"auto",imageRendering:"crisp-edges"}}/>
               )}
             </div>
           </div>
         )}
-        </div>{/* end flex row */}
       </div>
     </div>,
     document.body
