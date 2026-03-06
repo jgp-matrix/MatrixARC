@@ -4227,7 +4227,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const extractProgress=(bgTask?.status==="running"||bgTask?.status==="done")?{pct:bgTask.pct||0,msg:bgTask.msg}:ep.progress;
   // Unified progress: pricing takes priority when active, then extraction, then null
   const _showExtract=extractProgress&&(!awaitingConfirm||detecting);
-  const _rawUnified=(aiPricing&&pricingProgress)?pricingProgress:_showExtract?extractProgress:pricingProgress||null;
+  // When aiPricing=true, guarantee a non-null value even if pricingProgress state hasn't synced yet
+  const _activePricing=aiPricing?(pricingProgress||{msg:"Getting prices…",pct:5}):pricingProgress;
+  const _rawUnified=_activePricing||(_showExtract?extractProgress:null);
   const unifiedProgress=_rawUnified?{..._rawUnified,isError:_rawUnified.isError||bgTask?.status==="error"}:null;
   const [showFastQuote,setShowFastQuote]=useState(false);
   const [lightboxId,setLightboxId]=useState(null);
