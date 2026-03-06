@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.4";
+const APP_VERSION="v1.11.5";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -454,6 +454,33 @@ async function saveDefaultBomItems(uid,items){
   _defaultBomItems=items;
   const path=_appCtx.configPath?`${_appCtx.configPath}/defaultBomItems`:`users/${uid}/config/defaultBomItems`;
   await fbDb.doc(path).set({items});
+}
+
+// ── ALTERNATES DATABASE ──
+let _altCache=null;
+function _altPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/alternates";}
+async function loadAlternates(uid){
+  if(_altCache)return _altCache;
+  try{const d=await fbDb.doc(_altPath(uid)).get();_altCache=d.exists?(d.data().alternates||[]):[];}
+  catch(e){_altCache=[];}
+  return _altCache;
+}
+async function saveAlternateEntry(uid,originalPN,replacement){
+  const alts=await loadAlternates(uid);
+  const idx=alts.findIndex(a=>a.originalPN===originalPN);
+  if(idx>=0){alts[idx]={...alts[idx],replacement,updatedAt:Date.now()};}
+  else{alts.push({originalPN,replacement,autoReplace:false,createdAt:Date.now()});}
+  _altCache=[...alts];
+  await fbDb.doc(_altPath(uid)).set({alternates:_altCache});
+  return _altCache;
+}
+async function setAltAutoReplace(uid,originalPN,autoReplace){
+  const alts=await loadAlternates(uid);
+  const idx=alts.findIndex(a=>a.originalPN===originalPN);
+  if(idx>=0){alts[idx]={...alts[idx],autoReplace};}
+  _altCache=[...alts];
+  await fbDb.doc(_altPath(uid)).set({alternates:_altCache});
+  return _altCache;
 }
 async function apiCall(body){
   if(!_apiKey)throw new Error("API key not set. Open Settings and add your Anthropic key.");
@@ -3261,6 +3288,20 @@ function QuoteTab({project,onUpdate}){
                 <div style={{color:W.sub,marginBottom:2}}>NOTES:</div>
                 <textarea value={q.lineNotes||""} onChange={e=>setQ({lineNotes:e.target.value})} placeholder="e.g. Grey duct quoted instead of white." rows={2} style={{...qInp({display:"block",width:"100%",resize:"vertical",borderBottom:"none",border:`1px dashed ${W.border}`,borderRadius:3,padding:"4px 6px"})}}/>
               </div>
+              {(()=>{
+                const crossedItems=(bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
+                if(!crossedItems.length)return null;
+                return(
+                  <div style={{marginTop:8,borderTop:`1px dashed ${W.border}`,paddingTop:6}}>
+                    <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:W.sub,marginBottom:4}}>Crossed Items — Alternate Products Used</div>
+                    {crossedItems.map((item,i)=>(
+                      <div key={item.id||i} style={{fontSize:11,color:W.text,marginBottom:2}}>
+                        {i+1}. <span style={{color:W.muted}}>Scanned:</span> <strong>{item.crossedFrom}</strong> <span style={{color:W.muted}}>→ Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:W.muted}}> ({item.description})</span>:null}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -3740,6 +3781,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [bcNewlyCreated,setBcNewlyCreated]=useState(new Set());
   const [bcBrowserQuery,setBcBrowserQuery]=useState("");
   const [pendingPages,setPendingPages]=useState([]);
+  const [alternates,setAlternates]=useState([]);
+  const altAutoApplied=useRef(false);
   const feedbackRef=useRef(null);
   const fileRef=useRef(null);
   const autoSaveTimer=useRef(null);
@@ -3749,6 +3792,27 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     loadPartCorrections(uid).then(setPartCorrections);
   },[uid]);
   useEffect(()=>()=>{if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);},[]);
+
+  // Load alternates and auto-apply on mount
+  useEffect(()=>{
+    loadAlternates(uid).then(alts=>{
+      setAlternates(alts);
+      if(!alts.length||altAutoApplied.current)return;
+      altAutoApplied.current=true;
+      const bom=panel.bom||[];
+      let changed=false;
+      const newBom=bom.map(r=>{
+        if(r.isLaborRow||r.isCrossed)return r;
+        const pn=(r.partNumber||"").trim();
+        if(!pn)return r;
+        const alt=alts.find(a=>a.originalPN===pn&&a.autoReplace);
+        if(!alt)return r;
+        changed=true;
+        return{...r,partNumber:alt.replacement.partNumber,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",isCrossed:true,crossedFrom:pn};
+      });
+      if(changed){const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}}
+    }).catch(()=>{});
+  },[uid]);
 
   // BC item pulse check — verify bcItemNumber still exists in BC on mount
   useEffect(()=>{
@@ -4107,9 +4171,17 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   function applyBcItem(bomRowId,bcItem){
     const bom=(panel.bom||[]).map(r=>{
       if(r.id!==bomRowId)return r;
-      const updates={...r,partNumber:bcItem.number,unitPrice:bcItem.unitCost,priceSource:"bc"};
+      const origPN=(r.crossedFrom||r.partNumber||"").trim();
+      const newPN=bcItem.number;
+      const isCrossing=origPN&&origPN!==newPN;
+      const updates={...r,partNumber:newPN,unitPrice:bcItem.unitCost,priceSource:"bc"};
+      if(isCrossing){updates.isCrossed=true;updates.crossedFrom=origPN;}
       if(bcItem.displayName&&!r.description)updates.description=bcItem.displayName;
       if(bcItem._vendorName&&!r.manufacturer)updates.manufacturer=bcItem._vendorName;
+      if(isCrossing){
+        saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost})
+          .then(alts=>setAlternates([...alts])).catch(()=>{});
+      }
       return updates;
     });
     const updated={...panel,bom};
@@ -4552,7 +4624,48 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           {f==="partNumber"&&row.autoLoaded&&(
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>Auto-Loaded</span>
                           )}
+                          {f==="partNumber"&&row.isCrossed&&(
+                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>crossed item</span>
+                          )}
                           </div>
+                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&!readOnly&&(()=>{
+                            const alt=alternates.find(a=>a.originalPN===row.crossedFrom);
+                            return(
+                              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,paddingLeft:2}}>
+                                <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:C.red}}>{row.crossedFrom}</span></span>
+                                {alt&&(
+                                  <label style={{display:"flex",alignItems:"center",gap:3,fontSize:10,color:C.muted,cursor:"pointer"}}>
+                                    <input type="checkbox" checked={alt.autoReplace||false}
+                                      onChange={e=>setAltAutoReplace(uid,row.crossedFrom,e.target.checked).then(alts=>setAlternates([...alts])).catch(()=>{})}
+                                      style={{accentColor:C.accent,width:10,height:10,cursor:"pointer"}}/>
+                                    auto-replace
+                                  </label>
+                                )}
+                              </div>
+                            );
+                          })()}
+                          {f==="partNumber"&&!row.isLaborRow&&!row.isCrossed&&!readOnly&&(()=>{
+                            const pn=(row.partNumber||"").trim();
+                            const avail=pn?alternates.filter(a=>a.originalPN===pn):[];
+                            if(!avail.length)return null;
+                            return(
+                              <div style={{marginTop:3}}>
+                                <select onChange={e=>{
+                                  if(!e.target.value)return;
+                                  const alt=avail.find(a=>a.replacement.partNumber===e.target.value);
+                                  if(alt)applyBcItem(row.id,{number:alt.replacement.partNumber,unitCost:alt.replacement.unitCost,displayName:alt.replacement.description});
+                                  e.target.value="";
+                                }} style={{fontSize:10,background:"#1a1040",border:`1px solid ${C.accent}`,borderRadius:4,color:C.accent,padding:"1px 4px",cursor:"pointer"}}>
+                                  <option value="">⇄ Alternates…</option>
+                                  {avail.map(a=>(
+                                    <option key={a.replacement.partNumber} value={a.replacement.partNumber}>
+                                      {a.replacement.partNumber}{a.autoReplace?" ✓ auto":""} — {a.replacement.description}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          })()}
                           {f==="partNumber"&&row.suggestedPartNumber&&!row.partNumber&&!readOnly&&(
                             <div style={{display:"flex",alignItems:"center",gap:4,marginTop:3,paddingLeft:2,flexWrap:"nowrap"}}>
                               <span style={{fontSize:10,color:C.teal}}>📚</span>
@@ -4647,6 +4760,39 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             </table>
           </div>
           {!readOnly&&<button onClick={addBomRow} style={btn("transparent",C.accent,{fontSize:12,padding:"8px 12px",border:`1px dashed ${C.accent}66`,width:"100%",marginTop:8})}>+ Add Row</button>}
+          {/* BOM Notes */}
+          {(()=>{
+            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
+            return(
+              <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                {crossedItems.length>0&&(
+                  <div style={{marginBottom:8,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 12px"}}>
+                    <div style={{fontSize:11,fontWeight:700,color:C.red,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Crossed Items</div>
+                    {crossedItems.map((r,i)=>(
+                      <div key={r.id} style={{fontSize:12,color:C.sub,marginBottom:2}}>
+                        <span style={{color:C.muted}}>{i+1}.</span>{" "}
+                        <span style={{color:C.red,fontWeight:600}}>{r.crossedFrom}</span>
+                        <span style={{color:C.muted}}> → </span>
+                        <span style={{color:C.accent,fontWeight:600}}>{r.partNumber}</span>
+                        {r.description&&<span style={{color:C.muted,fontSize:11}}> ({r.description})</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>Notes</div>
+                  <textarea
+                    value={panel.bomNotes||""}
+                    onChange={e=>{const updated={...panel,bomNotes:e.target.value};onUpdate(updated);if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(ex){}},1000);}}
+                    readOnly={readOnly}
+                    rows={3}
+                    placeholder="Additional notes about this panel's BOM…"
+                    style={{width:"100%",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,padding:"6px 8px",resize:"vertical",fontFamily:"inherit",boxSizing:"border-box",outline:"none"}}
+                  />
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
