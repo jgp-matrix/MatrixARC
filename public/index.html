@@ -47,7 +47,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.32";
+const APP_VERSION="v1.11.33";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3800,7 +3800,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
         body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:120,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42,"x_fraction":0.15} where y_top/y_bottom are the top and bottom of that row as fractions of image height, and x_fraction is the horizontal center of the part number cell as a fraction of image width. If not found return {"found":false}.`}
+          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42} where y_top and y_bottom are the top and bottom edges of that specific row as fractions of the total image height (0=top, 1=bottom). If not found return {"found":false}.`}
         ]}]})
       });
       const data=await resp.json();
@@ -3809,39 +3809,33 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
       if(m){
         const r=JSON.parse(m[0]);
         if(r.found&&r.y_top!=null&&r.y_bottom!=null){
-          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom,r.x_fraction??0.2);
+          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom);
         }
       }
     }catch(e){console.warn('locateInDrawing:',e);}
     finally{setLocating(false);}
   }
 
-  function cropRowFromImage(dataUrl,yTop,yBottom,xFrac){
+  function cropRowFromImage(dataUrl,yTop,yBottom){
     return new Promise(resolve=>{
       const img=new Image();
       img.onload=()=>{
         const W=img.naturalWidth,H=img.naturalHeight;
-        // Vertical crop — row + padding
-        const vPad=0.018;
+        // Vertical crop — row + padding (2 rows worth above/below for context)
+        const vPad=0.025;
         const cropTop=Math.max(0,yTop-vPad);
         const cropBottom=Math.min(1,yBottom+vPad);
         const srcY=Math.round(cropTop*H);
         const srcRowH=Math.round((yBottom-yTop)*H);
         const srcH=Math.round((cropBottom-cropTop)*H);
-        // Scale so the row itself renders at ~80px tall
+        // Scale so the target row renders at ~80px tall — full width, no horizontal crop
         const scale=Math.max(1,80/Math.max(srcRowH,1));
-        // Horizontal crop — window around the part number column (±30% of width, min 20%)
-        const hWin=0.30;
-        const xLeft=Math.max(0,xFrac-hWin);
-        const xRight=Math.min(1,xFrac+hWin);
-        const srcX=Math.round(xLeft*W);
-        const srcW=Math.round((xRight-xLeft)*W);
-        const canvasW=Math.round(srcW*scale);
+        const canvasW=Math.round(W*scale);
         const canvasH=Math.round(srcH*scale);
         const canvas=document.createElement('canvas');
         canvas.width=canvasW;canvas.height=canvasH;
         const ctx=canvas.getContext('2d');
-        ctx.drawImage(img,srcX,srcY,srcW,srcH,0,0,canvasW,canvasH);
+        ctx.drawImage(img,0,srcY,W,srcH,0,0,canvasW,canvasH);
         // Highlight the row
         const rowTopC=Math.round(((yTop-cropTop)/(cropBottom-cropTop))*canvasH);
         const rowBotC=Math.round(((yBottom-cropTop)/(cropBottom-cropTop))*canvasH);
