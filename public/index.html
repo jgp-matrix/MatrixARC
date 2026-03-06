@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.15";
+const APP_VERSION="v1.11.16";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -465,11 +465,11 @@ async function loadAlternates(uid){
   catch(e){_altCache=[];}
   return _altCache;
 }
-async function saveAlternateEntry(uid,originalPN,replacement){
+async function saveAlternateEntry(uid,originalPN,replacement,autoReplace=false){
   const alts=await loadAlternates(uid);
   const idx=alts.findIndex(a=>a.originalPN===originalPN);
-  if(idx>=0){alts[idx]={...alts[idx],replacement,updatedAt:Date.now()};}
-  else{alts.push({originalPN,replacement,autoReplace:false,createdAt:Date.now()});}
+  if(idx>=0){alts[idx]={...alts[idx],replacement,autoReplace:autoReplace||alts[idx].autoReplace,updatedAt:Date.now()};}
+  else{alts.push({originalPN,replacement,autoReplace,createdAt:Date.now()});}
   _altCache=[...alts];
   await fbDb.doc(_altPath(uid)).set({alternates:_altCache});
   return _altCache;
@@ -4239,10 +4239,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(bcItem.displayName&&!r.description)updates.description=bcItem.displayName;
       if(bcItem._vendorName&&!r.manufacturer)updates.manufacturer=bcItem._vendorName;
       if(asCross){
-        saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost})
+        // autoReplace:true — APEX selection immediately trains the learning database
+        saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost},true)
           .then(alts=>setAlternates([...alts])).catch(()=>{});
       }else if(correctionType){
-        saveCorrectionEntry(uid,origPN,newPN,correctionType).catch(()=>{});
+        saveCorrectionEntry(uid,origPN,newPN,correctionType).then(()=>{}).catch(()=>{});
       }
       return updates;
     });
