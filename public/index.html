@@ -47,7 +47,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.30";
+const APP_VERSION="v1.11.31";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3778,18 +3778,16 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
   const [bcUoms,setBcUoms]=useState([]);
   const [bcVendors,setBcVendors]=useState([]);
   const [dropdownsLoaded,setDropdownsLoaded]=useState(false);
-  const [showDrawing,setShowDrawing]=useState(false);
-  const [highlightY,setHighlightY]=useState(null);
+  const [croppedDataUrl,setCroppedDataUrl]=useState(null);
   const [locating,setLocating]=useState(false);
-  const [drawingZoom,setDrawingZoom]=useState(1);
   const [drawingPageIdx,setDrawingPageIdx]=useState(0);
-  const drawingScrollRef=useRef(null);
   const bomPages=((pages||[]).filter(p=>getPageTypes(p).includes('bom')&&(p.dataUrl||p.storageUrl)));
 
-  async function locateInDrawing(pgIdx=drawingPageIdx){
-    const pg=bomPages[pgIdx];
+  async function locateInDrawing(pgIdx){
+    const idx=pgIdx!=null?pgIdx:drawingPageIdx;
+    const pg=bomPages[idx];
     if(!pg||!_apiKey)return;
-    setLocating(true);setHighlightY(null);
+    setLocating(true);setCroppedDataUrl(null);
     try{
       let dataUrl=pg.dataUrl;
       if(!dataUrl&&pg.storageUrl){const loaded=await ensureDataUrl(pg);dataUrl=loaded.dataUrl;}
@@ -3800,9 +3798,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:80,messages:[{role:"user",content:[
+        body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:100,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON with no explanation: {"found":true,"y_fraction":0.42} where y_fraction is the vertical center of that row as a fraction of the total image height (0=top, 1=bottom). If not found return {"found":false}.`}
+          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42} where y_top and y_bottom are the top and bottom edges of that specific row as fractions of the total image height (0=top of image, 1=bottom). If not found return {"found":false}.`}
         ]}]})
       });
       const data=await resp.json();
@@ -3810,28 +3808,53 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
       const m=text.match(/\{[\s\S]*?\}/);
       if(m){
         const r=JSON.parse(m[0]);
-        if(r.found&&r.y_fraction!=null){
-          setHighlightY(r.y_fraction);
-          setTimeout(()=>{
-            if(drawingScrollRef.current){
-              const el=drawingScrollRef.current;
-              el.scrollTo({top:Math.max(0,r.y_fraction*el.scrollHeight-el.clientHeight/2),behavior:'smooth'});
-            }
-          },120);
+        if(r.found&&r.y_top!=null&&r.y_bottom!=null){
+          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom);
         }
       }
     }catch(e){console.warn('locateInDrawing:',e);}
     finally{setLocating(false);}
   }
 
-  function toggleDrawing(){
-    if(!showDrawing){
-      setShowDrawing(true);
-      if(bomPages.length&&_apiKey)locateInDrawing(drawingPageIdx);
-    }else{
-      setShowDrawing(false);
-    }
+  function cropRowFromImage(dataUrl,yTop,yBottom){
+    return new Promise(resolve=>{
+      const img=new Image();
+      img.onload=()=>{
+        const W=img.naturalWidth,H=img.naturalHeight;
+        const pad=0.022;
+        const cropTop=Math.max(0,yTop-pad);
+        const cropBottom=Math.min(1,yBottom+pad);
+        const srcY=Math.round(cropTop*H);
+        const srcH=Math.round((cropBottom-cropTop)*H);
+        const targetW=880;
+        const scale=targetW/W;
+        const canvasW=targetW;
+        const canvasH=Math.round(srcH*scale);
+        const canvas=document.createElement('canvas');
+        canvas.width=canvasW;canvas.height=canvasH;
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(img,0,srcY,W,srcH,0,0,canvasW,canvasH);
+        // Highlight band over the actual row
+        const rowTopC=Math.round(((yTop-cropTop)/(cropBottom-cropTop))*canvasH);
+        const rowBotC=Math.round(((yBottom-cropTop)/(cropBottom-cropTop))*canvasH);
+        const rowH=Math.max(4,rowBotC-rowTopC);
+        ctx.fillStyle='rgba(253,224,71,0.22)';
+        ctx.fillRect(0,rowTopC,canvasW,rowH);
+        ctx.strokeStyle='#fde047';ctx.lineWidth=3;
+        ctx.strokeRect(1,rowTopC+1,canvasW-2,rowH-2);
+        ctx.shadowColor='#fde047';ctx.shadowBlur=12;
+        ctx.strokeRect(1,rowTopC+1,canvasW-2,rowH-2);
+        setCroppedDataUrl(canvas.toDataURL('image/jpeg',0.95));
+        resolve();
+      };
+      img.onerror=resolve;
+      img.src=dataUrl;
+    });
   }
+
+  useEffect(()=>{
+    if(bomPages.length&&_apiKey)locateInDrawing(0);
+  },[]);
 
   async function doSearch(append=false,overrideQuery){
     const q=overrideQuery!==undefined?overrideQuery:query;
@@ -3873,7 +3896,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onMouseDown={e=>{backdropMdRef.current=e.target===e.currentTarget;}}
       onClick={e=>{if(backdropMdRef.current)onClose();}}>
-      <div style={{...card(),width:"100%",maxWidth:showDrawing?1380:860,maxHeight:"90vh",display:"flex",flexDirection:"column",transition:"max-width 0.2s"}} onClick={e=>e.stopPropagation()}>
+      <div style={{...card(),width:"100%",maxWidth:bomPages.length>0?1340:860,maxHeight:"90vh",display:"flex",flexDirection:"column"}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14,gap:12}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>BC Item Browser</div>
@@ -3885,15 +3908,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               </div>
             )}
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-            {bomPages.length>0&&(
-              <button onClick={toggleDrawing}
-                style={{background:showDrawing?"#1a1a3a":"transparent",border:`1px solid ${showDrawing?C.accent:C.border}`,color:showDrawing?C.accent:C.muted,borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
-                {showDrawing?"Hide Drawing":"📐 View in Drawing"}
-              </button>
-            )}
-            <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18}}>✕</button>
-          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,flexShrink:0}}>✕</button>
         </div>
         <div style={{display:"flex",gap:14,flex:1,minHeight:0}}>
         <div style={{display:"flex",flexDirection:"column",flex:1,minWidth:0}}>
@@ -4028,50 +4043,42 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
         )}
         </div>{/* end search column */}
 
-        {/* Drawing reference panel */}
-        {showDrawing&&bomPages.length>0&&(
+        {/* Drawing reference panel — always visible when BOM pages exist */}
+        {bomPages.length>0&&(
           <div style={{width:460,flexShrink:0,borderLeft:`1px solid ${C.border}`,display:"flex",flexDirection:"column",minHeight:0}}>
-            {/* Panel header */}
-            <div style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
+            <div style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.5}}>DRAWING REFERENCE</span>
-                {locating&&<span style={{fontSize:11,color:C.yellow,animation:"pulse 1s ease-in-out infinite"}}>🔍 Locating…</span>}
-                {!locating&&highlightY!=null&&<span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✓ Row found</span>}
-                {!locating&&highlightY==null&&!_apiKey&&<span style={{fontSize:11,color:C.muted}}>Add API key to auto-locate</span>}
+                {locating&&<span style={{fontSize:11,color:C.yellow,animation:"pulse 1s ease-in-out infinite"}}>🔍 Locating row…</span>}
+                {!locating&&croppedDataUrl&&<span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✓ Row found</span>}
               </div>
-              <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                {bomPages.length>1&&bomPages.map((_,i)=>(
-                  <button key={i} onClick={()=>{setDrawingPageIdx(i);setHighlightY(null);if(_apiKey)locateInDrawing(i);}}
-                    style={{background:drawingPageIdx===i?C.accentDim:"transparent",border:`1px solid ${drawingPageIdx===i?C.accent:C.border}`,color:drawingPageIdx===i?C.accent:C.muted,borderRadius:4,padding:"2px 8px",fontSize:11,cursor:"pointer"}}>
-                    Pg {i+1}
-                  </button>
-                ))}
-                <button onClick={()=>setDrawingZoom(z=>Math.min(4,+(z+0.5).toFixed(1)))}
-                  style={{background:"transparent",border:`1px solid ${C.border}`,color:C.text,borderRadius:4,padding:"2px 8px",fontSize:12,cursor:"pointer",fontWeight:700}}>+</button>
-                <span style={{fontSize:11,color:C.muted,minWidth:32,textAlign:"center"}}>{Math.round(drawingZoom*100)}%</span>
-                <button onClick={()=>setDrawingZoom(z=>Math.max(0.5,+(z-0.5).toFixed(1)))}
-                  style={{background:"transparent",border:`1px solid ${C.border}`,color:C.text,borderRadius:4,padding:"2px 8px",fontSize:12,cursor:"pointer",fontWeight:700}}>−</button>
-              </div>
+              {bomPages.length>1&&(
+                <div style={{display:"flex",gap:4}}>
+                  {bomPages.map((_,i)=>(
+                    <button key={i} onClick={()=>{setDrawingPageIdx(i);locateInDrawing(i);}}
+                      style={{background:drawingPageIdx===i?C.accentDim:"transparent",border:`1px solid ${drawingPageIdx===i?C.accent:C.border}`,color:drawingPageIdx===i?C.accent:C.muted,borderRadius:4,padding:"2px 8px",fontSize:11,cursor:"pointer"}}>
+                      Pg {i+1}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            {/* Image with highlight overlay */}
-            <div ref={drawingScrollRef} style={{flex:1,overflowY:"auto",overflowX:"auto",position:"relative",background:"#04040a"}}>
-              <div style={{position:"relative",display:"inline-block",minWidth:"100%"}}>
-                <img src={bomPages[drawingPageIdx].dataUrl||bomPages[drawingPageIdx].storageUrl}
-                  alt="BOM Drawing"
-                  style={{width:`${drawingZoom*100}%`,display:"block",minWidth:"100%"}}/>
-                {highlightY!=null&&(
-                  <div style={{
-                    position:"absolute",left:0,right:0,
-                    top:`calc(${highlightY*100}% - 18px)`,
-                    height:36,
-                    background:"rgba(253,224,71,0.25)",
-                    border:"2px solid #fde047",
-                    borderRadius:3,
-                    pointerEvents:"none",
-                    boxShadow:"0 0 16px rgba(253,224,71,0.6), inset 0 0 8px rgba(253,224,71,0.15)"
-                  }}/>
-                )}
-              </div>
+            <div style={{flex:1,overflowY:"auto",background:"#04040a",display:"flex",alignItems:"center",justifyContent:"center"}}>
+              {locating&&!croppedDataUrl&&(
+                <div style={{color:C.muted,fontSize:13,textAlign:"center",padding:20}}>
+                  <div style={{fontSize:24,marginBottom:8}}>🔍</div>
+                  <div>Scanning drawing for</div>
+                  <div style={{color:C.yellow,fontWeight:700,fontFamily:"monospace",marginTop:4}}>{targetRow?.partNumber||initialQuery}</div>
+                </div>
+              )}
+              {!locating&&!croppedDataUrl&&(
+                <div style={{color:C.muted,fontSize:12,textAlign:"center",padding:20,lineHeight:1.6}}>
+                  {_apiKey?"Row not found in drawing.":"Add API key to enable drawing lookup."}
+                </div>
+              )}
+              {croppedDataUrl&&(
+                <img src={croppedDataUrl} alt="BOM row" style={{width:"100%",display:"block",imageRendering:"crisp-edges"}}/>
+              )}
             </div>
           </div>
         )}
