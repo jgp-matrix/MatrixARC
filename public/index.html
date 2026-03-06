@@ -47,7 +47,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.41";
+const APP_VERSION="v1.11.42";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4423,6 +4423,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
 
   async function confirmAndExtract(){
     setAwaitingConfirm(false);
+    bgUpdate(panel.id,"Starting extraction…");bgSetPct(panel.id,0,"Starting extraction…");
     // Save learning DB corrections for any page where user changed AI-detected types
     const changes=pageTypeChangesRef.current;
     const uid2=auth.currentUser?.uid;
