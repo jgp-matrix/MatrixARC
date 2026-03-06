@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.7";
+const APP_VERSION="v1.11.8";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3809,7 +3809,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         const alt=alts.find(a=>a.originalPN===pn&&a.autoReplace);
         if(!alt)return r;
         changed=true;
-        return{...r,partNumber:alt.replacement.partNumber,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",isCrossed:true,crossedFrom:pn};
+        return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",isCrossed:true,crossedFrom:pn,autoReplaced:true};
       });
       if(changed){const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}}
     }).catch(()=>{});
@@ -4638,7 +4638,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>Auto-Loaded</span>
                           )}
                           {f==="partNumber"&&row.isCrossed&&(
-                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>crossed item</span>
+                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>{row.autoReplaced?"auto-crossed":"crossed item"}</span>
                           )}
                           {f==="partNumber"&&row.isCorrection&&(
                             <span style={{fontSize:10,color:"#f0c040",fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>corrected</span>
@@ -4787,6 +4787,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     {crossedItems.map((r,i)=>(
                       <div key={r.id} style={{fontSize:12,color:C.sub,marginBottom:2}}>
                         <span style={{color:C.muted}}>{i+1}.</span>{" "}
+                        {r.autoReplaced&&<span style={{fontSize:10,color:"#a78bfa",fontWeight:700,marginRight:4}}>[auto]</span>}
                         <span style={{color:C.red,fontWeight:600}}>{r.crossedFrom}</span>
                         <span style={{color:C.muted}}> → </span>
                         <span style={{color:C.accent,fontWeight:600}}>{r.partNumber}</span>
