@@ -4210,9 +4210,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   useEffect(()=>{if(bgTask?.status==="running")setExtracting(true);},[]);
   // Progress bar: use bgTask (persists navigation) or ep (for re-extract/validate flows)
   const extractProgress=(bgTask?.status==="running"||bgTask?.status==="done")?{pct:bgTask.pct||0,msg:bgTask.msg}:ep.progress;
-  // Unified progress: extraction takes priority, then pricing
+  // Unified progress: pricing takes priority when active, then extraction, then null
   const _showExtract=extractProgress&&(!awaitingConfirm||detecting);
-  const unifiedProgress=_showExtract?extractProgress:pricingProgress||null;
+  const unifiedProgress=(aiPricing&&pricingProgress)?pricingProgress:_showExtract?extractProgress:pricingProgress||null;
   const [showFastQuote,setShowFastQuote]=useState(false);
   const [lightboxId,setLightboxId]=useState(null);
   const [draftName,setDraftName]=useState(panel.name||"");
@@ -4902,7 +4902,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             }
             return r;
           });
-        }catch(ex){setAiPricing(false);setPricingProgress(null);return;}
+        }catch(ex){setAiPricing(false);setPricingProgress({msg:`Pricing error: ${(ex.message||"failed").slice(0,60)}`,pct:0});setTimeout(()=>setPricingProgress(null),5000);return;}
       }
     }
 
