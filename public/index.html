@@ -51,7 +51,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.44";
+const APP_VERSION="v1.11.45";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4464,11 +4464,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       for(const[pid,{aiTypes,confirmedTypes,reason}]of Object.entries(changes)){
         const pg=allPages.find(p=>p.id===pid);
         if(!pg)continue;
-        await savePageTypeLearningEntry(uid2,{
+        savePageTypeLearningEntry(uid2,{
           aiTypes,confirmedTypes,reason:reason||null,
           pageId:pid,panelId:panel.id,
           timestamp:Date.now()
-        }).catch(()=>{});
+        }).catch(()={}); // fire-and-forget — never block extraction on a DB write
       }
       pageTypeChangesRef.current={};
     }
