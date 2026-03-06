@@ -46,7 +46,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.21";
+const APP_VERSION="v1.11.22";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -559,8 +559,8 @@ async function logPanelToCPD(uid,panel,categorizedBom,metadata=null){
   };
   const panels=[...(cpd.panels||[]).filter(p=>p.panelId!==panel.id),spec];
   // Merge new products
-  const existing=cpd.products||[];
-  const newProds=[...existing];
+  const existingProds=cpd.products||[];
+  const newProds=[...existingProds];
   categorizedBom.filter(r=>!r.isLaborRow&&r.partNumber).forEach(r=>{
     const pn=(r.partNumber||'').trim();
     if(!pn)return;
