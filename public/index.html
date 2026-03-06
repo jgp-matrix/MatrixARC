@@ -47,7 +47,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.35";
+const APP_VERSION="v1.11.36";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1834,6 +1834,60 @@ function mergeLayoutResults(layouts){
   return{...merged,ductDinFeet,panelHoles,doorDeviceCount,backpanelDeviceCount,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,topBeaconCount};
 }
 
+// ── PAGE TYPE LEARNING DB ──
+let _pageTypeLearningCache=null;
+function _ptlPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/page_type_learning";}
+async function loadPageTypeLearning(uid){
+  if(_pageTypeLearningCache)return _pageTypeLearningCache;
+  try{const d=await fbDb.doc(_ptlPath(uid)).get();_pageTypeLearningCache=d.exists?(d.data().examples||[]):[];}
+  catch(e){_pageTypeLearningCache=[];}
+  return _pageTypeLearningCache;
+}
+async function savePageTypeLearningEntry(uid,entry){
+  const examples=await loadPageTypeLearning(uid);
+  examples.push({...entry,savedAt:Date.now()});
+  const trimmed=examples.slice(-80);
+  _pageTypeLearningCache=trimmed;
+  await fbDb.doc(_ptlPath(uid)).set({examples:trimmed}).catch(()=>{});
+}
+function buildLearningHint(examples){
+  if(!examples||!examples.length)return"";
+  const relevant=examples.slice(-12);
+  const lines=relevant.map(e=>{
+    const ai=(e.aiTypes||[]).join(",")||"none";
+    const conf=(e.confirmedTypes||[]).join(",")||"none";
+    const reason=e.reason?` (reason: ${e.reason})`:"";
+    return `- AI detected [${ai}] → user confirmed [${conf}]${reason}`;
+  });
+  return`\n\nLearning from past corrections by this user:\n${lines.join("\n")}\nApply these patterns when classifying.`;
+}
+
+// Detect zoomed/duplicate pages among same-type pages (BP, ENC, BOM with 2+ pages)
+async function detectZoomedPages(pagesOfType){
+  if(!_apiKey||pagesOfType.length<2)return[];
+  try{
+    const batch=pagesOfType.slice(0,6);
+    const imageContent=batch.map((pg,i)=>[
+      {type:"text",text:`Page ${i+1}:`},
+      {type:"image",source:{type:"base64",media_type:"image/jpeg",data:(pg.dataUrl||"").split(",")[1]}}
+    ]).flat();
+    const resp=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:200,messages:[{role:"user",content:[
+        ...imageContent,
+        {type:"text",text:`These ${batch.length} drawing pages are all tagged as the same type. Identify any that are clearly zoomed-in detail sections showing just a portion of content that already appears in full on another page. These zoomed pages duplicate information and should be excluded from processing.\nReturn ONLY JSON array: [{"idx":0,"isZoomed":false},{"idx":1,"isZoomed":true},...] for all ${batch.length} pages. If uncertain, set isZoomed:false.`}
+      ]}]})
+    });
+    const data=await resp.json();
+    const text=data.content?.[0]?.text||"";
+    const m=text.match(/\[[\s\S]*\]/);
+    if(!m)return[];
+    const results=JSON.parse(m[0]);
+    return results.filter(r=>r.isZoomed).map(r=>batch[r.idx]?.id).filter(Boolean);
+  }catch(e){console.warn("detectZoomedPages:",e);return[];}
+}
+
 // ── PANEL VALIDATION ──
 async function runPanelValidation(panel,onProgress,bomPromise=null){
   let schematicPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl));
@@ -2052,16 +2106,17 @@ Use [] for title sheets, rev blocks, or unrecognized pages.
 "sheetNo": sheet number from title block (e.g. "1 of 5"). "" if not found.
 Example: {"types":["schematic"],"sheetNo":"3 of 8"}`;
 
-async function detectPageTypes(dataUrl){
+async function detectPageTypes(dataUrl,learningExamples=[]){
   const b64=dataUrl&&dataUrl.split(",")[1];
   if(!b64||!_apiKey)return{types:[],sheetNo:""};
   try{
+    const hint=buildLearningHint(learningExamples);
     const raw=await apiCall({
       model:"claude-haiku-4-5-20251001",
       max_tokens:120,
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-        {type:"text",text:PAGE_TYPE_DETECT_PROMPT}
+        {type:"text",text:PAGE_TYPE_DETECT_PROMPT+hint}
       ]}]
     });
     const m=raw.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
@@ -4106,6 +4161,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [detectProgress,setDetectProgress]=useState("");
   const [awaitingConfirm,setAwaitingConfirm]=useState(false);
   const pendingNewItemsRef=useRef([]);
+  const pageTypeChangesRef=useRef({});
+  const learningExamplesRef=useRef([]);
+  const [reasonPickerFor,setReasonPickerFor]=useState(null);
   const [extracting,setExtracting]=useState(false);
   const ep=useSmoothProgress();
   const bgTasks=useBgTasks();
@@ -4310,15 +4368,35 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     }
     setProcessing(false);setProcessingMsg("");
     if(_apiKey&&newItems.length){
+      // Load learning examples once before detection
+      const learningEx=await loadPageTypeLearning(uid).catch(()=>[]);
+      learningExamplesRef.current=learningEx;
       setDetecting(true);
       let done=0;
       await parallelMap(newItems,async(item,i)=>{
-        const info=await detectPageTypes(item.dataUrl);
-        newItems[i].types=info.types;newItems[i].sheetNo=info.sheetNo;
+        const info=await detectPageTypes(item.dataUrl,learningEx);
+        newItems[i].types=info.types;
+        newItems[i].aiDetectedTypes=info.types; // store original AI result
+        newItems[i].sheetNo=info.sheetNo;
         done++;setDetectProgress(`Detecting ${done}/${newItems.length}…`);
-        livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,sheetNo:info.sheetNo}:p);
+        livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,aiDetectedTypes:info.types,sheetNo:info.sheetNo}:p);
         setPendingPages([...livePages]);
       },4);
+      // Zoomed-page cross-check for types with 2+ pages
+      setDetectProgress("Checking for duplicate/zoomed pages…");
+      for(const t of["backpanel","enclosure","bom"]){
+        const ofType=livePages.filter(p=>getPageTypes(p).includes(t)&&p.dataUrl);
+        if(ofType.length<2)continue;
+        const zoomedIds=await detectZoomedPages(ofType);
+        if(zoomedIds.length){
+          livePages=livePages.map(p=>{
+            if(!zoomedIds.includes(p.id))return p;
+            const filtered=(p.types||[]).filter(x=>x!==t);
+            return{...p,types:filtered,isZoomedSection:true,zoomedSectionType:t};
+          });
+          setPendingPages([...livePages]);
+        }
+      }
       setDetecting(false);setDetectProgress("");
     }
     // Pause for user to review detected page types before extraction begins
@@ -4344,6 +4422,23 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
 
   async function confirmAndExtract(){
     setAwaitingConfirm(false);
+    // Save learning DB corrections for any page where user changed AI-detected types
+    const changes=pageTypeChangesRef.current;
+    const uid2=auth.currentUser?.uid;
+    if(uid2&&Object.keys(changes).length){
+      const allPages=pendingPages.length>0?pendingPages:(panel.pages||[]);
+      for(const[pid,{aiTypes,confirmedTypes,reason}]of Object.entries(changes)){
+        const pg=allPages.find(p=>p.id===pid);
+        if(!pg)continue;
+        await savePageTypeLearningEntry(uid2,{
+          aiTypes,confirmedTypes,reason:reason||null,
+          pageId:pid,panelId:panel.id,
+          timestamp:Date.now()
+        }).catch(()=>{});
+      }
+      pageTypeChangesRef.current={};
+    }
+    setReasonPickerFor(null);
     const livePages=pendingPages.length>0?pendingPages:(panel.pages||[]);
     const newItems=pendingNewItemsRef.current||[];
     let updated={...panel,pages:livePages};
@@ -4404,10 +4499,27 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     try{onSaveImmediate(updated);}catch(e){}
   }
 
-  function tagPage(id,types){
+  function tagPage(id,types,reason=null){
+    const pg=pages.find(p=>p.id===id);
     if(pendingPages.length>0)setPendingPages(pp=>pp.map(p=>p.id===id?{...p,types}:p));
     onUpdate({...panel,pages:pages.map(p=>p.id===id?{...p,types}:p)});
     setTagsChanged(true);
+    // During confirm phase: track changes vs AI detection
+    if(awaitingConfirm&&pg){
+      const aiTypes=pg.aiDetectedTypes||getPageTypes(pg);
+      const removedTypes=aiTypes.filter(t=>!types.includes(t));
+      const addedTypes=types.filter(t=>!aiTypes.includes(t));
+      if(removedTypes.length||addedTypes.length){
+        pageTypeChangesRef.current[id]={aiTypes,confirmedTypes:types,reason:reason||pageTypeChangesRef.current[id]?.reason||null};
+        // Ask for reason only when removing an AI-detected type and no reason given yet
+        if(removedTypes.length&&!reason&&reasonPickerFor!==id){
+          setReasonPickerFor(id);
+        }
+      }else{
+        delete pageTypeChangesRef.current[id];
+        if(reasonPickerFor===id)setReasonPickerFor(null);
+      }
+    }
   }
   function removePage(id){
     const remaining=pages.filter(p=>p.id!==id);
@@ -4927,7 +5039,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   )}
                   {pg.sheetNo&&<div style={{fontSize:11,color:C.teal,fontWeight:700,marginTop:1}}>Sht {pg.sheetNo}</div>}
                 </div>
-                <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
+                  {pg.isZoomedSection&&(
+                    <span style={{background:"rgba(250,204,21,0.15)",color:"#fde047",border:"1px solid rgba(250,204,21,0.4)",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>
+                      ⚡ Zoomed Section
+                    </span>
+                  )}
                   {["bom","schematic","backpanel","enclosure","pid"].map(t=>{
                     const active=types.includes(t);
                     return(
@@ -4938,6 +5055,22 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     );
                   })}
                 </div>
+                {awaitingConfirm&&reasonPickerFor===pg.id&&(
+                  <div style={{marginTop:4,background:"rgba(250,204,21,0.08)",border:"1px solid rgba(250,204,21,0.35)",borderRadius:6,padding:"8px 10px"}}>
+                    <div style={{fontSize:11,color:"#fde047",fontWeight:700,marginBottom:5}}>Why was this type removed?</div>
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {["Zoomed section","Wrong type","No useful content","Other"].map(r=>(
+                        <button key={r} onClick={()=>{
+                          const ch=pageTypeChangesRef.current[pg.id];
+                          if(ch){pageTypeChangesRef.current[pg.id]={...ch,reason:r};}
+                          setReasonPickerFor(null);
+                        }} style={{background:"rgba(250,204,21,0.12)",color:"#fde047",border:"1px solid rgba(250,204,21,0.4)",borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                          {r}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
