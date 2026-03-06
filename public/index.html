@@ -51,7 +51,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.43";
+const APP_VERSION="v1.11.44";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4475,21 +4475,23 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     setReasonPickerFor(null);
     const livePages=pendingPages.length>0?pendingPages:(panel.pages||[]);
     const newItems=pendingNewItemsRef.current||[];
-    let updated={...panel,pages:livePages};
-    // Auto-extract title block from first drawing if panel has none yet
+    const updated={...panel,pages:livePages};
+    onUpdate(updated);
+    setPendingPages([]);
+    onSaveImmediate(updated).catch(()=>{});
+    // Fire title block extraction in background — don't block extraction start
     if(_apiKey&&newItems.length>0&&!panel.drawingNo){
       const firstWithData=newItems.find(i=>i.dataUrl);
       if(firstWithData){
-        const tb=await extractTitleBlock(firstWithData.dataUrl);
-        if(tb){
-          updated={...updated,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+        extractTitleBlock(firstWithData.dataUrl).then(tb=>{
+          if(!tb)return;
+          const patched={...updated,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+          onUpdate(patched);
           setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
-        }
+          onSaveImmediate(patched).catch(()=>{});
+        }).catch(()=>{});
       }
     }
-    onUpdate(updated);
-    setPendingPages([]);
-    try{await onSaveImmediate(updated);}catch(e){}
     // Start background extraction
     const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
     const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&p.dataUrl);
