@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.13";
+const APP_VERSION="v1.11.14";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3323,7 +3323,7 @@ function QuoteTab({project,onUpdate}){
                 if(!crossedItems.length)return null;
                 return(
                   <div style={{marginTop:8,borderTop:`1px dashed ${W.border}`,paddingTop:6}}>
-                    <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:W.sub,marginBottom:4}}>Crossed Items — Alternate Products Used</div>
+                    <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:W.sub,marginBottom:4}}>Crossed / Superseded — Alternate Products Used</div>
                     {crossedItems.map((item,i)=>(
                       <div key={item.id||i} style={{fontSize:11,color:W.text,marginBottom:2}}>
                         {i+1}. <span style={{color:W.muted}}>Scanned:</span> <strong>{item.crossedFrom}</strong> <span style={{color:W.muted}}>→ Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:W.muted}}> ({item.description})</span>:null}
@@ -4847,7 +4847,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
                 {crossedItems.length>0&&(
                   <div style={{marginBottom:8,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 12px"}}>
-                    <div style={{fontSize:11,fontWeight:700,color:C.red,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Crossed Items</div>
+                    <div style={{fontSize:11,fontWeight:700,color:C.red,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Crossed / Superseded</div>
                     {crossedItems.map((r,i)=>(
                       <div key={r.id} style={{fontSize:12,color:C.sub,marginBottom:2}}>
                         <span style={{color:C.muted}}>{i+1}.</span>{" "}
