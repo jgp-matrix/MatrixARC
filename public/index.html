@@ -4228,6 +4228,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [draftRev,setDraftRev]=useState(panel.drawingRev||"");
   const [draftNoWarn,setDraftNoWarn]=useState(false);
   const draftNoWarnTimer=useRef(null);
+  const pricingClearTimer=useRef(null);
   const [extractingTitle,setExtractingTitle]=useState(false);
   const [tagsChanged,setTagsChanged]=useState(false);
   const [aiFeedback,setAiFeedback]=useState("");
@@ -4839,6 +4840,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   async function runPricingOnPanel(bomOverride,panelOverride){
     const bom=bomOverride||panel.bom||[];
     if(!bom.length||!_apiKey)return;
+    if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
     setAiPricing(true);setPricingProgress({msg:"Starting…",pct:5});
     let updatedBom=[...bom];
     let bcCount=0;
@@ -4921,7 +4923,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const totalPriced=updatedBom.filter(r=>r.unitPrice!=null).length;
     setPricingProgress({msg:`✓ ${totalPriced} of ${bom.length} priced${bcCount>0?` (${bcCount} BC, ${aiCount} AI est.)`:""}.`,pct:100});
     setAiPricing(false);
-    setTimeout(()=>setPricingProgress(null),4000);
+    pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
   }
   async function validatePanel(){
     if(!_apiKey)return;
@@ -5558,7 +5560,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   </button>
                 }
                 {bcError&&<span style={{fontSize:11,color:C.red}}>{bcError}</span>}
-                {_apiKey&&<button data-tip="Look up prices from Business Central, then fill remaining items with AI estimates" onClick={runPricingOnPanel} disabled={aiPricing} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,border:`1px solid ${C.accent}55`})}>
+                {_apiKey&&<button data-tip="Look up prices from Business Central, then fill remaining items with AI estimates" onClick={()=>runPricingOnPanel()} disabled={aiPricing} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,border:`1px solid ${C.accent}55`})}>
                   {aiPricing?"Pricing…":"💲 Get Prices (BC + AI)"}
                 </button>}
               </>)}
