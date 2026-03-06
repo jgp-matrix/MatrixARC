@@ -1507,7 +1507,7 @@ Output ONLY a valid JSON array — no markdown, no explanation. Each object must
 {"itemNo":"","qty":1,"partNumber":"","description":"","manufacturer":"","notes":"","y_top":0.0,"y_bottom":0.0,"x_left":0.0,"x_right":1.0}
 
 y_top and y_bottom are the top and bottom edges of this row as fractions of the total image height (0.0=top, 1.0=bottom). Be precise.
-x_left and x_right are the left and right edges of the PART NUMBER (catalog number) column cell as fractions of the total image width. Crop tightly to just the part number column — all rows on the same page share the same x_left/x_right values.
+x_left and x_right are the left and right edges of the entire BOM TABLE (all columns) as fractions of the total image width. Exclude any schematic diagram, layout drawing, or whitespace to the left of the table — crop to where the BOM table columns begin and end. All rows on the same page share the same x_left/x_right values.
 
 If no BOM table exists on this page, return [].`;
 
@@ -3903,7 +3903,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
         body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:120,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42,"x_left":0.60,"x_right":0.78} where y_top/y_bottom are the top/bottom edges of that row as fractions of image height, and x_left/x_right are the left/right edges of the PART NUMBER column cell only (crop tightly to just that column). If not found return {"found":false}.`}
+          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42,"x_left":0.50,"x_right":1.0} where y_top/y_bottom are the top/bottom edges of that row as fractions of image height, and x_left/x_right are the left/right edges of the entire BOM TABLE (all columns, excluding any schematic/layout area to the left). If not found return {"found":false}.`}
         ]}]})
       });
       const data=await resp.json();
@@ -3937,10 +3937,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
         const srcY=Math.round(cropTop*H);
         const srcRowH=Math.round((yBottom-yTop)*H);
         const srcH=Math.round((cropBottom-cropTop)*H);
-        // Scale so the target row renders at ~100px tall
-        const scale=Math.max(1,100/Math.max(srcRowH,1));
-        const canvasW=Math.round(srcW*scale);
-        const canvasH=Math.round(srcH*scale);
+        // Scale so the target row renders at ~100px tall, cap width at 1400px to stay readable
+        let scale=Math.max(1,100/Math.max(srcRowH,1));
+        let canvasW=srcW*scale;
+        let canvasH=srcH*scale;
+        if(canvasW>1400){const f=1400/canvasW;canvasW*=f;canvasH*=f;}
+        canvasW=Math.round(canvasW);canvasH=Math.round(canvasH);
         const canvas=document.createElement('canvas');
         canvas.width=canvasW;canvas.height=canvasH;
         const ctx=canvas.getContext('2d');
@@ -4194,7 +4196,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
                 </div>
               )}
               {croppedDataUrl&&(
-                <img src={croppedDataUrl} alt="BOM row" style={{display:"block",width:"100%",height:"auto",imageRendering:"crisp-edges"}}/>
+                <img src={croppedDataUrl} alt="BOM row" style={{display:"block",width:"100%",height:"auto"}}/>
               )}
             </div>
           </div>
