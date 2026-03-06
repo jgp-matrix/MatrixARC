@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.121";
+const APP_VERSION="v1.10.122";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5597,13 +5597,17 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate,onDelet
                 <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:4}}>
                   {customerLogo&&<img src={customerLogo} alt="" style={{width:36,height:36,objectFit:"contain",borderRadius:6,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
                   <div style={{display:"flex",flexDirection:"column",gap:2}}>
-                    {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:C.accent,lineHeight:1}}>{project.bcProjectNumber}</span>}
+                    {(project.bcProjectNumber||project.bcCustomerName)&&(
+                      <div style={{display:"flex",alignItems:"baseline",gap:10}}>
+                        {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:C.accent,lineHeight:1}}>{project.bcProjectNumber}</span>}
+                        {project.bcCustomerName&&<span style={{fontSize:18,fontWeight:700,color:C.text}}>{project.bcCustomerName}</span>}
+                      </div>
+                    )}
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
                       <span style={{fontSize:20,fontWeight:700,color:C.text}}>{project.name}</span>
                       {!readOnly&&<button onClick={()=>{setDraftName(project.name);setEditingName(true);}} title="Edit project name" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:"0 4px"}}>✏️</button>}
                       {project.importedFromBC&&<Badge status="imported"/>}
                     </div>
-                    {project.bcCustomerName&&<span style={{fontSize:18,fontWeight:700,color:C.teal}}>{project.bcCustomerName}</span>}
                     <span style={{fontSize:13,color:C.muted}}>Created: {project.createdAt?new Date(project.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):project.updatedAt?new Date(project.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</span>
                   </div>
                 </div>
