@@ -4467,7 +4467,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     bgUpdate(panel.id,"Starting extraction…");bgSetPct(panel.id,0,"Starting extraction…");
     // Save learning DB corrections for any page where user changed AI-detected types
     const changes=pageTypeChangesRef.current;
-    const uid2=auth.currentUser?.uid;
+    const uid2=fbAuth.currentUser?.uid;
     if(uid2&&Object.keys(changes).length){
       const allPages=pendingPages.length>0?pendingPages:(panel.pages||[]);
       for(const[pid,{aiTypes,confirmedTypes,reason}]of Object.entries(changes)){
