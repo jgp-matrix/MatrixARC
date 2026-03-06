@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.9";
+const APP_VERSION="v1.11.10";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3839,22 +3839,32 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   },[uid]);
   useEffect(()=>()=>{if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);},[]);
 
-  // Load alternates and auto-apply on mount
+  // Load alternates + corrections and auto-apply on mount
   useEffect(()=>{
-    loadAlternates(uid).then(alts=>{
+    const normPN=s=>s.replace(/[-\s./\\]/g,'').toUpperCase();
+    Promise.all([loadAlternates(uid),loadCorrectionDB(uid)]).then(([alts,corrs])=>{
       setAlternates(alts);
-      if(!alts.length||altAutoApplied.current)return;
+      if(altAutoApplied.current)return;
       altAutoApplied.current=true;
       const bom=panel.bom||[];
       let changed=false;
       const newBom=bom.map(r=>{
-        if(r.isLaborRow||r.isCrossed)return r;
+        if(r.isLaborRow||r.isCrossed||r.isCorrection)return r;
         const pn=(r.partNumber||"").trim();
         if(!pn)return r;
-        const alt=alts.find(a=>a.originalPN===pn&&a.autoReplace);
-        if(!alt)return r;
-        changed=true;
-        return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",isCrossed:true,crossedFrom:pn,autoReplaced:true};
+        // Auto-replace: exact match first, then normalized match (catches format variants)
+        const alt=alts.find(a=>a.autoReplace&&(a.originalPN===pn||normPN(a.originalPN)===normPN(pn)));
+        if(alt){
+          changed=true;
+          return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",isCrossed:true,crossedFrom:pn,autoReplaced:true};
+        }
+        // Auto-correct: apply known corrections (exact or normalized match)
+        const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn));
+        if(corr){
+          changed=true;
+          return{...r,partNumber:corr.correctedPN,isCorrection:true,correctionType:corr.type||'extraction',correctionFrom:pn};
+        }
+        return r;
       });
       if(changed){const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}}
     }).catch(()=>{});
