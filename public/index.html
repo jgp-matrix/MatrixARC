@@ -51,7 +51,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.45";
+const APP_VERSION="v1.11.46";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4468,7 +4468,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           aiTypes,confirmedTypes,reason:reason||null,
           pageId:pid,panelId:panel.id,
           timestamp:Date.now()
-        }).catch(()={}); // fire-and-forget — never block extraction on a DB write
+        }).catch(()=>{}); // fire-and-forget — never block extraction on a DB write
       }
       pageTypeChangesRef.current={};
     }
