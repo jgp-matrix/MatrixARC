@@ -244,7 +244,12 @@ function bgError(taskId,msg){
   if(!_bgTasks[taskId])return;
   _bgTasks[taskId]={..._bgTasks[taskId],status:"error",msg:msg||"Error"};
   _bgNotify();
-  _bgDeleteTimers[taskId]=setTimeout(()=>{delete _bgTasks[taskId];delete _bgDeleteTimers[taskId];_bgNotify();},6000);
+  // No auto-dismiss — user must acknowledge errors
+}
+function bgDismiss(taskId){
+  if(_bgDeleteTimers[taskId]){clearTimeout(_bgDeleteTimers[taskId]);delete _bgDeleteTimers[taskId];}
+  delete _bgTasks[taskId];
+  _bgNotify();
 }
 
 // ── PROJECT LIVE UPDATE SYSTEM (for background extraction notifications) ──
@@ -4212,7 +4217,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const extractProgress=(bgTask?.status==="running"||bgTask?.status==="done")?{pct:bgTask.pct||0,msg:bgTask.msg}:ep.progress;
   // Unified progress: pricing takes priority when active, then extraction, then null
   const _showExtract=extractProgress&&(!awaitingConfirm||detecting);
-  const unifiedProgress=(aiPricing&&pricingProgress)?pricingProgress:_showExtract?extractProgress:pricingProgress||null;
+  const _rawUnified=(aiPricing&&pricingProgress)?pricingProgress:_showExtract?extractProgress:pricingProgress||null;
+  const unifiedProgress=_rawUnified?{..._rawUnified,isError:_rawUnified.isError||bgTask?.status==="error"}:null;
   const [showFastQuote,setShowFastQuote]=useState(false);
   const [lightboxId,setLightboxId]=useState(null);
   const [draftName,setDraftName]=useState(panel.name||"");
@@ -4902,7 +4908,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             }
             return r;
           });
-        }catch(ex){setAiPricing(false);setPricingProgress({msg:`Pricing error: ${(ex.message||"failed").slice(0,60)}`,pct:0});setTimeout(()=>setPricingProgress(null),5000);return;}
+        }catch(ex){setAiPricing(false);setPricingProgress({msg:`Pricing error: ${(ex.message||"failed").slice(0,60)}`,pct:0,isError:true});return;}
       }
     }
 
@@ -5160,16 +5166,24 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 14px",fontSize:13,color:C.red,marginBottom:12,display:"flex",justifyContent:"space-between",alignItems:"center"}}>{err}<button onClick={()=>setErr("")} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:15,lineHeight:1}}>✕</button></div>}
 
       {/* Unified progress bar — extraction, validation, and pricing all share this one bar */}
-      {unifiedProgress&&(()=>{const pct=unifiedProgress.pct;return(
+      {unifiedProgress&&(()=>{
+        const pct=unifiedProgress.pct;
+        const isErr=unifiedProgress.isError;
+        const barBg=isErr?`linear-gradient(90deg,${C.red},#b91c1c)`:`linear-gradient(90deg,${C.accent},#818cf8)`;
+        const dismiss=()=>{if(pricingProgress?.isError)setPricingProgress(null);else bgDismiss(panel.id);};
+        return(
         <div style={{marginBottom:12}}>
-          <div style={{width:"100%",height:38,background:C.border,borderRadius:10,overflow:"hidden",position:"relative"}}>
-            <div style={{height:"100%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:10,transition:"width 0.25s linear",width:pct+"%"}}/>
+          <div style={{width:"100%",height:38,background:isErr?C.redDim:C.border,borderRadius:10,overflow:"hidden",position:"relative"}}>
+            <div style={{height:"100%",background:barBg,borderRadius:10,transition:"width 0.25s linear",width:(isErr?100:pct)+"%"}}/>
             <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 14px"}}>
               <span style={{display:"flex",flexDirection:"column",gap:1}}>
-                <span style={{fontSize:14,fontWeight:700,color:"#fff",textShadow:"0 1px 3px rgba(0,0,0,0.5)",animation:pct<100?"pulse 1.2s ease-in-out infinite":"none"}}>{unifiedProgress.msg||"Processing…"}</span>
-                {pct<100&&<span style={{fontSize:11,color:"rgba(255,255,255,0.65)",fontWeight:500}}>This process may take a while</span>}
+                <span style={{fontSize:14,fontWeight:700,color:"#fff",textShadow:"0 1px 3px rgba(0,0,0,0.5)",animation:(!isErr&&pct<100)?"pulse 1.2s ease-in-out infinite":"none"}}>{unifiedProgress.msg||"Processing…"}</span>
+                {!isErr&&pct<100&&<span style={{fontSize:11,color:"rgba(255,255,255,0.65)",fontWeight:500}}>This process may take a while</span>}
               </span>
-              <span style={{fontSize:16,fontWeight:800,color:"#fff",textShadow:"0 1px 3px rgba(0,0,0,0.5)",fontVariantNumeric:"tabular-nums"}}>{pct}%</span>
+              {isErr
+                ?<button onClick={dismiss} style={{background:"none",border:"1px solid rgba(255,255,255,0.4)",borderRadius:6,color:"#fff",cursor:"pointer",fontSize:13,fontWeight:700,padding:"3px 10px",lineHeight:1}}>Dismiss</button>
+                :<span style={{fontSize:16,fontWeight:800,color:"#fff",textShadow:"0 1px 3px rgba(0,0,0,0.5)",fontVariantNumeric:"tabular-nums"}}>{pct}%</span>
+              }
             </div>
           </div>
         </div>);})()}
