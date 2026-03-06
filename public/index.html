@@ -47,7 +47,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.33";
+const APP_VERSION="v1.11.34";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1486,7 +1486,9 @@ TRANSCRIBE EXACTLY what is printed — do NOT autocomplete, normalize, or guess 
 
 RETURN FORMAT:
 Output ONLY a valid JSON array — no markdown, no explanation. Each object must have exactly:
-{"itemNo":"","qty":1,"partNumber":"","description":"","manufacturer":"","notes":""}
+{"itemNo":"","qty":1,"partNumber":"","description":"","manufacturer":"","notes":"","y_top":0.0,"y_bottom":0.0}
+
+y_top and y_bottom are the vertical position of this row's top and bottom edges as fractions of the total image height (0.0 = top of image, 1.0 = bottom of image). Be precise — these will be used to locate the row visually.
 
 If no BOM table exists on this page, return [].`;
 
@@ -1947,14 +1949,15 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     if(_apiKey&&bomPages.length>0){
       bgUpdate(panel.id,"Extracting BOM…");
       let bomDone=0;
-      bomMergePromise=parallelMap(bomPages,async pg=>{
+      bomMergePromise=parallelMap(bomPages,async (pg,pgIdx)=>{
         bomDone++;
         bgSetPct(panel.id,Math.round((bomDone/bomPages.length)*40),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
-        return extractBomPage(pg.dataUrl);
+        const items=await extractBomPage(pg.dataUrl);
+        return items.map(item=>({...item,sourcePageIdx:pgIdx}));
       },3).then(results=>{
         const all=results.flat();if(!all.length)return[];
         const map={};
-        all.forEach(item=>{const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));if(map[key])map[key].qty=(+map[key].qty||1)+(+item.qty||1);else map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};});
+        all.forEach(item=>{const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}});
         return appendDefaultBomItems(Object.values(map));
       }).catch(ex=>{console.error("BOM extraction failed:",ex);return[];});
     }
@@ -3855,7 +3858,23 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
   }
 
   useEffect(()=>{
-    if(bomPages.length&&_apiKey)locateInDrawing(0);
+    // If extraction stored coordinates, use them directly — no API call needed
+    if(bomPages.length&&targetRow?.y_top!=null&&targetRow?.y_bottom!=null){
+      const pgIdx=targetRow.sourcePageIdx??0;
+      setDrawingPageIdx(pgIdx);
+      const pg=bomPages[pgIdx]||bomPages[0];
+      if(pg){
+        let dataUrl=pg.dataUrl;
+        if(dataUrl){
+          cropRowFromImage(dataUrl,targetRow.y_top,targetRow.y_bottom);
+        }else if(pg.storageUrl){
+          setLocating(true);
+          ensureDataUrl(pg).then(loaded=>{cropRowFromImage(loaded.dataUrl,targetRow.y_top,targetRow.y_bottom);}).catch(()=>{}).finally(()=>setLocating(false));
+        }
+      }
+    } else if(bomPages.length&&_apiKey){
+      locateInDrawing(0);
+    }
   },[]);
 
   async function doSearch(append=false,overrideQuery){
@@ -4052,7 +4071,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               {bomPages.length>1&&(
                 <div style={{display:"flex",gap:4,marginLeft:"auto"}}>
                   {bomPages.map((_,i)=>(
-                    <button key={i} onClick={()=>{setDrawingPageIdx(i);locateInDrawing(i);}}
+                    <button key={i} onClick={()=>{setDrawingPageIdx(i);if(targetRow?.y_top!=null){const pg=bomPages[i];if(pg?.dataUrl)cropRowFromImage(pg.dataUrl,targetRow.y_top,targetRow.y_bottom);}else locateInDrawing(i);}}
                       style={{background:drawingPageIdx===i?C.accentDim:"transparent",border:`1px solid ${drawingPageIdx===i?C.accent:C.border}`,color:drawingPageIdx===i?C.accent:C.muted,borderRadius:4,padding:"2px 8px",fontSize:11,cursor:"pointer"}}>
                       Pg {i+1}
                     </button>
