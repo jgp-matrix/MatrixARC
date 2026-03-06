@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.12";
+const APP_VERSION="v1.11.13";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -5262,7 +5262,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
                 <button onClick={()=>{commitBcItem(crossOrCorrectPending.bomRowId,crossOrCorrectPending.bcItem,true);dismiss();}}
                   style={{padding:"11px 14px",background:C.accentDim,border:`1px solid ${C.accent}`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
-                  <div style={{fontWeight:700,fontSize:13,color:C.accent,marginBottom:3}}>Cross</div>
+                  <div style={{fontWeight:700,fontSize:13,color:C.accent,marginBottom:3}}>Crossed / Superseded</div>
                   <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>An alternate product intentionally replacing the original. Saved to Alternates DB. Shown in BOM notes and on quote.</div>
                 </button>
                 <button onClick={()=>{commitBcItem(crossOrCorrectPending.bomRowId,crossOrCorrectPending.bcItem,false,'extraction');dismiss();}}
