@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.10";
+const APP_VERSION="v1.11.11";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -3333,14 +3333,14 @@ function QuoteTab({project,onUpdate}){
                 );
               })()}
               {(()=>{
-                const formatCorrs=(bom||[]).filter(r=>r.isCorrection&&r.correctionType==='format'&&r.correctionFrom);
+                const formatCorrs=(bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
                 if(!formatCorrs.length)return null;
                 return(
                   <div style={{marginTop:8,borderTop:`1px dashed ${W.border}`,paddingTop:6}}>
                     <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:W.sub,marginBottom:4}}>Part Number Format Corrections</div>
                     {formatCorrs.map((item,i)=>(
                       <div key={item.id||i} style={{fontSize:11,color:W.text,marginBottom:2}}>
-                        {i+1}. <span style={{color:W.muted}}>Extracted as:</span> <strong>{item.correctionFrom}</strong> <span style={{color:W.muted}}>→ Corrected to:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:W.muted}}> ({item.description})</span>:null}
+                        {i+1}. <span style={{color:W.muted}}>{item.correctionType==='formatting'?'Formatting error:':'Extracted as:'}</span> <strong>{item.correctionFrom}</strong> <span style={{color:W.muted}}>→ Corrected to:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:W.muted}}> ({item.description})</span>:null}
                       </div>
                     ))}
                   </div>
@@ -4704,7 +4704,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           )}
                           {f==="partNumber"&&row.isCorrection&&(
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>
-                              {row.correctionType==='extraction'?'extraction corrected':row.correctionType==='format'?'format corrected':'corrected'}
+                              {row.correctionType==='extraction'?'extraction corrected':row.correctionType==='formatting'?'formatting error':row.correctionType==='format'?'format corrected':'corrected'}
                             </span>
                           )}
                           </div>
@@ -4843,7 +4843,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           {/* BOM Notes */}
           {(()=>{
             const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
-            const formatCorrections=(panel.bom||[]).filter(r=>r.isCorrection&&r.correctionType==='format'&&r.correctionFrom);
+            const formatCorrections=(panel.bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
             return(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
                 {crossedItems.length>0&&(
@@ -4871,7 +4871,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         <span style={{color:C.muted}}> → </span>
                         <span style={{color:C.accent,fontWeight:600}}>{r.partNumber}</span>
                         {r.description&&<span style={{color:C.muted,fontSize:11}}> ({r.description})</span>}
-                        <span style={{color:C.muted,fontSize:10}}> — format corrected</span>
+                        <span style={{color:C.muted,fontSize:10}}> — {r.correctionType==='formatting'?'formatting error':'format corrected'}</span>
                       </div>
                     ))}
                   </div>
@@ -5288,7 +5288,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               <div style={{fontSize:11,background:"#120a2a",border:"1px solid #a78bfa",borderRadius:6,padding:"7px 10px",marginBottom:14,display:"flex",alignItems:"center",gap:6}}>
                 <span style={{fontSize:13}}>🤖</span>
                 <span style={{color:"#a78bfa",fontWeight:700}}>AI suggests: </span>
-                <span style={{color:C.text,fontWeight:600}}>{correctionSubtypePending.aiSuggestion==='format'?'Incorrect Format':'Bad Extraction'}</span>
+                <span style={{color:C.text,fontWeight:600}}>{correctionSubtypePending.aiSuggestion==='format'?'Formatting Error / Incorrect Format':'Bad Extraction'}</span>
                 <span style={{color:C.muted,fontSize:10,marginLeft:2}}>— based on part number similarity</span>
               </div>
             )}
@@ -5296,12 +5296,17 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               <button onClick={()=>{commitBcItem(correctionSubtypePending.bomRowId,correctionSubtypePending.bcItem,false,'extraction');setCorrectionSubtypePending(null);}}
                 style={{padding:"11px 14px",background:"#1a0a0a",border:`1px solid ${C.red}`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
                 <div style={{fontWeight:700,fontSize:13,color:C.red,marginBottom:3}}>Bad Extraction</div>
-                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>The AI misread the part number entirely. Fix quietly — logged to extraction database for AI learning. No note on quote.</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>AI misread the part number entirely. Fixed quietly — logged for AI learning. No note on quote.</div>
+              </button>
+              <button onClick={()=>{commitBcItem(correctionSubtypePending.bomRowId,correctionSubtypePending.bcItem,false,'formatting');setCorrectionSubtypePending(null);}}
+                style={{padding:"11px 14px",background:"#0a1a12",border:"1px solid #4ade80",borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#4ade80",marginBottom:3}}>Formatting Error</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Part number is correct but has a formatting difference (dashes, spacing). Trains auto-correction for future extractions. Noted on quote.</div>
               </button>
               <button onClick={()=>{commitBcItem(correctionSubtypePending.bomRowId,correctionSubtypePending.bcItem,false,'format');setCorrectionSubtypePending(null);}}
                 style={{padding:"11px 14px",background:"#1a1200",border:"1px solid #f0c040",borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
                 <div style={{fontWeight:700,fontSize:13,color:"#f0c040",marginBottom:3}}>Incorrect Format</div>
-                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Part number exists but formatting is wrong (missing dashes, incomplete, etc). Correction noted on BOM and included in quote.</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>The BOM document had a wrong or incomplete part number format. Correction noted on BOM and included in quote.</div>
               </button>
             </div>
             <button onClick={()=>setCorrectionSubtypePending(null)}
