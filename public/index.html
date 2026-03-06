@@ -43,7 +43,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.10.119";
+const APP_VERSION="v1.10.120";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -6497,7 +6497,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,userFirstName,draggable:isDra
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
       {customerLogo&&<img src={customerLogo} alt="" style={{width:22,height:22,objectFit:"contain",borderRadius:3,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
       <div style={{fontSize:14,fontWeight:800,color:C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>{p.bcProjectNumber||"–"}</div>
-      <div style={{fontSize:11,color:C.teal,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,visibility:p.bcCustomerName?"visible":"hidden"}}>{p.bcCustomerName||"–"}</div>
+      <div style={{fontSize:14,color:C.teal,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,visibility:p.bcCustomerName?"visible":"hidden"}}>{p.bcCustomerName||"–"}</div>
       {userFirstName&&<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0}}>{userFirstName}</div>}
     </div>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
