@@ -18,7 +18,7 @@ input,textarea,select,button{font-family:inherit;font-size:inherit}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
-@keyframes pulseYellow{0%,100%{box-shadow:0 0 0 0 rgba(250,204,21,0);background:#0e0e1e;border-color:rgba(250,204,21,0.3)}50%{box-shadow:0 0 18px 4px rgba(250,204,21,0.35);background:rgba(250,204,21,0.07);border-color:rgba(250,204,21,0.9)}}
+@keyframes pulseYellow{0%,100%{box-shadow:0 0 4px 1px rgba(250,204,21,0.15);background:rgba(250,204,21,0.04);border-color:rgba(250,204,21,0.4)}50%{box-shadow:0 0 40px 12px rgba(250,204,21,0.7),0 0 80px 20px rgba(250,204,21,0.25);background:rgba(250,204,21,0.18);border-color:#fde047}}
 .fade-in{animation:fadeIn 0.25s ease-out both}
 .spin{animation:spin 1s linear infinite;display:inline-block}
 @media print{.no-print{display:none!important}body{background:#fff!important}#quote-doc,#quote-doc *{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
@@ -47,7 +47,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.24";
+const APP_VERSION="v1.11.25";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
