@@ -4938,32 +4938,29 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   }
   async function validatePanel(){
     if(!_apiKey)return;
-    setValidatingPanel(true);setValPct(0);valTarget.current=0;
-    let current=0;
-    function tick(){
-      const target=valTarget.current;
-      const ceiling=Math.max(target,Math.min(current+0.08,99));
-      current+=(ceiling-current)*0.06+0.02;
-      current=Math.min(current,99);
-      setValPct(Math.round(current));
-      valRaf.current=requestAnimationFrame(tick);
-    }
-    valRaf.current=requestAnimationFrame(tick);
+    setValidatingPanel(true);
+    const valPages=(panel.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
+    ep.start("Validating…",valPages.length*20);
     try{
-      const result=await runPanelValidation(panel,pct=>{valTarget.current=pct;});
-      if(valRaf.current){cancelAnimationFrame(valRaf.current);valRaf.current=null;}
-      setValPct(100);
+      const result=await runPanelValidation(panel,pct=>{ep.set(Math.round(pct*0.95),"Validating…");});
+      let updated=panel;
       if(result.validation||result.laborData){
         const bom=appendDefaultBomItems(panel.bom||[]);
-        const updated={...panel,bom,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
+        updated={...panel,bom,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
         onUpdate(updated);
         try{await onSaveImmediate(updated);}catch(e){}
       }
+      ep.finish("✓ Validation complete");
+      setValidatingPanel(false);
+      // Auto-run pricing after validation
+      if((updated.bom||[]).length>0&&_apiKey){
+        try{await runPricingOnPanel(updated.bom,updated);}catch(e){}
+      }
     }catch(e){
       console.error("Validation error:",e);
-      if(valRaf.current){cancelAnimationFrame(valRaf.current);valRaf.current=null;}
+      ep.finish("Validation failed");
+      setValidatingPanel(false);
     }
-    setTimeout(()=>{setValidatingPanel(false);setValPct(0);},600);
   }
   function exportCSV(){
     const sourceLabel=s=>s==="bc"?"BC":s==="ai"?"AI":s==="manual"?"Manual":"";
@@ -5551,12 +5548,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap",justifyContent:"flex-end"}}>
               <span style={{fontSize:12,color:C.sub,marginRight:"auto"}}>{pricedCount}/{bom.length} priced</span>
               {_apiKey&&pages.some(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl))&&(
-                validatingPanel
-                  ?<span style={{display:"inline-flex",alignItems:"center",gap:8,padding:"4px 12px"}}>
-                    <span style={{fontSize:13,fontWeight:700,color:C.accent,animation:"pulse 1.2s ease-in-out infinite"}}>Validating…</span>
-                    <span style={{fontSize:15,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums"}}>{valPct}%</span>
-                  </span>
-                  :<button data-tip="Re-run AI validation against schematic/back-panel drawings to update wiring and layout checks" onClick={validatePanel} disabled={readOnly} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:readOnly?0.5:1,border:`1px solid ${C.accent}55`})}>🔄 Re-Validate</button>
+                <button data-tip="Re-run AI validation + pricing against schematic/back-panel drawings" onClick={validatePanel} disabled={readOnly||validatingPanel||aiPricing} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:(readOnly||validatingPanel||aiPricing)?0.5:1,border:`1px solid ${C.accent}55`})}>🔄 Re-Validate</button>
               )}
               {!readOnly&&bom.length>0&&(<>
                 {_bcToken
@@ -5571,10 +5563,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   </button>
                 }
                 {bcError&&<span style={{fontSize:11,color:C.red}}>{bcError}</span>}
-                {_apiKey&&<button data-tip="Look up prices from Business Central, then fill remaining items with AI estimates" onClick={()=>runPricingOnPanel()} disabled={aiPricing}
-                    style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,border:`1px solid ${C.accent}55`})}>
-                    {aiPricing?"Pricing…":"💲 Get Prices (BC + AI)"}
-                  </button>}
               </>)}
             </div>
 
