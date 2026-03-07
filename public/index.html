@@ -52,7 +52,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.12.0";
+const APP_VERSION="v1.12.1";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5555,9 +5555,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             {/* ── Top action bar ── */}
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexWrap:"wrap",justifyContent:"flex-end"}}>
               <span style={{fontSize:12,color:C.sub,marginRight:"auto"}}>{pricedCount}/{bom.length} priced</span>
-              {_apiKey&&pages.some(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl))&&(
-                <button data-tip="Re-run AI validation + pricing against schematic/back-panel drawings" onClick={validatePanel} disabled={readOnly||validatingPanel||aiPricing} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:(readOnly||validatingPanel||aiPricing)?0.5:1,border:`1px solid ${C.accent}55`})}>🔄 Re-Validate</button>
-              )}
               {!readOnly&&bom.length>0&&(<>
                 {_bcToken
                   ?<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:10,padding:"3px 10px",fontSize:11,fontWeight:700}}>BC Connected</span>
