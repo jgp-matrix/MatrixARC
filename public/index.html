@@ -3912,33 +3912,31 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
       if(m){
         const r=JSON.parse(m[0]);
         if(r.found&&r.y_top!=null&&r.y_bottom!=null){
-          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom,r.x_left,r.x_right);
+          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom);
         }
       }
     }catch(e){console.warn('locateInDrawing:',e);}
     finally{setLocating(false);}
   }
 
-  function cropRowFromImage(dataUrl,yTop,yBottom,xLeft,xRight){
+  function cropRowFromImage(dataUrl,yTop,yBottom){
     return new Promise(resolve=>{
       const img=new Image();
       img.onload=()=>{
         const W=img.naturalWidth,H=img.naturalHeight;
-        // Horizontal crop — default to right 55% (where BOM tables live in UL508A drawings)
-        // xLeft/xRight are BOM table bounds if provided by AI; otherwise use heuristic
-        const cropLeft=Math.max(0,(xLeft??0.45));
-        const cropRight=Math.min(1,(xRight??1.0));
-        const srcX=Math.round(cropLeft*W);
-        const srcW=Math.round((cropRight-cropLeft)*W);
-        // Vertical crop — one row of context above and below
-        const vPad=0.012;
+        // Full drawing width — no horizontal crop (BOM table position varies)
+        // The container auto-scrolls to the right where BOM tables always are
+        const srcX=0;
+        const srcW=W;
+        // Vertical crop — tight strip around the row
+        const vPad=0.015;
         const cropTop=Math.max(0,yTop-vPad);
         const cropBottom=Math.min(1,yBottom+vPad);
         const srcY=Math.round(cropTop*H);
         const srcRowH=Math.round((yBottom-yTop)*H);
         const srcH=Math.round((cropBottom-cropTop)*H);
-        // Scale so the target row renders at ~60px tall; natural width, container scrolls
-        const scale=Math.max(1,60/Math.max(srcRowH,1));
+        // Scale so the row renders at ~50px tall — natural width, container scrolls right
+        const scale=Math.max(1,50/Math.max(srcRowH,1));
         const canvasW=Math.round(srcW*scale);
         const canvasH=Math.round(srcH*scale);
         const canvas=document.createElement('canvas');
@@ -4194,7 +4192,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
                 </div>
               )}
               {croppedDataUrl&&(
-                <img src={croppedDataUrl} alt="BOM row" style={{display:"block",maxWidth:"none",height:"auto"}}/>
+                <img src={croppedDataUrl} alt="BOM row"
+                  onLoad={e=>{const c=e.target.parentElement;if(c)c.scrollLeft=c.scrollWidth;}}
+                  style={{display:"block",maxWidth:"none",height:"auto"}}/>
               )}
             </div>
           </div>
