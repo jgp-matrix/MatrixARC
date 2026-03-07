@@ -52,7 +52,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.12.3";
+const APP_VERSION="v1.12.4";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1740,7 +1740,7 @@ Rules:
 - Use device types: pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, meter, air_conditioner, fan, beacon, conduit_hub, other
 - Return JSON only, no explanation`;
 
-async function analyzeLayoutPage(dataUrl){
+async function analyzeLayoutPage(dataUrl,layoutLearningHint=""){
   const b64=dataUrl&&dataUrl.split(",")[1];
   if(!b64){console.warn("analyzeLayoutPage: skipping — empty or invalid dataUrl");return null;}
   const raw=await apiCall({
@@ -1748,7 +1748,7 @@ async function analyzeLayoutPage(dataUrl){
     max_tokens:4000,
     messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-      {type:"text",text:LAYOUT_PROMPT}
+      {type:"text",text:LAYOUT_PROMPT+layoutLearningHint}
     ]}]
   });
   console.log("Layout Claude response:",raw);
@@ -1781,7 +1781,7 @@ async function analyzeBackpanelPage(dataUrl){
   }catch(e){console.error("Backpanel JSON parse error:",e,raw);return null;}
 }
 
-async function analyzeEnclosurePage(dataUrl){
+async function analyzeEnclosurePage(dataUrl,layoutLearningHint=""){
   const small=await resizeForAnalysis(dataUrl,1568);
   const b64=small&&small.split(",")[1];
   if(!b64){console.warn("analyzeEnclosurePage: skipping — empty or invalid dataUrl");return null;}
@@ -1790,7 +1790,7 @@ async function analyzeEnclosurePage(dataUrl){
     max_tokens:2000,
     messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-      {type:"text",text:ENCLOSURE_PROMPT}
+      {type:"text",text:ENCLOSURE_PROMPT+layoutLearningHint}
     ]}]
   });
   console.log("Enclosure Claude response:",raw);
@@ -1852,6 +1852,36 @@ function mergeLayoutResults(layouts){
   const doorDeviceCount=merged.doorCutouts.length;
   const backpanelDeviceCount=merged.backpanelDevices.length;
   return{...merged,ductDinFeet,panelHoles,doorDeviceCount,backpanelDeviceCount,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,topBeaconCount};
+}
+
+// ── LAYOUT LEARNING DB ──
+let _layoutLearningCache=null;
+function _llPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/layout_learning";}
+async function loadLayoutLearning(uid){
+  if(_layoutLearningCache)return _layoutLearningCache;
+  try{const d=await fbDb.doc(_llPath(uid)).get();_layoutLearningCache=d.exists?(d.data().entries||[]):[];}
+  catch(e){_layoutLearningCache=[];}
+  return _layoutLearningCache;
+}
+async function saveLayoutLearningEntry(uid,entry){
+  const entries=await loadLayoutLearning(uid);
+  entries.push({...entry,savedAt:Date.now()});
+  _layoutLearningCache=entries;
+  await fbDb.doc(_llPath(uid)).set({entries}).catch(()=>{});
+}
+function buildLayoutLearningHint(entries){
+  if(!entries||!entries.length)return"";
+  const relevant=entries.slice(-15);
+  const lines=relevant.map(e=>{
+    const details=[];
+    if(e.doorCutoutCount!=null)details.push("doorCutouts="+e.doorCutoutCount);
+    if(e.topBeaconCount!=null)details.push("topBeacons="+e.topBeaconCount);
+    if(e.aiPanelHoles!=null)details.push("AI calculated "+e.aiPanelHoles+" panel holes");
+    if(e.userPanelHoles!=null)details.push("user corrected to "+e.userPanelHoles+" panel holes");
+    if(e.note)details.push("note: "+e.note);
+    return "- "+details.join(", ");
+  });
+  return`\n\nLearning from past panel hole corrections by this user:\n${lines.join("\n")}\nUse these patterns to improve door cutout vs backpanel device classification. Common errors: miscounting door cutouts by including backpanel devices, or missing door-mounted devices.`;
 }
 
 // ── PAGE TYPE LEARNING DB ──
@@ -1927,11 +1957,13 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
   let donePages=0;
   const reportProgress=()=>{if(onProgress&&totalPages>0)onProgress(Math.round((donePages/totalPages)*90));};
   if(onProgress)onProgress(0);
+  // Load layout learning for AI hints
+  const llHint=buildLayoutLearningHint(await loadLayoutLearning(_appCtx.uid).catch(()=>[]));
   const [schResults,bpResults,encResults,layResults]=await Promise.all([
     parallelMap(schematicPages,async pg=>{const r=await analyzeSchematicPage(pg.dataUrl);donePages++;reportProgress();return r;},4),
     parallelMap(backpanelPages,async pg=>{const r=await analyzeBackpanelPage(pg.dataUrl);donePages++;reportProgress();return r;},4),
-    parallelMap(enclosurePages,async pg=>{const r=await analyzeEnclosurePage(pg.dataUrl);donePages++;reportProgress();return r;},4),
-    parallelMap(layoutPages,async pg=>{const r=await analyzeLayoutPage(pg.dataUrl);donePages++;reportProgress();return r;},4)
+    parallelMap(enclosurePages,async pg=>{const r=await analyzeEnclosurePage(pg.dataUrl,llHint);donePages++;reportProgress();return r;},4),
+    parallelMap(layoutPages,async pg=>{const r=await analyzeLayoutPage(pg.dataUrl,llHint);donePages++;reportProgress();return r;},4)
   ]);
   if(onProgress)onProgress(92);
   for(const result of schResults){
@@ -3134,6 +3166,8 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
           setProgress(Math.round((bomPct*33)+(valPct*33)));
         };
 
+        // Load layout learning for AI hints
+        const fqLlHint=buildLayoutLearningHint(await loadLayoutLearning(_appCtx.uid).catch(()=>[]));
         const [bomResults,[schResults,layResults]]=await Promise.all([
           // BOM extraction (concurrency 3)
           parallelMap(bomPages.filter(p=>p.dataUrl),async(pg)=>{
@@ -3152,7 +3186,7 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
             },4),
             parallelMap(layPages.filter(p=>p.dataUrl),async(pg)=>{
               valStarted++;updateProgress();
-              const lr=await analyzeLayoutPage(pg.dataUrl);
+              const lr=await analyzeLayoutPage(pg.dataUrl,fqLlHint);
               valDone++;updateProgress();
               return lr;
             },4)
@@ -4846,6 +4880,19 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const updated={...panel,laborData:{...ld,overrides:{...(ld.overrides||{}),[field]:value}}};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
+    // Save layout learning when user corrects panel holes
+    if(field==="panelHoles"&&uid){
+      const aiCount=ld.counts?.panelHoles??0;
+      const la=ld.layoutAnalysis||{};
+      saveLayoutLearningEntry(uid,{
+        aiPanelHoles:aiCount,
+        userPanelHoles:value,
+        doorCutoutCount:la.doorDeviceCount??null,
+        topBeaconCount:la.topBeaconCount??null,
+        doorCutouts:(la.doorCutouts||[]).map(d=>d.type).join(","),
+        hasLayoutData:!!ld.hasLayoutData
+      }).catch(()=>{});
+    }
   }
   function saveLaborAccepted(category,accepted){
     const ld=panel.laborData||{};

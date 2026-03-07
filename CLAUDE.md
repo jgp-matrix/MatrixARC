@@ -12,6 +12,7 @@ This app is used for real production projects. **No user data may ever be lost d
    - `users/{uid}/config/alternates` — part crosses / superseded parts
    - `users/{uid}/config/corrections` — formatting & extraction error corrections
    - `users/{uid}/config/page_type_learning` — drawing type classification learning
+   - `users/{uid}/config/layout_learning` — panel hole / layout analysis corrections
 
 3. **Always include `schemaVersion: APP_SCHEMA_VERSION`** in project saves (both `saveProject` and `saveProjectPanel`). If the schema changes, bump `APP_SCHEMA_VERSION` and add migration code in `loadProjects`.
 
@@ -29,6 +30,7 @@ This app is used for real production projects. **No user data may ever be lost d
 | Part crosses | `users/{uid}/config/alternates` | Auto-applied on extraction |
 | Corrections | `users/{uid}/config/corrections` | Auto-applied on extraction |
 | Page type learning | `users/{uid}/config/page_type_learning` | Fed into AI detection prompt |
+| Layout learning | `users/{uid}/config/layout_learning` | Fed into layout/enclosure AI prompts |
 | Page images | Firebase Storage `pageImages/{uid}/{projectId}/{pageId}.jpg` | Loaded via `ensureDataUrl` |
 
 ### Learning Databases
@@ -37,4 +39,5 @@ All learning is persisted to Firestore and applied automatically:
 - **Alternates**: When a user crosses a part number, it's saved and auto-applied to future BOMs if `autoReplace: true`
 - **Corrections**: When a user fixes an OCR/formatting error, the correction is auto-applied to future extractions
 - **Page type learning**: When a user corrects AI page type detection, the correction history is included in future AI prompts
+- **Layout learning**: When a user corrects panel hole count in the labor estimate, the AI count vs user count is saved and fed into future layout/enclosure analysis prompts
 - **Extraction feedback**: When a user provides BOM correction feedback and re-extracts, the feedback is logged in `panel.extractionFeedbackLog`
