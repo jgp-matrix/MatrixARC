@@ -5571,9 +5571,15 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   </button>
                 }
                 {bcError&&<span style={{fontSize:11,color:C.red}}>{bcError}</span>}
-                {_apiKey&&<button data-tip="Look up prices from Business Central, then fill remaining items with AI estimates" onClick={()=>runPricingOnPanel()} disabled={aiPricing} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,border:`1px solid ${C.accent}55`})}>
-                  {aiPricing?"Pricing…":"💲 Get Prices (BC + AI)"}
-                </button>}
+                {_apiKey&&(aiPricing&&pricingProgress
+                  ?<span style={{display:"inline-flex",alignItems:"center",gap:8,padding:"4px 12px"}}>
+                    <span style={{fontSize:13,fontWeight:700,color:C.accent,animation:"pulse 1.2s ease-in-out infinite"}}>Pricing…</span>
+                    <span style={{fontSize:15,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums"}}>{pricingProgress.pct}%</span>
+                  </span>
+                  :<button data-tip="Look up prices from Business Central, then fill remaining items with AI estimates" onClick={()=>runPricingOnPanel()}
+                    style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",border:`1px solid ${C.accent}55`})}>
+                    💲 Get Prices (BC + AI)
+                  </button>)}
               </>)}
             </div>
 
