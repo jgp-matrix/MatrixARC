@@ -30,9 +30,9 @@ body.no-tips [data-tip]::after{opacity:0!important;}
   @page{size:letter;margin:0.5in}
   .no-print{display:none!important}
   body{background:#fff!important;margin:0!important;padding:0!important}
-  body>*{display:none!important}
+  body *{visibility:hidden!important}
+  #quote-doc,#quote-doc *{visibility:visible!important}
   #quote-doc{
-    display:block!important;
     position:absolute;top:0;left:0;
     width:100%;max-width:none!important;
     margin:0!important;padding:0!important;
