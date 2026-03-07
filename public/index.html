@@ -7572,7 +7572,7 @@ function AIDatabasePage({uid,onBack}){
   );
 }
 
-function Dashboard({uid,userFirstName,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject}){
+function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject}){
   const [groupBy,setGroupBy]=useState("status");
   const [hideImported,setHideImported]=useState({});
   const [dragProjectId,setDragProjectId]=useState(null);
@@ -8218,7 +8218,7 @@ function App({user}){
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} userFirstName={userFirstName} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}}/>
         </>
       )}
       {view==="project"&&openProject&&(
