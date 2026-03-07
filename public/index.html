@@ -2462,9 +2462,9 @@ function Badge({status}){
   const map={
     draft:["#3d1a00","#f97316","Draft"],
     in_progress:[C.yellowDim,C.yellow,"In Progress"],
-    extracted:[C.greenDim,C.green,"Extracted"],
-    validated:[C.accentDim,C.accent,"Validated"],
-    costed:["#052e1c",C.green,"Costed"],
+    extracted:[C.greenDim,C.green,"Ready"],
+    validated:[C.greenDim,C.green,"Ready"],
+    costed:[C.greenDim,C.green,"Ready"],
     pushed_to_bc:["#0d1f3c","#38bdf8","Pushed to BC"],
     quoted:[C.yellowDim,C.yellow,"Quoted"],
     imported:["#1a1040","#a78bfa","Imported"]
@@ -7617,10 +7617,10 @@ function Dashboard({uid,userFirstName,projects,loading,onOpen,onNew,onDelete,onA
       return [{label:null,items:sorted}];
     }
     if(groupBy==="status"){
-      const order=["draft","extracted","validated","costed","pushed_to_bc","quoted"];
-      const labels={draft:"Draft",extracted:"Extracted",validated:"Validated",costed:"Costed",pushed_to_bc:"Pushed to BC",quoted:"Quoted"};
+      const order=["draft","evc","pushed_to_bc","quoted"];
+      const labels={draft:"Draft",evc:"Extracted, Validated & Costed",pushed_to_bc:"Pushed to BC",quoted:"Quoted"};
       const map={};
-      list.forEach(p=>{const st=projectStatus(p);if(!map[st])map[st]=[];map[st].push(p);});
+      list.forEach(p=>{let st=projectStatus(p);if(st==="extracted"||st==="validated"||st==="costed")st="evc";if(!map[st])map[st]=[];map[st].push(p);});
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="imported"){
@@ -7701,8 +7701,8 @@ function Dashboard({uid,userFirstName,projects,loading,onOpen,onNew,onDelete,onA
           {(groupBy==="customer"||groupBy==="status")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,Extracted:C.green,Validated:C.accent,Costed:C.green,"Pushed to BC":"#38bdf8",Quoted:C.yellow};
-                const statusColBg={Draft:C.border,Extracted:C.greenDim,Validated:C.accentDim,Costed:"#052e1c","Pushed to BC":"#0d1f3c",Quoted:C.yellowDim};
+                const statusColColors={Draft:C.muted,"Extracted, Validated & Costed":C.green,"Pushed to BC":"#38bdf8",Quoted:C.yellow};
+                const statusColBg={Draft:C.border,"Extracted, Validated & Costed":C.greenDim,"Pushed to BC":"#0d1f3c",Quoted:C.yellowDim};
                 const colColor=groupBy==="status"?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=groupBy==="status"?(statusColBg[g.label]||C.border):"#2a2a3e";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
@@ -7716,7 +7716,7 @@ function Dashboard({uid,userFirstName,projects,loading,onOpen,onNew,onDelete,onA
                   {g.label&&<div style={{background:isOver?C.accent:colBg,color:isOver?"#fff":colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",transition:"background 0.15s,color 0.15s",outline:isDropTarget&&dragProjectId?(isOver?"2px solid "+C.accent:"2px dashed "+C.accent+"66"):"none",outlineOffset:2}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
                   <div style={{display:"flex",flexDirection:"column",gap:8,borderRadius:8,padding:isOver?"6px":"0",background:isOver?"#1e2e1e":"transparent",transition:"background 0.15s,padding 0.15s"}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName}
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap}
                         draggable={isNoCustomer}
                         onDragStart={isNoCustomer?e=>{e.dataTransfer.effectAllowed="move";setDragProjectId(p.id);}:undefined}
                         onDragEnd={isNoCustomer?()=>{setDragProjectId(null);setDropTarget(null);}:undefined}/>
@@ -7733,7 +7733,7 @@ function Dashboard({uid,userFirstName,projects,loading,onOpen,onNew,onDelete,onA
                   {g.label&&<div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:12,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>{g.label}</div>}
                   <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName}/>
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap}/>
                     ))}
                   </div>
                 </div>
@@ -7861,13 +7861,13 @@ function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onC
 }
 
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete,onTransfer,userFirstName,draggable:isDraggable,onDragStart,onDragEnd}){
+function ProjectTile({p,onOpen,onDelete,onTransfer,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
   const st=projectStatus(p);
-  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,quoted:C.yellow};
-  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",quoted:"QUOTED"};
+  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.green,costed:C.green,quoted:C.yellow};
+  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"READY",validated:"READY",costed:"READY",quoted:"QUOTED"};
   return(
   <div className="fade-in" onClick={()=>onOpen(p)}
     draggable={isDraggable||false}
@@ -7880,7 +7880,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,userFirstName,draggable:isDra
       {customerLogo&&<img src={customerLogo} alt="" style={{width:22,height:22,objectFit:"contain",borderRadius:3,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
       <div style={{fontSize:14,fontWeight:800,color:C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>{p.bcProjectNumber||"–"}</div>
       <div style={{fontSize:14,color:C.text,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,visibility:p.bcCustomerName?"visible":"hidden"}}>{p.bcCustomerName||"–"}</div>
-      {userFirstName&&<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0}}>{userFirstName}</div>}
+      {(()=>{const owner=memberMap&&p.createdBy&&memberMap[p.createdBy];const name=owner?owner.firstName||owner.email.split("@")[0]:userFirstName;return name?<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0}}>{name}</div>:null;})()}
     </div>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
       <div style={{fontSize:17,fontWeight:700,color:C.green,lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{p.name}</div>
@@ -7919,6 +7919,7 @@ function App({user}){
   const [deleteConfirm,setDeleteConfirm]=useState(null); // {id, name}
   const [transferProject,setTransferProject]=useState(null); // project object
   const [userFirstName,setUserFirstName]=useState("");
+  const [memberMap,setMemberMap]=useState({}); // uid → {email, firstName}
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
   const [bcLostAlert,setBcLostAlert]=useState(false);
   const bcOnlinePrev=useRef(!!_bcToken);
@@ -7988,6 +7989,19 @@ function App({user}){
       }
       await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid),loadDefaultBomItems(user.uid)]);
       fbDb.doc(`users/${user.uid}/config/profile`).get().then(d=>{if(d.exists)setUserFirstName(d.data().firstName||"");}).catch(()=>{});
+      // Load company members → uid→name map for project ownership display
+      if(profile?.companyId){
+        loadCompanyMembers(profile.companyId).then(async mems=>{
+          const map={};
+          const profileDocs=await Promise.all(mems.map(m=>fbDb.doc(`users/${m.uid}/config/profile`).get().catch(()=>null)));
+          mems.forEach((m,i)=>{
+            const pd=profileDocs[i];
+            const fn=pd&&pd.exists?pd.data().firstName||"":"";
+            map[m.uid]={email:m.email||"",firstName:fn};
+          });
+          setMemberMap(map);
+        }).catch(()=>{});
+      }
       if(!_defaultBomItems.length){
         _defaultBomItems=[
           {partNumber:"JOB-BUYOFF",description:"Job Buyoff",manufacturer:"",qty:1,unitPrice:0,priceSource:null},
