@@ -6,7 +6,7 @@
 <title>ARC by APEX Software</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet"/>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#0d0d14;color:#e8e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}
@@ -26,8 +26,62 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 @keyframes pulseYellow{0%,100%{box-shadow:0 0 4px 1px rgba(250,204,21,0.15);background:rgba(250,204,21,0.04);border-color:rgba(250,204,21,0.4)}50%{box-shadow:0 0 40px 12px rgba(250,204,21,0.7),0 0 80px 20px rgba(250,204,21,0.25);background:rgba(250,204,21,0.18);border-color:#fde047}}
 .fade-in{animation:fadeIn 0.25s ease-out both}
 .spin{animation:spin 1s linear infinite;display:inline-block}
+/* ── Quote Document ── */
+#quote-doc{font-family:'Inter',-apple-system,sans-serif;color:#1e293b;line-height:1.5}
+.qd-page{width:8.5in;min-height:11in;margin:0 auto 40px;background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.08);overflow:hidden}
+.qd-header{background:#f1f5f9;padding:36px 44px;display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #2563eb}
+.qd-brand{display:flex;align-items:center;gap:16px}.qd-brand h1{font-size:24px;font-weight:800;color:#2563eb;letter-spacing:-0.3px;margin:0}
+.qd-brand .qd-addr{font-size:12px;color:#64748b;line-height:1.6;margin-top:2px}
+.qd-hdr-right{text-align:right}.qd-qlabel{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;color:#64748b}
+.qd-qnum{font-size:28px;font-weight:800;color:#0f172a;letter-spacing:-0.5px}.qd-qmeta{font-size:12px;color:#64748b;margin-top:4px;line-height:1.6}
+.qd-info-grid{padding:28px 44px;display:grid;grid-template-columns:1fr 1fr;gap:28px;border-bottom:1px solid #e2e8f0}
+.qd-info-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;color:#2563eb;margin-bottom:8px}
+.qd-info-name{font-size:15px;font-weight:700;color:#0f172a;margin-bottom:2px}.qd-info-detail{font-size:12.5px;color:#64748b;line-height:1.7}
+.qd-info-detail strong{color:#0f172a;font-weight:600}
+.qd-proj{padding:24px 44px;border-bottom:1px solid #e2e8f0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px}
+.qd-proj-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:4px}
+.qd-proj-value{font-size:14px;font-weight:600;color:#0f172a}
+.qd-terms{padding:18px 44px;background:#eff6ff;border-bottom:1px solid #e2e8f0;font-size:11.5px;color:#334155;line-height:1.7}
+.qd-terms strong{color:#0f172a;font-weight:600}.qd-terms .qd-tnote{font-size:11px;color:#64748b;margin-top:4px}
+.qd-items{padding:28px 44px}.qd-items-heading{font-size:14px;font-weight:600;color:#0f172a;margin-bottom:20px;display:flex;align-items:center;gap:8px}
+.qd-items-heading::before{content:'';width:3px;height:16px;background:#2563eb;border-radius:2px}
+.qd-li{border:1px solid #e2e8f0;border-radius:8px;margin-bottom:12px;overflow:hidden}
+.qd-li-hdr{background:#f8fafc;padding:8px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #e2e8f0}
+.qd-li-num{font-size:11px;font-weight:700;color:#2563eb;background:#eff6ff;padding:2px 8px;border-radius:10px}
+.qd-li-part{font-size:12px;font-weight:700;color:#0f172a}.qd-li-body{padding:10px 16px 8px}
+.qd-li-title{font-size:13px;font-weight:600;color:#0f172a;margin-bottom:6px}
+.qd-specs{display:grid;grid-template-columns:1fr 1fr;gap:2px 20px}.qd-spec{font-size:11px;color:#64748b;line-height:1.5}
+.qd-spec b{font-weight:600;color:#334155}
+.qd-li-notes{margin-top:6px;padding:6px 10px;background:#fffbeb;border-left:3px solid #f59e0b;border-radius:0 4px 4px 0;font-size:11px;color:#475569}
+.qd-li-notes span{font-weight:600;color:#92400e}
+.qd-li-pricing{background:#f8fafc;padding:8px 16px;border-top:1px solid #e2e8f0;display:grid;grid-template-columns:repeat(5,1fr);gap:8px;text-align:center}
+.qd-plabel{font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:#94a3b8;margin-bottom:2px}
+.qd-pval{font-size:12px;font-weight:600;color:#0f172a;font-variant-numeric:tabular-nums}.qd-pval.qd-total-val{color:#2563eb;font-weight:700}
+.qd-totals-bar{display:flex;justify-content:flex-end;padding:0 44px 28px}
+.qd-totals-box{width:280px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
+.qd-totals-row{display:flex;justify-content:space-between;padding:10px 20px;font-size:13px;color:#475569;border-bottom:1px solid #f1f5f9}
+.qd-totals-row.qd-grand{background:#0f172a;color:#fff;font-weight:700;font-size:16px;border-bottom:none}
+.qd-totals-row.qd-grand .qd-amt{color:#93c5fd}
+.qd-footer-info{padding:20px 44px;border-top:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:flex-start;gap:32px}
+.qd-footer-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:4px}
+.qd-footer-value{font-size:13px;font-weight:500;color:#334155}
+.qd-bottom-bar{background:#f1f5f9;padding:18px 44px;display:flex;justify-content:space-between;font-size:11px;color:#64748b;border-top:2px solid #2563eb;margin-top:16px}
+.qd-tc{padding:36px 44px}.qd-tc-title{font-size:16px;font-weight:700;color:#0f172a;margin-bottom:6px;text-align:center;text-transform:uppercase;letter-spacing:1px}
+.qd-tc-sub{font-size:11px;color:#94a3b8;text-align:center;margin-bottom:28px}
+.qd-tc-body{columns:2;column-gap:32px}.qd-tc-item{break-inside:avoid;margin-bottom:14px}
+.qd-tc-item h4{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.8px;color:#2563eb;margin-bottom:3px;margin-top:0}
+.qd-tc-item p{font-size:9.5px;color:#475569;line-height:1.65;text-align:justify;margin:0}
+.qd-crossed{margin-top:8px;padding:8px 16px;border-top:1px dashed #e2e8f0}
+.qd-crossed-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#94a3b8;margin-bottom:4px}
+.qd-crossed-row{font-size:10px;color:#334155;margin-bottom:2px}.qd-crossed-row .qd-muted{color:#64748b}
+.qd-missing{margin:0 16px 8px;padding:6px 10px;border-top:1px solid #e2e8f0}
+.qd-missing-title{font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;color:#0f172a;margin-bottom:2px}
+.qd-missing-sub{font-size:7px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:1px}
+.qd-missing table{width:100%;border-collapse:collapse}
+.qd-missing th{padding:1px 6px;text-align:left;color:#94a3b8;font-weight:600;font-size:8px;text-transform:uppercase;letter-spacing:0.3px}
+.qd-missing td{padding:0 6px;font-size:8px;line-height:1.4}
 @media print{
-  @page{size:letter;margin:0.5in}
+  @page{size:8.5in 11in;margin:0.4in}
   .no-print{display:none!important}
   body{background:#fff!important;margin:0!important;padding:0!important}
   body *{visibility:hidden!important}
@@ -38,9 +92,10 @@ body.no-tips [data-tip]::after{opacity:0!important;}
     margin:0!important;padding:0!important;
     border:none!important;border-radius:0!important;box-shadow:none!important;
     background:#fff!important;
-    font-size:12px!important;
   }
   #quote-doc,#quote-doc *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .qd-page{box-shadow:none!important;border-radius:0!important;margin:0!important;width:100%!important;min-height:auto!important}
+  .qd-page+.qd-page{page-break-before:always}
   #quote-doc input,#quote-doc textarea{
     border:none!important;border-bottom:none!important;
     background:transparent!important;outline:none!important;
@@ -3481,9 +3536,8 @@ function QuoteTab({project,onUpdate}){
   const defaultValidUntil=new Date(Date.now()+30*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
   const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 
-  // Light-theme palette for the printable document
-  const W={bg:"#fff",text:"#111",sub:"#333",muted:"#666",faint:"#999",border:"#ccc",light:"#f4f4f4",accent:"#1a56db"};
-  const qInp=(x={})=>({background:"transparent",border:"none",borderBottom:`1px dashed ${W.border}`,outline:"none",color:W.text,fontSize:"inherit",fontFamily:"inherit",padding:"1px 2px",width:"100%",...x});
+  const defaultTerms="Standard Payment Terms for Panel Builds (Order Total over $30,000): 30% ARO; 40% @ Procurement, 30% @ Readiness To Ship\nStandard Payment Terms for Engineering / Programming: 50% ARO / 50% due @ Completion of Work";
+  const qInp=(x={})=>({background:"transparent",border:"none",borderBottom:"1px dashed #cbd5e1",outline:"none",color:"#1e293b",fontSize:"inherit",fontFamily:"inherit",padding:"1px 2px",width:"100%",...x});
 
   return(
     <div>
@@ -3514,229 +3568,284 @@ function QuoteTab({project,onUpdate}){
       </div>
 
       {/* Quote document */}
-      <div id="quote-doc" style={{background:W.bg,color:W.text,maxWidth:860,margin:"0 auto",padding:"28px 32px",borderRadius:8,border:`1px solid ${C.border}`,fontFamily:"Arial,sans-serif",fontSize:13,lineHeight:1.5}}>
+      <div id="quote-doc" style={{maxWidth:900,margin:"0 auto"}}>
+        <div className="qd-page">
 
-        {/* Header box */}
-        <div style={{border:`2px solid ${W.border}`,borderRadius:6,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:18}}>
-          <div style={{display:"flex",alignItems:"center",gap:14}}>
-            <div style={{fontSize:36,lineHeight:1}}>⚙</div>
+          {/* Header */}
+          <div className="qd-header">
+            <div className="qd-brand">
+              <div style={{fontSize:36,lineHeight:1}}>⚙</div>
+              <div>
+                <h1>Matrix Systems</h1>
+                <div className="qd-addr">5591 Leo Park Road<br/>West Jordan, UT 84081 US</div>
+              </div>
+            </div>
+            <div className="qd-hdr-right">
+              <div className="qd-qlabel">Quote</div>
+              <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="######" style={{...qInp({width:160,fontSize:28,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
+              <div className="qd-qmeta">{q.date||today}<br/>Page 1 of 2</div>
+            </div>
+          </div>
+
+          {/* Info Grid */}
+          <div className="qd-info-grid">
             <div>
-              <div style={{fontSize:18,fontWeight:800,color:W.accent,letterSpacing:-0.3}}>Matrix Systems</div>
-              <div style={{fontSize:12,color:W.sub}}>5591 Leo Park Road</div>
-              <div style={{fontSize:12,color:W.sub}}>West Jordan, UT  84081  US</div>
+              <div className="qd-info-label">Attention</div>
+              <div className="qd-info-name"><input value={q.contact||""} onChange={e=>setQ({contact:e.target.value})} placeholder="Contact name" style={qInp({fontWeight:700,fontSize:15})}/></div>
+              <div className="qd-info-detail">
+                <strong><input value={q.company||""} onChange={e=>setQ({company:e.target.value})} placeholder="Company" style={qInp({fontWeight:600,color:"#0f172a",marginBottom:2})}/></strong>
+                <input value={q.address||""} onChange={e=>setQ({address:e.target.value})} placeholder="Address" style={qInp({marginBottom:2})}/>
+                <div>Phone: <input value={q.phone||""} onChange={e=>setQ({phone:e.target.value})} placeholder="—" style={{...qInp({display:"inline",width:"60%"})}}/></div>
+              </div>
+            </div>
+            <div>
+              <div className="qd-info-label">Prepared By</div>
+              <div className="qd-info-name"><input value={q.salesperson||""} onChange={e=>setQ({salesperson:e.target.value})} placeholder="Salesperson name" style={qInp({fontWeight:700,fontSize:15})}/></div>
+              <div className="qd-info-detail">
+                Salesperson<br/>
+                <input value={q.salesEmail||""} onChange={e=>setQ({salesEmail:e.target.value})} placeholder="email@matrixpci.com" style={qInp({marginBottom:2})}/>
+                <input value={q.salesPhone||""} onChange={e=>setQ({salesPhone:e.target.value})} placeholder="(___) ___-____" style={qInp({})}/>
+              </div>
             </div>
           </div>
-          <div style={{textAlign:"right"}}>
-            <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>
-              Quote:&nbsp;&nbsp;
-              <input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="######" style={{...qInp({width:100,fontSize:18,fontWeight:700,textAlign:"right"})}}/>
-            </div>
-            <div style={{fontSize:13,color:W.sub,marginBottom:2}}>{q.date||today}</div>
-            <div style={{fontSize:12,color:W.faint}}>Page 1 of 1</div>
-          </div>
-        </div>
 
-        {/* Attention / Customer */}
-        <table style={{width:"100%",marginBottom:14,fontSize:13,borderCollapse:"collapse"}}>
-          <tbody>
-            <tr>
-              <td style={{width:90,verticalAlign:"top",fontStyle:"italic",fontWeight:600,paddingTop:2,color:W.sub}}>Attention:</td>
-              <td style={{verticalAlign:"top"}}>
-                <input value={q.contact||""} onChange={e=>setQ({contact:e.target.value})} placeholder="Contact name" style={{...qInp({fontWeight:600,marginBottom:4})}}/>
-                <input value={q.company||""} onChange={e=>setQ({company:e.target.value})} placeholder="Company" style={{...qInp({fontWeight:700,fontSize:14,marginBottom:3})}}/>
-                <input value={q.address||""} onChange={e=>setQ({address:e.target.value})} placeholder="Address" style={{...qInp({marginBottom:3})}}/>
-                <div style={{display:"flex",gap:6}}>
-                  <span style={{color:W.sub}}>Phone:</span>
-                  <input value={q.phone||""} onChange={e=>setQ({phone:e.target.value})} placeholder="—" style={{...qInp({flex:1})}}/>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-
-        {/* Project details */}
-        <table style={{marginBottom:14,fontSize:13,borderCollapse:"collapse"}}>
-          <tbody>
+          {/* Project Details */}
+          <div className="qd-proj">
             {[
-              ["Project #:",q.projectNumber,v=>setQ({projectNumber:v}),project.name],
-              ["Pmt. Terms:",q.paymentTerms,v=>setQ({paymentTerms:v}),"Net 30 Days"],
-              ["Shipping Method:",q.shippingMethod,v=>setQ({shippingMethod:v}),"Customer Handles Shipping"],
+              ["Project #",q.projectNumber,v=>setQ({projectNumber:v}),project.name],
+              ["Pmt. Terms",q.paymentTerms,v=>setQ({paymentTerms:v}),"Net 30 Days"],
+              ["Shipping Method",q.shippingMethod,v=>setQ({shippingMethod:v}),"Customer Handles Shipping"],
             ].map(([label,val,setter,ph])=>(
-              <tr key={label}>
-                <td style={{width:130,fontWeight:700,paddingRight:10,paddingBottom:3,color:W.sub,whiteSpace:"nowrap"}}>{label}</td>
-                <td style={{paddingBottom:3}}><input value={val||""} onChange={e=>setter(e.target.value)} placeholder={ph} style={qInp({width:260})}/></td>
-              </tr>
+              <div key={label}>
+                <div className="qd-proj-label">{label}</div>
+                <div className="qd-proj-value"><input value={val||""} onChange={e=>setter(e.target.value)} placeholder={ph} style={qInp({fontSize:14,fontWeight:600})}/></div>
+              </div>
             ))}
-          </tbody>
-        </table>
+          </div>
 
-        {/* Terms */}
-        <div style={{borderTop:`1px solid ${W.border}`,borderBottom:`1px solid ${W.border}`,padding:"8px 0",marginBottom:14,fontSize:11,color:W.muted,lineHeight:1.6}}>
-          Standard Payment Terms for Panel Builds (Order Total over $30,000): 30% ARO; 40% @ Procurement, 30% @ Readiness To Ship<br/>
-          Standard Payment Terms for Engineering / Programming: 50% ARO / 50% due @ Completion of Work<br/>
-          <strong style={{color:W.text}}>All quotes expire 30 days from date of issue unless otherwise noted. Prices subject to change without notice.</strong>
-        </div>
+          {/* Terms Banner */}
+          <div className="qd-terms">
+            <textarea value={q.termsText!=null?q.termsText:defaultTerms} onChange={e=>setQ({termsText:e.target.value})} rows={3} style={{...qInp({display:"block",width:"100%",resize:"vertical",fontSize:"11.5px",lineHeight:"1.7",color:"#334155",borderBottom:"none"})}}/>
+            <div className="qd-tnote"><strong>All quotes expire 30 days from date of issue unless otherwise noted. Prices subject to change without notice.</strong></div>
+          </div>
 
-        {/* Line item */}
-        <div style={{marginBottom:14}}>
-          <div style={{display:"flex",gap:12,marginBottom:8}}>
-            <span style={{fontStyle:"italic",fontWeight:700,color:W.sub,whiteSpace:"nowrap"}}>Line:&nbsp;1</span>
-            <div style={{flex:1}}>
-              <div style={{marginBottom:3}}>
-                <span style={{fontWeight:700}}>Part #: </span>
-                <input value={q.panelId||""} onChange={e=>setQ({panelId:e.target.value})} placeholder={project.name} style={{...qInp({display:"inline",width:200,fontWeight:700})}}/>
+          {/* Line Items */}
+          <div className="qd-items">
+            <div className="qd-items-heading">Line Items</div>
+            <div className="qd-li">
+              <div className="qd-li-hdr">
+                <span className="qd-li-num">Line 1</span>
+                <span className="qd-li-part">Part #: <input value={q.panelId||""} onChange={e=>setQ({panelId:e.target.value})} placeholder={project.name} style={{...qInp({display:"inline",width:200,fontWeight:700,fontSize:12})}}/></span>
               </div>
-              {[
-                ["Description",q.description,v=>setQ({description:v}),project.name],
-                ["Project",q.projectNumber,v=>setQ({projectNumber:v}),project.name],
-                ["Drawing Rev",q.drawingRev,v=>setQ({drawingRev:v}),"A"],
-                ["Panel ID",q.panelId,v=>setQ({panelId:v}),project.name],
-                ["Plant Name",q.plantName,v=>setQ({plantName:v}),""],
-                ["Supply Voltage",q.supplyVoltage,v=>setQ({supplyVoltage:v}),"480VAC"],
-                ["Control Voltage",q.controlVoltage,v=>setQ({controlVoltage:v}),"120VAC"],
-              ].map(([label,val,setter,ph])=>(
-                <div key={label} style={{marginBottom:2}}>
-                  <span style={{color:W.sub}}>{label}: </span>
-                  <input value={val||""} onChange={e=>setter(e.target.value)} placeholder={ph} style={{...qInp({display:"inline",width:220})}}/>
+              <div className="qd-li-body">
+                <div>
+                  <div className="qd-li-title"><input value={q.description||""} onChange={e=>setQ({description:e.target.value})} placeholder={project.name} style={qInp({fontWeight:600,fontSize:13})}/></div>
+                  <div className="qd-specs">
+                    {[
+                      ["Project",q.projectNumber,v=>setQ({projectNumber:v}),project.name],
+                      ["Drawing Rev",q.drawingRev,v=>setQ({drawingRev:v}),"A"],
+                      ["Panel ID",q.panelId,v=>setQ({panelId:v}),project.name],
+                      ["Plant Name",q.plantName,v=>setQ({plantName:v}),""],
+                      ["Supply Voltage",q.supplyVoltage,v=>setQ({supplyVoltage:v}),"480VAC"],
+                      ["Control Voltage",q.controlVoltage,v=>setQ({controlVoltage:v}),"120VAC"],
+                    ].map(([label,val,setter,ph])=>(
+                      <div key={label} className="qd-spec">
+                        <b>{label}:</b>{" "}
+                        <input value={val||""} onChange={e=>setter(e.target.value)} placeholder={ph} style={{...qInp({display:"inline",width:"55%",fontSize:11})}}/>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="qd-li-notes">
+                    <span>NOTES: </span>
+                    <textarea value={q.lineNotes||""} onChange={e=>setQ({lineNotes:e.target.value})} placeholder="e.g. Grey duct quoted instead of white." rows={1} style={{...qInp({display:"inline-block",width:"85%",resize:"vertical",fontSize:11,verticalAlign:"top",borderBottom:"none"})}}/>
+                  </div>
+                  {(()=>{
+                    const crossedItems=(bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
+                    if(!crossedItems.length)return null;
+                    return(
+                      <div className="qd-crossed">
+                        <div className="qd-crossed-title">Crossed / Superseded — Alternate Products Used</div>
+                        {crossedItems.map((item,i)=>(
+                          <div key={item.id||i} className="qd-crossed-row">
+                            {i+1}. <span className="qd-muted">Scanned:</span> <strong>{item.crossedFrom}</strong> <span className="qd-muted">→ Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span className="qd-muted"> ({item.description})</span>:null}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  {(()=>{
+                    const formatCorrs=(bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
+                    if(!formatCorrs.length)return null;
+                    return(
+                      <div className="qd-crossed">
+                        <div className="qd-crossed-title">Part Number Format Corrections</div>
+                        {formatCorrs.map((item,i)=>(
+                          <div key={item.id||i} className="qd-crossed-row">
+                            {i+1}. <span className="qd-muted">{item.correctionType==='formatting'?'Formatting error:':'Extracted as:'}</span> <strong>{item.correctionFrom}</strong> <span className="qd-muted">→ Corrected to:</span> <strong>{item.partNumber}</strong>{item.description?<span className="qd-muted"> ({item.description})</span>:null}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
                 </div>
-              ))}
-              <div style={{marginTop:6}}>
-                <div style={{color:W.sub,marginBottom:2}}>NOTES:</div>
-                <textarea value={q.lineNotes||""} onChange={e=>setQ({lineNotes:e.target.value})} placeholder="e.g. Grey duct quoted instead of white." rows={2} style={{...qInp({display:"block",width:"100%",resize:"vertical",borderBottom:"none",border:`1px dashed ${W.border}`,borderRadius:3,padding:"4px 6px"})}}/>
               </div>
+
+              {/* Missing Data */}
               {(()=>{
-                const crossedItems=(bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
-                if(!crossedItems.length)return null;
+                const v=project.validation;
+                if(!v)return null;
+                const lb=project.bom||[];
+                const missing=(v.missingFromSchematic||[]).filter(i=>lb.find(r=>r.id===i.id)?.validationAction!=="ignored");
+                const noId=(v.notTraceable||[]).filter(i=>lb.find(r=>r.id===i.id)?.validationAction!=="ignored");
+                if(!missing.length&&!noId.length)return null;
                 return(
-                  <div style={{marginTop:8,borderTop:`1px dashed ${W.border}`,paddingTop:6}}>
-                    <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:W.sub,marginBottom:4}}>Crossed / Superseded — Alternate Products Used</div>
-                    {crossedItems.map((item,i)=>(
-                      <div key={item.id||i} style={{fontSize:11,color:W.text,marginBottom:2}}>
-                        {i+1}. <span style={{color:W.muted}}>Scanned:</span> <strong>{item.crossedFrom}</strong> <span style={{color:W.muted}}>→ Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:W.muted}}> ({item.description})</span>:null}
+                  <div className="qd-missing">
+                    <div className="qd-missing-title">Missing Data</div>
+                    {missing.length>0&&(
+                      <div style={{marginBottom:2}}>
+                        <div className="qd-missing-sub">In BOM — not found in schematic</div>
+                        <table>
+                          <thead><tr>{["Part Number","Description","Ref Tags"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                          <tbody>
+                            {missing.map((item,i)=>(
+                              <tr key={item.id||i}>
+                                <td style={{color:"#64748b"}}>{item.partNumber||"—"}</td>
+                                <td style={{color:"#334155"}}>{item.description||"—"}</td>
+                                <td style={{color:"#94a3b8"}}>{item.notes||"—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
-                    ))}
+                    )}
+                    {noId.length>0&&(
+                      <div>
+                        <div className="qd-missing-sub">No device ID (AS SHOWN — field verification required)</div>
+                        <table>
+                          <thead><tr>{["Part Number","Description","Qty"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+                          <tbody>
+                            {noId.map((item,i)=>(
+                              <tr key={item.id||i}>
+                                <td style={{color:"#64748b"}}>{item.partNumber||"—"}</td>
+                                <td style={{color:"#334155"}}>{item.description||"—"}</td>
+                                <td style={{color:"#94a3b8"}}>{item.qty||1}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
-              {(()=>{
-                const formatCorrs=(bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
-                if(!formatCorrs.length)return null;
-                return(
-                  <div style={{marginTop:8,borderTop:`1px dashed ${W.border}`,paddingTop:6}}>
-                    <div style={{fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:W.sub,marginBottom:4}}>Part Number Format Corrections</div>
-                    {formatCorrs.map((item,i)=>(
-                      <div key={item.id||i} style={{fontSize:11,color:W.text,marginBottom:2}}>
-                        {i+1}. <span style={{color:W.muted}}>{item.correctionType==='formatting'?'Formatting error:':'Extracted as:'}</span> <strong>{item.correctionFrom}</strong> <span style={{color:W.muted}}>→ Corrected to:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:W.muted}}> ({item.description})</span>:null}
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
+
+              {/* Pricing Row */}
+              <div className="qd-li-pricing">
+                <div>
+                  <div className="qd-plabel">Quantity</div>
+                  <div className="qd-pval"><input value={q.qty||"1.00"} onChange={e=>setQ({qty:e.target.value})} onFocus={e=>e.target.select()} style={{...qInp({width:50,textAlign:"center",fontSize:12,fontWeight:600})}}/> EA</div>
+                </div>
+                <div>
+                  <div className="qd-plabel">Unit Price</div>
+                  <div className="qd-pval">{hasSellPrice?fmtMoney(sellPrice):"—"}</div>
+                </div>
+                <div>
+                  <div className="qd-plabel">Lead Time</div>
+                  <div className="qd-pval"><input value={q.leadTime||""} onChange={e=>setQ({leadTime:e.target.value})} placeholder="—" style={{...qInp({width:50,textAlign:"center",fontSize:12,fontWeight:600})}}/> days</div>
+                </div>
+                <div>
+                  <div className="qd-plabel">Discount</div>
+                  <div className="qd-pval">—</div>
+                </div>
+                <div>
+                  <div className="qd-plabel">Total Price</div>
+                  <div className={"qd-pval qd-total-val"}>{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):"—"} {hasSellPrice&&<span style={{fontWeight:400,color:"#94a3b8"}}>*</span>}</div>
+                </div>
+              </div>
+            </div>
+            <div style={{fontSize:11,color:"#94a3b8",marginTop:-4,marginBottom:16}}>* Indicates which quantity price is included in the Total</div>
+          </div>
+
+          {/* Totals */}
+          <div className="qd-totals-bar">
+            <div className="qd-totals-box">
+              <div className="qd-totals-row"><span>Subtotal</span><span>{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):"—"}</span></div>
+              <div className="qd-totals-row"><span>Tax</span><span>$0.00</span></div>
+              <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):"—"}</span></div>
             </div>
           </div>
 
-          {/* Missing Data — auto-populated from validation */}
-          {(()=>{
-            const v=project.validation;
-            if(!v)return null;
-            const lb=project.bom||[];
-            const missing=(v.missingFromSchematic||[]).filter(i=>lb.find(r=>r.id===i.id)?.validationAction!=="ignored");
-            const noId=(v.notTraceable||[]).filter(i=>lb.find(r=>r.id===i.id)?.validationAction!=="ignored");
-            if(!missing.length&&!noId.length)return null;
-            const th={padding:"1px 6px",textAlign:"left",color:W.muted,fontWeight:600,fontSize:8,textTransform:"uppercase",letterSpacing:0.3};
-            const td={padding:"0px 6px",fontSize:8,lineHeight:1.4};
-            return(
-              <div style={{marginTop:6,borderTop:`1px solid ${W.border}`,paddingTop:4}}>
-                <div style={{fontSize:8,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,color:W.text,marginBottom:2}}>Missing Data</div>
-                {missing.length>0&&(
-                  <div style={{marginBottom:2}}>
-                    <div style={{fontSize:7,fontWeight:600,color:W.muted,textTransform:"uppercase",letterSpacing:0.3,marginBottom:1}}>In BOM — not found in schematic</div>
-                    <table style={{width:"100%",borderCollapse:"collapse"}}>
-                      <thead><tr>{["Part Number","Description","Ref Tags"].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
-                      <tbody>
-                        {missing.map((item,i)=>(
-                          <tr key={item.id||i}>
-                            <td style={{...td,color:W.sub}}>{item.partNumber||"—"}</td>
-                            <td style={{...td,color:W.text}}>{item.description||"—"}</td>
-                            <td style={{...td,color:W.muted}}>{item.notes||"—"}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {noId.length>0&&(
-                  <div>
-                    <div style={{fontSize:7,fontWeight:600,color:W.muted,textTransform:"uppercase",letterSpacing:0.3,marginBottom:1}}>No device ID (AS SHOWN — field verification required)</div>
-                    <table style={{width:"100%",borderCollapse:"collapse"}}>
-                      <thead><tr>{["Part Number","Description","Qty"].map(h=><th key={h} style={th}>{h}</th>)}</tr></thead>
-                      <tbody>
-                        {noId.map((item,i)=>(
-                          <tr key={item.id||i}>
-                            <td style={{...td,color:W.sub}}>{item.partNumber||"—"}</td>
-                            <td style={{...td,color:W.text}}>{item.description||"—"}</td>
-                            <td style={{...td,color:W.muted}}>{item.qty||1}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* Pricing table */}
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,marginTop:10}}>
-            <thead>
-              <tr style={{borderBottom:`1px solid ${W.border}`}}>
-                {[["Quantity","left"],["U/M","left"],["Unit Price","left"],["Lead Time (Days)","left"],["Total Price","right"]].map(([h,a])=>(
-                  <th key={h} style={{padding:"6px 10px",textAlign:a,fontStyle:"italic",fontWeight:600,color:W.sub,fontSize:12}}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              <tr style={{borderBottom:`1px solid ${W.border}`}}>
-                <td style={{padding:"8px 10px"}}>
-                  <input value={q.qty||"1.00"} onChange={e=>setQ({qty:e.target.value})} onFocus={e=>e.target.select()} style={{...qInp({width:60})}}/>
-                </td>
-                <td style={{padding:"8px 10px"}}>EA</td>
-                <td style={{padding:"8px 10px"}}>{hasSellPrice?fmtMoney(sellPrice):<span style={{color:W.faint}}>—</span>}</td>
-                <td style={{padding:"8px 10px"}}>
-                  <input value={q.leadTime||""} onChange={e=>setQ({leadTime:e.target.value})} placeholder="45-60" style={{...qInp({width:80})}}/>
-                </td>
-                <td style={{padding:"8px 10px",textAlign:"right",fontWeight:700}}>{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):<span style={{color:W.faint}}>—</span>} {hasSellPrice&&<span style={{fontWeight:400,color:W.muted}}>*</span>}</td>
-              </tr>
-              <tr>
-                <td colSpan={3} style={{padding:"6px 10px",fontSize:11,color:W.faint,fontStyle:"italic"}}>* Indicates which quantity price is included in the Total</td>
-                <td style={{padding:"6px 10px",textAlign:"right",fontWeight:600,color:W.sub}}>Total:</td>
-                <td style={{padding:"6px 10px",textAlign:"right",fontWeight:700}}>{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):"—"}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        {/* Notes */}
-        <div style={{marginTop:18,borderTop:`1px solid ${W.border}`,paddingTop:14}}>
-          <div style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,color:W.text,marginBottom:8}}>Notes</div>
-          <textarea
-            value={q.notes||""}
-            onChange={e=>setQ({notes:e.target.value})}
-            placeholder="Quote terms, lead time, exclusions, etc."
-            rows={3}
-            style={{...qInp({display:"block",width:"100%",resize:"vertical",border:`1px dashed ${W.border}`,borderRadius:3,padding:"6px 8px",lineHeight:1.6,fontSize:13})}}
-          />
-        </div>
-
-        {/* Footer */}
-        <div style={{borderTop:`1px solid ${W.border}`,paddingTop:12,marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:12}}>
-          <div style={{fontSize:13,color:W.sub}}>
-            Salesperson:&nbsp;
-            <input value={q.salesperson||""} onChange={e=>setQ({salesperson:e.target.value})} placeholder="—" style={{...qInp({display:"inline",width:160})}}/>
+          {/* Footer Info */}
+          <div className="qd-footer-info">
+            <div>
+              <div className="qd-footer-label">Salesperson</div>
+              <div className="qd-footer-value">{q.salesperson||"—"}</div>
+            </div>
+            <div style={{textAlign:"right"}}>
+              <div className="qd-footer-label">Prices Valid Until</div>
+              <div className="qd-footer-value"><input value={q.validUntil||""} onChange={e=>setQ({validUntil:e.target.value})} placeholder={defaultValidUntil} style={{...qInp({textAlign:"right",color:"#dc2626",fontWeight:500})}}/></div>
+            </div>
           </div>
-          <div style={{fontSize:13,color:W.sub}}>
-            Prices are Valid Until&nbsp;
-            <input value={q.validUntil||""} onChange={e=>setQ({validUntil:e.target.value})} placeholder={defaultValidUntil} style={{...qInp({display:"inline",width:140})}}/>
+
+          {/* Bottom Bar */}
+          <div className="qd-bottom-bar">
+            <span>Matrix Systems · 5591 Leo Park Rd · West Jordan, UT 84081</span>
+            <span>(801) 930-9492 · info@matrixpci.com</span>
+          </div>
+        </div>
+
+        {/* ═══ PAGE 2: TERMS & CONDITIONS ═══ */}
+        <div className="qd-page">
+          <div className="qd-header">
+            <div className="qd-brand">
+              <div style={{fontSize:36,lineHeight:1}}>⚙</div>
+              <div>
+                <h1>Matrix Systems</h1>
+                <div className="qd-addr">5591 Leo Park Road<br/>West Jordan, UT 84081 US</div>
+              </div>
+            </div>
+            <div className="qd-hdr-right">
+              <div className="qd-qlabel">Quote</div>
+              <div className="qd-qnum">{q.number||"——"}</div>
+              <div className="qd-qmeta">{q.date||today}<br/>Page 2 of 2</div>
+            </div>
+          </div>
+
+          <div className="qd-tc">
+            <div className="qd-tc-title">Standard Terms and Conditions of Sale</div>
+            <div className="qd-tc-sub">Matrix Systems, LLC</div>
+            <div className="qd-tc-body">
+              <div className="qd-tc-item"><h4>1. Definitions</h4><p>(a) "Matrix" shall mean Matrix Systems LLC. (b) "Buyer" shall mean the purchaser, its representatives and/or agents. (c) "Product" shall mean any equipment, Software and/or Firmware, machinery, parts, materials, products or services provided for in this proposal. (d) "Software and/or Firmware" shall mean the programming for the computer component of the Product. (e) "Proprietary Data" shall mean engineering, drawings, specifications and/or instructions created by Matrix.</p></div>
+              <div className="qd-tc-item"><h4>2. Prevailing Documentation</h4><p>(a) Matrix's proposal, including these terms and conditions, shall constitute the contract. No course of dealing or usage of trade may add or amend the terms. (b) These terms embody the entire understanding between Matrix and Buyer. The Contract may only be amended by a written Change Order. (c) Unless otherwise stated, the proposal is valid for thirty (30) days. (d) Matrix's obligation shall not commence until any required down payment and Letter of Credit have been received.</p></div>
+              <div className="qd-tc-item"><h4>3. Engineering and Drawings</h4><p>(a) Buyer shall furnish Matrix with all information and drawings on which performance is dependent. (b) Matrix will submit drawings for Buyer's approval if required. (c) Unless Buyer advises otherwise within fourteen (14) days, drawings are deemed approved. (d) Matrix will furnish electronic copies in PDF format only. (e) Changes may result in price and delivery adjustments. (f) All Proprietary Data remains the sole property of Matrix.</p></div>
+              <div className="qd-tc-item"><h4>4. Confidential Information</h4><p>All drawings, specifications, and information provided by Matrix shall remain Matrix's exclusive property and shall not be disclosed by Buyer to any third party. Matrix grants Buyer a non-exclusive license to utilize Proprietary Data for design, installation, and maintenance of the Product.</p></div>
+              <div className="qd-tc-item"><h4>5. Title and Risk of Loss</h4><p>Matrix shall retain title to the Product until full purchase price has been paid. Risk of loss passes to Buyer at the delivery point stated in the proposal.</p></div>
+              <div className="qd-tc-item"><h4>6. Change Orders</h4><p>Either party may request changes via written Change Order, provided changes are within scope, do not impair Matrix's obligations, and do not adversely affect design integrity. Matrix shall submit proposed adjustments within a reasonable time.</p></div>
+              <div className="qd-tc-item"><h4>7. Safety Devices</h4><p>Matrix shall not be required to furnish safety devices except those stated in the proposal. Buyer shall install and operate Product in accordance with all applicable safety laws and regulations.</p></div>
+              <div className="qd-tc-item"><h4>8. Weights, Packing and Freight</h4><p>Weights are estimated and subject to fluctuation. Product will be packed per Matrix's standard commercial practice. Freight will be invoiced to and paid by Buyer.</p></div>
+              <div className="qd-tc-item"><h4>9. Permits, Laws and Regulations</h4><p>Buyer will secure all construction, operating, environmental and similar permits and will pay for all governmental charges and fees necessary for installation or operation of the Product.</p></div>
+              <div className="qd-tc-item"><h4>10. Inspection</h4><p>Buyer may inspect Product at mutually agreed times. Failure to inspect timely may delay progress and increase costs.</p></div>
+              <div className="qd-tc-item"><h4>11. Delivery / Delay / Extension of Time</h4><p>Delivery dates represent Matrix's best estimate and are not guaranteed. If delivery is prevented or postponed by Buyer or Force Majeure, Product may be stored at Buyer's expense. Force Majeure includes fires, Acts of God, war, strikes, and unavailability of parts.</p></div>
+              <div className="qd-tc-item"><h4>12. Short Shipments</h4><p>Claims for short shipments are excluded unless made in writing within a reasonable time after delivery.</p></div>
+              <div className="qd-tc-item"><h4>13. Returned Product</h4><p>Product may not be returned except by prior written approval of Matrix.</p></div>
+              <div className="qd-tc-item"><h4>14. Services</h4><p>Product shall be installed, erected and commissioned by Buyer at Buyer's expense unless otherwise specified.</p></div>
+              <div className="qd-tc-item"><h4>15. Taxes</h4><p>Buyer shall reimburse Matrix for all taxes, duties, and charges in connection with production, sale, transportation, and use of Product.</p></div>
+              <div className="qd-tc-item"><h4>16. Terms of Payment</h4><p>Invoices are payable per proposal terms. If payment is not current, interest will be charged at 5% above the prime rate of Citibank, N.A., or the maximum legal rate, whichever is lower.</p></div>
+              <div className="qd-tc-item"><h4>17. Limited Warranty</h4><p>Matrix warrants Product free from defects in labor and workmanship for one (1) year from date of shipment. Warranty excludes ordinary wear and tear, improper loading of software, corrosion, erosion, unauthorized modifications, or application outside design limitations. EXCEPT FOR THE EXPRESS WARRANTY STATED HEREIN, MATRIX DISCLAIMS ALL OTHER WARRANTIES, WHETHER EXPRESS, IMPLIED, OR STATUTORY.</p></div>
+              <div className="qd-tc-item"><h4>18. Patent Indemnification</h4><p>Matrix shall defend and hold harmless Buyer against claims for infringement of valid US patents with respect to the Product. Buyer must notify Matrix within ten (10) days of any such claim.</p></div>
+              <div className="qd-tc-item"><h4>19. Indemnification</h4><p>Each party shall indemnify the other from third-person claims for damages directly resulting from personal injury or death and damage to tangible property caused by the indemnifying party's negligence or willful misconduct.</p></div>
+              <div className="qd-tc-item"><h4>20. Insurance</h4><p>Matrix shall maintain Workers' Compensation, Commercial General Liability ($1M per occurrence / $2M aggregate), and Automobile Liability Insurance ($1M per occurrence).</p></div>
+              <div className="qd-tc-item"><h4>21. Termination and Suspension</h4><p>Buyer may terminate if Matrix becomes bankrupt or materially breaches the Contract. Matrix may suspend for Buyer's non-payment. Cancellation charges: 25% before engineering submittals; 100% after authorization to proceed with manufacturing.</p></div>
+              <div className="qd-tc-item"><h4>22. Limitation of Liability</h4><p>Neither party shall be liable for loss of profits, anticipated revenue, or consequential damages. Matrix's maximum aggregate liability shall be limited to ten percent (10%) of the Contract price and shall terminate upon expiration of the warranty period.</p></div>
+              <div className="qd-tc-item"><h4>23. Governing Law and Dispute Resolution</h4><p>The Contract shall be governed by Utah law. Disputes shall be resolved through binding arbitration by the AAA in Salt Lake City, Utah. The prevailing party shall be awarded attorneys' fees.</p></div>
+              <div className="qd-tc-item"><h4>24–30. Additional Provisions</h4><p><b>24. Notice:</b> Service via mail, courier, fax, or email. <b>25. Assignment:</b> Neither party may assign without consent. <b>26. Waiver of Breach:</b> No waiver constitutes waiver of other breaches. <b>27. Independent Contractor:</b> Matrix is an independent contractor. <b>28. Severability:</b> Invalid provisions shall be adjusted equitably. <b>29. Survival:</b> Articles 4, 15, 18, 19, 22, 23, and 26 survive termination. <b>30. License Agreements:</b> Buyer agrees to execute Matrix's software license agreements prior to delivery.</p></div>
+              <div className="qd-tc-item"><h4>Supply Chain Statement</h4><p>Matrix cannot confirm or commit to any delivery dates or be liable for any liquidated damages as a result. Please refer to Matrix Supply Chain Statement for further details.</p></div>
+            </div>
+          </div>
+
+          <div className="qd-bottom-bar">
+            <span>Matrix Systems · 5591 Leo Park Rd · West Jordan, UT 84081</span>
+            <span>(801) 930-9492 · info@matrixpci.com</span>
           </div>
         </div>
       </div>
