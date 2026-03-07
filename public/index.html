@@ -7007,7 +7007,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
       uid={uid}
       readOnly={readOnly}
       onBack={onBack}
-      onViewQuote={()=>setView("quote")}
+      onViewQuote={()=>{setView("quote");window.scrollTo(0,0);}}
       onUpdate={update}
       onDelete={onDelete}
       onTransfer={onTransfer}
