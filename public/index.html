@@ -2453,8 +2453,8 @@ function projectStatus(project){
   const panels=project.panels||[];
   if(!panels.length)return project.status||"draft";
   const statuses=panels.map(p=>p.status||"draft");
-  const rank={draft:0,extracted:1,validated:2,costed:3,pushed_to_bc:4,quoted:5};
-  const rankToStatus=["draft","extracted","validated","costed","pushed_to_bc","quoted"];
+  const rank={draft:0,extracted:1,validated:2,costed:3,pushed_to_bc:4};
+  const rankToStatus=["draft","extracted","validated","costed","pushed_to_bc"];
   const maxRank=Math.max(...statuses.map(s=>rank[s]||0));
   return rankToStatus[maxRank]||"draft";
 }
@@ -2466,7 +2466,6 @@ function Badge({status}){
     validated:[C.greenDim,C.green,"Ready"],
     costed:[C.greenDim,C.green,"Ready"],
     pushed_to_bc:["#0d1f3c","#38bdf8","Pushed to BC"],
-    quoted:[C.yellowDim,C.yellow,"Quoted"],
     imported:["#1a1040","#a78bfa","Imported"]
   };
   const [bg,col,label]=map[status]||map.draft;
@@ -7616,8 +7615,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return [{label:null,items:sorted}];
     }
     if(groupBy==="status"){
-      const order=["draft","evc","pushed_to_bc","quoted"];
-      const labels={draft:"Draft",evc:"Extracted, Validated & Costed",pushed_to_bc:"Pushed to BC",quoted:"Quoted"};
+      const order=["draft","evc","pushed_to_bc"];
+      const labels={draft:"Draft",evc:"Extracted, Validated & Costed",pushed_to_bc:"Pushed to BC"};
       const map={};
       list.forEach(p=>{let st=projectStatus(p);if(st==="extracted"||st==="validated"||st==="costed")st="evc";if(!map[st])map[st]=[];map[st].push(p);});
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
@@ -7691,8 +7690,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"Extracted, Validated & Costed":C.green,"Pushed to BC":"#38bdf8",Quoted:C.yellow};
-                const statusColBg={Draft:C.border,"Extracted, Validated & Costed":C.greenDim,"Pushed to BC":"#0d1f3c",Quoted:C.yellowDim};
+                const statusColColors={Draft:C.muted,"Extracted, Validated & Costed":C.green,"Pushed to BC":"#38bdf8"};
+                const statusColBg={Draft:C.border,"Extracted, Validated & Costed":C.greenDim,"Pushed to BC":"#0d1f3c"};
                 const colColor=groupBy==="status"?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=groupBy==="status"?(statusColBg[g.label]||C.border):"#2a2a3e";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
@@ -7738,8 +7737,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                 {transferred.map(p=>{
                   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
                   const st=projectStatus(p);
-                  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.accent,costed:C.green,pushed_to_bc:"#38bdf8",quoted:C.yellow};
-                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"EXTRACTED",validated:"VALIDATED",costed:"COSTED",pushed_to_bc:"PUSHED TO BC",quoted:"QUOTED"};
+                  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8"};
+                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC"};
                   return(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
                     style={{...card({padding:"10px 14px"}),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s",display:"flex",flexDirection:"column"}}
@@ -7856,8 +7855,8 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,userFirstName,memberMap,dragg
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
   const st=projectStatus(p);
-  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.green,costed:C.green,quoted:C.yellow};
-  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"READY",validated:"READY",costed:"READY",quoted:"QUOTED"};
+  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.green,costed:C.green};
+  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"READY",validated:"READY",costed:"READY"};
   return(
   <div className="fade-in" onClick={()=>onOpen(p)}
     draggable={isDraggable||false}
