@@ -52,7 +52,8 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.68";
+const APP_VERSION="v1.11.69";
+const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -1234,7 +1235,7 @@ async function saveProject(uid,project){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const col=fbDb.collection(path);
   const ref=project.id?col.doc(project.id):col.doc();
-  const data={...project,id:ref.id,updatedAt:Date.now(),...(!project.id&&{createdBy:uid})};
+  const data={...project,id:ref.id,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION,...(!project.id&&{createdBy:uid})};
   // Don't store page images in Firestore — strip dataUrls from panels
   const stripped={...data,panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
   // Firestore rejects undefined values — round-trip through JSON to remove them
@@ -1250,7 +1251,7 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel){
   if(!snap.exists)return;
   const proj={id:ref.id,...snap.data()};
   const panels=(proj.panels||[]).map(p=>p.id===panelId?updatedPanel:p);
-  const liveProject={...proj,panels,updatedAt:Date.now()};
+  const liveProject={...proj,panels,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
   const stripped=JSON.parse(JSON.stringify({...liveProject,panels:panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
   await ref.set(stripped);
   notifyProjectListeners(projectId,liveProject);
@@ -1865,9 +1866,8 @@ async function loadPageTypeLearning(uid){
 async function savePageTypeLearningEntry(uid,entry){
   const examples=await loadPageTypeLearning(uid);
   examples.push({...entry,savedAt:Date.now()});
-  const trimmed=examples.slice(-80);
-  _pageTypeLearningCache=trimmed;
-  await fbDb.doc(_ptlPath(uid)).set({examples:trimmed}).catch(()=>{});
+  _pageTypeLearningCache=examples;
+  await fbDb.doc(_ptlPath(uid)).set({examples}).catch(()=>{});
 }
 function buildLearningHint(examples){
   if(!examples||!examples.length)return"";
@@ -4256,7 +4256,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [valPct,setValPct]=useState(0);
   const valTarget=useRef(0);
   const valRaf=useRef(null);
-  const [bcFuzzySuggestions,setBcFuzzySuggestions]=useState({});
+  const [bcFuzzySuggestions,setBcFuzzySuggestions]=useState(panel.bcFuzzySuggestions||{});
   const [bcBrowserOpen,setBcBrowserOpen]=useState(false);
   const [laborMoreInfo,setLaborMoreInfo]=useState(false);
   const [showCreateItem,setShowCreateItem]=useState(false);
@@ -4809,7 +4809,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const updated={...panel,bom};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
-    setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
+    setBcFuzzySuggestions(prev=>{
+      const next={...prev};delete next[bomRowId];
+      const patched={...panel,bom,bcFuzzySuggestions:Object.keys(next).length?next:undefined};
+      onUpdate(patched);try{onSaveImmediate(patched);}catch(e){}
+      return next;
+    });
   }
   function applyBcItem(bomRowId,bcItem){
     const row=(panel.bom||[]).find(r=>r.id===bomRowId);
@@ -4928,7 +4933,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     }
 
     const panelBase=panelOverride||panel;
-    const updated={...panelBase,bom:updatedBom,status:"costed"};
+    const mergedFuzzy={...(panelBase.bcFuzzySuggestions||{}),...bcFuzzySuggestions};
+    const updated={...panelBase,bom:updatedBom,status:"costed",bcFuzzySuggestions:Object.keys(mergedFuzzy).length?mergedFuzzy:undefined};
     onUpdate(updated);
     try{await onSaveImmediate(updated);}catch(e){}
     const aiCount=updatedBom.filter(r=>r.priceSource==="ai").length;
