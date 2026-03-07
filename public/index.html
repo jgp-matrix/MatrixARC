@@ -324,6 +324,8 @@ function computeLaborEstimate(panel){
   const sideTopSmallCount=val("sideTopSmallCount",0);
   const sideTopLargeCount=val("sideTopLargeCount",0);
   const squareCutoutCount=val("squareCutoutCount",0);
+  const sideDeviceHours=val("sideDeviceHours",0);
+  const sideDeviceCount=val("sideDeviceCount",0);
   const pmUnits=val("pmUnits",2);
   const buyoffUnits=val("buyoffUnits",2);
   const cratingUnits=val("cratingUnits",1);
@@ -341,10 +343,8 @@ function computeLaborEstimate(panel){
   addLine("Device Mounting",allDevices,LABOR_RATES.mountingMinPerDevice,"devices","allDevices");
   addLine("Duct & DIN Rail",ductDinFeet,LABOR_RATES.ductDinMinPerFoot,"feet","ductDinFeet");
   addLine("Panel Holes",panelHoles,LABOR_RATES.holesMinPerHole,"holes","panelHoles");
-  // Side/top-mounted devices
-  if(sideTopSmallCount>0)addLine("Side Fans",sideTopSmallCount,120,"devices","sideTopSmallCount");
-  if(sideTopLargeCount>0)addLine("HVAC/Fans",sideTopLargeCount,240,"devices","sideTopLargeCount");
-  if(squareCutoutCount>0)addLine("Square Cutouts",squareCutoutCount,LABOR_RATES.squareCutoutMinPerCut,"cutouts","squareCutoutCount");
+  // Side-mounted components (unified: fans, ACs, fan shrouds, horns, etc.)
+  if(sideDeviceHours>0)lines.push({category:"Side-Mounted Components",qty:sideDeviceHours,unit:"hours",minPerUnit:60,hours:sideDeviceHours,cost:sideDeviceHours*laborRate,field:"sideDeviceHours"});
   // Labels: stored as hours directly
   lines.push({category:"Labels",qty:labelHours,unit:"hours",minPerUnit:60,hours:labelHours,cost:labelHours*laborRate,field:"labelHours"});
   addLine("Project Mgmt",pmUnits,LABOR_RATES.pmMinPerUnit,"sessions","pmUnits");
@@ -356,7 +356,7 @@ function computeLaborEstimate(panel){
 
   return{
     lines,totalCost,totalHours,
-    inputs:{wireCount,wireTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,pmUnits,buyoffUnits,cratingUnits,labelHours},
+    inputs:{wireCount,wireTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,sideDeviceHours,sideDeviceCount,pmUnits,buyoffUnits,cratingUnits,labelHours},
     hasLayoutData:hasLayout,
     isLegacy:false,
     isOverride:false
@@ -365,7 +365,7 @@ function computeLaborEstimate(panel){
 
 // ── LABOR BOM ROWS (auto-managed, always first 3 rows) ──
 const LABOR_BOM_GROUPS=[
-  {partNumber:"1012",description:"CUT",   cats:["Panel Holes","Side Devices","HVAC/Fans"]},
+  {partNumber:"1012",description:"CUT",   cats:["Panel Holes","Side-Mounted Components"]},
   {partNumber:"1013",description:"LAYOUT",cats:["Device Mounting","Duct & DIN Rail","Labels"]},
   {partNumber:"1014",description:"WIRE",  cats:["Wire Time","Door Wiring"]},
 ];
@@ -1683,7 +1683,8 @@ Rules:
 - dinRails: each DIN rail with estimated length in feet
 - sideTopDevices: devices mounted on the SIDE PANELS or TOP of the enclosure (not the door or backpanel). These appear as smaller views or silhouettes drawn to the side or above the main panel view. Common examples: air conditioners, exhaust fans, conduit hubs, gland plates, auxiliary boxes. Estimate widthIn and heightIn in inches based on relative scale to the enclosure dimensions. If the drawing shows a side/top view with a device that appears SMALLER than 6 inches square, classify it normally. If it appears LARGER than 6 inches square (likely an air conditioner or fan unit), still capture it — the size drives labor calculations.
 - IMPORTANT: Most layout pages show the backpanel. Only put devices in doorCutouts if you can clearly see they are door-mounted operator interface devices with cutout holes. When in doubt, put devices in backpanelDevices.
-- Use device types: breaker, contactor, overload, relay, transformer, fuse, disconnect, drive, plc_io, terminal_block, pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, power_supply, surge, meter, air_conditioner, fan, conduit_hub, other
+- Use device types: breaker, contactor, overload, relay, transformer, fuse, disconnect, drive, plc_io, terminal_block, pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, power_supply, surge, meter, air_conditioner, fan, fan_shroud, conduit_hub, other
+- fan_shroud: ventilation shroud/filter mounted on side panel. Always estimate widthIn and heightIn.
 - Return JSON only, no explanation`;
 
 // ── BACKPANEL PAGE ANALYSIS PROMPT ──
@@ -1724,6 +1725,7 @@ Extract and return ONLY valid JSON:
   "sideTopDevices": [
     {"tag":"AC1","type":"air_conditioner","location":"side","widthIn":14,"heightIn":14},
     {"tag":"FAN1","type":"fan","location":"side","widthIn":4,"heightIn":4},
+    {"tag":"FS1","type":"fan_shroud","location":"side","widthIn":6,"heightIn":6},
     {"tag":"HRN1","type":"horn","location":"side","widthIn":4,"heightIn":4},
     {"tag":"BEA1","type":"beacon","location":"top","widthIn":3,"heightIn":3}
   ]
@@ -1733,11 +1735,12 @@ Rules:
 - enclosure: overall panel dimensions if visible
 - doorCutouts: ONLY devices mounted through the DOOR FACE with cutout holes — pushbuttons, pilot lights, selector switches, HMIs, e-stops, horns, meters. These appear as circular or rectangular cutouts on the front face of the door. Do NOT include beacons or stack lights here — those go in sideTopDevices.
 - sideTopDevices: ALL devices on side panels or top. Always include a "location" field:
-    1. location "side": Square or rectangular devices on the left or right side panel — fans (e.g. 4"×4"), air conditioners (e.g. 10"×14" or bigger), horns or alarm boxes (square cutout). Estimate widthIn and heightIn in inches.
+    1. location "side": Square or rectangular devices on the left or right side panel — fans (e.g. 4"×4"), air conditioners (e.g. 10"×14" or bigger), fan shrouds/filters (ventilation shroud mounted on side), horns or alarm boxes (square cutout). Estimate widthIn and heightIn in inches.
     2. location "top": Any device shown on top of the front view or on the roof of the enclosure — beacons, stack lights, warning lights. Each requires ONE hole through the top panel. Use type "beacon".
 - IGNORE the backpanel entirely — do NOT list breakers, contactors, relays, PLCs, drives, terminal blocks, or DIN-rail devices
 - IGNORE wire duct and DIN rails — those are backpanel items
-- Use device types: pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, meter, air_conditioner, fan, beacon, conduit_hub, other
+- Use device types: pushbutton, pilot_light, selector_switch, hmi, e_stop, horn, meter, air_conditioner, fan, fan_shroud, beacon, conduit_hub, other
+- fan_shroud: ventilation shroud/filter mounted on side panel. Always estimate widthIn and heightIn.
 - Return JSON only, no explanation`;
 
 async function analyzeLayoutPage(dataUrl,layoutLearningHint=""){
@@ -1846,12 +1849,28 @@ function mergeLayoutResults(layouts){
   const squareCutoutCount=merged.sideTopDevices.filter(d=>d.location!=="top"&&d.type!=="beacon"&&d.type!=="fan"&&d.type!=="air_conditioner").length;
   const sideTopSmallCount=merged.sideTopDevices.filter(d=>d.type==="fan").length;
   const sideTopLargeCount=merged.sideTopDevices.filter(d=>d.type==="air_conditioner").length;
+  // Compute unified side-mounted component labor
+  const sideDevices=merged.sideTopDevices.filter(d=>d.location!=="top"&&d.type!=="beacon");
+  let sideDeviceMinutes=0;
+  for(const d of sideDevices){
+    if(d.type==="fan"){sideDeviceMinutes+=120;}
+    else if(d.type==="air_conditioner"){sideDeviceMinutes+=240;}
+    else if(d.type==="fan_shroud"){
+      const maxDim=Math.max(d.widthIn||0,d.heightIn||0);
+      if(maxDim<4)sideDeviceMinutes+=90;
+      else if(maxDim<=6)sideDeviceMinutes+=120;
+      else sideDeviceMinutes+=180;
+    }
+    else{sideDeviceMinutes+=180;} // horn, conduit_hub, other
+  }
+  const sideDeviceHours=Math.round(sideDeviceMinutes/60*100)/100;
+  const sideDeviceCount=sideDevices.length;
   // Panel holes: door cutouts (HMI=25 eq) + top beacons (1 hole each)
   const doorHoles=merged.doorCutouts.reduce((s,c)=>s+(c.type==="hmi"?LABOR_RATES.hmiHoleEquivalent:1),0);
   const panelHoles=doorHoles+topBeaconCount;
   const doorDeviceCount=merged.doorCutouts.length;
   const backpanelDeviceCount=merged.backpanelDevices.length;
-  return{...merged,ductDinFeet,panelHoles,doorDeviceCount,backpanelDeviceCount,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,topBeaconCount};
+  return{...merged,ductDinFeet,panelHoles,doorDeviceCount,backpanelDeviceCount,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,topBeaconCount,sideDeviceHours,sideDeviceCount};
 }
 
 // ── LAYOUT LEARNING DB ──
@@ -2008,7 +2027,7 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
 
   console.log("LABOR COUNTS: doorDevices="+doorDevices+", allDevices="+allDevices+", panelHoles="+panelHoles+", ductDinFeet="+ductDinFeet+", wireCount="+totalWires);
   const laborData={
-    counts:{wireCount:totalWires,wireTerminations:totalTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount:layoutMerged?.sideTopSmallCount||0,sideTopLargeCount:layoutMerged?.sideTopLargeCount||0},
+    counts:{wireCount:totalWires,wireTerminations:totalTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount:layoutMerged?.sideTopSmallCount||0,sideTopLargeCount:layoutMerged?.sideTopLargeCount||0,squareCutoutCount:layoutMerged?.squareCutoutCount||0,sideDeviceHours:layoutMerged?.sideDeviceHours||0,sideDeviceCount:layoutMerged?.sideDeviceCount||0},
     overrides:{},
     defaults:{pmUnits:2,buyoffUnits:2,cratingUnits:1,labelHours:4},
     hasLayoutData,
@@ -3229,7 +3248,7 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
         const panelHoles2=schDoorCount2>0?Math.min(layoutPanelHoles2,schDoorCount2):layoutPanelHoles2;
         console.log("FQ DOOR DEVICES: schematic="+schDoorCount2+", layout="+layDoorCount2+", using="+doorDevices2);
         const laborData={
-          counts:{wireCount:totalWires,wireTerminations:totalTerminations,doorDevices:doorDevices2,allDevices:allDevices2,panelHoles:panelHoles2,ductDinFeet:layoutMerged?layoutMerged.ductDinFeet:0,sideTopSmallCount:layoutMerged?.sideTopSmallCount||0,sideTopLargeCount:layoutMerged?.sideTopLargeCount||0},
+          counts:{wireCount:totalWires,wireTerminations:totalTerminations,doorDevices:doorDevices2,allDevices:allDevices2,panelHoles:panelHoles2,ductDinFeet:layoutMerged?layoutMerged.ductDinFeet:0,sideTopSmallCount:layoutMerged?.sideTopSmallCount||0,sideTopLargeCount:layoutMerged?.sideTopLargeCount||0,squareCutoutCount:layoutMerged?.squareCutoutCount||0,sideDeviceHours:layoutMerged?.sideDeviceHours||0,sideDeviceCount:layoutMerged?.sideDeviceCount||0},
           overrides:{},defaults:{pmUnits:2,buyoffUnits:2,cratingUnits:1,labelHours:4},hasLayoutData:!!layoutMerged,layoutAnalysis:layoutMerged,deviceClassification:allTags
         };
         proj={...proj,validation,laborData,status:"validated"};
@@ -5729,8 +5748,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           ["Total devices",laborEst.inputs.allDevices||0],
                           ["Panel holes",laborEst.inputs.panelHoles||0],
                           ["Duct & DIN rail",`${laborEst.inputs.ductDinFeet||0} ft`],
-                          ["Side devices (small)",laborEst.inputs.sideTopSmallCount||0],
-                          ["Side devices (AC/Fan)",laborEst.inputs.sideTopLargeCount||0],
+                          ["Side-mounted components",laborEst.inputs.sideDeviceCount||0],
                           ["Label hours",laborEst.inputs.labelHours||0],
                           ["PM sessions",laborEst.inputs.pmUnits||0],
                         ].map(([label,val])=>(
