@@ -7574,7 +7574,6 @@ function AIDatabasePage({uid,onBack}){
 
 function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject}){
   const [groupBy,setGroupBy]=useState("status");
-  const [hideImported,setHideImported]=useState({});
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
   const bgTasks=useBgTasks();
@@ -7668,15 +7667,6 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         {filterBtn("Imported","imported")}
         {filterBtn("All","all")}
       </div>
-      {groupBy!=="imported"&&(
-        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
-          <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",userSelect:"none",fontSize:13,color:C.muted}}>
-            <input type="checkbox" checked={!!hideImported[groupBy]} onChange={e=>setHideImported(h=>({...h,[groupBy]:e.target.checked}))}
-              style={{accentColor:C.accent,width:14,height:14,cursor:"pointer"}}/>
-            Hide Imported
-          </label>
-        </div>
-      )}
 
       {loading&&(
         <div style={{textAlign:"center",padding:80,color:C.muted}}>
@@ -7686,7 +7676,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       )}
 
       {(()=>{
-        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||!hideImported[groupBy]||!p.importedFromBC));
+        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||!p.importedFromBC));
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         return(<>
