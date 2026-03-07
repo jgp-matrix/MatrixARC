@@ -52,7 +52,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.11.67";
+const APP_VERSION="v1.11.68";
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
 const firebaseConfig={
@@ -4848,35 +4848,36 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
   }
-  async function runPricingOnPanel(bomOverride,panelOverride){
+  async function runPricingOnPanel(bomOverride,panelOverride,onEpProgress){
     const bom=bomOverride||panel.bom||[];
     if(!bom.length||!_apiKey)return;
     if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
-    setAiPricing(true);setPricingProgress({msg:"Starting…",pct:5});
+    const _pp=(o)=>{setPricingProgress(o);if(onEpProgress)onEpProgress(o.pct);};
+    setAiPricing(true);_pp({msg:"Getting prices…",pct:5});
     let updatedBom=[...bom];
     let bcCount=0;
 
     // Phase 1: Business Central lookup
     if(!_bcToken){
-      setPricingProgress({msg:"Trying silent BC login…",pct:5});
+      _pp({msg:"Trying silent BC login…",pct:5});
       try{await Promise.race([acquireBcToken(false),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),5000))]);}
-      catch(e){setPricingProgress({msg:"BC silent login skipped — use Connect BC button first. Using AI…",pct:5});}
+      catch(e){_pp({msg:"BC silent login skipped — using AI…",pct:5});}
     }
     if(_bcToken){
-      setPricingProgress({msg:"BC: Getting company ID…",pct:5});
+      _pp({msg:"BC: Getting company ID…",pct:5});
       try{
         const compId=await bcGetCompanyId();
         if(!compId){
-          setPricingProgress({msg:"BC: Company not found (\""+BC_COMPANY_NAME+"\") — falling back to AI…",pct:10});
+          _pp({msg:"BC: Company not found — falling back to AI…",pct:10});
         }else{
           const eligible=bom.filter(r=>{const ps=r.priceSource;return ps!=="bc"&&ps!=="manual";});
-          setPricingProgress({msg:`BC: Fuzzy-matching ${eligible.length} items…`,pct:7});
+          _pp({msg:`BC: Fuzzy-matching ${eligible.length} items…`,pct:7});
           const bcMap={};
           const fuzzySugg={};
           for(let i=0;i<eligible.length;i++){
             const pn=(eligible[i].partNumber||"").trim();
             if(!pn)continue;
-            setPricingProgress({msg:`BC: Fuzzy lookup ${i+1}/${eligible.length}: ${pn}`,pct:7+Math.round((i/eligible.length)*30)});
+            _pp({msg:`BC: Fuzzy lookup ${i+1}/${eligible.length}: ${pn}`,pct:7+Math.round((i/eligible.length)*30)});
             const result=await bcFuzzyLookup(pn);
             if(result.match&&result.match.unitCost!=null){
               bcMap[String(eligible[i].id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:result.match.number};
@@ -4894,11 +4895,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             setBcFuzzySuggestions(prev=>({...prev,...fuzzySugg}));
           }
           const fuzzyCount=Object.keys(fuzzySugg).length;
-          setPricingProgress({msg:`BC: ${bcCount} matched${fuzzyCount>0?`, ${fuzzyCount} need review`:""} of ${eligible.length}. AI for the rest…`,pct:40});
+          _pp({msg:`BC: ${bcCount} matched${fuzzyCount>0?`, ${fuzzyCount} need review`:""} of ${eligible.length}. AI for the rest…`,pct:40});
         }
       }catch(ex){
         console.warn("BC pricing phase failed:",ex);
-        setPricingProgress({msg:`BC failed: ${ex.message||ex} — falling back to AI…`,pct:10});
+        _pp({msg:`BC failed: ${ex.message||ex} — falling back to AI…`,pct:10});
       }
     }
 
@@ -4911,7 +4912,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         const batchIdx=Math.floor(i/BATCH);
         const basePct=_bcToken?45:5;
         const pctRange=_bcToken?45:90;
-        setPricingProgress({msg:`AI pricing ${i+1}–${Math.min(i+BATCH,unpricedBom.length)} of ${unpricedBom.length} remaining items…`,pct:basePct+Math.round((batchIdx/total)*pctRange)});
+        _pp({msg:`AI pricing ${i+1}–${Math.min(i+BATCH,unpricedBom.length)} of ${unpricedBom.length} remaining items…`,pct:basePct+Math.round((batchIdx/total)*pctRange)});
         const batch=unpricedBom.slice(i,i+BATCH);
         try{
           const map=await estimatePrices(batch);
@@ -4922,7 +4923,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             }
             return r;
           });
-        }catch(ex){setAiPricing(false);setPricingProgress({msg:`Pricing error: ${(ex.message||"failed").slice(0,60)}`,pct:0,isError:true});return;}
+        }catch(ex){setAiPricing(false);_pp({msg:`Pricing error: ${(ex.message||"failed").slice(0,60)}`,pct:0,isError:true});return;}
       }
     }
 
@@ -4932,7 +4933,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     try{await onSaveImmediate(updated);}catch(e){}
     const aiCount=updatedBom.filter(r=>r.priceSource==="ai").length;
     const totalPriced=updatedBom.filter(r=>r.unitPrice!=null).length;
-    setPricingProgress({msg:`✓ ${totalPriced} of ${bom.length} priced${bcCount>0?` (${bcCount} BC, ${aiCount} AI est.)`:""}.`,pct:100});
+    _pp({msg:`✓ ${totalPriced} of ${bom.length} priced${bcCount>0?` (${bcCount} BC, ${aiCount} AI est.)`:""}.`,pct:100});
     setAiPricing(false);
     pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
   }
@@ -4942,7 +4943,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const valPages=(panel.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
     ep.start("Validating…",valPages.length*20);
     try{
-      const result=await runPanelValidation(panel,pct=>{ep.set(Math.round(pct*0.95),"Validating…");});
+      const result=await runPanelValidation(panel,pct=>{ep.set(Math.round(pct*0.45),"Validating…");});
       let updated=panel;
       if(result.validation||result.laborData){
         const bom=appendDefaultBomItems(panel.bom||[]);
@@ -4950,12 +4951,13 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         onUpdate(updated);
         try{await onSaveImmediate(updated);}catch(e){}
       }
-      ep.finish("✓ Validation complete");
       setValidatingPanel(false);
-      // Auto-run pricing after validation
+      // Continue into pricing — keep ep alive, no gap in the bar
       if((updated.bom||[]).length>0&&_apiKey){
-        try{await runPricingOnPanel(updated.bom,updated);}catch(e){}
+        ep.set(48,"Getting prices…");
+        try{await runPricingOnPanel(updated.bom,updated,pct=>{ep.set(48+Math.round(pct*0.50),null);});}catch(e){}
       }
+      ep.finish("✓ Complete");
     }catch(e){
       console.error("Validation error:",e);
       ep.finish("Validation failed");
