@@ -52,7 +52,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.12.4";
+const APP_VERSION="v1.12.5";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2676,7 +2676,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
                 const zeroPrice=!item.unitPrice;
                 return(
                   <div key={i} style={{display:"grid",gridTemplateColumns:"50px 100px 1fr 80px 32px",gap:0,padding:"4px 10px",fontSize:12,borderBottom:i<defaultItems.length-1?`1px solid ${C.border}22`:"none",background:zeroPrice?"#ff000011":"transparent",alignItems:"center"}}>
-                    <input type="number" min="1" step="1" value={item.qty||1} onChange={e=>{const q=Math.max(1,+e.target.value||1);setDefaultItems(prev=>prev.map((it,j)=>j===i?{...it,qty:q}:it));}} style={{...inp(),width:40,fontSize:12,textAlign:"center",padding:"3px 4px"}}/>
+                    <input type="number" min="1" step="1" value={item.qty||1} onChange={e=>{const q=Math.max(1,+e.target.value||1);setDefaultItems(prev=>prev.map((it,j)=>j===i?{...it,qty:q}:it));}} onFocus={e=>e.target.select()} style={{...inp(),width:40,fontSize:12,textAlign:"center",padding:"3px 4px"}}/>
                     <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.partNumber||"—"}</div>
                     <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.description}</div>
                     <div style={{textAlign:"right",color:zeroPrice?C.red:C.green}}>{item.unitPrice?"$"+Number(item.unitPrice).toFixed(2):"$0.00"}</div>
@@ -3660,7 +3660,7 @@ function QuoteTab({project,onUpdate}){
             <tbody>
               <tr style={{borderBottom:`1px solid ${W.border}`}}>
                 <td style={{padding:"8px 10px"}}>
-                  <input value={q.qty||"1.00"} onChange={e=>setQ({qty:e.target.value})} style={{...qInp({width:60})}}/>
+                  <input value={q.qty||"1.00"} onChange={e=>setQ({qty:e.target.value})} onFocus={e=>e.target.select()} style={{...qInp({width:60})}}/>
                 </td>
                 <td style={{padding:"8px 10px"}}>EA</td>
                 <td style={{padding:"8px 10px"}}>{hasSellPrice?fmtMoney(sellPrice):<span style={{color:W.faint}}>—</span>}</td>
@@ -5696,6 +5696,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           <td style={{padding:"3px 4px",textAlign:"right",whiteSpace:"nowrap"}}>
                             {l.field&&!readOnly?(
                               <input type="text" inputMode="decimal" defaultValue={l.qty} key={l.field+"-"+l.qty}
+                                onFocus={e=>e.target.select()}
                                 onBlur={e=>{const v=parseFloat(e.target.value);if(!isNaN(v)&&v!==l.qty)saveLaborOverride(l.field,Math.max(0,v));}}
                                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
                                 style={{background:"transparent",border:"1px solid #888",borderRadius:4,color:C.text,padding:"1px 4px",fontSize:13,width:48,textAlign:"right"}}/>
