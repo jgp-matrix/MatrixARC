@@ -26,7 +26,27 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 @keyframes pulseYellow{0%,100%{box-shadow:0 0 4px 1px rgba(250,204,21,0.15);background:rgba(250,204,21,0.04);border-color:rgba(250,204,21,0.4)}50%{box-shadow:0 0 40px 12px rgba(250,204,21,0.7),0 0 80px 20px rgba(250,204,21,0.25);background:rgba(250,204,21,0.18);border-color:#fde047}}
 .fade-in{animation:fadeIn 0.25s ease-out both}
 .spin{animation:spin 1s linear infinite;display:inline-block}
-@media print{.no-print{display:none!important}body{background:#fff!important}#quote-doc,#quote-doc *{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+@media print{
+  @page{size:letter;margin:0.5in}
+  .no-print{display:none!important}
+  body{background:#fff!important;margin:0!important;padding:0!important}
+  body>*{display:none!important}
+  #quote-doc{
+    display:block!important;
+    position:absolute;top:0;left:0;
+    width:100%;max-width:none!important;
+    margin:0!important;padding:0!important;
+    border:none!important;border-radius:0!important;box-shadow:none!important;
+    background:#fff!important;
+    font-size:12px!important;
+  }
+  #quote-doc,#quote-doc *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #quote-doc input,#quote-doc textarea{
+    border:none!important;border-bottom:none!important;
+    background:transparent!important;outline:none!important;
+    padding:0!important;
+  }
+}
 </style>
 </head>
 <body>
