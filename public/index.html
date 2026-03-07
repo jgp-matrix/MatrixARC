@@ -52,7 +52,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.12.1";
+const APP_VERSION="v1.12.2";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5420,7 +5420,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                               }
                             }}
                             style={{...inp({padding:"5px 14px 5px 7px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5}),width:w?w-10+"px":"100%",minWidth:w?w-10+"px":"100px",flex:1}}
-                            onFocus={e=>e.target.style.borderColor=C.accent}
+                            onFocus={e=>{e.target.style.borderColor=C.accent;if(f==="qty")e.target.select();}}
                           />
                         )}
                       </td>
