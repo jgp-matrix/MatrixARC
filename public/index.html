@@ -8041,6 +8041,7 @@ function App({user}){
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
   const [bcLostAlert,setBcLostAlert]=useState(false);
   const bcOnlinePrev=useRef(!!_bcToken);
+  const [connStatus,setConnStatus]=useState("good"); // "good"|"slow"|"offline"
   const bgTasks=useBgTasks();
   const bgRunning=Object.values(bgTasks).filter(t=>t.status==="running");
 
@@ -8067,6 +8068,51 @@ function App({user}){
     const early=setTimeout(checkBc,5000);
     const interval=setInterval(checkBc,CHECK_MS);
     return()=>{clearTimeout(early);clearInterval(interval);};
+  },[]);
+
+  // Connection quality monitor
+  useEffect(()=>{
+    const determine=()=>{
+      if(!navigator.onLine)return "offline";
+      const c=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
+      if(c){
+        const et=c.effectiveType;
+        if(et==="slow-2g"||et==="2g"||(c.downlink!==undefined&&c.downlink<0.5))return "slow";
+      }
+      return null; // unknown — defer to ping
+    };
+    const apply=s=>setConnStatus(prev=>prev!==s?s:prev);
+    const onOnline=()=>{const s=determine();apply(s||"good");};
+    const onOffline=()=>apply("offline");
+    const onConnChange=()=>{const s=determine();if(s)apply(s);};
+    window.addEventListener("online",onOnline);
+    window.addEventListener("offline",onOffline);
+    const conn=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
+    if(conn)conn.addEventListener("change",onConnChange);
+    // Firestore latency ping every 30s
+    const ping=async()=>{
+      if(!navigator.onLine){apply("offline");return;}
+      const t0=Date.now();
+      try{
+        const p=new Promise((_,rej)=>setTimeout(()=>rej("timeout"),10000));
+        await Promise.race([firebase.firestore().collection("_ping").doc("test").get(),p]);
+        const ms=Date.now()-t0;
+        const net=determine();
+        if(net==="offline")apply("offline");
+        else if(net==="slow"||ms>3000)apply("slow");
+        else apply("good");
+      }catch(e){
+        apply(e==="timeout"?"offline":"slow");
+      }
+    };
+    const iv=setInterval(ping,30000);
+    setTimeout(ping,5000); // initial check after 5s
+    return()=>{
+      window.removeEventListener("online",onOnline);
+      window.removeEventListener("offline",onOffline);
+      if(conn)conn.removeEventListener("change",onConnChange);
+      clearInterval(iv);
+    };
   },[]);
 
   // Splash screen state: "loading" → "shrinking" → "done"
@@ -8291,6 +8337,17 @@ function App({user}){
               style={{display:"flex",alignItems:"center",gap:6,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,background:"#0d2a0d",border:"1px solid #22c55e99",cursor:"default"}}>
               <span className="spin" style={{fontSize:12,color:"#86efac",lineHeight:1}}>◌</span>
               <span style={{fontSize:11,fontWeight:600,color:"#86efac",whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
+            </div>
+          )}
+          {connStatus!=="good"&&(
+            <div style={{display:"flex",alignItems:"center",gap:6,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,
+              background:connStatus==="offline"?"#3b080844":"#3a1f0044",border:`1px solid ${connStatus==="offline"?"#ef444466":"#f59e0b66"}`}}>
+              <div style={{width:7,height:7,borderRadius:"50%",flexShrink:0,
+                background:connStatus==="offline"?C.red:C.yellow,
+                boxShadow:`0 0 5px ${connStatus==="offline"?C.red:C.yellow}`,
+                animation:"pulse 2s ease-in-out infinite"}}/>
+              <span style={{fontSize:11,fontWeight:600,whiteSpace:"nowrap",
+                color:connStatus==="offline"?"#fca5a5":"#fcd34d"}}>{connStatus==="offline"?"Offline":"Slow Connection"}</span>
             </div>
           )}
           <div title={bcOnline?"Business Central is connected":"Click to connect to Business Central"}
