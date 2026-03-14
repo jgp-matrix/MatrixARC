@@ -158,6 +158,15 @@ body.no-tips [data-tip]::after{opacity:0!important;}
   .qd-tc-item{margin-bottom:12px!important}
   .qd-tc-item h4{font-size:10.5px!important}
   .qd-tc-item p{font-size:10px!important;line-height:1.6!important}
+  /* ── RFQ print mode ── */
+  body[data-print-target="rfq"] #quote-doc,body[data-print-target="rfq"] #quote-doc *{visibility:hidden!important;height:0!important;overflow:hidden!important;position:absolute!important}
+  body[data-print-target="rfq"] #rfq-doc,body[data-print-target="rfq"] #rfq-doc *{visibility:visible!important}
+  body[data-print-target="rfq"] #rfq-doc{position:absolute;top:0;left:0;width:100%;max-width:none!important;margin:0!important;padding:0!important;border:none!important;border-radius:0!important;box-shadow:none!important;background:#fff!important;height:auto!important;overflow:visible!important}
+  body[data-print-target="rfq"] #rfq-doc,body[data-print-target="rfq"] #rfq-doc *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .rfq-table{width:100%;border-collapse:collapse;font-size:12px}
+  .rfq-table th{background:#f1f5f9;color:#334155;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;padding:6px 10px;text-align:left;border-bottom:2px solid #2563eb}
+  .rfq-table td{padding:6px 10px;border-bottom:1px solid #e2e8f0;color:#1e293b;font-size:11px}
+  .rfq-table tr:nth-child(even) td{background:#f8fafc}
 }
 </style>
 </head>
@@ -184,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.15.0";
+const APP_VERSION="v1.16.0";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -507,7 +516,7 @@ function buildLaborBomRows(panel){
   if(!est.lines.length)return[];
   return LABOR_BOM_GROUPS.map(g=>{
     const hrs=est.lines.filter(l=>g.cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
-    return{id:`labor-${g.partNumber}`,isLaborRow:true,partNumber:g.partNumber,description:g.description,qty:Math.ceil(hrs)||0,unitPrice:null,priceSource:"bc",manufacturer:"",notes:""};
+    return{id:`labor-${g.partNumber}`,isLaborRow:true,partNumber:g.partNumber,description:g.description,qty:Math.ceil(hrs)||0,unitPrice:null,priceSource:"bc",priceDate:Date.now(),manufacturer:"",notes:""};
   });
 }
 function syncLaborBomRows(panel){
@@ -1289,6 +1298,42 @@ async function bcCheckItemOnProjects(itemNo){
   }catch(e){console.warn("bcCheckItemOnProjects error:",e);return{onProjects:false,projects:[]};}
 }
 
+const RFQ_STALE_MS=60*24*60*60*1000; // 60 days
+async function buildRfqSupplierGroups(bom){
+  const now=Date.now();
+  const eligible=bom.filter(r=>!r.isLaborRow&&r.priceSource==="ai"&&(!r.priceDate||r.priceDate<now-RFQ_STALE_MS));
+  if(!eligible.length)return{groups:[],noItems:true};
+  // Fetch vendors list for name lookup
+  const vendors=_bcToken?await bcListVendors():[];
+  const vendorMap={};vendors.forEach(v=>{vendorMap[v.number]=v.displayName;});
+  // For each eligible item, try to get vendor from BC item card
+  const itemVendors={};
+  if(_bcToken){
+    const compId=await bcGetCompanyId();
+    if(compId){
+      for(const item of eligible){
+        const pn=(item.partNumber||"").trim();
+        if(!pn||itemVendors[pn]!==undefined)continue;
+        try{
+          const r=await fetch(`${BC_API_BASE}/companies(${compId})/items?$filter=number eq '${encodeURIComponent(pn)}'&$select=number,vendorNo`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          if(r.ok){const d=await r.json();const it=(d.value||[])[0];itemVendors[pn]=it?.vendorNo||null;}
+          else{itemVendors[pn]=null;}
+        }catch(e){itemVendors[pn]=null;}
+      }
+    }
+  }
+  // Group by vendor
+  const groupMap={};
+  for(const item of eligible){
+    const pn=(item.partNumber||"").trim();
+    const vendorNo=itemVendors[pn]||null;
+    let vendorName=vendorNo&&vendorMap[vendorNo]?vendorMap[vendorNo]:(item.manufacturer||"").trim()||"Unknown Supplier";
+    if(!groupMap[vendorName])groupMap[vendorName]={vendorName,items:[]};
+    groupMap[vendorName].items.push(item);
+  }
+  return{groups:Object.values(groupMap).sort((a,b)=>a.vendorName.localeCompare(b.vendorName)),noItems:false};
+}
+
 async function bcClearAssemblyBOMLines(parentItemNo,bomPage){
   const getUrl=`${BC_ODATA_BASE}/${bomPage}?$filter=Parent_Item_No eq '${encodeURIComponent(parentItemNo)}'`;
   const gr=await fetch(getUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
@@ -1546,7 +1591,7 @@ function appendDefaultBomItems(bom){
     if(_laborPns.has((tpl.partNumber||"").trim()))continue;
     const desc=(tpl.description||"").trim().toLowerCase();
     if(desc&&lower.has(desc)){console.log("APPEND DEFAULTS: skipped (duplicate):",tpl.description);continue;}
-    items.push({id:Date.now()+Math.random(),qty:tpl.qty||1,partNumber:tpl.partNumber||"",description:tpl.description||"",manufacturer:tpl.manufacturer||"",notes:"",unitPrice:tpl.unitPrice||0,priceSource:tpl.priceSource||null,autoLoaded:true});
+    items.push({id:Date.now()+Math.random(),qty:tpl.qty||1,partNumber:tpl.partNumber||"",description:tpl.description||"",manufacturer:tpl.manufacturer||"",notes:"",unitPrice:tpl.unitPrice||0,priceSource:tpl.priceSource||null,priceDate:Date.now(),autoLoaded:true});
     console.log("APPEND DEFAULTS: adding:",tpl.description,"$"+tpl.unitPrice);
   }
   console.log("APPEND DEFAULTS: appended",items.length,"of",_defaultBomItems.length,"defaults. BOM total:",bom.length+items.length);
@@ -2734,7 +2779,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
     if(bcDebounce.current){clearTimeout(bcDebounce.current);bcDebounce.current=null;}
     const exists=defaultItems.some(d=>(d.description||"").toLowerCase()===((item.displayName||"").toLowerCase()));
     if(!exists){
-      setDefaultItems(prev=>[...prev,{partNumber:item.number||"",description:item.displayName||"",manufacturer:"",qty:1,unitPrice:item.unitCost??item.unitPrice??0,priceSource:"bc"}]);
+      setDefaultItems(prev=>[...prev,{partNumber:item.number||"",description:item.displayName||"",manufacturer:"",qty:1,unitPrice:item.unitCost??item.unitPrice??0,priceSource:"bc",priceDate:Date.now()}]);
     }
     setBcQuery("");setBcResults([]);setBcSearching(false);
   }
@@ -2744,7 +2789,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
     if(!desc)return;
     const exists=defaultItems.some(d=>(d.description||"").toLowerCase()===desc.toLowerCase());
     if(exists)return;
-    setDefaultItems(prev=>[...prev,{partNumber:"",description:desc,manufacturer:"",qty:1,unitPrice:+manualPrice||0,priceSource:null}]);
+    setDefaultItems(prev=>[...prev,{partNumber:"",description:desc,manufacturer:"",qty:1,unitPrice:+manualPrice||0,priceSource:null,priceDate:Date.now()}]);
     setManualDesc("");setManualPrice("");
   }
 
@@ -3447,7 +3492,7 @@ function FastQuoteOverlay({project,uid,onUpdate,onSaveImmediate,onClose,onDone})
           const priceMap=await estimatePrices(proj.bom);
           const pricedBom=proj.bom.map(r=>{
             const key=String(r.id);
-            if(key in priceMap)return{...r,unitPrice:priceMap[key],priceSource:priceMap[key]!=null?"ai":null};
+            if(key in priceMap)return{...r,unitPrice:priceMap[key],priceSource:priceMap[key]!=null?"ai":null,priceDate:Date.now()};
             return r;
           });
           proj={...proj,bom:pricedBom,status:"costed"};
@@ -3613,6 +3658,85 @@ function BudgetaryQuoteTab({project,onUpdate}){
           Generated {new Date(bq.generatedAt).toLocaleString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"})} · {bq.contingencyPct}% budgetary contingency applied
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── RFQ DOCUMENT ──
+function RfqDocument({groups,projectName}){
+  const rfqNum="RFQ-"+Date.now().toString(36).toUpperCase().slice(-6);
+  const today=new Date();
+  const rfqDate=today.toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+  const responseBy=new Date(today.getTime()+14*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+  return(
+    <div id="rfq-doc" style={{fontFamily:"'Inter',-apple-system,sans-serif",color:"#1e293b",lineHeight:1.5}}>
+      {groups.map((group,gi)=>(
+        <div key={gi} className="qd-page" style={{pageBreakAfter:gi<groups.length-1?"always":"auto"}}>
+          <div className="qd-header">
+            <div className="qd-brand">
+              <div>
+                <h1 style={{fontSize:29,fontWeight:800,color:"#2563eb",letterSpacing:-0.3,margin:0}}>Matrix Systems, Inc.</h1>
+                <div className="qd-addr">501 S 300 W · Salt Lake City, UT 84101<br/>Phone: (801) 596-2953</div>
+              </div>
+            </div>
+            <div className="qd-hdr-right">
+              <div className="qd-qlabel">Request for Quote</div>
+              <div className="qd-qnum">{rfqNum}</div>
+            </div>
+          </div>
+          <div className="qd-info-grid">
+            <div>
+              <div className="qd-info-label">To: Supplier</div>
+              <div className="qd-info-name">{group.vendorName}</div>
+            </div>
+            <div>
+              <div className="qd-info-label">From</div>
+              <div className="qd-info-name">Matrix Systems, Inc.</div>
+              <div className="qd-info-detail">purchasing@matrixpci.com</div>
+            </div>
+          </div>
+          <div className="qd-proj">
+            <div><div className="qd-proj-label">Project</div><div className="qd-proj-value">{projectName||"—"}</div></div>
+            <div><div className="qd-proj-label">RFQ Date</div><div className="qd-proj-value">{rfqDate}</div></div>
+            <div><div className="qd-proj-label">Response By</div><div className="qd-proj-value">{responseBy}</div></div>
+          </div>
+          <div style={{padding:"20px 44px"}}>
+            <table className="rfq-table">
+              <thead>
+                <tr>
+                  <th style={{width:30}}>#</th>
+                  <th>Part Number</th>
+                  <th>Description</th>
+                  <th>Manufacturer</th>
+                  <th style={{textAlign:"center",width:50}}>Qty</th>
+                  <th style={{textAlign:"right",width:90}}>Unit Price</th>
+                  <th style={{textAlign:"center",width:90}}>Lead Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.items.map((item,ii)=>(
+                  <tr key={ii}>
+                    <td>{ii+1}</td>
+                    <td style={{fontWeight:600}}>{item.partNumber||"—"}</td>
+                    <td>{item.description||"—"}</td>
+                    <td>{item.manufacturer||"—"}</td>
+                    <td style={{textAlign:"center"}}>{item.qty||1}</td>
+                    <td style={{borderBottom:"1px dotted #94a3b8",textAlign:"right"}}></td>
+                    <td style={{borderBottom:"1px dotted #94a3b8",textAlign:"center"}}></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{padding:"16px 44px",borderTop:"1px solid #e2e8f0",marginTop:16,fontSize:13,color:"#475569",lineHeight:1.7}}>
+            Please return completed RFQ to <strong>purchasing@matrixpci.com</strong>
+          </div>
+          <div className="qd-print-footer">
+            <div>{rfqNum} · {projectName}</div>
+            <div>Matrix Systems, Inc. · Confidential</div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -4547,7 +4671,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote}){
+function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,rfqLoading}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -4638,7 +4762,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         const alt=alts.find(a=>a.autoReplace&&(a.originalPN===pn||normPN(a.originalPN)===normPN(pn)));
         if(alt){
           changed=true;
-          return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",isCrossed:true,crossedFrom:pn,autoReplaced:true};
+          return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:Date.now(),isCrossed:true,crossedFrom:pn,autoReplaced:true};
         }
         // Auto-correct: apply known corrections (exact or normalized match)
         const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn));
@@ -5128,7 +5252,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
-      const updates={...r,partNumber:newPN,unitPrice:bcItem.unitCost,priceSource:"bc"};
+      const updates={...r,partNumber:newPN,unitPrice:bcItem.unitCost,priceSource:"bc",priceDate:Date.now()};
       if(asCross){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
@@ -5171,7 +5295,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   }
   function updatePrice(id,val){
     const parsed=val===""?null:parseFloat(val);
-    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:isNaN(parsed)?null:parsed,priceSource:isNaN(parsed)||parsed===null?null:"manual"}:r);
+    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:isNaN(parsed)?null:parsed,priceSource:isNaN(parsed)||parsed===null?null:"manual",priceDate:Date.now()}:r);
     const updated={...panel,bom:updatedBom};
     onUpdate(updated);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
@@ -5247,7 +5371,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           bcCount=Object.keys(bcMap).length;
           updatedBom=updatedBom.map(r=>{
             const key=String(r.id);
-            if(key in bcMap){return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc"};}
+            if(key in bcMap){return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",priceDate:Date.now()};}
             return r;
           });
           if(Object.keys(fuzzySugg).length>0){
@@ -5278,7 +5402,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           updatedBom=updatedBom.map(r=>{
             const key=String(r.id);
             if(key in map&&r.priceSource!=="bc"&&r.priceSource!=="manual"){
-              return{...r,unitPrice:map[key],priceSource:map[key]!=null?"ai":r.priceSource||null};
+              return{...r,unitPrice:map[key],priceSource:map[key]!=null?"ai":r.priceSource||null,priceDate:Date.now()};
             }
             return r;
           });
@@ -6094,6 +6218,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   <span style={{fontWeight:800,color:C.accent,fontSize:18,fontVariantNumeric:"tabular-nums"}}>{fmt(sellPrice)}</span>
                 </div>
                 <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
+                  <button onClick={onPrintRfq} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building RFQ…":"📋 Print RFQ"}</button>
                   <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Quote</button>
                   {!readOnly&&(<>
                     {panel.bcItemNumber&&(
@@ -6331,7 +6456,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
           qty:r.qty||1,
           manufacturer:r.manufacturer||'',
           unitPrice:r.unitPrice||null,
-          priceSource:r.unitPrice?'ai':null,
+          priceSource:r.unitPrice?'ai':null,priceDate:Date.now(),
           cpdCategory:r.category||'Other',
           cpdGenerated:true
         }));
@@ -6965,7 +7090,7 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
 }
 
 // ── PANEL LIST VIEW ──
-function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate,onDelete,onTransfer}){
+function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLoading,onUpdate,onDelete,onTransfer}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -7063,6 +7188,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate,onDelet
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
+              {panels.length>0&&<button onClick={onPrintRfq} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building RFQ…":"📋 Print RFQ"}</button>}
               {panels.length>0&&<button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13})}>🖨 Print Quote</button>}
             </div>
           </div>
@@ -7090,6 +7216,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onUpdate,onDelet
                   }}
                   onSaveImmediate={updatedPanel=>saveImmediatePanel(panel.id,updatedPanel)}
                   onViewQuote={onViewQuote}
+                  onPrintRfq={onPrintRfq}
+                  rfqLoading={rfqLoading}
                 />
               ))}
             </div>
@@ -7236,6 +7364,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
   const projectRef=useRef(migrateProject(init));
   const [view,setView]=useState("panels"); // "panels"|"quote"
   const [autoPrint,setAutoPrint]=useState(false);
+  const [rfqLoading,setRfqLoading]=useState(false);
+  const [rfqGroups,setRfqGroups]=useState(null);
+  const [autoPrintRfq,setAutoPrintRfq]=useState(false);
   const saveTimer=useRef(null);
   const readOnly=isReadOnly();
   const didMigrate=useRef(!init.panels);
@@ -7268,6 +7399,31 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
     }
   },[autoPrint,view]);
 
+  async function onPrintRfq(){
+    setRfqLoading(true);
+    try{
+      const allBom=mergeBoms((projectRef.current.panels||[]).map(p=>p.bom||[]));
+      const result=await buildRfqSupplierGroups(allBom);
+      if(result.noItems){setRfqLoading(false);alert("No AI-estimated items eligible for RFQ (items must be AI-priced and 60+ days old, or have no price date).");return;}
+      setRfqGroups(result.groups);
+      setAutoPrintRfq(true);
+    }catch(e){console.error("RFQ build error:",e);alert("Failed to build RFQ: "+(e.message||e));}
+    setRfqLoading(false);
+  }
+
+  // Auto-print RFQ
+  useEffect(()=>{
+    if(autoPrintRfq&&rfqGroups){
+      const t=setTimeout(()=>{
+        document.body.dataset.printTarget="rfq";
+        window.print();
+        delete document.body.dataset.printTarget;
+        setAutoPrintRfq(false);setRfqGroups(null);
+      },400);
+      return()=>clearTimeout(t);
+    }
+  },[autoPrintRfq,rfqGroups]);
+
   if(view==="quote"){
     return(
       <div style={autoPrint?{height:0,overflow:"hidden"}:undefined}>
@@ -7282,16 +7438,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
   }
 
   return(
-    <PanelListView
-      project={project}
-      uid={uid}
-      readOnly={readOnly}
-      onBack={onBack}
-      onViewQuote={()=>{setAutoPrint(true);setView("quote");}}
-      onUpdate={update}
-      onDelete={onDelete}
-      onTransfer={onTransfer}
-    />
+    <>
+      <PanelListView
+        project={project}
+        uid={uid}
+        readOnly={readOnly}
+        onBack={onBack}
+        onViewQuote={()=>{setAutoPrint(true);setView("quote");}}
+        onPrintRfq={onPrintRfq}
+        rfqLoading={rfqLoading}
+        onUpdate={update}
+        onDelete={onDelete}
+        onTransfer={onTransfer}
+      />
+      {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
+    </>
   );
 }
 
@@ -8339,8 +8500,8 @@ function App({user}){
       }
       if(!_defaultBomItems.length){
         _defaultBomItems=[
-          {partNumber:"JOB-BUYOFF",description:"Job Buyoff",manufacturer:"",qty:1,unitPrice:0,priceSource:null},
-          {partNumber:"",description:"Crate",manufacturer:"",qty:1,unitPrice:0,priceSource:null}
+          {partNumber:"JOB-BUYOFF",description:"Job Buyoff",manufacturer:"",qty:1,unitPrice:0,priceSource:null,priceDate:Date.now()},
+          {partNumber:"",description:"Crate",manufacturer:"",qty:1,unitPrice:0,priceSource:null,priceDate:Date.now()}
         ];
         saveDefaultBomItems(user.uid,_defaultBomItems).catch(()=>{});
       }
