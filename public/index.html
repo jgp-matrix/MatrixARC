@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.16.9";
+const APP_VERSION="v1.17.0";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4862,40 +4862,48 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   },[uid]);
 
   // Backfill bcVendorName for BC-priced rows that are missing it
+  // Retries every 3s until BC connects (auto-connect is async)
   const vendorBackfillRan=useRef(false);
   useEffect(()=>{
-    if(vendorBackfillRan.current||!_bcToken)return;
-    const bom=panel.bom||[];
-    const needVendor=bom.filter(r=>!r.isLaborRow&&r.priceSource==="bc"&&!r.bcVendorName&&(r.partNumber||"").trim());
-    if(!needVendor.length)return;
-    vendorBackfillRan.current=true;
-    (async()=>{
-      try{
-        const pnVendor={};
-        for(const row of needVendor){
-          const pn=(row.partNumber||"").trim();
-          if(pnVendor[pn]!==undefined)continue;
-          const vNo=await bcGetItemVendorNo(pn);
-          pnVendor[pn]=vNo?await bcGetVendorName(vNo):"";
-          console.log("VENDOR BACKFILL:",pn,"→ vendorNo=",vNo,"→ name=",pnVendor[pn]);
-        }
-        let changed=false;
-        const newBom=bom.map(r=>{
-          if(!r.isLaborRow&&r.priceSource==="bc"&&!r.bcVendorName){
-            const pn=(r.partNumber||"").trim();
-            const name=pnVendor[pn];
-            if(name){changed=true;return{...r,bcVendorName:name};}
+    if(vendorBackfillRan.current)return;
+    function tryBackfill(){
+      if(vendorBackfillRan.current)return;
+      if(!_bcToken){console.log("VENDOR BACKFILL: waiting for BC…");return;}
+      const bom=panel.bom||[];
+      const needVendor=bom.filter(r=>!r.isLaborRow&&r.priceSource==="bc"&&!r.bcVendorName&&(r.partNumber||"").trim());
+      if(!needVendor.length){vendorBackfillRan.current=true;return;}
+      vendorBackfillRan.current=true;
+      (async()=>{
+        try{
+          const pnVendor={};
+          for(const row of needVendor){
+            const pn=(row.partNumber||"").trim();
+            if(pnVendor[pn]!==undefined)continue;
+            const vNo=await bcGetItemVendorNo(pn);
+            pnVendor[pn]=vNo?await bcGetVendorName(vNo):"";
+            console.log("VENDOR BACKFILL:",pn,"→ vendorNo=",vNo,"→ name=",pnVendor[pn]);
           }
-          return r;
-        });
-        if(changed){
-          const updated={...panel,bom:newBom};
-          onUpdate(updated);
-          try{onSaveImmediate(updated);}catch(e){}
-          console.log("VENDOR BACKFILL: updated",newBom.filter(r=>r.bcVendorName&&!bom.find(o=>o.id===r.id&&o.bcVendorName)).length,"rows for panel",panel.name);
-        }
-      }catch(e){console.warn("Vendor backfill error:",e);}
-    })();
+          let changed=false;
+          const newBom=bom.map(r=>{
+            if(!r.isLaborRow&&r.priceSource==="bc"&&!r.bcVendorName){
+              const pn=(r.partNumber||"").trim();
+              const name=pnVendor[pn];
+              if(name){changed=true;return{...r,bcVendorName:name};}
+            }
+            return r;
+          });
+          if(changed){
+            const updated={...panel,bom:newBom};
+            onUpdate(updated);
+            try{onSaveImmediate(updated);}catch(e){}
+            console.log("VENDOR BACKFILL: updated",newBom.filter(r=>r.bcVendorName&&!bom.find(o=>o.id===r.id&&o.bcVendorName)).length,"rows for panel",panel.name);
+          }
+        }catch(e){console.warn("Vendor backfill error:",e);}
+      })();
+    }
+    tryBackfill();
+    const iv=setInterval(tryBackfill,3000);
+    return()=>clearInterval(iv);
   },[uid]);
 
   // Backfill priceDate for rows that have a price but no priceDate
