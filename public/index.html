@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.16.0";
+const APP_VERSION="v1.16.1";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5697,16 +5697,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             </div>
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
           </div>
-          {panel.validation&&<div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:18,marginBottom:8,fontSize:13,color:C.muted}}>
-            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{color:C.green,fontSize:12}}>⬤</span> Matched</span>
-            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{color:"#cc0000",fontSize:12}}>⬤</span> Missing</span>
-            <span style={{display:"flex",alignItems:"center",gap:5}}><span style={{color:"#ffe033",fontSize:12}}>⬤</span> Not Traceable</span>
-          </div>}
           <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0],["Manufacturer",0,"fit"],["Notes",160],["Unit $",110],["Ext $",80],["Val",44],["",90]].map(([h,w,mode],hi)=>(
+                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0],["Manufacturer",0,"fit"],["Notes",160],["Unit $",110],["Ext $",80],["",90]].map(([h,w,mode],hi)=>(
                     <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
@@ -5724,11 +5719,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     if(!isNaN(an)&&!isNaN(bn))return an-bn;
                     return (a.itemNo||"").localeCompare(b.itemNo||"");
                   });
-                  const valData=panel.validation||null;
-                  const matchedIds=valData?new Set((valData.matched||[]).map(m=>String(m.item.id))):null;
-                  const missingIds=valData?new Set((valData.missingFromSchematic||[]).map(m=>String(m.id))):null;
-                  const ntIds=valData?new Set((valData.notTraceable||[]).map(m=>String(m.id))):null;
-                  const wAccepted=new Set((panel.wiringAccepted||[]).map(String));
                   return sortedBom.map((row,i)=>(
                   <tr key={row.id} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:row.isLaborRow?"#0a1628":(!row.isLaborRow&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
@@ -5930,15 +5920,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     </td>
                     <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                       {row.isLaborRow?"—":row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
-                    </td>
-                    <td style={{padding:"3px 5px",textAlign:"center",width:44}}>
-                      {valData&&(
-                        matchedIds.has(String(row.id))?<span style={{color:C.green,fontSize:13}} title="Matched in schematic">⬤</span>
-                        :missingIds.has(String(row.id))&&wAccepted.has(String(row.id))?<span style={{color:C.accent,fontSize:13}} title="Accepted (not in schematic)">⬤</span>
-                        :missingIds.has(String(row.id))?<span style={{color:"#cc0000",fontSize:13}} title="Not found in schematic">⬤</span>
-                        :ntIds.has(String(row.id))?<span style={{color:"#ffe033",fontSize:13}} title="As shown / not traceable">⬤</span>
-                        :<span style={{color:C.border,fontSize:11}}>—</span>
-                      )}
                     </td>
                     <td style={{padding:"3px 3px",textAlign:"center",width:90}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:0}}>
