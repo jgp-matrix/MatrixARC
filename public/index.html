@@ -1327,7 +1327,7 @@ async function buildRfqSupplierGroups(bom){
   for(const item of eligible){
     const pn=(item.partNumber||"").trim();
     const vendorNo=itemVendors[pn]||null;
-    let vendorName=vendorNo&&vendorMap[vendorNo]?vendorMap[vendorNo]:(item.manufacturer||"").trim()||"Unknown Supplier";
+    let vendorName=vendorNo&&vendorMap[vendorNo]?vendorMap[vendorNo]:"Unknown Supplier";
     if(!groupMap[vendorName])groupMap[vendorName]={vendorName,items:[]};
     groupMap[vendorName].items.push(item);
   }
