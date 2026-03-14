@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.16.8";
+const APP_VERSION="v1.16.9";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1318,6 +1318,26 @@ async function bcGetVendorName(vendorNo){
     }
     return"";
   }catch(e){return"";}
+}
+
+// Get last purchase info for an item from posted purchase invoices
+async function bcGetLastPurchase(itemNo){
+  if(!_bcToken||!itemNo)return null;
+  const compId=await bcGetCompanyId();
+  if(!compId)return null;
+  try{
+    // Try purchaseInvoiceLines — posted invoices with actual costs
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/purchaseInvoiceLines?$filter=lineObjectNumber eq '${encodeURIComponent(itemNo)}'&$orderby=postingDate desc&$top=1&$select=lineObjectNumber,directUnitCost,postingDate,documentId`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.ok){
+      const d=await r.json();
+      const line=(d.value||[])[0];
+      if(line){
+        console.log("LAST PURCHASE:",itemNo,"→ $"+line.directUnitCost,"on",line.postingDate);
+        return{directUnitCost:line.directUnitCost,postingDate:line.postingDate};
+      }
+    }
+    return null;
+  }catch(e){console.warn("bcGetLastPurchase error:",itemNo,e);return null;}
 }
 
 async function bcCheckItemInUse(itemNo){
@@ -4388,6 +4408,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
   const [locating,setLocating]=useState(false);
   const [drawingPageIdx,setDrawingPageIdx]=useState(0);
   const [vendorNames,setVendorNames]=useState({});
+  const [purchaseData,setPurchaseData]=useState({});
   const bomPages=((pages||[]).filter(p=>getPageTypes(p).includes('bom')&&(p.dataUrl||p.storageUrl)));
 
   async function locateInDrawing(pgIdx){
@@ -4511,12 +4532,15 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
     if(!_bcToken||!items.length)return;
     const toFetch=items.filter(it=>it.number&&vendorNames[it.number]===undefined);
     if(!toFetch.length)return;
-    const batch={};
+    const vBatch={};const pBatch={};
     for(const it of toFetch){
       const vNo=await bcGetItemVendorNo(it.number);
-      batch[it.number]=vNo?await bcGetVendorName(vNo):"";
+      vBatch[it.number]=vNo?await bcGetVendorName(vNo):"";
+      const lp=await bcGetLastPurchase(it.number);
+      pBatch[it.number]=lp||null;
     }
-    setVendorNames(prev=>({...prev,...batch}));
+    setVendorNames(prev=>({...prev,...vBatch}));
+    setPurchaseData(prev=>({...prev,...pBatch}));
   }
 
   function onQueryChange(val){
@@ -4648,7 +4672,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead style={{position:"sticky",top:0,zIndex:1}}>
               <tr style={{background:"#0a0a12"}}>
-                {["Part #","Description","Vendor","Unit Cost","Last Modified",""].map(h=>(
+                {["Part #","Description","Vendor","Unit Cost","Last Purchased",""].map(h=>(
                   <th key={h} style={{padding:"9px 10px",textAlign:h==="Unit Cost"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                 ))}
               </tr>
@@ -4663,8 +4687,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
                   <td style={{padding:"7px 10px",fontWeight:600,whiteSpace:"nowrap"}}>{item.number}</td>
                   <td style={{padding:"7px 10px",color:C.sub}}>{item.displayName}</td>
                   <td style={{padding:"7px 10px",color:vendorNames[item.number]?C.sub:C.muted,fontSize:12,whiteSpace:"nowrap"}}>{vendorNames[item.number]||"…"}</td>
-                  <td style={{padding:"7px 10px",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{item.unitCost!=null?"$"+item.unitCost.toFixed(2):"—"}</td>
-                  <td style={{padding:"7px 10px",color:C.muted,fontSize:12}}>{fmtDate(item.lastModifiedDateTime)}</td>
+                  <td style={{padding:"7px 10px",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
+                    {purchaseData[item.number]?.directUnitCost!=null?(
+                      <span title="Last PO cost">${purchaseData[item.number].directUnitCost.toFixed(2)}</span>
+                    ):item.unitCost!=null?"$"+item.unitCost.toFixed(2):"—"}
+                  </td>
+                  <td style={{padding:"7px 10px",color:C.muted,fontSize:12,whiteSpace:"nowrap"}}>
+                    {purchaseData[item.number]?.postingDate?fmtDate(purchaseData[item.number].postingDate):(purchaseData[item.number]===null?"No POs":"…")}
+                  </td>
                   <td style={{padding:"7px 10px",textAlign:"center"}}>
                     <button onClick={e=>{e.stopPropagation();onSelect(item);}}
                       style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`})}>Use</button>
