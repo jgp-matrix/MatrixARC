@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.16.1";
+const APP_VERSION="v1.16.2";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1039,7 +1039,7 @@ async function bcLookupItem(partNumber){
     const d=await r.json();
     const item=(d.value||[])[0];
     if(!item)return null;
-    return{unitCost:item.unitCost||null,unitPrice:item.unitPrice||null,displayName:item.displayName||"",inventory:item.inventory||0,number:item.number||""};
+    return{unitCost:item.unitCost||null,unitPrice:item.unitPrice||null,displayName:item.displayName||"",inventory:item.inventory||0,number:item.number||"",vendorNo:item.vendorNo||""};
   }catch(e){console.warn("BC item lookup error:",e);return null;}
 }
 
@@ -1066,7 +1066,7 @@ async function _bcFetchItems(compId,filter,top,skip){
   return(d.value||[]).map(item=>({
     number:item.number||"",displayName:item.displayName||"",
     unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,
-    inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||""
+    inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:item.vendorNo||""
   }));
 }
 async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
@@ -1270,6 +1270,20 @@ async function bcListVendors(){
     const d=await r.json();
     return(d.value||[]).map(v=>({number:v.number||"",displayName:v.displayName||""}));
   }catch(e){console.warn("bcListVendors error:",e);return[];}
+}
+
+let _vendorMapCache=null;
+async function bcGetVendorMap(){
+  if(_vendorMapCache)return _vendorMapCache;
+  const vendors=await bcListVendors();
+  if(!vendors.length)return{};
+  _vendorMapCache={};
+  vendors.forEach(v=>{_vendorMapCache[v.number]=v.displayName;});
+  return _vendorMapCache;
+}
+function bcResolveVendorName(vendorNo){
+  if(!vendorNo||!_vendorMapCache)return"";
+  return _vendorMapCache[vendorNo]||"";
 }
 
 async function bcCheckItemInUse(itemNo){
@@ -5253,6 +5267,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
       const updates={...r,partNumber:newPN,unitPrice:bcItem.unitCost,priceSource:"bc",priceDate:Date.now()};
+      if(bcItem.vendorNo)updates.bcVendorName=bcResolveVendorName(bcItem.vendorNo)||bcItem._vendorName||"";
+      else if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       if(asCross){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
@@ -5355,6 +5371,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         }else{
           const eligible=bom.filter(r=>{const ps=r.priceSource;return ps!=="bc"&&ps!=="manual";});
           _pp({msg:`BC: Fuzzy-matching ${eligible.length} items…`,pct:7});
+          await bcGetVendorMap();
           const bcMap={};
           const fuzzySugg={};
           for(let i=0;i<eligible.length;i++){
@@ -5363,7 +5380,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             _pp({msg:`BC: Fuzzy lookup ${i+1}/${eligible.length}: ${pn}`,pct:7+Math.round((i/eligible.length)*30)});
             const result=await bcFuzzyLookup(pn);
             if(result.match&&result.match.unitCost!=null){
-              bcMap[String(eligible[i].id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:result.match.number};
+              bcMap[String(eligible[i].id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:result.match.number,bcVendorName:bcResolveVendorName(result.match.vendorNo)};
             } else if(result.suggestions.length>0){
               fuzzySugg[String(eligible[i].id)]=result.suggestions;
             }
@@ -5371,7 +5388,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           bcCount=Object.keys(bcMap).length;
           updatedBom=updatedBom.map(r=>{
             const key=String(r.id);
-            if(key in bcMap){return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",priceDate:Date.now()};}
+            if(key in bcMap){return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",priceDate:Date.now(),bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||""};}
             return r;
           });
           if(Object.keys(fuzzySugg).length>0){
@@ -5701,7 +5718,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0],["Manufacturer",0,"fit"],["Notes",160],["Unit $",110],["Ext $",80],["",90]].map(([h,w,mode],hi)=>(
+                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0],["Manufacturer",0,"fit"],["Supplier",0,"fit"],["Notes",160],["Unit $",110],["Ext $",80],["Priced",76],["",90]].map(([h,w,mode],hi)=>(
                     <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
@@ -5724,7 +5741,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
                       {row.itemNo||i+1}
                     </td>
-                    {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",0],["manufacturer",0,"fit"],["notes",160]].map(([f,w,mode])=>(
+                    {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",0],["manufacturer",0,"fit"],["_supplier",0,"fit"],["notes",160]].map(([f,w,mode])=>(
                       f==="_bc"?(
                         <td key="_bc" style={{padding:"3px 2px",width:32,textAlign:"center"}}>
                           {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
@@ -5737,6 +5754,10 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                               else{setBcBrowserTarget(row.id);setBcBrowserQuery(pn);setBcBrowserOpen(true);}
                             }} style={{background:"#2563eb",border:"none",color:"#fff",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}>BC</button>
                           )}
+                        </td>
+                      ):f==="_supplier"?(
+                        <td key="_supplier" style={{padding:"3px 5px",width:"1%",whiteSpace:"nowrap",fontSize:11,color:row.bcVendorName?C.sub:C.muted}}>
+                          {row.bcVendorName||"—"}
                         </td>
                       ):
                       <td key={f} style={{padding:"3px 5px",width:mode==="fit"?"1%":w||"auto",whiteSpace:mode==="fit"?"nowrap":"normal",overflow:"visible"}}>
@@ -5920,6 +5941,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     </td>
                     <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                       {row.isLaborRow?"—":row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
+                    </td>
+                    <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,color:C.muted,whiteSpace:"nowrap"}}>
+                      {row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—"}
                     </td>
                     <td style={{padding:"3px 3px",textAlign:"center",width:90}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:0}}>
