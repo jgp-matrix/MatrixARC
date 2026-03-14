@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.1";
+const APP_VERSION="v1.17.2";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5463,11 +5463,18 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
   }
   function updateVendor(id,vendorName){
+    const row=(panel.bom||[]).find(r=>r.id===id);
     const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,bcVendorName:vendorName}:r);
     const updated={...panel,bom:updatedBom};
     onUpdate(updated);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
+    // Write vendor back to BC item card
+    const pn=(row?.partNumber||"").trim();
+    if(pn&&_bcToken&&vendorName){
+      const vendor=bomVendorList.find(v=>v.displayName===vendorName);
+      if(vendor){bcPatchItemOData(pn,{Vendor_No:vendor.number}).then(()=>console.log("BC VENDOR UPDATE:",pn,"→",vendor.number,vendorName)).catch(e=>console.warn("BC vendor update failed:",pn,e));}
+    }
   }
   function savePricing(updates){
     const updated={...panel,pricing:{...(panel.pricing||{}),...updates}};
