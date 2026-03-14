@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.0";
+const APP_VERSION="v1.17.1";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1371,21 +1371,15 @@ async function buildRfqSupplierGroups(bom){
   const now=Date.now();
   const eligible=bom.filter(r=>!r.isLaborRow&&r.priceSource==="ai"&&(!r.priceDate||r.priceDate<now-RFQ_STALE_MS));
   if(!eligible.length)return{groups:[],noItems:true};
-  // For each eligible item, get vendor name from OData ItemCard + vendor lookup
-  const itemVendorNames={};
-  if(_bcToken){
-    for(const item of eligible){
-      const pn=(item.partNumber||"").trim();
-      if(!pn||itemVendorNames[pn]!==undefined)continue;
-      const vNo=await bcGetItemVendorNo(pn);
-      itemVendorNames[pn]=vNo?await bcGetVendorName(vNo):"";
-    }
-  }
-  // Group by vendor
+  // Group by vendor — use user-assigned bcVendorName first, then BC lookup
   const groupMap={};
   for(const item of eligible){
-    const pn=(item.partNumber||"").trim();
-    let vendorName=itemVendorNames[pn]||"Unknown Supplier";
+    let vendorName=item.bcVendorName||"";
+    if(!vendorName&&_bcToken){
+      const pn=(item.partNumber||"").trim();
+      if(pn){const vNo=await bcGetItemVendorNo(pn);vendorName=vNo?await bcGetVendorName(vNo):"";}
+    }
+    if(!vendorName)vendorName="Unknown Supplier";
     if(!groupMap[vendorName])groupMap[vendorName]={vendorName,items:[]};
     groupMap[vendorName].items.push(item);
   }
@@ -4819,6 +4813,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [crossOrCorrectPending,setCrossOrCorrectPending]=useState(null);
   const [cpdQuery,setCpdQuery]=useState("");
   const [showCpdSearch,setShowCpdSearch]=useState(false);
+  const [bomVendorList,setBomVendorList]=useState([]);
+  const bomVendorListLoaded=useRef(false);
   const altAutoApplied=useRef(false);
   const feedbackRef=useRef(null);
   const fileRef=useRef(null);
@@ -4923,6 +4919,19 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     console.log("PRICEDATE BACKFILL:",needDate.length,"rows for panel",panel.name);
+  },[]);
+
+  // Load vendor list for BOM supplier dropdown (retry until BC connects)
+  useEffect(()=>{
+    if(bomVendorListLoaded.current)return;
+    function tryLoad(){
+      if(bomVendorListLoaded.current||!_bcToken)return;
+      bomVendorListLoaded.current=true;
+      bcListVendors().then(v=>{if(v.length)setBomVendorList(v);else bomVendorListLoaded.current=false;}).catch(()=>{bomVendorListLoaded.current=false;});
+    }
+    tryLoad();
+    const iv=setInterval(tryLoad,3000);
+    return()=>clearInterval(iv);
   },[]);
 
   // Background CPD cataloging — runs on panel load, silently logs BOM + metadata to CPD database
@@ -5453,6 +5462,13 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
   }
+  function updateVendor(id,vendorName){
+    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,bcVendorName:vendorName}:r);
+    const updated={...panel,bom:updatedBom};
+    onUpdate(updated);
+    if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
+  }
   function savePricing(updates){
     const updated={...panel,pricing:{...(panel.pricing||{}),...updates}};
     onUpdate(updated);
@@ -5894,8 +5910,18 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                           )}
                         </td>
                       ):f==="_supplier"?(
-                        <td key="_supplier" style={{padding:"3px 5px",width:"1%",whiteSpace:"nowrap",fontSize:11,color:row.bcVendorName?C.sub:C.muted}}>
-                          {row.bcVendorName||"—"}
+                        <td key="_supplier" style={{padding:"3px 5px",width:"1%",whiteSpace:"nowrap",fontSize:11}}>
+                          {row.isLaborRow?"—":row.priceSource==="bc"&&row.bcVendorName?(
+                            <span style={{color:C.sub}}>{row.bcVendorName}</span>
+                          ):!readOnly&&bomVendorList.length>0?(
+                            <select value={row.bcVendorName||""} onChange={e=>updateVendor(row.id,e.target.value)}
+                              style={{background:"transparent",border:`1px solid ${row.bcVendorName?C.border:C.accent+"66"}`,borderRadius:5,padding:"2px 4px",color:row.bcVendorName?C.sub:C.muted,fontSize:11,cursor:"pointer",maxWidth:140}}>
+                              <option value="">— Select —</option>
+                              {bomVendorList.map(v=><option key={v.number} value={v.displayName}>{v.displayName}</option>)}
+                            </select>
+                          ):(
+                            <span style={{color:C.muted}}>{row.bcVendorName||"—"}</span>
+                          )}
                         </td>
                       ):
                       <td key={f} style={{padding:"3px 5px",width:mode==="fit"?"1%":w||"auto",whiteSpace:mode==="fit"?"nowrap":"normal",overflow:"visible"}}>
