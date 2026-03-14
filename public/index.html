@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.16.3";
+const APP_VERSION="v1.16.5";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1286,6 +1286,17 @@ function bcResolveVendorName(vendorNo){
   return _vendorMapCache[vendorNo]||"";
 }
 
+async function bcGetItemVendorNo(itemNo){
+  if(!_bcToken||!itemNo)return"";
+  try{
+    const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok)return"";
+    const d=await r.json();
+    const rec=(d.value||[])[0];
+    return rec?.Vendor_No||"";
+  }catch(e){return"";}
+}
+
 async function bcCheckItemInUse(itemNo){
   if(!_bcToken||!itemNo)return{inUse:false,count:0};
   const compId=await bcGetCompanyId();
@@ -1318,22 +1329,15 @@ async function buildRfqSupplierGroups(bom){
   const eligible=bom.filter(r=>!r.isLaborRow&&r.priceSource==="ai"&&(!r.priceDate||r.priceDate<now-RFQ_STALE_MS));
   if(!eligible.length)return{groups:[],noItems:true};
   // Fetch vendors list for name lookup
-  const vendors=_bcToken?await bcListVendors():[];
-  const vendorMap={};vendors.forEach(v=>{vendorMap[v.number]=v.displayName;});
-  // For each eligible item, try to get vendor from BC item card
+  const vendorMap=_bcToken?await bcGetVendorMap():{};
+  // For each eligible item, get vendor from OData ItemCard
   const itemVendors={};
   if(_bcToken){
-    const compId=await bcGetCompanyId();
-    if(compId){
-      for(const item of eligible){
-        const pn=(item.partNumber||"").trim();
-        if(!pn||itemVendors[pn]!==undefined)continue;
-        try{
-          const r=await fetch(`${BC_API_BASE}/companies(${compId})/items?$filter=number eq '${encodeURIComponent(pn)}'&$select=number,vendorNo`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-          if(r.ok){const d=await r.json();const it=(d.value||[])[0];itemVendors[pn]=it?.vendorNo||null;}
-          else{itemVendors[pn]=null;}
-        }catch(e){itemVendors[pn]=null;}
-      }
+    for(const item of eligible){
+      const pn=(item.partNumber||"").trim();
+      if(!pn||itemVendors[pn]!==undefined)continue;
+      const vNo=await bcGetItemVendorNo(pn);
+      itemVendors[pn]=vNo||null;
     }
   }
   // Group by vendor
@@ -4802,17 +4806,12 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       try{
         const vendorMap=await bcGetVendorMap();
         if(!Object.keys(vendorMap).length)return;
-        const compId=await bcGetCompanyId();
-        if(!compId)return;
         const pnVendor={};
         for(const row of needVendor){
           const pn=(row.partNumber||"").trim();
           if(pnVendor[pn]!==undefined)continue;
-          try{
-            const r=await fetch(`${BC_API_BASE}/companies(${compId})/items?$filter=number eq '${encodeURIComponent(pn)}'&$select=number,vendorNo`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-            if(r.ok){const d=await r.json();const it=(d.value||[])[0];pnVendor[pn]=it?.vendorNo?bcResolveVendorName(it.vendorNo):"";}
-            else{pnVendor[pn]="";}
-          }catch(e){pnVendor[pn]="";}
+          const vNo=await bcGetItemVendorNo(pn);
+          pnVendor[pn]=vNo?bcResolveVendorName(vNo):"";
         }
         let changed=false;
         const newBom=bom.map(r=>{
@@ -5329,8 +5328,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
       const updates={...r,partNumber:newPN,unitPrice:bcItem.unitCost,priceSource:"bc",priceDate:Date.now()};
-      if(bcItem.vendorNo)updates.bcVendorName=bcResolveVendorName(bcItem.vendorNo)||bcItem._vendorName||"";
-      else if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
+      if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
+      // Async vendor lookup — don't block commit
+      if(!updates.bcVendorName&&newPN){bcGetItemVendorNo(newPN).then(vNo=>{if(vNo){const name=bcResolveVendorName(vNo);if(name){const bom2=(panel.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...panel,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}}}}).catch(()=>{});}
       if(asCross){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
@@ -5442,7 +5442,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             _pp({msg:`BC: Fuzzy lookup ${i+1}/${eligible.length}: ${pn}`,pct:7+Math.round((i/eligible.length)*30)});
             const result=await bcFuzzyLookup(pn);
             if(result.match&&result.match.unitCost!=null){
-              bcMap[String(eligible[i].id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:result.match.number,bcVendorName:bcResolveVendorName(result.match.vendorNo)};
+              const matchNo=result.match.number||pn;
+              const vNo=await bcGetItemVendorNo(matchNo);
+              bcMap[String(eligible[i].id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorName:vNo?bcResolveVendorName(vNo):""};
             } else if(result.suggestions.length>0){
               fuzzySugg[String(eligible[i].id)]=result.suggestions;
             }
