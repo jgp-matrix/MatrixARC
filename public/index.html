@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.16.5";
+const APP_VERSION="v1.16.6";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1288,13 +1288,31 @@ function bcResolveVendorName(vendorNo){
 
 async function bcGetItemVendorNo(itemNo){
   if(!_bcToken||!itemNo)return"";
+  const compId=await bcGetCompanyId();
+  if(!compId)return"";
   try{
-    const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-    if(!r.ok)return"";
-    const d=await r.json();
-    const rec=(d.value||[])[0];
-    return rec?.Vendor_No||"";
-  }catch(e){return"";}
+    // v2.0 API: field is "vendorNumber"
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/items?$filter=number eq '${encodeURIComponent(itemNo)}'&$select=number,vendorNumber`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.ok){
+      const d=await r.json();
+      const it=(d.value||[])[0];
+      if(it){
+        console.log("VENDOR LOOKUP v2.0:",itemNo,"→ vendorNumber=",it.vendorNumber,"raw keys=",Object.keys(it).filter(k=>k.toLowerCase().includes("vendor")).join(","));
+        if(it.vendorNumber)return it.vendorNumber;
+      }
+    }
+    // Fallback: OData ItemCard — field is "Vendor_No"
+    const r2=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r2.ok){
+      const d2=await r2.json();
+      const rec=(d2.value||[])[0];
+      if(rec){
+        console.log("VENDOR LOOKUP OData:",itemNo,"→ Vendor_No=",rec.Vendor_No,"raw keys=",Object.keys(rec).filter(k=>k.toLowerCase().includes("vendor")).join(","));
+        if(rec.Vendor_No)return rec.Vendor_No;
+      }
+    }
+    return"";
+  }catch(e){console.warn("bcGetItemVendorNo error:",itemNo,e);return"";}
 }
 
 async function bcCheckItemInUse(itemNo){
