@@ -4833,6 +4833,25 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     })();
   },[uid]);
 
+  // Backfill priceDate for rows that have a price but no priceDate
+  const priceDateBackfillRan=useRef(false);
+  useEffect(()=>{
+    if(priceDateBackfillRan.current)return;
+    const bom=panel.bom||[];
+    const needDate=bom.filter(r=>r.unitPrice!=null&&r.priceSource&&!r.priceDate);
+    if(!needDate.length)return;
+    priceDateBackfillRan.current=true;
+    const fallbackDate=panel.updatedAt||panel.createdAt||Date.now();
+    const newBom=bom.map(r=>{
+      if(r.unitPrice!=null&&r.priceSource&&!r.priceDate)return{...r,priceDate:fallbackDate};
+      return r;
+    });
+    const updated={...panel,bom:newBom};
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+    console.log("PRICEDATE BACKFILL:",needDate.length,"rows for panel",panel.name);
+  },[]);
+
   // Background CPD cataloging — runs on panel load, silently logs BOM + metadata to CPD database
   useEffect(()=>{
     const bom=panel.bom||[];
