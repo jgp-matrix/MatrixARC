@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.16.2";
+const APP_VERSION="v1.16.3";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4788,6 +4788,49 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       });
       if(changed){const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}}
     }).catch(()=>{});
+  },[uid]);
+
+  // Backfill bcVendorName for BC-priced rows that are missing it
+  const vendorBackfillRan=useRef(false);
+  useEffect(()=>{
+    if(vendorBackfillRan.current||!_bcToken)return;
+    const bom=panel.bom||[];
+    const needVendor=bom.filter(r=>!r.isLaborRow&&r.priceSource==="bc"&&!r.bcVendorName&&(r.partNumber||"").trim());
+    if(!needVendor.length)return;
+    vendorBackfillRan.current=true;
+    (async()=>{
+      try{
+        const vendorMap=await bcGetVendorMap();
+        if(!Object.keys(vendorMap).length)return;
+        const compId=await bcGetCompanyId();
+        if(!compId)return;
+        const pnVendor={};
+        for(const row of needVendor){
+          const pn=(row.partNumber||"").trim();
+          if(pnVendor[pn]!==undefined)continue;
+          try{
+            const r=await fetch(`${BC_API_BASE}/companies(${compId})/items?$filter=number eq '${encodeURIComponent(pn)}'&$select=number,vendorNo`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+            if(r.ok){const d=await r.json();const it=(d.value||[])[0];pnVendor[pn]=it?.vendorNo?bcResolveVendorName(it.vendorNo):"";}
+            else{pnVendor[pn]="";}
+          }catch(e){pnVendor[pn]="";}
+        }
+        let changed=false;
+        const newBom=bom.map(r=>{
+          if(!r.isLaborRow&&r.priceSource==="bc"&&!r.bcVendorName){
+            const pn=(r.partNumber||"").trim();
+            const name=pnVendor[pn];
+            if(name){changed=true;return{...r,bcVendorName:name};}
+          }
+          return r;
+        });
+        if(changed){
+          const updated={...panel,bom:newBom};
+          onUpdate(updated);
+          try{onSaveImmediate(updated);}catch(e){}
+          console.log("VENDOR BACKFILL: updated",newBom.filter(r=>r.bcVendorName&&!bom.find(o=>o.id===r.id&&o.bcVendorName)).length,"rows for panel",panel.name);
+        }
+      }catch(e){console.warn("Vendor backfill error:",e);}
+    })();
   },[uid]);
 
   // Background CPD cataloging — runs on panel load, silently logs BOM + metadata to CPD database
