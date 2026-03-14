@@ -6,7 +6,7 @@
 - **Deploy**: `cd matrix-arc && npx firebase deploy --only hosting`
 - **User always wants deploy after changes**
 - **Git workflow**: Always commit + push + tag after each change (remote: `jgp-matrix/MatrixARC`)
-- **Versioning**: `vMajor.Minor.Patch` (semver). Current: **v1.14.2**
+- **Versioning**: `vMajor.Minor.Patch` (semver). Current: **v1.15.0**
   - **Patch** (x.x.+1): Bug fixes, cosmetic/wording tweaks, adjusting rates/thresholds, fixing a value that wasn't stored
   - **Minor** (x.+1.0): New AI prompt capabilities, new device types, new labor categories, new UI sections, restructuring data flow — anything that changes what the app can detect or output
   - **Major** (+1.0.0): Schema changes requiring migration, breaking changes to saved data format, `APP_SCHEMA_VERSION` bumps
