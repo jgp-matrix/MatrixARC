@@ -184,7 +184,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.14.3";
+const APP_VERSION="v1.15.0";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -395,8 +395,8 @@ function notifyProjectListeners(projectId,liveProject){
   if(_appProjectUpdateFn)_appProjectUpdateFn(liveProject);
 }
 
-// ── LABOR RATE CONSTANTS ──
-const LABOR_RATES={
+// ── LABOR RATE DEFAULTS ──
+const LABOR_RATE_DEFAULTS={
   pmMinPerUnit:60,            // Project management: 60 min/session
   buyoffMinPerUnit:60,        // Buyoff/QC: 60 min/session
   cratingMinPerUnit:60,       // Crating: 60 min/crate
@@ -408,6 +408,7 @@ const LABOR_RATES={
   hmiHoleEquivalent:25,       // 1 HMI cutout = 25 standard holes
   squareCutoutMinPerCut:180,  // Square side cutout (horn, etc.): 3 hrs each
 };
+let LABOR_RATES={...LABOR_RATE_DEFAULTS};
 const DOOR_DEVICE_TYPES=new Set(["pushbutton","pilot_light","selector_switch","hmi","e_stop","horn","meter"]);
 
 // ── LABOR ESTIMATION (centralized) ──
@@ -593,6 +594,20 @@ async function savePricingConfig(uid,cfg){
   _pricingConfig=cfg;
   const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
   await fbDb.doc(path).set(cfg);
+}
+
+// ── LABOR RATES (admin-configurable) ──
+async function loadLaborRates(uid){
+  try{
+    const path=_appCtx.configPath?`${_appCtx.configPath}/laborRates`:`users/${uid}/config/laborRates`;
+    const d=await fbDb.doc(path).get();
+    if(d.exists){const c=d.data();Object.keys(LABOR_RATE_DEFAULTS).forEach(k=>{if(c[k]!=null)LABOR_RATES[k]=c[k];});}
+  }catch(e){}
+}
+async function saveLaborRates(uid,rates){
+  Object.assign(LABOR_RATES,rates);
+  const path=_appCtx.configPath?`${_appCtx.configPath}/laborRates`:`users/${uid}/config/laborRates`;
+  await fbDb.doc(path).set(rates);
 }
 
 // ── DEFAULT BOM ITEMS (configurable via Pricing Config) ──
@@ -2659,6 +2674,9 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   const [manualDesc,setManualDesc]=useState("");
   const [manualPrice,setManualPrice]=useState("");
 
+  // Labor rates state (admin only)
+  const [laborRates,setLaborRates]=useState(()=>({...LABOR_RATES}));
+
   // Logo upload (admin + company only)
   const canUploadLogo=!!(_appCtx.companyId&&_appCtx.role==="admin");
   const [logoUrl,setLogoUrl]=useState(null);
@@ -2736,7 +2754,8 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
     setSaving(true);
     await Promise.all([
       savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct}),
-      saveDefaultBomItems(uid,defaultItems)
+      saveDefaultBomItems(uid,defaultItems),
+      isAdmin()?saveLaborRates(uid,laborRates):Promise.resolve()
     ]);
     setSaving(false);setSaved(true);setTimeout(()=>setSaved(false),2000);
   }
@@ -2858,6 +2877,37 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             </div>
             {logoErr&&<div style={{fontSize:12,color:C.red,marginTop:6}}>{logoErr}</div>}
             <div style={{fontSize:11,color:C.muted,marginTop:6}}>PNG, JPG, or SVG recommended. Displayed in the header top-left.</div>
+          </div>
+        )}
+
+        {/* ── LABOR RATES (admin only) ── */}
+        {isAdmin()&&(
+          <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:4}}>
+            <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Labor Category Rates</label>
+            <div style={{fontSize:11,color:C.muted,marginBottom:12}}>Minutes per unit for each labor category. Changes apply to all future estimates.</div>
+            {[
+              ["wireMinPerPoint","Wire Time","min / wire point"],
+              ["doorDeviceMinPerDevice","Door Wiring","min / device"],
+              ["mountingMinPerDevice","Device Mounting","min / device"],
+              ["ductDinMinPerFoot","Duct & DIN Rail","min / foot"],
+              ["holesMinPerHole","Panel Holes","min / hole"],
+              ["hmiHoleEquivalent","HMI Hole Equivalent","holes per HMI cutout"],
+              ["squareCutoutMinPerCut","Square Cutout","min / cutout"],
+              ["pmMinPerUnit","Project Mgmt","min / session"],
+              ["cratingMinPerUnit","Crating","min / crate"],
+            ].map(([key,label,unit])=>(
+              <div key={key} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                <div style={{flex:1,fontSize:12,color:C.text,fontWeight:500}}>{label}</div>
+                <input type="number" min="0" step="1" value={laborRates[key]??LABOR_RATE_DEFAULTS[key]}
+                  onChange={e=>setLaborRates(prev=>({...prev,[key]:Math.max(0,+e.target.value||0)}))}
+                  style={{...inp(),width:70,textAlign:"right",fontSize:12,padding:"4px 6px"}}/>
+                <div style={{fontSize:11,color:C.muted,width:120}}>{unit}</div>
+              </div>
+            ))}
+            <button onClick={()=>setLaborRates({...LABOR_RATE_DEFAULTS})}
+              style={{...btn(C.border,C.muted,{fontSize:11,padding:"4px 10px",marginTop:4})}}>
+              Reset to Defaults
+            </button>
           </div>
         )}
 
@@ -8272,7 +8322,7 @@ function App({user}){
       } else {
         _appCtx.projectsPath=`users/${user.uid}/projects`;
       }
-      await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid),loadDefaultBomItems(user.uid)]);
+      await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid),loadDefaultBomItems(user.uid),loadLaborRates(user.uid)]);
       fbDb.doc(`users/${user.uid}/config/profile`).get().then(d=>{if(d.exists)setUserFirstName(d.data().firstName||"");}).catch(()=>{});
       // Load company members → uid→name map for project ownership display
       if(profile?.companyId){
