@@ -5532,15 +5532,28 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         if(!compId){
           _pp({msg:"BC: Company not found — falling back to AI…",pct:10});
         }else{
+          // Rows already BC-priced but missing bcPoDate — just backfill PO date, no re-match
+          const needPoDate=bom.filter(r=>r.priceSource==="bc"&&!r.isLaborRow&&!("bcPoDate"in r)&&(r.partNumber||"").trim());
+          if(needPoDate.length){
+            _pp({msg:`BC: Backfilling PO dates for ${needPoDate.length} items…`,pct:7});
+            const poMap={};
+            for(let i=0;i<needPoDate.length;i++){
+              const pn=(needPoDate[i].partNumber||"").trim();
+              _pp({msg:`BC: PO date ${i+1}/${needPoDate.length}: ${pn}`,pct:7+Math.round((i/needPoDate.length)*20)});
+              const lp=await bcGetLastPurchase(pn);
+              poMap[String(needPoDate[i].id)]=lp?new Date(lp.postingDate).getTime():null;
+            }
+            updatedBom=updatedBom.map(r=>{const key=String(r.id);return key in poMap?{...r,bcPoDate:poMap[key]}:r;});
+          }
           const eligible=bom.filter(r=>{const ps=r.priceSource;return ps!=="bc"&&ps!=="manual";});
-          _pp({msg:`BC: Fuzzy-matching ${eligible.length} items…`,pct:7});
+          _pp({msg:`BC: Fuzzy-matching ${eligible.length} items…`,pct:27});
           await bcGetVendorMap();
           const bcMap={};
           const fuzzySugg={};
           for(let i=0;i<eligible.length;i++){
             const pn=(eligible[i].partNumber||"").trim();
             if(!pn)continue;
-            _pp({msg:`BC: Fuzzy lookup ${i+1}/${eligible.length}: ${pn}`,pct:7+Math.round((i/eligible.length)*30)});
+            _pp({msg:`BC: Fuzzy lookup ${i+1}/${eligible.length}: ${pn}`,pct:27+Math.round((i/eligible.length)*20)});
             const result=await bcFuzzyLookup(pn);
             if(result.match&&result.match.unitCost!=null){
               const matchNo=result.match.number||pn;
