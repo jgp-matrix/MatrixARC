@@ -4760,6 +4760,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const pendingNewItemsRef=useRef([]);
   const pageTypeChangesRef=useRef({});
   const learningExamplesRef=useRef([]);
+  const latestPanelRef=useRef(panel);
   const [reasonPickerFor,setReasonPickerFor]=useState(null);
   const [extracting,setExtracting]=useState(false);
   const ep=useSmoothProgress();
@@ -4948,6 +4949,35 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     return()=>{cancelled=true;clearInterval(iv);};
   },[bcNeedingPoDate.length]);
 
+  // Poll BC every 5 minutes to keep bcPoDate current (picks up new POs without a manual refresh)
+  useEffect(()=>{
+    const POLL_MS=5*60*1000;
+    async function pollPoDate(){
+      if(!_bcToken)return;
+      const p=latestPanelRef.current;
+      const rows=(p.bom||[]).filter(r=>r.priceSource==="bc"&&!r.isLaborRow&&(r.partNumber||"").trim());
+      if(!rows.length)return;
+      const poMap={};
+      for(const r of rows){
+        const lp=await bcGetLastPurchase((r.partNumber||"").trim());
+        poMap[String(r.id)]=lp?new Date(lp.postingDate).getTime():null;
+      }
+      // Only update rows where bcPoDate actually changed
+      const fresh=latestPanelRef.current;
+      let changed=false;
+      const newBom=(fresh.bom||[]).map(r=>{
+        const key=String(r.id);
+        if(!(key in poMap))return r;
+        if(r.bcPoDate===poMap[key])return r;
+        changed=true;
+        return{...r,bcPoDate:poMap[key]};
+      });
+      if(changed){const updated={...fresh,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}}
+    }
+    const iv=setInterval(pollPoDate,POLL_MS);
+    return()=>clearInterval(iv);
+  },[]);
+
   // Load vendor list for BOM supplier dropdown (retry until BC connects)
   useEffect(()=>{
     if(bomVendorListLoaded.current)return;
@@ -5019,6 +5049,9 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const t=setTimeout(()=>onSaveImmediate(updated).catch(()=>{}),800);
     return()=>clearTimeout(t);
   },[_laborSyncKey]);
+
+  // Keep latestPanelRef current so async closures always have fresh panel data
+  latestPanelRef.current=panel;
 
   const savedPages=panel.pages||[];
   const pages=pendingPages.length>0?pendingPages:savedPages;
