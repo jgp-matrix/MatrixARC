@@ -4660,7 +4660,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               <div style={{flex:1,minWidth:160}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Item Category</label>
                 <select value={createCategory} onChange={e=>setCreateCategory(e.target.value)}
-                  style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  style={{background:"#0a0a12",border:"1px solid #3a3a54",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcCategories.map(c=><option key={c.code} value={c.code}>{c.code}{c.description?` — ${c.description}`:""}</option>)}
                 </select>
@@ -4668,7 +4668,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               <div style={{flex:1,minWidth:140}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Unit of Measure</label>
                 <select value={createUom} onChange={e=>setCreateUom(e.target.value)}
-                  style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  style={{background:"#0a0a12",border:"1px solid #3a3a54",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcUoms.map(u=><option key={u.code} value={u.code}>{u.code}{u.displayName&&u.displayName!==u.code?` — ${u.displayName}`:""}</option>)}
                 </select>
@@ -4676,7 +4676,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               <div style={{flex:1,minWidth:180}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Vendor</label>
                 <select value={createVendor} onChange={e=>setCreateVendor(e.target.value)}
-                  style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  style={{background:"#0a0a12",border:"1px solid #3a3a54",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
                 </select>
@@ -4684,7 +4684,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               <div style={{flex:1,minWidth:180}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Gen. Prod. Posting Group</label>
                 <select value={createGenProd} onChange={e=>setCreateGenProd(e.target.value)}
-                  style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  style={{background:"#0a0a12",border:"1px solid #3a3a54",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcGenProdGroups.map(g=><option key={g.code} value={g.code}>{g.code}{g.description?` — ${g.description}`:""}</option>)}
                 </select>
@@ -4692,7 +4692,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               <div style={{flex:1,minWidth:180}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Inventory Posting Group</label>
                 <select value={createInvPosting} onChange={e=>setCreateInvPosting(e.target.value)}
-                  style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  style={{background:"#0a0a12",border:"1px solid #3a3a54",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcInvPostingGroups.map(g=><option key={g.code} value={g.code}>{g.code}{g.description?` — ${g.description}`:""}</option>)}
                 </select>
