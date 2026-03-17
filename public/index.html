@@ -8789,10 +8789,14 @@ function App({user}){
         const ms=Date.now()-t0;
         const net=determine();
         if(net==="offline")apply("offline");
-        else if(net==="slow"||ms>3000)apply("slow");
+        else if(net==="slow"||ms>5000)apply("slow");
         else apply("good");
       }catch(e){
-        apply(e==="timeout"?"offline":"slow");
+        if(e==="timeout")apply("offline");
+        else if(!navigator.onLine)apply("offline");
+        // permission-denied / not-found = Firestore reachable → connection is good
+        else if(e?.code==="unavailable"||e?.code==="resource-exhausted")apply("slow");
+        else apply("good");
       }
     };
     const iv=setInterval(ping,30000);
