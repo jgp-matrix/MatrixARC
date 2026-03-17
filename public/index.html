@@ -24,6 +24,8 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
 @keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}
 @keyframes pulseYellow{0%,100%{box-shadow:0 0 4px 1px rgba(250,204,21,0.15);background:rgba(250,204,21,0.04);border-color:rgba(250,204,21,0.4)}50%{box-shadow:0 0 40px 12px rgba(250,204,21,0.7),0 0 80px 20px rgba(250,204,21,0.25);background:rgba(250,204,21,0.18);border-color:#fde047}}
+@keyframes bcRowFlash{0%{background:rgba(74,222,128,0)}15%{background:rgba(74,222,128,0.38)}60%{background:rgba(74,222,128,0.18)}100%{background:rgba(74,222,128,0.06)}}
+.bc-row-updated{animation:bcRowFlash 2.5s ease-out forwards!important}
 .fade-in{animation:fadeIn 0.25s ease-out both}
 .spin{animation:spin 1s linear infinite;display:inline-block}
 /* ── Quote Document ── */
@@ -4864,6 +4866,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [showUpdateBom,setShowUpdateBom]=useState(false);
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
   const [bcNewlyCreated,setBcNewlyCreated]=useState(new Set());
+  const [bcUpdatedRows,setBcUpdatedRows]=useState(new Set());
+  const [bcUpdateNotif,setBcUpdateNotif]=useState(false);
   const [bcBrowserQuery,setBcBrowserQuery]=useState("");
   const [pendingPages,setPendingPages]=useState([]);
   const [alternates,setAlternates]=useState([]);
@@ -5005,9 +5009,17 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     return()=>{cancelled=true;clearInterval(iv);};
   },[bcNeedingPoDate.length]);
 
+  // Dismiss BC update notification on any click
+  useEffect(()=>{
+    if(!bcUpdateNotif)return;
+    const dismiss=()=>setBcUpdateNotif(false);
+    document.addEventListener("click",dismiss,{once:true});
+    return()=>document.removeEventListener("click",dismiss);
+  },[bcUpdateNotif]);
+
   // Poll BC every 5 minutes to keep bcPoDate and unitPrice current (picks up new POs without a manual refresh)
   useEffect(()=>{
-    const POLL_MS=5*60*1000;
+    const POLL_MS=10*1000;
     async function pollBcPricing(){
       if(!_bcToken)return;
       const p=latestPanelRef.current;
@@ -5024,6 +5036,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       // Only update rows where bcPoDate or unitPrice actually changed
       const fresh=latestPanelRef.current;
       let changed=false;
+      const changedIds=[];
       const newBom=(fresh.bom||[]).map(r=>{
         const key=String(r.id);
         if(!(key in bcMap))return r;
@@ -5032,9 +5045,17 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
         const dateChanged=r.bcPoDate!==bcPoDate;
         if(!priceChanged&&!dateChanged)return r;
         changed=true;
+        changedIds.push(key);
         return{...r,bcPoDate,...(priceChanged?{unitPrice}:{})};
       });
-      if(changed){const updated={...fresh,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}}
+      if(changed){
+        const updated={...fresh,bom:newBom};
+        onUpdate(updated);
+        try{onSaveImmediate(updated);}catch(e){}
+        setBcUpdatedRows(new Set(changedIds));
+        setBcUpdateNotif(true);
+        setTimeout(()=>setBcUpdatedRows(new Set()),4000);
+      }
     }
     const iv=setInterval(pollBcPricing,POLL_MS);
     return()=>clearInterval(iv);
@@ -6036,7 +6057,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     return (a.itemNo||"").localeCompare(b.itemNo||"");
                   });
                   return sortedBom.map((row,i)=>(
-                  <tr key={row.id} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:row.isLaborRow?"#0a1628":(!row.isLaborRow&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
+                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":(!row.isLaborRow&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
                       {row.itemNo||i+1}
                     </td>
@@ -6635,6 +6656,13 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           startId={lightboxId}
           onClose={()=>setLightboxId(null)}
         />
+      )}
+      {bcUpdateNotif&&ReactDOM.createPortal(
+        <div style={{position:"fixed",top:64,right:24,zIndex:9500,background:"#052e16",border:"1px solid #4ade80",borderRadius:10,padding:"12px 20px",color:"#4ade80",fontSize:13,fontWeight:600,cursor:"pointer",boxShadow:"0 4px 24px rgba(0,0,0,0.6)",display:"flex",alignItems:"center",gap:10,animation:"fadeIn 0.2s ease-out"}}
+          onClick={()=>setBcUpdateNotif(false)}>
+          <span style={{fontSize:16}}>↻</span>
+          <span>BC price update received — click anywhere to dismiss</span>
+        </div>,document.body
       )}
       {bcBrowserOpen&&(
         <BCItemBrowserModal
