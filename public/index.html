@@ -1157,7 +1157,7 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
     if(item.number&&(vendorNo||genProdPostingGroup||inventoryPostingGroup)){
       const patch={};
       if(vendorNo)patch.Vendor_No=vendorNo;
-      if(genProdPostingGroup)patch.Gen__Prod__Posting_Group=genProdPostingGroup;
+      if(genProdPostingGroup)patch.Gen_Prod_Posting_Group=genProdPostingGroup;
       if(inventoryPostingGroup)patch.Inventory_Posting_Group=inventoryPostingGroup;
       // Retry up to 3x — newly created items may not be indexed in OData immediately
       let patched=false;let patchErr="";
