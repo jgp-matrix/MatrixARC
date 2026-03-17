@@ -4922,31 +4922,31 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   },[]);
 
   // Backfill bcPoDate for BC-priced rows — same source as Item Browser "Last Purchased"
-  const bcPoDateBackfillRan=useRef(false);
+  const bcNeedingPoDate=(panel.bom||[]).filter(r=>r.priceSource==="bc"&&!r.isLaborRow&&!("bcPoDate"in r)&&(r.partNumber||"").trim());
   useEffect(()=>{
-    if(bcPoDateBackfillRan.current)return;
-    const bom=panel.bom||[];
-    const need=bom.filter(r=>r.priceSource==="bc"&&!r.isLaborRow&&!("bcPoDate"in r)&&(r.partNumber||"").trim());
-    if(!need.length)return;
+    if(!bcNeedingPoDate.length)return;
+    const need=[...bcNeedingPoDate];
+    let cancelled=false;
     function tryBackfill(){
-      if(!_bcToken){return;}
-      bcPoDateBackfillRan.current=true;
+      if(!_bcToken)return;
       (async()=>{
         const poMap={};
         for(const r of need){
+          if(cancelled)return;
           const lp=await bcGetLastPurchase((r.partNumber||"").trim());
           poMap[String(r.id)]=lp?new Date(lp.postingDate).getTime():null;
         }
+        if(cancelled)return;
         const newBom=(panel.bom||[]).map(r=>{const key=String(r.id);return key in poMap?{...r,bcPoDate:poMap[key]}:r;});
         const updated={...panel,bom:newBom};
         onUpdate(updated);
         try{onSaveImmediate(updated);}catch(e){}
-      })().catch(()=>{bcPoDateBackfillRan.current=false;});
+      })().catch(()=>{});
     }
     tryBackfill();
     const iv=setInterval(()=>{if(_bcToken){clearInterval(iv);tryBackfill();}},3000);
-    return()=>clearInterval(iv);
-  },[]);
+    return()=>{cancelled=true;clearInterval(iv);};
+  },[bcNeedingPoDate.length]);
 
   // Load vendor list for BOM supplier dropdown (retry until BC connects)
   useEffect(()=>{
@@ -5443,8 +5443,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — don't block commit
       if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const bom2=(panel.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...panel,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}}}})().catch(()=>{});}
-      // Async PO date lookup — don't block commit
-      if(newPN){(async()=>{const lp=await bcGetLastPurchase(newPN);const bcPoDate=lp?new Date(lp.postingDate).getTime():null;const bom2=(panel.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcPoDate}:r2);const u2={...panel,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}})().catch(()=>{});}
       if(asCross){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
