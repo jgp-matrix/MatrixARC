@@ -1062,7 +1062,14 @@ async function _bcFetchItems(compId,filter,top,skip){
   const url=`${BC_API_BASE}/companies(${compId})/items?$filter=${filter}&$top=${top}&$skip=${skip}&$orderby=number`;
   console.log("bcSearchItems URL:",url);
   const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-  if(r.status===401){_bcToken=null;return null;}
+  if(r.status===401){
+    _bcToken=await acquireBcToken(false)||null;
+    if(!_bcToken)return null;
+    const r2=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r2.ok){_bcToken=null;return null;}
+    const d2=await r2.json();
+    return(d2.value||[]).map(item=>({number:item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:item.vendorNo||""}));
+  }
   if(!r.ok){console.warn("bcSearchItems failed:",r.status,await r.text());return null;}
   const d=await r.json();
   return(d.value||[]).map(item=>({
@@ -1072,7 +1079,10 @@ async function _bcFetchItems(compId,filter,top,skip){
   }));
 }
 async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
-  if(!_bcToken||!query||query.trim().length<3)return{items:[],hasMore:false};
+  if(!query||query.trim().length<3)return{items:[],hasMore:false};
+  // Auto-reacquire token if missing or recently cleared
+  if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
+  if(!_bcToken)return{items:[],hasMore:false};
   const compId=await bcGetCompanyId();
   if(!compId)return{items:[],hasMore:false};
   const q=query.trim().replace(/'/g,"''");
