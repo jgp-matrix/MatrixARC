@@ -1139,8 +1139,6 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   if(unitCost!=null&&unitCost!=="")body.unitCost=parseFloat(unitCost);
   if(itemCategoryCode)body.itemCategoryCode=itemCategoryCode;
   if(baseUnitOfMeasureCode)body.baseUnitOfMeasureCode=baseUnitOfMeasureCode;
-  if(genProdPostingGroup)body.generalProductPostingGroup=genProdPostingGroup;
-  if(inventoryPostingGroup)body.inventoryPostingGroup=inventoryPostingGroup;
   try{
     const r=await fetch(`${BC_API_BASE}/companies(${compId})/items`,{
       method:"POST",
@@ -1156,8 +1154,12 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
     if(!r.ok){const txt=await r.text();throw new Error(txt||`BC returned status ${r.status}`);}
     const item=await r.json();
     // PATCH extra fields via OData ItemCard (v2.0 API doesn't expose these)
-    if(item.number&&vendorNo){
-      try{await bcPatchItemOData(item.number,{Vendor_No:vendorNo});}
+    if(item.number&&(vendorNo||genProdPostingGroup||inventoryPostingGroup)){
+      const patch={};
+      if(vendorNo)patch.Vendor_No=vendorNo;
+      if(genProdPostingGroup)patch.Gen__Prod__Posting_Group=genProdPostingGroup;
+      if(inventoryPostingGroup)patch.Inventory_Posting_Group=inventoryPostingGroup;
+      try{await bcPatchItemOData(item.number,patch);}
       catch(ve){console.warn("OData PATCH failed:",ve);}
     }
     return{number:item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||""};
