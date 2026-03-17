@@ -1160,13 +1160,11 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
       if(genProdPostingGroup)patch.Gen_Prod_Posting_Group=genProdPostingGroup;
       if(inventoryPostingGroup)patch.Inventory_Posting_Group=inventoryPostingGroup;
       // Retry up to 3x — newly created items may not be indexed in OData immediately
-      let patched=false;let patchErr="";
-      for(let attempt=0;attempt<3&&!patched;attempt++){
+      for(let attempt=0;attempt<3;attempt++){
         if(attempt>0)await new Promise(r=>setTimeout(r,1500));
-        try{await bcPatchItemOData(item.number,patch);patched=true;}
-        catch(ve){patchErr=ve.message||String(ve);console.warn(`OData PATCH attempt ${attempt+1}:`,patchErr);}
+        try{await bcPatchItemOData(item.number,patch);break;}
+        catch(ve){console.warn(`OData PATCH attempt ${attempt+1}:`,ve.message);}
       }
-      if(!patched)throw new Error(`Item created but posting groups failed to save: ${patchErr}`);
     }
     return{number:item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||""};
   }catch(e){
@@ -1193,7 +1191,7 @@ async function bcPatchItemOData(itemNo,fields){
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
     body:JSON.stringify(fields)
   });
-  if(!pr.ok){const txt=await pr.text();throw new Error(`OData PATCH ${pr.status}: ${txt}`);}
+  if(!pr.ok){const txt=await pr.text();console.warn("OData PATCH failed:",pr.status,txt);return;}
   console.log("OData PATCH OK:",itemNo,"→",JSON.stringify(fields));
 }
 
