@@ -1129,7 +1129,7 @@ async function bcFuzzyLookup(partNumber){
   return{match:null,type:null,suggestions:[]};
 }
 
-async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUnitOfMeasureCode,vendorNo}){
+async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUnitOfMeasureCode,vendorNo,genProdPostingGroup,inventoryPostingGroup}){
   if(!_bcToken)throw new Error("Not connected to Business Central");
   const compId=await bcGetCompanyId();
   if(!compId)throw new Error("Could not resolve BC company");
@@ -1139,6 +1139,8 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   if(unitCost!=null&&unitCost!=="")body.unitCost=parseFloat(unitCost);
   if(itemCategoryCode)body.itemCategoryCode=itemCategoryCode;
   if(baseUnitOfMeasureCode)body.baseUnitOfMeasureCode=baseUnitOfMeasureCode;
+  if(genProdPostingGroup)body.generalProductPostingGroup=genProdPostingGroup;
+  if(inventoryPostingGroup)body.inventoryPostingGroup=inventoryPostingGroup;
   try{
     const r=await fetch(`${BC_API_BASE}/companies(${compId})/items`,{
       method:"POST",
@@ -1270,6 +1272,30 @@ async function bcListVendors(){
     const d=await r.json();
     return(d.value||[]).map(v=>({number:v.number||"",displayName:v.displayName||""}));
   }catch(e){console.warn("bcListVendors error:",e);return[];}
+}
+
+async function bcListGenProdPostingGroups(){
+  if(!_bcToken)return[];
+  const compId=await bcGetCompanyId();
+  if(!compId)return[];
+  try{
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/generalProductPostingGroups?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok)return[];
+    const d=await r.json();
+    return(d.value||[]).map(g=>({code:g.code||"",description:g.description||""}));
+  }catch(e){console.warn("bcListGenProdPostingGroups error:",e);return[];}
+}
+
+async function bcListInventoryPostingGroups(){
+  if(!_bcToken)return[];
+  const compId=await bcGetCompanyId();
+  if(!compId)return[];
+  try{
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/inventoryPostingGroups?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok)return[];
+    const d=await r.json();
+    return(d.value||[]).map(g=>({code:g.code||"",description:g.description||""}));
+  }catch(e){console.warn("bcListInventoryPostingGroups error:",e);return[];}
 }
 
 let _vendorMapCache=null;
@@ -4397,6 +4423,10 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
   const [bcCategories,setBcCategories]=useState([]);
   const [bcUoms,setBcUoms]=useState([]);
   const [bcVendors,setBcVendors]=useState([]);
+  const [bcGenProdGroups,setBcGenProdGroups]=useState([]);
+  const [bcInvPostingGroups,setBcInvPostingGroups]=useState([]);
+  const [createGenProd,setCreateGenProd]=useState("");
+  const [createInvPosting,setCreateInvPosting]=useState("");
   const [dropdownsLoaded,setDropdownsLoaded]=useState(false);
   const [croppedDataUrl,setCroppedDataUrl]=useState(null);
   const [locating,setLocating]=useState(false);
@@ -4593,6 +4623,8 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               bcListItemCategories().then(setBcCategories);
               bcListUnitsOfMeasure().then(setBcUoms);
               bcListVendors().then(setBcVendors);
+              bcListGenProdPostingGroups().then(setBcGenProdGroups);
+              bcListInventoryPostingGroups().then(setBcInvPostingGroups);
             }}}
             style={btn("#1a2a1a","#4ade80",{padding:"9px 16px",border:"1px solid #4ade8044",fontSize:13,fontWeight:600})}>
             + New Item
@@ -4643,12 +4675,28 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
                   {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
                 </select>
               </div>
+              <div style={{flex:1,minWidth:180}}>
+                <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Gen. Prod. Posting Group</label>
+                <select value={createGenProd} onChange={e=>setCreateGenProd(e.target.value)}
+                  style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  <option value="">— None —</option>
+                  {bcGenProdGroups.map(g=><option key={g.code} value={g.code}>{g.code}{g.description?` — ${g.description}`:""}</option>)}
+                </select>
+              </div>
+              <div style={{flex:1,minWidth:180}}>
+                <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Inventory Posting Group</label>
+                <select value={createInvPosting} onChange={e=>setCreateInvPosting(e.target.value)}
+                  style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  <option value="">— None —</option>
+                  {bcInvPostingGroups.map(g=><option key={g.code} value={g.code}>{g.code}{g.description?` — ${g.description}`:""}</option>)}
+                </select>
+              </div>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <button disabled={creating||!createNumber.trim()} onClick={async()=>{
                 setCreating(true);setCreateErr("");
                 try{
-                  const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost||undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined});
+                  const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost||undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined,genProdPostingGroup:createGenProd||undefined,inventoryPostingGroup:createInvPosting||undefined});
                   const vendorName=createVendor?((bcVendors.find(v=>v.number===createVendor)||{}).displayName||""):"";
                   onSelect({...created,_created:true,_vendorName:vendorName});
                 }catch(e){setCreateErr(e.message||"Failed to create item");}
