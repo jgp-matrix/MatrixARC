@@ -193,7 +193,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.3";
+const APP_VERSION="v1.17.5";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5093,9 +5093,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       onUpdate(updated);setPendingPages([]);
       try{await onSaveImmediate(updated);}catch(e){}
       bgDone(panel.id,"Complete");
-    }else{
+    }else if(newItems.length>0){
       bgUpdate(panel.id,"Awaiting confirmation…");
       setAwaitingConfirm(true);
+    }else{
+      bgDone(panel.id,"Complete");
     }
     }catch(ex){
       console.error("addFiles error:",ex);
