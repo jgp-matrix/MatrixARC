@@ -4681,7 +4681,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
                   {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
                 </select>
               </div>
-              <div style={{flex:1,minWidth:180}}>
+            </div>
+            <div style={{display:"flex",gap:8,marginBottom:10}}>
+              <div style={{flex:1}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Gen. Prod. Posting Group</label>
                 <select value={createGenProd} onChange={e=>setCreateGenProd(e.target.value)}
                   style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
@@ -4689,7 +4691,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
                   {bcGenProdGroups.map(g=><option key={g.code} value={g.code}>{g.code}{g.description?` — ${g.description}`:""}</option>)}
                 </select>
               </div>
-              <div style={{flex:1,minWidth:180}}>
+              <div style={{flex:1}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Inventory Posting Group</label>
                 <select value={createInvPosting} onChange={e=>setCreateInvPosting(e.target.value)}
                   style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
