@@ -5416,6 +5416,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — don't block commit
       if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const bom2=(panel.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...panel,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}}}})().catch(()=>{});}
+      // Async PO date lookup — don't block commit
+      if(newPN){(async()=>{const lp=await bcGetLastPurchase(newPN);const bcPoDate=lp?new Date(lp.postingDate).getTime():null;const bom2=(panel.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcPoDate}:r2);const u2={...panel,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}})().catch(()=>{});}
       if(asCross){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
@@ -5543,7 +5545,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             if(result.match&&result.match.unitCost!=null){
               const matchNo=result.match.number||pn;
               const vNo=await bcGetItemVendorNo(matchNo);
-              bcMap[String(eligible[i].id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorName:vNo?await bcGetVendorName(vNo):""};
+              const lp=await bcGetLastPurchase(matchNo);
+              bcMap[String(eligible[i].id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:lp?new Date(lp.postingDate).getTime():null};
             } else if(result.suggestions.length>0){
               fuzzySugg[String(eligible[i].id)]=result.suggestions;
             }
@@ -5551,7 +5554,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           bcCount=Object.keys(bcMap).length;
           updatedBom=updatedBom.map(r=>{
             const key=String(r.id);
-            if(key in bcMap){return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",priceDate:Date.now(),bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||""};}
+            if(key in bcMap){return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",priceDate:Date.now(),bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",bcPoDate:bcMap[key].bcPoDate};}
             return r;
           });
           if(Object.keys(fuzzySugg).length>0){
@@ -6116,7 +6119,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                       {row.isLaborRow?"—":row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,color:C.muted,whiteSpace:"nowrap"}}>
-                      {row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—"}
+                      {row.isLaborRow?"—":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—"}
                     </td>
                     <td style={{padding:"3px 3px",textAlign:"center",width:90}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:0}}>
