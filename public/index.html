@@ -6058,8 +6058,13 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   });
                   return sortedBom.map((row,i)=>(
                   <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":(!row.isLaborRow&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
-                    <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
+                    <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none",position:"relative"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
                       {row.itemNo||i+1}
+                      {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
+                        <div onClick={e=>{e.stopPropagation();setBcUpdateNotif(false);}} style={{position:"absolute",top:-26,left:0,zIndex:200,background:"#052e16",border:"1px solid #4ade80",borderRadius:6,padding:"3px 10px",color:"#4ade80",fontSize:11,fontWeight:600,whiteSpace:"nowrap",boxShadow:"0 2px 12px rgba(0,0,0,0.6)",cursor:"pointer",animation:"fadeIn 0.2s ease-out",display:"flex",alignItems:"center",gap:5}}>
+                          <span>↻</span><span>BC price updated</span>
+                        </div>
+                      )}
                     </td>
                     {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",0],["manufacturer",0,"fit"],["_supplier",0,"fit"],["notes",160]].map(([f,w,mode])=>(
                       f==="_bc"?(
@@ -6656,13 +6661,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
           startId={lightboxId}
           onClose={()=>setLightboxId(null)}
         />
-      )}
-      {bcUpdateNotif&&ReactDOM.createPortal(
-        <div style={{position:"fixed",top:64,right:24,zIndex:9500,background:"#052e16",border:"1px solid #4ade80",borderRadius:10,padding:"12px 20px",color:"#4ade80",fontSize:13,fontWeight:600,cursor:"pointer",boxShadow:"0 4px 24px rgba(0,0,0,0.6)",display:"flex",alignItems:"center",gap:10,animation:"fadeIn 0.2s ease-out"}}
-          onClick={()=>setBcUpdateNotif(false)}>
-          <span style={{fontSize:16}}>↻</span>
-          <span>BC price update received — click anywhere to dismiss</span>
-        </div>,document.body
       )}
       {bcBrowserOpen&&(
         <BCItemBrowserModal
