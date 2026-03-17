@@ -4921,6 +4921,33 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     console.log("PRICEDATE BACKFILL:",needDate.length,"rows for panel",panel.name);
   },[]);
 
+  // Backfill bcPoDate for BC-priced rows — same source as Item Browser "Last Purchased"
+  const bcPoDateBackfillRan=useRef(false);
+  useEffect(()=>{
+    if(bcPoDateBackfillRan.current)return;
+    const bom=panel.bom||[];
+    const need=bom.filter(r=>r.priceSource==="bc"&&!r.isLaborRow&&!("bcPoDate"in r)&&(r.partNumber||"").trim());
+    if(!need.length)return;
+    function tryBackfill(){
+      if(!_bcToken){return;}
+      bcPoDateBackfillRan.current=true;
+      (async()=>{
+        const poMap={};
+        for(const r of need){
+          const lp=await bcGetLastPurchase((r.partNumber||"").trim());
+          poMap[String(r.id)]=lp?new Date(lp.postingDate).getTime():null;
+        }
+        const newBom=(panel.bom||[]).map(r=>{const key=String(r.id);return key in poMap?{...r,bcPoDate:poMap[key]}:r;});
+        const updated={...panel,bom:newBom};
+        onUpdate(updated);
+        try{onSaveImmediate(updated);}catch(e){}
+      })().catch(()=>{bcPoDateBackfillRan.current=false;});
+    }
+    tryBackfill();
+    const iv=setInterval(()=>{if(_bcToken){clearInterval(iv);tryBackfill();}},3000);
+    return()=>clearInterval(iv);
+  },[]);
+
   // Load vendor list for BOM supplier dropdown (retry until BC connects)
   useEffect(()=>{
     if(bomVendorListLoaded.current)return;
