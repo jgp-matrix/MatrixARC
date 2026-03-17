@@ -6132,7 +6132,10 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
               </tbody>
             </table>
           </div>
-          {!readOnly&&<button onClick={addBomRow} style={btn("transparent",C.accent,{fontSize:12,padding:"8px 12px",border:`1px dashed ${C.accent}66`,width:"100%",marginTop:8})}>+ Add Row</button>}
+          {!readOnly&&<div style={{display:"flex",gap:8,marginTop:8}}>
+            <button onClick={addBomRow} style={btn("transparent",C.accent,{fontSize:12,padding:"8px 12px",border:`1px dashed ${C.accent}66`,flex:1})}>+ Add Row</button>
+            {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&<button onClick={()=>runPricingOnPanel()} disabled={aiPricing} style={btn(C.border,C.muted,{fontSize:12,padding:"8px 14px",opacity:aiPricing?0.5:1,cursor:aiPricing?"default":"pointer"})}>{aiPricing?"Refreshing…":"↻ Refresh Pricing"}</button>}
+          </div>}
           {/* BOM Notes */}
           {(()=>{
             const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
