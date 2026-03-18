@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.78";
+const APP_VERSION="v1.17.79";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4598,6 +4598,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
   const [drawingPageIdx,setDrawingPageIdx]=useState(0);
   const [vendorNames,setVendorNames]=useState({});
   const [purchaseData,setPurchaseData]=useState({});
+  const [customerSupplied,setCustomerSupplied]=useState(false);
   const bomPages=((pages||[]).filter(p=>getPageTypes(p).includes('bom')&&(p.dataUrl||p.storageUrl)));
 
   async function locateInDrawing(pgIdx){
@@ -4769,6 +4770,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,flexShrink:0}}>✕</button>
         </div>
+        {/* Customer Supplied banner */}
+        {customerSupplied&&(
+          <div style={{marginBottom:10,background:"#1a0d2a",border:`1px solid #a78bfa`,borderRadius:8,padding:"7px 14px",fontSize:12,color:"#a78bfa",fontWeight:600,display:"flex",alignItems:"center",gap:8}}>
+            ✔ Customer Supplied — $0 cost will be accepted; row will not highlight red
+          </div>
+        )}
         <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
           <input value={query} onChange={e=>onQueryChange(e.target.value)} placeholder="Search items (min 3 chars)…"
             onKeyDown={e=>{if(e.key==="Enter"){if(debounceRef.current)clearTimeout(debounceRef.current);doSearch();}}}
@@ -4794,6 +4801,11 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
             style={btn("#1a2a1a","#4ade80",{padding:"9px 16px",border:"1px solid #4ade8044",fontSize:13,fontWeight:600})}>
             + New Item
           </button>
+          <label style={{display:"flex",alignItems:"center",gap:7,cursor:"pointer",padding:"9px 12px",background:customerSupplied?"#1a0d2a":"transparent",border:`1px solid ${customerSupplied?"#a78bfa":"#3a3a54"}`,borderRadius:8,userSelect:"none",flexShrink:0}}>
+            <input type="checkbox" checked={customerSupplied} onChange={e=>setCustomerSupplied(e.target.checked)}
+              style={{width:15,height:15,accentColor:"#a78bfa",cursor:"pointer"}}/>
+            <span style={{fontSize:12,fontWeight:600,color:customerSupplied?"#a78bfa":C.muted,whiteSpace:"nowrap"}}>Customer Supplied</span>
+          </label>
         </div>
         {showCreate&&(
           <div style={{marginBottom:14,padding:14,borderRadius:8,border:`1px solid ${C.border}`,background:"#0a0a12"}}>
@@ -4872,7 +4884,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
                 try{
                   const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost||undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined,genProdPostingGroup:createGenProd||undefined,inventoryPostingGroup:createInvPosting||undefined});
                   const vendorName=createVendor?((bcVendors.find(v=>v.number===createVendor)||{}).displayName||""):"";
-                  onSelect({...created,_created:true,_vendorName:vendorName});
+                  onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName});
                 }catch(e){setCreateErr(e.message||"Failed to create item");}
                 finally{setCreating(false);}
               }} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!createNumber.trim()?0.5:1})}>
@@ -4897,7 +4909,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               {results.map((item,i)=>(
                 <tr key={item.number+"-"+i}
                   style={{borderBottom:`1px solid ${C.border}33`,background:i%2===0?"transparent":"rgba(255,255,255,0.015)",cursor:"pointer"}}
-                  onClick={()=>onSelect(item)}
+                  onClick={()=>onSelect(customerSupplied?{...item,unitCost:0,_customerSupplied:true}:item)}
                   onMouseEnter={e=>e.currentTarget.style.background=C.accentDim+"44"}
                   onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)"}>
                   <td style={{padding:"7px 10px",fontWeight:600,whiteSpace:"nowrap"}}>{item.number}</td>
@@ -4912,7 +4924,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
                     {purchaseData[item.number]?.postingDate?fmtDate(purchaseData[item.number].postingDate):(purchaseData[item.number]===null?"No POs":"…")}
                   </td>
                   <td style={{padding:"7px 10px",textAlign:"center"}}>
-                    <button onClick={e=>{e.stopPropagation();onSelect(item);}}
+                    <button onClick={e=>{e.stopPropagation();onSelect(customerSupplied?{...item,unitCost:0,_customerSupplied:true}:item);}}
                       style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`})}>Use</button>
                   </td>
                 </tr>
@@ -5725,6 +5737,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
       const updates={...r,partNumber:newPN,unitPrice:bcItem.unitCost,priceSource:"bc",priceDate:Date.now()};
+      if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — don't block commit
       if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const bom2=(panel.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...panel,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}}}})().catch(()=>{});}
@@ -6226,7 +6239,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     return (a.itemNo||"").localeCompare(b.itemNo||"");
                   });
                   return sortedBom.map((row,i)=>(
-                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":(!row.isLaborRow&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
+                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":(!row.isLaborRow&&!row.customerSupplied&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:bcNewlyCreated.has(row.id)?C.green:row.itemNo?C.accent:C.red,userSelect:"none",position:"relative"}} title={bcNewlyCreated.has(row.id)?"New — created in BC":""}>
                       {row.itemNo||i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
