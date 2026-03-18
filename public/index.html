@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.44";
+const APP_VERSION="v1.17.45";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7788,44 +7788,43 @@ ${fullText.slice(0,12000)}`;
 
         {/* PARSING PHASE */}
         {phase==='parsing'&&(
-          <div style={{padding:"32px 20px"}}>
-            <div style={{textAlign:"center",marginBottom:24}}>
+          <div style={{padding:"40px 24px"}}>
+            <div style={{textAlign:"center",marginBottom:32}}>
               <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:4}}>{statusMsg||'Processing…'}</div>
               {parseEta&&<div style={{fontSize:12,color:C.muted}}>{parseEta}</div>}
             </div>
-            {/* Progress bar */}
-            <div style={{background:C.bg,borderRadius:99,height:10,overflow:"hidden",border:`1px solid ${C.border}`}}>
-              <div style={{height:"100%",borderRadius:99,background:C.accent,width:`${parseProgress}%`,transition:"width 0.3s ease"}}/>
-            </div>
-            <div style={{display:"flex",justifyContent:"space-between",marginTop:6,fontSize:11,color:C.muted}}>
-              <span>
-                {parseProgress<15?"Extracting PDF text":
-                 parseProgress<65?"Parsing with AI":
-                 parseProgress<72?"Saving quote":
-                 parseProgress<100?"Matching to BC items":"Complete"}
-              </span>
-              <span>{parseProgress}%</span>
-            </div>
-            {/* Step indicators */}
-            <div style={{display:"flex",gap:0,marginTop:20,position:"relative"}}>
-              <div style={{position:"absolute",top:10,left:"12.5%",right:"12.5%",height:2,background:C.border,zIndex:0}}/>
-              <div style={{position:"absolute",top:10,left:"12.5%",height:2,width:`${Math.min(100,Math.max(0,(parseProgress-0)/100*100))}%`,background:C.accent,zIndex:1,transition:"width 0.3s ease"}}/>
-              {(()=>{
-                const steps=[{label:"Extract",pct:0},{label:"AI Parse",pct:15},{label:"Save",pct:65},{label:"Match BC",pct:72}];
-                return steps.map(({label,pct},i)=>{
-                const nextPct=i<steps.length-1?steps[i+1].pct:101;
-                const done=parseProgress>=nextPct;
-                const active=parseProgress>=pct&&parseProgress<nextPct;
-                return(
-                  <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,position:"relative",zIndex:2}}>
-                    <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${done||active?C.accent:C.border}`,background:done?C.accent:C.card,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:done?"#fff":active?C.accent:C.muted,fontWeight:700,transition:"all 0.3s"}}>
-                      {done?"✓":i+1}
-                    </div>
-                    <div style={{fontSize:10,color:done||active?C.text:C.muted,textAlign:"center",fontWeight:done||active?600:400}}>{label}</div>
+            {/* Bubble step track */}
+            {(()=>{
+              const steps=[{label:"Extract",pct:0},{label:"AI Parse",pct:15},{label:"Save",pct:65},{label:"Match BC",pct:72}];
+              // Progress line spans between bubble centers: 12.5%→87.5% = 75% of width
+              const fillPct=Math.min(100,Math.max(0,parseProgress/100*75));
+              return(
+                <div style={{display:"flex",alignItems:"flex-start",position:"relative"}}>
+                  {/* Track background */}
+                  <div style={{position:"absolute",top:10,left:"12.5%",right:"12.5%",height:2,background:C.border,zIndex:0}}/>
+                  {/* Track fill */}
+                  <div style={{position:"absolute",top:10,left:"12.5%",height:2,width:`${fillPct}%`,background:C.accent,zIndex:1,transition:"width 0.3s ease"}}/>
+                  {steps.map(({label,pct},i)=>{
+                    const nextPct=i<steps.length-1?steps[i+1].pct:101;
+                    const done=parseProgress>=nextPct;
+                    const active=parseProgress>=pct&&parseProgress<nextPct;
+                    const lit=done||active;
+                    return(
+                      <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:8,position:"relative",zIndex:2}}>
+                        <div style={{width:22,height:22,borderRadius:"50%",border:`2px solid ${lit?C.accent:C.border}`,background:lit?C.accent:C.card,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:lit?"#fff":C.muted,fontWeight:700,transition:"all 0.3s"}}>
+                          {done?"✓":i+1}
+                        </div>
+                        <div style={{fontSize:10,color:lit?C.text:C.muted,textAlign:"center",fontWeight:lit?600:400,whiteSpace:"nowrap"}}>{label}</div>
+                      </div>
+                    );
+                  })}
+                  {/* % complete after bubble 4 */}
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:8,paddingLeft:12,paddingTop:2,zIndex:2}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.accent,minWidth:40}}>{parseProgress}%</div>
                   </div>
-                );
-              });})()}
-            </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
