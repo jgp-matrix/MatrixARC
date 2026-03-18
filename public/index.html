@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.60";
+const APP_VERSION="v1.17.61";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7890,12 +7890,19 @@ ${fullText.slice(0,12000)}`;
   const matchedCount=lineItems.filter(i=>i.matchStatus==='auto_matched').length;
   const pricedCount=lineItems.filter(i=>i.isPriced).length;
 
+  // Lock body scroll while modal is visible
+  useEffect(()=>{
+    if(show){document.body.style.overflow='hidden';}
+    else{document.body.style.overflow='';}
+    return()=>{document.body.style.overflow='';};
+  },[show]);
+
   const boxStyle={
     position:"fixed",zIndex:2001,
     left:modalPos?modalPos.left:'50%',top:modalPos?modalPos.top:'50%',
     transform:modalPos?'none':'translate(-50%,-50%)',
     background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:24,
-    width:"min(1300px,98vw)",minHeight:"80vh",maxWidth:"98vw",
+    width:"min(1300px,98vw)",minHeight:"60vh",maxHeight:"calc(100vh - 24px)",maxWidth:"98vw",
     overflowY:"auto",display:show?'flex':'none',flexDirection:"column",gap:16,
     resize:"vertical",boxSizing:"border-box",
   };
@@ -9609,6 +9616,51 @@ function App({user}){
   const [connStatus,setConnStatus]=useState("good"); // "good"|"slow"|"offline"
   const bgTasks=useBgTasks();
   const bgRunning=Object.values(bgTasks).filter(t=>t.status==="running");
+  const [sqQuery,setSqQuery]=useState('');
+  const [sqResults,setSqResults]=useState(null);
+  const [sqSearching,setSqSearching]=useState(false);
+  const sqInputRef=useRef();
+
+  async function runAiSearch(q){
+    if(!q||q.trim().length<2){setSqResults(null);return;}
+    setSqSearching(true);setSqResults(null);
+    try{
+      const snap=await fbDb.collection('supplierQuotes').where('importedBy','==',user.uid).limit(200).get();
+      const quotes=snap.docs.map(d=>{
+        const v=d.data();
+        return{id:d.id,supplier:v.supplier||'',quoteId:v.quoteId||'',jobName:v.jobName||'',
+          quoteDate:v.quoteDate||'',merchandiseTotal:v.merchandiseTotal||0,status:v.status||'',
+          pdfUrl:v.pdfUrl||null,lineCount:(v.lineItems||[]).length,
+          importedAt:v.importedAt?.toMillis?.()||0,supersededBy:v.supersededBy||null};
+      }).sort((a,b)=>b.importedAt-a.importedAt);
+      let matchedQuotes=[];
+      if(_apiKey&&quotes.length>0){
+        const ctx=quotes.map((qt,i)=>`${i+1}. ID:${qt.id} Supplier:${qt.supplier} Quote#:${qt.quoteId} Job:${qt.jobName} Date:${qt.quoteDate} Total:$${qt.merchandiseTotal} Lines:${qt.lineCount} Status:${qt.status}`).join('\n');
+        try{
+          const raw=await apiCall({model:'claude-haiku-4-5-20251001',max_tokens:400,
+            messages:[{role:'user',content:`Search query: "${q}"\n\nSupplier quotes:\n${ctx}\n\nReturn a JSON array of matching document IDs ordered by relevance. Example: ["id1","id2"]. Return [] if no matches. Only return the JSON array.`}]});
+          const m=raw.match(/\[[\s\S]*?\]/);
+          const ids=m?JSON.parse(m[0]):[];
+          matchedQuotes=ids.map(id=>quotes.find(qt=>qt.id===id)).filter(Boolean);
+        }catch(e){console.warn('AI search fallback:',e);matchedQuotes=[];}
+      }
+      if(!matchedQuotes.length){
+        const tokens=q.toLowerCase().replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(w=>w.length>1);
+        matchedQuotes=quotes.filter(qt=>{
+          const text=`${qt.supplier} ${qt.quoteId} ${qt.jobName}`.toLowerCase();
+          return tokens.some(t=>text.includes(t));
+        });
+      }
+      const qLow=q.toLowerCase();
+      const matchedProjects=projects.filter(p=>
+        (p.name||'').toLowerCase().includes(qLow)||
+        (p.bcCustomerName||'').toLowerCase().includes(qLow)||
+        (p.bcProjectNumber||'').toLowerCase().includes(qLow)
+      );
+      setSqResults({quotes:matchedQuotes,projects:matchedProjects});
+    }catch(e){setSqResults({quotes:[],projects:[],error:e.message});}
+    setSqSearching(false);
+  }
 
   // Load user preferences from Firestore on mount
   useEffect(()=>{
