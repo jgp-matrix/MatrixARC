@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.64";
+const APP_VERSION="v1.17.65";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10004,47 +10004,40 @@ function App({user}){
         </div>
       )}
       {/* ── TOP MENU BAR (always visible) ── */}
-      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 16px",display:"flex",alignItems:"center",gap:12,minHeight:88,position:"fixed",top:0,left:0,right:0,zIndex:500}}>
-        {/* Left: ARC logo + nav */}
-        <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",flexShrink:0}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
-            <svg width="22" height="20" viewBox="0 0 100 90" fill="none">
-              <polygon points="50,4 96,86 4,86" stroke={C.accent} strokeWidth="3.5" strokeLinejoin="round" fill={C.accentDim}/>
-              <polygon points="50,4 68,38 32,38" fill={C.accent} opacity="0.85"/>
-              <line x1="50" y1="38" x2="50" y2="86" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
-              <line x1="26" y1="62" x2="74" y2="62" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
-            </svg>
-            <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:20,fontWeight:900,letterSpacing:4,color:C.accent,lineHeight:1}}>ARC</span>
+      <div style={{position:"fixed",top:0,left:0,right:0,zIndex:500}}>
+        {/* Row 1: original header */}
+        <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:88}}>
+          <div style={{position:"absolute",left:"50%",top:"44px",transform:"translateX(-50%) translateY(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:5,pointerEvents:"none"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",pointerEvents:"auto"}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
+              <svg width="38" height="34" viewBox="0 0 100 90" fill="none">
+                <polygon points="50,4 96,86 4,86" stroke={C.accent} strokeWidth="3.5" strokeLinejoin="round" fill={C.accentDim}/>
+                <polygon points="50,4 68,38 32,38" fill={C.accent} opacity="0.85"/>
+                <line x1="50" y1="38" x2="50" y2="86" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
+                <line x1="26" y1="62" x2="74" y2="62" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
+              </svg>
+              <div style={{display:"flex",flexDirection:"column",lineHeight:1}}>
+                <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:34,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
+                <span style={{fontSize:11,color:C.muted,fontWeight:500,letterSpacing:1.5,marginTop:3}}>by APEX Software</span>
+              </div>
+            </div>
+            <span style={{fontSize:14,color:C.muted,opacity:0.6}}>{APP_VERSION}</span>
           </div>
-          {view!=="dashboard"&&(
-            <button onClick={()=>{setView("dashboard");setOpenProject(null);}}
-              style={{display:"flex",alignItems:"center",gap:6,background:"none",border:`1px solid ${C.border}`,
-                color:C.accent,cursor:"pointer",borderRadius:8,padding:"5px 14px",fontSize:13,fontWeight:700,
-                whiteSpace:"nowrap",flexShrink:0}}>
-              ← Back to Projects
-            </button>
-          )}
-          {companyLogo?(
-            <img src={companyLogo} alt="Company logo" style={{maxHeight:54,maxWidth:140,objectFit:"contain"}}/>
-          ):companyName?(
-            <span style={{color:C.accent,fontSize:22,fontWeight:700,whiteSpace:"nowrap"}}>⬡ {companyName}</span>
-          ):null}
-        </div>
-        {/* Center: AI Search bar */}
-        <div style={{flex:1,display:"flex",justifyContent:"center",minWidth:0,padding:"0 8px"}}>
-          <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",width:"100%",maxWidth:900}}>
-            <span style={{padding:"0 12px",color:C.muted,fontSize:18,lineHeight:1,flexShrink:0}}>🔍</span>
-            <input ref={sqInputRef} value={sqQuery} placeholder="AI Search — quotes, projects, suppliers…"
-              onChange={e=>setSqQuery(e.target.value)}
-              onKeyDown={e=>{if(e.key==='Enter')runAiSearch(sqQuery);if(e.key==='Escape'){setSqQuery('');setSqResults(null);}}}
-              style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:17,padding:"10px 4px",minWidth:0}}/>
-            {sqSearching&&<span style={{padding:"0 12px",color:C.muted,fontSize:16,flexShrink:0}}>…</span>}
-            {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 12px",fontSize:20,lineHeight:1,flexShrink:0}}>×</button>}
-            <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"10px 16px",cursor:"pointer",fontSize:16,fontWeight:700,flexShrink:0}}>Search</button>
+          <div style={{display:"flex",alignItems:"center",gap:12,flex:1}}>
+            {view!=="dashboard"&&(
+              <button onClick={()=>{setView("dashboard");setOpenProject(null);}}
+                style={{display:"flex",alignItems:"center",gap:6,background:"none",border:`1px solid ${C.border}`,
+                  color:C.accent,cursor:"pointer",borderRadius:8,padding:"5px 16px",fontSize:13,fontWeight:700,
+                  whiteSpace:"nowrap",flexShrink:0}}>
+                ← Back to Projects
+              </button>
+            )}
+            {companyLogo?(
+              <img src={companyLogo} alt="Company logo" style={{maxHeight:64,maxWidth:200,objectFit:"contain"}}/>
+            ):companyName?(
+              <span style={{color:C.accent,fontSize:29,fontWeight:700}}>⬡ {companyName}</span>
+            ):null}
           </div>
-        </div>
-        {/* Right: status + actions */}
-        <div style={{display:"flex",gap:8,alignItems:"center",height:36,flexShrink:0}}>
+          <div style={{display:"flex",gap:8,alignItems:"center",height:36}}>
           {bgRunning.length>0&&(
             <div title={bgRunning.map(t=>t.panelName+": "+t.msg).join("\n")}
               style={{display:"flex",alignItems:"center",gap:6,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,background:"#0d2a0d",border:"1px solid #22c55e99",cursor:"default"}}>
@@ -10077,10 +10070,24 @@ function App({user}){
           <span style={{fontSize:15,color:C.muted}}>{user.email}</span>
           {userRole&&<span style={{fontSize:14,fontWeight:700,padding:"4px 10px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
           <button data-tip="Sign out of ARC" onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36}}>Sign out</button>
+          </div>
+        </div>
+        {/* Row 2: AI Search bar */}
+        <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"6px 32px",display:"flex",justifyContent:"center"}}>
+          <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",width:"100%",maxWidth:900}}>
+            <span style={{padding:"0 12px",color:C.muted,fontSize:16,lineHeight:1,flexShrink:0}}>🔍</span>
+            <input ref={sqInputRef} value={sqQuery} placeholder="AI Search — quotes, projects, suppliers…"
+              onChange={e=>setSqQuery(e.target.value)}
+              onKeyDown={e=>{if(e.key==='Enter')runAiSearch(sqQuery);if(e.key==='Escape'){setSqQuery('');setSqResults(null);}}}
+              style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:15,padding:"8px 4px",minWidth:0}}/>
+            {sqSearching&&<span style={{padding:"0 10px",color:C.muted,fontSize:14,flexShrink:0}}>…</span>}
+            {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 10px",fontSize:18,lineHeight:1,flexShrink:0}}>×</button>}
+            <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>Search</button>
+          </div>
         </div>
       </div>
-      {/* Content — padded below fixed header */}
-      <div style={{flex:1,paddingTop:88}}>
+      {/* Content — padded below fixed header (88px top row + ~44px search row) */}
+      <div style={{flex:1,paddingTop:132}}>
       {/* BC Connection Lost popup */}
       {bcLostAlert&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
