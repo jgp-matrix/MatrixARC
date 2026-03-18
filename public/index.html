@@ -11,7 +11,7 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{background:#0d0d14;color:#e8e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}
 input,textarea,select,button{font-family:inherit;font-size:inherit}
-::-webkit-scrollbar{width:6px;height:20px}
+::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:#1e1e2e}
 ::-webkit-scrollbar-thumb{background:#5a5a78;border-radius:5px}
 ::-webkit-scrollbar-thumb:hover{background:#7a7a9a}
@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.58";
+const APP_VERSION="v1.17.59";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1525,7 +1525,7 @@ function sqNormalize(raw){
     extPrice:isPriced?Math.round(raw.qty*raw.price*100)/100:null,notes,isPriced,
     bcItemId:null,bcItemDescription:null,bcCurrentCost:null,matchStatus:'unmatched',priceUpdateStatus:null,approved:true};
 }
-async function saveSupplierQuoteToFirestore(quoteData,userId){
+async function saveSupplierQuoteToFirestore(quoteData,userId,{supersedes=null}={}){
   const ref=fbDb.collection('supplierQuotes').doc();
   const lineItems=(quoteData.lineItems||[]).map(sqNormalize);
   const total=lineItems.reduce((s,i)=>s+(i.extPrice||0),0);
@@ -1542,8 +1542,12 @@ async function saveSupplierQuoteToFirestore(quoteData,userId){
     jobName:quoteData.jobName||'',contactName:quoteData.contactName||'',quoteDate:quoteData.quoteDate||null,
     expiresOn:quoteData.expiresOn||null,fob:quoteData.fob||'',freight:quoteData.freight||'',
     status:'pending_review',merchandiseTotal:Math.round(total*100)/100,lineItems,searchTokens,
-    pdfUrl:null,fileName:'',
+    pdfUrl:null,fileName:'',supersedes:supersedes||null,supersededBy:null,
     importedAt:firebase.firestore.FieldValue.serverTimestamp(),importedBy:userId});
+  if(supersedes){
+    fbDb.collection('supplierQuotes').doc(supersedes)
+      .update({supersededBy:ref.id,status:'superseded'}).catch(()=>{});
+  }
   return{docId:ref.id,lineItems};
 }
 async function bcLookupItemForQuote(partNumber){
@@ -7599,6 +7603,7 @@ function SupplierQuoteImportModal({uid,onClose,show}){
   const [bcCfg,setBcCfg]=useState({uoms:[],categories:[],vendors:[],genGroups:[],invGroups:[],loaded:false,loading:false});
   const [autoVendor,setAutoVendor]=useState({vendorNo:'',vendorName:''});
   const [showVendorPrompt,setShowVendorPrompt]=useState(null); // {vendorNo, vendorName, supplierName}
+  const [precedingQuoteId,setPrecedingQuoteId]=useState(null); // docId being superseded by this upload
   const [modalPos,setModalPos]=useState(null); // {left,top} when dragged, null=centered
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
@@ -7729,7 +7734,7 @@ ${fullText.slice(0,12000)}`;
       }
       setStatusMsg('Saving to database…');
       setParseProgress(68);
-      const{docId,lineItems:normalized}=await saveSupplierQuoteToFirestore(parsed,uid);
+      const{docId,lineItems:normalized}=await saveSupplierQuoteToFirestore(parsed,uid,{supersedes:precedingQuoteId||null});
       // Upload original PDF to Firebase Storage for preview
       let pdfUrl=null;
       try{
@@ -8160,8 +8165,15 @@ ${fullText.slice(0,12000)}`;
             </div>
           )}
           {statusMsg&&<div style={{fontSize:13,color:C.red}}>{statusMsg}</div>}
+          {precedingQuoteId&&(
+            <div style={{background:"#1a1a00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 14px",fontSize:12,color:C.yellow}}>
+              ⚠ This quote will supersede the previous version — history is retained in the database.
+            </div>
+          )}
           <div style={{display:"flex",gap:10,justifyContent:"flex-end",alignItems:"center",flexWrap:"wrap"}}>
             <span style={{fontSize:12,color:C.muted,marginRight:"auto"}}>{approvedCount} item{approvedCount!==1?'s':''} will be updated in BC</span>
+            <button onClick={()=>{setPrecedingQuoteId(quoteDocId);setFile(null);setPdfPreview(null);setQuoteHeader(null);setLineItems([]);setQuoteDocId(null);setPhase('upload');setStatusMsg('');}}
+              style={btn('#1a1200',C.yellow,{fontSize:13,border:`1px solid ${C.yellow}`})}>↑ Upload Revision</button>
             <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
             <button onClick={handlePush} disabled={approvedCount===0} style={btn(approvedCount>0?"#0d2a1a":C.card,approvedCount>0?C.green:C.muted,{fontSize:13,border:`1px solid ${approvedCount>0?C.green:C.border}`,opacity:approvedCount>0?1:0.5})}>
               {bcConnecting?'Connecting…':`Push ${approvedCount} Price${approvedCount!==1?'s':''} to BC →`}
@@ -9153,6 +9165,58 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
   const bgTasks=useBgTasks();
+  const [sqQuery,setSqQuery]=useState('');
+  const [sqResults,setSqResults]=useState(null); // null=idle, {quotes:[],projects:[]}
+  const [sqSearching,setSqSearching]=useState(false);
+  const sqInputRef=useRef();
+
+  async function runAiSearch(q){
+    if(!q||q.trim().length<2){setSqResults(null);return;}
+    setSqSearching(true);setSqResults(null);
+    try{
+      // Fetch recent quotes for this user (all, sort client-side)
+      const snap=await fbDb.collection('supplierQuotes').where('importedBy','==',uid).limit(200).get();
+      const quotes=snap.docs.map(d=>{
+        const v=d.data();
+        return{id:d.id,supplier:v.supplier||'',quoteId:v.quoteId||'',jobName:v.jobName||'',
+          quoteDate:v.quoteDate||'',merchandiseTotal:v.merchandiseTotal||0,status:v.status||'',
+          pdfUrl:v.pdfUrl||null,lineCount:(v.lineItems||[]).length,
+          importedAt:v.importedAt?.toMillis?.()||0,supersededBy:v.supersededBy||null};
+      }).sort((a,b)=>b.importedAt-a.importedAt);
+
+      let matchedQuotes=[];
+      if(_apiKey&&quotes.length>0){
+        // AI matching via Claude Haiku
+        const ctx=quotes.map((qt,i)=>`${i+1}. ID:${qt.id} Supplier:${qt.supplier} Quote#:${qt.quoteId} Job:${qt.jobName} Date:${qt.quoteDate} Total:$${qt.merchandiseTotal} Lines:${qt.lineCount} Status:${qt.status}`).join('\n');
+        try{
+          const raw=await apiCall({model:'claude-haiku-4-5-20251001',max_tokens:400,
+            messages:[{role:'user',content:`Search query: "${q}"\n\nSupplier quotes:\n${ctx}\n\nReturn a JSON array of matching document IDs ordered by relevance. Example: ["id1","id2"]. Return [] if no matches. Only return the JSON array.`}]});
+          const m=raw.match(/\[[\s\S]*?\]/);
+          const ids=m?JSON.parse(m[0]):[];
+          matchedQuotes=ids.map(id=>quotes.find(qt=>qt.id===id)).filter(Boolean);
+        }catch(e){console.warn('AI search fallback:',e);matchedQuotes=[];}
+      }
+      if(!matchedQuotes.length){
+        // Fallback: local token match
+        const tokens=q.toLowerCase().replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(w=>w.length>1);
+        matchedQuotes=quotes.filter(qt=>{
+          const text=`${qt.supplier} ${qt.quoteId} ${qt.jobName}`.toLowerCase();
+          return tokens.some(t=>text.includes(t));
+        });
+      }
+
+      // Local project search
+      const qLow=q.toLowerCase();
+      const matchedProjects=projects.filter(p=>
+        (p.name||'').toLowerCase().includes(qLow)||
+        (p.bcCustomerName||'').toLowerCase().includes(qLow)||
+        (p.bcProjectNumber||'').toLowerCase().includes(qLow)
+      );
+
+      setSqResults({quotes:matchedQuotes,projects:matchedProjects});
+    }catch(e){setSqResults({quotes:[],projects:[],error:e.message});}
+    setSqSearching(false);
+  }
 
   function groupProjects(list){
     if(groupBy==="customer"){
@@ -9230,10 +9294,63 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         <div>
           <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
         </div>
-        <button data-tip="Start a new panel extraction project" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
-          <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
-        </button>
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          <div style={{display:"flex",alignItems:"center",gap:0,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",width:320}}>
+            <span style={{padding:"0 10px",color:C.muted,fontSize:14,lineHeight:1}}>🔍</span>
+            <input ref={sqInputRef} value={sqQuery} placeholder="AI Search — quotes, projects, suppliers…"
+              onChange={e=>setSqQuery(e.target.value)}
+              onKeyDown={e=>{if(e.key==='Enter')runAiSearch(sqQuery);if(e.key==='Escape'){setSqQuery('');setSqResults(null);}}}
+              style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:13,padding:"9px 4px"}}/>
+            {sqSearching&&<span style={{padding:"0 10px",color:C.muted,fontSize:12}}>…</span>}
+            {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 10px",fontSize:16,lineHeight:1}}>×</button>}
+            <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"9px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>Search</button>
+          </div>
+          <button data-tip="Start a new panel extraction project" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
+            <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
+          </button>
+        </div>
       </div>
+
+      {/* AI Search Results */}
+      {sqResults&&(
+        <div style={{background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:20}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.muted,marginBottom:12}}>
+            Search Results — {sqResults.quotes.length} quote{sqResults.quotes.length!==1?'s':''}, {sqResults.projects.length} project{sqResults.projects.length!==1?'s':''}
+            {sqResults.error&&<span style={{color:C.red,marginLeft:8}}>({sqResults.error})</span>}
+          </div>
+          {sqResults.quotes.length>0&&(<>
+            <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Supplier Quotes</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
+              {sqResults.quotes.map(qt=>(
+                <div key={qt.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",minWidth:220,maxWidth:320}}>
+                  <div style={{fontWeight:700,color:C.text,fontSize:13,marginBottom:3}}>{qt.supplier||'—'}</div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:2}}>Quote #{qt.quoteId||'—'}{qt.quoteDate?` · ${qt.quoteDate}`:''}</div>
+                  {qt.jobName&&<div style={{fontSize:11,color:C.sub,marginBottom:2}}>{qt.jobName}</div>}
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginTop:6}}>
+                    {qt.merchandiseTotal>0&&<span style={{fontSize:12,color:C.green,fontWeight:700}}>${qt.merchandiseTotal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>}
+                    <span style={{fontSize:10,background:qt.supersededBy?'#2a1a00':C.bg,color:qt.supersededBy?C.muted:C.accent,borderRadius:6,padding:"1px 6px"}}>{qt.supersededBy?'superseded':qt.status||'—'}</span>
+                    {qt.pdfUrl&&<a href={qt.pdfUrl} target="_blank" rel="noreferrer" style={{fontSize:11,color:C.accent,marginLeft:"auto"}}>📄 PDF</a>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>)}
+          {sqResults.projects.length>0&&(<>
+            <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Projects</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+              {sqResults.projects.map(p=>(
+                <div key={p.id} onClick={()=>onOpen(p)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",minWidth:180,cursor:"pointer"}}>
+                  <div style={{fontWeight:700,color:C.text,fontSize:13}}>{p.name||'Untitled'}</div>
+                  {p.bcCustomerName&&<div style={{fontSize:11,color:C.muted}}>{p.bcCustomerName}</div>}
+                </div>
+              ))}
+            </div>
+          </>)}
+          {sqResults.quotes.length===0&&sqResults.projects.length===0&&(
+            <div style={{color:C.muted,fontSize:13}}>No results found for "{sqQuery}"</div>
+          )}
+        </div>
+      )}
 
       <div style={{display:"flex",gap:8,marginBottom:groupBy!=="imported"?8:24}}>
         {filterBtn("By Status","status")}
