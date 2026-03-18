@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.54";
+const APP_VERSION="v1.17.55";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6815,7 +6815,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       {showCpdSearch&&<CPDSearchModal query={cpdQuery} uid={uid} panel={panel} onClose={()=>setShowCpdSearch(false)} onImportBom={rows=>{const newBom=[...(panel.bom||[]),...rows];const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}setShowCpdSearch(false);setCpdQuery("");}}/>}
       {showCreateItem&&<CreateItemInBCModal panel={panel} onClose={()=>setShowCreateItem(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
       {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate} onCreateNewItem={()=>{setShowUpdateBom(false);setShowCreateItem(true);}}/>}
-      {showSupplierQuote&&<SupplierQuoteImportModal uid={uid} onClose={()=>setShowSupplierQuote(false)}/>}
+      <SupplierQuoteImportModal show={showSupplierQuote} uid={uid} onClose={()=>setShowSupplierQuote(false)}/>
       {crossOrCorrectPending&&(()=>{
         const aiSug=guessCorrection(crossOrCorrectPending.origPN,crossOrCorrectPending.newPN);
         const dismiss=()=>setCrossOrCorrectPending(null);
@@ -7569,9 +7569,10 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
 }
 
 // ── SUPPLIER QUOTE IMPORT MODAL ──
-function SupplierQuoteImportModal({uid,onClose}){
+function SupplierQuoteImportModal({uid,onClose,show}){
   const [phase,setPhase]=useState('upload'); // upload|parsing|review|pushing|done
   const [file,setFile]=useState(null);
+  const [pdfPreview,setPdfPreview]=useState(null);
   const [statusMsg,setStatusMsg]=useState('');
   const [quoteHeader,setQuoteHeader]=useState(null);
   const [lineItems,setLineItems]=useState([]);
@@ -7590,6 +7591,27 @@ function SupplierQuoteImportModal({uid,onClose}){
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
+
+  // Render first page of PDF to canvas for thumbnail preview
+  useEffect(()=>{
+    if(!file)return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        await window.pdfjsReady;
+        const pdfjs=window._pdfjs;
+        const buf=await file.arrayBuffer();
+        const pdf=await pdfjs.getDocument({data:buf}).promise;
+        const page=await pdf.getPage(1);
+        const vp=page.getViewport({scale:1.2});
+        const canvas=document.createElement('canvas');
+        canvas.width=vp.width;canvas.height=vp.height;
+        await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+        if(!cancelled)setPdfPreview(canvas.toDataURL('image/jpeg',0.82));
+      }catch(e){console.warn('PDF preview render:',e);}
+    })();
+    return()=>{cancelled=true;};
+  },[file]);
 
   async function handleParse(droppedFile){
     const targetFile=droppedFile||file;
@@ -7838,11 +7860,11 @@ ${fullText.slice(0,12000)}`;
   const matchedCount=lineItems.filter(i=>i.matchStatus==='auto_matched').length;
   const pricedCount=lineItems.filter(i=>i.isPriced).length;
 
-  const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"};
+  const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:2000,display:show?'flex':'none',alignItems:"center",justifyContent:"center"};
   const box={background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:24,width:"min(1300px,98vw)",maxHeight:"92vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:16};
 
   return ReactDOM.createPortal(
-    <div style={overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div style={overlay}>
       <div style={box}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div style={{fontSize:17,fontWeight:700,color:C.text}}>📥 Upload Supplier Quote</div>
@@ -7913,6 +7935,7 @@ ${fullText.slice(0,12000)}`;
                 </div>
               );
             })()}
+            {pdfPreview&&<img src={pdfPreview} style={{width:90,borderRadius:6,border:`1px solid ${C.border}`,margin:"16px auto 0",display:"block",opacity:0.75}}/>}
           </div>
         )}
 
@@ -7930,12 +7953,14 @@ ${fullText.slice(0,12000)}`;
                   <div style={{fontSize:13,color:C.text,fontWeight:600}}>{val}</div>
                 </div>):null)}
             </div>
-            {quoteHeader.pdfUrl&&(
-              <a href={quoteHeader.pdfUrl} target="_blank" rel="noreferrer"
-                style={{display:"inline-flex",alignItems:"center",gap:6,background:C.card,
-                  border:`1px solid ${C.accent}`,borderRadius:8,padding:"8px 16px",
-                  fontSize:12,color:C.accent,fontWeight:700,textDecoration:"none",whiteSpace:"nowrap",flexShrink:0}}>
-                &#128196; View Original PDF
+            {(pdfPreview||quoteHeader.pdfUrl)&&(
+              <a href={quoteHeader.pdfUrl||'#'} target={quoteHeader.pdfUrl?"_blank":"_self"} rel="noreferrer"
+                style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,flexShrink:0,textDecoration:"none"}}>
+                {pdfPreview
+                  ?<img src={pdfPreview} style={{width:90,borderRadius:6,border:`1px solid ${C.accent}`,cursor:"pointer"}} title="View original PDF"/>
+                  :<div style={{width:90,height:120,borderRadius:6,border:`1px solid ${C.accent}`,background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:32}}>📄</div>
+                }
+                <span style={{fontSize:10,color:C.accent,fontWeight:700}}>View PDF</span>
               </a>
             )}
           </div>
@@ -8122,7 +8147,9 @@ ${fullText.slice(0,12000)}`;
               </div>
             )}
           </div>
-          <div style={{textAlign:"right"}}>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+            <button onClick={()=>{setPhase('upload');setFile(null);setPdfPreview(null);setQuoteHeader(null);setLineItems([]);setQuoteDocId(null);setPushResult(null);setStatusMsg('');}}
+              style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Upload Another Quote</button>
             <button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Done</button>
           </div>
         </>)}
@@ -8305,7 +8332,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLo
         </div>
       </div>
     )}
-    {showSupplierQuotePLV&&<SupplierQuoteImportModal uid={uid} onClose={()=>setShowSupplierQuotePLV(false)}/>}
+    <SupplierQuoteImportModal show={showSupplierQuotePLV} uid={uid} onClose={()=>setShowSupplierQuotePLV(false)}/>
   </>);
 }
 
