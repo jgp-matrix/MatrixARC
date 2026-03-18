@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.72";
+const APP_VERSION="v1.17.73";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8360,7 +8360,7 @@ ${fullText.slice(0,12000)}`;
                         <div style={{fontSize:12,color:C.green,fontWeight:700,flexShrink:0}}>
                           {bc.unitCost!=null?`$${bc.unitCost.toFixed(2)}`:'—'}
                         </div>
-                        <button style={btn('#1a2a1a',C.green,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.green}`})}>
+                        <button onClick={e=>{e.stopPropagation();applyLink(bc);}} style={btn('#1a2a1a',C.green,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.green}`})}>
                           Link & Remember ✓
                         </button>
                       </div>
