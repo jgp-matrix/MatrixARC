@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.69";
+const APP_VERSION="v1.17.70";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7606,6 +7606,7 @@ function SupplierQuoteImportModal({uid,onClose,show}){
   const [savedQuotes,setSavedQuotes]=useState([]); // recent quotes from Firestore
   const [loadingQuotes,setLoadingQuotes]=useState(false);
   const [dupWarning,setDupWarning]=useState(null); // {existingDocId,existingSupplier,existingDate,parsedData,targetFile}
+  const [showRevisions,setShowRevisions]=useState(false);
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
@@ -7623,9 +7624,10 @@ function SupplierQuoteImportModal({uid,onClose,show}){
     e.preventDefault();
   }
 
-  // Load saved quotes from Firestore whenever modal opens
+  // Load saved quotes from Firestore whenever modal opens; auto-open most recent if idle
   useEffect(()=>{
     if(!show)return;
+    const currentPhase=phase; // capture at effect-run time
     setLoadingQuotes(true);
     fbDb.collection('supplierQuotes').where('importedBy','==',uid).limit(50).get()
       .then(snap=>{
@@ -7638,6 +7640,10 @@ function SupplierQuoteImportModal({uid,onClose,show}){
         });
         rows.sort((a,b)=>b.importedAt-a.importedAt);
         setSavedQuotes(rows);
+        // Auto-open most recent quote if modal is idle (not already showing a quote)
+        if(currentPhase==='upload'&&rows.length>0){
+          loadSavedQuote(rows[0].id);
+        }
       }).catch(e=>console.warn('Load saved quotes failed:',e)).finally(()=>setLoadingQuotes(false));
   },[show,uid]);
 
@@ -8331,9 +8337,42 @@ ${fullText.slice(0,12000)}`;
               ⚠ This quote will supersede the previous version — history is retained in the database.
             </div>
           )}
+          {(()=>{
+            const prevRevisions=savedQuotes.filter(q=>q.quoteId===quoteHeader?.quoteId&&q.id!==quoteDocId);
+            return prevRevisions.length>0&&showRevisions&&(
+              <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:10,display:"flex",flexDirection:"column",gap:6}}>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>Previous Revisions</div>
+                {prevRevisions.map(q=>(
+                  <div key={q.id} onClick={()=>{loadSavedQuote(q.id);setShowRevisions(false);}}
+                    style={{display:"flex",alignItems:"center",gap:10,padding:"7px 12px",background:C.card,border:`1px solid ${C.border}`,borderRadius:7,cursor:"pointer"}}
+                    onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
+                    onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                    <span style={{fontSize:13,color:C.muted}}>📋</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:700,color:C.text}}>
+                        #{q.quoteId}{q.revision&&<span style={{color:C.accent,marginLeft:6}}>Rev {q.revision}</span>}
+                      </div>
+                      <div style={{fontSize:11,color:C.muted}}>{q.importedAt?new Date(q.importedAt).toLocaleDateString():''}{q.jobName&&` · ${q.jobName}`}</div>
+                    </div>
+                    <span style={{fontSize:11,color:C.accent}}>View →</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
           <div style={{display:"flex",gap:10,justifyContent:"flex-end",alignItems:"center",flexWrap:"wrap"}}>
             <span style={{fontSize:12,color:C.muted,marginRight:"auto"}}>{approvedCount} item{approvedCount!==1?'s':''} will be updated in BC</span>
-            <button onClick={()=>{setPrecedingQuoteId(quoteDocId);setFile(null);setPdfPreview(null);setQuoteHeader(null);setLineItems([]);setQuoteDocId(null);setPhase('upload');setStatusMsg('');}}
+            {(()=>{
+              const prevRevisions=savedQuotes.filter(q=>q.quoteId===quoteHeader?.quoteId&&q.id!==quoteDocId);
+              return prevRevisions.length>0&&(
+                <button onClick={()=>setShowRevisions(v=>!v)}
+                  style={btn('#0d1a2a','#93c5fd',{fontSize:13,border:'1px solid #3b82f655',display:"flex",alignItems:"center",gap:6})}>
+                  📂 View Previous Revisions
+                  <span style={{background:'#3b82f644',borderRadius:10,padding:"0 7px",fontSize:11,fontWeight:800,color:'#93c5fd'}}>{prevRevisions.length}</span>
+                </button>
+              );
+            })()}
+            <button onClick={()=>{setPrecedingQuoteId(quoteDocId);setFile(null);setPdfPreview(null);setQuoteHeader(null);setLineItems([]);setQuoteDocId(null);setPhase('upload');setStatusMsg('');setShowRevisions(false);}}
               style={btn('#1a1200',C.yellow,{fontSize:13,border:`1px solid ${C.yellow}`})}>↑ Upload Revision</button>
             <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
             <button onClick={handlePush} disabled={approvedCount===0} style={btn(approvedCount>0?"#0d2a1a":C.card,approvedCount>0?C.green:C.muted,{fontSize:13,border:`1px solid ${approvedCount>0?C.green:C.border}`,opacity:approvedCount>0?1:0.5})}>
