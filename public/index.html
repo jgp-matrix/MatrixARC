@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.28";
+const APP_VERSION="v1.17.29";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6159,9 +6159,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         </td>
                       ):f==="_supplier"?(
                         <td key="_supplier" style={{padding:"3px 5px",width:"1%",whiteSpace:"nowrap",fontSize:11}}>
-                          {row.isLaborRow?"—":row.priceSource==="bc"&&row.bcVendorName?(
-                            <span style={{color:C.sub}}>{row.bcVendorName}</span>
-                          ):!readOnly&&bomVendorList.length>0?(
+                          {row.isLaborRow?"—":!readOnly&&bomVendorList.length>0?(
                             <select value={row.bcVendorName||""} onChange={e=>updateVendor(row.id,e.target.value)}
                               style={{background:"#0a0a12",border:`1px solid ${row.bcVendorName?C.border:C.accent+"66"}`,borderRadius:5,padding:"2px 4px",color:row.bcVendorName?C.text:C.muted,fontSize:11,cursor:"pointer",maxWidth:140}}>
                               <option value="" style={{background:"#0a0a12",color:C.muted}}>— Select —</option>
