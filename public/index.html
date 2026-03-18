@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.37";
+const APP_VERSION="v1.17.38";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7562,12 +7562,17 @@ Rules:
 
 PDF TEXT:
 ${fullText.slice(0,12000)}`;
-      const raw=await apiCall({model:"claude-sonnet-4-6",max_tokens:4000,messages:[{role:"user",content:prompt}]});
+      const raw=await apiCall({model:"claude-sonnet-4-6",max_tokens:8000,messages:[{role:"user",content:prompt}]});
       let parsed;
       try{
-        const m=raw.match(/\{[\s\S]*\}/);
-        parsed=JSON.parse(m?m[0]:raw);
-      }catch(e){throw new Error("AI returned invalid JSON. Try again.");}
+        // Strip markdown code fences if present, then extract outermost JSON object
+        const stripped=raw.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+        const m=stripped.match(/\{[\s\S]*\}/);
+        parsed=JSON.parse(m?m[0]:stripped);
+      }catch(e){
+        console.error("Quote parse raw response:",raw);
+        throw new Error("AI returned invalid JSON — the quote may be too long or in an unsupported format. Try again.");
+      }
       setStatusMsg('Saving to Firestore…');
       const{docId,lineItems:normalized}=await saveSupplierQuoteToFirestore(parsed,uid);
       setQuoteDocId(docId);
