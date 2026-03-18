@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.67";
+const APP_VERSION="v1.17.68";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8056,16 +8056,8 @@ ${fullText.slice(0,12000)}`;
             {/* Previously scanned quotes */}
             {savedQuotes.length>0&&(
               <div>
-                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                  <div style={{fontSize:12,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>
-                    Previously Scanned Quotes {loadingQuotes&&'…'}
-                  </div>
-                  {savedQuotes.length>1&&(
-                    <button onClick={deleteAllButLatest}
-                      style={{background:"none",border:`1px solid ${C.red}55`,color:C.red,borderRadius:6,padding:"2px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>
-                      🗑 Delete All But Latest
-                    </button>
-                  )}
+                <div style={{fontSize:12,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>
+                  Previously Scanned Quotes {loadingQuotes&&'…'}
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:260,overflowY:"auto"}}>
                   {savedQuotes.map(q=>(
