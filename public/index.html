@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.74";
+const APP_VERSION="v1.17.75";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7642,6 +7642,24 @@ function SupplierQuoteImportModal({uid,onClose,show}){
     e.preventDefault();
   }
 
+  // Apply a BC item link — component-level so closure is always fresh
+  async function applyLink(bcItem){
+    const idx=linkingIdx;
+    if(idx===null)return;
+    const item=lineItems[idx];
+    if(!item)return;
+    try{
+      await sqSaveCrossing(uid,item.partNumber,bcItem);
+      const updated=lineItems.map((it,i)=>i===idx
+        ?{...it,bcItemId:bcItem.id,bcItemDescription:bcItem.displayName||'',
+            bcCurrentCost:bcItem.unitCost??null,matchStatus:'manually_matched',approved:true}
+        :it);
+      setLineItems(updated);
+      if(quoteDocId)await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updated});
+      setLinkingIdx(null);setLinkQuery('');setLinkResults([]);
+    }catch(e){setStatusMsg('Link failed: '+e.message);}
+  }
+
   // Debounced BC item search for the Link panel
   function onLinkQueryChange(val){
     setLinkQuery(val);
@@ -8326,18 +8344,6 @@ ${fullText.slice(0,12000)}`;
           {linkingIdx!==null&&(()=>{
             const item=lineItems[linkingIdx];
             if(!item)return null;
-            async function applyLink(bcItem){
-              // Save crossing for future auto-matching
-              await sqSaveCrossing(uid,item.partNumber,bcItem);
-              // Update line item in state and Firestore
-              const updated=lineItems.map((it,idx)=>idx===linkingIdx
-                ?{...it,bcItemId:bcItem.id,bcItemDescription:bcItem.displayName||'',
-                    bcCurrentCost:bcItem.unitCost??null,matchStatus:'manually_matched',approved:true}
-                :it);
-              setLineItems(updated);
-              await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updated});
-              setLinkingIdx(null);setLinkQuery('');setLinkResults([]);
-            }
             return(
               <div style={{background:"#0f120f",border:`1px solid ${C.yellow}`,borderRadius:10,padding:16,display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
