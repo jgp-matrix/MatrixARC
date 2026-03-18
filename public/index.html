@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.41";
+const APP_VERSION="v1.17.42";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7519,6 +7519,7 @@ function SupplierQuoteImportModal({uid,onClose}){
   const [createError,setCreateError]=useState('');
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
+  const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
 
   async function handleParse(){
     if(!file)return;
@@ -7531,6 +7532,7 @@ function SupplierQuoteImportModal({uid,onClose}){
       const buf=await file.arrayBuffer();
       const pdf=await pdfjs.getDocument({data:buf}).promise;
       let fullText='';
+      parseMetaRef.current.numPages=pdf.numPages;
       for(let pg=1;pg<=pdf.numPages;pg++){
         setStatusMsg(`Reading page ${pg} of ${pdf.numPages}…`);
         setParseProgress(Math.round((pg/pdf.numPages)*15));
@@ -7538,18 +7540,22 @@ function SupplierQuoteImportModal({uid,onClose}){
         const tc=await page.getTextContent();
         fullText+=tc.items.map(i=>i.str).join(' ')+'\n';
       }
-      // AI phase: 15→64% — exponential decay so bar keeps moving regardless of actual duration
+      // AI phase: 15→64% — exponential decay (never stalls), ETA uses multi-stage model
       setStatusMsg('Sending to AI for parsing…');
       setParseProgress(15);
-      const AI_HALFLIFE_MS=10000; // reaches ~50% of range in 10s, keeps creeping after
-      const AI_START=Date.now();
+      const AI_PRIOR_SEC=20, SAVE_EST_SEC=2, MATCH_PER_ITEM_SEC=1.2;
+      const AI_HALFLIFE_MS=13000; // asymptotes, never hits ceiling
+      parseMetaRef.current.aiStartMs=Date.now();
       aiTimerRef.current=setInterval(()=>{
-        const elapsed=Date.now()-AI_START;
-        const frac=1-Math.exp(-elapsed/AI_HALFLIFE_MS);
-        setParseProgress(Math.round(15+frac*49)); // asymptotes toward 64, never stalls
-        const etaSec=Math.max(0,Math.round((AI_HALFLIFE_MS*1.5-elapsed)/1000));
-        setParseEta(etaSec>2?`~${etaSec}s remaining`:null);
-      },250);
+        const meta=parseMetaRef.current;
+        const elapsed=(Date.now()-meta.aiStartMs)/1000;
+        const frac=1-Math.exp(-elapsed*1000/AI_HALFLIFE_MS);
+        setParseProgress(Math.round(15+frac*49));
+        // ETA = remaining AI (linear prior, floor 0) + save + match estimate
+        const aiRemaining=Math.max(0,AI_PRIOR_SEC-elapsed);
+        const totalEta=Math.round(aiRemaining+SAVE_EST_SEC+meta.pricedCount*MATCH_PER_ITEM_SEC);
+        setParseEta(totalEta>3?`~${totalEta}s remaining`:null);
+      },300);
       const prompt=`You are parsing a supplier quote PDF. Extract ALL information into this exact JSON structure. Return ONLY valid JSON, no commentary.
 
 {
@@ -7612,6 +7618,8 @@ ${fullText.slice(0,12000)}`;
       }
       const matched=[...normalized];
       const pricedItems=matched.filter(i=>i.isPriced&&i.partNumber);
+      parseMetaRef.current.pricedCount=pricedItems.length;
+      parseMetaRef.current.matchStartMs=Date.now();
       let matchedSoFar=0;
       for(let i=0;i<matched.length;i++){
         const item=matched[i];
@@ -7620,6 +7628,12 @@ ${fullText.slice(0,12000)}`;
         setStatusMsg(`Matching item ${matchedSoFar} of ${pricedItems.length}…`);
         const pct=pricedItems.length>0?Math.round(72+(matchedSoFar/pricedItems.length)*26):98;
         setParseProgress(pct);
+        // ETA based on observed rate (fall back to 1.2s/item prior before we have data)
+        const elapsedMatch=(Date.now()-parseMetaRef.current.matchStartMs)/1000;
+        const ratePerItem=matchedSoFar>1?elapsedMatch/matchedSoFar:1.2;
+        const remaining=pricedItems.length-matchedSoFar;
+        const matchEta=Math.round(remaining*ratePerItem);
+        setParseEta(matchEta>1?`~${matchEta}s remaining`:null);
         const bc=await bcLookupItemForQuote(item.partNumber);
         if(bc){
           matched[i]={...item,bcItemId:bc.id,bcItemDescription:bc.displayName,bcCurrentCost:bc.unitCost,matchStatus:'auto_matched'};
@@ -7776,14 +7790,12 @@ ${fullText.slice(0,12000)}`;
             <div style={{display:"flex",gap:0,marginTop:20,position:"relative"}}>
               <div style={{position:"absolute",top:10,left:"12.5%",right:"12.5%",height:2,background:C.border,zIndex:0}}/>
               <div style={{position:"absolute",top:10,left:"12.5%",height:2,width:`${Math.min(100,Math.max(0,(parseProgress-0)/100*100))}%`,background:C.accent,zIndex:1,transition:"width 0.3s ease"}}/>
-              {[
-                {label:"Extract",pct:0},
-                {label:"AI Parse",pct:15},
-                {label:"Save",pct:65},
-                {label:"Match BC",pct:72},
-              ].map(({label,pct},i)=>{
-                const done=parseProgress>pct+5;
-                const active=parseProgress>=pct&&parseProgress<=pct+30;
+              {(()=>{
+                const steps=[{label:"Extract",pct:0},{label:"AI Parse",pct:15},{label:"Save",pct:65},{label:"Match BC",pct:72}];
+                return steps.map(({label,pct},i)=>{
+                const nextPct=i<steps.length-1?steps[i+1].pct:101;
+                const done=parseProgress>=nextPct;
+                const active=parseProgress>=pct&&parseProgress<nextPct;
                 return(
                   <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:6,position:"relative",zIndex:2}}>
                     <div style={{width:20,height:20,borderRadius:"50%",border:`2px solid ${done||active?C.accent:C.border}`,background:done?C.accent:C.card,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:done?"#fff":active?C.accent:C.muted,fontWeight:700,transition:"all 0.3s"}}>
@@ -7792,7 +7804,7 @@ ${fullText.slice(0,12000)}`;
                     <div style={{fontSize:10,color:done||active?C.text:C.muted,textAlign:"center",fontWeight:done||active?600:400}}>{label}</div>
                   </div>
                 );
-              })}
+              });})()}
             </div>
           </div>
         )}
