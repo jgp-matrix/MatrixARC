@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.30";
+const APP_VERSION="v1.17.31";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5879,7 +5879,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   }
 
   return(
-    <div className="fade-in" style={{...card(),border:`2px solid ${C.accent}`}}>
+    <div className="fade-in" style={{...card(),border:`2px solid ${C.accent}`,minWidth:0}}>
       {/* Combined header + title block */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
         <div style={{background:C.accentDim,color:C.accent,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:800,letterSpacing:1,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",justifyContent:"center"}}>LINE {idx+1}</div>
@@ -6285,7 +6285,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                             </div>
                           )}
                           {f==="partNumber"&&bcFuzzySuggestions[row.id]&&!readOnly&&(
-                            <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}44`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto"}}>
+                            <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}44`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto",maxWidth:360,minWidth:200}}>
                               <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
                                 <div style={{fontSize:10,color:C.accent,fontWeight:700,flex:1}}>BC FUZZY MATCHES</div>
                                 <button onClick={()=>setBcFuzzySuggestions(prev=>{const next={...prev};delete next[row.id];return next;})}
