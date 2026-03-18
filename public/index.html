@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.82";
+const APP_VERSION="v1.17.83";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8327,9 +8327,14 @@ ${fullText.slice(0,12000)}`;
   }
 
   const approvedCount=lineItems.filter(i=>i.isPriced&&i.bcItemId&&i.approved&&(i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched')).length;
-  // Items that are approved+matched but haven't been pushed yet (or errored)
-  const unpushedCount=lineItems.filter(i=>i.isPriced&&i.bcItemId&&i.approved&&(i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched')&&i.priceUpdateStatus!=='pushed').length;
-  const allPushed=quoteHeader?.status==='pushed_to_bc'&&unpushedCount===0;
+  // Trust the quote-level status as the authoritative push record.
+  // Only surface a push button again if the user manually linked NEW items after the push
+  // (those will have matchStatus==='manually_matched' AND priceUpdateStatus===null post-push).
+  const allPushed=quoteHeader?.status==='pushed_to_bc';
+  const newlyLinkedCount=allPushed
+    ?lineItems.filter(i=>i.isPriced&&i.bcItemId&&i.approved&&i.matchStatus==='manually_matched'&&i.priceUpdateStatus===null).length
+    :0;
+  const unpushedCount=allPushed?newlyLinkedCount:approvedCount;
   const matchedCount=lineItems.filter(i=>i.matchStatus==='auto_matched').length;
   const pricedCount=lineItems.filter(i=>i.isPriced).length;
 
@@ -8783,10 +8788,10 @@ ${fullText.slice(0,12000)}`;
             <button onClick={()=>{setPrecedingQuoteId(quoteDocId);setFile(null);setPdfPreview(null);setQuoteHeader(null);setLineItems([]);setQuoteDocId(null);setPhase('upload');setStatusMsg('');setShowRevisions(false);}}
               style={btn('#1a1200',C.yellow,{fontSize:13,border:`1px solid ${C.yellow}`})}>↑ Upload Revision</button>
             <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
-            {allPushed
+            {allPushed&&newlyLinkedCount===0
               ?<span style={{fontSize:12,color:C.green,fontWeight:700,padding:"5px 14px",background:C.greenDim,border:`1px solid ${C.green}55`,borderRadius:8}}>✓ All Prices Current in BC</span>
               :<button onClick={handlePush} disabled={unpushedCount===0} style={btn(unpushedCount>0?"#0d2a1a":C.card,unpushedCount>0?C.green:C.muted,{fontSize:13,border:`1px solid ${unpushedCount>0?C.green:C.border}`,opacity:unpushedCount>0?1:0.5})}>
-                {bcConnecting?'Connecting…':`Push ${unpushedCount} Price${unpushedCount!==1?'s':''} to BC →`}
+                {bcConnecting?'Connecting…':allPushed?`Push ${newlyLinkedCount} New Link${newlyLinkedCount!==1?'s':''} to BC →`:`Push ${unpushedCount} Price${unpushedCount!==1?'s':''} to BC →`}
               </button>
             }
           </div>
