@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.70";
+const APP_VERSION="v1.17.71";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1578,6 +1578,19 @@ async function sqSavePushAudit(quoteDocId,supplier,quoteId,userId,auditItems){
   await fbDb.collection('bcPriceUpdates').add({quoteId,supplier,quoteDocId,
     pushedAt:firebase.firestore.FieldValue.serverTimestamp(),pushedBy:userId,items:auditItems});
 }
+// Supplier quote part-number crossings — maps supplier PN → BC item
+// Path: users/{uid}/config/sqCrossings
+async function sqGetCrossings(uid){
+  try{const snap=await fbDb.doc(`users/${uid}/config/sqCrossings`).get();return snap.exists?snap.data():{};
+  }catch(e){return{};}
+}
+async function sqSaveCrossing(uid,supplierPN,bcItem){
+  const key=supplierPN.toLowerCase().trim();
+  await fbDb.doc(`users/${uid}/config/sqCrossings`).set(
+    {[key]:{bcItemId:bcItem.id,bcItemNumber:bcItem.number,bcItemDescription:bcItem.displayName||'',bcUnitCost:bcItem.unitCost??null}},
+    {merge:true});
+}
+
 // Adaptive AI parse time learning — stored in Firestore users/{uid}/config/sqLearning
 async function sqGetAiPrior(uid){
   try{
@@ -7607,6 +7620,10 @@ function SupplierQuoteImportModal({uid,onClose,show}){
   const [loadingQuotes,setLoadingQuotes]=useState(false);
   const [dupWarning,setDupWarning]=useState(null); // {existingDocId,existingSupplier,existingDate,parsedData,targetFile}
   const [showRevisions,setShowRevisions]=useState(false);
+  const [linkingIdx,setLinkingIdx]=useState(null); // row index being manually linked
+  const [linkQuery,setLinkQuery]=useState('');
+  const [linkResults,setLinkResults]=useState([]);
+  const [linkSearching,setLinkSearching]=useState(false);
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
@@ -7856,6 +7873,7 @@ ${fullText.slice(0,12000)}`;
         await acquireBcToken(false);
         setBcConnecting(false);
       }
+      const crossings=await sqGetCrossings(uid);
       const matched=[...normalized];
       const pricedItems=matched.filter(i=>i.isPriced&&i.partNumber);
       parseMetaRef.current.pricedCount=pricedItems.length;
@@ -7873,9 +7891,20 @@ ${fullText.slice(0,12000)}`;
         const remaining=pricedItems.length-matchedSoFar;
         const matchEta=Math.round(remaining*ratePerItem);
         setParseEta(matchEta>1?`~${matchEta}s remaining`:null);
-        const bc=await bcLookupItemForQuote(item.partNumber);
-        if(bc){
-          matched[i]={...item,bcItemId:bc.id,bcItemDescription:bc.displayName,bcCurrentCost:bc.unitCost,matchStatus:'auto_matched'};
+        // Check saved crossings first
+        const crossingKey=item.partNumber.toLowerCase().trim();
+        const crossing=crossings[crossingKey];
+        if(crossing){
+          // Get fresh cost from BC using the crossed item number
+          const bc=await bcLookupItemForQuote(crossing.bcItemNumber);
+          matched[i]={...item,bcItemId:bc?.id||crossing.bcItemId,
+            bcItemDescription:bc?.displayName||crossing.bcItemDescription,
+            bcCurrentCost:bc?.unitCost??crossing.bcUnitCost,matchStatus:'auto_matched'};
+        }else{
+          const bc=await bcLookupItemForQuote(item.partNumber);
+          if(bc){
+            matched[i]={...item,bcItemId:bc.id,bcItemDescription:bc.displayName,bcCurrentCost:bc.unitCost,matchStatus:'auto_matched'};
+          }
         }
       }
       setParseProgress(100);
@@ -8234,13 +8263,17 @@ ${fullText.slice(0,12000)}`;
                               color:item.approved?C.green:C.red,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
                             }}>{item.approved?'Approved ✓':'Skip'}</button>
-                          :<button onClick={async()=>{
-                              setNewItemIdx(i);
+                          :<div style={{display:"flex",gap:4}}>
+                            <button onClick={()=>{setLinkingIdx(i);setLinkQuery(item.partNumber||'');setLinkResults([]);setNewItemIdx(null);}} style={{
+                              background:'#1a1200',border:`1px solid ${C.yellow}`,color:C.yellow,
+                              borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
+                            }}>🔗 Link</button>
+                            <button onClick={async()=>{
+                              setNewItemIdx(i);setLinkingIdx(null);
                               setNewItemForm(f=>({...f,itemNo:item.partNumber||'',description:item.description||item.rawPartNumber||'',
                                 cost:item.price!=null?String(item.price):'',category:'PARTS',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT'}));
                               setCreateError('');setAutoVendor({vendorNo:'',vendorName:''});
                               const cfg=await loadBcCfg();
-                              // Auto-match vendor from supplier name
                               const supplierName=quoteHeader?.supplier||'';
                               if(supplierName&&cfg.vendors.length){
                                 const map=await sqGetVendorMap(uid);
@@ -8250,9 +8283,10 @@ ${fullText.slice(0,12000)}`;
                                 if(matchedNo){setAutoVendor({vendorNo:matchedNo,vendorName:matchedName});setNewItemForm(f=>({...f,vendor:matchedNo}));}
                               }
                             }} style={{
-                              background:'#1a1a00',border:`1px solid ${C.yellow}`,color:C.yellow,
-                              borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
-                            }}>+ New BC Item</button>
+                              background:'#1a1a00',border:`1px solid #6060a0`,color:C.muted,
+                              borderRadius:12,padding:"2px 8px",fontSize:11,cursor:"pointer"
+                            }}>+ New</button>
+                          </div>
                         }
                       </td>
                     </tr>
@@ -8261,6 +8295,76 @@ ${fullText.slice(0,12000)}`;
               </tbody>
             </table>
           </div>
+          {/* Link to BC Panel */}
+          {linkingIdx!==null&&(()=>{
+            const item=lineItems[linkingIdx];
+            if(!item)return null;
+            async function runLinkSearch(q){
+              if(!q||q.trim().length<2)return;
+              setLinkSearching(true);setLinkResults([]);
+              const res=await bcSearchItems(q,{field:"both",top:12});
+              setLinkResults(res.items||[]);
+              setLinkSearching(false);
+            }
+            async function applyLink(bcItem){
+              // Save crossing for future auto-matching
+              await sqSaveCrossing(uid,item.partNumber,bcItem);
+              // Update line item in state and Firestore
+              const updated=lineItems.map((it,idx)=>idx===linkingIdx
+                ?{...it,bcItemId:bcItem.id,bcItemDescription:bcItem.displayName||'',
+                    bcCurrentCost:bcItem.unitCost??null,matchStatus:'manually_matched',approved:true}
+                :it);
+              setLineItems(updated);
+              await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updated});
+              setLinkingIdx(null);setLinkQuery('');setLinkResults([]);
+            }
+            return(
+              <div style={{background:"#0f120f",border:`1px solid ${C.yellow}`,borderRadius:10,padding:16,display:"flex",flexDirection:"column",gap:10}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.yellow}}>
+                    🔗 Link to BC Item — <span style={{fontFamily:"monospace",color:C.text}}>{item.mfr?`${item.mfr} `:''}{item.partNumber}</span>
+                    <span style={{fontSize:11,color:C.muted,marginLeft:8,fontFamily:"normal"}}>Match will be remembered for future quotes</span>
+                  </div>
+                  <button onClick={()=>{setLinkingIdx(null);setLinkResults([]);}} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer",lineHeight:1}}>×</button>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <input value={linkQuery} onChange={e=>setLinkQuery(e.target.value)}
+                    onKeyDown={e=>{if(e.key==='Enter')runLinkSearch(linkQuery);}}
+                    placeholder="Search BC part number or description…"
+                    autoFocus
+                    style={{flex:1,background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"8px 10px",color:C.text,fontSize:13,outline:"none"}}/>
+                  <button onClick={()=>runLinkSearch(linkQuery)} disabled={linkSearching}
+                    style={btn(C.accent,"#fff",{fontSize:13,padding:"8px 16px",opacity:linkSearching?0.6:1})}>
+                    {linkSearching?'…':'Search'}
+                  </button>
+                </div>
+                {linkResults.length>0&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:220,overflowY:"auto"}}>
+                    {linkResults.map(bc=>(
+                      <div key={bc.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:C.card,border:`1px solid ${C.border}`,borderRadius:7,cursor:"pointer"}}
+                        onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
+                        onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}
+                        onClick={()=>applyLink(bc)}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontFamily:"monospace",fontWeight:700,color:C.accent,fontSize:13}}>{bc.number}</div>
+                          <div style={{fontSize:11,color:C.sub,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bc.displayName||'—'}</div>
+                        </div>
+                        <div style={{fontSize:12,color:C.green,fontWeight:700,flexShrink:0}}>
+                          {bc.unitCost!=null?`$${bc.unitCost.toFixed(2)}`:'—'}
+                        </div>
+                        <button style={btn('#1a2a1a',C.green,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.green}`})}>
+                          Link & Remember ✓
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {linkResults.length===0&&!linkSearching&&linkQuery.length>=2&&(
+                  <div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"8px 0"}}>No results — try a shorter search term</div>
+                )}
+              </div>
+            );
+          })()}
           {/* New BC Item Form */}
           {newItemIdx!==null&&(()=>{const item=lineItems[newItemIdx];return item?(
             <div style={{background:"#0f1a0f",border:`1px solid ${C.accent}`,borderRadius:10,padding:16,display:"flex",flexDirection:"column",gap:12}}>
