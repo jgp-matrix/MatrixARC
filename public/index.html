@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.46";
+const APP_VERSION="v1.17.47";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -546,7 +546,7 @@ async function ensureMsal(){
   try{
     _msalInstance=new msal.PublicClientApplication({
       auth:{clientId:BC_CLIENT_ID,authority:`https://login.microsoftonline.com/${BC_TENANT}`,redirectUri:window.location.origin},
-      cache:{cacheLocation:"localStorage"}
+      cache:{cacheLocation:"sessionStorage"}
     });
     await _msalInstance.initialize();
     _msalReady=true;
@@ -588,9 +588,14 @@ function isReadOnly(){return _appCtx.role==="view";}
 function isAdmin(){return !!_appCtx.companyId&&_appCtx.role==="admin";}
 
 // ── TOOLTIPS ──
-let _tooltipsEnabled=(()=>{const v=localStorage.getItem('arc_tooltips');return v===null?true:v!=='false';})();
-if(!_tooltipsEnabled)document.body.classList.add('no-tips');
-function setTooltipsEnabled(v){_tooltipsEnabled=v;localStorage.setItem('arc_tooltips',v?'true':'false');document.body.classList.toggle('no-tips',!v);}
+let _tooltipsEnabled=true; // default; loaded from Firestore after auth
+function setTooltipsEnabled(v){
+  _tooltipsEnabled=v;
+  document.body.classList.toggle('no-tips',!v);
+  const uid=fbAuth.currentUser?.uid;
+  if(uid)fbDb.collection('users').doc(uid).collection('config').doc('preferences')
+    .set({tooltipsEnabled:v},{merge:true}).catch(()=>{});
+}
 
 // ── PRICING CONFIG (loaded from Firestore) ──
 let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20};
@@ -1559,22 +1564,26 @@ async function sqSavePushAudit(quoteDocId,supplier,quoteId,userId,auditItems){
   await fbDb.collection('bcPriceUpdates').add({quoteId,supplier,quoteDocId,
     pushedAt:firebase.firestore.FieldValue.serverTimestamp(),pushedBy:userId,items:auditItems});
 }
-// Adaptive AI parse time learning — stores actual durations in localStorage
-function sqGetAiPrior(){
+// Adaptive AI parse time learning — stored in Firestore users/{uid}/config/sqLearning
+async function sqGetAiPrior(uid){
   try{
-    const arr=JSON.parse(localStorage.getItem('sqAiParseTimes')||'[]');
-    if(!arr.length)return 22; // cold-start default
+    const snap=await fbDb.collection('users').doc(uid).collection('config').doc('sqLearning').get();
+    if(!snap.exists)return 22;
+    const arr=snap.data().aiParseTimes||[];
+    if(!arr.length)return 22;
     const recent=arr.slice(-8);
     const avg=recent.reduce((a,b)=>a+b,0)/recent.length;
-    return Math.max(10,Math.round(avg*1.15)); // avg + 15% buffer, min 10s
+    return Math.max(10,Math.round(avg*1.15)); // rolling avg + 15% buffer
   }catch{return 22;}
 }
-function sqRecordAiTime(seconds){
+async function sqRecordAiTime(uid,seconds){
   try{
-    const arr=JSON.parse(localStorage.getItem('sqAiParseTimes')||'[]');
+    const ref=fbDb.collection('users').doc(uid).collection('config').doc('sqLearning');
+    const snap=await ref.get();
+    const arr=snap.exists?(snap.data().aiParseTimes||[]):[];
     arr.push(Math.round(seconds));
-    localStorage.setItem('sqAiParseTimes',JSON.stringify(arr.slice(-10))); // keep last 10
-  }catch{}
+    await ref.set({aiParseTimes:arr.slice(-10)},{merge:true}); // keep last 10 runs
+  }catch(e){console.warn('sqRecordAiTime:',e);}
 }
 
 // ── IMAGE RESIZE ──
@@ -7544,6 +7553,8 @@ function SupplierQuoteImportModal({uid,onClose}){
     if(!_apiKey){setStatusMsg('API key not set — open Settings to add your Anthropic key.');return;}
     setPhase('parsing');setStatusMsg('Extracting text from PDF…');
     setParseProgress(0);setParseEta(null);
+    // Load learned AI prior from Firestore concurrently with PDF init
+    const aiPriorPromise=sqGetAiPrior(uid);
     try{
       await window.pdfjsReady;
       const pdfjs=window._pdfjs;
@@ -7562,7 +7573,7 @@ function SupplierQuoteImportModal({uid,onClose}){
       setStatusMsg('Sending to AI for parsing…');
       setParseProgress(15);
       const SAVE_EST_SEC=2, MATCH_PER_ITEM_SEC=1.2;
-      const AI_PRIOR_SEC=sqGetAiPrior(); // learned from past runs
+      const AI_PRIOR_SEC=await aiPriorPromise; // learned from Firestore (already fetching)
       parseMetaRef.current.aiStartMs=Date.now();
       parseMetaRef.current.aiPriorSec=AI_PRIOR_SEC;
       aiTimerRef.current=setInterval(()=>{
@@ -7612,7 +7623,7 @@ PDF TEXT:
 ${fullText.slice(0,12000)}`;
       const raw=await apiCall({model:"claude-sonnet-4-6",max_tokens:8000,messages:[{role:"user",content:prompt}]});
       const aiElapsed=(Date.now()-parseMetaRef.current.aiStartMs)/1000;
-      sqRecordAiTime(aiElapsed); // learn from this run
+      sqRecordAiTime(uid,aiElapsed).catch(()=>{}); // fire-and-forget, learn from this run
       clearInterval(aiTimerRef.current);aiTimerRef.current=null;
       setParseProgress(65);setParseEta(null);
       let parsed;
@@ -9301,6 +9312,17 @@ function App({user}){
   const [connStatus,setConnStatus]=useState("good"); // "good"|"slow"|"offline"
   const bgTasks=useBgTasks();
   const bgRunning=Object.values(bgTasks).filter(t=>t.status==="running");
+
+  // Load user preferences from Firestore on mount
+  useEffect(()=>{
+    fbDb.collection('users').doc(user.uid).collection('config').doc('preferences').get()
+      .then(snap=>{
+        if(snap.exists){
+          const v=snap.data().tooltipsEnabled;
+          if(v!==undefined&&v!==_tooltipsEnabled){_tooltipsEnabled=v;document.body.classList.toggle('no-tips',!v);}
+        }
+      }).catch(()=>{});
+  },[]);
 
   // Periodic BC connectivity ping every 5 minutes
   useEffect(()=>{
