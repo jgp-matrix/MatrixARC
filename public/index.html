@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.48";
+const APP_VERSION="v1.17.49";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7540,10 +7540,10 @@ function SupplierQuoteImportModal({uid,onClose}){
   const [parseProgress,setParseProgress]=useState(0);
   const [parseEta,setParseEta]=useState(null);
   const [newItemIdx,setNewItemIdx]=useState(null);
-  const [newItemForm,setNewItemForm]=useState({type:'Inventory',itemNo:'',description:'',uom:'EA'});
+  const [newItemForm,setNewItemForm]=useState({itemNo:'',description:'',cost:'',category:'',uom:'',vendor:'',genGroup:'',invGroup:''});
   const [creatingItem,setCreatingItem]=useState(false);
   const [createError,setCreateError]=useState('');
-  const [bcCfg,setBcCfg]=useState({uoms:[],loaded:false,loading:false});
+  const [bcCfg,setBcCfg]=useState({uoms:[],categories:[],vendors:[],genGroups:[],invGroups:[],loaded:false,loading:false});
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
@@ -7726,50 +7726,40 @@ ${fullText.slice(0,12000)}`;
   async function loadBcCfg(){
     if(bcCfg.loaded||bcCfg.loading)return;
     setBcCfg(c=>({...c,loading:true}));
-    try{
-      if(!_bcToken)await acquireBcToken(false);
-      const compId=await bcGetCompanyId();
-      if(!compId){setBcCfg(c=>({...c,loading:false}));return;}
-      const h={"Authorization":`Bearer ${_bcToken}`};
-      const r=await fetch(`${BC_API_BASE}/companies(${compId})/unitsOfMeasure?$select=code,displayName&$top=200`,{headers:h});
-      const uoms=r.ok?(await r.json()).value||[]:[];
-      setBcCfg({uoms,loaded:true,loading:false});
-    }catch(e){console.warn('loadBcCfg:',e);setBcCfg(c=>({...c,loading:false}));}
+    if(!_bcToken)await acquireBcToken(false);
+    const [categories,uoms,vendors,genGroups,invGroups]=await Promise.all([
+      bcListItemCategories(),bcListUnitsOfMeasure(),bcListVendors(),
+      bcListGenProdPostingGroups(),bcListInventoryPostingGroups(),
+    ]);
+    setBcCfg({categories,uoms,vendors,genGroups,invGroups,loaded:true,loading:false});
   }
 
   async function handleCreateInBC(){
     const item=lineItems[newItemIdx];
     if(!item)return;
-    if(!_bcToken){
-      const tok=await acquireBcToken(true);
-      if(!tok){setCreateError('BC sign-in cancelled.');return;}
-    }
+    if(!_bcToken){const tok=await acquireBcToken(true);if(!tok){setCreateError('BC sign-in cancelled.');return;}}
     setCreatingItem(true);setCreateError('');
     try{
-      const compId=await bcGetCompanyId();
-      if(!compId)throw new Error('No BC company found');
-      // BC API v2.0 only accepts these fields on item create; posting groups must be set inside BC
-      const body={displayName:newItemForm.description||item.description||item.rawPartNumber,type:newItemForm.type,unitCost:item.price??0};
-      if(newItemForm.itemNo)body.number=newItemForm.itemNo;
-      if(newItemForm.uom)body.baseUnitOfMeasureCode=newItemForm.uom;
-      const r=await fetch(`${BC_API_BASE}/companies(${compId})/items`,{
-        method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-        body:JSON.stringify(body)});
-      if(!r.ok){
-        let msg=`BC error ${r.status}`;
-        try{const e=await r.json();msg=e?.error?.message||msg;}catch(x){}
-        throw new Error(msg);
-      }
-      const created=await r.json();
-      // Update line item with new BC item info
-      setLineItems(prev=>prev.map((it,i)=>i===newItemIdx?{...it,
-        bcItemId:created.id,bcItemDescription:newItemForm.description||item.description,
-        bcCurrentCost:created.unitCost??null,matchStatus:'auto_matched',approved:true}:it));
-      // Persist to Firestore
-      const updated=lineItems.map((it,i)=>i===newItemIdx?{...it,bcItemId:created.id,
-        bcItemDescription:newItemForm.description||item.description,bcCurrentCost:created.unitCost??null,
-        matchStatus:'auto_matched',approved:true}:it);
-      await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updated});
+      // Use same bcCreateItem as BC Item Browser — handles OData PATCH for posting groups
+      const created=await bcCreateItem({
+        number:newItemForm.itemNo||undefined,
+        displayName:newItemForm.description||item.description||item.rawPartNumber,
+        unitCost:newItemForm.cost!==''?newItemForm.cost:item.price,
+        itemCategoryCode:newItemForm.category||undefined,
+        baseUnitOfMeasureCode:newItemForm.uom||undefined,
+        vendorNo:newItemForm.vendor||undefined,
+        genProdPostingGroup:newItemForm.genGroup||undefined,
+        inventoryPostingGroup:newItemForm.invGroup||undefined,
+      });
+      // Look up the newly created item to get its GUID
+      const bcItem=await bcLookupItemForQuote(created.number);
+      const bcId=bcItem?.id||null;
+      const desc=created.displayName||newItemForm.description||item.description;
+      const cost=created.unitCost??null;
+      const updatedItems=lineItems.map((it,i)=>i===newItemIdx
+        ?{...it,bcItemId:bcId,bcItemDescription:desc,bcCurrentCost:cost,matchStatus:'auto_matched',approved:true}:it);
+      setLineItems(updatedItems);
+      await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updatedItems});
       setNewItemIdx(null);setCreateError('');
     }catch(e){setCreateError(e.message);}
     setCreatingItem(false);
@@ -7916,7 +7906,7 @@ ${fullText.slice(0,12000)}`;
                               color:item.approved?C.green:C.red,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
                             }}>{item.approved?'Approved ✓':'Skip'}</button>
-                          :<button onClick={()=>{setNewItemIdx(i);setNewItemForm(f=>({...f,itemNo:item.partNumber||'',description:item.description||item.rawPartNumber||''}));setCreateError('');loadBcCfg();}} style={{
+                          :<button onClick={()=>{setNewItemIdx(i);setNewItemForm(f=>({...f,itemNo:item.partNumber||'',description:item.description||item.rawPartNumber||'',cost:item.price!=null?String(item.price):'',category:'',uom:'',vendor:'',genGroup:'',invGroup:''}));setCreateError('');loadBcCfg();}} style={{
                               background:'#1a1a00',border:`1px solid ${C.yellow}`,color:C.yellow,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
                             }}>+ New BC Item</button>
@@ -7935,32 +7925,35 @@ ${fullText.slice(0,12000)}`;
                 <div style={{fontSize:13,fontWeight:700,color:C.accent}}>Create New BC Item — {item.mfr?`${item.mfr} `:''}{item.partNumber||item.rawPartNumber}</div>
                 <button onClick={()=>{setNewItemIdx(null);setCreateError('');}} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer",lineHeight:1}}>×</button>
               </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,fontSize:12}}>
-                {(()=>{
-                  const inp=(key,placeholder)=><input value={newItemForm[key]} placeholder={placeholder||''} onChange={e=>setNewItemForm(p=>({...p,[key]:e.target.value}))} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"5px 8px",fontSize:12,width:"100%",boxSizing:"border-box"}}/>;
-                  const row=(label,span,content)=>(
-                    <div style={{gridColumn:`span ${span}`,display:"flex",flexDirection:"column",gap:4}}>
-                      <label style={{color:C.muted,fontSize:10,textTransform:"uppercase",letterSpacing:0.5}}>{label}</label>
-                      {content}
-                    </div>
-                  );
-                  const uomSel=bcCfg.uoms.length>0
-                    ?<select value={newItemForm.uom} onChange={e=>setNewItemForm(p=>({...p,uom:e.target.value}))} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"5px 8px",fontSize:12,width:"100%",boxSizing:"border-box"}}>
-                        <option value="">— select —</option>
-                        {bcCfg.uoms.map(o=><option key={o.code} value={o.code}>{o.code}{o.displayName?` — ${o.displayName}`:''}</option>)}
-                      </select>
-                    :inp('uom','EA');
-                  return[
-                    row("Item No. (leave blank — BC auto-generates)",2,inp('itemNo')),
-                    row("Type *",1,<select value={newItemForm.type} onChange={e=>setNewItemForm(p=>({...p,type:e.target.value}))} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"5px 8px",fontSize:12,width:"100%",boxSizing:"border-box"}}><option>Inventory</option><option>Non-Inventory</option><option>Service</option></select>),
-                    row("Description *",2,inp('description')),
-                    row("Base UOM",1,bcCfg.loading?<span style={{color:C.muted,fontSize:11}}>Loading…</span>:uomSel),
-                  ];
-                })()}
-              </div>
-              <div style={{fontSize:11,color:C.yellow,background:"rgba(234,179,8,0.08)",borderRadius:6,padding:"7px 10px"}}>
-                ⚠ Posting groups (Gen. Prod., Inventory, VAT) must be assigned inside Business Central after creation — the BC API v2.0 does not accept them on item create.
-              </div>
+              {bcCfg.loading&&<div style={{fontSize:11,color:C.muted}}>Loading BC data…</div>}
+              {(()=>{
+                const si={background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"8px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"};
+                const ii={...si};
+                const lbl=(t)=><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>{t}</label>;
+                const nif=(key,ph,type="text")=><input type={type} value={newItemForm[key]} placeholder={ph||''} step={type==="number"?"0.01":undefined} onChange={e=>setNewItemForm(p=>({...p,[key]:e.target.value}))} style={ii}/>;
+                const sel=(key,opts,valFn=o=>o.code,lblFn=o=>o.code)=>(
+                  <select value={newItemForm[key]} onChange={e=>setNewItemForm(p=>({...p,[key]:e.target.value}))} style={si}>
+                    <option value="">— None —</option>
+                    {opts.map((o,i)=><option key={i} value={valFn(o)}>{lblFn(o)}</option>)}
+                  </select>
+                );
+                return(<>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:4}}>
+                    <div style={{flex:1,minWidth:140}}>{lbl("Part Number")}{nif('itemNo','e.g. MTX-1234')}</div>
+                    <div style={{flex:2,minWidth:200}}>{lbl("Description *")}{nif('description','Item description')}</div>
+                    <div style={{minWidth:110}}>{lbl("Unit Cost")}{nif('cost','0.00','number')}</div>
+                  </div>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:4}}>
+                    <div style={{flex:1,minWidth:160}}>{lbl("Item Category")}{sel('category',bcCfg.categories,o=>o.code,o=>o.code+(o.description?` — ${o.description}`:''))}</div>
+                    <div style={{flex:1,minWidth:140}}>{lbl("Unit of Measure")}{sel('uom',bcCfg.uoms,o=>o.code,o=>o.code+(o.displayName&&o.displayName!==o.code?` — ${o.displayName}`:''))}</div>
+                    <div style={{flex:1,minWidth:180}}>{lbl("Vendor")}{sel('vendor',bcCfg.vendors,o=>o.number,o=>`${o.displayName} (${o.number})`)}</div>
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <div style={{flex:1}}>{lbl("Gen. Prod. Posting Group")}{sel('genGroup',bcCfg.genGroups,o=>o.code,o=>o.code+(o.description?` — ${o.description}`:''))}</div>
+                    <div style={{flex:1}}>{lbl("Inventory Posting Group")}{sel('invGroup',bcCfg.invGroups,o=>o.code,o=>o.code+(o.description?` — ${o.description}`:''))}</div>
+                  </div>
+                </>);
+              })()}
               {createError&&<div style={{fontSize:12,color:C.red}}>{createError}</div>}
               <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
                 <button onClick={()=>{setNewItemIdx(null);setCreateError('');}} style={btn(C.card,C.sub,{fontSize:12,border:`1px solid ${C.border}`})}>Cancel</button>
