@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.49";
+const APP_VERSION="v1.17.50";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1582,8 +1582,33 @@ async function sqRecordAiTime(uid,seconds){
     const snap=await ref.get();
     const arr=snap.exists?(snap.data().aiParseTimes||[]):[];
     arr.push(Math.round(seconds));
-    await ref.set({aiParseTimes:arr.slice(-10)},{merge:true}); // keep last 10 runs
+    await ref.set({aiParseTimes:arr.slice(-10)},{merge:true});
   }catch(e){console.warn('sqRecordAiTime:',e);}
+}
+// Vendor fuzzy matching for supplier → BC vendor auto-population
+function sqFuzzyMatchVendor(supplierName,vendors){
+  if(!supplierName||!vendors.length)return null;
+  const norm=s=>s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\b(inc|llc|ltd|corp|co|company|the|and)\b/g,' ').replace(/\s+/g,' ').trim();
+  const srcWords=norm(supplierName).split(' ').filter(w=>w.length>1);
+  if(!srcWords.length)return null;
+  let best=null,bestScore=0;
+  for(const v of vendors){
+    const vWords=norm(v.displayName).split(' ').filter(w=>w.length>1);
+    const matched=srcWords.filter(sw=>vWords.some(vw=>vw.includes(sw)||sw.includes(vw)));
+    const score=matched.length/Math.max(srcWords.length,vWords.length);
+    if(score>bestScore){bestScore=score;best=v;}
+  }
+  return bestScore>=0.25?best:null;
+}
+async function sqGetVendorMap(uid){
+  try{const snap=await fbDb.collection('users').doc(uid).collection('config').doc('supplierVendorMap').get();return snap.exists?snap.data():{};}
+  catch{return{};}
+}
+async function sqSaveVendorMapping(uid,supplierName,vendorNo){
+  try{
+    const key=supplierName.toLowerCase().trim();
+    await fbDb.collection('users').doc(uid).collection('config').doc('supplierVendorMap').set({[key]:vendorNo},{merge:true});
+  }catch(e){console.warn('sqSaveVendorMapping:',e);}
 }
 
 // ── IMAGE RESIZE ──
@@ -4520,8 +4545,8 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
   const [createNumber,setCreateNumber]=useState(initialQuery||"");
   const [createName,setCreateName]=useState(targetRow&&targetRow.description?targetRow.description:"");
   const [createCost,setCreateCost]=useState("");
-  const [createCategory,setCreateCategory]=useState("");
-  const [createUom,setCreateUom]=useState("");
+  const [createCategory,setCreateCategory]=useState("Parts");
+  const [createUom,setCreateUom]=useState("EA");
   const [createVendor,setCreateVendor]=useState("");
   const [creating,setCreating]=useState(false);
   const [createErr,setCreateErr]=useState("");
@@ -4530,8 +4555,8 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
   const [bcVendors,setBcVendors]=useState([]);
   const [bcGenProdGroups,setBcGenProdGroups]=useState([]);
   const [bcInvPostingGroups,setBcInvPostingGroups]=useState([]);
-  const [createGenProd,setCreateGenProd]=useState("");
-  const [createInvPosting,setCreateInvPosting]=useState("");
+  const [createGenProd,setCreateGenProd]=useState("INVENTORY");
+  const [createInvPosting,setCreateInvPosting]=useState("RAW MAT");
   const [dropdownsLoaded,setDropdownsLoaded]=useState(false);
   const [croppedDataUrl,setCroppedDataUrl]=useState(null);
   const [locating,setLocating]=useState(false);
@@ -7540,10 +7565,12 @@ function SupplierQuoteImportModal({uid,onClose}){
   const [parseProgress,setParseProgress]=useState(0);
   const [parseEta,setParseEta]=useState(null);
   const [newItemIdx,setNewItemIdx]=useState(null);
-  const [newItemForm,setNewItemForm]=useState({itemNo:'',description:'',cost:'',category:'',uom:'',vendor:'',genGroup:'',invGroup:''});
+  const [newItemForm,setNewItemForm]=useState({itemNo:'',description:'',cost:'',category:'Parts',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT'});
   const [creatingItem,setCreatingItem]=useState(false);
   const [createError,setCreateError]=useState('');
   const [bcCfg,setBcCfg]=useState({uoms:[],categories:[],vendors:[],genGroups:[],invGroups:[],loaded:false,loading:false});
+  const [autoVendor,setAutoVendor]=useState({vendorNo:'',vendorName:''});
+  const [showVendorPrompt,setShowVendorPrompt]=useState(null); // {vendorNo, vendorName, supplierName}
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
@@ -7724,14 +7751,20 @@ ${fullText.slice(0,12000)}`;
   }
 
   async function loadBcCfg(){
-    if(bcCfg.loaded||bcCfg.loading)return;
+    if(bcCfg.loaded)return bcCfg;
+    if(bcCfg.loading){// wait for in-flight load
+      await new Promise(r=>{const t=setInterval(()=>{if(!bcCfg.loading){clearInterval(t);r();}},100);});
+      return bcCfg;
+    }
     setBcCfg(c=>({...c,loading:true}));
     if(!_bcToken)await acquireBcToken(false);
     const [categories,uoms,vendors,genGroups,invGroups]=await Promise.all([
       bcListItemCategories(),bcListUnitsOfMeasure(),bcListVendors(),
       bcListGenProdPostingGroups(),bcListInventoryPostingGroups(),
     ]);
-    setBcCfg({categories,uoms,vendors,genGroups,invGroups,loaded:true,loading:false});
+    const cfg={categories,uoms,vendors,genGroups,invGroups,loaded:true,loading:false};
+    setBcCfg(cfg);
+    return cfg;
   }
 
   async function handleCreateInBC(){
@@ -7760,7 +7793,16 @@ ${fullText.slice(0,12000)}`;
         ?{...it,bcItemId:bcId,bcItemDescription:desc,bcCurrentCost:cost,matchStatus:'auto_matched',approved:true}:it);
       setLineItems(updatedItems);
       await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updatedItems});
-      setNewItemIdx(null);setCreateError('');
+      // Prompt to save vendor correction if user changed from auto-matched vendor
+      const chosenVendor=newItemForm.vendor;
+      const supplierName=quoteHeader?.supplier||'';
+      if(chosenVendor&&chosenVendor!==autoVendor.vendorNo&&supplierName){
+        const chosenName=bcCfg.vendors.find(v=>v.number===chosenVendor)?.displayName||chosenVendor;
+        setShowVendorPrompt({vendorNo:chosenVendor,vendorName:chosenName,supplierName});
+      }else{
+        setNewItemIdx(null);
+      }
+      setCreateError('');
     }catch(e){setCreateError(e.message);}
     setCreatingItem(false);
   }
@@ -7906,7 +7948,22 @@ ${fullText.slice(0,12000)}`;
                               color:item.approved?C.green:C.red,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
                             }}>{item.approved?'Approved ✓':'Skip'}</button>
-                          :<button onClick={()=>{setNewItemIdx(i);setNewItemForm(f=>({...f,itemNo:item.partNumber||'',description:item.description||item.rawPartNumber||'',cost:item.price!=null?String(item.price):'',category:'',uom:'',vendor:'',genGroup:'',invGroup:''}));setCreateError('');loadBcCfg();}} style={{
+                          :<button onClick={async()=>{
+                              setNewItemIdx(i);
+                              setNewItemForm(f=>({...f,itemNo:item.partNumber||'',description:item.description||item.rawPartNumber||'',
+                                cost:item.price!=null?String(item.price):'',category:'Parts',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT'}));
+                              setCreateError('');setAutoVendor({vendorNo:'',vendorName:''});
+                              const cfg=await loadBcCfg();
+                              // Auto-match vendor from supplier name
+                              const supplierName=quoteHeader?.supplier||'';
+                              if(supplierName&&cfg.vendors.length){
+                                const map=await sqGetVendorMap(uid);
+                                const savedNo=map[supplierName.toLowerCase().trim()]||'';
+                                const matchedNo=savedNo||(sqFuzzyMatchVendor(supplierName,cfg.vendors)?.number||'');
+                                const matchedName=cfg.vendors.find(v=>v.number===matchedNo)?.displayName||'';
+                                if(matchedNo){setAutoVendor({vendorNo:matchedNo,vendorName:matchedName});setNewItemForm(f=>({...f,vendor:matchedNo}));}
+                              }
+                            }} style={{
                               background:'#1a1a00',border:`1px solid ${C.yellow}`,color:C.yellow,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
                             }}>+ New BC Item</button>
@@ -7946,7 +8003,10 @@ ${fullText.slice(0,12000)}`;
                   <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:4}}>
                     <div style={{flex:1,minWidth:160}}>{lbl("Item Category")}{sel('category',bcCfg.categories,o=>o.code,o=>o.code+(o.description?` — ${o.description}`:''))}</div>
                     <div style={{flex:1,minWidth:140}}>{lbl("Unit of Measure")}{sel('uom',bcCfg.uoms,o=>o.code,o=>o.code+(o.displayName&&o.displayName!==o.code?` — ${o.displayName}`:''))}</div>
-                    <div style={{flex:1,minWidth:180}}>{lbl("Vendor")}{sel('vendor',bcCfg.vendors,o=>o.number,o=>`${o.displayName} (${o.number})`)}</div>
+                    <div style={{flex:1,minWidth:180}}>
+                      {lbl(autoVendor.vendorNo?`Vendor (auto-matched from "${quoteHeader?.supplier||''}")`:"Vendor")}
+                      {sel('vendor',bcCfg.vendors,o=>o.number,o=>`${o.displayName} (${o.number})`)}
+                    </div>
                   </div>
                   <div style={{display:"flex",gap:8}}>
                     <div style={{flex:1}}>{lbl("Gen. Prod. Posting Group")}{sel('genGroup',bcCfg.genGroups,o=>o.code,o=>o.code+(o.description?` — ${o.description}`:''))}</div>
@@ -7963,6 +8023,18 @@ ${fullText.slice(0,12000)}`;
               </div>
             </div>
           ):null;})()}
+          {/* Vendor correction prompt */}
+          {showVendorPrompt&&(
+            <div style={{background:"#1a1200",border:`1px solid ${C.yellow}`,borderRadius:10,padding:14,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <div style={{fontSize:13,color:C.text,flex:1}}>
+                Remember <strong style={{color:C.accent}}>{showVendorPrompt.vendorName}</strong> as the default vendor for <strong style={{color:C.sub}}>{showVendorPrompt.supplierName}</strong>?
+              </div>
+              <button onClick={async()=>{await sqSaveVendorMapping(uid,showVendorPrompt.supplierName,showVendorPrompt.vendorNo);setAutoVendor({vendorNo:showVendorPrompt.vendorNo,vendorName:showVendorPrompt.vendorName});setShowVendorPrompt(null);setNewItemIdx(null);}}
+                style={btn('#1a2a1a',C.green,{fontSize:12,border:`1px solid ${C.green}`,padding:"5px 14px"})}>Yes, remember this</button>
+              <button onClick={()=>{setShowVendorPrompt(null);setNewItemIdx(null);}}
+                style={btn(C.card,C.muted,{fontSize:12,border:`1px solid ${C.border}`,padding:"5px 14px"})}>No thanks</button>
+            </div>
+          )}
           {statusMsg&&<div style={{fontSize:13,color:C.red}}>{statusMsg}</div>}
           <div style={{display:"flex",gap:10,justifyContent:"flex-end",alignItems:"center",flexWrap:"wrap"}}>
             <span style={{fontSize:12,color:C.muted,marginRight:"auto"}}>{approvedCount} item{approvedCount!==1?'s':''} will be updated in BC</span>
