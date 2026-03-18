@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.73";
+const APP_VERSION="v1.17.74";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7670,23 +7670,33 @@ function SupplierQuoteImportModal({uid,onClose,show}){
           return{id:d.id,supplier:v.supplier||'',quoteId:v.quoteId||'',revision:v.revision||'',jobName:v.jobName||'',
             quoteDate:v.quoteDate||'',status:v.status||'',pdfUrl:v.pdfUrl||null,
             merchandiseTotal:v.merchandiseTotal||0,lineCount:(v.lineItems||[]).length,
-            importedAt:v.importedAt?.toMillis?.()||0,supersededBy:v.supersededBy||null};
+            importedAt:v.importedAt?.toMillis?.()||0,supersededBy:v.supersededBy||null,
+            // Keep full data so loadSavedQuote can use it without a second Firestore read
+            _full:{contactName:v.contactName||'',expiresOn:v.expiresOn||null,fob:v.fob||'',
+              freight:v.freight||'',fileName:v.fileName||'',lineItems:v.lineItems||[]}};
         });
         rows.sort((a,b)=>b.importedAt-a.importedAt);
         setSavedQuotes(rows);
         // Auto-open most recent quote if modal is idle (not already showing a quote)
         if(currentPhase==='upload'&&rows.length>0){
-          loadSavedQuote(rows[0].id);
+          loadSavedQuote(rows[0].id,rows[0]);
         }
       }).catch(e=>console.warn('Load saved quotes failed:',e)).finally(()=>setLoadingQuotes(false));
   },[show,uid]);
 
   // Load a previously scanned quote back into review phase
-  async function loadSavedQuote(docId){
+  // Pass preloaded row (from savedQuotes) to skip a second Firestore read
+  async function loadSavedQuote(docId,preloaded){
     try{
-      const snap=await fbDb.collection('supplierQuotes').doc(docId).get();
-      if(!snap.exists)return;
-      const v=snap.data();
+      let v;
+      if(preloaded&&preloaded._full){
+        // Use already-fetched data — no extra round trip
+        v={...preloaded,...preloaded._full};
+      }else{
+        const snap=await fbDb.collection('supplierQuotes').doc(docId).get();
+        if(!snap.exists)return;
+        v=snap.data();
+      }
       setQuoteDocId(docId);
       setQuoteHeader({quoteId:v.quoteId||'',revision:v.revision||'',supplier:v.supplier||'',
         jobName:v.jobName||'',contactName:v.contactName||'',quoteDate:v.quoteDate||null,
@@ -8113,7 +8123,7 @@ ${fullText.slice(0,12000)}`;
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:260,overflowY:"auto"}}>
                   {savedQuotes.map(q=>(
-                    <div key={q.id} onClick={()=>loadSavedQuote(q.id)}
+                    <div key={q.id} onClick={()=>loadSavedQuote(q.id,q)}
                       style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,cursor:"pointer",transition:"border-color 0.15s"}}
                       onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
                       onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
@@ -8458,7 +8468,7 @@ ${fullText.slice(0,12000)}`;
               <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,padding:10,display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>Previous Revisions</div>
                 {prevRevisions.map(q=>(
-                  <div key={q.id} onClick={()=>{loadSavedQuote(q.id);setShowRevisions(false);}}
+                  <div key={q.id} onClick={()=>{loadSavedQuote(q.id,q);setShowRevisions(false);}}
                     style={{display:"flex",alignItems:"center",gap:10,padding:"7px 12px",background:C.card,border:`1px solid ${C.border}`,borderRadius:7,cursor:"pointer"}}
                     onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
                     onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
