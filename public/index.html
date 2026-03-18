@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.75";
+const APP_VERSION="v1.17.76";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6892,11 +6892,21 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
 }
 
 // ── CPD SEARCH MODAL ──
+function isBomQuoteAnalysis(q){
+  const ql=(q||'').toLowerCase();
+  return(ql.includes('bom')||ql.includes('bill of material'))
+    &&(ql.includes('quote')||ql.includes('supplier'))
+    &&(ql.includes('build')||ql.includes('how many')||ql.includes('quantities')||ql.includes('examine'));
+}
+
 function CPDSearchModal({query,uid,panel,onClose,onImportBom}){
-  const [phase,setPhase]=useState("thinking"); // thinking | result | error
+  const isQuoteMode=isBomQuoteAnalysis(query);
+  const [phase,setPhase]=useState(isQuoteMode?"analyzeQuote":"thinking"); // thinking | result | error | analyzeQuote | quoteResult
   const [result,setResult]=useState(null);
   const [selected,setSelected]=useState(new Set());
   const [errorMsg,setErrorMsg]=useState("");
+  const [quoteAnalysis,setQuoteAnalysis]=useState(null); // {quote,results,totalPanels,matchedCount}
+  const [marginPct,setMarginPct]=useState(30);
 
   const [similarPanels,setSimilarPanels]=useState([]);
 
@@ -6921,6 +6931,7 @@ function CPDSearchModal({query,uid,panel,onClose,onImportBom}){
   },[]);
 
   useEffect(()=>{
+    if(isQuoteMode)return; // handled by quote analysis effect
     let cancelled=false;
     async function run(){
       try{
@@ -6976,12 +6987,106 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
     return()=>{cancelled=true;};
   },[]);
 
+  // Quote analysis: compare panel BOM vs most recent supplier quote
+  useEffect(()=>{
+    if(!isQuoteMode)return;
+    let cancelled=false;
+    async function run(){
+      try{
+        const snap=await fbDb.collection('supplierQuotes').where('importedBy','==',uid).limit(50).get();
+        if(snap.empty)throw new Error('No supplier quotes found. Import a supplier quote first.');
+        const quotes=snap.docs.map(d=>({id:d.id,...d.data(),_ms:d.data().importedAt?.toMillis?.()||0}))
+          .sort((a,b)=>b._ms-a._ms);
+        const q=quotes[0];
+        const quoteItems=(q.lineItems||[]).filter(qi=>qi.isPriced&&qi.partNumber);
+        const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow&&(r.partNumber||'').trim());
+        if(!bomRows.length)throw new Error('This panel has no BOM items. Extract a BOM from drawings first.');
+        // Match each BOM row to a quote line item
+        const results=bomRows.map(row=>{
+          const pn=(row.partNumber||'').toLowerCase().trim();
+          const bcNo=(row.bcItemNumber||'').toLowerCase().trim();
+          let match=null;
+          for(const qi of quoteItems){
+            const qpn=(qi.partNumber||'').toLowerCase().trim();
+            const qraw=(qi.rawPartNumber||'').toLowerCase().trim();
+            const qbc=(qi.bcItemId||'').toLowerCase().trim();
+            if(pn&&pn===qpn){match=qi;break;}
+            if(bcNo&&bcNo===qbc){match=qi;break;}
+            if(pn&&(qraw===pn||qraw.endsWith(' '+pn)||qpn.includes(pn))){match=qi;break;}
+          }
+          const bomQty=Number(row.qty)||1;
+          const quotedQty=match!=null?Number(match.qty):null;
+          const panelsFromItem=quotedQty!=null&&bomQty>0?Math.floor(quotedQty/bomQty):null;
+          return{
+            partNumber:row.partNumber||'—',
+            description:row.description||match?.description||'',
+            unitPrice:row.unitPrice??match?.price??null,
+            bomQty,quotedQty,panelsFromItem,matched:!!match,
+          };
+        });
+        const matched=results.filter(r=>r.panelsFromItem!==null);
+        const totalPanels=matched.length>0?Math.min(...matched.map(r=>r.panelsFromItem)):null;
+        if(cancelled)return;
+        setQuoteAnalysis({
+          quote:{supplier:q.supplier||'',quoteId:q.quoteId||'',revision:q.revision||''},
+          results,totalPanels,matchedCount:matched.length,
+        });
+        setPhase('quoteResult');
+      }catch(e){if(!cancelled){setErrorMsg(e.message);setPhase('error');}}
+    }
+    run();
+    return()=>{cancelled=true;};
+  },[]);
+
+  // Excel download using SheetJS loaded on demand
+  async function downloadExcel(){
+    if(!window.XLSX){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://unpkg.com/xlsx/dist/xlsx.full.min.js';
+        s.onload=res;s.onerror=()=>rej(new Error('Failed to load XLSX library'));
+        document.head.appendChild(s);
+      });
+    }
+    const XL=window.XLSX;
+    const{results,totalPanels,quote}=quoteAnalysis;
+    const margin=marginPct/100;
+    const dataRows=results.map(r=>({
+      'Part #':r.partNumber,
+      'Description':r.description,
+      'Unit Price':r.unitPrice!=null?Number(r.unitPrice.toFixed(4)):null,
+      'BOM Qty (per panel)':r.bomQty,
+      'Qty Quoted':r.quotedQty!=null?r.quotedQty:'',
+      'Panels Buildable':r.panelsFromItem!=null?r.panelsFromItem:'—',
+      'Margin %':marginPct,
+      'Sale Price':r.unitPrice!=null?Number((r.unitPrice/(1-margin)).toFixed(4)):null,
+    }));
+    const salePriceTotal=results.reduce((s,r)=>s+(r.unitPrice!=null?r.unitPrice/(1-margin):0),0);
+    dataRows.push({
+      'Part #':'',
+      'Description':'── TOTAL ──',
+      'Unit Price':null,
+      'BOM Qty (per panel)':'',
+      'Qty Quoted':'',
+      'Panels Buildable':totalPanels!=null?`${totalPanels} complete panels`:'',
+      'Margin %':'',
+      'Sale Price':Number(salePriceTotal.toFixed(4)),
+    });
+    const ws=XL.utils.json_to_sheet(dataRows);
+    // Column widths
+    ws['!cols']=[{wch:18},{wch:40},{wch:12},{wch:18},{wch:12},{wch:18},{wch:10},{wch:12}];
+    const wb=XL.utils.book_new();
+    XL.utils.book_append_sheet(wb,ws,'BOM vs Quote');
+    const name=(panel.drawingNo||panel.name||'BOM').replace(/[^a-z0-9]/gi,'_');
+    XL.writeFile(wb,`${name}_QuoteAnalysis.xlsx`);
+  }
+
   const catColors={'PLC Processor':'#93c5fd','PLC I/O Module':'#818cf8','VFD':'#fb923c','Contactor':'#f472b6','Relay':'#a78bfa','MCCB':'#ef4444','Circuit Breaker':'#f87171','Wire Duct':'#6b7280','DIN Rail':'#9ca3af','Terminal Block':'#d1d5db','Heater':'#fb923c','Air Conditioner':'#22d3ee','Horn/Beacon':'#facc15','Enclosure':'#a3e635','HMI':'#34d399','Pilot Light/Operator':'#f9a8d4','Other':'#6b7280'};
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,width:"100%",maxWidth:780,maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 12px 60px rgba(0,0,0,0.8)"}}>
+      <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,width:"100%",maxWidth:isQuoteMode?1100:780,maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 12px 60px rgba(0,0,0,0.8)"}}>
         {/* Header */}
         <div style={{padding:"18px 24px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,flexShrink:0}}>
           <div>
@@ -7014,6 +7119,98 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
               ))}
             </div>
           )}
+          {phase==="analyzeQuote"&&(
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"48px 0",gap:14}}>
+              <div style={{fontSize:36,animation:"spin 1.2s linear infinite",display:"inline-block"}}>📊</div>
+              <div style={{fontSize:13,color:C.muted}}>Comparing BOM against supplier quote…</div>
+            </div>
+          )}
+          {phase==="quoteResult"&&quoteAnalysis&&(()=>{
+            const{quote,results,totalPanels,matchedCount}=quoteAnalysis;
+            const margin=marginPct/100;
+            const salePriceTotal=results.reduce((s,r)=>s+(r.unitPrice!=null?r.unitPrice/(1-margin):0),0);
+            const unmatchedCount=results.filter(r=>!r.matched).length;
+            return(
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {/* Summary bar */}
+                <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+                  <div style={{background:"#0d1a0d",border:`1px solid ${C.green}44`,borderRadius:8,padding:"8px 16px"}}>
+                    <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Complete Panels Buildable</div>
+                    <div style={{fontSize:28,fontWeight:800,color:C.green,lineHeight:1.1}}>{totalPanels!=null?totalPanels:'—'}</div>
+                  </div>
+                  <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 16px"}}>
+                    <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>BOM Items Matched</div>
+                    <div style={{fontSize:20,fontWeight:700,color:C.accent}}>{matchedCount} / {results.length}</div>
+                  </div>
+                  {unmatchedCount>0&&(
+                    <div style={{background:"#1a0d00",border:`1px solid ${C.yellow}44`,borderRadius:8,padding:"8px 16px"}}>
+                      <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Unmatched (no quote data)</div>
+                      <div style={{fontSize:20,fontWeight:700,color:C.yellow}}>{unmatchedCount}</div>
+                    </div>
+                  )}
+                  <div style={{marginLeft:"auto",fontSize:11,color:C.muted,textAlign:"right",lineHeight:1.6}}>
+                    Quote: <span style={{color:C.sub}}>{quote.supplier}</span><br/>
+                    {quote.quoteId&&<>{quote.quoteId}{quote.revision?` Rev ${quote.revision}`:''}</>}
+                  </div>
+                </div>
+                {/* Margin control */}
+                <div style={{display:"flex",alignItems:"center",gap:10,background:C.bg,borderRadius:8,padding:"8px 14px",border:`1px solid ${C.border}`}}>
+                  <span style={{fontSize:12,color:C.muted,flexShrink:0}}>Gross Margin %</span>
+                  <input type="number" min={0} max={99} value={marginPct}
+                    onChange={e=>setMarginPct(Math.max(0,Math.min(99,Number(e.target.value)||0)))}
+                    style={{width:60,background:"#0a0a12",border:`1px solid ${C.accent}55`,borderRadius:6,padding:"3px 8px",color:C.accent,fontSize:13,fontWeight:700,outline:"none",textAlign:"center"}}/>
+                  <span style={{fontSize:11,color:C.muted}}>Sale Price = Unit Cost ÷ (1 − margin)</span>
+                  <button onClick={downloadExcel}
+                    style={{marginLeft:"auto",background:"#0d2a0d",border:`1px solid ${C.green}`,color:C.green,borderRadius:8,padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                    ⬇ Download Excel
+                  </button>
+                </div>
+                {/* Table */}
+                <div style={{overflowX:"auto",border:`1px solid ${C.border}`,borderRadius:8}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:700}}>
+                    <thead>
+                      <tr style={{background:C.card,color:C.muted,borderBottom:`2px solid ${C.border}`}}>
+                        {['Part #','Description','Unit Price','BOM Qty','Qty Quoted','Panels','Margin %','Sale Price'].map(h=>(
+                          <th key={h} style={{padding:"8px 10px",textAlign:h==='Description'?'left':'center',fontWeight:700,fontSize:11,whiteSpace:"nowrap"}}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.map((r,i)=>{
+                        const sp=r.unitPrice!=null?r.unitPrice/(1-margin):null;
+                        const panelOk=r.panelsFromItem!=null&&r.panelsFromItem>=totalPanels;
+                        return(
+                          <tr key={i} style={{borderBottom:`1px solid ${C.border}33`,background:r.matched?"transparent":"#1a0d0011"}}>
+                            <td style={{padding:"7px 10px",fontFamily:"monospace",color:C.accent,fontWeight:700,whiteSpace:"nowrap"}}>{r.partNumber}</td>
+                            <td style={{padding:"7px 10px",color:C.sub,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</td>
+                            <td style={{padding:"7px 10px",textAlign:"center",color:C.text}}>{r.unitPrice!=null?'$'+r.unitPrice.toFixed(2):'—'}</td>
+                            <td style={{padding:"7px 10px",textAlign:"center",color:C.text}}>{r.bomQty}</td>
+                            <td style={{padding:"7px 10px",textAlign:"center",color:r.matched?C.text:C.muted}}>{r.quotedQty!=null?r.quotedQty:'—'}</td>
+                            <td style={{padding:"7px 10px",textAlign:"center",fontWeight:700,color:r.panelsFromItem!=null?(panelOk?C.green:C.yellow):C.red}}>
+                              {r.panelsFromItem!=null?r.panelsFromItem:'—'}
+                            </td>
+                            <td style={{padding:"7px 10px",textAlign:"center",color:C.muted}}>{marginPct}%</td>
+                            <td style={{padding:"7px 10px",textAlign:"center",color:C.green,fontWeight:600}}>{sp!=null?'$'+sp.toFixed(2):'—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{background:C.card,borderTop:`2px solid ${C.border}`}}>
+                        <td colSpan={7} style={{padding:"8px 10px",textAlign:"right",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Total Sale Price</td>
+                        <td style={{padding:"8px 10px",textAlign:"center",fontWeight:800,color:C.green,fontSize:14}}>${salePriceTotal.toFixed(2)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                {unmatchedCount>0&&(
+                  <div style={{fontSize:11,color:C.yellow,background:"#1a0d00",border:`1px solid ${C.yellow}33`,borderRadius:6,padding:"8px 12px"}}>
+                    ⚠ {unmatchedCount} BOM item{unmatchedCount!==1?'s':''} had no matching line in the supplier quote — shown as "—" for quoted qty and panels buildable.
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           {phase==="thinking"&&(
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"48px 0",gap:14}}>
               <div style={{fontSize:36,animation:"spin 1.2s linear infinite",display:"inline-block"}}>⚙</div>
