@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.76";
+const APP_VERSION="v1.17.77";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1587,7 +1587,7 @@ async function sqGetCrossings(uid){
 async function sqSaveCrossing(uid,supplierPN,bcItem){
   const key=supplierPN.toLowerCase().trim();
   await fbDb.doc(`users/${uid}/config/sqCrossings`).set(
-    {[key]:{bcItemId:bcItem.id,bcItemNumber:bcItem.number,bcItemDescription:bcItem.displayName||'',bcUnitCost:bcItem.unitCost??null}},
+    {[key]:{bcItemId:bcItem.id||null,bcItemNumber:bcItem.number||'',bcItemDescription:bcItem.displayName||'',bcUnitCost:bcItem.unitCost??null}},
     {merge:true});
 }
 
@@ -7848,7 +7848,7 @@ function SupplierQuoteImportModal({uid,onClose,show}){
     try{
       await sqSaveCrossing(uid,item.partNumber,bcItem);
       const updated=lineItems.map((it,i)=>i===idx
-        ?{...it,bcItemId:bcItem.id,bcItemDescription:bcItem.displayName||'',
+        ?{...it,bcItemId:bcItem.id||null,bcItemDescription:bcItem.displayName||'',
             bcCurrentCost:bcItem.unitCost??null,matchStatus:'manually_matched',approved:true}
         :it);
       setLineItems(updated);
