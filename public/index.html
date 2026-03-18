@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.39";
+const APP_VERSION="v1.17.40";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7534,17 +7534,17 @@ function SupplierQuoteImportModal({uid,onClose}){
         const tc=await page.getTextContent();
         fullText+=tc.items.map(i=>i.str).join(' ')+'\n';
       }
-      // AI phase: 15→65% over estimated 12s
+      // AI phase: 15→64% — exponential decay so bar keeps moving regardless of actual duration
       setStatusMsg('Sending to AI for parsing…');
       setParseProgress(15);
-      const AI_ESTIMATE_MS=12000;
+      const AI_HALFLIFE_MS=10000; // reaches ~50% of range in 10s, keeps creeping after
       const AI_START=Date.now();
       aiTimerRef.current=setInterval(()=>{
         const elapsed=Date.now()-AI_START;
-        const frac=Math.min(elapsed/AI_ESTIMATE_MS,0.95);
-        setParseProgress(Math.round(15+frac*50));
-        const remaining=Math.max(0,Math.round((AI_ESTIMATE_MS-elapsed)/1000));
-        setParseEta(remaining>0?`~${remaining}s remaining`:null);
+        const frac=1-Math.exp(-elapsed/AI_HALFLIFE_MS);
+        setParseProgress(Math.round(15+frac*49)); // asymptotes toward 64, never stalls
+        const etaSec=Math.max(0,Math.round((AI_HALFLIFE_MS*1.5-elapsed)/1000));
+        setParseEta(etaSec>2?`~${etaSec}s remaining`:null);
       },250);
       const prompt=`You are parsing a supplier quote PDF. Extract ALL information into this exact JSON structure. Return ONLY valid JSON, no commentary.
 
