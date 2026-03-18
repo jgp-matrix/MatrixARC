@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.53";
+const APP_VERSION="v1.17.54";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1529,10 +1529,20 @@ async function saveSupplierQuoteToFirestore(quoteData,userId){
   const ref=fbDb.collection('supplierQuotes').doc();
   const lineItems=(quoteData.lineItems||[]).map(sqNormalize);
   const total=lineItems.reduce((s,i)=>s+(i.extPrice||0),0);
+  // Build search tokens for array-contains queries (supplier, quote#, job name, contact)
+  const tokenize=s=>(s||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w.length>1);
+  const searchTokens=[...new Set([
+    ...tokenize(quoteData.supplier),
+    ...tokenize(quoteData.quoteId),
+    ...tokenize(quoteData.jobName),
+    ...tokenize(quoteData.contactName),
+  ])];
   await ref.set({quoteId:quoteData.quoteId||'',revision:quoteData.revision||'',supplier:quoteData.supplier||'',
+    supplierLower:(quoteData.supplier||'').toLowerCase(),
     jobName:quoteData.jobName||'',contactName:quoteData.contactName||'',quoteDate:quoteData.quoteDate||null,
     expiresOn:quoteData.expiresOn||null,fob:quoteData.fob||'',freight:quoteData.freight||'',
-    status:'pending_review',merchandiseTotal:Math.round(total*100)/100,lineItems,
+    status:'pending_review',merchandiseTotal:Math.round(total*100)/100,lineItems,searchTokens,
+    pdfUrl:null,fileName:'',
     importedAt:firebase.firestore.FieldValue.serverTimestamp(),importedBy:userId});
   return{docId:ref.id,lineItems};
 }
@@ -1586,16 +1596,22 @@ async function sqRecordAiTime(uid,seconds){
   }catch(e){console.warn('sqRecordAiTime:',e);}
 }
 // Vendor fuzzy matching for supplier → BC vendor auto-population
+// First word of supplier name is heavily weighted — e.g. "Royal - Salt Lake City" → "Royal Wholesale"
 function sqFuzzyMatchVendor(supplierName,vendors){
   if(!supplierName||!vendors.length)return null;
   const norm=s=>s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\b(inc|llc|ltd|corp|co|company|the|and)\b/g,' ').replace(/\s+/g,' ').trim();
   const srcWords=norm(supplierName).split(' ').filter(w=>w.length>1);
   if(!srcWords.length)return null;
+  const srcFirst=srcWords[0];
   let best=null,bestScore=0;
   for(const v of vendors){
     const vWords=norm(v.displayName).split(' ').filter(w=>w.length>1);
-    const matched=srcWords.filter(sw=>vWords.some(vw=>vw.includes(sw)||sw.includes(vw)));
-    const score=matched.length/Math.max(srcWords.length,vWords.length);
+    if(!vWords.length)continue;
+    // If first words match exactly, score gets a strong 0.6 base boost
+    const firstMatch=srcFirst&&vWords[0]===srcFirst;
+    const overlapMatched=srcWords.filter(sw=>vWords.some(vw=>vw===sw||vw.includes(sw)||sw.includes(vw)));
+    const overlapScore=overlapMatched.length/Math.max(srcWords.length,vWords.length);
+    const score=firstMatch?Math.max(0.6+overlapScore*0.4,overlapScore):overlapScore;
     if(score>bestScore){bestScore=score;best=v;}
   }
   return bestScore>=0.25?best:null;
@@ -7667,11 +7683,21 @@ ${fullText.slice(0,12000)}`;
       setStatusMsg('Saving to database…');
       setParseProgress(68);
       const{docId,lineItems:normalized}=await saveSupplierQuoteToFirestore(parsed,uid);
+      // Upload original PDF to Firebase Storage for preview
+      let pdfUrl=null;
+      try{
+        setStatusMsg('Uploading PDF for preview…');
+        const pdfRef=fbStorage.ref(`supplierQuotePDFs/${uid}/${docId}.pdf`);
+        await pdfRef.put(targetFile,{contentType:'application/pdf'});
+        pdfUrl=await pdfRef.getDownloadURL();
+        await fbDb.collection('supplierQuotes').doc(docId).update({pdfUrl,fileName:targetFile.name||''});
+      }catch(e){console.warn('PDF upload failed:',e);}
       setParseProgress(72);
       setQuoteDocId(docId);
       setQuoteHeader({quoteId:parsed.quoteId||'',revision:parsed.revision||'',supplier:parsed.supplier||'',
         jobName:parsed.jobName||'',contactName:parsed.contactName||'',quoteDate:parsed.quoteDate||null,
-        expiresOn:parsed.expiresOn||null,fob:parsed.fob||'',freight:parsed.freight||''});
+        expiresOn:parsed.expiresOn||null,fob:parsed.fob||'',freight:parsed.freight||'',
+        pdfUrl,fileName:targetFile.name||''});
       // Auto-match to BC items
       if(!_bcToken){
         setStatusMsg('Connecting to Business Central…');
@@ -7893,15 +7919,25 @@ ${fullText.slice(0,12000)}`;
         {/* REVIEW PHASE */}
         {phase==='review'&&quoteHeader&&(<>
           {/* Header info */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
-            {[['Supplier',quoteHeader.supplier],['Quote #',quoteHeader.quoteId],['Revision',quoteHeader.revision],
-              ['Job',quoteHeader.jobName],['Contact',quoteHeader.contactName],
-              ['Quote Date',quoteHeader.quoteDate],['Expires',quoteHeader.expiresOn],
-              ['Freight',quoteHeader.freight]].map(([label,val])=>val?(
-              <div key={label} style={{background:C.bg,borderRadius:8,padding:"8px 12px"}}>
-                <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>{label}</div>
-                <div style={{fontSize:13,color:C.text,fontWeight:600}}>{val}</div>
-              </div>):null)}
+          <div style={{display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+            <div style={{flex:1,display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:10}}>
+              {[['Supplier',quoteHeader.supplier],['Quote #',quoteHeader.quoteId],['Revision',quoteHeader.revision],
+                ['Job',quoteHeader.jobName],['Contact',quoteHeader.contactName],
+                ['Quote Date',quoteHeader.quoteDate],['Expires',quoteHeader.expiresOn],
+                ['Freight',quoteHeader.freight]].map(([label,val])=>val?(
+                <div key={label} style={{background:C.bg,borderRadius:8,padding:"8px 12px"}}>
+                  <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>{label}</div>
+                  <div style={{fontSize:13,color:C.text,fontWeight:600}}>{val}</div>
+                </div>):null)}
+            </div>
+            {quoteHeader.pdfUrl&&(
+              <a href={quoteHeader.pdfUrl} target="_blank" rel="noreferrer"
+                style={{display:"inline-flex",alignItems:"center",gap:6,background:C.card,
+                  border:`1px solid ${C.accent}`,borderRadius:8,padding:"8px 16px",
+                  fontSize:12,color:C.accent,fontWeight:700,textDecoration:"none",whiteSpace:"nowrap",flexShrink:0}}>
+                &#128196; View Original PDF
+              </a>
+            )}
           </div>
           {/* Match summary */}
           <div style={{display:"flex",gap:16,fontSize:12,color:C.muted,flexWrap:"wrap"}}>
