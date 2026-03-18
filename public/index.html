@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.79";
+const APP_VERSION="v1.17.80";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7011,21 +7011,36 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
         const quotes=snap.docs.map(d=>({id:d.id,...d.data(),_ms:d.data().importedAt?.toMillis?.()||0}))
           .sort((a,b)=>b._ms-a._ms);
         const q=quotes[0];
-        const quoteItems=(q.lineItems||[]).filter(qi=>qi.isPriced&&qi.partNumber);
+        const quoteItems=(q.lineItems||[]).filter(qi=>qi.isPriced&&(qi.partNumber||qi.rawPartNumber));
         const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow&&(r.partNumber||'').trim());
         if(!bomRows.length)throw new Error('This panel has no BOM items. Extract a BOM from drawings first.');
-        // Match each BOM row to a quote line item
+        // Normalize: strip all non-alphanumeric chars and lowercase for fuzzy comparison
+        const norm=s=>(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
         const results=bomRows.map(row=>{
-          const pn=(row.partNumber||'').toLowerCase().trim();
-          const bcNo=(row.bcItemNumber||'').toLowerCase().trim();
+          const pn=norm(row.partNumber);
+          const bcNo=norm(row.bcItemNumber||'');
           let match=null;
           for(const qi of quoteItems){
-            const qpn=(qi.partNumber||'').toLowerCase().trim();
-            const qraw=(qi.rawPartNumber||'').toLowerCase().trim();
-            const qbc=(qi.bcItemId||'').toLowerCase().trim();
-            if(pn&&pn===qpn){match=qi;break;}
-            if(bcNo&&bcNo===qbc){match=qi;break;}
-            if(pn&&(qraw===pn||qraw.endsWith(' '+pn)||qpn.includes(pn))){match=qi;break;}
+            const qpn=norm(qi.partNumber);
+            const qraw=norm(qi.rawPartNumber);
+            const qmfrpn=norm((qi.mfr||'')+qi.partNumber); // e.g. "phxct2891035"
+            const qbc=norm(qi.bcItemId||qi.bcItemNumber||'');
+            // 1. Exact normalized part number
+            if(pn&&qpn&&pn===qpn){match=qi;break;}
+            // 2. BOM PN equals mfr+pn from quote (e.g. BOM "PHXCT2891035")
+            if(pn&&qmfrpn&&pn===qmfrpn){match=qi;break;}
+            // 3. BOM PN equals full normalized raw quote PN
+            if(pn&&qraw&&pn===qraw){match=qi;break;}
+            // 4. BC item number cross-reference
+            if(bcNo&&qbc&&bcNo===qbc){match=qi;break;}
+            // 5. One PN ends with the other (handles mfr prefixes like "PHXCT-2891035" → "2891035")
+            if(pn.length>=4&&qpn.length>=4&&(pn.endsWith(qpn)||qpn.endsWith(pn))){match=qi;break;}
+            // 6. BOM PN ends with mfr+pn or vice versa
+            if(pn.length>=4&&qmfrpn.length>=4&&(pn.endsWith(qmfrpn)||qmfrpn.endsWith(pn))){match=qi;break;}
+            // 7. Normalized raw ends with BOM PN (e.g. raw "phxct2891035" ends with "2891035")
+            if(pn.length>=4&&qraw.length>=4&&qraw.endsWith(pn)){match=qi;break;}
+            // 8. Substring containment for longer part numbers (min 6 chars to avoid false positives)
+            if(pn.length>=6&&qpn.length>=6&&(pn.includes(qpn)||qpn.includes(pn))){match=qi;break;}
           }
           const bomQty=Number(row.qty)||1;
           const quotedQty=match!=null?Number(match.qty):null;
