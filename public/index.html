@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.52";
+const APP_VERSION="v1.17.53";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7943,7 +7943,24 @@ ${fullText.slice(0,12000)}`;
                       </td>
                       <td style={{padding:"6px 8px",whiteSpace:"nowrap"}}>
                         {!item.isPriced
-                          ?<span style={{color:C.muted,fontSize:11}}>unpriced</span>
+                          ?<button onClick={async()=>{
+                              setNewItemIdx(i);
+                              setNewItemForm(f=>({...f,itemNo:item.partNumber||'',description:item.description||item.rawPartNumber||'',
+                                cost:'',category:'PARTS',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT'}));
+                              setCreateError('');setAutoVendor({vendorNo:'',vendorName:''});
+                              const cfg=await loadBcCfg();
+                              const supplierName=quoteHeader?.supplier||'';
+                              if(supplierName&&cfg.vendors.length){
+                                const map=await sqGetVendorMap(uid);
+                                const savedNo=map[supplierName.toLowerCase().trim()]||'';
+                                const matchedNo=savedNo||(sqFuzzyMatchVendor(supplierName,cfg.vendors)?.number||'');
+                                const matchedName=cfg.vendors.find(v=>v.number===matchedNo)?.displayName||'';
+                                if(matchedNo){setAutoVendor({vendorNo:matchedNo,vendorName:matchedName});setNewItemForm(f=>({...f,vendor:matchedNo}));}
+                              }
+                            }} style={{
+                              background:'#0d0d1a',border:`1px solid ${C.accent}`,color:C.accent,
+                              borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
+                            }}>+ Add to BC</button>
                           :isMatched
                           ?<button onClick={()=>toggleApprove(i)} style={{
                               background:item.approved?'#0d2a1a':'#1a0d0d',
