@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.66";
+const APP_VERSION="v1.17.67";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7658,7 +7658,7 @@ function SupplierQuoteImportModal({uid,onClose,show}){
     }catch(e){setStatusMsg('Failed to load quote: '+e.message);}
   }
 
-  // Render first page of PDF to canvas for thumbnail preview
+  // Render first page of PDF to canvas — from local file
   useEffect(()=>{
     if(!file)return;
     let cancelled=false;
@@ -7678,6 +7678,40 @@ function SupplierQuoteImportModal({uid,onClose,show}){
     })();
     return()=>{cancelled=true;};
   },[file]);
+
+  // Render first page from Firebase Storage URL when no local file (saved quotes)
+  useEffect(()=>{
+    if(file||pdfPreview||!quoteHeader?.pdfUrl)return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        await window.pdfjsReady;
+        const pdfjs=window._pdfjs;
+        const pdf=await pdfjs.getDocument({url:quoteHeader.pdfUrl,withCredentials:false}).promise;
+        const page=await pdf.getPage(1);
+        const vp=page.getViewport({scale:1.2});
+        const canvas=document.createElement('canvas');
+        canvas.width=vp.width;canvas.height=vp.height;
+        await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+        if(!cancelled)setPdfPreview(canvas.toDataURL('image/jpeg',0.82));
+      }catch(e){console.warn('PDF preview from URL:',e);}
+    })();
+    return()=>{cancelled=true;};
+  },[quoteHeader?.pdfUrl,file,pdfPreview]);
+
+  // Delete all saved quotes except the most recent
+  async function deleteAllButLatest(){
+    if(!window.confirm(`Delete all but the most recent quote? This cannot be undone.`))return;
+    const toDelete=savedQuotes.slice(1); // already sorted newest-first
+    for(const q of toDelete){
+      try{
+        await fbDb.collection('supplierQuotes').doc(q.id).delete();
+        // Best-effort: delete PDF from storage too
+        fbStorage.ref(`supplierQuotePDFs/${uid}/${q.id}.pdf`).delete().catch(()=>{});
+      }catch(e){console.warn('Delete failed:',q.id,e);}
+    }
+    setSavedQuotes(savedQuotes.slice(0,1));
+  }
 
   async function handleParse(droppedFile){
     const targetFile=droppedFile||file;
@@ -8022,8 +8056,16 @@ ${fullText.slice(0,12000)}`;
             {/* Previously scanned quotes */}
             {savedQuotes.length>0&&(
               <div>
-                <div style={{fontSize:12,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>
-                  Previously Scanned Quotes {loadingQuotes&&'…'}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <div style={{fontSize:12,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>
+                    Previously Scanned Quotes {loadingQuotes&&'…'}
+                  </div>
+                  {savedQuotes.length>1&&(
+                    <button onClick={deleteAllButLatest}
+                      style={{background:"none",border:`1px solid ${C.red}55`,color:C.red,borderRadius:6,padding:"2px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>
+                      🗑 Delete All But Latest
+                    </button>
+                  )}
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:260,overflowY:"auto"}}>
                   {savedQuotes.map(q=>(
