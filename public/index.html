@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.55";
+const APP_VERSION="v1.17.56";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4792,8 +4792,15 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               </div>
               <div style={{minWidth:110}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Unit Cost</label>
-                <input type="number" step="0.01" min="0" value={createCost} onChange={e=>setCreateCost(e.target.value)} placeholder="0.00"
-                  style={{...inp(),width:"100%",boxSizing:"border-box"}}/>
+                <div style={{position:"relative",display:"flex",alignItems:"center"}}>
+                  <span style={{position:"absolute",left:10,color:C.muted,fontSize:13,pointerEvents:"none"}}>$</span>
+                  <input type="text" value={createCost}
+                    onChange={e=>setCreateCost(e.target.value.replace(/[^0-9.]/g,''))}
+                    onBlur={e=>{const v=parseFloat(e.target.value);setCreateCost(isNaN(v)?'0.00':v.toFixed(2));}}
+                    onFocus={e=>e.target.select()}
+                    placeholder="0.00"
+                    style={{...inp(),width:"100%",boxSizing:"border-box",paddingLeft:22}}/>
+                </div>
               </div>
             </div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
@@ -8079,7 +8086,17 @@ ${fullText.slice(0,12000)}`;
                   <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:4}}>
                     <div style={{flex:1,minWidth:140}}>{lbl("Part Number")}{nif('itemNo','e.g. MTX-1234')}</div>
                     <div style={{flex:2,minWidth:200}}>{lbl("Description *")}{nif('description','Item description')}</div>
-                    <div style={{minWidth:110}}>{lbl("Unit Cost")}{nif('cost','0.00','number')}</div>
+                    <div style={{minWidth:110}}>{lbl("Unit Cost")}
+                      <div style={{position:"relative",display:"flex",alignItems:"center"}}>
+                        <span style={{position:"absolute",left:10,color:C.muted,fontSize:13,pointerEvents:"none"}}>$</span>
+                        <input type="text" value={newItemForm.cost}
+                          onChange={e=>setNewItemForm(p=>({...p,cost:e.target.value.replace(/[^0-9.]/g,'')}))}
+                          onBlur={e=>{const v=parseFloat(e.target.value);setNewItemForm(p=>({...p,cost:isNaN(v)?'0.00':v.toFixed(2)}));}}
+                          onFocus={e=>e.target.select()}
+                          placeholder="0.00"
+                          style={{...ii,paddingLeft:22}}/>
+                      </div>
+                    </div>
                   </div>
                   <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:4}}>
                     <div style={{flex:1,minWidth:160}}>{lbl("Item Category")}{sel('category',bcCfg.categories,o=>o.code,o=>o.code+(o.description?` — ${o.description}`:''))}</div>
