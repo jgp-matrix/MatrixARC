@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.43";
+const APP_VERSION="v1.17.44";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7753,7 +7753,7 @@ ${fullText.slice(0,12000)}`;
   const pricedCount=lineItems.filter(i=>i.isPriced).length;
 
   const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center"};
-  const box={background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:24,width:"min(900px,95vw)",maxHeight:"90vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:16};
+  const box={background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:24,width:"min(1300px,98vw)",maxHeight:"92vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:16};
 
   return ReactDOM.createPortal(
     <div style={overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
