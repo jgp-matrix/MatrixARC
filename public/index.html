@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.57";
+const APP_VERSION="v1.17.58";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7599,9 +7599,23 @@ function SupplierQuoteImportModal({uid,onClose,show}){
   const [bcCfg,setBcCfg]=useState({uoms:[],categories:[],vendors:[],genGroups:[],invGroups:[],loaded:false,loading:false});
   const [autoVendor,setAutoVendor]=useState({vendorNo:'',vendorName:''});
   const [showVendorPrompt,setShowVendorPrompt]=useState(null); // {vendorNo, vendorName, supplierName}
+  const [modalPos,setModalPos]=useState(null); // {left,top} when dragged, null=centered
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
+  const boxRef=useRef();
+  const dragRef=useRef(null);
+
+  function onTitleDrag(e){
+    if(e.button!==0||e.target.closest('button'))return;
+    const r=boxRef.current.getBoundingClientRect();
+    dragRef.current={ox:e.clientX-r.left,oy:e.clientY-r.top};
+    function move(ev){setModalPos({left:Math.max(0,ev.clientX-dragRef.current.ox),top:Math.max(0,ev.clientY-dragRef.current.oy)});}
+    function up(){document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);}
+    document.addEventListener('mousemove',move);
+    document.addEventListener('mouseup',up);
+    e.preventDefault();
+  }
 
   // Render first page of PDF to canvas for thumbnail preview
   useEffect(()=>{
@@ -7871,13 +7885,21 @@ ${fullText.slice(0,12000)}`;
   const matchedCount=lineItems.filter(i=>i.matchStatus==='auto_matched').length;
   const pricedCount=lineItems.filter(i=>i.isPriced).length;
 
-  const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:2000,display:show?'flex':'none',alignItems:"center",justifyContent:"center"};
-  const box={background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:24,width:"min(1300px,98vw)",maxHeight:"92vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:16};
+  const boxStyle={
+    position:"fixed",zIndex:2001,
+    left:modalPos?modalPos.left:'50%',top:modalPos?modalPos.top:'50%',
+    transform:modalPos?'none':'translate(-50%,-50%)',
+    background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:24,
+    width:"min(1300px,98vw)",minHeight:"80vh",maxWidth:"98vw",
+    overflowY:"auto",display:show?'flex':'none',flexDirection:"column",gap:16,
+    resize:"vertical",boxSizing:"border-box",
+  };
 
-  return ReactDOM.createPortal(
-    <div style={overlay}>
-      <div style={box}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+  return ReactDOM.createPortal(<>
+    {/* Backdrop */}
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:2000,display:show?'block':'none'}}/>
+    <div ref={boxRef} style={boxStyle}>
+        <div onMouseDown={onTitleDrag} style={{display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"grab",userSelect:"none",marginBottom:4}}>
           <div style={{fontSize:17,fontWeight:700,color:C.text}}>📥 Upload Supplier Quote</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer",lineHeight:1}}>×</button>
         </div>
@@ -7983,7 +8005,7 @@ ${fullText.slice(0,12000)}`;
             <span style={{marginLeft:"auto",color:C.accent,fontWeight:700}}>{approvedCount} approved for push</span>
           </div>
           {/* Line items table */}
-          <div style={{overflowX:"auto",overflowY:"auto",maxHeight:360,borderRadius:8,border:`1px solid ${C.border}`}}>
+          <div style={{overflowX:"auto",overflowY:"auto",flex:1,minHeight:200,borderRadius:8,border:`1px solid ${C.border}`}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
               <thead style={{position:"sticky",top:0,zIndex:2,background:C.card}}>
                 <tr style={{color:C.muted,borderBottom:`2px solid ${C.border}`}}>
@@ -8096,7 +8118,7 @@ ${fullText.slice(0,12000)}`;
                         <input type="text" value={newItemForm.cost}
                           onChange={e=>setNewItemForm(p=>({...p,cost:e.target.value.replace(/[^0-9.]/g,'')}))}
                           onBlur={e=>{const v=parseFloat(e.target.value);setNewItemForm(p=>({...p,cost:isNaN(v)?'0.00':v.toFixed(2)}));}}
-                          onFocus={e=>e.target.select()}
+                          onFocus={e=>{const t=e.target;setTimeout(()=>t.select(),0);}}
                           placeholder="0.00"
                           style={{...ii,paddingLeft:22}}/>
                       </div>
@@ -8174,8 +8196,8 @@ ${fullText.slice(0,12000)}`;
             <button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Done</button>
           </div>
         </>)}
-      </div>
-    </div>,
+    </div>
+  </>,
     document.body
   );
 }
