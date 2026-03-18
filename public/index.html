@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.62";
+const APP_VERSION="v1.17.63";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4959,7 +4959,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,rfqLoading}){
+function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,rfqLoading,onOpenSupplierQuote}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -5025,7 +5025,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [crossOrCorrectPending,setCrossOrCorrectPending]=useState(null);
   const [cpdQuery,setCpdQuery]=useState("");
   const [showCpdSearch,setShowCpdSearch]=useState(false);
-  const [showSupplierQuote,setShowSupplierQuote]=useState(false);
   const [bomVendorList,setBomVendorList]=useState([]);
   const bomVendorListLoaded=useRef(false);
   const altAutoApplied=useRef(false);
@@ -6711,7 +6710,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                 </div>
                 <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
                   <button onClick={onPrintRfq} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building RFQ…":"📋 Print RFQ"}</button>
-                  <button onClick={()=>setShowSupplierQuote(true)} style={btn("#0d1f0d","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>
+                  <button onClick={onOpenSupplierQuote} style={btn("#0d1f0d","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>
                   <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Quote</button>
                   {!readOnly&&(<>
                     {panel.bcItemNumber&&(
@@ -6830,7 +6829,6 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       {showCpdSearch&&<CPDSearchModal query={cpdQuery} uid={uid} panel={panel} onClose={()=>setShowCpdSearch(false)} onImportBom={rows=>{const newBom=[...(panel.bom||[]),...rows];const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}setShowCpdSearch(false);setCpdQuery("");}}/>}
       {showCreateItem&&<CreateItemInBCModal panel={panel} onClose={()=>setShowCreateItem(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
       {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate} onCreateNewItem={()=>{setShowUpdateBom(false);setShowCreateItem(true);}}/>}
-      <SupplierQuoteImportModal show={showSupplierQuote} uid={uid} onClose={()=>setShowSupplierQuote(false)}/>
       {crossOrCorrectPending&&(()=>{
         const aiSug=guessCorrection(crossOrCorrectPending.origPN,crossOrCorrectPending.newPN);
         const dismiss=()=>setCrossOrCorrectPending(null);
@@ -7980,7 +7978,7 @@ ${fullText.slice(0,12000)}`;
                 </div>
               );
             })()}
-            {pdfPreview&&<img src={pdfPreview} style={{width:90,borderRadius:6,border:`1px solid ${C.border}`,margin:"16px auto 0",display:"block",opacity:0.75}}/>}
+            {pdfPreview&&<img src={pdfPreview} onClick={()=>{if(file){const u=URL.createObjectURL(file);window.open(u,'_blank','noopener,noreferrer');setTimeout(()=>URL.revokeObjectURL(u),60000);}}} style={{width:90,borderRadius:6,border:`1px solid ${C.border}`,margin:"16px auto 0",display:"block",opacity:0.75,cursor:"pointer"}} title="Click to open PDF in new tab"/>}
           </div>
         )}
 
@@ -7999,14 +7997,16 @@ ${fullText.slice(0,12000)}`;
                 </div>):null)}
             </div>
             {(pdfPreview||quoteHeader.pdfUrl)&&(
-              <a href={quoteHeader.pdfUrl||'#'} target={quoteHeader.pdfUrl?"_blank":"_self"} rel="noreferrer"
-                style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,flexShrink:0,textDecoration:"none"}}>
+              <div onClick={()=>{
+                if(quoteHeader.pdfUrl){window.open(quoteHeader.pdfUrl,'_blank','noopener,noreferrer');return;}
+                if(file){const u=URL.createObjectURL(file);window.open(u,'_blank','noopener,noreferrer');setTimeout(()=>URL.revokeObjectURL(u),60000);}
+              }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,flexShrink:0,cursor:"pointer"}}>
                 {pdfPreview
-                  ?<img src={pdfPreview} style={{width:90,borderRadius:6,border:`1px solid ${C.accent}`,cursor:"pointer"}} title="View original PDF"/>
+                  ?<img src={pdfPreview} style={{width:90,borderRadius:6,border:`1px solid ${C.accent}`}} title="Click to open PDF in new tab"/>
                   :<div style={{width:90,height:120,borderRadius:6,border:`1px solid ${C.accent}`,background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",fontSize:32}}>📄</div>
                 }
                 <span style={{fontSize:10,color:C.accent,fontWeight:700}}>View PDF</span>
-              </a>
+              </div>
             )}
           </div>
           {/* Match summary */}
@@ -8222,14 +8222,13 @@ ${fullText.slice(0,12000)}`;
 }
 
 // ── PANEL LIST VIEW ──
-function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLoading,onUpdate,onDelete,onTransfer}){
+function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLoading,onUpdate,onDelete,onTransfer,onOpenSupplierQuote}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
   const [validating,setValidating]=useState(false);
   const [validateMsg,setValidateMsg]=useState("");
   const [showDeleteAdminWarn,setShowDeleteAdminWarn]=useState(false);
-  const [showSupplierQuotePLV,setShowSupplierQuotePLV]=useState(false);
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
 
   function addPanel(){
@@ -8322,7 +8321,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLo
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
               {panels.length>0&&<button onClick={onPrintRfq} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building RFQ…":"📋 Print RFQ"}</button>}
-              {panels.length>0&&<button onClick={()=>setShowSupplierQuotePLV(true)} style={btn("#0d1f0d","#4ade80",{fontSize:13,border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>}
+              {panels.length>0&&<button onClick={onOpenSupplierQuote} style={btn("#0d1f0d","#4ade80",{fontSize:13,border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>}
               {panels.length>0&&<button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13})}>🖨 Print Quote</button>}
             </div>
           </div>
@@ -8352,6 +8351,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLo
                   onViewQuote={onViewQuote}
                   onPrintRfq={onPrintRfq}
                   rfqLoading={rfqLoading}
+                  onOpenSupplierQuote={onOpenSupplierQuote}
                 />
               ))}
             </div>
@@ -8394,7 +8394,6 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLo
         </div>
       </div>
     )}
-    <SupplierQuoteImportModal show={showSupplierQuotePLV} uid={uid} onClose={()=>setShowSupplierQuotePLV(false)}/>
   </>);
 }
 
@@ -8502,6 +8501,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
   const [rfqLoading,setRfqLoading]=useState(false);
   const [rfqGroups,setRfqGroups]=useState(null);
   const [autoPrintRfq,setAutoPrintRfq]=useState(false);
+  const [showSqModal,setShowSqModal]=useState(false);
   const saveTimer=useRef(null);
   const readOnly=isReadOnly();
   const didMigrate=useRef(!init.panels);
@@ -8559,34 +8559,31 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
     }
   },[autoPrintRfq,rfqGroups]);
 
-  if(view==="quote"){
-    return(
-      <div style={autoPrint?{height:0,overflow:"hidden"}:undefined}>
-        <QuoteView
-          project={project}
-          uid={uid}
-          onBack={()=>setView("panels")}
-          onUpdate={update}
-        />
-      </div>
-    );
-  }
-
   return(
     <>
-      <PanelListView
-        project={project}
-        uid={uid}
-        readOnly={readOnly}
-        onBack={onBack}
-        onViewQuote={()=>{setAutoPrint(true);setView("quote");}}
-        onPrintRfq={onPrintRfq}
-        rfqLoading={rfqLoading}
-        onUpdate={update}
-        onDelete={onDelete}
-        onTransfer={onTransfer}
-      />
-      {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
+      {view==="quote"?(
+        <div style={autoPrint?{height:0,overflow:"hidden"}:undefined}>
+          <QuoteView project={project} uid={uid} onBack={()=>setView("panels")} onUpdate={update}/>
+        </div>
+      ):(
+        <>
+          <PanelListView
+            project={project}
+            uid={uid}
+            readOnly={readOnly}
+            onBack={onBack}
+            onViewQuote={()=>{setAutoPrint(true);setView("quote");}}
+            onPrintRfq={onPrintRfq}
+            rfqLoading={rfqLoading}
+            onUpdate={update}
+            onDelete={onDelete}
+            onTransfer={onTransfer}
+            onOpenSupplierQuote={()=>setShowSqModal(true)}
+          />
+          {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
+        </>
+      )}
+      <SupplierQuoteImportModal show={showSqModal} uid={uid} onClose={()=>setShowSqModal(false)}/>
     </>
   );
 }
