@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.50";
+const APP_VERSION="v1.17.51";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7575,8 +7575,9 @@ function SupplierQuoteImportModal({uid,onClose}){
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
 
-  async function handleParse(){
-    if(!file)return;
+  async function handleParse(droppedFile){
+    const targetFile=droppedFile||file;
+    if(!targetFile)return;
     if(!_apiKey){setStatusMsg('API key not set — open Settings to add your Anthropic key.');return;}
     setPhase('parsing');setStatusMsg('Extracting text from PDF…');
     setParseProgress(0);setParseEta(null);
@@ -7585,7 +7586,7 @@ function SupplierQuoteImportModal({uid,onClose}){
     try{
       await window.pdfjsReady;
       const pdfjs=window._pdfjs;
-      const buf=await file.arrayBuffer();
+      const buf=await targetFile.arrayBuffer();
       const pdf=await pdfjs.getDocument({data:buf}).promise;
       let fullText='';
       parseMetaRef.current.numPages=pdf.numPages;
@@ -7824,24 +7825,26 @@ ${fullText.slice(0,12000)}`;
 
         {/* UPLOAD PHASE */}
         {phase==='upload'&&(<>
-          <div style={{fontSize:13,color:C.sub,lineHeight:1.6}}>Upload a supplier quote PDF. ARC will extract line items, match them to BC items, and let you review before pushing updated costs to Business Central.</div>
           <div
             onClick={()=>fileRef.current?.click()}
-            style={{border:`2px dashed ${file?C.accent:C.border}`,borderRadius:10,padding:"32px 20px",textAlign:"center",cursor:"pointer",background:file?"#0f1a2e":"transparent",transition:"all 0.2s"}}
-            onDragOver={e=>{e.preventDefault();}}
-            onDrop={e=>{e.preventDefault();const f=e.dataTransfer.files[0];if(f?.type==="application/pdf")setFile(f);}}
+            style={{border:`2px dashed ${C.accent}44`,borderRadius:14,padding:"56px 32px",textAlign:"center",cursor:"pointer",background:"rgba(99,102,241,0.04)",transition:"border-color 0.2s"}}
+            onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=C.accent;}}
+            onDragLeave={e=>{e.currentTarget.style.borderColor=`${C.accent}44`;}}
+            onDrop={e=>{
+              e.preventDefault();e.currentTarget.style.borderColor=`${C.accent}44`;
+              const f=e.dataTransfer.files[0];
+              if(f?.type==="application/pdf"){setFile(f);handleParse(f);}
+            }}
           >
-            <input ref={fileRef} type="file" accept="application/pdf" style={{display:"none"}} onChange={e=>setFile(e.target.files[0])}/>
-            <div style={{fontSize:32,marginBottom:8}}>📄</div>
-            {file
-              ?<div style={{color:C.accent,fontWeight:700,fontSize:14}}>{file.name}</div>
-              :<><div style={{color:C.sub,fontSize:14,fontWeight:600}}>Click or drag & drop a PDF</div>
-                <div style={{color:C.muted,fontSize:12,marginTop:4}}>Supplier quote PDFs only</div></>}
+            <input ref={fileRef} type="file" accept="application/pdf" style={{display:"none"}}
+              onChange={e=>{const f=e.target.files[0];if(f){setFile(f);handleParse(f);}}}/>
+            <div style={{fontSize:48,marginBottom:16}}>📄</div>
+            <div style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:8}}>Drop your Supplier Quote here to begin extraction</div>
+            <div style={{fontSize:13,color:C.muted}}>or click to browse — PDF files only</div>
           </div>
-          {statusMsg&&<div style={{fontSize:13,color:C.red}}>{statusMsg}</div>}
-          <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+          {statusMsg&&<div style={{fontSize:13,color:C.red,textAlign:"center"}}>{statusMsg}</div>}
+          <div style={{display:"flex",justifyContent:"flex-end"}}>
             <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
-            <button onClick={handleParse} disabled={!file} style={btn(C.accent,"#fff",{fontSize:13,opacity:file?1:0.4})}>Parse Quote →</button>
           </div>
         </>)}
 
