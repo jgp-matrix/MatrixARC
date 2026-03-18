@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.34";
+const APP_VERSION="v1.17.35";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6115,7 +6115,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             <table style={{width:"auto",minWidth:"100%",tableLayout:"auto",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",220],["Manufacturer",0,"fit"],["Supplier",0,"fit"],["Notes",140],["Unit $",100],["Ext $",80],["Priced",76],["",56]].map(([h,w,mode],hi)=>(
+                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",220],["Manufacturer",0,"fit"],["Supplier",0,"fit"],["Unit $",100],["Ext $",80],["Priced",76],["",56]].map(([h,w,mode],hi)=>(
                     <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
@@ -6143,7 +6143,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         </div>
                       )}
                     </td>
-                    {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"],["notes",140]].map(([f,w,mode])=>(
+                    {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"]].map(([f,w,mode])=>(
                       f==="_bc"?(
                         <td key="_bc" style={{padding:"3px 2px",width:32,textAlign:"center"}}>
                           {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
