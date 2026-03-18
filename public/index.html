@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.71";
+const APP_VERSION="v1.17.72";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7629,6 +7629,7 @@ function SupplierQuoteImportModal({uid,onClose,show}){
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
   const boxRef=useRef();
   const dragRef=useRef(null);
+  const linkDebounceRef=useRef(null);
 
   function onTitleDrag(e){
     if(e.button!==0||e.target.closest('button'))return;
@@ -7639,6 +7640,22 @@ function SupplierQuoteImportModal({uid,onClose,show}){
     document.addEventListener('mousemove',move);
     document.addEventListener('mouseup',up);
     e.preventDefault();
+  }
+
+  // Debounced BC item search for the Link panel
+  function onLinkQueryChange(val){
+    setLinkQuery(val);
+    if(linkDebounceRef.current)clearTimeout(linkDebounceRef.current);
+    if(val.trim().length>=2){
+      setLinkSearching(true);
+      linkDebounceRef.current=setTimeout(async()=>{
+        const res=await bcSearchItems(val.trim(),{field:"both",top:12});
+        setLinkResults(res.items||[]);
+        setLinkSearching(false);
+      },350);
+    }else{
+      setLinkResults([]);setLinkSearching(false);
+    }
   }
 
   // Load saved quotes from Firestore whenever modal opens; auto-open most recent if idle
@@ -8299,13 +8316,6 @@ ${fullText.slice(0,12000)}`;
           {linkingIdx!==null&&(()=>{
             const item=lineItems[linkingIdx];
             if(!item)return null;
-            async function runLinkSearch(q){
-              if(!q||q.trim().length<2)return;
-              setLinkSearching(true);setLinkResults([]);
-              const res=await bcSearchItems(q,{field:"both",top:12});
-              setLinkResults(res.items||[]);
-              setLinkSearching(false);
-            }
             async function applyLink(bcItem){
               // Save crossing for future auto-matching
               await sqSaveCrossing(uid,item.partNumber,bcItem);
@@ -8327,16 +8337,14 @@ ${fullText.slice(0,12000)}`;
                   </div>
                   <button onClick={()=>{setLinkingIdx(null);setLinkResults([]);}} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer",lineHeight:1}}>×</button>
                 </div>
-                <div style={{display:"flex",gap:8}}>
-                  <input value={linkQuery} onChange={e=>setLinkQuery(e.target.value)}
-                    onKeyDown={e=>{if(e.key==='Enter')runLinkSearch(linkQuery);}}
-                    placeholder="Search BC part number or description…"
+                <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                  <input value={linkQuery}
+                    onChange={e=>onLinkQueryChange(e.target.value)}
+                    onKeyDown={e=>{if(e.key==='Escape'){setLinkingIdx(null);setLinkResults([]);}}}
+                    placeholder="Type BC part number or description…"
                     autoFocus
                     style={{flex:1,background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"8px 10px",color:C.text,fontSize:13,outline:"none"}}/>
-                  <button onClick={()=>runLinkSearch(linkQuery)} disabled={linkSearching}
-                    style={btn(C.accent,"#fff",{fontSize:13,padding:"8px 16px",opacity:linkSearching?0.6:1})}>
-                    {linkSearching?'…':'Search'}
-                  </button>
+                  {linkSearching&&<span style={{color:C.muted,fontSize:13,flexShrink:0}}>Searching…</span>}
                 </div>
                 {linkResults.length>0&&(
                   <div style={{display:"flex",flexDirection:"column",gap:4,maxHeight:220,overflowY:"auto"}}>
@@ -8359,8 +8367,11 @@ ${fullText.slice(0,12000)}`;
                     ))}
                   </div>
                 )}
-                {linkResults.length===0&&!linkSearching&&linkQuery.length>=2&&(
-                  <div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"8px 0"}}>No results — try a shorter search term</div>
+                {linkResults.length===0&&!linkSearching&&linkQuery.trim().length>=2&&(
+                  <div style={{fontSize:12,color:C.muted,textAlign:"center",padding:"8px 0"}}>No results — try a different search term</div>
+                )}
+                {linkQuery.trim().length<2&&!linkSearching&&(
+                  <div style={{fontSize:12,color:C.muted,padding:"4px 0"}}>Type at least 2 characters to search</div>
                 )}
               </div>
             );
