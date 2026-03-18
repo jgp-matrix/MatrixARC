@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.42";
+const APP_VERSION="v1.17.43";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7517,6 +7517,7 @@ function SupplierQuoteImportModal({uid,onClose}){
   const [newItemForm,setNewItemForm]=useState({type:'Inventory',itemNo:'',description:'',genGroup:'',vatGroup:'',invGroup:'',uom:'EA'});
   const [creatingItem,setCreatingItem]=useState(false);
   const [createError,setCreateError]=useState('');
+  const [bcCfg,setBcCfg]=useState({uoms:[],genGroups:[],invGroups:[],vatGroups:[],loaded:false,loading:false});
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
@@ -7659,7 +7660,7 @@ ${fullText.slice(0,12000)}`;
       if(!tok){setStatusMsg('BC sign-in cancelled.');return;}
     }
     setPhase('pushing');setStatusMsg('Pushing prices to BC…');
-    const toUpdate=lineItems.filter(i=>i.isPriced&&i.bcItemId&&i.matchStatus!=='skipped'&&i.approved);
+    const toUpdate=lineItems.filter(i=>i.isPriced&&i.bcItemId&&i.approved&&(i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched'));
     let pushed=0,errors=[];
     const updatedItems=[...lineItems];
     const auditItems=[];
@@ -7685,7 +7686,26 @@ ${fullText.slice(0,12000)}`;
   }
 
   function toggleApprove(idx){
-    setLineItems(prev=>prev.map((item,i)=>i===idx?{...item,approved:!item.approved,matchStatus:item.matchStatus==='skipped'?'auto_matched':'skipped'}:item));
+    setLineItems(prev=>prev.map((item,i)=>i===idx?{...item,approved:!item.approved}:item));
+  }
+
+  async function loadBcCfg(){
+    if(bcCfg.loaded||bcCfg.loading)return;
+    setBcCfg(c=>({...c,loading:true}));
+    try{
+      if(!_bcToken)await acquireBcToken(false);
+      const compId=await bcGetCompanyId();
+      if(!compId){setBcCfg(c=>({...c,loading:false}));return;}
+      const h={"Authorization":`Bearer ${_bcToken}`};
+      const safe=async url=>{try{const r=await fetch(url,{headers:h});if(r.ok)return(await r.json()).value||[];}catch{}return[];};
+      const [uoms,genGroups,invGroups,vatGroups]=await Promise.all([
+        safe(`${BC_API_BASE}/companies(${compId})/unitsOfMeasure?$select=code,displayName&$top=200`),
+        safe(`${BC_API_BASE}/companies(${compId})/generalProductPostingGroups?$select=code,description&$top=200`),
+        safe(`${BC_API_BASE}/companies(${compId})/inventoryPostingGroups?$select=code,description&$top=200`),
+        safe(`${BC_API_BASE}/companies(${compId})/taxGroups?$select=code,displayName&$top=200`),
+      ]);
+      setBcCfg({uoms,genGroups,invGroups,vatGroups,loaded:true,loading:false});
+    }catch(e){console.warn('loadBcCfg:',e);setBcCfg(c=>({...c,loading:false}));}
   }
 
   async function handleCreateInBC(){
@@ -7728,7 +7748,7 @@ ${fullText.slice(0,12000)}`;
     setCreatingItem(false);
   }
 
-  const approvedCount=lineItems.filter(i=>i.isPriced&&i.bcItemId&&i.approved&&i.matchStatus!=='skipped').length;
+  const approvedCount=lineItems.filter(i=>i.isPriced&&i.bcItemId&&i.approved&&(i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched')).length;
   const matchedCount=lineItems.filter(i=>i.matchStatus==='auto_matched').length;
   const pricedCount=lineItems.filter(i=>i.isPriced).length;
 
@@ -7865,10 +7885,12 @@ ${fullText.slice(0,12000)}`;
                           ?<span style={{color:C.muted,fontSize:11}}>unpriced</span>
                           :isMatched
                           ?<button onClick={()=>toggleApprove(i)} style={{
-                              background:isSkipped?C.redDim:'#0d2a1a',border:`1px solid ${isSkipped?C.red:C.green}`,
-                              color:isSkipped?C.red:C.green,borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
-                            }}>{isSkipped?'Skip':'Approve'}</button>
-                          :<button onClick={()=>{setNewItemIdx(i);setNewItemForm(f=>({...f,description:item.description||item.rawPartNumber||''}));setCreateError('');}} style={{
+                              background:item.approved?'#0d2a1a':'#1a0d0d',
+                              border:`1px solid ${item.approved?C.green:C.red}`,
+                              color:item.approved?C.green:C.red,
+                              borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
+                            }}>{item.approved?'Approved ✓':'Skip'}</button>
+                          :<button onClick={()=>{setNewItemIdx(i);setNewItemForm(f=>({...f,itemNo:item.partNumber||'',description:item.description||item.rawPartNumber||''}));setCreateError('');loadBcCfg();}} style={{
                               background:'#1a1a00',border:`1px solid ${C.yellow}`,color:C.yellow,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
                             }}>+ New BC Item</button>
@@ -7887,28 +7909,35 @@ ${fullText.slice(0,12000)}`;
                 <div style={{fontSize:13,fontWeight:700,color:C.accent}}>Create New BC Item — {item.mfr?`${item.mfr} `:''}{item.partNumber||item.rawPartNumber}</div>
                 <button onClick={()=>{setNewItemIdx(null);setCreateError('');}} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer",lineHeight:1}}>×</button>
               </div>
+              {bcCfg.loading&&<div style={{fontSize:11,color:C.muted}}>Loading BC lookup data…</div>}
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,fontSize:12}}>
-                {[
-                  {label:"Item No. (optional — BC auto-generates if blank)",key:"itemNo",span:3},
-                  {label:"Description *",key:"description",span:3},
-                  {label:"Type *",key:"type",type:"select",opts:["Inventory","Non-Inventory","Service"],span:1},
-                  {label:"Base UOM *",key:"uom",span:1,placeholder:"EA"},
-                  {label:"Gen. Prod. Posting Group *",key:"genGroup",span:1},
-                  ...(newItemForm.type==='Inventory'?[{label:"Inventory Posting Group *",key:"invGroup",span:1}]:[]),
-                  {label:"VAT Prod. Posting Group",key:"vatGroup",span:1},
-                ].map(f=>(
-                  <div key={f.key} style={{gridColumn:`span ${f.span||1}`,display:"flex",flexDirection:"column",gap:4}}>
-                    <label style={{color:C.muted,fontSize:10,textTransform:"uppercase",letterSpacing:0.5}}>{f.label}</label>
-                    {f.type==='select'
-                      ?<select value={newItemForm[f.key]} onChange={e=>setNewItemForm(p=>({...p,[f.key]:e.target.value}))}
-                          style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"5px 8px",fontSize:12}}>
-                          {f.opts.map(o=><option key={o}>{o}</option>)}
+                {(()=>{
+                  const inp=(key,placeholder)=><input value={newItemForm[key]} placeholder={placeholder||''} onChange={e=>setNewItemForm(p=>({...p,[key]:e.target.value}))} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"5px 8px",fontSize:12,width:"100%",boxSizing:"border-box"}}/>;
+                  const sel=(key,items,labelFn=i=>i.description||i.displayName||'')=>{
+                    const opts=items.length>0?items:null;
+                    return opts
+                      ?<select value={newItemForm[key]} onChange={e=>setNewItemForm(p=>({...p,[key]:e.target.value}))} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"5px 8px",fontSize:12,width:"100%",boxSizing:"border-box"}}>
+                          <option value="">— select —</option>
+                          {opts.map(o=><option key={o.code} value={o.code}>{o.code}{labelFn(o)?` — ${labelFn(o)}`:''}</option>)}
                         </select>
-                      :<input value={newItemForm[f.key]} placeholder={f.placeholder||''} onChange={e=>setNewItemForm(p=>({...p,[f.key]:e.target.value}))}
-                          style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"5px 8px",fontSize:12}}/>
-                    }
-                  </div>
-                ))}
+                      :inp(key,'Type code…');
+                  };
+                  const row=(label,span,content)=>(
+                    <div style={{gridColumn:`span ${span}`,display:"flex",flexDirection:"column",gap:4}}>
+                      <label style={{color:C.muted,fontSize:10,textTransform:"uppercase",letterSpacing:0.5}}>{label}</label>
+                      {content}
+                    </div>
+                  );
+                  return[
+                    row("Item No. (optional — BC auto-generates if blank)",3,inp('itemNo')),
+                    row("Description *",3,inp('description')),
+                    row("Type *",1,<select value={newItemForm.type} onChange={e=>setNewItemForm(p=>({...p,type:e.target.value}))} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"5px 8px",fontSize:12,width:"100%",boxSizing:"border-box"}}><option>Inventory</option><option>Non-Inventory</option><option>Service</option></select>),
+                    row("Base UOM *",1,sel('uom',bcCfg.uoms,i=>i.displayName)),
+                    row("Gen. Prod. Posting Group *",1,sel('genGroup',bcCfg.genGroups,i=>i.description)),
+                    ...(newItemForm.type==='Inventory'?[row("Inventory Posting Group *",1,sel('invGroup',bcCfg.invGroups,i=>i.description))]:[]),
+                    row("VAT / Tax Group",1,sel('vatGroup',bcCfg.vatGroups,i=>i.displayName||i.description)),
+                  ];
+                })()}
               </div>
               {createError&&<div style={{fontSize:12,color:C.red}}>{createError}</div>}
               <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
