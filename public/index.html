@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.63";
+const APP_VERSION="v1.17.64";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7603,6 +7603,9 @@ function SupplierQuoteImportModal({uid,onClose,show}){
   const [showVendorPrompt,setShowVendorPrompt]=useState(null); // {vendorNo, vendorName, supplierName}
   const [precedingQuoteId,setPrecedingQuoteId]=useState(null); // docId being superseded by this upload
   const [modalPos,setModalPos]=useState(null); // {left,top} when dragged, null=centered
+  const [savedQuotes,setSavedQuotes]=useState([]); // recent quotes from Firestore
+  const [loadingQuotes,setLoadingQuotes]=useState(false);
+  const [dupWarning,setDupWarning]=useState(null); // {existingDocId,existingSupplier,existingDate,parsedData,targetFile}
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
@@ -7618,6 +7621,39 @@ function SupplierQuoteImportModal({uid,onClose,show}){
     document.addEventListener('mousemove',move);
     document.addEventListener('mouseup',up);
     e.preventDefault();
+  }
+
+  // Load saved quotes from Firestore whenever modal opens
+  useEffect(()=>{
+    if(!show)return;
+    setLoadingQuotes(true);
+    fbDb.collection('supplierQuotes').where('importedBy','==',uid).orderBy('importedAt','desc').limit(30).get()
+      .then(snap=>{
+        setSavedQuotes(snap.docs.map(d=>{
+          const v=d.data();
+          return{id:d.id,supplier:v.supplier||'',quoteId:v.quoteId||'',jobName:v.jobName||'',
+            quoteDate:v.quoteDate||'',status:v.status||'',pdfUrl:v.pdfUrl||null,
+            merchandiseTotal:v.merchandiseTotal||0,lineCount:(v.lineItems||[]).length,
+            importedAt:v.importedAt?.toMillis?.()||0,supersededBy:v.supersededBy||null};
+        }));
+      }).catch(()=>{}).finally(()=>setLoadingQuotes(false));
+  },[show,uid]);
+
+  // Load a previously scanned quote back into review phase
+  async function loadSavedQuote(docId){
+    try{
+      const snap=await fbDb.collection('supplierQuotes').doc(docId).get();
+      if(!snap.exists)return;
+      const v=snap.data();
+      setQuoteDocId(docId);
+      setQuoteHeader({quoteId:v.quoteId||'',revision:v.revision||'',supplier:v.supplier||'',
+        jobName:v.jobName||'',contactName:v.contactName||'',quoteDate:v.quoteDate||null,
+        expiresOn:v.expiresOn||null,fob:v.fob||'',freight:v.freight||'',
+        pdfUrl:v.pdfUrl||null,fileName:v.fileName||''});
+      setLineItems(v.lineItems||[]);
+      setPdfPreview(null);setFile(null);setPushResult(null);
+      setPhase('review');setStatusMsg('');
+    }catch(e){setStatusMsg('Failed to load quote: '+e.message);}
   }
 
   // Render first page of PDF to canvas for thumbnail preview
@@ -7730,9 +7766,38 @@ ${fullText.slice(0,12000)}`;
         console.error("Quote parse raw response:",raw);
         throw new Error("AI returned invalid JSON — the quote may be too long or in an unsupported format. Try again.");
       }
-      setStatusMsg('Saving to database…');
-      setParseProgress(68);
-      const{docId,lineItems:normalized}=await saveSupplierQuoteToFirestore(parsed,uid,{supersedes:precedingQuoteId||null});
+      setStatusMsg('Checking for duplicates…');
+      setParseProgress(67);
+      // Duplicate check: same quoteId from the same user
+      if(parsed.quoteId){
+        const dupSnap=await fbDb.collection('supplierQuotes')
+          .where('importedBy','==',uid)
+          .where('quoteId','==',parsed.quoteId)
+          .limit(1).get();
+        if(!dupSnap.empty&&!precedingQuoteId){
+          const dup=dupSnap.docs[0];
+          const dv=dup.data();
+          // Pause and show warning — resume via setDupWarning resolution
+          setPhase('upload');
+          setParseProgress(0);setParseEta(null);setStatusMsg('');
+          setDupWarning({existingDocId:dup.id,existingSupplier:dv.supplier||'',
+            existingDate:dv.importedAt?.toDate?.().toLocaleDateString()||'',
+            parsedData:parsed,targetFile});
+          return; // handleParse will be re-called by dupWarning handler
+        }
+      }
+      await saveAndMatch(parsed,targetFile,precedingQuoteId||null);
+    }catch(e){
+      clearInterval(aiTimerRef.current);aiTimerRef.current=null;
+      setStatusMsg('Error: '+e.message);setPhase('upload');
+    }
+  }
+
+  // Save parsed quote to Firestore + upload PDF + BC match
+  async function saveAndMatch(parsed,targetFile,supersedes){
+    setPhase('parsing');setStatusMsg('Saving to database…');setParseProgress(68);
+    try{
+      const{docId,lineItems:normalized}=await saveSupplierQuoteToFirestore(parsed,uid,{supersedes:supersedes||null});
       // Upload original PDF to Firebase Storage for preview
       let pdfUrl=null;
       try{
@@ -7767,7 +7832,6 @@ ${fullText.slice(0,12000)}`;
         setStatusMsg(`Matching item ${matchedSoFar} of ${pricedItems.length}…`);
         const pct=pricedItems.length>0?Math.round(72+(matchedSoFar/pricedItems.length)*26):98;
         setParseProgress(pct);
-        // ETA based on observed rate (fall back to 1.2s/item prior before we have data)
         const elapsedMatch=(Date.now()-parseMetaRef.current.matchStartMs)/1000;
         const ratePerItem=matchedSoFar>1?elapsedMatch/matchedSoFar:1.2;
         const remaining=pricedItems.length-matchedSoFar;
@@ -7779,12 +7843,17 @@ ${fullText.slice(0,12000)}`;
         }
       }
       setParseProgress(100);
-      // Persist matches back to Firestore
       await fbDb.collection('supplierQuotes').doc(docId).update({lineItems:matched,status:'pending_review'});
       setLineItems(matched);
       setPhase('review');setStatusMsg('');
+      // Refresh saved quotes list
+      setSavedQuotes(prev=>{
+        const entry={id:docId,supplier:parsed.supplier||'',quoteId:parsed.quoteId||'',
+          jobName:parsed.jobName||'',quoteDate:parsed.quoteDate||'',status:'pending_review',
+          pdfUrl,merchandiseTotal:0,lineCount:normalized.length,importedAt:Date.now(),supersededBy:null};
+        return[entry,...prev.filter(q=>q.id!==docId)];
+      });
     }catch(e){
-      clearInterval(aiTimerRef.current);aiTimerRef.current=null;
       setStatusMsg('Error: '+e.message);setPhase('upload');
     }
   }
@@ -7916,27 +7985,81 @@ ${fullText.slice(0,12000)}`;
 
         {/* UPLOAD PHASE */}
         {phase==='upload'&&(<>
-          <div
-            onClick={()=>fileRef.current?.click()}
-            style={{border:`2px dashed ${C.accent}44`,borderRadius:14,padding:"56px 32px",textAlign:"center",cursor:"pointer",background:"rgba(99,102,241,0.04)",transition:"border-color 0.2s"}}
-            onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=C.accent;}}
-            onDragLeave={e=>{e.currentTarget.style.borderColor=`${C.accent}44`;}}
-            onDrop={e=>{
-              e.preventDefault();e.currentTarget.style.borderColor=`${C.accent}44`;
-              const f=e.dataTransfer.files[0];
-              if(f?.type==="application/pdf"){setFile(f);handleParse(f);}
-            }}
-          >
-            <input ref={fileRef} type="file" accept="application/pdf" style={{display:"none"}}
-              onChange={e=>{const f=e.target.files[0];if(f){setFile(f);handleParse(f);}}}/>
-            <div style={{fontSize:48,marginBottom:16}}>📄</div>
-            <div style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:8}}>Drop your Supplier Quote here to begin extraction</div>
-            <div style={{fontSize:13,color:C.muted}}>or click to browse — PDF files only</div>
-          </div>
-          {statusMsg&&<div style={{fontSize:13,color:C.red,textAlign:"center"}}>{statusMsg}</div>}
-          <div style={{display:"flex",justifyContent:"flex-end"}}>
-            <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
-          </div>
+          {/* Duplicate warning dialog */}
+          {dupWarning&&(
+            <div style={{background:"#1a1000",border:`1px solid ${C.yellow}`,borderRadius:12,padding:20,marginBottom:8}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.yellow,marginBottom:8}}>⚠ Duplicate Quote Detected</div>
+              <div style={{fontSize:13,color:C.sub,marginBottom:16,lineHeight:1.6}}>
+                Quote <strong style={{color:C.text}}>#{dupWarning.parsedData.quoteId}</strong> from <strong style={{color:C.text}}>{dupWarning.parsedData.supplier}</strong> was already imported
+                {dupWarning.existingDate?` on ${dupWarning.existingDate}`:''}.
+                <br/>What would you like to do?
+              </div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                <button onClick={()=>setDupWarning(null)}
+                  style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
+                <button onClick={async()=>{const d=dupWarning;setDupWarning(null);await saveAndMatch(d.parsedData,d.targetFile,null);}}
+                  style={btn("#1a1a2e",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Save as Separate Copy</button>
+                <button onClick={async()=>{const d=dupWarning;setPrecedingQuoteId(d.existingDocId);setDupWarning(null);await saveAndMatch(d.parsedData,d.targetFile,d.existingDocId);}}
+                  style={btn("#0d1f0d","#4ade80",{fontSize:13,border:"1px solid #4ade8044"})}>↑ Supersede Previous Version</button>
+              </div>
+            </div>
+          )}
+          {!dupWarning&&(<>
+            <div
+              onClick={()=>fileRef.current?.click()}
+              style={{border:`2px dashed ${C.accent}44`,borderRadius:14,padding:"40px 32px",textAlign:"center",cursor:"pointer",background:"rgba(99,102,241,0.04)",transition:"border-color 0.2s"}}
+              onDragOver={e=>{e.preventDefault();e.currentTarget.style.borderColor=C.accent;}}
+              onDragLeave={e=>{e.currentTarget.style.borderColor=`${C.accent}44`;}}
+              onDrop={e=>{
+                e.preventDefault();e.currentTarget.style.borderColor=`${C.accent}44`;
+                const f=e.dataTransfer.files[0];
+                if(f?.type==="application/pdf"){setFile(f);handleParse(f);}
+              }}
+            >
+              <input ref={fileRef} type="file" accept="application/pdf" style={{display:"none"}}
+                onChange={e=>{const f=e.target.files[0];if(f){setFile(f);handleParse(f);}}}/>
+              <div style={{fontSize:40,marginBottom:12}}>📄</div>
+              <div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:6}}>Drop a Supplier Quote PDF here</div>
+              <div style={{fontSize:13,color:C.muted}}>or click to browse — PDF files only</div>
+            </div>
+            {statusMsg&&<div style={{fontSize:13,color:C.red,textAlign:"center"}}>{statusMsg}</div>}
+            {/* Previously scanned quotes */}
+            {savedQuotes.length>0&&(
+              <div>
+                <div style={{fontSize:12,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>
+                  Previously Scanned Quotes {loadingQuotes&&'…'}
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:260,overflowY:"auto"}}>
+                  {savedQuotes.map(q=>(
+                    <div key={q.id} onClick={()=>loadSavedQuote(q.id)}
+                      style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,cursor:"pointer",transition:"border-color 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
+                      onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                      <span style={{fontSize:22,flexShrink:0}}>{q.supersededBy?'🔄':'📋'}</span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:700,color:q.supersededBy?C.muted:C.text,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {q.supplier||'—'} {q.quoteId?`· #${q.quoteId}`:''}
+                          {q.supersededBy&&<span style={{fontSize:11,color:C.muted,marginLeft:6}}>(superseded)</span>}
+                        </div>
+                        <div style={{fontSize:11,color:C.muted,marginTop:2}}>
+                          {q.jobName&&<span>{q.jobName} · </span>}
+                          {q.lineCount} lines
+                          {q.merchandiseTotal>0&&<span> · ${q.merchandiseTotal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>}
+                        </div>
+                      </div>
+                      <div style={{fontSize:10,color:C.muted,flexShrink:0,textAlign:"right"}}>
+                        <div style={{padding:"2px 8px",borderRadius:6,background:q.status==='pushed_to_bc'?C.greenDim:C.border,color:q.status==='pushed_to_bc'?C.green:C.muted,fontWeight:700,marginBottom:3}}>{q.status||'—'}</div>
+                        {q.importedAt?new Date(q.importedAt).toLocaleDateString():''}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{display:"flex",justifyContent:"flex-end"}}>
+              <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
+            </div>
+          </>)}
         </>)}
 
         {/* PARSING PHASE */}
@@ -9881,22 +10004,9 @@ function App({user}){
         </div>
       )}
       {/* ── TOP MENU BAR (always visible) ── */}
-      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:88,position:"fixed",top:0,left:0,right:0,zIndex:500}}>
-        {/* Centered AI Search bar */}
-        <div style={{position:"absolute",left:"50%",top:"50%",transform:"translateX(-50%) translateY(-50%)",width:"min(960px,52vw)",zIndex:1}}>
-          <div style={{display:"flex",alignItems:"center",gap:0,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",width:"100%"}}>
-            <span style={{padding:"0 12px",color:C.muted,fontSize:18,lineHeight:1}}>🔍</span>
-            <input ref={sqInputRef} value={sqQuery} placeholder="AI Search — quotes, projects, suppliers…"
-              onChange={e=>setSqQuery(e.target.value)}
-              onKeyDown={e=>{if(e.key==='Enter')runAiSearch(sqQuery);if(e.key==='Escape'){setSqQuery('');setSqResults(null);}}}
-              style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:19,padding:"10px 4px"}}/>
-            {sqSearching&&<span style={{padding:"0 12px",color:C.muted,fontSize:16}}>…</span>}
-            {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 12px",fontSize:20,lineHeight:1}}>×</button>}
-            <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"10px 18px",cursor:"pointer",fontSize:18,fontWeight:700}}>Search</button>
-          </div>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:12,flex:1}}>
-          {/* Small ARC logo */}
+      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 16px",display:"flex",alignItems:"center",gap:12,minHeight:88,position:"fixed",top:0,left:0,right:0,zIndex:500}}>
+        {/* Left: ARC logo + nav */}
+        <div style={{display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
           <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",flexShrink:0}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
             <svg width="22" height="20" viewBox="0 0 100 90" fill="none">
               <polygon points="50,4 96,86 4,86" stroke={C.accent} strokeWidth="3.5" strokeLinejoin="round" fill={C.accentDim}/>
@@ -9909,18 +10019,32 @@ function App({user}){
           {view!=="dashboard"&&(
             <button onClick={()=>{setView("dashboard");setOpenProject(null);}}
               style={{display:"flex",alignItems:"center",gap:6,background:"none",border:`1px solid ${C.border}`,
-                color:C.accent,cursor:"pointer",borderRadius:8,padding:"5px 16px",fontSize:13,fontWeight:700,
+                color:C.accent,cursor:"pointer",borderRadius:8,padding:"5px 14px",fontSize:13,fontWeight:700,
                 whiteSpace:"nowrap",flexShrink:0}}>
               ← Back to Projects
             </button>
           )}
           {companyLogo?(
-            <img src={companyLogo} alt="Company logo" style={{maxHeight:64,maxWidth:200,objectFit:"contain"}}/>
+            <img src={companyLogo} alt="Company logo" style={{maxHeight:54,maxWidth:140,objectFit:"contain"}}/>
           ):companyName?(
-            <span style={{color:C.accent,fontSize:29,fontWeight:700}}>⬡ {companyName}</span>
+            <span style={{color:C.accent,fontSize:22,fontWeight:700,whiteSpace:"nowrap"}}>⬡ {companyName}</span>
           ):null}
         </div>
-        <div style={{display:"flex",gap:8,alignItems:"center",height:36}}>
+        {/* Center: AI Search bar */}
+        <div style={{flex:1,display:"flex",justifyContent:"center",minWidth:0,padding:"0 8px"}}>
+          <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",width:"100%",maxWidth:900}}>
+            <span style={{padding:"0 12px",color:C.muted,fontSize:18,lineHeight:1,flexShrink:0}}>🔍</span>
+            <input ref={sqInputRef} value={sqQuery} placeholder="AI Search — quotes, projects, suppliers…"
+              onChange={e=>setSqQuery(e.target.value)}
+              onKeyDown={e=>{if(e.key==='Enter')runAiSearch(sqQuery);if(e.key==='Escape'){setSqQuery('');setSqResults(null);}}}
+              style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:17,padding:"10px 4px",minWidth:0}}/>
+            {sqSearching&&<span style={{padding:"0 12px",color:C.muted,fontSize:16,flexShrink:0}}>…</span>}
+            {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 12px",fontSize:20,lineHeight:1,flexShrink:0}}>×</button>}
+            <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"10px 16px",cursor:"pointer",fontSize:16,fontWeight:700,flexShrink:0}}>Search</button>
+          </div>
+        </div>
+        {/* Right: status + actions */}
+        <div style={{display:"flex",gap:8,alignItems:"center",height:36,flexShrink:0}}>
           {bgRunning.length>0&&(
             <div title={bgRunning.map(t=>t.panelName+": "+t.msg).join("\n")}
               style={{display:"flex",alignItems:"center",gap:6,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,background:"#0d2a0d",border:"1px solid #22c55e99",cursor:"default"}}>
