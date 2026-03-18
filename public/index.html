@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.45";
+const APP_VERSION="v1.17.46";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1558,6 +1558,23 @@ async function sqSavePushAudit(quoteDocId,supplier,quoteId,userId,auditItems){
   if(!auditItems.length)return;
   await fbDb.collection('bcPriceUpdates').add({quoteId,supplier,quoteDocId,
     pushedAt:firebase.firestore.FieldValue.serverTimestamp(),pushedBy:userId,items:auditItems});
+}
+// Adaptive AI parse time learning — stores actual durations in localStorage
+function sqGetAiPrior(){
+  try{
+    const arr=JSON.parse(localStorage.getItem('sqAiParseTimes')||'[]');
+    if(!arr.length)return 22; // cold-start default
+    const recent=arr.slice(-8);
+    const avg=recent.reduce((a,b)=>a+b,0)/recent.length;
+    return Math.max(10,Math.round(avg*1.15)); // avg + 15% buffer, min 10s
+  }catch{return 22;}
+}
+function sqRecordAiTime(seconds){
+  try{
+    const arr=JSON.parse(localStorage.getItem('sqAiParseTimes')||'[]');
+    arr.push(Math.round(seconds));
+    localStorage.setItem('sqAiParseTimes',JSON.stringify(arr.slice(-10))); // keep last 10
+  }catch{}
 }
 
 // ── IMAGE RESIZE ──
@@ -7541,19 +7558,23 @@ function SupplierQuoteImportModal({uid,onClose}){
         const tc=await page.getTextContent();
         fullText+=tc.items.map(i=>i.str).join(' ')+'\n';
       }
-      // AI phase: 15→64% — exponential decay (never stalls), ETA uses multi-stage model
+      // AI phase: linear 15→60% over learned prior, then slow crawl if overrun
       setStatusMsg('Sending to AI for parsing…');
       setParseProgress(15);
-      const AI_PRIOR_SEC=20, SAVE_EST_SEC=2, MATCH_PER_ITEM_SEC=1.2;
-      const AI_HALFLIFE_MS=13000; // asymptotes, never hits ceiling
+      const SAVE_EST_SEC=2, MATCH_PER_ITEM_SEC=1.2;
+      const AI_PRIOR_SEC=sqGetAiPrior(); // learned from past runs
       parseMetaRef.current.aiStartMs=Date.now();
+      parseMetaRef.current.aiPriorSec=AI_PRIOR_SEC;
       aiTimerRef.current=setInterval(()=>{
         const meta=parseMetaRef.current;
         const elapsed=(Date.now()-meta.aiStartMs)/1000;
-        const frac=1-Math.exp(-elapsed*1000/AI_HALFLIFE_MS);
-        setParseProgress(Math.round(15+frac*49));
-        // ETA = remaining AI (linear prior, floor 0) + save + match estimate
-        const aiRemaining=Math.max(0,AI_PRIOR_SEC-elapsed);
+        const prior=meta.aiPriorSec;
+        // Linear 15→60 during expected window; slow crawl +0.3%/s after (max 64)
+        const pct=elapsed<=prior
+          ?15+(elapsed/prior)*45
+          :60+Math.min(4,(elapsed-prior)*0.3);
+        setParseProgress(Math.round(pct));
+        const aiRemaining=Math.max(0,prior-elapsed);
         const totalEta=Math.round(aiRemaining+SAVE_EST_SEC+meta.pricedCount*MATCH_PER_ITEM_SEC);
         setParseEta(totalEta>3?`~${totalEta}s remaining`:null);
       },300);
@@ -7590,6 +7611,8 @@ Rules:
 PDF TEXT:
 ${fullText.slice(0,12000)}`;
       const raw=await apiCall({model:"claude-sonnet-4-6",max_tokens:8000,messages:[{role:"user",content:prompt}]});
+      const aiElapsed=(Date.now()-parseMetaRef.current.aiStartMs)/1000;
+      sqRecordAiTime(aiElapsed); // learn from this run
       clearInterval(aiTimerRef.current);aiTimerRef.current=null;
       setParseProgress(65);setParseEta(null);
       let parsed;
