@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.61";
+const APP_VERSION="v1.17.62";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9167,63 +9167,11 @@ function AIDatabasePage({uid,onBack}){
   );
 }
 
-function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject}){
+function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching}){
   const [groupBy,setGroupBy]=useState("status");
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
   const bgTasks=useBgTasks();
-  const [sqQuery,setSqQuery]=useState('');
-  const [sqResults,setSqResults]=useState(null); // null=idle, {quotes:[],projects:[]}
-  const [sqSearching,setSqSearching]=useState(false);
-  const sqInputRef=useRef();
-
-  async function runAiSearch(q){
-    if(!q||q.trim().length<2){setSqResults(null);return;}
-    setSqSearching(true);setSqResults(null);
-    try{
-      // Fetch recent quotes for this user (all, sort client-side)
-      const snap=await fbDb.collection('supplierQuotes').where('importedBy','==',uid).limit(200).get();
-      const quotes=snap.docs.map(d=>{
-        const v=d.data();
-        return{id:d.id,supplier:v.supplier||'',quoteId:v.quoteId||'',jobName:v.jobName||'',
-          quoteDate:v.quoteDate||'',merchandiseTotal:v.merchandiseTotal||0,status:v.status||'',
-          pdfUrl:v.pdfUrl||null,lineCount:(v.lineItems||[]).length,
-          importedAt:v.importedAt?.toMillis?.()||0,supersededBy:v.supersededBy||null};
-      }).sort((a,b)=>b.importedAt-a.importedAt);
-
-      let matchedQuotes=[];
-      if(_apiKey&&quotes.length>0){
-        // AI matching via Claude Haiku
-        const ctx=quotes.map((qt,i)=>`${i+1}. ID:${qt.id} Supplier:${qt.supplier} Quote#:${qt.quoteId} Job:${qt.jobName} Date:${qt.quoteDate} Total:$${qt.merchandiseTotal} Lines:${qt.lineCount} Status:${qt.status}`).join('\n');
-        try{
-          const raw=await apiCall({model:'claude-haiku-4-5-20251001',max_tokens:400,
-            messages:[{role:'user',content:`Search query: "${q}"\n\nSupplier quotes:\n${ctx}\n\nReturn a JSON array of matching document IDs ordered by relevance. Example: ["id1","id2"]. Return [] if no matches. Only return the JSON array.`}]});
-          const m=raw.match(/\[[\s\S]*?\]/);
-          const ids=m?JSON.parse(m[0]):[];
-          matchedQuotes=ids.map(id=>quotes.find(qt=>qt.id===id)).filter(Boolean);
-        }catch(e){console.warn('AI search fallback:',e);matchedQuotes=[];}
-      }
-      if(!matchedQuotes.length){
-        // Fallback: local token match
-        const tokens=q.toLowerCase().replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(w=>w.length>1);
-        matchedQuotes=quotes.filter(qt=>{
-          const text=`${qt.supplier} ${qt.quoteId} ${qt.jobName}`.toLowerCase();
-          return tokens.some(t=>text.includes(t));
-        });
-      }
-
-      // Local project search
-      const qLow=q.toLowerCase();
-      const matchedProjects=projects.filter(p=>
-        (p.name||'').toLowerCase().includes(qLow)||
-        (p.bcCustomerName||'').toLowerCase().includes(qLow)||
-        (p.bcProjectNumber||'').toLowerCase().includes(qLow)
-      );
-
-      setSqResults({quotes:matchedQuotes,projects:matchedProjects});
-    }catch(e){setSqResults({quotes:[],projects:[],error:e.message});}
-    setSqSearching(false);
-  }
 
   function groupProjects(list){
     if(groupBy==="customer"){
@@ -9302,16 +9250,6 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
         </div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          <div style={{display:"flex",alignItems:"center",gap:0,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",width:320}}>
-            <span style={{padding:"0 10px",color:C.muted,fontSize:14,lineHeight:1}}>🔍</span>
-            <input ref={sqInputRef} value={sqQuery} placeholder="AI Search — quotes, projects, suppliers…"
-              onChange={e=>setSqQuery(e.target.value)}
-              onKeyDown={e=>{if(e.key==='Enter')runAiSearch(sqQuery);if(e.key==='Escape'){setSqQuery('');setSqResults(null);}}}
-              style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:13,padding:"9px 4px"}}/>
-            {sqSearching&&<span style={{padding:"0 10px",color:C.muted,fontSize:12}}>…</span>}
-            {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 10px",fontSize:16,lineHeight:1}}>×</button>}
-            <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"9px 14px",cursor:"pointer",fontSize:12,fontWeight:700}}>Search</button>
-          </div>
           <button data-tip="Start a new panel extraction project" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
             <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
           </button>
@@ -9947,22 +9885,30 @@ function App({user}){
       )}
       {/* ── TOP MENU BAR (always visible) ── */}
       <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:88,position:"fixed",top:0,left:0,right:0,zIndex:500}}>
-        <div style={{position:"absolute",left:"50%",top:"50%",transform:"translateX(-50%) translateY(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:5,pointerEvents:"none"}}>
-          <div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",pointerEvents:"auto"}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
-            <svg width="38" height="34" viewBox="0 0 100 90" fill="none">
+        {/* Centered AI Search bar */}
+        <div style={{position:"absolute",left:"50%",top:"50%",transform:"translateX(-50%) translateY(-50%)",width:"min(960px,52vw)",zIndex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:0,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",width:"100%"}}>
+            <span style={{padding:"0 12px",color:C.muted,fontSize:18,lineHeight:1}}>🔍</span>
+            <input ref={sqInputRef} value={sqQuery} placeholder="AI Search — quotes, projects, suppliers…"
+              onChange={e=>setSqQuery(e.target.value)}
+              onKeyDown={e=>{if(e.key==='Enter')runAiSearch(sqQuery);if(e.key==='Escape'){setSqQuery('');setSqResults(null);}}}
+              style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:19,padding:"10px 4px"}}/>
+            {sqSearching&&<span style={{padding:"0 12px",color:C.muted,fontSize:16}}>…</span>}
+            {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 12px",fontSize:20,lineHeight:1}}>×</button>}
+            <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"10px 18px",cursor:"pointer",fontSize:18,fontWeight:700}}>Search</button>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:12,flex:1}}>
+          {/* Small ARC logo */}
+          <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",flexShrink:0}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
+            <svg width="22" height="20" viewBox="0 0 100 90" fill="none">
               <polygon points="50,4 96,86 4,86" stroke={C.accent} strokeWidth="3.5" strokeLinejoin="round" fill={C.accentDim}/>
               <polygon points="50,4 68,38 32,38" fill={C.accent} opacity="0.85"/>
               <line x1="50" y1="38" x2="50" y2="86" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
               <line x1="26" y1="62" x2="74" y2="62" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
             </svg>
-            <div style={{display:"flex",flexDirection:"column",lineHeight:1}}>
-              <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:34,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
-              <span style={{fontSize:11,color:C.muted,fontWeight:500,letterSpacing:1.5,marginTop:3}}>by APEX Software</span>
-            </div>
+            <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:20,fontWeight:900,letterSpacing:4,color:C.accent,lineHeight:1}}>ARC</span>
           </div>
-          <span style={{fontSize:14,color:C.muted,opacity:0.6}}>{APP_VERSION}</span>
-        </div>
-        <div style={{display:"flex",alignItems:"center",gap:12,flex:1}}>
           {view!=="dashboard"&&(
             <button onClick={()=>{setView("dashboard");setOpenProject(null);}}
               style={{display:"flex",alignItems:"center",gap:6,background:"none",border:`1px solid ${C.border}`,
@@ -10041,7 +9987,7 @@ function App({user}){
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching}/>
         </>
       )}
       {view==="project"&&openProject&&(
