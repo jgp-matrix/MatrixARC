@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.56";
+const APP_VERSION="v1.17.57";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3099,6 +3099,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             <div style={{display:"flex",alignItems:"center",gap:2}}>
               <span style={{color:C.muted,fontSize:12}}>$</span>
               <input type="number" min="0" step="0.01" value={manualPrice} onChange={e=>setManualPrice(e.target.value)} placeholder="0.00" style={{...inp(),width:80,fontSize:12,textAlign:"right"}}
+                onFocus={e=>e.target.select()}
                 onKeyDown={e=>{if(e.key==="Enter")addManualItem();}}/>
             </div>
             <button onClick={addManualItem} disabled={!manualDesc.trim()} style={btn(C.accent,"#fff",{padding:"6px 14px",fontSize:12,opacity:manualDesc.trim()?1:0.4})}>Add</button>
@@ -3169,6 +3170,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
                 <div style={{flex:1,fontSize:12,color:C.text,fontWeight:500}}>{label}</div>
                 <input type="number" min="0" step="1" value={laborRates[key]??LABOR_RATE_DEFAULTS[key]}
                   onChange={e=>setLaborRates(prev=>({...prev,[key]:Math.max(0,+e.target.value||0)}))}
+                  onFocus={e=>e.target.select()}
                   style={{...inp(),width:70,textAlign:"right",fontSize:12,padding:"4px 6px"}}/>
                 <div style={{fontSize:11,color:C.muted,width:120}}>{unit}</div>
               </div>
@@ -6572,6 +6574,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                   <span style={{fontSize:12,color:C.muted}}>$/hr</span>
                   <input type="number" min="0" step="1" readOnly={readOnly} value={laborRate}
                     onChange={e=>savePricing({laborRate:Math.max(0,+e.target.value||0)})}
+                    onFocus={e=>e.target.select()}
                     style={{...inp({padding:"3px 5px",fontSize:13,width:60,textAlign:"right",border:"1px solid #888"})}}/>
                   <span style={{fontSize:12,color:C.muted}}>Override hrs</span>
                   <input type="number" min="0" step="0.5" readOnly={readOnly} value={pr.laborHoursOverride??""} placeholder="auto"
@@ -6683,7 +6686,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         <input type="number" min="0" step="50" readOnly={readOnly} value={numVal}
                           onChange={e=>savePricing({[key]:Math.max(0,+e.target.value||0)})}
                           style={{...inp({padding:"3px 5px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:4,width:80,textAlign:"right"}),color}}
-                          onFocus={e=>e.target.style.borderColor=C.accent}
+                          onFocus={e=>{e.target.style.borderColor=C.accent;e.target.select();}}
                           onBlur={e=>e.target.style.borderColor="transparent"}/>
                       </div>
                     ):(
@@ -6696,6 +6699,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     <span style={{color:C.sub,fontSize:13}}>Margin</span>
                     <input type="number" min="0" step="1" value={markup} readOnly={readOnly}
                       onChange={e=>savePricing({markup:Math.max(0,+e.target.value||0)})}
+                      onFocus={e=>e.target.select()}
                       style={{...inp({padding:"3px 6px",fontSize:13,width:55,textAlign:"right"})}}/>
                     <span style={{color:C.muted,fontSize:13}}>%</span>
                   </div>
@@ -7253,7 +7257,7 @@ function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
               </div>
               <div style={{flex:1}}>
                 <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Unit Price ($)</div>
-                <input type="number" min="0" step="0.01" value={unitPriceStr} onChange={e=>setUnitPriceStr(e.target.value)} style={inp()} placeholder="0.00"/>
+                <input type="number" min="0" step="0.01" value={unitPriceStr} onChange={e=>setUnitPriceStr(e.target.value)} onFocus={e=>e.target.select()} style={inp()} placeholder="0.00"/>
               </div>
             </div>
           </div>
