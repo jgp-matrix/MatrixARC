@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.33";
+const APP_VERSION="v1.17.34";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6111,11 +6111,11 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             </div>
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
           </div>
-          <div style={{borderRadius:8,border:`1px solid ${C.border}`}}>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
+            <table style={{width:"auto",minWidth:"100%",tableLayout:"auto",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0],["Manufacturer",0,"fit"],["Supplier",0,"fit"],["Notes",160],["Unit $",110],["Ext $",80],["Priced",76],["",90]].map(([h,w,mode],hi)=>(
+                  {[["#",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",220],["Manufacturer",0,"fit"],["Supplier",0,"fit"],["Notes",140],["Unit $",100],["Ext $",80],["Priced",76],["",56]].map(([h,w,mode],hi)=>(
                     <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
@@ -6143,7 +6143,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                         </div>
                       )}
                     </td>
-                    {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",0],["manufacturer",0,"fit"],["_supplier",0,"fit"],["notes",160]].map(([f,w,mode])=>(
+                    {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"],["notes",140]].map(([f,w,mode])=>(
                       f==="_bc"?(
                         <td key="_bc" style={{padding:"3px 2px",width:32,textAlign:"center"}}>
                           {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
@@ -6355,7 +6355,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                     <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,color:C.muted,whiteSpace:"nowrap"}}>
                       {row.isLaborRow?"—":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—"}
                     </td>
-                    <td style={{padding:"3px 3px",textAlign:"center",width:90}}>
+                    <td style={{padding:"3px 3px",textAlign:"center",width:56}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:0}}>
                         {!readOnly&&!row.isLaborRow&&<button onClick={()=>deleteBomRow(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"2px 4px",width:28,textAlign:"center"}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
                       </div>
@@ -7866,7 +7866,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLo
         {readOnly&&<><div style={{width:1,height:16,background:C.border}}/><span style={{background:C.border,color:C.muted,borderRadius:20,padding:"2px 10px",fontSize:13,fontWeight:700}}>VIEW ONLY</span></>}
       </div>
       <div style={{flex:1,overflowY:"auto",padding:24}}>
-        <div style={{maxWidth:"100%",margin:"0 auto"}}>
+        <div style={{maxWidth:1400,margin:"0 auto"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
             <div>
               {editingName?(
