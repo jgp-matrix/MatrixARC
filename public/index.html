@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.77";
+const APP_VERSION="v1.17.78";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7821,12 +7821,14 @@ function SupplierQuoteImportModal({uid,onClose,show}){
   const [linkQuery,setLinkQuery]=useState('');
   const [linkResults,setLinkResults]=useState([]);
   const [linkSearching,setLinkSearching]=useState(false);
+  const [fuzzyResults,setFuzzyResults]=useState({}); // idx → BC item | null | 'searching'
   const fileRef=useRef();
   const aiTimerRef=useRef(null);
   const parseMetaRef=useRef({numPages:1,pricedCount:20,aiStartMs:0,matchStartMs:0});
   const boxRef=useRef();
   const dragRef=useRef(null);
   const linkDebounceRef=useRef(null);
+  const fuzzySearchStarted=useRef(false);
 
   function onTitleDrag(e){
     if(e.button!==0||e.target.closest('button'))return;
@@ -7855,6 +7857,42 @@ function SupplierQuoteImportModal({uid,onClose,show}){
       if(quoteDocId)await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updated});
       setLinkingIdx(null);setLinkQuery('');setLinkResults([]);
     }catch(e){setStatusMsg('Link failed: '+e.message);}
+  }
+
+  // Reset fuzzy search state when a new quote is loaded
+  useEffect(()=>{
+    setFuzzyResults({});
+    fuzzySearchStarted.current=false;
+  },[quoteDocId]);
+
+  // Background fuzzy BC search for unmatched priced items once review phase starts
+  useEffect(()=>{
+    if(phase!=='review'||fuzzySearchStarted.current)return;
+    fuzzySearchStarted.current=true;
+    lineItems.forEach(async(item,i)=>{
+      if(!item.isPriced||item.matchStatus!=='unmatched'||!item.partNumber||(item.partNumber.trim().length<3))return;
+      setFuzzyResults(prev=>({...prev,[i]:'searching'}));
+      try{
+        const res=await bcSearchItems(item.partNumber.trim(),{field:'both',top:3});
+        setFuzzyResults(prev=>({...prev,[i]:res.items?.[0]||null}));
+      }catch(e){setFuzzyResults(prev=>({...prev,[i]:null}));}
+    });
+  },[phase]);
+
+  // Accept a fuzzy-suggested BC match without opening the link panel
+  async function acceptFuzzyMatch(idx,bcItem){
+    const item=lineItems[idx];
+    if(!item)return;
+    try{
+      await sqSaveCrossing(uid,item.partNumber,bcItem);
+      const updated=lineItems.map((it,i)=>i===idx
+        ?{...it,bcItemId:bcItem.id||null,bcItemDescription:bcItem.displayName||'',
+            bcCurrentCost:bcItem.unitCost??null,matchStatus:'auto_matched',approved:true}
+        :it);
+      setLineItems(updated);
+      if(quoteDocId)await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updated});
+      setFuzzyResults(prev=>({...prev,[idx]:undefined}));
+    }catch(e){setStatusMsg('Match failed: '+e.message);}
   }
 
   // Debounced BC item search for the Link panel
@@ -8505,6 +8543,17 @@ ${fullText.slice(0,12000)}`;
                               color:item.approved?C.green:C.red,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
                             }}>{item.approved?'Approved ✓':'Skip'}</button>
+                          :fuzzyResults[i]==='searching'
+                          ?<span style={{fontSize:11,color:C.muted,padding:"2px 6px"}}>…</span>
+                          :fuzzyResults[i]
+                          ?<div style={{display:"flex",flexDirection:"column",gap:3,minWidth:0}}>
+                            <div style={{fontSize:10,color:C.accent,fontFamily:"monospace",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:130}} title={fuzzyResults[i].number}>{fuzzyResults[i].number}</div>
+                            <div style={{fontSize:9,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:130}} title={fuzzyResults[i].displayName}>{fuzzyResults[i].displayName}</div>
+                            <div style={{display:"flex",gap:4}}>
+                              <button onClick={()=>acceptFuzzyMatch(i,fuzzyResults[i])} style={{background:'#0d2a0d',border:`1px solid ${C.green}`,color:C.green,borderRadius:10,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Accept ✓</button>
+                              <button onClick={()=>{setLinkingIdx(i);setLinkQuery(item.partNumber||'');setLinkResults([]);setNewItemIdx(null);}} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:10,padding:"2px 6px",fontSize:10,cursor:"pointer"}} title="Link to a different item">⟳</button>
+                            </div>
+                          </div>
                           :<div style={{display:"flex",gap:4}}>
                             <button onClick={()=>{setLinkingIdx(i);setLinkQuery(item.partNumber||'');setLinkResults([]);setNewItemIdx(null);}} style={{
                               background:'#1a1200',border:`1px solid ${C.yellow}`,color:C.yellow,
