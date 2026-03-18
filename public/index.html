@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.59";
+const APP_VERSION="v1.17.60";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9894,7 +9894,7 @@ function App({user}){
         </div>
       )}
       {/* ── TOP MENU BAR (always visible) ── */}
-      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:88,position:"relative"}}>
+      <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:88,position:"fixed",top:0,left:0,right:0,zIndex:500}}>
         <div style={{position:"absolute",left:"50%",top:"50%",transform:"translateX(-50%) translateY(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:5,pointerEvents:"none"}}>
           <div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",pointerEvents:"auto"}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
             <svg width="38" height="34" viewBox="0 0 100 90" fill="none">
@@ -9910,7 +9910,15 @@ function App({user}){
           </div>
           <span style={{fontSize:14,color:C.muted,opacity:0.6}}>{APP_VERSION}</span>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:10,flex:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,flex:1}}>
+          {view!=="dashboard"&&(
+            <button onClick={()=>{setView("dashboard");setOpenProject(null);}}
+              style={{display:"flex",alignItems:"center",gap:6,background:"none",border:`1px solid ${C.border}`,
+                color:C.accent,cursor:"pointer",borderRadius:8,padding:"5px 16px",fontSize:13,fontWeight:700,
+                whiteSpace:"nowrap",flexShrink:0}}>
+              ← Back to Projects
+            </button>
+          )}
           {companyLogo?(
             <img src={companyLogo} alt="Company logo" style={{maxHeight:64,maxWidth:200,objectFit:"contain"}}/>
           ):companyName?(
@@ -9952,6 +9960,8 @@ function App({user}){
           <button data-tip="Sign out of ARC" onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36}}>Sign out</button>
         </div>
       </div>
+      {/* Content — padded below fixed header */}
+      <div style={{flex:1,paddingTop:88}}>
       {/* BC Connection Lost popup */}
       {bcLostAlert&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -9997,6 +10007,7 @@ function App({user}){
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={url=>setCompanyLogo(url||null)}/>}
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
+      </div>{/* end paddingTop wrapper */}
     </div>
   );
 }
