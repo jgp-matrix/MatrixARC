@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.94";
+const APP_VERSION="v1.17.95";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8250,92 +8250,111 @@ ${fullText.slice(0,12000)}`;
     //          H=Quote$ I=ItemPrice J=TotalCost K=Margin L=TotalPrice
     //          M=BC$ N=Delta$ O=BCItemNo P=BCDesc Q=MatchStatus R=Notes
     const bomRows=panelBom?(panelBom.filter(r=>!r.isLaborRow&&(r.partNumber||'').trim())):[];
-    // 8-strategy match: for a quote item find its BOM row (same logic as CPD search)
-    function findBomRow(item){
-      const qpn=norm(item.partNumber);
-      const qraw=norm(item.rawPartNumber);
-      const qmfrpn=norm((item.mfr||'')+item.partNumber);
-      const qbc=norm(item.bcItemId||'');
-      for(const row of bomRows){
-        const pn=norm(row.partNumber);
-        const bcNo=norm(row.bcItemNumber||'');
-        if(pn&&qpn&&pn===qpn)return row;
-        if(pn&&qmfrpn&&pn===qmfrpn)return row;
-        if(pn&&qraw&&pn===qraw)return row;
-        if(bcNo&&qbc&&bcNo===qbc)return row;
-        if(pn.length>=4&&qpn.length>=4&&(pn.endsWith(qpn)||qpn.endsWith(pn)))return row;
-        if(pn.length>=4&&qmfrpn.length>=4&&(pn.endsWith(qmfrpn)||qmfrpn.endsWith(pn)))return row;
-        if(pn.length>=4&&qraw.length>=4&&qraw.endsWith(pn))return row;
-        if(pn.length>=6&&qpn.length>=6&&(pn.includes(qpn)||qpn.includes(pn)))return row;
+    const quoteItems=lineItems.filter(qi=>qi.partNumber||qi.rawPartNumber);
+    // 8-strategy match: BOM row → quote item
+    function findQuoteItem(row){
+      const pn=norm(row.partNumber);
+      const bcNo=norm(row.bcItemNumber||'');
+      for(const qi of quoteItems){
+        const qpn=norm(qi.partNumber);
+        const qraw=norm(qi.rawPartNumber);
+        const qmfrpn=norm((qi.mfr||'')+qi.partNumber);
+        const qbc=norm(qi.bcItemId||'');
+        if(pn&&qpn&&pn===qpn)return qi;
+        if(pn&&qmfrpn&&pn===qmfrpn)return qi;
+        if(pn&&qraw&&pn===qraw)return qi;
+        if(bcNo&&qbc&&bcNo===qbc)return qi;
+        if(pn.length>=4&&qpn.length>=4&&(pn.endsWith(qpn)||qpn.endsWith(pn)))return qi;
+        if(pn.length>=4&&qmfrpn.length>=4&&(pn.endsWith(qmfrpn)||qmfrpn.endsWith(pn)))return qi;
+        if(pn.length>=4&&qraw.length>=4&&qraw.endsWith(pn))return qi;
+        if(pn.length>=6&&qpn.length>=6&&(pn.includes(qpn)||qpn.includes(pn)))return qi;
       }
       return null;
     }
+    // BOM-first: use BOM rows as source so unquoted items appear; fall back to quote items if no BOM
+    const useBom=bomRows.length>0;
+    const allRows=useBom?bomRows:lineItems;
     const source=matchedOnly
-      ?lineItems.filter(i=>i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched')
-      :lineItems;
+      ?(useBom?bomRows.filter(r=>findQuoteItem(r)!==null):lineItems.filter(i=>i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched'))
+      :allRows;
     const f=str=>({t:'n',f:str}); // formula cell helper
     const acctFmt='_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)';
     let headers,dataRows,totalsRow,dollarCols,colWidths;
     if(customerView){
       // Customer Pricing — no source costs
       // Cols: A=Ln B=MFR C=PartNo D=Desc E=Qty/Panel F=QtyQuoted G=UOM
-      //       H=ItemPrice I=TotalPrice J=BCItemNo K=BCDesc L=MatchStatus M=Notes
+      //       H=ItemPrice I=TotalPrice J=BCItemNo K=BCDesc L=Quoted M=Notes
       headers=['Ln','MFR','Part Number','Description','Qty/Panel','Qty Quoted','UOM',
-        'Item Price','Total Price','BC Item #','BC Description','Match Status','Notes'];
-      dataRows=source.map((item,idx)=>{
+        'Item Price','Total Price','BC Item #','BC Description','Quoted','Notes'];
+      dataRows=source.map((row,idx)=>{
         const r=idx+2;
-        const bomRow=bomRows.length?findBomRow(item):null;
-        const qtyPerPanel=bomRow!=null?(Number(bomRow.qty)||1):null;
-        const hasPrice=item.price!=null;
-        const hasQty=item.qty!=null;
-        const itemPrice=hasPrice?Number((item.price/(1-margin)).toFixed(4)):null;
-        const totalPrice=hasPrice&&hasQty?Number((item.qty*itemPrice).toFixed(4)):null;
+        const qi=useBom?findQuoteItem(row):row;
+        const bomQty=useBom?(Number(row.qty)||1):null;
+        const hasPrice=qi?.price!=null;
+        const hasQty=qi?.qty!=null;
+        const itemPrice=hasPrice?Number((qi.price/(1-margin)).toFixed(4)):null;
         return[
-          item.ln??'',item.mfr||'',item.partNumber||item.rawPartNumber||'',item.description||'',
-          qtyPerPanel!=null?qtyPerPanel:'',hasQty?item.qty:'',item.uom||'',
-          itemPrice,                                          // H Item Price (value — cost basis hidden)
+          useBom?(row.itemNo??idx+1):(qi?.ln??''),            // A Ln
+          qi?.mfr||'',                                        // B MFR
+          useBom?row.partNumber:(qi?.partNumber||qi?.rawPartNumber||''), // C Part Number
+          useBom?row.description:(qi?.description||''),       // D Description
+          bomQty!=null?bomQty:'',                             // E Qty/Panel
+          hasQty?qi.qty:'',                                   // F Qty Quoted
+          qi?.uom||'',                                        // G UOM
+          itemPrice,                                          // H Item Price
           hasPrice&&hasQty?f(`F${r}*H${r}`):null,            // I Total Price
-          item.bcItemId||'',item.bcItemDescription||'',item.matchStatus||'',item.notes||'',
+          useBom?(row.bcItemNumber||''):(qi?.bcItemId||''),   // J BC Item #
+          useBom?(row.description||''):(qi?.bcItemDescription||''), // K BC Desc
+          qi?'Yes':'No',                                      // L Quoted
+          qi?.notes||'',                                      // M Notes
         ];
       });
       const lastData=source.length+1;
-      totalsRow=['','','','── TOTALS ──','','','',null,f(`SUM(I2:I${lastData})`),
-        '','','',''];
-      dollarCols=[7,8]; // H=ItemPrice I=TotalPrice
-      colWidths=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:11},{wch:12},{wch:18},{wch:35},{wch:16},{wch:20}];
+      totalsRow=['','','','── TOTALS ──','','','',null,f(`SUM(I2:I${lastData})`),'','','',''];
+      dollarCols=[7,8];
+      colWidths=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:11},{wch:12},{wch:18},{wch:35},{wch:8},{wch:20}];
     }else{
       // Full Export — all columns with formulas
       // Cols: A=Ln B=MFR C=PartNo D=Desc E=Qty/Panel F=QtyQuoted G=UOM
       //       H=Quote$ I=ItemPrice J=TotalCost K=Margin L=TotalPrice
-      //       M=BC$ N=Delta$ O=BCItemNo P=BCDesc Q=MatchStatus R=Notes
+      //       M=BC$ N=Delta$ O=BCItemNo P=BCDesc Q=Quoted R=Notes
       headers=['Ln','MFR','Part Number','Description','Qty/Panel','Qty Quoted','UOM',
         'Quote $','Item Price','Total Cost','Margin','Total Price',
-        'BC $','Delta $','BC Item #','BC Description','Match Status','Notes'];
-      dataRows=source.map((item,idx)=>{
+        'BC $','Delta $','BC Item #','BC Description','Quoted','Notes'];
+      dataRows=source.map((row,idx)=>{
         const r=idx+2;
-        const bomRow=bomRows.length?findBomRow(item):null;
-        const qtyPerPanel=bomRow!=null?(Number(bomRow.qty)||1):null;
-        const hasPrice=item.price!=null;
-        const hasQty=item.qty!=null;
-        const hasBc=item.bcCurrentCost!=null;
+        const qi=useBom?findQuoteItem(row):row;
+        const bomQty=useBom?(Number(row.qty)||1):null;
+        const hasPrice=qi?.price!=null;
+        const hasQty=qi?.qty!=null;
+        const hasBc=qi?.bcCurrentCost!=null||(useBom&&row.priceSource==='bc'&&row.unitPrice!=null);
+        const bcCost=qi?.bcCurrentCost??((useBom&&row.priceSource==='bc')?row.unitPrice:null);
         return[
-          item.ln??'',item.mfr||'',item.partNumber||item.rawPartNumber||'',item.description||'',
-          qtyPerPanel!=null?qtyPerPanel:'',hasQty?item.qty:'',item.uom||'',
-          hasPrice?item.price:null,                           // H Quote $
+          useBom?(row.itemNo??idx+1):(qi?.ln??''),            // A Ln
+          qi?.mfr||'',                                        // B MFR
+          useBom?row.partNumber:(qi?.partNumber||qi?.rawPartNumber||''), // C Part Number
+          useBom?row.description:(qi?.description||''),       // D Description
+          bomQty!=null?bomQty:'',                             // E Qty/Panel
+          hasQty?qi.qty:'',                                   // F Qty Quoted
+          qi?.uom||'',                                        // G UOM
+          hasPrice?qi.price:null,                             // H Quote $
           hasPrice?f(`H${r}/(1-K${r})`):null,                // I Item Price
           hasPrice&&hasQty?f(`F${r}*H${r}`):null,            // J Total Cost
           margin,                                             // K Margin
           hasPrice&&hasQty?f(`F${r}*I${r}`):null,            // L Total Price
-          hasBc?item.bcCurrentCost:null,                      // M BC $
+          hasBc?bcCost:null,                                  // M BC $
           hasPrice&&hasBc?f(`H${r}-M${r}`):null,             // N Delta $
-          item.bcItemId||'',item.bcItemDescription||'',item.matchStatus||'',item.notes||'',
+          useBom?(row.bcItemNumber||''):(qi?.bcItemId||''),   // O BC Item #
+          useBom?(row.description||''):(qi?.bcItemDescription||''), // P BC Desc
+          qi?'Yes':'No',                                      // Q Quoted
+          qi?.notes||'',                                      // R Notes
         ];
       });
       const lastData=source.length+1;
       totalsRow=['','','','── TOTALS ──','','','',null,null,
         f(`SUM(J2:J${lastData})`),margin,f(`SUM(L2:L${lastData})`),null,null,'','','',''];
-      dollarCols=[7,8,9,11,12,13]; // H I J L M N
-      colWidths=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:10},{wch:11},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
+      dollarCols=[7,8,9,11,12,13];
+      colWidths=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:10},{wch:11},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:8},{wch:20}];
     }
     const ws=XL.utils.aoa_to_sheet([headers,...dataRows,totalsRow]);
     const range=XL.utils.decode_range(ws['!ref']);
@@ -8931,10 +8950,10 @@ ${fullText.slice(0,12000)}`;
                     <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,writingMode:"vertical-rl",transform:"rotate(180deg)",paddingRight:4}}/>
                     <div style={{fontSize:10,color:C.muted,fontWeight:700,textAlign:"center",textTransform:"uppercase",letterSpacing:0.5}}>Full Export</div>
                     <div style={{fontSize:10,color:'#a78bfa',fontWeight:700,textAlign:"center",textTransform:"uppercase",letterSpacing:0.5}}>Customer Pricing</div>
-                    <div style={{fontSize:11,color:C.sub,fontWeight:600,whiteSpace:"nowrap"}}>✓ Matched Only</div>
+                    <div style={{fontSize:11,color:C.sub,fontWeight:600,whiteSpace:"nowrap"}}>Quoted Items Only</div>
                     <button onClick={()=>exportQuoteToExcel(true,false)} style={btn('#0d2a1a',C.green,{fontSize:12,border:`1px solid ${C.green}`,padding:"5px 8px"})}>⬇ All Cols</button>
                     <button onClick={()=>exportQuoteToExcel(true,true)} style={btn('#1a0d2a','#a78bfa',{fontSize:12,border:`1px solid #a78bfa`,padding:"5px 8px"})}>👤 Hide Costs</button>
-                    <div style={{fontSize:11,color:C.sub,fontWeight:600,whiteSpace:"nowrap"}}>All Items</div>
+                    <div style={{fontSize:11,color:C.sub,fontWeight:600,whiteSpace:"nowrap"}}>Full BOM</div>
                     <button onClick={()=>exportQuoteToExcel(false,false)} style={btn(C.bg,C.sub,{fontSize:12,border:`1px solid ${C.border}`,padding:"5px 8px"})}>⬇ All Cols</button>
                     <button onClick={()=>exportQuoteToExcel(false,true)} style={btn('#120d1a',C.muted,{fontSize:12,border:`1px solid #a78bfa66`,padding:"5px 8px"})}>👤 Hide Costs</button>
                   </div>
