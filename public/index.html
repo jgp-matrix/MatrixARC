@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.91";
+const APP_VERSION="v1.17.92";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8305,11 +8305,16 @@ ${fullText.slice(0,12000)}`;
       null,null,'','','','',                                  // M-R
     ];
     const ws=XL.utils.aoa_to_sheet([headers,...dataRows,totalsRow]);
-    // Format Margin column (K = index 10) as percentage
     const range=XL.utils.decode_range(ws['!ref']);
+    const acctFmt='_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)';
+    const dollarCols=[7,8,9,11,12,13]; // H=Quote$ I=ItemPrice J=TotalCost L=TotalPrice M=BC$ N=Delta$
     for(let r=1;r<=range.e.r;r++){
-      const cell=ws[XL.utils.encode_cell({r,c:10})];
-      if(cell&&(cell.t==='n'||cell.f)){cell.z='0%';}
+      for(const c of dollarCols){
+        const cell=ws[XL.utils.encode_cell({r,c})];
+        if(cell&&(cell.t==='n'||cell.f)){cell.z=acctFmt;}
+      }
+      const mCell=ws[XL.utils.encode_cell({r,c:10})]; // K = Margin
+      if(mCell&&(mCell.t==='n'||mCell.f)){mCell.z='0%';}
     }
     ws['!cols']=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:10},{wch:11},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
     const wb=XL.utils.book_new();
