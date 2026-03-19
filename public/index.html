@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.89";
+const APP_VERSION="v1.17.90";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8260,8 +8260,9 @@ ${fullText.slice(0,12000)}`;
       :lineItems;
     const rows=source.map(item=>{
       const delta=item.bcCurrentCost!=null&&item.price!=null?+(item.price-item.bcCurrentCost).toFixed(4):null;
+      const itemPrice=item.price!=null?Number((item.price/(1-margin)).toFixed(4)):null;
       const totalCost=(item.qty!=null&&item.price!=null)?Number((item.qty*item.price).toFixed(4)):null;
-      const totalPrice=totalCost!=null?Number((totalCost/(1-margin)).toFixed(4)):null;
+      const totalPrice=(item.qty!=null&&itemPrice!=null)?Number((item.qty*itemPrice).toFixed(4)):null;
       // Look up qty per panel: try normalized partNumber, rawPartNumber, bcItemId
       let qtyPerPanel=null;
       if(panelBom&&panelBom.length){
@@ -8277,6 +8278,7 @@ ${fullText.slice(0,12000)}`;
         'Qty Quoted':item.qty??'',
         'UOM':item.uom||'',
         'Quote $':item.price!=null?Number(item.price.toFixed(4)):null,
+        'Item Price':itemPrice,
         'Total Cost':totalCost,
         'Margin':margin,
         'Total Price':totalPrice,
@@ -8293,7 +8295,7 @@ ${fullText.slice(0,12000)}`;
     const sumPrice=rows.reduce((s,r)=>s+(r['Total Price']||0),0);
     rows.push({
       'Ln':'','MFR':'','Part Number':'','Description':'── TOTALS ──',
-      'Qty/Panel':'','Qty Quoted':'','UOM':'','Quote $':null,
+      'Qty/Panel':'','Qty Quoted':'','UOM':'','Quote $':null,'Item Price':null,
       'Total Cost':Number(sumCost.toFixed(4)),
       'Margin':margin,
       'Total Price':Number(sumPrice.toFixed(4)),
@@ -8308,7 +8310,7 @@ ${fullText.slice(0,12000)}`;
       const cell=ws[XL.utils.encode_cell({r,c:marginCol})];
       if(cell&&cell.t==='n'){cell.z='0%';}
     }
-    ws['!cols']=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:10},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
+    ws['!cols']=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:10},{wch:11},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
     const wb=XL.utils.book_new();
     const sheetName=(quoteHeader?.supplier||'Quote').replace(/[^a-z0-9 ]/gi,'').trim().substring(0,28)||'Quote';
     XL.utils.book_append_sheet(wb,ws,sheetName);
