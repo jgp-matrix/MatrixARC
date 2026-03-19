@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.90";
+const APP_VERSION="v1.17.91";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8246,7 +8246,9 @@ ${fullText.slice(0,12000)}`;
     const XL=window.XLSX;
     const margin=0.30;
     const normPn=s=>(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-    // Build a lookup map from the panel BOM: normalized part# → qty
+    // Columns: A=Ln B=MFR C=PartNo D=Desc E=Qty/Panel F=QtyQuoted G=UOM
+    //          H=Quote$ I=ItemPrice J=TotalCost K=Margin L=TotalPrice
+    //          M=BC$ N=Delta$ O=BCItemNo P=BCDesc Q=MatchStatus R=Notes
     const bomQtyMap={};
     if(panelBom&&panelBom.length){
       for(const row of panelBom){
@@ -8258,57 +8260,56 @@ ${fullText.slice(0,12000)}`;
     const source=matchedOnly
       ?lineItems.filter(i=>i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched')
       :lineItems;
-    const rows=source.map(item=>{
-      const delta=item.bcCurrentCost!=null&&item.price!=null?+(item.price-item.bcCurrentCost).toFixed(4):null;
-      const itemPrice=item.price!=null?Number((item.price/(1-margin)).toFixed(4)):null;
-      const totalCost=(item.qty!=null&&item.price!=null)?Number((item.qty*item.price).toFixed(4)):null;
-      const totalPrice=(item.qty!=null&&itemPrice!=null)?Number((item.qty*itemPrice).toFixed(4)):null;
-      // Look up qty per panel: try normalized partNumber, rawPartNumber, bcItemId
+    const f=str=>({t:'n',f:str}); // formula cell helper
+    const headers=['Ln','MFR','Part Number','Description','Qty/Panel','Qty Quoted','UOM',
+      'Quote $','Item Price','Total Cost','Margin','Total Price',
+      'BC $','Delta $','BC Item #','BC Description','Match Status','Notes'];
+    const dataRows=source.map((item,idx)=>{
+      const r=idx+2; // Excel row (row 1 = header)
       let qtyPerPanel=null;
       if(panelBom&&panelBom.length){
         const tries=[normPn(item.partNumber),normPn(item.rawPartNumber),normPn(item.bcItemId||'')];
         for(const k of tries){if(k&&bomQtyMap[k]!=null){qtyPerPanel=bomQtyMap[k];break;}}
       }
-      return{
-        'Ln':item.ln??'',
-        'MFR':item.mfr||'',
-        'Part Number':item.partNumber||item.rawPartNumber||'',
-        'Description':item.description||'',
-        'Qty/Panel':qtyPerPanel!=null?qtyPerPanel:'',
-        'Qty Quoted':item.qty??'',
-        'UOM':item.uom||'',
-        'Quote $':item.price!=null?Number(item.price.toFixed(4)):null,
-        'Item Price':itemPrice,
-        'Total Cost':totalCost,
-        'Margin':margin,
-        'Total Price':totalPrice,
-        'BC $':item.bcCurrentCost!=null?Number(item.bcCurrentCost.toFixed(4)):null,
-        'Delta $':delta,
-        'BC Item #':item.bcItemId||'',
-        'BC Description':item.bcItemDescription||'',
-        'Match Status':item.matchStatus||'',
-        'Notes':item.notes||'',
-      };
+      const hasPrice=item.price!=null;
+      const hasQty=item.qty!=null;
+      const hasBc=item.bcCurrentCost!=null;
+      return[
+        item.ln??'',                                          // A Ln
+        item.mfr||'',                                         // B MFR
+        item.partNumber||item.rawPartNumber||'',              // C Part Number
+        item.description||'',                                 // D Description
+        qtyPerPanel!=null?qtyPerPanel:'',                     // E Qty/Panel
+        hasQty?item.qty:'',                                   // F Qty Quoted
+        item.uom||'',                                         // G UOM
+        hasPrice?item.price:null,                             // H Quote $
+        hasPrice?f(`H${r}/(1-K${r})`):null,                  // I Item Price
+        hasPrice&&hasQty?f(`F${r}*H${r}`):null,              // J Total Cost
+        margin,                                               // K Margin
+        hasPrice&&hasQty?f(`F${r}*I${r}`):null,              // L Total Price
+        hasBc?item.bcCurrentCost:null,                        // M BC $
+        hasPrice&&hasBc?f(`H${r}-M${r}`):null,               // N Delta $
+        item.bcItemId||'',                                    // O BC Item #
+        item.bcItemDescription||'',                           // P BC Description
+        item.matchStatus||'',                                 // Q Match Status
+        item.notes||'',                                       // R Notes
+      ];
     });
-    // Totals row
-    const sumCost=rows.reduce((s,r)=>s+(r['Total Cost']||0),0);
-    const sumPrice=rows.reduce((s,r)=>s+(r['Total Price']||0),0);
-    rows.push({
-      'Ln':'','MFR':'','Part Number':'','Description':'── TOTALS ──',
-      'Qty/Panel':'','Qty Quoted':'','UOM':'','Quote $':null,'Item Price':null,
-      'Total Cost':Number(sumCost.toFixed(4)),
-      'Margin':margin,
-      'Total Price':Number(sumPrice.toFixed(4)),
-      'BC $':null,'Delta $':null,'BC Item #':'','BC Description':'','Match Status':'','Notes':'',
-    });
-    const ws=XL.utils.json_to_sheet(rows);
-    // Format Margin column as percentage
+    const lastData=source.length+1; // last data row number
+    const totalsRow=[
+      '','','','── TOTALS ──',
+      '','','',null,null,                                     // A-I
+      f(`SUM(J2:J${lastData})`),                             // J Total Cost
+      margin,                                                 // K Margin
+      f(`SUM(L2:L${lastData})`),                             // L Total Price
+      null,null,'','','','',                                  // M-R
+    ];
+    const ws=XL.utils.aoa_to_sheet([headers,...dataRows,totalsRow]);
+    // Format Margin column (K = index 10) as percentage
     const range=XL.utils.decode_range(ws['!ref']);
-    const headers=Object.keys(rows[0]);
-    const marginCol=headers.indexOf('Margin');
-    for(let r=range.s.r+1;r<=range.e.r;r++){
-      const cell=ws[XL.utils.encode_cell({r,c:marginCol})];
-      if(cell&&cell.t==='n'){cell.z='0%';}
+    for(let r=1;r<=range.e.r;r++){
+      const cell=ws[XL.utils.encode_cell({r,c:10})];
+      if(cell&&(cell.t==='n'||cell.f)){cell.z='0%';}
     }
     ws['!cols']=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:10},{wch:11},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
     const wb=XL.utils.book_new();
