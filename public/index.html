@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.83";
+const APP_VERSION="v1.17.84";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8261,8 +8261,14 @@ ${fullText.slice(0,12000)}`;
     await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updatedItems,status:finalStatus});
     await sqSavePushAudit(quoteDocId,quoteHeader?.supplier||'',quoteHeader?.quoteId||'',uid,auditItems);
     setLineItems(updatedItems);
-    setPushResult({pushed,errors,total:toUpdate.length});
-    setPhase('done');setStatusMsg('');
+    setQuoteHeader(h=>({...h,status:finalStatus}));
+    if(errors.length===0){
+      setStatusMsg(`✓ ${pushed} price${pushed!==1?'s':''} updated in BC`);
+      setTimeout(()=>setStatusMsg(''),4000);
+    }else{
+      setStatusMsg(`⚠ ${pushed} updated, ${errors.length} failed: ${errors.join(', ')}`);
+    }
+    setPhase('review');
   }
 
   function toggleApprove(idx){
