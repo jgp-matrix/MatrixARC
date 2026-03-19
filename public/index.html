@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.87";
+const APP_VERSION="v1.17.88";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8244,11 +8244,14 @@ ${fullText.slice(0,12000)}`;
       });
     }
     const XL=window.XLSX;
+    const margin=0.30;
     const source=matchedOnly
       ?lineItems.filter(i=>i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched')
       :lineItems;
     const rows=source.map(item=>{
       const delta=item.bcCurrentCost!=null&&item.price!=null?+(item.price-item.bcCurrentCost).toFixed(4):null;
+      const totalCost=(item.qty!=null&&item.price!=null)?Number((item.qty*item.price).toFixed(4)):null;
+      const totalPrice=totalCost!=null?Number((totalCost/(1-margin)).toFixed(4)):null;
       return{
         'Ln':item.ln??'',
         'MFR':item.mfr||'',
@@ -8257,6 +8260,9 @@ ${fullText.slice(0,12000)}`;
         'Qty':item.qty??'',
         'UOM':item.uom||'',
         'Quote $':item.price!=null?Number(item.price.toFixed(4)):null,
+        'Total Cost':totalCost,
+        'Margin':margin,
+        'Total Price':totalPrice,
         'BC $':item.bcCurrentCost!=null?Number(item.bcCurrentCost.toFixed(4)):null,
         'Delta $':delta,
         'BC Item #':item.bcItemId||'',
@@ -8265,8 +8271,27 @@ ${fullText.slice(0,12000)}`;
         'Notes':item.notes||'',
       };
     });
+    // Totals row
+    const sumCost=rows.reduce((s,r)=>s+(r['Total Cost']||0),0);
+    const sumPrice=rows.reduce((s,r)=>s+(r['Total Price']||0),0);
+    rows.push({
+      'Ln':'','MFR':'','Part Number':'','Description':'── TOTALS ──',
+      'Qty':'','UOM':'','Quote $':null,
+      'Total Cost':Number(sumCost.toFixed(4)),
+      'Margin':margin,
+      'Total Price':Number(sumPrice.toFixed(4)),
+      'BC $':null,'Delta $':null,'BC Item #':'','BC Description':'','Match Status':'','Notes':'',
+    });
     const ws=XL.utils.json_to_sheet(rows);
-    ws['!cols']=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:7},{wch:5},{wch:10},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
+    // Format Margin column as percentage
+    const range=XL.utils.decode_range(ws['!ref']);
+    const headers=Object.keys(rows[0]);
+    const marginCol=headers.indexOf('Margin');
+    for(let r=range.s.r+1;r<=range.e.r;r++){
+      const cell=ws[XL.utils.encode_cell({r,c:marginCol})];
+      if(cell&&cell.t==='n'){cell.z='0%';}
+    }
+    ws['!cols']=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:7},{wch:5},{wch:10},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
     const wb=XL.utils.book_new();
     const sheetName=(quoteHeader?.supplier||'Quote').replace(/[^a-z0-9 ]/gi,'').trim().substring(0,28)||'Quote';
     XL.utils.book_append_sheet(wb,ws,sheetName);
