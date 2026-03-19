@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.88";
+const APP_VERSION="v1.17.89";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6736,7 +6736,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
                 </div>
                 <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
                   <button onClick={onPrintRfq} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building RFQ…":"📋 Print RFQ"}</button>
-                  <button onClick={onOpenSupplierQuote} style={btn("#0d1f0d","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>
+                  <button onClick={()=>onOpenSupplierQuote(panel.bom||[])} style={btn("#0d1f0d","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>
                   <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Quote</button>
                   {!readOnly&&(<>
                     {panel.bcItemNumber&&(
@@ -7820,7 +7820,7 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
 }
 
 // ── SUPPLIER QUOTE IMPORT MODAL ──
-function SupplierQuoteImportModal({uid,onClose,show}){
+function SupplierQuoteImportModal({uid,onClose,show,panelBom}){
   const [phase,setPhase]=useState('upload'); // upload|parsing|review|pushing|done
   const [file,setFile]=useState(null);
   const [pdfPreview,setPdfPreview]=useState(null);
@@ -8245,6 +8245,16 @@ ${fullText.slice(0,12000)}`;
     }
     const XL=window.XLSX;
     const margin=0.30;
+    const normPn=s=>(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    // Build a lookup map from the panel BOM: normalized part# → qty
+    const bomQtyMap={};
+    if(panelBom&&panelBom.length){
+      for(const row of panelBom){
+        if(row.isLaborRow)continue;
+        const key=normPn(row.partNumber||row.catalogNumber||'');
+        if(key)bomQtyMap[key]=(bomQtyMap[key]||0)+(Number(row.qty)||0);
+      }
+    }
     const source=matchedOnly
       ?lineItems.filter(i=>i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched')
       :lineItems;
@@ -8252,12 +8262,19 @@ ${fullText.slice(0,12000)}`;
       const delta=item.bcCurrentCost!=null&&item.price!=null?+(item.price-item.bcCurrentCost).toFixed(4):null;
       const totalCost=(item.qty!=null&&item.price!=null)?Number((item.qty*item.price).toFixed(4)):null;
       const totalPrice=totalCost!=null?Number((totalCost/(1-margin)).toFixed(4)):null;
+      // Look up qty per panel: try normalized partNumber, rawPartNumber, bcItemId
+      let qtyPerPanel=null;
+      if(panelBom&&panelBom.length){
+        const tries=[normPn(item.partNumber),normPn(item.rawPartNumber),normPn(item.bcItemId||'')];
+        for(const k of tries){if(k&&bomQtyMap[k]!=null){qtyPerPanel=bomQtyMap[k];break;}}
+      }
       return{
         'Ln':item.ln??'',
         'MFR':item.mfr||'',
         'Part Number':item.partNumber||item.rawPartNumber||'',
         'Description':item.description||'',
-        'Qty':item.qty??'',
+        'Qty/Panel':qtyPerPanel!=null?qtyPerPanel:'',
+        'Qty Quoted':item.qty??'',
         'UOM':item.uom||'',
         'Quote $':item.price!=null?Number(item.price.toFixed(4)):null,
         'Total Cost':totalCost,
@@ -8276,7 +8293,7 @@ ${fullText.slice(0,12000)}`;
     const sumPrice=rows.reduce((s,r)=>s+(r['Total Price']||0),0);
     rows.push({
       'Ln':'','MFR':'','Part Number':'','Description':'── TOTALS ──',
-      'Qty':'','UOM':'','Quote $':null,
+      'Qty/Panel':'','Qty Quoted':'','UOM':'','Quote $':null,
       'Total Cost':Number(sumCost.toFixed(4)),
       'Margin':margin,
       'Total Price':Number(sumPrice.toFixed(4)),
@@ -8291,7 +8308,7 @@ ${fullText.slice(0,12000)}`;
       const cell=ws[XL.utils.encode_cell({r,c:marginCol})];
       if(cell&&cell.t==='n'){cell.z='0%';}
     }
-    ws['!cols']=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:7},{wch:5},{wch:10},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
+    ws['!cols']=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:10},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
     const wb=XL.utils.book_new();
     const sheetName=(quoteHeader?.supplier||'Quote').replace(/[^a-z0-9 ]/gi,'').trim().substring(0,28)||'Quote';
     XL.utils.book_append_sheet(wb,ws,sheetName);
@@ -9023,7 +9040,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLo
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
               {panels.length>0&&<button onClick={onPrintRfq} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building RFQ…":"📋 Print RFQ"}</button>}
-              {panels.length>0&&<button onClick={onOpenSupplierQuote} style={btn("#0d1f0d","#4ade80",{fontSize:13,border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>}
+              {panels.length>0&&<button onClick={()=>onOpenSupplierQuote(null)} style={btn("#0d1f0d","#4ade80",{fontSize:13,border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>}
               {panels.length>0&&<button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13})}>🖨 Print Quote</button>}
             </div>
           </div>
@@ -9204,6 +9221,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
   const [rfqGroups,setRfqGroups]=useState(null);
   const [autoPrintRfq,setAutoPrintRfq]=useState(false);
   const [showSqModal,setShowSqModal]=useState(false);
+  const [sqPanelBom,setSqPanelBom]=useState(null);
   const saveTimer=useRef(null);
   const readOnly=isReadOnly();
   const didMigrate=useRef(!init.panels);
@@ -9280,12 +9298,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
             onUpdate={update}
             onDelete={onDelete}
             onTransfer={onTransfer}
-            onOpenSupplierQuote={()=>setShowSqModal(true)}
+            onOpenSupplierQuote={bom=>{setSqPanelBom(bom);setShowSqModal(true);}}
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
         </>
       )}
-      <SupplierQuoteImportModal show={showSqModal} uid={uid} onClose={()=>setShowSqModal(false)}/>
+      <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} onClose={()=>setShowSqModal(false)}/>
     </>
   );
 }
