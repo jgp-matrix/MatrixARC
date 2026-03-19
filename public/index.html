@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.98";
+const APP_VERSION="v1.17.99";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8272,19 +8272,21 @@ ${fullText.slice(0,12000)}`;
     // BOM-first: use BOM rows as source; fall back to quote items if no BOM
     const useBom=bomRows.length>0;
     const source=useBom?bomRows:lineItems;
-    const f=str=>({t:'n',f:str}); // formula cell helper
+    const f=str=>({t:'n',f:str,v:0}); // formula cell helper — v:0 seeds cached value so Excel renders immediately
     const acctFmt='_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)';
     // Track which quote items were matched to a BOM row
     const matchedQiSet=new Set();
     const buildBomRow=(row,idx,excelR,cv)=>{
       const qi=useBom?findQuoteItem(row):row;
       if(qi)matchedQiSet.add(qi);
-      const bomQty=useBom?(Number(row.qty)||1):null;
-      const hasPrice=qi?.price!=null;
-      const hasQty=qi?.qty!=null;
+      const bomQtyRaw=useBom?Number(row.qty):null;
+      const bomQty=bomQtyRaw!=null&&!isNaN(bomQtyRaw)?Math.max(bomQtyRaw,1):null;
+      const hasPrice=qi?.price!=null&&!isNaN(Number(qi.price));
+      const hasQty=qi?.qty!=null&&!isNaN(Number(qi.qty));
       const hasBc=qi?.bcCurrentCost!=null||(useBom&&row.priceSource==='bc'&&row.unitPrice!=null);
       const bcCost=qi?.bcCurrentCost??((useBom&&row.priceSource==='bc')?row.unitPrice:null);
-      const itemPrice=hasPrice?Number((qi.price/(1-margin)).toFixed(4)):null;
+      const itemPrice=hasPrice?Number((Number(qi.price)/(1-margin)).toFixed(4)):null;
+      const qtyVal=hasQty?Number(qi.qty):null;
       if(cv){
         return[
           useBom?(row.itemNo??idx+1):(qi?.ln??''),
@@ -8292,7 +8294,7 @@ ${fullText.slice(0,12000)}`;
           useBom?row.partNumber:(qi?.partNumber||qi?.rawPartNumber||''),
           useBom?row.description:(qi?.description||''),
           bomQty!=null?bomQty:'',
-          hasQty?qi.qty:'',
+          qtyVal!=null?qtyVal:'',
           qi?.uom||'',
           itemPrice,
           hasPrice&&hasQty?f(`F${excelR}*H${excelR}`):null,
@@ -8308,9 +8310,9 @@ ${fullText.slice(0,12000)}`;
           useBom?row.partNumber:(qi?.partNumber||qi?.rawPartNumber||''),
           useBom?row.description:(qi?.description||''),
           bomQty!=null?bomQty:'',
-          hasQty?qi.qty:'',
+          qtyVal!=null?qtyVal:'',
           qi?.uom||'',
-          hasPrice?qi.price:null,
+          hasPrice?Number(qi.price):null,
           hasPrice?f(`H${excelR}/(1-K${excelR})`):null,
           hasPrice&&hasQty?f(`F${excelR}*H${excelR}`):null,
           margin,
@@ -8325,15 +8327,15 @@ ${fullText.slice(0,12000)}`;
       }
     };
     const buildQiRow=(qi,idx,excelR,cv)=>{
-      // Unmatched quote item — no BOM qty
-      const hasPrice=qi.price!=null;
-      const hasQty=qi.qty!=null;
+      const hasPrice=qi.price!=null&&!isNaN(Number(qi.price));
+      const hasQty=qi.qty!=null&&!isNaN(Number(qi.qty));
       const hasBc=qi.bcCurrentCost!=null;
-      const itemPrice=hasPrice?Number((qi.price/(1-margin)).toFixed(4)):null;
+      const itemPrice=hasPrice?Number((Number(qi.price)/(1-margin)).toFixed(4)):null;
+      const qtyVal=hasQty?Number(qi.qty):null;
       if(cv){
         return[
           qi.ln??'',qi.mfr||'',qi.partNumber||qi.rawPartNumber||'',qi.description||'',
-          '',hasQty?qi.qty:'',qi.uom||'',
+          '',qtyVal!=null?qtyVal:'',qi.uom||'',
           itemPrice,
           hasPrice&&hasQty?f(`F${excelR}*H${excelR}`):null,
           qi.bcItemId||'',qi.bcItemDescription||'','Quote Only',qi.notes||'',
@@ -8341,8 +8343,8 @@ ${fullText.slice(0,12000)}`;
       }else{
         return[
           qi.ln??'',qi.mfr||'',qi.partNumber||qi.rawPartNumber||'',qi.description||'',
-          '',hasQty?qi.qty:'',qi.uom||'',
-          hasPrice?qi.price:null,
+          '',qtyVal!=null?qtyVal:'',qi.uom||'',
+          hasPrice?Number(qi.price):null,
           hasPrice?f(`H${excelR}/(1-K${excelR})`):null,
           hasPrice&&hasQty?f(`F${excelR}*H${excelR}`):null,
           margin,
