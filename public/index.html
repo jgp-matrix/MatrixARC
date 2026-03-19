@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.95";
+const APP_VERSION="v1.17.96";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8940,23 +8940,18 @@ ${fullText.slice(0,12000)}`;
               <button onClick={()=>setShowExportMenu(v=>!v)}
                 style={btn('#0d1a0d',C.green,{fontSize:13,border:`1px solid ${C.green}55`})}>⬇ Export Excel ▾</button>
               {showExportMenu&&(
-                <div style={{position:"absolute",bottom:"calc(100% + 6px)",left:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:8,minWidth:280,zIndex:20,boxShadow:"0 4px 20px #0008"}}>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-                    <div/>
-                    <div style={{fontSize:10,color:C.muted,fontWeight:700,textAlign:"center",textTransform:"uppercase",letterSpacing:0.5}}>Full Export</div>
-                    <div style={{fontSize:10,color:'#a78bfa',fontWeight:700,textAlign:"center",textTransform:"uppercase",letterSpacing:0.5,gridColumn:"2/3",display:"none"}}/>
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"auto 1fr 1fr",gap:6,alignItems:"center"}}>
-                    <div style={{fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,writingMode:"vertical-rl",transform:"rotate(180deg)",paddingRight:4}}/>
-                    <div style={{fontSize:10,color:C.muted,fontWeight:700,textAlign:"center",textTransform:"uppercase",letterSpacing:0.5}}>Full Export</div>
-                    <div style={{fontSize:10,color:'#a78bfa',fontWeight:700,textAlign:"center",textTransform:"uppercase",letterSpacing:0.5}}>Customer Pricing</div>
-                    <div style={{fontSize:11,color:C.sub,fontWeight:600,whiteSpace:"nowrap"}}>Quoted Items Only</div>
-                    <button onClick={()=>exportQuoteToExcel(true,false)} style={btn('#0d2a1a',C.green,{fontSize:12,border:`1px solid ${C.green}`,padding:"5px 8px"})}>⬇ All Cols</button>
-                    <button onClick={()=>exportQuoteToExcel(true,true)} style={btn('#1a0d2a','#a78bfa',{fontSize:12,border:`1px solid #a78bfa`,padding:"5px 8px"})}>👤 Hide Costs</button>
-                    <div style={{fontSize:11,color:C.sub,fontWeight:600,whiteSpace:"nowrap"}}>Full BOM</div>
-                    <button onClick={()=>exportQuoteToExcel(false,false)} style={btn(C.bg,C.sub,{fontSize:12,border:`1px solid ${C.border}`,padding:"5px 8px"})}>⬇ All Cols</button>
-                    <button onClick={()=>exportQuoteToExcel(false,true)} style={btn('#120d1a',C.muted,{fontSize:12,border:`1px solid #a78bfa66`,padding:"5px 8px"})}>👤 Hide Costs</button>
-                  </div>
+                <div style={{position:"absolute",bottom:"calc(100% + 6px)",left:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:8,minWidth:230,zIndex:20,boxShadow:"0 4px 20px #0008"}}>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Export Format</div>
+                  <button onClick={()=>exportQuoteToExcel(false,false)}
+                    style={btn('#0d2a1a',C.green,{fontSize:13,border:`1px solid ${C.green}`,textAlign:"left",padding:"8px 12px",display:"flex",flexDirection:"column",gap:2})}>
+                    <span style={{fontWeight:700}}>⬇ Full Export</span>
+                    <span style={{fontSize:11,opacity:0.75}}>All columns including costs</span>
+                  </button>
+                  <button onClick={()=>exportQuoteToExcel(false,true)}
+                    style={btn('#1a0d2a','#a78bfa',{fontSize:13,border:`1px solid #a78bfa`,textAlign:"left",padding:"8px 12px",display:"flex",flexDirection:"column",gap:2})}>
+                    <span style={{fontWeight:700}}>👤 Customer Pricing</span>
+                    <span style={{fontSize:11,opacity:0.75}}>Hides Quote $, Cost &amp; Margin</span>
+                  </button>
                   <button onClick={()=>setShowExportMenu(false)}
                     style={{background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",textAlign:"left",padding:"2px 0"}}>Cancel</button>
                 </div>
