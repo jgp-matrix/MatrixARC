@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.99";
+const APP_VERSION="v1.17.100";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1524,6 +1524,18 @@ function sqNormalize(raw){
     qty:isPriced?Number(raw.qty):null,price:isPriced?Number(raw.price):null,uom:raw.uom||'',
     extPrice:isPriced?Math.round(raw.qty*raw.price*100)/100:null,notes,isPriced,
     bcItemId:null,bcItemDescription:null,bcCurrentCost:null,matchStatus:'unmatched',priceUpdateStatus:null,approved:true};
+}
+function sqValidateLineItems(items){
+  const dupeLines=[],dupeParts=[];
+  const lnMap={},pnMap={};
+  items.forEach((item,i)=>{
+    if(item.ln!=null){const k=String(item.ln);(lnMap[k]=lnMap[k]||[]).push(i);}
+    if(item.rawPartNumber){const k=(item.rawPartNumber||'').toLowerCase().trim();(pnMap[k]=pnMap[k]||[]).push(i);}
+  });
+  Object.entries(lnMap).filter(([,a])=>a.length>1).forEach(([ln,idxs])=>dupeLines.push({ln:Number(ln),rows:idxs}));
+  Object.entries(pnMap).filter(([,a])=>a.length>1).forEach(([,idxs])=>dupeParts.push({pn:items[idxs[0]].rawPartNumber,rows:idxs}));
+  const missingLn=items.filter(item=>item.ln==null).length;
+  return{dupeLines,dupeParts,missingLn,hasIssues:dupeLines.length>0||dupeParts.length>0};
 }
 async function saveSupplierQuoteToFirestore(quoteData,userId,{supersedes=null}={}){
   const ref=fbDb.collection('supplierQuotes').doc();
@@ -7844,6 +7856,7 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom}){
   const [savedQuotes,setSavedQuotes]=useState([]); // recent quotes from Firestore
   const [loadingQuotes,setLoadingQuotes]=useState(false);
   const [dupWarning,setDupWarning]=useState(null); // {existingDocId,existingSupplier,existingDate,parsedData,targetFile}
+  const [lineItemWarning,setLineItemWarning]=useState(null); // {issues,parsedData,targetFile,precedingId}
   const [showRevisions,setShowRevisions]=useState(false);
   const [showExportMenu,setShowExportMenu]=useState(false);
   const [linkingIdx,setLinkingIdx]=useState(null); // row index being manually linked
@@ -8133,6 +8146,14 @@ ${fullText.slice(0,12000)}`;
       }catch(e){
         console.error("Quote parse raw response:",raw);
         throw new Error("AI returned invalid JSON — the quote may be too long or in an unsupported format. Try again.");
+      }
+      // Validate line items for duplicate row numbers / part numbers before saving
+      const liIssues=sqValidateLineItems(parsed.lineItems||[]);
+      if(liIssues.hasIssues){
+        setPhase('upload');
+        setParseProgress(0);setParseEta(null);setStatusMsg('');
+        setLineItemWarning({issues:liIssues,parsedData:parsed,targetFile,precedingId:precedingQuoteId||null});
+        return;
       }
       setStatusMsg('Checking for duplicates…');
       setParseProgress(67);
@@ -8570,7 +8591,62 @@ ${fullText.slice(0,12000)}`;
               </div>
             </div>
           )}
-          {!dupWarning&&(<>
+          {/* Line item validation warning dialog */}
+          {lineItemWarning&&(
+            <div style={{background:"#110a00",border:`1px solid ${C.yellow}`,borderRadius:12,padding:20,marginBottom:8}}>
+              <div style={{fontSize:15,fontWeight:700,color:C.yellow,marginBottom:8}}>⚠ Extraction Issues Detected</div>
+              <div style={{fontSize:13,color:C.sub,marginBottom:12,lineHeight:1.6}}>
+                The AI extracted <strong style={{color:C.text}}>{(lineItemWarning.parsedData.lineItems||[]).length} line items</strong> but found the following problems. Review before proceeding.
+              </div>
+              {lineItemWarning.issues.dupeLines.length>0&&(
+                <div style={{marginBottom:10}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#f87171",marginBottom:4}}>Duplicate Row Numbers</div>
+                  {lineItemWarning.issues.dupeLines.map(({ln,rows})=>(
+                    <div key={ln} style={{fontSize:12,color:C.sub,paddingLeft:8}}>
+                      Row #{ln} appears {rows.length}× — at extracted positions {rows.map(r=>r+1).join(', ')}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {lineItemWarning.issues.dupeParts.length>0&&(
+                <div style={{marginBottom:10}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#fb923c",marginBottom:4}}>Duplicate Part Numbers</div>
+                  {lineItemWarning.issues.dupeParts.map(({pn,rows})=>(
+                    <div key={pn} style={{fontSize:12,color:C.sub,paddingLeft:8}}>
+                      <strong style={{color:C.text}}>{pn}</strong> appears {rows.length}× — at extracted positions {rows.map(r=>r+1).join(', ')}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {lineItemWarning.issues.missingLn>0&&(
+                <div style={{marginBottom:10,fontSize:12,color:C.muted}}>
+                  {lineItemWarning.issues.missingLn} item{lineItemWarning.issues.missingLn>1?'s':''} missing a row number
+                </div>
+              )}
+              <div style={{fontSize:12,color:C.muted,marginBottom:14}}>
+                You may proceed and manually correct these in the review step, or cancel to re-upload.
+              </div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                <button onClick={()=>setLineItemWarning(null)}
+                  style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
+                <button onClick={async()=>{const d=lineItemWarning;setLineItemWarning(null);setPhase('parsing');
+                  try{
+                    setStatusMsg('Checking for duplicates…');setParseProgress(67);
+                    if(d.parsedData.quoteId&&!d.precedingId){
+                      const existing=savedQuotes.find(q=>q.quoteId===d.parsedData.quoteId&&q.status!=='superseded');
+                      if(existing){setPhase('upload');setParseProgress(0);setParseEta(null);setStatusMsg('');
+                        setDupWarning({existingDocId:existing.id,existingSupplier:existing.supplier||'',
+                          existingDate:existing.importedAt?new Date(existing.importedAt).toLocaleDateString():'',
+                          parsedData:d.parsedData,targetFile:d.targetFile});return;}
+                    }
+                    await saveAndMatch(d.parsedData,d.targetFile,d.precedingId||null);
+                  }catch(e){setStatusMsg('Error: '+e.message);setPhase('upload');}
+                }}
+                  style={btn("#1a1000","#fbbf24",{fontSize:13,border:"1px solid #fbbf2444"})}>Proceed Anyway</button>
+              </div>
+            </div>
+          )}
+          {!dupWarning&&!lineItemWarning&&(<>
             <div
               onClick={()=>fileRef.current?.click()}
               style={{border:`2px dashed ${C.accent}44`,borderRadius:14,padding:"40px 32px",textAlign:"center",cursor:"pointer",background:"rgba(99,102,241,0.04)",transition:"border-color 0.2s"}}
