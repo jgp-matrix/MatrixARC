@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.97";
+const APP_VERSION="v1.17.98";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8269,90 +8269,124 @@ ${fullText.slice(0,12000)}`;
       }
       return null;
     }
-    // BOM-first: use BOM rows as source so unquoted items appear; fall back to quote items if no BOM
+    // BOM-first: use BOM rows as source; fall back to quote items if no BOM
     const useBom=bomRows.length>0;
-    const allRows=useBom?bomRows:lineItems;
-    const source=matchedOnly
-      ?(useBom?bomRows.filter(r=>findQuoteItem(r)!==null):lineItems.filter(i=>i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched'))
-      :allRows;
+    const source=useBom?bomRows:lineItems;
     const f=str=>({t:'n',f:str}); // formula cell helper
     const acctFmt='_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)';
+    // Track which quote items were matched to a BOM row
+    const matchedQiSet=new Set();
+    const buildBomRow=(row,idx,excelR,cv)=>{
+      const qi=useBom?findQuoteItem(row):row;
+      if(qi)matchedQiSet.add(qi);
+      const bomQty=useBom?(Number(row.qty)||1):null;
+      const hasPrice=qi?.price!=null;
+      const hasQty=qi?.qty!=null;
+      const hasBc=qi?.bcCurrentCost!=null||(useBom&&row.priceSource==='bc'&&row.unitPrice!=null);
+      const bcCost=qi?.bcCurrentCost??((useBom&&row.priceSource==='bc')?row.unitPrice:null);
+      const itemPrice=hasPrice?Number((qi.price/(1-margin)).toFixed(4)):null;
+      if(cv){
+        return[
+          useBom?(row.itemNo??idx+1):(qi?.ln??''),
+          qi?.mfr||'',
+          useBom?row.partNumber:(qi?.partNumber||qi?.rawPartNumber||''),
+          useBom?row.description:(qi?.description||''),
+          bomQty!=null?bomQty:'',
+          hasQty?qi.qty:'',
+          qi?.uom||'',
+          itemPrice,
+          hasPrice&&hasQty?f(`F${excelR}*H${excelR}`):null,
+          useBom?(row.bcItemNumber||''):(qi?.bcItemId||''),
+          useBom?(row.description||''):(qi?.bcItemDescription||''),
+          qi?'Yes':'No',
+          qi?.notes||'',
+        ];
+      }else{
+        return[
+          useBom?(row.itemNo??idx+1):(qi?.ln??''),
+          qi?.mfr||'',
+          useBom?row.partNumber:(qi?.partNumber||qi?.rawPartNumber||''),
+          useBom?row.description:(qi?.description||''),
+          bomQty!=null?bomQty:'',
+          hasQty?qi.qty:'',
+          qi?.uom||'',
+          hasPrice?qi.price:null,
+          hasPrice?f(`H${excelR}/(1-K${excelR})`):null,
+          hasPrice&&hasQty?f(`F${excelR}*H${excelR}`):null,
+          margin,
+          hasPrice&&hasQty?f(`F${excelR}*I${excelR}`):null,
+          hasBc?bcCost:null,
+          hasPrice&&hasBc?f(`H${excelR}-M${excelR}`):null,
+          useBom?(row.bcItemNumber||''):(qi?.bcItemId||''),
+          useBom?(row.description||''):(qi?.bcItemDescription||''),
+          qi?'Yes':'No',
+          qi?.notes||'',
+        ];
+      }
+    };
+    const buildQiRow=(qi,idx,excelR,cv)=>{
+      // Unmatched quote item — no BOM qty
+      const hasPrice=qi.price!=null;
+      const hasQty=qi.qty!=null;
+      const hasBc=qi.bcCurrentCost!=null;
+      const itemPrice=hasPrice?Number((qi.price/(1-margin)).toFixed(4)):null;
+      if(cv){
+        return[
+          qi.ln??'',qi.mfr||'',qi.partNumber||qi.rawPartNumber||'',qi.description||'',
+          '',hasQty?qi.qty:'',qi.uom||'',
+          itemPrice,
+          hasPrice&&hasQty?f(`F${excelR}*H${excelR}`):null,
+          qi.bcItemId||'',qi.bcItemDescription||'','Quote Only',qi.notes||'',
+        ];
+      }else{
+        return[
+          qi.ln??'',qi.mfr||'',qi.partNumber||qi.rawPartNumber||'',qi.description||'',
+          '',hasQty?qi.qty:'',qi.uom||'',
+          hasPrice?qi.price:null,
+          hasPrice?f(`H${excelR}/(1-K${excelR})`):null,
+          hasPrice&&hasQty?f(`F${excelR}*H${excelR}`):null,
+          margin,
+          hasPrice&&hasQty?f(`F${excelR}*I${excelR}`):null,
+          hasBc?qi.bcCurrentCost:null,
+          hasPrice&&hasBc?f(`H${excelR}-M${excelR}`):null,
+          qi.bcItemId||'',qi.bcItemDescription||'','Quote Only',qi.notes||'',
+        ];
+      }
+    };
     let headers,dataRows,totalsRow,dollarCols,colWidths;
-    if(customerView){
-      // Customer Pricing — no source costs
-      // Cols: A=Ln B=MFR C=PartNo D=Desc E=Qty/Panel F=QtyQuoted G=UOM
-      //       H=ItemPrice I=TotalPrice J=BCItemNo K=BCDesc L=Quoted M=Notes
+    const cv=customerView;
+    if(cv){
       headers=['Ln','MFR','Part Number','Description','Qty/Panel','Qty Quoted','UOM',
         'Item Price','Total Price','BC Item #','BC Description','Quoted','Notes'];
-      dataRows=source.map((row,idx)=>{
-        const r=idx+2;
-        const qi=useBom?findQuoteItem(row):row;
-        const bomQty=useBom?(Number(row.qty)||1):null;
-        const hasPrice=qi?.price!=null;
-        const hasQty=qi?.qty!=null;
-        const itemPrice=hasPrice?Number((qi.price/(1-margin)).toFixed(4)):null;
-        return[
-          useBom?(row.itemNo??idx+1):(qi?.ln??''),            // A Ln
-          qi?.mfr||'',                                        // B MFR
-          useBom?row.partNumber:(qi?.partNumber||qi?.rawPartNumber||''), // C Part Number
-          useBom?row.description:(qi?.description||''),       // D Description
-          bomQty!=null?bomQty:'',                             // E Qty/Panel
-          hasQty?qi.qty:'',                                   // F Qty Quoted
-          qi?.uom||'',                                        // G UOM
-          itemPrice,                                          // H Item Price
-          hasPrice&&hasQty?f(`F${r}*H${r}`):null,            // I Total Price
-          useBom?(row.bcItemNumber||''):(qi?.bcItemId||''),   // J BC Item #
-          useBom?(row.description||''):(qi?.bcItemDescription||''), // K BC Desc
-          qi?'Yes':'No',                                      // L Quoted
-          qi?.notes||'',                                      // M Notes
-        ];
-      });
-      const lastData=source.length+1;
-      totalsRow=['','','','── TOTALS ──','','','',null,f(`SUM(I2:I${lastData})`),'','','',''];
       dollarCols=[7,8];
-      colWidths=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:11},{wch:12},{wch:18},{wch:35},{wch:8},{wch:20}];
+      colWidths=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:11},{wch:12},{wch:18},{wch:35},{wch:10},{wch:20}];
     }else{
-      // Full Export — all columns with formulas
-      // Cols: A=Ln B=MFR C=PartNo D=Desc E=Qty/Panel F=QtyQuoted G=UOM
-      //       H=Quote$ I=ItemPrice J=TotalCost K=Margin L=TotalPrice
-      //       M=BC$ N=Delta$ O=BCItemNo P=BCDesc Q=Quoted R=Notes
       headers=['Ln','MFR','Part Number','Description','Qty/Panel','Qty Quoted','UOM',
         'Quote $','Item Price','Total Cost','Margin','Total Price',
         'BC $','Delta $','BC Item #','BC Description','Quoted','Notes'];
-      dataRows=source.map((row,idx)=>{
-        const r=idx+2;
-        const qi=useBom?findQuoteItem(row):row;
-        const bomQty=useBom?(Number(row.qty)||1):null;
-        const hasPrice=qi?.price!=null;
-        const hasQty=qi?.qty!=null;
-        const hasBc=qi?.bcCurrentCost!=null||(useBom&&row.priceSource==='bc'&&row.unitPrice!=null);
-        const bcCost=qi?.bcCurrentCost??((useBom&&row.priceSource==='bc')?row.unitPrice:null);
-        return[
-          useBom?(row.itemNo??idx+1):(qi?.ln??''),            // A Ln
-          qi?.mfr||'',                                        // B MFR
-          useBom?row.partNumber:(qi?.partNumber||qi?.rawPartNumber||''), // C Part Number
-          useBom?row.description:(qi?.description||''),       // D Description
-          bomQty!=null?bomQty:'',                             // E Qty/Panel
-          hasQty?qi.qty:'',                                   // F Qty Quoted
-          qi?.uom||'',                                        // G UOM
-          hasPrice?qi.price:null,                             // H Quote $
-          hasPrice?f(`H${r}/(1-K${r})`):null,                // I Item Price
-          hasPrice&&hasQty?f(`F${r}*H${r}`):null,            // J Total Cost
-          margin,                                             // K Margin
-          hasPrice&&hasQty?f(`F${r}*I${r}`):null,            // L Total Price
-          hasBc?bcCost:null,                                  // M BC $
-          hasPrice&&hasBc?f(`H${r}-M${r}`):null,             // N Delta $
-          useBom?(row.bcItemNumber||''):(qi?.bcItemId||''),   // O BC Item #
-          useBom?(row.description||''):(qi?.bcItemDescription||''), // P BC Desc
-          qi?'Yes':'No',                                      // Q Quoted
-          qi?.notes||'',                                      // R Notes
-        ];
+      dollarCols=[7,8,9,11,12,13];
+      colWidths=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:10},{wch:11},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:10},{wch:20}];
+    }
+    // Build BOM rows (excelR starts at 2)
+    dataRows=source.map((row,idx)=>buildBomRow(row,idx,idx+2,cv));
+    // Find unmatched quote items and append after separator
+    const unmatchedQi=quoteItems.filter(qi=>!matchedQiSet.has(qi)&&(qi.isPriced||qi.price!=null));
+    if(useBom&&unmatchedQi.length>0){
+      const sepCols=headers.length;
+      const sepLabel=cv?['','','','── OTHER ITEMS ──','','','','','',' ','','','']
+        :['','','','── OTHER ITEMS ──','','','','','','','','','','','','','',''];
+      dataRows.push(sepLabel.slice(0,sepCols));
+      unmatchedQi.forEach((qi,idx)=>{
+        const excelR=dataRows.length+2; // +2: row 1=header, current length already includes separator
+        dataRows.push(buildQiRow(qi,idx,excelR,cv));
       });
-      const lastData=source.length+1;
+    }
+    const lastData=dataRows.length+1;
+    if(cv){
+      totalsRow=['','','','── TOTALS ──','','','',null,f(`SUM(I2:I${lastData})`),'','','',''];
+    }else{
       totalsRow=['','','','── TOTALS ──','','','',null,null,
         f(`SUM(J2:J${lastData})`),margin,f(`SUM(L2:L${lastData})`),null,null,'','','',''];
-      dollarCols=[7,8,9,11,12,13];
-      colWidths=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:10},{wch:11},{wch:5},{wch:10},{wch:11},{wch:12},{wch:9},{wch:12},{wch:10},{wch:10},{wch:18},{wch:35},{wch:8},{wch:20}];
     }
     const ws=XL.utils.aoa_to_sheet([headers,...dataRows,totalsRow]);
     const range=XL.utils.decode_range(ws['!ref']);
