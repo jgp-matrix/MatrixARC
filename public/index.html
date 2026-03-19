@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.101";
+const APP_VERSION="v1.17.102";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4819,6 +4819,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
               style={{width:15,height:15,accentColor:"#a78bfa",cursor:"pointer"}}/>
             <span style={{fontSize:12,fontWeight:600,color:customerSupplied?"#a78bfa":C.muted,whiteSpace:"nowrap"}}>Customer Supplied</span>
           </label>
+          {customerSupplied&&(
+            <button onClick={()=>onSelect({_customerSupplied:true,unitCost:0})}
+              style={btn("#1a0d2a","#a78bfa",{padding:"9px 16px",border:"1px solid #a78bfa66",fontSize:13,fontWeight:700,flexShrink:0})}>
+              Done ✓
+            </button>
+          )}
         </div>
         {showCreate&&(
           <div style={{marginBottom:14,padding:14,borderRadius:8,border:`1px solid ${C.border}`,background:"#0a0a12"}}>
@@ -5749,7 +5755,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
-      const updates={...r,partNumber:newPN,unitPrice:bcItem.unitCost,priceSource:"bc",priceDate:Date.now()};
+      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost,priceSource:"bc",priceDate:Date.now()};
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — don't block commit
@@ -5785,6 +5791,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   function applyBcItem(bomRowId,bcItem){
     const row=(panel.bom||[]).find(r=>r.id===bomRowId);
     if(!row)return;
+    if(bcItem._customerSupplied&&!bcItem.number){commitBcItem(bomRowId,bcItem,false);return;}
     const origPN=(row.crossedFrom||row.partNumber||"").trim();
     const newPN=bcItem.number;
     const isCrossing=origPN&&origPN!==newPN;
