@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.92";
+const APP_VERSION="v1.17.93";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8245,17 +8245,30 @@ ${fullText.slice(0,12000)}`;
     }
     const XL=window.XLSX;
     const margin=0.30;
-    const normPn=s=>(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+    const norm=s=>(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
     // Columns: A=Ln B=MFR C=PartNo D=Desc E=Qty/Panel F=QtyQuoted G=UOM
     //          H=Quote$ I=ItemPrice J=TotalCost K=Margin L=TotalPrice
     //          M=BC$ N=Delta$ O=BCItemNo P=BCDesc Q=MatchStatus R=Notes
-    const bomQtyMap={};
-    if(panelBom&&panelBom.length){
-      for(const row of panelBom){
-        if(row.isLaborRow)continue;
-        const key=normPn(row.partNumber||row.catalogNumber||'');
-        if(key)bomQtyMap[key]=(bomQtyMap[key]||0)+(Number(row.qty)||0);
+    const bomRows=panelBom?(panelBom.filter(r=>!r.isLaborRow&&(r.partNumber||'').trim())):[];
+    // 8-strategy match: for a quote item find its BOM row (same logic as CPD search)
+    function findBomRow(item){
+      const qpn=norm(item.partNumber);
+      const qraw=norm(item.rawPartNumber);
+      const qmfrpn=norm((item.mfr||'')+item.partNumber);
+      const qbc=norm(item.bcItemId||'');
+      for(const row of bomRows){
+        const pn=norm(row.partNumber);
+        const bcNo=norm(row.bcItemNumber||'');
+        if(pn&&qpn&&pn===qpn)return row;
+        if(pn&&qmfrpn&&pn===qmfrpn)return row;
+        if(pn&&qraw&&pn===qraw)return row;
+        if(bcNo&&qbc&&bcNo===qbc)return row;
+        if(pn.length>=4&&qpn.length>=4&&(pn.endsWith(qpn)||qpn.endsWith(pn)))return row;
+        if(pn.length>=4&&qmfrpn.length>=4&&(pn.endsWith(qmfrpn)||qmfrpn.endsWith(pn)))return row;
+        if(pn.length>=4&&qraw.length>=4&&qraw.endsWith(pn))return row;
+        if(pn.length>=6&&qpn.length>=6&&(pn.includes(qpn)||qpn.includes(pn)))return row;
       }
+      return null;
     }
     const source=matchedOnly
       ?lineItems.filter(i=>i.matchStatus==='auto_matched'||i.matchStatus==='manually_matched')
@@ -8266,11 +8279,8 @@ ${fullText.slice(0,12000)}`;
       'BC $','Delta $','BC Item #','BC Description','Match Status','Notes'];
     const dataRows=source.map((item,idx)=>{
       const r=idx+2; // Excel row (row 1 = header)
-      let qtyPerPanel=null;
-      if(panelBom&&panelBom.length){
-        const tries=[normPn(item.partNumber),normPn(item.rawPartNumber),normPn(item.bcItemId||'')];
-        for(const k of tries){if(k&&bomQtyMap[k]!=null){qtyPerPanel=bomQtyMap[k];break;}}
-      }
+      const bomRow=bomRows.length?findBomRow(item):null;
+      const qtyPerPanel=bomRow!=null?(Number(bomRow.qty)||1):null;
       const hasPrice=item.price!=null;
       const hasQty=item.qty!=null;
       const hasBc=item.bcCurrentCost!=null;
