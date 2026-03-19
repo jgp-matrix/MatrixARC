@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.84";
+const APP_VERSION="v1.17.86";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8231,6 +8231,44 @@ ${fullText.slice(0,12000)}`;
     }
   }
 
+  async function exportQuoteToExcel(){
+    if(!lineItems.length)return;
+    if(!window.XLSX){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://unpkg.com/xlsx/dist/xlsx.full.min.js';
+        s.onload=res;s.onerror=()=>rej(new Error('Failed to load XLSX library'));
+        document.head.appendChild(s);
+      });
+    }
+    const XL=window.XLSX;
+    const rows=lineItems.map(item=>{
+      const delta=item.bcCurrentCost!=null&&item.price!=null?+(item.price-item.bcCurrentCost).toFixed(4):null;
+      return{
+        'Ln':item.ln??'',
+        'MFR':item.mfr||'',
+        'Part Number':item.partNumber||item.rawPartNumber||'',
+        'Description':item.description||'',
+        'Qty':item.qty??'',
+        'UOM':item.uom||'',
+        'Quote $':item.price!=null?Number(item.price.toFixed(4)):null,
+        'BC $':item.bcCurrentCost!=null?Number(item.bcCurrentCost.toFixed(4)):null,
+        'Delta $':delta,
+        'BC Item #':item.bcItemId||'',
+        'BC Description':item.bcItemDescription||'',
+        'Match Status':item.matchStatus||'',
+        'Notes':item.notes||'',
+      };
+    });
+    const ws=XL.utils.json_to_sheet(rows);
+    ws['!cols']=[{wch:5},{wch:8},{wch:20},{wch:40},{wch:7},{wch:5},{wch:10},{wch:10},{wch:10},{wch:18},{wch:35},{wch:16},{wch:20}];
+    const wb=XL.utils.book_new();
+    const sheetName=(quoteHeader?.supplier||'Quote').replace(/[^a-z0-9 ]/gi,'').trim().substring(0,28)||'Quote';
+    XL.utils.book_append_sheet(wb,ws,sheetName);
+    const safeName=((quoteHeader?.supplier||'')+' '+(quoteHeader?.quoteId||'')).replace(/[^a-z0-9]/gi,'_').replace(/_+/g,'_').replace(/^_|_$/g,'')||'SupplierQuote';
+    XL.writeFile(wb,`${safeName}.xlsx`);
+  }
+
   async function handlePush(){
     if(!quoteDocId)return;
     if(!_bcToken){
@@ -8791,6 +8829,8 @@ ${fullText.slice(0,12000)}`;
                 </button>
               );
             })()}
+            <button onClick={exportQuoteToExcel}
+              style={btn('#0d1a0d',C.green,{fontSize:13,border:`1px solid ${C.green}55`})}>⬇ Export Excel</button>
             <button onClick={()=>{setPrecedingQuoteId(quoteDocId);setFile(null);setPdfPreview(null);setQuoteHeader(null);setLineItems([]);setQuoteDocId(null);setPhase('upload');setStatusMsg('');setShowRevisions(false);}}
               style={btn('#1a1200',C.yellow,{fontSize:13,border:`1px solid ${C.yellow}`})}>↑ Upload Revision</button>
             <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
