@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.107";
+const APP_VERSION="v1.17.108";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -505,6 +505,18 @@ function computeLaborEstimate(panel){
     isLegacy:false,
     isOverride:false
   };
+}
+
+function computePanelSellPrice(panel){
+  const pr=panel.pricing||{};
+  const laborEst=computeLaborEstimate(panel);
+  const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isCrossed);
+  const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+  const contingencyBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
+  const contingencyConsumables=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
+  const grandTotal=materialCost+laborEst.totalCost+contingencyBOM+contingencyConsumables;
+  const markup=pr.markup??30;
+  return Math.round(grandTotal*(1+markup/100)*100)/100;
 }
 
 // ── LABOR BOM ROWS (auto-managed, always first 3 rows) ──
@@ -996,6 +1008,109 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   if(!r.ok)throw new Error(`bcAddEcoTask: task ${taskNo} failed (${r.status}): ${await r.text()}`);
   console.log(`bcAddEcoTask: ECO ${ecoNumber} task ${taskNo} created for panel ${panelIndex}`);
   return taskNo;
+}
+
+async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
+  // Full sync of BC Job Planning Lines for task 20N10 (where N = panelIndex, 1-based).
+  // Strategy: delete all existing lines for the task, then recreate from current ARC state.
+  //
+  // Line structure:
+  //   10000  Billable / Item  "PROGRESS BILLING"   unit price = panel sell price, qty = panel.lineQty
+  //   20000  Budget  / R0020  "ENGINEERING"         qty = 0 (not yet tracked in ARC — future build-out)
+  //   30000  Budget  / R0020  "CUT"                 qty = CUT hours from ARC labor estimate
+  //   40000  Budget  / R0020  "LAYOUT"              qty = LAYOUT hours from ARC labor estimate
+  //   50000  Budget  / R0020  "WIRE"                qty = WIRE hours from ARC labor estimate
+  //   60000+ Budget  / Item   BOM rows              starting at 60000, step 10000, non-labor non-crossed rows
+
+  const n=panelIndex;
+  const base=20000+n*100;
+  const taskNo=String(base+10); // "20110", "20210", …
+  const suffix=n*100;
+  const pfx=`${projectNumber}-${suffix}`;
+
+  // Discover Job Planning Lines OData page (publish page 1007 as "JobPlanningLines" in BC Web Services)
+  const allPages=await bcDiscoverODataPages();
+  const planPage=allPages.find(p=>/job.?planning|project.?planning/i.test(p))||null;
+  if(!planPage)throw new Error("No Job Planning Lines OData page found. Publish BC web service page 1007 (Job Planning Lines) as 'JobPlanningLines'.");
+
+  // Step 1: delete all existing planning lines for this task
+  const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=Job_No eq '${encodeURIComponent(projectNumber)}' and Job_Task_No eq '${encodeURIComponent(taskNo)}'`;
+  const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  if(gr.ok){
+    const existing=(await gr.json()).value||[];
+    for(const line of existing){
+      const etag=line["@odata.etag"];
+      const delUrl=`${BC_ODATA_BASE}/${planPage}(Job_No='${encodeURIComponent(projectNumber)}',Job_Task_No='${encodeURIComponent(taskNo)}',Line_No=${line.Line_No})`;
+      const dr=await fetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}});
+      if(!dr.ok)console.warn(`bcSyncPlanningLines: delete line ${line.Line_No} failed (${dr.status})`);
+    }
+    console.log(`bcSyncPlanningLines: deleted ${existing.length} existing lines for task ${taskNo}`);
+  }
+
+  // Step 2: build lines
+  const today=new Date().toISOString().split('T')[0];
+  const lines=[];
+
+  // 10000 — Progress Billing (Billable)
+  const sellPrice=computePanelSellPrice(panel);
+  const lineQty=panel.lineQty??1;
+  const panelDesc=panel.drawingDesc||panel.name||`Panel ${n}`;
+  const rev=panel.drawingRev||"-";
+  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:10000,Planning_Date:today,
+    Line_Type:"Billable",Type:"Item",No:"PROGRESS BILLING",
+    Description:`${pfx} Rev ${rev} - ${panelDesc}`,
+    Quantity:lineQty,Unit_Price:sellPrice,Location_Code:"MAIN"});
+
+  // 20000 — Engineering (Budget, qty=0 until ARC tracks engineering hours)
+  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:20000,Planning_Date:today,
+    Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"ENGINEERING",
+    Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+
+  // Labor hours from ARC
+  const laborEst=computeLaborEstimate(panel);
+  const cutHrs=laborEst.lines.filter(l=>["Panel Holes","Side-Mounted Components"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
+  const layoutHrs=laborEst.lines.filter(l=>["Device Mounting","Duct & DIN Rail","Labels"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
+  const wireHrs=laborEst.lines.filter(l=>["Wire Time","Door Wiring"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
+
+  // 30000 — CUT
+  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:30000,Planning_Date:today,
+    Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"CUT",
+    Quantity:Math.round(cutHrs*100)/100,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+
+  // 40000 — LAYOUT
+  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:40000,Planning_Date:today,
+    Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"LAYOUT",
+    Quantity:Math.round(layoutHrs*100)/100,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+
+  // 50000 — WIRE
+  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:50000,Planning_Date:today,
+    Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"WIRE",
+    Quantity:Math.round(wireHrs*100)/100,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+
+  // 60000+ — BOM items (non-labor, non-crossed)
+  const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isCrossed);
+  let lineNo=60000;
+  for(const row of bomRows){
+    lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:lineNo,Planning_Date:today,
+      Line_Type:"Budget",Type:"Item",No:row.partNumber,
+      Description:(row.description||"").slice(0,100),
+      Quantity:row.qty||1,Unit_Cost_LCY:row.unitPrice||0,Location_Code:"MAIN"});
+    lineNo+=10000;
+  }
+
+  // Step 3: POST all lines
+  let created=0;
+  for(const line of lines){
+    const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
+      method:"POST",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+      body:JSON.stringify(line)
+    });
+    if(r.ok){created++;console.log(`bcSyncPlanningLines: line ${line.Line_No} (${line.Description}) created`);}
+    else console.warn(`bcSyncPlanningLines: line ${line.Line_No} failed (${r.status}):`,await r.text());
+  }
+  console.log(`bcSyncPlanningLines: ${created}/${lines.length} lines synced for task ${taskNo}`);
+  return created;
 }
 
 async function bcCreateProject(displayName, customerNumber){
@@ -5123,7 +5238,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,rfqLoading,onOpenSupplierQuote}){
+function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,rfqLoading,onOpenSupplierQuote}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -5156,6 +5271,8 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [draftDesc,setDraftDesc]=useState(panel.drawingDesc||"");
   const [draftRev,setDraftRev]=useState(panel.drawingRev||"");
   const [draftLineQty,setDraftLineQty]=useState(panel.lineQty??1);
+  const [bcSyncing,setBcSyncing]=useState(false);
+  const [bcSyncStatus,setBcSyncStatus]=useState(null); // null | "ok" | "error"
   const [draftNoWarn,setDraftNoWarn]=useState(false);
   const draftNoWarnTimer=useRef(null);
   const pricingClearTimer=useRef(null);
@@ -5651,6 +5768,22 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     const updated={...panel,drawingNo:draftNo.trim(),drawingDesc:draftDesc.trim(),drawingRev:draftRev.trim()};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
+  }
+  async function syncPlanningLinesToBC(){
+    if(!bcProjectNumber||bcSyncing)return;
+    setBcSyncing(true);setBcSyncStatus(null);
+    try{
+      if(!_bcToken){await acquireBcToken(true);}
+      if(!_bcToken)throw new Error("Could not connect to Business Central");
+      await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel);
+      setBcSyncStatus("ok");
+      setTimeout(()=>setBcSyncStatus(null),4000);
+    }catch(e){
+      console.error("bcSyncPlanningLines failed:",e);
+      setBcSyncStatus("error");
+      setTimeout(()=>setBcSyncStatus(null),6000);
+    }
+    setBcSyncing(false);
   }
   function saveLineQty(){
     const q=Math.max(1,Math.min(20,parseInt(draftLineQty)||1));
@@ -6198,6 +6331,16 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
             <button data-tip="Re-extract drawing number, description, and revision from the title block" onClick={autoExtractTitle} disabled={extractingTitle} title="Re-extract title block from drawing"
               style={{background:"none",border:`1px solid ${C.border}`,color:C.yellow,cursor:"pointer",borderRadius:5,padding:"2px 8px",fontSize:12,fontWeight:600,opacity:extractingTitle?0.5:1}}>
               {extractingTitle?"🤖…":"🤖"}
+            </button>
+          )}
+          {bcProjectNumber&&!readOnly&&(
+            <button onClick={syncPlanningLinesToBC} disabled={bcSyncing}
+              title="Sync BOM and labor to BC Planning Lines"
+              style={{background:"none",border:`1px solid ${bcSyncStatus==="ok"?C.green:bcSyncStatus==="error"?C.red:C.border}`,
+                color:bcSyncStatus==="ok"?C.green:bcSyncStatus==="error"?C.red:C.muted,
+                cursor:"pointer",borderRadius:5,padding:"2px 8px",fontSize:11,fontWeight:600,
+                opacity:bcSyncing?0.5:1,whiteSpace:"nowrap"}}>
+              {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":"Sync BC"}
             </button>
           )}
           <Badge status={panel.status||"draft"}/>
@@ -9332,6 +9475,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLo
                   idx={idx}
                   uid={uid}
                   projectId={project.id}
+                  bcProjectNumber={project.bcProjectNumber||null}
                   readOnly={readOnly}
                   onDelete={()=>deletePanel(panel.id)}
                   onUpdate={updatedPanel=>{
