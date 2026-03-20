@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.117";
+const APP_VERSION="v1.17.118";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -930,56 +930,60 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
   // Panel index N is 1-based: Panel 1 → base 20100, Panel 2 → 20200, etc.
 
   const allPages=await bcDiscoverODataPages();
-  // Prefer Project-prefixed page (uses Project_No fields); fall back to Job_Task_Lines (uses Job_No fields)
   const taskPage=allPages.find(n=>/^project.?task/i.test(n))||allPages.find(n=>/job.?task/i.test(n))||null;
-  const useProjectFields=taskPage&&/^project/i.test(taskPage);
-  const F_NO=useProjectFields?"Project_No":"Job_No";
-  const F_TASK_NO=useProjectFields?"Project_Task_No":"Job_Task_No";
-  const F_TASK_TYPE=useProjectFields?"Project_Task_Type":"Job_Task_Type";
   if(!taskPage){
     const msg=`No Project Task OData page found (available: ${allPages.join(", ")||"none"}). Publish BC web service page 1002 as 'ProjectTaskLines'.`;
     console.warn("bcCreatePanelTaskStructure:",msg);
     throw new Error(msg);
   }
-  console.log(`bcCreatePanelTaskStructure: using page '${taskPage}' with fields ${F_NO}/${F_TASK_NO}`);
 
-  const tasks=[];
-
-  // 10000 — Project header
-  tasks.push({[F_NO]:projectNumber,[F_TASK_NO]:"10000",Description:`${projectNumber} - ${projectName}`,[F_TASK_TYPE]:"Begin-Total",Indentation:0});
-
-  for(let i=0;i<panels.length;i++){
-    const n=i+1;
-    const base=20000+n*100;          // 20100, 20200, …
-    const suffix=n*100;              // 100, 200, …
-    const beginNo=String(base);      // "20100"
-    const endNo=String(base+99);     // "20199"
-    const postingNo=String(base+10); // "20110"
-    const engNo=String(base+20);     // "20120"
-    // ECO slots 20N30–20N39 reserved (created on-demand, not at project init)
-    const desc=panels[i].name;
-    const pfx=`${projectNumber}-${suffix}`;
-
-    tasks.push({[F_NO]:projectNumber,[F_TASK_NO]:beginNo,Description:`${pfx} - ${desc}`,[F_TASK_TYPE]:"Begin-Total",Indentation:1});
-    tasks.push({[F_NO]:projectNumber,[F_TASK_NO]:postingNo,Description:`${pfx} Rev - - ${desc}`,[F_TASK_TYPE]:"Posting",Indentation:2});
-    tasks.push({[F_NO]:projectNumber,[F_TASK_NO]:engNo,Description:`Engineering Design - ${desc}`,[F_TASK_TYPE]:"Posting",Indentation:2});
-    tasks.push({[F_NO]:projectNumber,[F_TASK_NO]:endNo,Description:`TOTAL: ${pfx} - ${desc}`,[F_TASK_TYPE]:"End-Total",Totaling:`${beginNo}..${endNo}`,Indentation:1});
+  // Helper: build a task object using the given field-name prefix ("Project" or "Job")
+  function makeTask(prefix,noVal,taskNoVal,desc,type,extra={}){
+    return{[`${prefix}_No`]:noVal,[`${prefix}_Task_No`]:taskNoVal,Description:desc,[`${prefix}_Task_Type`]:type,...extra};
   }
 
-  // 99999 — Project End-Total
-  tasks.push({[F_NO]:projectNumber,[F_TASK_NO]:"99999",Description:`TOTAL: ${projectNumber} - ${projectName}`,[F_TASK_TYPE]:"End-Total",Totaling:"10000..99999",Indentation:0});
-
-  let created=0;
-  for(const task of tasks){
-    const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
-      method:"POST",
-      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-      body:JSON.stringify(task)
-    });
-    if(r.ok){created++;console.log(`bcCreatePanelTaskStructure: task ${task[F_TASK_NO]} created`);}
-    else console.warn(`bcCreatePanelTaskStructure: task ${task[F_TASK_NO]} failed (${r.status}):`,await r.text());
+  function buildTasks(prefix){
+    const t=[];
+    t.push(makeTask(prefix,projectNumber,"10000",`${projectNumber} - ${projectName}`,"Begin-Total",{Indentation:0}));
+    for(let i=0;i<panels.length;i++){
+      const n=i+1,base=20000+n*100,suffix=n*100;
+      const beginNo=String(base),endNo=String(base+99),postingNo=String(base+10),engNo=String(base+20);
+      const desc=panels[i].name,pfx=`${projectNumber}-${suffix}`;
+      t.push(makeTask(prefix,projectNumber,beginNo,`${pfx} - ${desc}`,"Begin-Total",{Indentation:1}));
+      t.push(makeTask(prefix,projectNumber,postingNo,`${pfx} Rev - - ${desc}`,"Posting",{Indentation:2}));
+      t.push(makeTask(prefix,projectNumber,engNo,`Engineering Design - ${desc}`,"Posting",{Indentation:2}));
+      t.push(makeTask(prefix,projectNumber,endNo,`TOTAL: ${pfx} - ${desc}`,"End-Total",{Totaling:`${beginNo}..${endNo}`,Indentation:1}));
+    }
+    t.push(makeTask(prefix,projectNumber,"99999",`TOTAL: ${projectNumber} - ${projectName}`,"End-Total",{Totaling:"10000..99999",Indentation:0}));
+    return t;
   }
-  return created;
+
+  // Probe: try first task with Project_ fields; auto-fall back to Job_ if BC rejects Project_No
+  async function postTasks(prefix){
+    const tasks=buildTasks(prefix);
+    const taskNoField=`${prefix}_Task_No`;
+    let created=0;
+    for(const task of tasks){
+      const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
+        method:"POST",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+        body:JSON.stringify(task)
+      });
+      if(r.ok){created++;console.log(`bcCreatePanelTaskStructure: task ${task[taskNoField]} created (${prefix}_No)`);}
+      else{
+        const txt=await r.text();
+        if(created===0&&prefix==="Project"&&txt.includes("'Project_No' does not exist")){
+          console.log("bcCreatePanelTaskStructure: Project_No rejected, retrying with Job_No");
+          return postTasks("Job");
+        }
+        console.warn(`bcCreatePanelTaskStructure: task ${task[taskNoField]} failed (${r.status}):`,txt);
+      }
+    }
+    return created;
+  }
+
+  console.log(`bcCreatePanelTaskStructure: using page '${taskPage}', probing with Project_No fields`);
+  return postTasks("Project");
 }
 
 async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
@@ -1044,13 +1048,22 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
   const suffix=n*100;
   const pfx=`${projectNumber}-${suffix}`;
 
-  // Discover Project Planning Lines OData page — prefer Project-prefixed (Project_No fields), fall back to JobPlanningLines (Job_No fields)
+  // Discover Project Planning Lines OData page
   const allPages=await bcDiscoverODataPages();
   const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p))||null;
   if(!planPage)throw new Error(`No Project Planning Lines OData page found (available: ${allPages.join(", ")||"none"}). Publish BC web service page 1007 as 'ProjectPlanningLines'.`);
-  const useProjPlan=planPage&&/^project/i.test(planPage);
-  const FP_NO=useProjPlan?"Project_No":"Job_No";
-  const FP_TASK_NO=useProjPlan?"Project_Task_No":"Job_Task_No";
+
+  // Probe: GET one record to detect whether page uses Project_No or Job_No
+  let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
+  {
+    const probeUrl=`${BC_ODATA_BASE}/${planPage}?$top=1`;
+    const pr=await fetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(pr.ok){
+      const pd=await pr.json();
+      const rec=(pd.value||[])[0];
+      if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}
+    }
+  }
   console.log(`bcSyncPlanningLines: using page '${planPage}' with fields ${FP_NO}/${FP_TASK_NO}`);
 
   // Step 1: delete all existing planning lines for this task
