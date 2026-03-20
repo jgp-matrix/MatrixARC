@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.114";
+const APP_VERSION="v1.17.115";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -932,7 +932,7 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
   const allPages=await bcDiscoverODataPages();
   const taskPage=allPages.find(n=>/job.?task|project.?task/i.test(n))||null;
   if(!taskPage){
-    const msg=`No Job Task OData page found (available: ${allPages.join(", ")||"none"}). Publish BC web service page 1002 as 'JobTaskLines'.`;
+    const msg=`No Project Task OData page found (available: ${allPages.join(", ")||"none"}). Publish BC web service page 1002 as 'ProjectTaskLines'.`;
     console.warn("bcCreatePanelTaskStructure:",msg);
     throw new Error(msg);
   }
@@ -940,7 +940,7 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
   const tasks=[];
 
   // 10000 — Project header
-  tasks.push({Job_No:projectNumber,Job_Task_No:"10000",Description:`${projectNumber} - ${projectName}`,Job_Task_Type:"Begin-Total",Indentation:0});
+  tasks.push({Project_No:projectNumber,Project_Task_No:"10000",Description:`${projectNumber} - ${projectName}`,Project_Task_Type:"Begin-Total",Indentation:0});
 
   for(let i=0;i<panels.length;i++){
     const n=i+1;
@@ -954,14 +954,14 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
     const desc=panels[i].name;
     const pfx=`${projectNumber}-${suffix}`;
 
-    tasks.push({Job_No:projectNumber,Job_Task_No:beginNo,Description:`${pfx} - ${desc}`,Job_Task_Type:"Begin-Total",Indentation:1});
-    tasks.push({Job_No:projectNumber,Job_Task_No:postingNo,Description:`${pfx} Rev - - ${desc}`,Job_Task_Type:"Posting",Indentation:2});
-    tasks.push({Job_No:projectNumber,Job_Task_No:engNo,Description:`Engineering Design - ${desc}`,Job_Task_Type:"Posting",Indentation:2});
-    tasks.push({Job_No:projectNumber,Job_Task_No:endNo,Description:`TOTAL: ${pfx} - ${desc}`,Job_Task_Type:"End-Total",Totaling:`${beginNo}..${endNo}`,Indentation:1});
+    tasks.push({Project_No:projectNumber,Project_Task_No:beginNo,Description:`${pfx} - ${desc}`,Project_Task_Type:"Begin-Total",Indentation:1});
+    tasks.push({Project_No:projectNumber,Project_Task_No:postingNo,Description:`${pfx} Rev - - ${desc}`,Project_Task_Type:"Posting",Indentation:2});
+    tasks.push({Project_No:projectNumber,Project_Task_No:engNo,Description:`Engineering Design - ${desc}`,Project_Task_Type:"Posting",Indentation:2});
+    tasks.push({Project_No:projectNumber,Project_Task_No:endNo,Description:`TOTAL: ${pfx} - ${desc}`,Project_Task_Type:"End-Total",Totaling:`${beginNo}..${endNo}`,Indentation:1});
   }
 
   // 99999 — Project End-Total
-  tasks.push({Job_No:projectNumber,Job_Task_No:"99999",Description:`TOTAL: ${projectNumber} - ${projectName}`,Job_Task_Type:"End-Total",Totaling:"10000..99999",Indentation:0});
+  tasks.push({Project_No:projectNumber,Project_Task_No:"99999",Description:`TOTAL: ${projectNumber} - ${projectName}`,Project_Task_Type:"End-Total",Totaling:"10000..99999",Indentation:0});
 
   let created=0;
   for(const task of tasks){
@@ -970,8 +970,8 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(task)
     });
-    if(r.ok){created++;console.log(`bcCreatePanelTaskStructure: task ${task.Job_Task_No} created`);}
-    else console.warn(`bcCreatePanelTaskStructure: task ${task.Job_Task_No} failed (${r.status}):`,await r.text());
+    if(r.ok){created++;console.log(`bcCreatePanelTaskStructure: task ${task.Project_Task_No} created`);}
+    else console.warn(`bcCreatePanelTaskStructure: task ${task.Project_Task_No} failed (${r.status}):`,await r.text());
   }
   return created;
 }
@@ -1000,13 +1000,13 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
 
   const allPages=await bcDiscoverODataPages();
   const taskPage=allPages.find(p=>/job.?task|project.?task/i.test(p))||null;
-  if(!taskPage)throw new Error("bcAddEcoTask: No job task OData page found");
+  if(!taskPage)throw new Error("bcAddEcoTask: No project task OData page found");
 
   const body={
-    Job_No:projectNumber,
-    Job_Task_No:taskNo,
+    Project_No:projectNumber,
+    Project_Task_No:taskNo,
     Description:`ECO ${ecoNumber} - Change Order for ${panelName}`,
-    Job_Task_Type:"Posting",
+    Project_Task_Type:"Posting",
     Indentation:2
   };
   const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
@@ -1037,19 +1037,19 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
   const suffix=n*100;
   const pfx=`${projectNumber}-${suffix}`;
 
-  // Discover Job Planning Lines OData page (publish page 1007 as "JobPlanningLines" in BC Web Services)
+  // Discover Project Planning Lines OData page (publish page 1007 as "ProjectPlanningLines" in BC Web Services)
   const allPages=await bcDiscoverODataPages();
   const planPage=allPages.find(p=>/job.?planning|project.?planning/i.test(p))||null;
-  if(!planPage)throw new Error(`No Job Planning Lines OData page found (available: ${allPages.join(", ")||"none"}). Publish BC web service page 1007 as 'JobPlanningLines'.`);
+  if(!planPage)throw new Error(`No Project Planning Lines OData page found (available: ${allPages.join(", ")||"none"}). Publish BC web service page 1007 as 'ProjectPlanningLines'.`);
 
   // Step 1: delete all existing planning lines for this task
-  const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=Job_No eq '${encodeURIComponent(projectNumber)}' and Job_Task_No eq '${encodeURIComponent(taskNo)}'`;
+  const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=Project_No eq '${encodeURIComponent(projectNumber)}' and Project_Task_No eq '${encodeURIComponent(taskNo)}'`;
   const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(gr.ok){
     const existing=(await gr.json()).value||[];
     for(const line of existing){
       const etag=line["@odata.etag"];
-      const delUrl=`${BC_ODATA_BASE}/${planPage}(Job_No='${encodeURIComponent(projectNumber)}',Job_Task_No='${encodeURIComponent(taskNo)}',Line_No=${line.Line_No})`;
+      const delUrl=`${BC_ODATA_BASE}/${planPage}(Project_No='${encodeURIComponent(projectNumber)}',Project_Task_No='${encodeURIComponent(taskNo)}',Line_No=${line.Line_No})`;
       const dr=await fetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}});
       if(!dr.ok)console.warn(`bcSyncPlanningLines: delete line ${line.Line_No} failed (${dr.status})`);
     }
@@ -1065,13 +1065,13 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
   const lineQty=panel.lineQty??1;
   const panelDesc=panel.drawingDesc||panel.name||`Panel ${n}`;
   const rev=panel.drawingRev||"-";
-  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:10000,Planning_Date:today,
+  lines.push({Project_No:projectNumber,Project_Task_No:taskNo,Line_No:10000,Planning_Date:today,
     Line_Type:"Billable",Type:"Item",No:"PROGRESS BILLING",
     Description:`${pfx} Rev ${rev} - ${panelDesc}`,
     Quantity:lineQty,Unit_Price:sellPrice,Location_Code:"MAIN"});
 
   // 20000 — Engineering (Budget, qty=0 until ARC tracks engineering hours)
-  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:20000,Planning_Date:today,
+  lines.push({Project_No:projectNumber,Project_Task_No:taskNo,Line_No:20000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"ENGINEERING",
     Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
@@ -1082,17 +1082,17 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
   const wireHrs=laborEst.lines.filter(l=>["Wire Time","Door Wiring"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
 
   // 30000 — CUT
-  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:30000,Planning_Date:today,
+  lines.push({Project_No:projectNumber,Project_Task_No:taskNo,Line_No:30000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"CUT",
     Quantity:Math.round(cutHrs*100)/100,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
   // 40000 — LAYOUT
-  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:40000,Planning_Date:today,
+  lines.push({Project_No:projectNumber,Project_Task_No:taskNo,Line_No:40000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"LAYOUT",
     Quantity:Math.round(layoutHrs*100)/100,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
   // 50000 — WIRE
-  lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:50000,Planning_Date:today,
+  lines.push({Project_No:projectNumber,Project_Task_No:taskNo,Line_No:50000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"WIRE",
     Quantity:Math.round(wireHrs*100)/100,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
@@ -1100,7 +1100,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
   const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isCrossed);
   let lineNo=60000;
   for(const row of bomRows){
-    lines.push({Job_No:projectNumber,Job_Task_No:taskNo,Line_No:lineNo,Planning_Date:today,
+    lines.push({Project_No:projectNumber,Project_Task_No:taskNo,Line_No:lineNo,Planning_Date:today,
       Line_Type:"Budget",Type:"Item",No:row.partNumber,
       Description:(row.description||"").slice(0,100),
       Quantity:row.qty||1,Unit_Cost_LCY:row.unitPrice||0,Location_Code:"MAIN"});
@@ -1480,7 +1480,7 @@ async function bcPatchJobOData(jobNo,fields){
   const projectPage=allPages.find(n=>/^(project(card)?|job(card)?)$/i.test(n))||null;
   if(!projectPage){
     console.warn("BC OData published pages available:",allPages.join(", ")||"(none)");
-    console.warn("bcPatchJobOData: No project OData page found — skipping defaults patch. Publish page 88 as 'ProjectCard' in BC Web Services.");
+    console.warn("bcPatchJobOData: No project OData page found — skipping defaults patch. Publish page 88 as 'ProjectCard' in BC Web Services (Settings → Web Services → New → Object Type: Page, Object ID: 88, Service Name: ProjectCard).");
     return; // non-fatal: project was already created, defaults can be set manually in BC
   }
   const pages=[projectPage];
@@ -9723,7 +9723,7 @@ function NewProjectModal({uid,onCreated,onClose}){
         createdAt:Date.now(),updatedAt:Date.now()
       });
       if(taskWarn){
-        setCreateErr(`Project created, but BC task structure failed: ${taskWarn} — ensure 'JobTaskLines' (page 1002) is published in BC Web Services.`);
+        setCreateErr(`Project created, but BC task structure failed: ${taskWarn} — ensure 'ProjectTaskLines' (page 1002) is published in BC Web Services.`);
         setLoading(false);
         return; // don't auto-navigate — let user see the warning
       }
