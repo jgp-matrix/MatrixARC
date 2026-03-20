@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.123";
+const APP_VERSION="v1.17.124";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5042,6 +5042,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [draftLineQty,setDraftLineQty]=useState(panel.lineQty??1);
   const [bcSyncing,setBcSyncing]=useState(false);
   const [bcSyncStatus,setBcSyncStatus]=useState(null); // null | "ok" | "error"
+  const [unpricedAlert,setUnpricedAlert]=useState(null); // null | array of unpriced rows
   const bcAutoSyncTimer=useRef(null);
   const bcPrevSyncCount=useRef(-1);
   const [draftNoWarn,setDraftNoWarn]=useState(false);
@@ -5556,12 +5557,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
     if(!bcProjectNumber||bcSyncing)return;
     // Guard: all non-labor, non-crossed BOM rows must have a BC or manual price
     const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isCrossed&&r.priceSource!=="bc"&&r.priceSource!=="manual");
-    if(unpriced.length){
-      setBcSyncStatus("error");
-      setErr(`BC sync blocked: ${unpriced.length} item${unpriced.length>1?"s":""} not yet priced in Business Central (${unpriced.slice(0,3).map(r=>r.partNumber||"?").join(", ")}${unpriced.length>3?", …":""}). Price all items via BC before syncing.`);
-      setTimeout(()=>{setBcSyncStatus(null);setErr("");},8000);
-      return;
-    }
+    if(unpriced.length){setUnpricedAlert(unpriced);return;}
     setBcSyncing(true);setBcSyncStatus(null);
     try{
       if(!_bcToken){await acquireBcToken(true);}
@@ -6133,6 +6129,29 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                 opacity:bcSyncing?0.5:1,whiteSpace:"nowrap"}}>
               {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":"Sync BC"}
             </button>
+          )}
+          {unpricedAlert&&(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+              <div style={{background:C.card,border:`1px solid ${C.red}`,borderRadius:10,padding:24,maxWidth:480,width:"100%"}}>
+                <div style={{fontSize:16,fontWeight:700,color:C.red,marginBottom:8}}>BC Sync Blocked</div>
+                <div style={{fontSize:13,color:C.text,marginBottom:12}}>
+                  {unpricedAlert.length} item{unpricedAlert.length>1?"s":""} must be priced in Business Central before syncing:
+                </div>
+                <div style={{background:C.bg,borderRadius:6,padding:"8px 12px",maxHeight:200,overflowY:"auto",marginBottom:16}}>
+                  {unpricedAlert.map((r,i)=>(
+                    <div key={i} style={{fontSize:12,color:C.muted,padding:"2px 0",borderBottom:`1px solid ${C.border}33`}}>
+                      <span style={{color:C.text,fontWeight:600}}>{r.partNumber||"(no part #)"}</span>
+                      {r.description?<span style={{marginLeft:8}}>{r.description.slice(0,60)}{r.description.length>60?"…":""}</span>:null}
+                    </div>
+                  ))}
+                </div>
+                <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Use "Get BC Prices" to price these items, or mark them manually before syncing.</div>
+                <button onClick={()=>setUnpricedAlert(null)}
+                  style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 24px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>
+                  OK
+                </button>
+              </div>
+            </div>
           )}
           <Badge status={panel.status||"draft"}/>
           {!readOnly&&<button data-tip="Delete this panel" onClick={onDelete} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
