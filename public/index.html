@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.112";
+const APP_VERSION="v1.17.113";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1456,15 +1456,16 @@ async function bcPatchItemOData(itemNo,fields){
 
 async function bcDiscoverODataPages(){
   if(!_bcToken)return[];
-  // The service list is at the ODataV4 root, not the company-level URL
-  const rootUrl=`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/ODataV4/`;
+  // Published web services are company-specific — query the company-level service document
+  const companyUrl=`${BC_ODATA_BASE}/`;
   try{
-    const r=await fetch(rootUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await fetch(companyUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok){console.warn("bcDiscoverODataPages failed:",r.status);return[];}
     const txt=await r.text();
     try{
       const d=JSON.parse(txt);
       const names=(d.value||[]).map(e=>e.name||e.url||"").filter(Boolean);
+      console.log("bcDiscoverODataPages found:",names.join(", ")||"(none)");
       return names;
     }catch(pe){console.warn("bcDiscoverODataPages JSON parse error:",pe);return[];}
   }catch(e){console.warn("bcDiscoverODataPages error:",e);return[];}
@@ -9700,9 +9701,15 @@ function NewProjectModal({uid,onCreated,onClose}){
       const bc=await bcCreateProject(trimmed,selectedCustomer.number);
       const panelList=Array.from({length:Math.max(1,panelCount)},(_,i)=>({id:`panel-${i+1}`,name:`Panel ${i+1}`}));
       setBcStatus("tasks");
-      try{await bcCreatePanelTaskStructure(bc.number,trimmed,panelList);}
-      catch(te){console.warn("bcCreatePanelTaskStructure skipped:",te.message);}
-      setBcStatus("ok");
+      let taskWarn=null;
+      try{
+        const taskCount=await bcCreatePanelTaskStructure(bc.number,trimmed,panelList);
+        console.log(`bcCreatePanelTaskStructure: ${taskCount} tasks created`);
+      }catch(te){
+        console.error("bcCreatePanelTaskStructure failed:",te.message);
+        taskWarn=te.message;
+      }
+      setBcStatus(taskWarn?"taskwarn":"ok");
       const p=await saveProject(uid,{
         name:trimmed,
         bcProjectId:bc.id,
@@ -9713,6 +9720,11 @@ function NewProjectModal({uid,onCreated,onClose}){
         panels:panelList.map(panel=>({...panel,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'})),
         createdAt:Date.now(),updatedAt:Date.now()
       });
+      if(taskWarn){
+        setCreateErr(`Project created, but BC task structure failed: ${taskWarn} — ensure 'JobTaskLines' (page 1002) is published in BC Web Services.`);
+        setLoading(false);
+        return; // don't auto-navigate — let user see the warning
+      }
       onCreated(p);
     }catch(e){
       setBcStatus(null);
@@ -9794,6 +9806,7 @@ function NewProjectModal({uid,onCreated,onClose}){
           {bcStatus==="connecting"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Connecting to Business Central...</div>}
           {bcStatus==="creating"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Creating project in Business Central…</div>}
           {bcStatus==="tasks"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Building project task structure in BC…</div>}
+          {bcStatus==="taskwarn"&&<div style={{fontSize:12,color:C.yellow,marginBottom:10}}>Project created — task structure pending (see error below)</div>}
           {createErr&&<div style={{fontSize:12,color:C.red,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>{createErr}</div>}
           {!selectedCustomer&&name.trim()&&<div style={{fontSize:12,color:C.yellow,marginBottom:10}}>A customer is required to create a project.</div>}
           <div style={{display:"flex",gap:10,marginTop:4}}>
