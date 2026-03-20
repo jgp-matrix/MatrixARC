@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.113";
+const APP_VERSION="v1.17.114";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -932,8 +932,9 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
   const allPages=await bcDiscoverODataPages();
   const taskPage=allPages.find(n=>/job.?task|project.?task/i.test(n))||null;
   if(!taskPage){
-    console.warn("bcCreatePanelTaskStructure: No job task OData page found. Publish BC web service page 1002 (Job Task Lines) as 'JobTaskLines'.");
-    return 0;
+    const msg=`No Job Task OData page found (available: ${allPages.join(", ")||"none"}). Publish BC web service page 1002 as 'JobTaskLines'.`;
+    console.warn("bcCreatePanelTaskStructure:",msg);
+    throw new Error(msg);
   }
 
   const tasks=[];
@@ -1039,7 +1040,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
   // Discover Job Planning Lines OData page (publish page 1007 as "JobPlanningLines" in BC Web Services)
   const allPages=await bcDiscoverODataPages();
   const planPage=allPages.find(p=>/job.?planning|project.?planning/i.test(p))||null;
-  if(!planPage)throw new Error("No Job Planning Lines OData page found. Publish BC web service page 1007 (Job Planning Lines) as 'JobPlanningLines'.");
+  if(!planPage)throw new Error(`No Job Planning Lines OData page found (available: ${allPages.join(", ")||"none"}). Publish BC web service page 1007 as 'JobPlanningLines'.`);
 
   // Step 1: delete all existing planning lines for this task
   const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=Job_No eq '${encodeURIComponent(projectNumber)}' and Job_Task_No eq '${encodeURIComponent(taskNo)}'`;
@@ -1475,11 +1476,12 @@ async function bcPatchJobOData(jobNo,fields){
   if(!_bcToken||!jobNo||!fields||!Object.keys(fields).length)return;
   // Discover published OData pages and find a project-related one
   const allPages=await bcDiscoverODataPages();
-  // Match project card/header pages only — exclude planning lines, tasks, etc.
-  const projectPage=allPages.find(n=>/^project(card)?$/i.test(n))||null;
+  // Match project card/header pages — common names: ProjectCard, JobCard, Project, Job
+  const projectPage=allPages.find(n=>/^(project(card)?|job(card)?)$/i.test(n))||null;
   if(!projectPage){
-    console.warn("BC OData published pages available:",allPages.join(", "));
-    throw new Error(`No Project Card OData page found in Business Central. Please publish the Project Card page as a web service in BC (Settings → Web Services → New → Object Type: Page, Object ID: 88, Service Name: ProjectCard).`);
+    console.warn("BC OData published pages available:",allPages.join(", ")||"(none)");
+    console.warn("bcPatchJobOData: No project OData page found — skipping defaults patch. Publish page 88 as 'ProjectCard' in BC Web Services.");
+    return; // non-fatal: project was already created, defaults can be set manually in BC
   }
   const pages=[projectPage];
   for(const page of pages){
