@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.121";
+const APP_VERSION="v1.17.122";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1129,15 +1129,17 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
       Description:(row.description||"").slice(0,100),
       Quantity:row.qty||1,Unit_Price:row.unitPrice||0,Location_Code:"MAIN",
       _fallback:{[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
-        Line_Type:"Budget",Type:"",
+        Line_Type:"Budget",Type:"Text",
         Description:`${row.partNumber||""} - ${(row.description||"").slice(0,90)}`.slice(0,100).trim(),
-        Quantity:row.qty||1,Unit_Price:row.unitPrice||0}});
+        Quantity:row.qty||1}});
     lineNo+=10000;
   }
 
   // Step 3: POST all lines
+  const sleep=ms=>new Promise(res=>setTimeout(res,ms));
   let created=0;
   for(const line of lines){
+    await sleep(150);
     const {_fallback,...payload}=line;
     const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
       method:"POST",
@@ -1148,6 +1150,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
     else if(_fallback){
       const txt=await r.text();
       console.warn(`bcSyncPlanningLines: line ${line.Line_No} item POST failed (${r.status}), retrying as text:`,txt);
+      await sleep(300);
       const r2=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
