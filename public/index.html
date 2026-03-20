@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.102";
+const APP_VERSION="v1.17.103";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -890,6 +890,69 @@ async function bcCopyProjectFromTemplate(fromProjectNumber, toProjectNumber){
   return copied;
 }
 
+async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
+  // Creates the ARC-defined BC Job Task hierarchy for a new project.
+  //
+  // Numbering scheme:
+  //   10000   = Project header (Begin-Total)             "{projectNumber} - {projectName}"
+  //   20N00   = Panel N Begin-Total                      "{projectNumber}-{N*100} - {panelName}"
+  //   20N10   = Panel N BOM / Drawing work (Posting)     "{projectNumber}-{N*100} Rev - - {panelName}"
+  //             → Planning lines will be populated from BOM (future step)
+  //             → Dwg Rev# will be tracked as an ARC panel field (future build-out)
+  //   20N20   = Engineering / Design / Programming / Onsite Commissioning (Posting — future build-out)
+  //   20N30   = ECO / Change Orders numbered ECO-1 and up (Posting — future build-out)
+  //   20N99   = Panel N End-Total                        "TOTAL: {projectNumber}-{N*100} - {panelName}"
+  //   99999   = Project End-Total                        "TOTAL: {projectNumber} - {projectName}"
+  //
+  // Panel index N is 1-based: Panel 1 → base 20100, Panel 2 → 20200, etc.
+
+  const allPages=await bcDiscoverODataPages();
+  const taskPage=allPages.find(n=>/job.?task|project.?task/i.test(n))||null;
+  if(!taskPage){
+    console.warn("bcCreatePanelTaskStructure: No job task OData page found. Publish BC web service page 1002 (Job Task Lines) as 'JobTaskLines'.");
+    return 0;
+  }
+
+  const tasks=[];
+
+  // 10000 — Project header
+  tasks.push({Job_No:projectNumber,Job_Task_No:"10000",Description:`${projectNumber} - ${projectName}`,Job_Task_Type:"Begin-Total",Indentation:0});
+
+  for(let i=0;i<panels.length;i++){
+    const n=i+1;
+    const base=20000+n*100;          // 20100, 20200, …
+    const suffix=n*100;              // 100, 200, …
+    const beginNo=String(base);      // "20100"
+    const endNo=String(base+99);     // "20199"
+    const postingNo=String(base+10); // "20110"
+    const engNo=String(base+20);     // "20120"
+    const ecoNo=String(base+30);     // "20130"
+    const desc=panels[i].name;
+    const pfx=`${projectNumber}-${suffix}`;
+
+    tasks.push({Job_No:projectNumber,Job_Task_No:beginNo,Description:`${pfx} - ${desc}`,Job_Task_Type:"Begin-Total",Indentation:1});
+    tasks.push({Job_No:projectNumber,Job_Task_No:postingNo,Description:`${pfx} Rev - - ${desc}`,Job_Task_Type:"Posting",Indentation:2});
+    tasks.push({Job_No:projectNumber,Job_Task_No:engNo,Description:`Engineering Design - ${desc}`,Job_Task_Type:"Posting",Indentation:2});
+    tasks.push({Job_No:projectNumber,Job_Task_No:ecoNo,Description:`ECO# - Change Order for ${desc}`,Job_Task_Type:"Posting",Indentation:2});
+    tasks.push({Job_No:projectNumber,Job_Task_No:endNo,Description:`TOTAL: ${pfx} - ${desc}`,Job_Task_Type:"End-Total",Totaling:`${beginNo}..${endNo}`,Indentation:1});
+  }
+
+  // 99999 — Project End-Total
+  tasks.push({Job_No:projectNumber,Job_Task_No:"99999",Description:`TOTAL: ${projectNumber} - ${projectName}`,Job_Task_Type:"End-Total",Totaling:"10000..99999",Indentation:0});
+
+  let created=0;
+  for(const task of tasks){
+    const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
+      method:"POST",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+      body:JSON.stringify(task)
+    });
+    if(r.ok){created++;console.log(`bcCreatePanelTaskStructure: task ${task.Job_Task_No} created`);}
+    else console.warn(`bcCreatePanelTaskStructure: task ${task.Job_Task_No} failed (${r.status}):`,await r.text());
+  }
+  return created;
+}
+
 async function bcCreateProject(displayName, customerNumber){
   if(!_bcToken)throw new Error("Not connected to Business Central");
   if(!customerNumber)throw new Error("A customer must be selected");
@@ -910,9 +973,7 @@ async function bcCreateProject(displayName, customerNumber){
     // Step 2: PATCH Bill_to_Customer_No via OData FIRST (BC requires customer before task lines)
     await bcPatchJobOData(d.number,{Bill_to_Customer_No:customerNumber});
 
-    // Step 3: Copy project tasks from template via OData (non-fatal if BC web service not published)
-    try{await bcCopyProjectFromTemplate(BC_PROJECT_TEMPLATE, d.number);}
-    catch(e){console.warn("bcCreateProject: task copy skipped:",e.message);}
+    // Step 3: Panel task structure is created by the caller (bcCreatePanelTaskStructure) after panels are known
     return{id:d.id,number:d.number,displayName:d.displayName,customerNumber:customerNumber,customerName:null};
   }catch(e){
     // Rollback: delete the BC project if it was created
@@ -9708,6 +9769,10 @@ function NewProjectModal({uid,onCreated,onClose}){
     try{
       setBcStatus("creating");
       const bc=await bcCreateProject(trimmed,selectedCustomer.number);
+      const panelList=Array.from({length:Math.max(1,panelCount)},(_,i)=>({id:`panel-${i+1}`,name:`Panel ${i+1}`}));
+      setBcStatus("tasks");
+      try{await bcCreatePanelTaskStructure(bc.number,trimmed,panelList);}
+      catch(te){console.warn("bcCreatePanelTaskStructure skipped:",te.message);}
       setBcStatus("ok");
       const p=await saveProject(uid,{
         name:trimmed,
@@ -9716,7 +9781,7 @@ function NewProjectModal({uid,onCreated,onClose}){
         bcCustomerNumber:bc.customerNumber,
         bcCustomerName:bc.customerName||selectedCustomer.displayName,
         status:"draft",
-        panels:Array.from({length:Math.max(1,panelCount)},(_,i)=>({id:`panel-${i+1}`,name:`Panel ${i+1}`,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'})),
+        panels:panelList.map(panel=>({...panel,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'})),
         createdAt:Date.now(),updatedAt:Date.now()
       });
       onCreated(p);
@@ -9798,7 +9863,8 @@ function NewProjectModal({uid,onCreated,onClose}){
             </div>
           )}
           {bcStatus==="connecting"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Connecting to Business Central...</div>}
-          {bcStatus==="creating"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Creating BC project, copying template tasks, and linking customer…</div>}
+          {bcStatus==="creating"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Creating project in Business Central…</div>}
+          {bcStatus==="tasks"&&<div style={{fontSize:12,color:C.muted,marginBottom:10}}>Building project task structure in BC…</div>}
           {createErr&&<div style={{fontSize:12,color:C.red,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>{createErr}</div>}
           {!selectedCustomer&&name.trim()&&<div style={{fontSize:12,color:C.yellow,marginBottom:10}}>A customer is required to create a project.</div>}
           <div style={{display:"flex",gap:10,marginTop:4}}>
