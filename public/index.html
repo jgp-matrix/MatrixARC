@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.118";
+const APP_VERSION="v1.17.119";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -944,17 +944,17 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
 
   function buildTasks(prefix){
     const t=[];
-    t.push(makeTask(prefix,projectNumber,"10000",`${projectNumber} - ${projectName}`,"Begin-Total",{Indentation:0}));
+    t.push(makeTask(prefix,projectNumber,"10000",`${projectNumber} - ${projectName}`,"Begin-Total"));
     for(let i=0;i<panels.length;i++){
       const n=i+1,base=20000+n*100,suffix=n*100;
       const beginNo=String(base),endNo=String(base+99),postingNo=String(base+10),engNo=String(base+20);
       const desc=panels[i].name,pfx=`${projectNumber}-${suffix}`;
-      t.push(makeTask(prefix,projectNumber,beginNo,`${pfx} - ${desc}`,"Begin-Total",{Indentation:1}));
-      t.push(makeTask(prefix,projectNumber,postingNo,`${pfx} Rev - - ${desc}`,"Posting",{Indentation:2}));
-      t.push(makeTask(prefix,projectNumber,engNo,`Engineering Design - ${desc}`,"Posting",{Indentation:2}));
-      t.push(makeTask(prefix,projectNumber,endNo,`TOTAL: ${pfx} - ${desc}`,"End-Total",{Totaling:`${beginNo}..${endNo}`,Indentation:1}));
+      t.push(makeTask(prefix,projectNumber,beginNo,`${pfx} - ${desc}`,"Begin-Total"));
+      t.push(makeTask(prefix,projectNumber,postingNo,`${pfx} Rev - - ${desc}`,"Posting"));
+      t.push(makeTask(prefix,projectNumber,engNo,`Engineering Design - ${desc}`,"Posting"));
+      t.push(makeTask(prefix,projectNumber,endNo,`TOTAL: ${pfx} - ${desc}`,"End-Total",{Totaling:`${beginNo}..${endNo}`}));
     }
-    t.push(makeTask(prefix,projectNumber,"99999",`TOTAL: ${projectNumber} - ${projectName}`,"End-Total",{Totaling:"10000..99999",Indentation:0}));
+    t.push(makeTask(prefix,projectNumber,"99999",`TOTAL: ${projectNumber} - ${projectName}`,"End-Total",{Totaling:"10000..99999"}));
     return t;
   }
 
