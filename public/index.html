@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.120";
+const APP_VERSION="v1.17.121";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1127,20 +1127,37 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
     lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
       Line_Type:"Budget",Type:"Item",No:row.partNumber,
       Description:(row.description||"").slice(0,100),
-      Quantity:row.qty||1,Unit_Cost_LCY:row.unitPrice||0,Location_Code:"MAIN"});
+      Quantity:row.qty||1,Unit_Price:row.unitPrice||0,Location_Code:"MAIN",
+      _fallback:{[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
+        Line_Type:"Budget",Type:"",
+        Description:`${row.partNumber||""} - ${(row.description||"").slice(0,90)}`.slice(0,100).trim(),
+        Quantity:row.qty||1,Unit_Price:row.unitPrice||0}});
     lineNo+=10000;
   }
 
   // Step 3: POST all lines
   let created=0;
   for(const line of lines){
+    const {_fallback,...payload}=line;
     const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-      body:JSON.stringify(line)
+      body:JSON.stringify(payload)
     });
     if(r.ok){created++;console.log(`bcSyncPlanningLines: line ${line.Line_No} (${line.Description}) created`);}
-    else console.warn(`bcSyncPlanningLines: line ${line.Line_No} failed (${r.status}):`,await r.text());
+    else if(_fallback){
+      const txt=await r.text();
+      console.warn(`bcSyncPlanningLines: line ${line.Line_No} item POST failed (${r.status}), retrying as text:`,txt);
+      const r2=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
+        method:"POST",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+        body:JSON.stringify(_fallback)
+      });
+      if(r2.ok){created++;console.log(`bcSyncPlanningLines: line ${line.Line_No} created as text line`);}
+      else console.warn(`bcSyncPlanningLines: line ${line.Line_No} text fallback failed (${r2.status}):`,await r2.text());
+    }else{
+      console.warn(`bcSyncPlanningLines: line ${line.Line_No} failed (${r.status}):`,await r.text());
+    }
   }
   console.log(`bcSyncPlanningLines: ${created}/${lines.length} lines synced for task ${taskNo}`);
   return created;
