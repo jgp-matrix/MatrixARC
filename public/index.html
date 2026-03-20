@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.106";
+const APP_VERSION="v1.17.107";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5155,6 +5155,7 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
   const [draftNo,setDraftNo]=useState((panel.drawingNo||"").slice(0,25));
   const [draftDesc,setDraftDesc]=useState(panel.drawingDesc||"");
   const [draftRev,setDraftRev]=useState(panel.drawingRev||"");
+  const [draftLineQty,setDraftLineQty]=useState(panel.lineQty??1);
   const [draftNoWarn,setDraftNoWarn]=useState(false);
   const draftNoWarnTimer=useRef(null);
   const pricingClearTimer=useRef(null);
@@ -5651,6 +5652,13 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
   }
+  function saveLineQty(){
+    const q=Math.max(1,Math.min(20,parseInt(draftLineQty)||1));
+    setDraftLineQty(q);
+    const updated={...panel,lineQty:q};
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+  }
   function savePanelName(){
     if(!draftName.trim())return;
     const updated={...panel,name:draftName.trim()};
@@ -6128,6 +6136,15 @@ function PanelCard({panel,idx,uid,projectId,readOnly,onDelete,onUpdate,onSaveImm
       {/* Combined header + title block */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
         <div style={{background:C.accentDim,color:C.accent,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:800,letterSpacing:1,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",justifyContent:"center"}}>LINE {idx+1}</div>
+        <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
+          <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Qty</div>
+          <input type="number" value={draftLineQty} min={1} max={20} readOnly={readOnly}
+            onChange={e=>setDraftLineQty(e.target.value)}
+            onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
+            onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";saveLineQty();}}
+            onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftLineQty(panel.lineQty??1);e.target.blur();}}}
+            style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:"4ch",fontFamily:"inherit",MozAppearance:"textfield"}}/>
+        </div>
         {/* Panel name + title block identity */}
         <div style={{flex:1,display:"flex",alignItems:"flex-start",gap:20,minWidth:0,flexWrap:"wrap"}}>
           <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
