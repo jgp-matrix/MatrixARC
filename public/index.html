@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.103";
+const APP_VERSION="v1.17.104";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -900,7 +900,10 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
   //             → Planning lines will be populated from BOM (future step)
   //             → Dwg Rev# will be tracked as an ARC panel field (future build-out)
   //   20N20   = Engineering / Design / Programming / Onsite Commissioning (Posting — future build-out)
-  //   20N30   = ECO / Change Orders numbered ECO-1 and up (Posting — future build-out)
+  //   20N30   = ECO 1 for Panel N  ← created on-demand via bcAddEcoTask() (future build-out)
+  //   20N31   = ECO 2 for Panel N  ← created on-demand
+  //   ...up to 20N39 = ECO 10 for Panel N (10 ECO slots per panel)
+  //   ECO tasks are NOT pre-created; only added when an ECO is created in ARC for a quote.
   //   20N99   = Panel N End-Total                        "TOTAL: {projectNumber}-{N*100} - {panelName}"
   //   99999   = Project End-Total                        "TOTAL: {projectNumber} - {projectName}"
   //
@@ -926,14 +929,13 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
     const endNo=String(base+99);     // "20199"
     const postingNo=String(base+10); // "20110"
     const engNo=String(base+20);     // "20120"
-    const ecoNo=String(base+30);     // "20130"
+    // ECO slots 20N30–20N39 reserved (created on-demand, not at project init)
     const desc=panels[i].name;
     const pfx=`${projectNumber}-${suffix}`;
 
     tasks.push({Job_No:projectNumber,Job_Task_No:beginNo,Description:`${pfx} - ${desc}`,Job_Task_Type:"Begin-Total",Indentation:1});
     tasks.push({Job_No:projectNumber,Job_Task_No:postingNo,Description:`${pfx} Rev - - ${desc}`,Job_Task_Type:"Posting",Indentation:2});
     tasks.push({Job_No:projectNumber,Job_Task_No:engNo,Description:`Engineering Design - ${desc}`,Job_Task_Type:"Posting",Indentation:2});
-    tasks.push({Job_No:projectNumber,Job_Task_No:ecoNo,Description:`ECO# - Change Order for ${desc}`,Job_Task_Type:"Posting",Indentation:2});
     tasks.push({Job_No:projectNumber,Job_Task_No:endNo,Description:`TOTAL: ${pfx} - ${desc}`,Job_Task_Type:"End-Total",Totaling:`${beginNo}..${endNo}`,Indentation:1});
   }
 
@@ -951,6 +953,49 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
     else console.warn(`bcCreatePanelTaskStructure: task ${task.Job_Task_No} failed (${r.status}):`,await r.text());
   }
   return created;
+}
+
+async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
+  // Adds a single ECO task line to BC for a specific panel.
+  // Called on-demand when an ECO is created in ARC — NOT at project init.
+  //
+  // panelIndex : 1-based panel number (1 = Panel 1, 2 = Panel 2, …)
+  // ecoNumber  : 1-based ECO number (1–10 supported; maps to slots 20N30–20N39)
+  //
+  // Task No. formula:  20{panelIndex}3{ecoNumber-1}
+  //   Panel 1 ECO 1  → 20130,  ECO 2 → 20131, … ECO 10 → 20139
+  //   Panel 2 ECO 1  → 20230,  ECO 2 → 20231, … ECO 10 → 20239
+  //
+  // Description: "ECO {ecoNumber} - Change Order for {panelName}"
+  //
+  // FUTURE BUILD-OUT: wire this to an "Add ECO" action in the ARC Quote view.
+  // Store eco list on project (e.g. panel.ecos:[{number,description,status}]) and
+  // call this function when a new ECO is saved.
+
+  if(ecoNumber<1||ecoNumber>10)throw new Error(`ECO number must be 1–10 (got ${ecoNumber})`);
+  const n=panelIndex;
+  const base=20000+n*100;
+  const taskNo=String(base+30+(ecoNumber-1)); // 20130, 20131, …
+
+  const allPages=await bcDiscoverODataPages();
+  const taskPage=allPages.find(p=>/job.?task|project.?task/i.test(p))||null;
+  if(!taskPage)throw new Error("bcAddEcoTask: No job task OData page found");
+
+  const body={
+    Job_No:projectNumber,
+    Job_Task_No:taskNo,
+    Description:`ECO ${ecoNumber} - Change Order for ${panelName}`,
+    Job_Task_Type:"Posting",
+    Indentation:2
+  };
+  const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
+    method:"POST",
+    headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+    body:JSON.stringify(body)
+  });
+  if(!r.ok)throw new Error(`bcAddEcoTask: task ${taskNo} failed (${r.status}): ${await r.text()}`);
+  console.log(`bcAddEcoTask: ECO ${ecoNumber} task ${taskNo} created for panel ${panelIndex}`);
+  return taskNo;
 }
 
 async function bcCreateProject(displayName, customerNumber){
