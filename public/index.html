@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.115";
+const APP_VERSION="v1.17.116";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1457,19 +1457,28 @@ async function bcPatchItemOData(itemNo,fields){
 
 async function bcDiscoverODataPages(){
   if(!_bcToken)return[];
-  // Published web services are company-specific — query the company-level service document
-  const companyUrl=`${BC_ODATA_BASE}/`;
-  try{
-    const r=await fetch(companyUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-    if(!r.ok){console.warn("bcDiscoverODataPages failed:",r.status);return[];}
-    const txt=await r.text();
+  const headers={"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"};
+  // Try company-level URL first (published web services are company-specific)
+  // Fall back to root OData URL in case company URL returns empty
+  const urls=[`${BC_ODATA_BASE}/`,`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/ODataV4/`];
+  for(const url of urls){
     try{
-      const d=JSON.parse(txt);
-      const names=(d.value||[]).map(e=>e.name||e.url||"").filter(Boolean);
-      console.log("bcDiscoverODataPages found:",names.join(", ")||"(none)");
-      return names;
-    }catch(pe){console.warn("bcDiscoverODataPages JSON parse error:",pe);return[];}
-  }catch(e){console.warn("bcDiscoverODataPages error:",e);return[];}
+      const r=await fetch(url,{headers});
+      if(!r.ok){console.warn("bcDiscoverODataPages",url,"→",r.status);continue;}
+      const txt=await r.text();
+      try{
+        const d=JSON.parse(txt);
+        const names=(d.value||[]).map(e=>e.name||e.url||"").filter(Boolean);
+        if(names.length){
+          console.log("bcDiscoverODataPages found at",url,":",names.join(", "));
+          return names;
+        }
+        console.warn("bcDiscoverODataPages",url,"→ empty list, trying next");
+      }catch(pe){console.warn("bcDiscoverODataPages JSON parse error at",url,":",pe.message);}
+    }catch(e){console.warn("bcDiscoverODataPages error at",url,":",e.message);}
+  }
+  console.warn("bcDiscoverODataPages: all URLs returned empty");
+  return[];
 }
 
 async function bcPatchJobOData(jobNo,fields){
