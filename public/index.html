@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.108";
+const APP_VERSION="v1.17.109";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -505,6 +505,14 @@ function computeLaborEstimate(panel){
     isLegacy:false,
     isOverride:false
   };
+}
+
+function isPanelBudgetary(panel){
+  // A panel is BUDGETARY if it has at least one BOM item that is not confirmed in BC.
+  // Panels with no BOM items are treated as non-budgetary (blank/not-yet-extracted).
+  const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isCrossed);
+  if(!bom.length)return false;
+  return !bom.every(r=>r.priceSource==='bc');
 }
 
 function computePanelSellPrice(panel){
@@ -4251,6 +4259,9 @@ function QuoteTab({project,onUpdate}){
   const sellPrice=grandTotal*(1+markup/100);
   const hasSellPrice=sellPrice>0;
 
+  // BUDGETARY: true if any panel has at least one BOM item not yet confirmed in BC
+  const isProjectBudgetary=(project.panels||[project]).some(isPanelBudgetary);
+
   const q=project.quote||{};
   function setQ(updates){onUpdate({...project,quote:{...q,...updates}});}
 
@@ -4365,7 +4376,7 @@ function QuoteTab({project,onUpdate}){
               </div>
             </div>
             <div className="qd-hdr-right">
-              <div className="qd-qlabel">Quote</div>
+              <div className="qd-qlabel">{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
               <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="######" style={{...qInp({width:160,fontSize:34,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
               <div className="qd-qmeta">{q.date||today}<br/>Page 1 of 2</div>
             </div>
@@ -5273,6 +5284,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [draftLineQty,setDraftLineQty]=useState(panel.lineQty??1);
   const [bcSyncing,setBcSyncing]=useState(false);
   const [bcSyncStatus,setBcSyncStatus]=useState(null); // null | "ok" | "error"
+  const bcAutoSyncTimer=useRef(null);
+  const bcPrevSyncCount=useRef(-1);
   const [draftNoWarn,setDraftNoWarn]=useState(false);
   const draftNoWarnTimer=useRef(null);
   const pricingClearTimer=useRef(null);
@@ -5769,6 +5782,18 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
   }
+  // Auto-sync to BC when the number of BC-confirmed items changes (debounced 3s)
+  useEffect(()=>{
+    if(!bcProjectNumber)return;
+    const bcCount=(panel.bom||[]).filter(r=>r.priceSource==='bc').length;
+    if(bcPrevSyncCount.current===-1){bcPrevSyncCount.current=bcCount;return;}
+    if(bcCount===bcPrevSyncCount.current)return;
+    bcPrevSyncCount.current=bcCount;
+    if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);
+    bcAutoSyncTimer.current=setTimeout(()=>syncPlanningLinesToBC(),3000);
+    return()=>{if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);};
+  },[JSON.stringify((panel.bom||[]).map(r=>r.id+'|'+r.priceSource))]);
+
   async function syncPlanningLinesToBC(){
     if(!bcProjectNumber||bcSyncing)return;
     setBcSyncing(true);setBcSyncStatus(null);
