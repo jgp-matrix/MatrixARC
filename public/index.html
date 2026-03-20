@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.110";
+const APP_VERSION="v1.17.111";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9641,6 +9641,13 @@ function NewProjectModal({uid,onCreated,onClose}){
     }).catch(()=>{});
   },[]);
 
+  // Block Escape key — modal must only close via Cancel or Create buttons
+  useEffect(()=>{
+    function blockEsc(e){if(e.key==="Escape"){e.preventDefault();e.stopImmediatePropagation();}}
+    window.addEventListener("keydown",blockEsc,{capture:true});
+    return()=>window.removeEventListener("keydown",blockEsc,{capture:true});
+  },[]);
+
   async function loadCustomers(){
     setCustomerSearching(true);
     const all=await bcLoadAllCustomers();
@@ -9716,7 +9723,7 @@ function NewProjectModal({uid,onCreated,onClose}){
   }
 
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}>
       <div style={{...card(),width:"100%",maxWidth:460}}>
         <div style={{fontSize:20,fontWeight:700,marginBottom:4}}>New Project</div>
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Name this control panel quote</div>
