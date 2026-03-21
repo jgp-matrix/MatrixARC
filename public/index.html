@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.165";
+const APP_VERSION="v1.17.166";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3312,9 +3312,9 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
   }
   const acceptedSet=new Set((panel.wiringAccepted||[]).map(String));
   return(
-    <div ref={barRef} style={{background:C.card,border:`1px solid #3a3a55`,borderRadius:compact?8:10,padding:compact?"8px 12px":"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+    <div ref={barRef} style={{background:C.card,border:compact?`1px solid ${C.accent}66`:`1px solid #3a3a55`,borderRadius:compact?8:10,padding:compact?"8px 12px":"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
       <div style={{display:"flex",alignItems:"center",gap:compact?8:20,flexWrap:"wrap"}}>
-        <div style={{display:"flex",alignItems:"center",gap:6,borderRight:`1px solid #3a3a55`,paddingRight:compact?10:16,marginRight:compact?0:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,borderRight:compact?`1px solid ${C.accent}44`:`1px solid #3a3a55`,paddingRight:compact?10:16,marginRight:compact?0:0}}>
           <span style={{fontSize:compact?11:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>CONFIDENCE</span>
           <span style={{fontSize:compact?14:18,color:barColor(overall),fontWeight:800}}>{overall}%</span>
         </div>
@@ -9386,7 +9386,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             ];
             return(<>
               {/* Selected panel name header */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px"}}>
+              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}66`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{fontSize:14,fontWeight:800,color:C.accent,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
                 <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                   <span style={{fontSize:12,color:C.muted}}>{pricedCount}/{bom.length} priced</span>
@@ -9406,7 +9406,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               </div>
 
               {/* Pricing Summary */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}66`,borderRadius:8,padding:"12px 14px"}}>
                 <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
                 {[
                   ["Materials",fmt(matCost),C.green,null,null],
@@ -9445,7 +9445,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               </div>
 
               {/* Labor */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px"}}>
+              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}66`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
                   <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
                   <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700}}>
