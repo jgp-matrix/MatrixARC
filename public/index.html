@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.190";
+const APP_VERSION="v1.17.191";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6714,20 +6714,20 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftRev(panel.drawingRev||"");e.target.blur();}}}
               style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.yellow,fontSize:15,fontWeight:700,outline:"none",width:Math.max(3,(draftRev||"").length+2)+"ch",fontFamily:"inherit"}}/>
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:3,flex:1,minWidth:160}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"flex",gap:8,flex:1,minWidth:160,alignItems:"flex-start"}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1,minWidth:0}}>
               <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Description</div>
-              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Requested Ship Date</div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
               <input value={draftDesc} onChange={e=>setDraftDesc(e.target.value)} placeholder="—" readOnly={readOnly}
                 onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
                 onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";saveTitleFields();}}
                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftDesc(panel.drawingDesc||"");e.target.blur();}}}
-                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.sub,fontSize:14,outline:"none",flex:1,minWidth:0,fontFamily:"inherit"}}/>
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.sub,fontSize:14,outline:"none",width:"100%",fontFamily:"inherit"}}/>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Requested Ship Date</div>
               <input type="date" value={draftShipDate} onChange={e=>setDraftShipDate(e.target.value)} readOnly={readOnly}
                 onBlur={()=>saveTitleFields()}
-                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",flexShrink:0,fontFamily:"inherit",colorScheme:"dark"}}/>
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
             </div>
           </div>
         </div>
@@ -9491,20 +9491,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               {/* Selected panel name header */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{fontSize:14,fontWeight:800,color:C.accent,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
-                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
                   <span style={{fontSize:12,color:C.muted}}>{pricedCount}/{bom.length} priced</span>
-                  {!readOnly&&bom.length>0&&(_bcToken
-                    ?<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>BC Connected</span>
-                    :<button disabled={fbcConnecting} onClick={async()=>{
-                      setFbcConnecting(true);setFbcError("");
-                      try{await acquireBcToken();setFbcError("");}
-                      catch(e){setFbcError("BC error: "+(e.message||e));}
-                      setFbcConnecting(false);
-                    }} style={btn(C.border,C.muted,{fontSize:11,padding:"2px 8px",borderRadius:10,opacity:fbcConnecting?0.5:1})}>
-                      {fbcConnecting?"Connecting…":"Connect BC"}
-                    </button>
-                  )}
-                  {fbcError&&<span style={{fontSize:11,color:C.red}}>{fbcError}</span>}
+                  {sp.requestedShipDate&&<span style={{fontSize:12,color:C.green,fontWeight:600}}>Ship: {sp.requestedShipDate}</span>}
                 </div>
               </div>
 
