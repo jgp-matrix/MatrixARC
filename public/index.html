@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.182";
+const APP_VERSION="v1.17.183";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3029,9 +3029,36 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
   return{validation,laborData};
 }
 
+// ── BURN STAMP INTO IMAGE — applies overlay text permanently to a dataUrl via canvas ──
+async function burnStampCanvas(dataUrl,overlay){
+  return new Promise(resolve=>{
+    const canvas=document.createElement('canvas');
+    const ctx=canvas.getContext('2d');
+    const img=new Image();img.crossOrigin='anonymous';
+    img.onload=()=>{
+      canvas.width=img.width;canvas.height=img.height;
+      ctx.drawImage(img,0,0);
+      const barH=Math.max(24,Math.round(img.height*0.03));
+      const fontSize=Math.max(12,Math.round(barH*0.58));
+      // White semi-transparent background strip — matches drawing paper look
+      ctx.fillStyle='rgba(255,255,255,0.88)';ctx.fillRect(0,0,img.width,barH);
+      // Red border line at bottom of strip
+      ctx.fillStyle='#cc0000';ctx.fillRect(0,barH-1,img.width,1);
+      ctx.font=`bold ${fontSize}px Arial,sans-serif`;ctx.fillStyle='#cc0000';ctx.textBaseline='middle';
+      const y=barH/2;const pad=Math.max(10,Math.round(img.width*0.012));
+      ctx.textAlign='left';ctx.fillText((overlay.left||'').slice(0,55),pad,y);
+      ctx.textAlign='center';ctx.fillText(overlay.center||'',img.width/2,y);
+      ctx.textAlign='right';ctx.fillText((overlay.right||'').slice(0,65),img.width-pad,y);
+      resolve(canvas.toDataURL('image/jpeg',0.93));
+    };
+    img.onerror=()=>resolve(dataUrl);
+    img.src=dataUrl;
+  });
+}
+
 // ── BACKGROUND EXTRACTION TASK (module-level — survives React component unmount / navigation) ──
 async function runExtractionTask(uid,projectId,panel,cbs={}){
-  const {onDone}=cbs;
+  const {onDone,stampFn}=cbs;
   let latestPanel=panel;
   try{
   latestPanel={...panel};
@@ -3081,12 +3108,20 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       try{const vr=await verifyPartNumbers(bomToVerify);if(vr?.length>0)await save({...latestPanel,bomVerification:vr,updatedAt:Date.now()});}
       catch(e){console.warn("Part verification failed:",e);}
     }
-    // Upload page images to Firebase Storage
+    // Upload page images to Firebase Storage (with permanent stamp burned in if stampFn provided)
     const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
     if(pagesNeedingUpload.length>0&&projectId){
       try{
         const urlMap={};
-        await parallelMap(pagesNeedingUpload,async pg=>{urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,pg.dataUrl);},4);
+        const totalPages=latestPanel.pages.length;
+        await parallelMap(pagesNeedingUpload,async pg=>{
+          let dataUrl=pg.dataUrl;
+          if(stampFn){
+            const pgIdx=latestPanel.pages.findIndex(p=>p.id===pg.id);
+            try{dataUrl=await stampFn(dataUrl,pgIdx,totalPages)||dataUrl;}catch(e){console.warn('Stamp failed:',e);}
+          }
+          urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,dataUrl);
+        },4);
         const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
         await save({...latestPanel,pages:pagesWithUrls});
       }catch(e){console.warn("Storage upload failed:",e);}
@@ -5477,13 +5512,14 @@ function StampedDrawing({src,overlay,width,height,onClick}){
       ctx.fillStyle='#080810';ctx.fillRect(0,0,width,height);
       ctx.drawImage(img,0,0,width,height);
       if(overlay){
-        const barH=20;
-        ctx.fillStyle='rgba(10,10,20,0.85)';ctx.fillRect(0,0,width,barH);
-        ctx.font='bold 10px monospace';ctx.fillStyle='#ef4444';ctx.textBaseline='middle';
+        const barH=14;
+        ctx.fillStyle='rgba(255,255,255,0.88)';ctx.fillRect(0,0,width,barH);
+        ctx.fillStyle='#cc0000';ctx.fillRect(0,barH-1,width,1);
+        ctx.font='bold 11px Arial,sans-serif';ctx.fillStyle='#cc0000';ctx.textBaseline='middle';
         const y=barH/2;
-        ctx.textAlign='left';ctx.fillText((overlay.left||'').slice(0,40),8,y);
+        ctx.textAlign='left';ctx.fillText((overlay.left||'').slice(0,40),6,y);
         ctx.textAlign='center';ctx.fillText(overlay.center||'',width/2,y);
-        ctx.textAlign='right';ctx.fillText((overlay.right||'').slice(0,50),width-8,y);
+        ctx.textAlign='right';ctx.fillText((overlay.right||'').slice(0,50),width-6,y);
       }
     };
     img.onerror=()=>{const c=canvasRef.current;if(!c)return;c.getContext('2d').fillStyle='#080810';c.getContext('2d').fillRect(0,0,width,height);};
@@ -6000,6 +6036,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
     const valPageCount=(updated.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl)).length;
     const totalEst=Math.max(30,bomPages.length*15+valPageCount*20);
     setExtracting(bomPages.length>0);setValidatingPanel(willValidate);
+    const _stampPanel=updated;
+    const _stampBcProjNo=bcProjectNumber;
     runExtractionTask(uid,projectId,updated,{
       onDone:(finalPanel)=>{
         try{onUpdate(finalPanel);}catch(e){}
@@ -6008,6 +6046,14 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
         if((finalPanel.bom||[]).length>0&&_apiKey){
           try{runPricingOnPanel(finalPanel.bom,finalPanel);}catch(e){}
         }
+      },
+      stampFn:async(dataUrl,pgIdx,total)=>{
+        const today=new Date().toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'numeric'});
+        return burnStampCanvas(dataUrl,{
+          left:`QUOTE · ${today}`,
+          center:`${pgIdx+1} of ${total}`,
+          right:[_stampBcProjNo,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ')
+        });
       }
     });
   }
