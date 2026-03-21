@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.193";
+const APP_VERSION="v1.17.194";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9494,6 +9494,11 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   <div style={{fontSize:14,fontWeight:800,color:C.accent,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
                   {sp.requestedShipDate&&<div style={{fontSize:12,color:C.green,fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>Ship: {sp.requestedShipDate}</div>}
                 </div>
+                {(sp.drawingNo||sp.drawingRev)&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:5,fontSize:12}}>
+                  {sp.drawingNo&&<span style={{color:C.muted}}><span style={{color:C.sub,fontWeight:600}}>DWG#</span> {sp.drawingNo}</span>}
+                  {sp.drawingRev&&<span style={{color:C.muted}}><span style={{color:C.sub,fontWeight:600}}>Rev</span> {sp.drawingRev}</span>}
+                </div>}
+                {sp.drawingDesc&&<div style={{fontSize:12,color:C.muted,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.drawingDesc}</div>}
               </div>
 
               {/* Pricing Summary */}
@@ -9513,7 +9518,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                         <span style={{color:C.muted,fontSize:12}}>$</span>
                         <input type="number" min="0" step="50" readOnly={readOnly} value={numVal}
                           onChange={e=>saveSelectedPricing({[key]:Math.max(0,+e.target.value||0)})}
-                          style={{...inp({padding:"3px 5px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:4,width:80,textAlign:"right"}),color}}
+                          style={{...inp({padding:"3px 5px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:4,width:80,textAlign:"right"}),color,WebkitAppearance:"none",MozAppearance:"textfield"}}
                           onFocus={e=>{e.target.style.borderColor=C.accent;e.target.select();}}
                           onBlur={e=>e.target.style.borderColor="transparent"}/>
                       </div>
