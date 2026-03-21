@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.228";
+const APP_VERSION="v1.17.229";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1977,32 +1977,41 @@ function detectSheetMm(w,h){
 async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   // W/H passed in from caller to match drawing page size; fall back to 11x17 landscape
   if(!W||!H){W=431.8;H=279.4;}
+  // Scale factor relative to 11x17 landscape baseline (431.8 x 279.4 mm)
+  const sc=Math.min(W/431.8,H/279.4);
+  const m=v=>v*sc; // scale a measurement
+  const fs=v=>Math.max(4,Math.round(v*sc*10)/10); // scale a font size
+  const margin=m(12);
+
   const q=quoteData||{};
   const accent=[30,64,175];
   const dark=[15,23,42];
   const mid=[71,85,105];
   const light=[241,245,249];
+  const orange=[234,88,12];
   const generated=new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
 
   // ── Header bar ──
+  const hdrH=m(24);
   doc.setFillColor(...accent);
-  doc.rect(0,0,W,24,"F");
-  doc.setFontSize(17);doc.setFont("helvetica","bold");doc.setTextColor(255,255,255);
-  doc.text("Matrix Systems, Inc.",12,16);
-  doc.setFontSize(12);doc.setFont("helvetica","normal");
-  doc.text("PANEL PRODUCTION TRAVELER",W-12,16,{align:"right"});
+  doc.rect(0,0,W,hdrH,"F");
+  doc.setFontSize(fs(17));doc.setFont("helvetica","bold");doc.setTextColor(255,255,255);
+  doc.text("Matrix Systems, Inc.",margin,m(16));
+  doc.setFontSize(fs(12));doc.setFont("helvetica","normal");
+  doc.text("PANEL PRODUCTION TRAVELER",W-margin,m(16),{align:"right"});
 
   // ── DWG title block ──
   const dwgTitle=[panel.drawingNo||bcProjectNumber,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join("  ·  ");
-  doc.setFontSize(22);doc.setFont("helvetica","bold");doc.setTextColor(...dark);
-  doc.text(dwgTitle,12,38);
+  doc.setFontSize(fs(22));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+  doc.text(dwgTitle,margin,m(38));
   if(panel.drawingDesc){
-    doc.setFontSize(11);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-    doc.text(panel.drawingDesc,12,47,{maxWidth:W-24});
+    doc.setFontSize(fs(11));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.text(panel.drawingDesc,margin,m(47),{maxWidth:W-margin*2});
   }
 
   // ── Info grid: 4 columns across full width ──
-  const infoY=58;
+  const infoY=m(58);
+  const rowH=m(14);
   const fields=[
     ["BC JOB #",bcProjectNumber||"—"],
     ["LINE #","Line "+(lineIdx+1)],
@@ -2018,59 +2027,57 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
     ["STATUS",(panel.status||"draft").toUpperCase()],
   ];
   const cols=4;
-  const cellW=(W-24)/cols;
+  const cellW=(W-margin*2)/cols;
   fields.forEach(([lbl,val],i)=>{
     const col=i%cols;
     const row=Math.floor(i/cols);
-    const x=12+col*cellW;
-    const y=infoY+row*14;
-    // light background alternating
-    if(row%2===0){doc.setFillColor(...light);doc.rect(x,y-5,cellW-1,13,"F");}
-    doc.setFontSize(7);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-    doc.text(lbl,x+2,y);
-    doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...dark);
-    doc.text(String(val).slice(0,28),x+2,y+7);
+    const x=margin+col*cellW;
+    const y=infoY+row*rowH;
+    if(row%2===0){doc.setFillColor(...light);doc.rect(x,y-m(5),cellW-m(1),m(13),"F");}
+    doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.text(lbl,x+m(2),y);
+    doc.setFontSize(fs(10));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+    doc.text(String(val).slice(0,28),x+m(2),y+m(7));
   });
 
   // Divider
-  const rows=Math.ceil(fields.length/cols);
-  const divY=infoY+rows*14+2;
-  doc.setDrawColor(...accent);doc.setLineWidth(0.5);doc.line(12,divY,W-12,divY);
+  const gridRows=Math.ceil(fields.length/cols);
+  const divY=infoY+gridRows*rowH+m(2);
+  doc.setDrawColor(...accent);doc.setLineWidth(m(0.5));doc.line(margin,divY,W-margin,divY);
 
   // ── BOM section label ──
-  doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...accent);
-  doc.text("BILL OF MATERIALS",12,divY+7);
+  doc.setFontSize(fs(9));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
+  doc.text("BILL OF MATERIALS",margin,divY+m(7));
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow);
   const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom);
-  doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-  doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-12,divY+7,{align:"right"});
+  doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+  doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,divY+m(7),{align:"right"});
 
   // ── BOM table — fit to remaining page height ──
-  const tableStart=divY+10;
-  const tableEnd=H-14; // leave room for footer
+  const tableStart=divY+m(10);
+  const tableEnd=H-m(14);
   const availH=tableEnd-tableStart;
-  const headerH=8,rowH=6.5;
-  const maxRows=Math.floor((availH-headerH)/rowH);
-  const fontSize=bom.length>maxRows?Math.max(6,8*(maxRows/bom.length)):8;
-  const cellPad=fontSize<7?1.2:1.8;
-  const orange=[234,88,12]; // crossed-part highlight color
+  const tblHeaderH=m(8),tblRowH=m(6.5);
+  const maxRows=Math.floor((availH-tblHeaderH)/tblRowH);
+  const baseFontSize=fs(8);
+  const fontSize=bom.length>maxRows?Math.max(fs(6),baseFontSize*(maxRows/bom.length)):baseFontSize;
+  const cellPad=m(fontSize<fs(7)?1.2:1.8);
 
-  // Column config differs based on whether any crosses exist
   const colStyles=hasCrosses?{
-    0:{cellWidth:7,halign:"center"},
-    1:{cellWidth:11,halign:"center"},
-    2:{cellWidth:35},   // Part # (replacement)
-    3:{cellWidth:30},   // Original Part #
+    0:{cellWidth:m(7),halign:"center"},
+    1:{cellWidth:m(11),halign:"center"},
+    2:{cellWidth:m(35)},
+    3:{cellWidth:m(30)},
     4:{cellWidth:"auto"},
-    5:{cellWidth:30},
-    6:{cellWidth:32},
+    5:{cellWidth:m(30)},
+    6:{cellWidth:m(32)},
   }:{
-    0:{cellWidth:8,halign:"center"},
-    1:{cellWidth:13,halign:"center"},
-    2:{cellWidth:42},
+    0:{cellWidth:m(8),halign:"center"},
+    1:{cellWidth:m(13),halign:"center"},
+    2:{cellWidth:m(42)},
     3:{cellWidth:"auto"},
-    4:{cellWidth:36},
-    5:{cellWidth:38},
+    4:{cellWidth:m(36)},
+    5:{cellWidth:m(38)},
   };
   const head=hasCrosses
     ?[["#","Qty","Part #","Original Part #","Description","MFR","Supplier"]]
@@ -2082,9 +2089,9 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
 
   doc.autoTable({
     startY:tableStart,
-    margin:{left:12,right:12,bottom:14},
+    margin:{left:margin,right:margin,bottom:m(14)},
     pageBreak:"avoid",
-    headStyles:{fillColor:accent,textColor:255,fontStyle:"bold",fontSize:fontSize+0.5,cellPadding:cellPad},
+    headStyles:{fillColor:accent,textColor:255,fontStyle:"bold",fontSize:fontSize+m(0.5),cellPadding:cellPad},
     bodyStyles:{fontSize,cellPadding:cellPad},
     alternateRowStyles:{fillColor:light},
     styles:{overflow:"ellipsize"},
@@ -2092,19 +2099,18 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
     head,
     body,
     didParseCell:(data)=>{
-      // Highlight crossed part rows: Part # cell gets accent color, Original Part # gets muted orange
       if(hasCrosses&&data.section==="body"){
         const row=bom[data.row.index];
         if(row&&row.isCrossed){
-          if(data.column.index===2){data.cell.styles.textColor=accent;}        // replacement part#
-          if(data.column.index===3){data.cell.styles.textColor=orange;data.cell.styles.fontStyle="italic";} // original part#
+          if(data.column.index===2){data.cell.styles.textColor=accent;}
+          if(data.column.index===3){data.cell.styles.textColor=orange;data.cell.styles.fontStyle="italic";}
         }
       }
     },
     didDrawPage:()=>{
-      doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-      doc.text(`${panel.drawingNo||bcProjectNumber}  ·  ${bom.length} items  ·  ${generated}`,12,H-6);
-      doc.text("Page 1 of 1",W-12,H-6,{align:"right"});
+      doc.setFontSize(fs(7.5));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+      doc.text(`${panel.drawingNo||bcProjectNumber}  ·  ${bom.length} items  ·  ${generated}`,margin,H-m(6));
+      doc.text("Page 1 of 1",W-margin,H-m(6),{align:"right"});
     }
   });
 }
