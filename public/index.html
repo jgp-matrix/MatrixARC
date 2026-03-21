@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.154";
+const APP_VERSION="v1.17.155";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1886,18 +1886,75 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy){
   </body></html>`;
 }
 
-async function sendGraphEmail(graphToken,to,subject,htmlBody){
+let _jsPdfReady=false;
+async function ensureJsPDF(){
+  if(_jsPdfReady&&window.jspdf)return window.jspdf.jsPDF;
+  if(!window.jspdf){
+    await new Promise((res,rej)=>{const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+  }
+  if(!window.jspdf?.jsPDF?.prototype?.autoTable){
+    await new Promise((res,rej)=>{const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js";s.onload=res;s.onerror=rej;document.head.appendChild(s);});
+  }
+  _jsPdfReady=true;
+  return window.jspdf.jsPDF;
+}
+
+async function buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy){
+  const JsPDF=await ensureJsPDF();
+  const doc=new JsPDF({format:"letter",unit:"mm"});
+  const W=doc.internal.pageSize.getWidth();
+  const slate=r=>[r>>16&255,r>>8&255,r&255];
+  // Header — company name
+  doc.setFontSize(20);doc.setFont("helvetica","bold");doc.setTextColor(37,99,235);
+  doc.text("Matrix Systems, Inc.",14,18);
+  doc.setFontSize(10);doc.setFont("helvetica","normal");doc.setTextColor(100,116,139);
+  doc.text("501 S 300 W  \u00b7  Salt Lake City, UT 84101  \u00b7  (801) 596-2953",14,25);
+  // RFQ label — right
+  doc.setFontSize(9);doc.setTextColor(100,116,139);
+  doc.text("REQUEST FOR QUOTE",W-14,18,{align:"right"});
+  doc.setFontSize(15);doc.setFont("helvetica","bold");doc.setTextColor(30,41,59);
+  doc.text(rfqNum,W-14,25,{align:"right"});
+  // Divider
+  doc.setDrawColor(203,213,225);doc.setLineWidth(0.3);doc.line(14,29,W-14,29);
+  // Info block
+  const iy=36;doc.setFontSize(10);
+  const infoRows=[["To:",group.vendorName],["Project:",projectName||"—"],["RFQ Date:",rfqDate],["Response By:",responseBy]];
+  infoRows.forEach(([lbl,val],i)=>{
+    doc.setFont("helvetica","normal");doc.setTextColor(100,116,139);doc.text(lbl,14,iy+i*6);
+    doc.setFont("helvetica","bold");doc.setTextColor(30,41,59);doc.text(val,42,iy+i*6);
+  });
+  // Items table
+  doc.autoTable({
+    startY:iy+infoRows.length*6+4,
+    head:[["#","Part Number","Description","Manufacturer","Qty","Unit Price","Lead Time"]],
+    body:group.items.map((item,i)=>[i+1,item.partNumber||"—",item.description||"—",item.manufacturer||"—",item.qty||1,"",""]),
+    styles:{fontSize:9,cellPadding:2.5,textColor:[30,41,59]},
+    headStyles:{fillColor:[241,245,249],textColor:[30,41,59],fontStyle:"bold",lineColor:[203,213,225],lineWidth:0.3},
+    columnStyles:{0:{cellWidth:10,halign:"center"},1:{cellWidth:32,fontStyle:"bold"},2:{cellWidth:"auto"},3:{cellWidth:34},4:{cellWidth:12,halign:"center"},5:{cellWidth:24,halign:"right"},6:{cellWidth:22,halign:"center"}},
+    theme:"grid",tableLineColor:[203,213,225],tableLineWidth:0.3
+  });
+  // Footer
+  const fy=doc.lastAutoTable.finalY||180;
+  doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(100,116,139);
+  doc.text("Please return completed RFQ to purchasing@matrixpci.com",14,fy+10);
+  doc.setDrawColor(226,232,240);doc.line(14,doc.internal.pageSize.getHeight()-16,W-14,doc.internal.pageSize.getHeight()-16);
+  doc.setFontSize(8);doc.text(`${rfqNum}  \u00b7  ${projectName||""}  \u00b7  Matrix Systems, Inc.  \u00b7  Confidential`,14,doc.internal.pageSize.getHeight()-10);
+  return doc.output("datauristring").split(",")[1];
+}
+
+async function sendGraphEmail(graphToken,to,subject,htmlBody,pdfBase64,pdfFilename){
+  const msg={
+    subject,
+    body:{contentType:"HTML",content:htmlBody},
+    toRecipients:[{emailAddress:{address:to}}]
+  };
+  if(pdfBase64){
+    msg.attachments=[{"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"RFQ.pdf",contentType:"application/pdf",contentBytes:pdfBase64}];
+  }
   const r=await fetch("https://graph.microsoft.com/v1.0/me/sendMail",{
     method:"POST",
     headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
-    body:JSON.stringify({
-      message:{
-        subject,
-        body:{contentType:"HTML",content:htmlBody},
-        toRecipients:[{emailAddress:{address:to}}]
-      },
-      saveToSentItems:true
-    })
+    body:JSON.stringify({message:msg,saveToSentItems:true})
   });
   if(!r.ok){const err=await r.text();throw new Error(err);}
 }
@@ -4215,7 +4272,9 @@ function RfqEmailModal({groups,projectName,projectId,uid,userEmail,onClose,onSen
       try{
         const subject=`Request for Quote — ${projectName||"Project"} — ${rfqNum}`;
         const html=buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy);
-        await sendGraphEmail(graphToken,to,subject,html);
+        const pdfBase64=await buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy).catch(()=>null);
+        const pdfName=`${rfqNum}-${(group.vendorName||"Supplier").replace(/[^a-z0-9]/gi,"_")}.pdf`;
+        await sendGraphEmail(graphToken,to,subject,html,pdfBase64,pdfName);
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent"}}));
         group.items.forEach(item=>sentItemIds.push(item.id));
         historyEntries.push({vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false});
