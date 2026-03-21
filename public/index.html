@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.150";
+const APP_VERSION="v1.17.151";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5441,9 +5441,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [unpricedAlert,setUnpricedAlert]=useState(null); // null | array of unpriced rows
   const [syncFailedAlert,setSyncFailedAlert]=useState(null); // null | array of failed rows
   const [bcSyncErrors,setBcSyncErrors]=useState({}); // rowId -> {partNumber,description,error} — persists after modal closes
-  const [collapsedRows,setCollapsedRows]=useState(new Set());
   const [panelCollapsed,setPanelCollapsed]=useState(false);
-  function toggleRowCollapse(id){setCollapsedRows(prev=>{const next=new Set(prev);next.has(id)?next.delete(id):next.add(id);return next;});}
   const bcAutoSyncTimer=useRef(null);
   const bcPrevSyncCount=useRef(-1);
   const [draftNoWarn,setDraftNoWarn]=useState(false);
@@ -6835,11 +6833,6 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               BILL OF MATERIALS — {panel.bom.length} items
             </div>
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
-            {(panel.bom||[]).length>1&&(
-              collapsedRows.size>0
-                ?<button onClick={()=>setCollapsedRows(new Set())} style={{background:"#1a2a3a",color:C.accent,border:`1px solid ${C.accent}`,borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>⊞ Expand All</button>
-                :<button onClick={()=>setCollapsedRows(new Set((panel.bom||[]).map(r=>r.id)))} style={{background:"#1a1a2a",color:C.sub,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>⊟ Collapse All</button>
-            )}
           </div>
           <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
             <table style={{width:"auto",minWidth:"100%",tableLayout:"auto",borderCollapse:"collapse",fontSize:13}}>
@@ -6864,33 +6857,11 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                     return (a.itemNo||"").localeCompare(b.itemNo||"");
                   });
                   return sortedBom.map((row,i)=>{
-                  const isCollapsed=collapsedRows.has(row.id);
                   const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":(!row.isLaborRow&&!row.customerSupplied&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)";
-                  if(isCollapsed){return(
-                  <tr key={row.id} style={{borderBottom:`1px solid ${C.border}33`,background:rowBg,cursor:"default"}}>
-                    <td colSpan={12} style={{padding:"3px 8px"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <button onClick={()=>toggleRowCollapse(row.id)} title="Expand row" style={{background:"#1a2a3a",border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer",fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,lineHeight:1,flexShrink:0}}>+</button>
-                        <span style={{color:C.muted,fontSize:11,minWidth:20,textAlign:"right"}}>{i+1}</span>
-                        {row.itemNo&&<span style={{color:C.accent,fontSize:11,fontFamily:"monospace"}}>{row.itemNo}</span>}
-                        <span style={{color:C.muted,fontSize:11,minWidth:28}}>×{row.qty||1}</span>
-                        <span style={{color:C.yellow,fontWeight:700,fontSize:12,fontFamily:"monospace"}}>{row.partNumber||"—"}</span>
-                        <span style={{color:C.sub,fontSize:11,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.description||""}</span>
-                        {row.unitPrice!=null&&<span style={{color:C.text,fontSize:12,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap",marginLeft:"auto"}}>${((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>}
-                        {row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:10,fontWeight:700}}>BC</span>}
-                        {row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:10,fontWeight:700}}>M</span>}
-                        {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:10,fontWeight:700}}>LABOR</span>}
-                      </div>
-                    </td>
-                  </tr>);
-                  }
                   return(
                   <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:rowBg}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
-                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
-                        <button onClick={()=>toggleRowCollapse(row.id)} title="Collapse row" style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.sub,cursor:"pointer",fontSize:9,fontWeight:700,padding:"1px 5px",borderRadius:3,lineHeight:1}}>−</button>
-                        <span>{i+1}</span>
-                      </div>
+                      {i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
                         <div onClick={e=>{e.stopPropagation();setBcUpdateNotif(false);}} style={{position:"absolute",top:-26,left:0,zIndex:200,background:"#052e16",border:"1px solid #4ade80",borderRadius:6,padding:"3px 10px",color:"#4ade80",fontSize:11,fontWeight:600,whiteSpace:"nowrap",boxShadow:"0 2px 12px rgba(0,0,0,0.6)",cursor:"pointer",animation:"fadeIn 0.2s ease-out",display:"flex",alignItems:"center",gap:5}}>
                           <span>↻</span><span>BC price updated</span>
