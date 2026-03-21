@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.134";
+const APP_VERSION="v1.17.135";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5977,12 +5977,21 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
     onUpdate(updated);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
-    // Push updated cost back to BC item card
+    // Push updated cost to BC, then re-fetch to confirm and flip priceSource back to "bc"
     const pn=(row?.partNumber||"").trim();
     if(pn&&_bcToken&&parsed!=null&&!isNaN(parsed)){
       bcPatchItemOData(pn,{Unit_Cost:parsed})
-        .then(()=>console.log("BC UNIT COST UPDATE:",pn,"→",parsed))
-        .catch(e=>console.warn("BC unit cost update failed:",pn,e));
+        .then(()=>bcLookupItem(pn))
+        .then(bcItem=>{
+          if(!bcItem)return;
+          console.log("BC UNIT COST CONFIRMED:",pn,"→",bcItem.unitCost);
+          const confirmedCost=bcItem.unitCost??parsed;
+          const bom2=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:confirmedCost,priceSource:"bc",priceDate:Date.now()}:r);
+          const u2={...panel,bom:bom2};
+          onUpdate(u2);
+          try{onSaveImmediate(u2);}catch(e){}
+        })
+        .catch(e=>console.warn("BC unit cost update/verify failed:",pn,e));
     }
   }
   function updateVendor(id,vendorName){
