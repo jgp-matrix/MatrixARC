@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.210";
+const APP_VERSION="v1.17.211";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3351,15 +3351,15 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
   return(
     <div ref={barRef} style={{background:C.card,border:compact?`1px solid ${C.accent}`:`1px solid #3a3a55`,borderRadius:compact?8:10,padding:compact?"8px 12px":"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
       <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
-        <span style={{fontSize:compact?11:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>OVERALL CONFIDENCE</span>
-        <span style={{fontSize:compact?14:18,color:barColor(overall),fontWeight:800}}>{overall}%</span>
+        <span style={{fontSize:compact?14:17,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>OVERALL CONFIDENCE</span>
+        <span style={{fontSize:compact?18:23,color:barColor(overall),fontWeight:800}}>{overall}%</span>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:12}}>
         {items.map(it=>(
           <div key={it.key} onClick={()=>setExpanded(expanded===it.key?null:it.key)}
             style={{display:"flex",alignItems:"center",gap:3,cursor:"pointer",userSelect:"none"}} title={`${it.label}: ${it.val}% — click for details`}>
-            <span style={{fontSize:11,color:C.muted,fontWeight:600}}>{it.label}</span>
-            <span style={{fontSize:11,color:barColor(it.val),fontWeight:700}}>{it.val}%</span>
+            <span style={{fontSize:14,color:C.muted,fontWeight:600}}>{it.label}</span>
+            <span style={{fontSize:14,color:barColor(it.val),fontWeight:700}}>{it.val}%</span>
           </div>
         ))}
       </div>
