@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.142";
+const APP_VERSION="v1.17.143";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5188,6 +5188,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [syncFailedAlert,setSyncFailedAlert]=useState(null); // null | array of failed rows
   const [bcSyncErrors,setBcSyncErrors]=useState({}); // rowId -> {partNumber,description,error} — persists after modal closes
   const [collapsedRows,setCollapsedRows]=useState(new Set());
+  const [panelCollapsed,setPanelCollapsed]=useState(false);
   function toggleRowCollapse(id){setCollapsedRows(prev=>{const next=new Set(prev);next.has(id)?next.delete(id):next.add(id);return next;});}
   const bcAutoSyncTimer=useRef(null);
   const bcPrevSyncCount=useRef(-1);
@@ -6403,11 +6404,16 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             </div>
             ,document.body);
           })()}
+          <button onClick={()=>setPanelCollapsed(v=>!v)} title={panelCollapsed?"Expand panel":"Collapse panel"}
+            style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:panelCollapsed?C.accent:C.sub,borderRadius:6,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0,letterSpacing:0.3}}>
+            {panelCollapsed?"▶ Expand":"▼ Collapse"}
+          </button>
           <Badge status={panel.status||"draft"}/>
           {!readOnly&&<button data-tip="Delete this panel" onClick={onDelete} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
         </div>
       </div>
 
+      {!panelCollapsed&&<>
       {/* CPD Search bar */}
       <div style={{marginBottom:12}}>
         <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:`1px solid ${C.accent}55`,background:"#0a0a16"}}>
@@ -7265,6 +7271,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
           document.body
         );
       })()}
+      </>}
     </div>
   );
 }
