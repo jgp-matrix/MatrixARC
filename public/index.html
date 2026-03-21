@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.135";
+const APP_VERSION="v1.17.136";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5194,6 +5194,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const feedbackRef=useRef(null);
   const fileRef=useRef(null);
   const autoSaveTimer=useRef(null);
+  const panelRef=useRef(panel);
+  useEffect(()=>{panelRef.current=panel;},[panel]);
   const bomEditRef=useRef({});
   useEffect(()=>{
     loadPartLibrary(uid).then(setPartLibrary);
@@ -5986,8 +5988,10 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
           if(!bcItem)return;
           console.log("BC UNIT COST CONFIRMED:",pn,"→",bcItem.unitCost);
           const confirmedCost=bcItem.unitCost??parsed;
-          const bom2=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:confirmedCost,priceSource:"bc",priceDate:Date.now()}:r);
-          const u2={...panel,bom:bom2};
+          if(autoSaveTimer.current){clearTimeout(autoSaveTimer.current);autoSaveTimer.current=null;}
+          const cur=panelRef.current;
+          const bom2=(cur.bom||[]).map(r=>r.id===id?{...r,unitPrice:confirmedCost,priceSource:"bc",priceDate:Date.now()}:r);
+          const u2={...cur,bom:bom2};
           onUpdate(u2);
           try{onSaveImmediate(u2);}catch(e){}
         })
