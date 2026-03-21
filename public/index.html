@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.222";
+const APP_VERSION="v1.17.223";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1958,95 +1958,107 @@ async function ensureJsPDF(){
 }
 
 async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx){
-  const W=doc.internal.pageSize.getWidth();
-  const H=doc.internal.pageSize.getHeight();
+  // 11x17 portrait = 279.4 x 431.8 mm
+  const W=279.4,H=431.8;
   const q=quoteData||{};
-  const accent=[30,64,175]; // blue
+  const accent=[30,64,175];
   const dark=[15,23,42];
   const mid=[71,85,105];
   const light=[241,245,249];
+  const generated=new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
 
   // ── Header bar ──
   doc.setFillColor(...accent);
-  doc.rect(0,0,W,18,`F`);
-  doc.setFontSize(13);doc.setFont("helvetica","bold");doc.setTextColor(255,255,255);
-  doc.text("Matrix Systems, Inc.",10,12);
-  doc.setFontSize(10);doc.setFont("helvetica","normal");
-  doc.text("PANEL PRODUCTION TRAVELER",W-10,12,{align:"right"});
+  doc.rect(0,0,W,24,"F");
+  doc.setFontSize(17);doc.setFont("helvetica","bold");doc.setTextColor(255,255,255);
+  doc.text("Matrix Systems, Inc.",12,16);
+  doc.setFontSize(12);doc.setFont("helvetica","normal");
+  doc.text("PANEL PRODUCTION TRAVELER",W-12,16,{align:"right"});
 
-  // ── Sub-header: DWG# large ──
-  doc.setFontSize(18);doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+  // ── DWG title block ──
   const dwgTitle=[panel.drawingNo||bcProjectNumber,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join("  ·  ");
-  doc.text(dwgTitle,10,30);
+  doc.setFontSize(22);doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+  doc.text(dwgTitle,12,38);
   if(panel.drawingDesc){
-    doc.setFontSize(10);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-    doc.text(panel.drawingDesc,10,37,{maxWidth:W-20});
+    doc.setFontSize(11);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.text(panel.drawingDesc,12,47,{maxWidth:W-24});
   }
 
-  // ── Info grid ──
-  const infoY=44;
-  const col1=[
-    ["BC Job #",bcProjectNumber||"—"],
-    ["Line #","Line "+(lineIdx+1)],
+  // ── Info grid: 4 columns across full width ──
+  const infoY=58;
+  const fields=[
+    ["BC JOB #",bcProjectNumber||"—"],
+    ["LINE #","Line "+(lineIdx+1)],
     ["DWG #",panel.drawingNo||"—"],
-    ["Rev",panel.drawingRev||"—"],
-    ["Ship Date",panel.requestedShipDate||q.requestedShipDate||"—"],
+    ["REV",panel.drawingRev||"—"],
+    ["SHIP DATE",panel.requestedShipDate||q.requestedShipDate||"—"],
+    ["CUSTOMER",q.company||"—"],
+    ["CONTACT",q.contact||"—"],
+    ["PHONE",q.phone||"—"],
+    ["SALESPERSON",q.salesperson||"—"],
+    ["PROJECT #",q.projectNumber||bcProjectNumber||"—"],
+    ["GENERATED",generated],
+    ["STATUS",(panel.status||"draft").toUpperCase()],
   ];
-  const col2=[
-    ["Customer",q.company||"—"],
-    ["Contact",q.contact||"—"],
-    ["Phone",q.phone||"—"],
-    ["Salesperson",q.salesperson||"—"],
-    ["Project #",q.projectNumber||bcProjectNumber||"—"],
-  ];
-  const colW=(W-20)/2;
-  [[col1,10],[col2,10+colW]].forEach(([rows,x])=>{
-    rows.forEach(([lbl,val],i)=>{
-      const y=infoY+i*7;
-      doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-      doc.text(lbl.toUpperCase(),x,y);
-      doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...dark);
-      doc.text(String(val),x+28,y);
-    });
+  const cols=4;
+  const cellW=(W-24)/cols;
+  fields.forEach(([lbl,val],i)=>{
+    const col=i%cols;
+    const row=Math.floor(i/cols);
+    const x=12+col*cellW;
+    const y=infoY+row*14;
+    // light background alternating
+    if(row%2===0){doc.setFillColor(...light);doc.rect(x,y-5,cellW-1,13,"F");}
+    doc.setFontSize(7);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.text(lbl,x+2,y);
+    doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+    doc.text(String(val).slice(0,28),x+2,y+7);
   });
 
   // Divider
-  const divY=infoY+col1.length*7+3;
-  doc.setDrawColor(203,213,225);doc.setLineWidth(0.3);doc.line(10,divY,W-10,divY);
+  const rows=Math.ceil(fields.length/cols);
+  const divY=infoY+rows*14+2;
+  doc.setDrawColor(...accent);doc.setLineWidth(0.5);doc.line(12,divY,W-12,divY);
 
-  // ── BOM table ──
+  // ── BOM section label ──
+  doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...accent);
+  doc.text("BILL OF MATERIALS",12,divY+7);
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow);
+  doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+  doc.text(`${bom.length} items`,W-12,divY+7,{align:"right"});
+
+  // ── BOM table — fit to remaining page height ──
+  const tableStart=divY+10;
+  const tableEnd=H-14; // leave room for footer
+  const availH=tableEnd-tableStart;
+  // Estimate rows per page — use dynamic fontSize to fit all on one page
+  const headerH=8,rowH=6.5;
+  const maxRows=Math.floor((availH-headerH)/rowH);
+  const fontSize=bom.length>maxRows?Math.max(6,8*(maxRows/bom.length)):8;
+  const cellPad=fontSize<7?1.2:1.8;
+
   doc.autoTable({
-    startY:divY+4,
-    margin:{left:10,right:10},
-    headStyles:{fillColor:accent,textColor:255,fontStyle:"bold",fontSize:8,cellPadding:2},
-    bodyStyles:{fontSize:8,cellPadding:2},
+    startY:tableStart,
+    margin:{left:12,right:12,bottom:14},
+    pageBreak:"avoid",
+    headStyles:{fillColor:accent,textColor:255,fontStyle:"bold",fontSize:fontSize+0.5,cellPadding:cellPad},
+    bodyStyles:{fontSize,cellPadding:cellPad},
     alternateRowStyles:{fillColor:light},
-    styles:{overflow:"ellipsize",cellWidth:"wrap"},
+    styles:{overflow:"ellipsize"},
     columnStyles:{
       0:{cellWidth:8,halign:"center"},
-      1:{cellWidth:12,halign:"center"},
-      2:{cellWidth:32},
+      1:{cellWidth:13,halign:"center"},
+      2:{cellWidth:42},
       3:{cellWidth:"auto"},
-      4:{cellWidth:30},
-      5:{cellWidth:32},
+      4:{cellWidth:36},
+      5:{cellWidth:38},
     },
     head:[["#","Qty","Part #","Description","MFR","Supplier"]],
-    body:bom.map((r,i)=>[
-      i+1,
-      r.qty||1,
-      r.partNumber||"—",
-      r.description||"—",
-      r.manufacturer||"—",
-      r.bcVendorName||"—",
-    ]),
-    didDrawPage:(data)=>{
-      // Footer on each page
-      doc.setFontSize(7);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-      const pg=doc.internal.getCurrentPageInfo().pageNumber;
-      const total=bom.length;
-      doc.text(`${panel.drawingNo||bcProjectNumber} · ${total} items · Generated ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}`,10,H-6);
-      doc.text(`Page ${pg}`,W-10,H-6,{align:"right"});
+    body:bom.map((r,i)=>[i+1,r.qty||1,r.partNumber||"—",r.description||"—",r.manufacturer||"—",r.bcVendorName||"—"]),
+    didDrawPage:()=>{
+      doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+      doc.text(`${panel.drawingNo||bcProjectNumber}  ·  ${bom.length} items  ·  ${generated}`,12,H-6);
+      doc.text("Page 1 of 1",W-12,H-6,{align:"right"});
     }
   });
 }
@@ -6272,8 +6284,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       const JsPDF=await ensureJsPDF();
       // Ensure all page dataUrls are loaded
       const loaded=await Promise.all(pages.map(pg=>ensureDataUrl(pg)));
-      // Build PDF — cover page first (letter, mm), then drawing pages
-      const doc=new JsPDF({unit:"mm",format:"letter",orientation:"portrait",compress:true});
+      // Build PDF — cover page first (11x17 portrait), then drawing pages
+      const doc=new JsPDF({unit:"mm",format:[279.4,431.8],orientation:"portrait",compress:true});
       setAttachPdfMsg("Building cover page…");
       await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx);
       // Add drawing pages
