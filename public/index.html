@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.169";
+const APP_VERSION="v1.17.170";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7219,14 +7219,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             rows={4}
             style={{...inp(),width:"100%",resize:"vertical",lineHeight:1.6,fontSize:13,marginBottom:10}}
           />
-          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-            <button data-tip="Re-run BOM extraction using your correction notes above — fixes will be saved as training examples" onClick={reExtractWithFeedback} disabled={!aiFeedback.trim()||reExtracting}
-              style={btn(C.accentDim,C.accent,{fontSize:14,padding:"7px 18px",opacity:!aiFeedback.trim()||reExtracting?0.45:1,border:`1px solid ${C.accent}55`})}>
-              {reExtracting?"Re-extracting…":"🔄 Re-Extract with Feedback"}
-            </button>
-            {feedbackSaved&&<span style={{fontSize:12,color:C.green,fontWeight:600}}>✓ Feedback saved as training example</span>}
-            {!feedbackSaved&&aiFeedback.trim()&&<span style={{fontSize:12,color:C.muted}}>Your feedback will be saved as a training example after re-extraction</span>}
-          </div>
+          {feedbackSaved&&<span style={{fontSize:12,color:C.green,fontWeight:600}}>✓ Feedback saved</span>}
         </div>
       )}
 
