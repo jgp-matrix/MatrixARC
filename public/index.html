@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.183";
+const APP_VERSION="v1.17.184";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6848,16 +6848,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             const types=getPageTypes(pg);
             return(
               <div key={pg.id} style={{flexShrink:0,width:420,display:"flex",flexDirection:"column",gap:6}}>
-                <div style={{position:"relative"}} >
-                  <StampedDrawing
-                    src={pg.dataUrl||pg.storageUrl}
-                    overlay={extracted?{
-                      left:`${statusLabel}${qd.date?` · ${qd.date}`:""}`,
-                      center:`${pgIdx+1} of ${pages.length}`,
-                      right:[bcProjectNumber||qd.projectNumber,panel.drawingNo,panel.requestedShipDate||qd.expiresOn].filter(Boolean).join(" · ")
-                    }:null}
-                    onClick={()=>setLightboxId(pg.id)}
-                  />
+                <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
+                  <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
                   {!readOnly&&<button data-tip="Remove this drawing page" onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
                 </div>
                 <div style={{lineHeight:1.4}}>
