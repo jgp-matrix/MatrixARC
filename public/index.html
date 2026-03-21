@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.181";
+const APP_VERSION="v1.17.182";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1120,7 +1120,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
   const lineQty=panel.lineQty??1;
   const panelDesc=panel.drawingDesc||panel.name||`Panel ${n}`;
   const rev=panel.drawingRev||"-";
-  lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:10000,Planning_Date:today,
+  lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:10000,Planning_Date:panel.requestedShipDate||today,
     Line_Type:"Billable",Type:"Item",No:"PROGRESS BILLING",
     Description:`${pfx} Rev ${rev} - ${panelDesc}`,
     Quantity:lineQty,Unit_Price:sellPrice,Location_Code:"MAIN"});
@@ -4534,6 +4534,7 @@ function QuoteTab({project,onUpdate}){
           <div className="qd-proj">
             {[
               ["Project #",q.projectNumber,v=>setQ({projectNumber:v}),project.name],
+              ["Req. Ship Date",q.requestedShipDate||(project.panels||[]).find(p=>p.requestedShipDate)?.requestedShipDate||"",v=>setQ({requestedShipDate:v}),"YYYY-MM-DD"],
               ["Pmt. Terms",q.paymentTerms,v=>setQ({paymentTerms:v}),"Net 30 Days"],
               ["Shipping Method",q.shippingMethod,v=>setQ({shippingMethod:v}),"Customer Handles Shipping"],
             ].map(([label,val,setter,ph])=>(
@@ -5462,6 +5463,35 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   );
 }
 
+// ── STAMPED DRAWING — burns overlay text into canvas so it persists in screenshots/prints ──
+function StampedDrawing({src,overlay,width,height,onClick}){
+  width=width||420;height=height||381;
+  const canvasRef=React.useRef();
+  React.useEffect(()=>{
+    if(!src)return;
+    const canvas=canvasRef.current;if(!canvas)return;
+    const ctx=canvas.getContext('2d');
+    const img=new Image();img.crossOrigin='anonymous';
+    img.onload=()=>{
+      canvas.width=width;canvas.height=height;
+      ctx.fillStyle='#080810';ctx.fillRect(0,0,width,height);
+      ctx.drawImage(img,0,0,width,height);
+      if(overlay){
+        const barH=20;
+        ctx.fillStyle='rgba(10,10,20,0.85)';ctx.fillRect(0,0,width,barH);
+        ctx.font='bold 10px monospace';ctx.fillStyle='#ef4444';ctx.textBaseline='middle';
+        const y=barH/2;
+        ctx.textAlign='left';ctx.fillText((overlay.left||'').slice(0,40),8,y);
+        ctx.textAlign='center';ctx.fillText(overlay.center||'',width/2,y);
+        ctx.textAlign='right';ctx.fillText((overlay.right||'').slice(0,50),width-8,y);
+      }
+    };
+    img.onerror=()=>{const c=canvasRef.current;if(!c)return;c.getContext('2d').fillStyle='#080810';c.getContext('2d').fillRect(0,0,width,height);};
+    img.src=src;
+  },[src,JSON.stringify(overlay),width,height]);
+  return <canvas ref={canvasRef} width={width} height={height} onClick={onClick} style={{borderRadius:6,display:'block',cursor:'zoom-in'}}/>;
+}
+
 // ── PANEL CARD (inline workspace) ──
 function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData}){
   const [dragging,setDragging]=useState(false);
@@ -5494,6 +5524,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [draftNo,setDraftNo]=useState((panel.drawingNo||"").slice(0,25));
   const [draftDesc,setDraftDesc]=useState(panel.drawingDesc||"");
   const [draftRev,setDraftRev]=useState(panel.drawingRev||"");
+  const [draftShipDate,setDraftShipDate]=useState(panel.requestedShipDate||"");
   const [draftLineQty,setDraftLineQty]=useState(panel.lineQty??1);
   const [bcSyncing,setBcSyncing]=useState(false);
   const [bcSyncStatus,setBcSyncStatus]=useState(null); // null | "ok" | "error"
@@ -5997,7 +6028,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   }
 
   function saveTitleFields(){
-    const updated={...panel,drawingNo:draftNo.trim(),drawingDesc:draftDesc.trim(),drawingRev:draftRev.trim()};
+    const updated={...panel,drawingNo:draftNo.trim(),drawingDesc:draftDesc.trim(),drawingRev:draftRev.trim(),requestedShipDate:draftShipDate};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
   }
@@ -6620,6 +6651,12 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftDesc(panel.drawingDesc||"");e.target.blur();}}}
               style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.sub,fontSize:14,outline:"none",width:"100%",fontFamily:"inherit"}}/>
           </div>
+          <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
+            <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Ship Date</div>
+            <input type="date" value={draftShipDate} onChange={e=>{setDraftShipDate(e.target.value);}} readOnly={readOnly}
+              onBlur={()=>saveTitleFields()}
+              style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
+          </div>
         </div>
         {/* Right-side controls */}
         <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
@@ -6765,21 +6802,16 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             const types=getPageTypes(pg);
             return(
               <div key={pg.id} style={{flexShrink:0,width:420,display:"flex",flexDirection:"column",gap:6}}>
-                <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
-                  <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
-                  {extracted&&(
-                    <div style={{position:"absolute",top:0,left:0,right:0,background:"rgba(10,10,20,0.82)",padding:"4px 8px",display:"flex",alignItems:"center",borderRadius:"6px 6px 0 0",pointerEvents:"none",gap:4}}>
-                      <div style={{fontSize:10,fontWeight:700,color:"#ef4444",whiteSpace:"nowrap",flex:"0 1 35%",overflow:"hidden",textOverflow:"ellipsis"}}>
-                        {statusLabel}{qd.date?` · ${qd.date}`:""}
-                      </div>
-                      <div style={{fontSize:10,fontWeight:800,color:"#ef4444",textAlign:"center",flex:1,whiteSpace:"nowrap"}}>
-                        {pgIdx+1} of {pages.length}
-                      </div>
-                      <div style={{fontSize:10,fontWeight:700,color:"#ef4444",textAlign:"right",flex:"0 1 40%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                        {[bcProjectNumber||qd.projectNumber,panel.drawingNo,qd.expiresOn].filter(Boolean).join(" · ")}
-                      </div>
-                    </div>
-                  )}
+                <div style={{position:"relative"}} >
+                  <StampedDrawing
+                    src={pg.dataUrl||pg.storageUrl}
+                    overlay={extracted?{
+                      left:`${statusLabel}${qd.date?` · ${qd.date}`:""}`,
+                      center:`${pgIdx+1} of ${pages.length}`,
+                      right:[bcProjectNumber||qd.projectNumber,panel.drawingNo,panel.requestedShipDate||qd.expiresOn].filter(Boolean).join(" · ")
+                    }:null}
+                    onClick={()=>setLightboxId(pg.id)}
+                  />
                   {!readOnly&&<button data-tip="Remove this drawing page" onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
                 </div>
                 <div style={{lineHeight:1.4}}>
