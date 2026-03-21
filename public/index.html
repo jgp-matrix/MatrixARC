@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.205";
+const APP_VERSION="v1.17.206";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10659,10 +10659,10 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return [{label:null,items:sorted}];
     }
     if(groupBy==="status"){
-      const order=["draft","evc","pushed_to_bc"];
-      const labels={draft:"Draft",evc:"Extracted, Validated & Costed",pushed_to_bc:"Pushed to BC"};
+      const order=["draft","in_progress","evc","pushed_to_bc"];
+      const labels={draft:"Draft",in_progress:"In Progress",evc:"Ready",pushed_to_bc:"Pushed to BC"};
       const map={};
-      list.forEach(p=>{let st=projectStatus(p);if(st==="extracted"||st==="validated"||st==="costed")st="evc";if(!map[st])map[st]=[];map[st].push(p);});
+      list.forEach(p=>{let st=projectStatus(p);if(st==="extracted"||st==="validated"||st==="costed"||st==="quoted")st="evc";if(!map[st])map[st]=[];map[st].push(p);});
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="imported"){
@@ -10777,8 +10777,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"Extracted, Validated & Costed":C.green,"Pushed to BC":"#38bdf8"};
-                const statusColBg={Draft:C.border,"Extracted, Validated & Costed":C.greenDim,"Pushed to BC":"#0d1f3c"};
+                const statusColColors={Draft:C.muted,"In Progress":C.yellow,Ready:C.green,"Pushed to BC":"#38bdf8"};
+                const statusColBg={Draft:C.border,"In Progress":C.yellowDim,Ready:C.greenDim,"Pushed to BC":"#0d1f3c"};
                 const colColor=groupBy==="status"?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=groupBy==="status"?(statusColBg[g.label]||C.border):"#2a2a3e";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
