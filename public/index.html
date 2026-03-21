@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.156";
+const APP_VERSION="v1.17.157";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5529,7 +5529,6 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [bcFuzzySuggestions,setBcFuzzySuggestions]=useState(panel.bcFuzzySuggestions||{});
   const [bcBrowserOpen,setBcBrowserOpen]=useState(false);
   const [laborMoreInfo,setLaborMoreInfo]=useState(false);
-  const [showCreateItem,setShowCreateItem]=useState(false);
   const [showUpdateBom,setShowUpdateBom]=useState(false);
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
   const [bcNewlyCreated,setBcNewlyCreated]=useState(new Set());
@@ -7429,13 +7428,6 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                         🔄 Update BOM in BC (Item# {panel.bcItemNumber})
                       </button>
                     )}
-                    <button
-                      onClick={()=>!panel.bcItemNumber&&!pendingBcCount&&setShowCreateItem(true)}
-                      disabled={!!panel.bcItemNumber||pendingBcCount>0}
-                      title={panel.bcItemNumber?`Item ${panel.bcItemNumber} already created in BC`:pendingBcCount>0?`${pendingBcCount} part${pendingBcCount>1?"s":""} not yet verified in BC — resolve all blue BC circles first`:undefined}
-                      style={{background:(!panel.bcItemNumber&&!pendingBcCount)?"#1a1040":"#111",border:"1px solid "+(!panel.bcItemNumber&&!pendingBcCount?"#7c3aed":"#444"),color:panel.bcItemNumber?"#38bdf8":(!pendingBcCount?"#c4b5fd":"#555"),cursor:(!panel.bcItemNumber&&!pendingBcCount)?"pointer":"not-allowed",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:panel.bcItemNumber?0.7:pendingBcCount>0?0.5:1,textAlign:"center"}}>
-                      {panel.bcItemNumber?`✓ Item ${panel.bcItemNumber} Already In BC`:"⚙ Create Item in BC"}
-                    </button>
                     {pendingBcCount>0&&<span style={{fontSize:10,color:"#f87171",textAlign:"center"}}>{pendingBcCount} unverified BC part{pendingBcCount>1?"s":""}</span>}
                   </>)}
                 </div>
@@ -7512,8 +7504,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
         />
       )}
       {showCpdSearch&&<CPDSearchModal query={cpdQuery} uid={uid} panel={panel} onClose={()=>setShowCpdSearch(false)} onImportBom={rows=>{const newBom=[...(panel.bom||[]),...rows];const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}setShowCpdSearch(false);setCpdQuery("");}}/>}
-      {showCreateItem&&<CreateItemInBCModal panel={panel} onClose={()=>setShowCreateItem(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
-      {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate} onCreateNewItem={()=>{setShowUpdateBom(false);setShowCreateItem(true);}}/>}
+      {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
       {crossOrCorrectPending&&(()=>{
         const aiSug=guessCorrection(crossOrCorrectPending.origPN,crossOrCorrectPending.newPN);
         const dismiss=()=>setCrossOrCorrectPending(null);
@@ -7959,325 +7950,8 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
   );
 }
 
-// ── CREATE ITEM IN BC MODAL ──
-function CreateItemInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
-  const [description,setDescription]=useState(panel.drawingDesc||panel.name||"");
-  const [vendorItemNo,setVendorItemNo]=useState([panel.drawingNo,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join(" ")||"");
-  const [categoryCode,setCategoryCode]=useState("");
-  const [categories,setCategories]=useState([]);
-  const [uomCode,setUomCode]=useState("EA");
-  const [uoms,setUoms]=useState([]);
-  const [phase,setPhase]=useState("setup"); // setup | creating | done | error | missing_items
-  const [progress,setProgress]=useState("");
-  const [result,setResult]=useState(null);
-  const [missingItems,setMissingItems]=useState([]);
-  const [itemNumber,setItemNumber]=useState("");
-  const [unitPriceStr,setUnitPriceStr]=useState(()=>{
-    const pr=panel.pricing||{};
-    const laborEst=computeLaborEstimate(panel);
-    const markup=pr.markup??30;
-    const contingencyBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
-    const contingencyConsumables=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
-    const materialCost=(panel.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-    const grandTotal=materialCost+laborEst.totalCost+contingencyBOM+contingencyConsumables;
-    const sell=grandTotal*(1+markup/100);
-    return sell>0?sell.toFixed(2):"";
-  });
-
-  // This panel's BOM only, rows with a part number
-  const mergedBom=React.useMemo(()=>
-    (panel.bom||[])
-      .filter(r=>(r.partNumber||"").trim())
-      .slice()
-      .sort((a,b)=>{
-        if(a.isLaborRow&&!b.isLaborRow)return -1;
-        if(!a.isLaborRow&&b.isLaborRow)return 1;
-        if(a.isLaborRow&&b.isLaborRow)return (a.partNumber||"").localeCompare(b.partNumber||"");
-        return (a.partNumber||"").localeCompare(b.partNumber||"");
-      })
-  ,[panel]);
-  const pendingBcRows=mergedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual");
-  const pendingBcCount=pendingBcRows.length;
-
-  useEffect(()=>{
-    bcListItemCategories().then(setCategories).catch(()=>{});
-    bcListUnitsOfMeasure().then(setUoms).catch(()=>{});
-    // Suggest next item number from BC
-    (async()=>{
-      try{
-        if(!_bcToken){await acquireBcToken(false);}
-        if(!_bcToken)return;
-        const compId=await bcGetCompanyId();
-        if(!compId)return;
-        const r=await fetch(`${BC_API_BASE}/companies(${compId})/items?$orderby=number desc&$top=1&$select=number`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-        if(!r.ok)return;
-        const d=await r.json();
-        const last=((d.value||[])[0]||{}).number||"";
-        const n=parseInt(last,10);
-        if(!isNaN(n))setItemNumber(String(n+1));
-      }catch(e){}
-    })();
-  },[]);
-
-  async function handleCreate(){
-    if(!description.trim()||!categoryCode||!uomCode||pendingBcCount>0)return;
-    setPhase("creating");
-    setProgress("Connecting to Business Central…");
-    try{
-      if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
-      if(!_bcToken){_bcToken=await acquireBcToken(true)||null;}
-      if(!_bcToken)throw new Error("Not connected to Business Central");
-
-      // Pre-validate: all BOM part numbers must exist in BC
-      if(mergedBom.length>0){
-        setProgress("Validating BOM items exist in BC…");
-        const missing=[];
-        for(const row of mergedBom){
-          const pn=(row.partNumber||"").trim();
-          if(!pn)continue;
-          const found=await bcLookupItem(pn);
-          if(!found)missing.push(pn);
-        }
-        if(missing.length>0){
-          setMissingItems(missing);
-          setPhase("missing_items");
-          return;
-        }
-      }
-
-      // Step 1: Create the Item via REST API (UoM only — other fields set via OData PATCH)
-      const created=await bcCreateItem({number:itemNumber.trim()||undefined,baseUnitOfMeasureCode:uomCode||undefined});
-      setProgress(`Item ${created.number} created. Patching fields via OData…`);
-
-      // Step 2: Comprehensive OData PATCH — Description, Category, Vendor Item No, Replenishment System, Unit Price
-      const odataFields={
-        Description:description.trim(),
-        Replenishment_System:"Assembly"
-      };
-      if(categoryCode)odataFields.Item_Category_Code=categoryCode;
-      if(vendorItemNo.trim())odataFields.Vendor_Item_No=vendorItemNo.trim();
-      const parsedUnitPrice=parseFloat(unitPriceStr);
-      if(!isNaN(parsedUnitPrice)&&parsedUnitPrice>0)odataFields.Unit_Price=parsedUnitPrice;
-      try{
-        await bcPatchItemOData(created.number,odataFields);
-      }catch(pe){
-        throw new Error(`Item ${created.number} created but field patch failed: ${pe.message}. Ensure the ItemCard OData web service is published (Page 30, Service Name: ItemCard).`);
-      }
-
-      // Step 3: Add Assembly BOM lines
-      let bomResult={added:0,skipped:0,errors:[],warning:""};
-      if(mergedBom.length>0){
-        setProgress(`Adding ${mergedBom.length} assembly BOM components…`);
-        bomResult=await bcAddAssemblyBOMLines(
-          created.number,
-          mergedBom,
-          (i,total,pn)=>setProgress(`Adding BOM line ${i+1}/${total}: ${pn}…`)
-        );
-      }
-
-      // Determine if push was fully successful (item created, BOM lines added with no errors)
-      const itemCreated=!!created.number;
-      const bomFullyPushed=mergedBom.length===0||(bomResult.added>0&&bomResult.errors.length===0);
-      const pushSuccess=itemCreated&&bomFullyPushed&&!bomResult.warning;
-
-      const resultData={
-        itemNumber:created.number,
-        bomAdded:bomResult.added,
-        bomSkipped:bomResult.skipped,
-        bomErrors:bomResult.errors,
-        bomWarning:bomResult.warning,
-        pushSuccess
-      };
-      setResult(resultData);
-
-      // Only set pushed_to_bc status if item was fully created and all BOM lines pushed without errors
-      if(pushSuccess&&onUpdate&&onSaveImmediate){
-        const updated={...panel,status:"pushed_to_bc",bcItemNumber:created.number,updatedAt:Date.now()};
-        onUpdate(updated);
-        try{await onSaveImmediate(updated);}catch(se){console.warn("Status save failed:",se);}
-      }
-
-      setPhase("done");
-    }catch(e){
-      setResult({error:e.message});
-      setPhase("error");
-    }
-  }
-
-  const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999,padding:24};
-  const modalCard={...card({padding:28}),width:"100%",maxWidth:680,maxHeight:"90vh",overflowY:"auto",display:"flex",flexDirection:"column",gap:16};
-
-  return(
-    <div style={overlay} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={modalCard}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{fontSize:18,fontWeight:700}}>Create Item in BC</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
-        </div>
-
-        {phase==="setup"&&(<>
-          {pendingBcCount>0&&(
-            <div style={{background:"#450a0a55",border:"1px solid #ef444466",borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"flex-start",gap:10}}>
-              <span style={{fontSize:18,flexShrink:0}}>🚫</span>
-              <div>
-                <div style={{fontWeight:700,color:"#f87171",fontSize:13,marginBottom:3}}>{pendingBcCount} part{pendingBcCount>1?"s":""} not yet verified in Business Central</div>
-                <div style={{fontSize:12,color:C.sub,lineHeight:1.5}}>All BOM parts must be confirmed as BC items (blue BC circle resolved) before pushing to the Assembly BOM. Close this dialog, resolve the highlighted rows, then try again.</div>
-              </div>
-            </div>
-          )}
-          <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            <div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Description</div>
-              <input value={description} onChange={e=>setDescription(e.target.value)} style={inp()} placeholder="Item description…"/>
-            </div>
-            <div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Vendor Item No. <span style={{fontWeight:400}}>(DWG # + Rev)</span></div>
-              <input value={vendorItemNo} onChange={e=>setVendorItemNo(e.target.value)} style={inp()} placeholder="e.g. DWG-1234 Rev B"/>
-            </div>
-            <div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Item Category Code <span style={{color:C.red}}>*</span></div>
-              <select value={categoryCode} onChange={e=>setCategoryCode(e.target.value)}
-                style={{...inp(),cursor:"pointer"}}>
-                <option value="">— Select Category —</option>
-                {categories.map(c=><option key={c.code} value={c.code}>{c.code}{c.description?" – "+c.description:""}</option>)}
-              </select>
-            </div>
-            <div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Unit of Measure <span style={{color:C.red}}>*</span></div>
-              <select value={uomCode} onChange={e=>setUomCode(e.target.value)}
-                style={{...inp(),cursor:"pointer"}}>
-                <option value="">— Select Unit of Measure —</option>
-                {uoms.map(u=><option key={u.code} value={u.code}>{u.code}{u.displayName&&u.displayName!==u.code?" – "+u.displayName:""}</option>)}
-              </select>
-            </div>
-            <div style={{display:"flex",gap:12}}>
-              <div style={{flex:1}}>
-                <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Item Number <span style={{fontWeight:400,textTransform:"none"}}>(leave blank for auto-assign)</span></div>
-                <input value={itemNumber} onChange={e=>setItemNumber(e.target.value)} style={inp()} placeholder="Auto-assigned by BC"/>
-              </div>
-              <div style={{flex:1}}>
-                <div style={{fontSize:12,color:C.muted,marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Unit Price ($)</div>
-                <input type="number" min="0" step="0.01" value={unitPriceStr} onChange={e=>setUnitPriceStr(e.target.value)} onFocus={e=>e.target.select()} style={inp()} placeholder="0.00"/>
-              </div>
-            </div>
-          </div>
-
-          {mergedBom.length>0?(
-            <div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:8,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Assembly BOM — {mergedBom.length} component{mergedBom.length!==1?"s":""}</div>
-              <div style={{maxHeight:220,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:8}}>
-                <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-                  <thead>
-                    <tr style={{background:C.border}}>
-                      <th style={{textAlign:"left",padding:"6px 10px",color:C.muted,fontWeight:600}}>Part #</th>
-                      <th style={{textAlign:"center",padding:"6px 10px",color:C.muted,fontWeight:600,width:60}}>Qty</th>
-                      <th style={{textAlign:"left",padding:"6px 10px",color:C.muted,fontWeight:600}}>Description</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {mergedBom.map((row,i)=>{
-                      const unverified=row.priceSource!=="bc"&&row.priceSource!=="manual";
-                      return(
-                      <tr key={i} style={{borderTop:`1px solid ${C.border}`,background:unverified?"#450a0a44":"transparent"}}>
-                        <td style={{padding:"5px 10px",fontFamily:"monospace",color:unverified?"#f87171":C.accent}}>
-                          {row.partNumber}
-                          {unverified&&<span style={{marginLeft:6,fontSize:9,background:"#2563eb",color:"#fff",borderRadius:"50%",width:14,height:14,display:"inline-flex",alignItems:"center",justifyContent:"center",fontWeight:800,verticalAlign:"middle"}}>BC</span>}
-                        </td>
-                        <td style={{padding:"5px 10px",textAlign:"center",color:C.text}}>{row.qty||1}</td>
-                        <td style={{padding:"5px 10px",color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:240}}>{row.description||"—"}</td>
-                      </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ):(
-            <div style={{padding:16,background:C.border,borderRadius:8,fontSize:13,color:C.muted,textAlign:"center"}}>No BOM components with part numbers found in this project.</div>
-          )}
-
-          <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
-            <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
-            <button onClick={handleCreate} disabled={!description.trim()||!categoryCode||!uomCode||pendingBcCount>0}
-              style={btn(C.accent,"#fff",{fontSize:13,opacity:!description.trim()||!categoryCode||!uomCode||pendingBcCount>0?0.4:1})}>
-              Create Item in BC
-            </button>
-          </div>
-        </>)}
-
-        {phase==="creating"&&(
-          <div style={{textAlign:"center",padding:"40px 20px"}}>
-            <div className="spin" style={{fontSize:28,marginBottom:16,color:C.accent}}>◌</div>
-            <div style={{fontSize:14,color:C.sub}}>{progress}</div>
-          </div>
-        )}
-
-        {phase==="done"&&(
-          <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            {result.pushSuccess?(
-              <div style={{background:"#0d1f3c",border:"1px solid #38bdf844",borderRadius:8,padding:16}}>
-                <div style={{fontSize:15,fontWeight:700,color:"#38bdf8",marginBottom:6}}>✓ Pushed to BC — Status Updated</div>
-                <div style={{fontSize:13,color:C.sub,marginBottom:4}}>BC Item Number: <span style={{fontFamily:"monospace",color:C.accent,fontWeight:700}}>{result.itemNumber}</span></div>
-                <div style={{fontSize:12,color:"#38bdf8aa"}}>Panel status set to <strong>PUSHED TO BC</strong></div>
-              </div>
-            ):(
-              <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}44`,borderRadius:8,padding:16}}>
-                <div style={{fontSize:15,fontWeight:700,color:C.yellow,marginBottom:6}}>⚠ Item Created — Partial Push</div>
-                <div style={{fontSize:13,color:C.sub,marginBottom:4}}>BC Item Number: <span style={{fontFamily:"monospace",color:C.accent,fontWeight:700}}>{result.itemNumber}</span></div>
-                <div style={{fontSize:12,color:C.yellow}}>BOM had errors or warnings — status not updated to Pushed to BC. Resolve issues and retry.</div>
-              </div>
-            )}
-            <div style={{fontSize:13,color:C.muted}}>
-              Assembly BOM: <span style={{color:C.green}}>{result.bomAdded} component{result.bomAdded!==1?"s":""} added</span>
-              {result.bomSkipped>0&&<span style={{color:C.yellow}}> · {result.bomSkipped} skipped</span>}
-            </div>
-            {result.bomWarning&&<div style={{fontSize:12,color:C.yellow,background:C.yellowDim,borderRadius:6,padding:"8px 12px"}}>{result.bomWarning}</div>}
-            {result.bomErrors.length>0&&(
-              <div style={{fontSize:12,color:C.red,background:C.redDim,borderRadius:6,padding:"8px 12px",maxHeight:120,overflowY:"auto"}}>
-                <div style={{fontWeight:700,marginBottom:4}}>BOM errors ({result.bomErrors.length}):</div>
-                {result.bomErrors.map((e,i)=><div key={i} style={{marginBottom:2}}>• {e}</div>)}
-              </div>
-            )}
-            <div style={{textAlign:"right"}}>
-              <button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Close</button>
-            </div>
-          </div>
-        )}
-
-        {phase==="error"&&(
-          <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:16}}>
-              <div style={{fontSize:15,fontWeight:700,color:C.red,marginBottom:4}}>✕ Creation Failed</div>
-              <div style={{fontSize:13,color:C.sub}}>{result.error}</div>
-            </div>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
-              <button onClick={()=>setPhase("setup")} style={btn(C.accent,"#fff",{fontSize:13})}>Try Again</button>
-            </div>
-          </div>
-        )}
-
-        {phase==="missing_items"&&(
-          <div style={{display:"flex",flexDirection:"column",gap:12}}>
-            <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:16}}>
-              <div style={{fontSize:15,fontWeight:700,color:C.red,marginBottom:6}}>⛔ Missing Items in BC</div>
-              <div style={{fontSize:13,color:C.sub,marginBottom:10}}>The following item{missingItems.length>1?"s":""} must be added to Business Central before you can create this item:</div>
-              <div style={{fontFamily:"monospace",fontSize:13,display:"flex",flexDirection:"column",gap:4}}>
-                {missingItems.map(pn=><div key={pn} style={{color:C.red}}>• {pn}</div>)}
-              </div>
-            </div>
-            <div style={{textAlign:"right"}}>
-              <button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13})}>Close</button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 // ── UPDATE BOM IN BC MODAL ──
-function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewItem}){
+function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
   const [phase,setPhase]=useState("checking"); // checking | confirm | in_use | updating | done | error | missing_items
   const [progress,setProgress]=useState("");
   const [result,setResult]=useState(null);
@@ -8376,10 +8050,6 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate,onCreateNewI
             </div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
               <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
-              <button onClick={()=>{onClose();if(onCreateNewItem)onCreateNewItem();}}
-                style={btn(C.accentDim,C.accent,{fontSize:13,border:`1px solid ${C.accent}55`})}>
-                ⚙ Create New Item in BC
-              </button>
             </div>
           </div>
         )}
@@ -10072,6 +9742,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
       if(r.priceSource==="manual")return false;
       const isBC=r.priceSource==="bc"&&"bcPoDate"in r;
       const dt=isBC?r.bcPoDate:r.priceDate;
+      if(isBC&&!dt)return true; // No PO date = "No POs" — needs pricing
       return dt&&dt<now-staleMs;
     });
     if(warn.length>0){setQuoteWarnRows(warn);}
@@ -10140,13 +9811,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
                   <div style={{fontSize:15,fontWeight:800,color:"#fbbf24"}}>Pricing May Be Outdated</div>
                 </div>
                 <div style={{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}}>
-                  {quoteWarnRows.filter(r=>r.priceSource==="ai").length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{quoteWarnRows.filter(r=>r.priceSource==="ai").length} item{quoteWarnRows.filter(r=>r.priceSource==="ai").length!==1?"s":""}</strong> with <strong style={{color:"#c084fc"}}>AI-estimated pricing</strong> — not confirmed from a real source.</div>}
-                  {quoteWarnRows.filter(r=>r.priceSource!=="ai").length>0&&<div>• <strong style={{color:"#f1f5f9"}}>{quoteWarnRows.filter(r=>r.priceSource!=="ai").length} item{quoteWarnRows.filter(r=>r.priceSource!=="ai").length!==1?"s":""}</strong> with pricing <strong style={{color:"#fb923c"}}>older than 60 days</strong>.</div>}
+                  {(()=>{const ai=quoteWarnRows.filter(r=>r.priceSource==="ai");const nopo=quoteWarnRows.filter(r=>r.priceSource!=="ai"&&(r.priceSource==="bc"&&"bcPoDate"in r)&&!r.bcPoDate);const old=quoteWarnRows.filter(r=>r.priceSource!=="ai"&&!(r.priceSource==="bc"&&"bcPoDate"in r&&!r.bcPoDate));return(<>
+                    {ai.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{ai.length} item{ai.length!==1?"s":""}</strong> with <strong style={{color:"#c084fc"}}>AI-estimated pricing</strong> — not confirmed from a real source.</div>}
+                    {nopo.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{nopo.length} item{nopo.length!==1?"s":""}</strong> with <strong style={{color:"#fbbf24"}}>No POs</strong> — no purchase order pricing on record.</div>}
+                    {old.length>0&&<div>• <strong style={{color:"#f1f5f9"}}>{old.length} item{old.length!==1?"s":""}</strong> with pricing <strong style={{color:"#fb923c"}}>older than 60 days</strong>.</div>}
+                  </>);})()}
                 </div>
                 <div style={{background:"#0a0a18",border:"1px solid #2a2a3e",borderRadius:6,maxHeight:180,overflowY:"auto",marginBottom:16}}>
                   {quoteWarnRows.map((r,i)=>(
                     <div key={r.id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:i<quoteWarnRows.length-1?"1px solid #1a1a2e":"none",fontSize:12}}>
-                      <span style={{color:r.priceSource==="ai"?"#c084fc":"#fb923c",fontWeight:700,fontSize:10,minWidth:24}}>{r.priceSource==="ai"?"AI":"OLD"}</span>
+                      <span style={{color:r.priceSource==="ai"?"#c084fc":(r.priceSource==="bc"&&"bcPoDate"in r&&!r.bcPoDate)?"#fbbf24":"#fb923c",fontWeight:700,fontSize:10,minWidth:28}}>{r.priceSource==="ai"?"AI":(r.priceSource==="bc"&&"bcPoDate"in r&&!r.bcPoDate)?"NoPO":"OLD"}</span>
                       <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:120}}>{r.partNumber||"—"}</span>
                       <span style={{color:"#64748b",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||""}</span>
                       <span style={{color:"#475569",fontSize:10,whiteSpace:"nowrap"}}>{r.priceSource==="ai"?"AI est.":r.bcPoDate||r.priceDate?new Date(r.bcPoDate||r.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"no date"}</span>
