@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.227";
+const APP_VERSION="v1.17.228";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1974,9 +1974,9 @@ function detectSheetMm(w,h){
   return landscape?{mmW:mmL,mmH:mmS}:{mmW:mmS,mmH:mmL};
 }
 
-async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx){
-  // 11x17 landscape = 431.8 x 279.4 mm
-  const W=431.8,H=279.4;
+async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
+  // W/H passed in from caller to match drawing page size; fall back to 11x17 landscape
+  if(!W||!H){W=431.8;H=279.4;}
   const q=quoteData||{};
   const accent=[30,64,175];
   const dark=[15,23,42];
@@ -6330,15 +6330,22 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       const JsPDF=await ensureJsPDF();
       // Ensure all page dataUrls are loaded
       const loaded=await Promise.all(pages.map(pg=>ensureDataUrl(pg)));
-      // Build PDF — cover page first (11x17 portrait), then drawing pages
-      const doc=new JsPDF({unit:"mm",format:[431.8,279.4],orientation:"landscape",compress:true});
+      // Detect size from first drawing page so cover matches
+      const allDims=await Promise.all(loaded.map(pg=>pg.dataUrl
+        ?new Promise(res=>{const img=new Image();img.onload=()=>res({w:img.naturalWidth,h:img.naturalHeight});img.onerror=()=>res(null);img.src=pg.dataUrl;})
+        :Promise.resolve(null)
+      ));
+      const firstDims=allDims.find(d=>d!=null)||{w:1584,h:1056}; // default B-size landscape
+      const coverMm=detectSheetMm(firstDims.w,firstDims.h);
+      const coverOrient=coverMm.mmW>=coverMm.mmH?"landscape":"portrait";
+      const doc=new JsPDF({unit:"mm",format:[coverMm.mmW,coverMm.mmH],orientation:coverOrient,compress:true});
       setAttachPdfMsg("Building cover page…");
-      await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx);
+      await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH);
       // Add drawing pages
       for(let i=0;i<loaded.length;i++){
         const pg=loaded[i];
         if(!pg.dataUrl)continue;
-        const dims=await new Promise(res=>{const img=new Image();img.onload=()=>res({w:img.naturalWidth,h:img.naturalHeight});img.onerror=()=>res({w:816,h:1056});img.src=pg.dataUrl;});
+        const dims=allDims[i]||firstDims;
         const orient=dims.w>dims.h?"landscape":"portrait";
         // Detect engineering sheet size (A/B/C/D/E) from pixel area
         const {mmW,mmH}=detectSheetMm(dims.w,dims.h);
