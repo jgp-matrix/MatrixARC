@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.127";
+const APP_VERSION="v1.17.128";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5066,6 +5066,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [bcSyncStatus,setBcSyncStatus]=useState(null); // null | "ok" | "error"
   const [unpricedAlert,setUnpricedAlert]=useState(null); // null | array of unpriced rows
   const [syncFailedAlert,setSyncFailedAlert]=useState(null); // null | array of failed rows
+  const [bcSyncErrors,setBcSyncErrors]=useState({}); // rowId -> {partNumber,description,error} — persists after modal closes
   const bcAutoSyncTimer=useRef(null);
   const bcPrevSyncCount=useRef(-1);
   const [draftNoWarn,setDraftNoWarn]=useState(false);
@@ -5589,8 +5590,12 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       if(result.failed&&result.failed.length>0){
         setBcSyncStatus("error");
         setSyncFailedAlert(result.failed);
+        // persist errors on rows so pill shows after modal is dismissed
+        const errs={};result.failed.forEach(f=>{if(f.rowId)errs[f.rowId]=f;});
+        setBcSyncErrors(prev=>({...prev,...errs}));
       }else{
         setBcSyncStatus("ok");
+        setBcSyncErrors({});
         setTimeout(()=>setBcSyncStatus(null),4000);
       }
     }catch(e){
@@ -5863,6 +5868,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       onUpdate(patched);try{onSaveImmediate(patched);}catch(e){}
       return next;
     });
+    // Clear any BC sync error for this row — item has been fixed via Item Browser
+    setBcSyncErrors(prev=>{const next={...prev};delete next[bomRowId];return next;});
   }
   function applyBcItem(bomRowId,bcItem){
     const row=(panel.bom||[]).find(r=>r.id===bomRowId);
@@ -6621,6 +6628,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                         {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
                         {!row.isLaborRow&&row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>AI</span>}
                         {!row.isLaborRow&&row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>M</span>}
+                        {bcSyncErrors[row.id]&&(()=>{const ef=bcSyncErrors[row.id];function parsePillErr(e){if(!e)return"Sync error";if(/must select an existing item/i.test(e))return"Not in BC";if(/Posting Group/i.test(e))return"BC setup";if(/429|Too Many/i.test(e))return"Rate limit";return"BC error";}return(<button title={parsePillErr(ef.error)+"\nClick to fix in Item Browser"} onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||"");setBcBrowserOpen(true);}} style={{background:C.red,color:"#fff",border:"none",borderRadius:8,padding:"1px 6px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>⚠ {parsePillErr(ef.error)}</button>);})()}
                         <div style={{display:"inline-flex",alignItems:"center",gap:0,marginLeft:"auto"}}>
                         {row.isLaborRow?<span style={{color:C.muted,fontSize:13,minWidth:70,textAlign:"right"}}>— auto</span>:<>
                         <span style={{color:C.muted,fontSize:13,lineHeight:1}}>$</span>
