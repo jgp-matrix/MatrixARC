@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.147";
+const APP_VERSION="v1.17.148";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -598,24 +598,37 @@ async function acquireBcToken(interactive=true){
   try{
     const resp=await inst.acquireTokenPopup({scopes});
     _bcToken=resp.accessToken;
+    tryGraphTokenSilent().catch(()=>{}); // background: pre-consent Mail.Send if already granted
     return _bcToken;
   }catch(e){console.warn("BC token acquisition failed:",e);return null;}
 }
 
 let _graphToken=null;
+const GRAPH_MAIL_SCOPES=["https://graph.microsoft.com/Mail.Send"];
+
+async function tryGraphTokenSilent(){
+  try{
+    const inst=await ensureMsal();
+    if(!inst)return null;
+    const accounts=inst.getAllAccounts();
+    if(!accounts.length)return null;
+    const resp=await inst.acquireTokenSilent({scopes:GRAPH_MAIL_SCOPES,account:accounts[0]});
+    _graphToken=resp.accessToken;return _graphToken;
+  }catch(e){return null;}
+}
+
 async function acquireGraphToken(){
   const inst=await ensureMsal();
   if(!inst)return null;
-  const scopes=["https://graph.microsoft.com/Mail.Send"];
   try{
     const accounts=inst.getAllAccounts();
     if(accounts.length>0){
-      const resp=await inst.acquireTokenSilent({scopes,account:accounts[0]});
+      const resp=await inst.acquireTokenSilent({scopes:GRAPH_MAIL_SCOPES,account:accounts[0]});
       _graphToken=resp.accessToken;return _graphToken;
     }
   }catch(e){}
   try{
-    const resp=await inst.acquireTokenPopup({scopes});
+    const resp=await inst.acquireTokenPopup({scopes:GRAPH_MAIL_SCOPES});
     _graphToken=resp.accessToken;return _graphToken;
   }catch(e){console.warn("Graph token acquisition failed:",e);return null;}
 }
@@ -9995,6 +10008,7 @@ function SettingsModal({uid,onClose,onNameChange}){
   const [pwErr,setPwErr]=useState("");
   const [pwOk,setPwOk]=useState(false);
   const [resetSent,setResetSent]=useState(false);
+  const [graphStatus,setGraphStatus]=useState("checking"); // checking|authorized|unauthorized|loading
 
   const email=fbAuth.currentUser?.email||"";
 
@@ -10006,7 +10020,15 @@ function SettingsModal({uid,onClose,onNameChange}){
       if(apiDoc.exists)setKey(apiDoc.data().key||"");
       if(profileDoc.exists)setFirstName(profileDoc.data().firstName||"");
     }).finally(()=>setLoading(false));
+    // Check if Mail.Send is already consented
+    tryGraphTokenSilent().then(tok=>setGraphStatus(tok?"authorized":"unauthorized")).catch(()=>setGraphStatus("unauthorized"));
   },[uid]);
+
+  async function authorizeOutlook(){
+    setGraphStatus("loading");
+    const tok=await acquireGraphToken();
+    setGraphStatus(tok?"authorized":"unauthorized");
+  }
 
   async function saveName(){
     const name=firstName.trim();
@@ -10094,6 +10116,19 @@ function SettingsModal({uid,onClose,onNameChange}){
           <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:2,opacity:loading||!key.trim()?0.5:1})}>
             {saved?"✓ Saved":"Save Key"}
           </button>
+        </div>
+
+        {/* Outlook Email Integration */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Outlook Email — RFQ Sending</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Authorize ARC to send RFQ emails via your Microsoft 365 / Outlook account. Required for the <strong style={{color:C.text}}>✉ Email RFQs</strong> feature.</div>
+          {graphStatus==="checking"&&<div style={{fontSize:12,color:C.muted}}>Checking authorization…</div>}
+          {graphStatus==="authorized"&&<div style={{fontSize:12,color:C.green,display:"flex",alignItems:"center",gap:6}}>✓ Outlook email authorized — RFQ sending is ready.</div>}
+          {(graphStatus==="unauthorized"||graphStatus==="loading")&&(
+            <button onClick={authorizeOutlook} disabled={graphStatus==="loading"} style={btn(C.accent,"#fff",{fontSize:12,opacity:graphStatus==="loading"?0.6:1})}>
+              {graphStatus==="loading"?"Authorizing…":"Authorize Outlook Email"}
+            </button>
+          )}
         </div>
 
         <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
