@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.167";
+const APP_VERSION="v1.17.168";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9535,20 +9535,6 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               {/* Level of Confidence */}
               <ConfidenceBar panel={sp} readOnly={readOnly} onUpdate={selectedOnUpdate} onSaveImmediate={selectedOnSaveImmediate} compact/>
 
-              {/* Action buttons */}
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                <button onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
-                <button onClick={()=>onOpenSupplierQuote(sp.bom||[])} style={btn("#0d1f0d","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>
-                <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Quote</button>
-                {!readOnly&&sp.bcItemNumber&&(
-                  <button onClick={()=>{}} disabled={pendingBcCount>0}
-                    title={pendingBcCount>0?`${pendingBcCount} unverified BC parts — resolve blue circles first`:`Update Assembly BOM for item ${sp.bcItemNumber}`}
-                    style={{background:pendingBcCount>0?"#111":"#0d1f3c",border:'1px solid '+(pendingBcCount>0?"#444":"#38bdf866"),color:pendingBcCount>0?"#555":"#38bdf8",cursor:pendingBcCount>0?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:pendingBcCount>0?0.5:1,textAlign:"center"}}>
-                    🔄 Update BOM in BC (Item# {sp.bcItemNumber})
-                  </button>
-                )}
-              </div>
-
               {/* All panels compact list */}
               <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4,display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.7,textTransform:"uppercase",marginBottom:4}}>All Panels</div>
@@ -9588,6 +9574,20 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     </div>
                   );
                 })()}
+              </div>
+
+              {/* Action buttons — sticky at bottom */}
+              <div style={{position:"sticky",bottom:0,background:"#080810",paddingTop:10,marginTop:4,borderTop:`1px solid ${C.border}`,display:"flex",flexDirection:"column",gap:6}}>
+                <button onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
+                <button onClick={()=>onOpenSupplierQuote(sp.bom||[])} style={btn("#0d1f0d","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>
+                <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Quote</button>
+                {!readOnly&&sp.bcItemNumber&&(
+                  <button onClick={()=>{}} disabled={pendingBcCount>0}
+                    title={pendingBcCount>0?`${pendingBcCount} unverified BC parts — resolve blue circles first`:`Update Assembly BOM for item ${sp.bcItemNumber}`}
+                    style={{background:pendingBcCount>0?"#111":"#0d1f3c",border:'1px solid '+(pendingBcCount>0?"#444":"#38bdf866"),color:pendingBcCount>0?"#555":"#38bdf8",cursor:pendingBcCount>0?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:pendingBcCount>0?0.5:1,textAlign:"center"}}>
+                    🔄 Update BOM in BC (Item# {sp.bcItemNumber})
+                  </button>
+                )}
               </div>
             </>);
           })()}
