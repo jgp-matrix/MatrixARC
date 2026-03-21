@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.163";
+const APP_VERSION="v1.17.164";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9407,8 +9407,44 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                 {fbcError&&<span style={{fontSize:11,color:C.red}}>{fbcError}</span>}
               </div>
 
-              {/* Level of Confidence */}
-              <ConfidenceBar panel={sp} readOnly={readOnly} onUpdate={selectedOnUpdate} onSaveImmediate={selectedOnSaveImmediate}/>
+              {/* Pricing Summary */}
+              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+                <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
+                {[
+                  ["Materials",fmt(matCost),C.green,null,null],
+                  ["BOM Contingency",null,C.sub,cBOM,"contingencyBOM"],
+                  ["Consumables",null,C.sub,cCons,"contingencyConsumables"],
+                  ["Labor",fmt(laborEst.totalCost),C.sub,null,null],
+                  ["Total",fmt(grandTotal),C.text,null,null],
+                ].map(([label,val,color,numVal,key])=>(
+                  <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:13}}>
+                    <span style={{color:C.muted}}>{label}</span>
+                    {key?(
+                      <div style={{display:"flex",alignItems:"center",gap:2}}>
+                        <span style={{color:C.muted,fontSize:12}}>$</span>
+                        <input type="number" min="0" step="50" readOnly={readOnly} value={numVal}
+                          onChange={e=>saveSelectedPricing({[key]:Math.max(0,+e.target.value||0)})}
+                          style={{...inp({padding:"3px 5px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:4,width:80,textAlign:"right"}),color}}
+                          onFocus={e=>{e.target.style.borderColor=C.accent;e.target.select();}}
+                          onBlur={e=>e.target.style.borderColor="transparent"}/>
+                      </div>
+                    ):(
+                      <span style={{color,fontWeight:label==="Total"?700:400,fontVariantNumeric:"tabular-nums"}}>{val}</span>
+                    )}
+                  </div>
+                ))}
+                <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:4,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:14}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{color:C.sub,fontSize:13}}>Margin</span>
+                    <input type="number" min="0" step="1" value={markup} readOnly={readOnly}
+                      onChange={e=>saveSelectedPricing({markup:Math.max(0,+e.target.value||0)})}
+                      onFocus={e=>e.target.select()}
+                      style={{...inp({padding:"3px 6px",fontSize:13,width:55,textAlign:"right"})}}/>
+                    <span style={{color:C.muted,fontSize:13}}>%</span>
+                  </div>
+                  <span style={{fontWeight:800,color:C.accent,fontSize:18,fontVariantNumeric:"tabular-nums"}}>{fmt(sellPrice)}</span>
+                </div>
+              </div>
 
               {/* Labor */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
@@ -9502,44 +9538,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                 )}
               </div>
 
-              {/* Pricing Summary */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-                <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
-                {[
-                  ["Materials",fmt(matCost),C.green,null,null],
-                  ["BOM Contingency",null,C.sub,cBOM,"contingencyBOM"],
-                  ["Consumables",null,C.sub,cCons,"contingencyConsumables"],
-                  ["Labor",fmt(laborEst.totalCost),C.sub,null,null],
-                  ["Total",fmt(grandTotal),C.text,null,null],
-                ].map(([label,val,color,numVal,key])=>(
-                  <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:13}}>
-                    <span style={{color:C.muted}}>{label}</span>
-                    {key?(
-                      <div style={{display:"flex",alignItems:"center",gap:2}}>
-                        <span style={{color:C.muted,fontSize:12}}>$</span>
-                        <input type="number" min="0" step="50" readOnly={readOnly} value={numVal}
-                          onChange={e=>saveSelectedPricing({[key]:Math.max(0,+e.target.value||0)})}
-                          style={{...inp({padding:"3px 5px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:4,width:80,textAlign:"right"}),color}}
-                          onFocus={e=>{e.target.style.borderColor=C.accent;e.target.select();}}
-                          onBlur={e=>e.target.style.borderColor="transparent"}/>
-                      </div>
-                    ):(
-                      <span style={{color,fontWeight:label==="Total"?700:400,fontVariantNumeric:"tabular-nums"}}>{val}</span>
-                    )}
-                  </div>
-                ))}
-                <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:4,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:14}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{color:C.sub,fontSize:13}}>Margin</span>
-                    <input type="number" min="0" step="1" value={markup} readOnly={readOnly}
-                      onChange={e=>saveSelectedPricing({markup:Math.max(0,+e.target.value||0)})}
-                      onFocus={e=>e.target.select()}
-                      style={{...inp({padding:"3px 6px",fontSize:13,width:55,textAlign:"right"})}}/>
-                    <span style={{color:C.muted,fontSize:13}}>%</span>
-                  </div>
-                  <span style={{fontWeight:800,color:C.accent,fontSize:18,fontVariantNumeric:"tabular-nums"}}>{fmt(sellPrice)}</span>
-                </div>
-              </div>
+              {/* Level of Confidence */}
+              <ConfidenceBar panel={sp} readOnly={readOnly} onUpdate={selectedOnUpdate} onSaveImmediate={selectedOnSaveImmediate}/>
 
               {/* Action buttons */}
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
