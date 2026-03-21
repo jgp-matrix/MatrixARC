@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.133";
+const APP_VERSION="v1.17.134";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5971,11 +5971,19 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   }
   function updatePrice(id,val){
     const parsed=val===""?null:parseFloat(val);
+    const row=(panel.bom||[]).find(r=>r.id===id);
     const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:isNaN(parsed)?null:parsed,priceSource:isNaN(parsed)||parsed===null?null:"manual",priceDate:Date.now()}:r);
     const updated={...panel,bom:updatedBom};
     onUpdate(updated);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
+    // Push updated cost back to BC item card
+    const pn=(row?.partNumber||"").trim();
+    if(pn&&_bcToken&&parsed!=null&&!isNaN(parsed)){
+      bcPatchItemOData(pn,{Unit_Cost:parsed})
+        .then(()=>console.log("BC UNIT COST UPDATE:",pn,"→",parsed))
+        .catch(e=>console.warn("BC unit cost update failed:",pn,e));
+    }
   }
   function updateVendor(id,vendorName){
     const row=(panel.bom||[]).find(r=>r.id===id);
