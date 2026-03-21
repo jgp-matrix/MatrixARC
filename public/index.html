@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.171";
+const APP_VERSION="v1.17.172";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6725,8 +6725,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       </div>
 
       {!panelCollapsed&&<>
-      {/* CPD Search bar */}
-      <div style={{marginBottom:12}}>
+      {/* CPD Search bar — hidden after drawings have been extracted */}
+      {!((panel.bom&&panel.bom.length>0)||["extracted","validated","costed","quoted"].includes(panel.status))&&<div style={{marginBottom:12}}>
         <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:`1px solid ${C.accent}55`,background:"#0a0a16"}}>
           <input
             value={cpdQuery}
@@ -6741,7 +6741,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             CPD Search
           </button>
         </div>
-      </div>
+      </div>}
 
       {/* 5 stat boxes */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:14}}>
