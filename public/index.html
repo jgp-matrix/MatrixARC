@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.159";
+const APP_VERSION="v1.17.160";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9563,7 +9563,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
           )}
         </div>
         </div>
-        <div style={{width:280,flexShrink:0,overflowY:"auto",borderLeft:`1px solid ${C.border}`,background:"#080810",padding:16,display:"flex",flexDirection:"column",gap:12}}>
+        <div style={{width:420,flexShrink:0,overflowY:"auto",borderLeft:`1px solid ${C.border}`,background:"#080810",padding:16,display:"flex",flexDirection:"column",gap:12}}>
           <div style={{fontSize:12,fontWeight:700,letterSpacing:0.7,color:C.muted,textTransform:"uppercase",marginBottom:4}}>Pricing Summary</div>
           {panels.length===0?(
             <div style={{color:C.muted,fontSize:13,textAlign:"center",marginTop:20}}>No panels</div>
