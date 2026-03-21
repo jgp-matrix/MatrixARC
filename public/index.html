@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.140";
+const APP_VERSION="v1.17.141";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5187,6 +5187,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [unpricedAlert,setUnpricedAlert]=useState(null); // null | array of unpriced rows
   const [syncFailedAlert,setSyncFailedAlert]=useState(null); // null | array of failed rows
   const [bcSyncErrors,setBcSyncErrors]=useState({}); // rowId -> {partNumber,description,error} — persists after modal closes
+  const [collapsedRows,setCollapsedRows]=useState(new Set());
+  function toggleRowCollapse(id){setCollapsedRows(prev=>{const next=new Set(prev);next.has(id)?next.delete(id):next.add(id);return next;});}
   const bcAutoSyncTimer=useRef(null);
   const bcPrevSyncCount=useRef(-1);
   const [draftNoWarn,setDraftNoWarn]=useState(false);
@@ -6573,6 +6575,11 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               BILL OF MATERIALS — {panel.bom.length} items
             </div>
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
+            {(panel.bom||[]).length>1&&(
+              collapsedRows.size>0
+                ?<button onClick={()=>setCollapsedRows(new Set())} style={btn("transparent",C.accent,{fontSize:11,padding:"3px 10px",border:`1px solid ${C.accent}44`})}>⊞ Expand All</button>
+                :<button onClick={()=>setCollapsedRows(new Set((panel.bom||[]).map(r=>r.id)))} style={btn("transparent",C.muted,{fontSize:11,padding:"3px 10px",border:`1px solid ${C.border}`})}>⊟ Collapse All</button>
+            )}
           </div>
           <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
             <table style={{width:"auto",minWidth:"100%",tableLayout:"auto",borderCollapse:"collapse",fontSize:13}}>
@@ -6596,8 +6603,29 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                     if(!isNaN(an)&&!isNaN(bn))return an-bn;
                     return (a.itemNo||"").localeCompare(b.itemNo||"");
                   });
-                  return sortedBom.map((row,i)=>(
-                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":(!row.isLaborRow&&!row.customerSupplied&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
+                  return sortedBom.map((row,i)=>{
+                  const isCollapsed=collapsedRows.has(row.id);
+                  const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":(!row.isLaborRow&&!row.customerSupplied&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)";
+                  if(isCollapsed){return(
+                  <tr key={row.id} style={{borderBottom:`1px solid ${C.border}33`,background:rowBg,cursor:"default"}}>
+                    <td colSpan={12} style={{padding:"3px 8px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <button onClick={()=>toggleRowCollapse(row.id)} title="Expand row" style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:13,padding:"0 2px",lineHeight:1,flexShrink:0}}>▶</button>
+                        <span style={{color:C.muted,fontSize:11,minWidth:20,textAlign:"right"}}>{i+1}</span>
+                        {row.itemNo&&<span style={{color:C.accent,fontSize:11,fontFamily:"monospace"}}>{row.itemNo}</span>}
+                        <span style={{color:C.muted,fontSize:11,minWidth:28}}>×{row.qty||1}</span>
+                        <span style={{color:C.yellow,fontWeight:700,fontSize:12,fontFamily:"monospace"}}>{row.partNumber||"—"}</span>
+                        <span style={{color:C.sub,fontSize:11,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.description||""}</span>
+                        {row.unitPrice!=null&&<span style={{color:C.text,fontSize:12,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap",marginLeft:"auto"}}>${((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>}
+                        {row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:10,fontWeight:700}}>BC</span>}
+                        {row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:10,fontWeight:700}}>M</span>}
+                        {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:10,fontWeight:700}}>LABOR</span>}
+                      </div>
+                    </td>
+                  </tr>);
+                  }
+                  return(
+                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:rowBg}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
                       {i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
@@ -6814,11 +6842,12 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                     </td>
                     <td style={{padding:"3px 3px",textAlign:"center",width:56}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:0}}>
+                        <button onClick={()=>toggleRowCollapse(row.id)} title="Collapse row" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"2px 4px",lineHeight:1,opacity:0.5}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.5}>▼</button>
                         {!readOnly&&!row.isLaborRow&&<button onClick={()=>deleteBomRow(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"2px 4px",width:28,textAlign:"center"}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
                       </div>
                     </td>
                   </tr>
-                ));
+                  );});
                 })()}
               </tbody>
             </table>
