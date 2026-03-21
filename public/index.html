@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.128";
+const APP_VERSION="v1.17.129";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6165,8 +6165,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":"Sync BC"}
             </button>
           )}
-          {unpricedAlert&&(
-            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          {unpricedAlert&&ReactDOM.createPortal(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
               <div style={{background:C.card,border:`1px solid ${C.red}`,borderRadius:10,padding:24,maxWidth:480,width:"100%"}}>
                 <div style={{fontSize:16,fontWeight:700,color:C.red,marginBottom:8}}>BC Sync Blocked</div>
                 <div style={{fontSize:13,color:C.text,marginBottom:12}}>
@@ -6187,7 +6187,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                 </button>
               </div>
             </div>
-          )}
+          ,document.body)}
           {syncFailedAlert&&(()=>{
             function parseBcError(err){
               if(!err)return"Unknown error";
@@ -6201,8 +6201,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               return m?m[1]:"BC error — see console for details";
             }
             const allRateLimit=syncFailedAlert.every(r=>/429|Too Many/i.test(r.error||""));
-            return(
-            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+            return ReactDOM.createPortal(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
               <div style={{background:C.card,border:`2px solid ${C.red}`,borderRadius:10,padding:24,maxWidth:560,width:"100%"}}>
                 <div style={{fontSize:16,fontWeight:700,color:C.red,marginBottom:4}}>⚠ BC Sync Incomplete</div>
                 <div style={{fontSize:13,color:C.text,marginBottom:12}}>
@@ -6239,7 +6239,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                 </div>
               </div>
             </div>
-            );
+            ,document.body);
           })()}
           <Badge status={panel.status||"draft"}/>
           {!readOnly&&<button data-tip="Delete this panel" onClick={onDelete} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
