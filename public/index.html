@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.191";
+const APP_VERSION="v1.17.192";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9491,10 +9491,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               {/* Selected panel name header */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{fontSize:14,fontWeight:800,color:C.accent,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
-                <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-                  <span style={{fontSize:12,color:C.muted}}>{pricedCount}/{bom.length} priced</span>
-                  {sp.requestedShipDate&&<span style={{fontSize:12,color:C.green,fontWeight:600}}>Ship: {sp.requestedShipDate}</span>}
-                </div>
+                {sp.requestedShipDate&&<div style={{fontSize:12,color:C.green,fontWeight:600,marginTop:2}}>Ship: {sp.requestedShipDate}</div>}
               </div>
 
               {/* Pricing Summary */}
