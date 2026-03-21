@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.214";
+const APP_VERSION="v1.17.215";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -897,6 +897,41 @@ async function bcGetCompanyId(){
     if(co)_bcCompanyId=co.id;
     return _bcCompanyId;
   }catch(e){console.warn("BC company lookup failed:",e);return null;}
+}
+
+async function bcGetJobGuid(jobNumber){
+  const compId=await bcGetCompanyId();
+  if(!compId||!_bcToken)throw new Error("Not connected to BC");
+  const r=await fetch(`${BC_API_BASE}/companies(${compId})/jobs?$filter=number eq '${encodeURIComponent(jobNumber)}'&$select=id,number`,{
+    headers:{"Authorization":`Bearer ${_bcToken}`}
+  });
+  if(!r.ok)throw new Error(`BC job lookup failed: ${r.status}`);
+  const d=await r.json();
+  const job=(d.value||[])[0];
+  if(!job)throw new Error(`BC job '${jobNumber}' not found`);
+  return{compId,jobId:job.id};
+}
+
+async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer){
+  const {compId,jobId}=await bcGetJobGuid(jobNumber);
+  // Step 1: create attachment record
+  const cr=await fetch(`${BC_API_BASE}/companies(${compId})/jobs(${jobId})/documentAttachments`,{
+    method:"POST",
+    headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+    body:JSON.stringify({fileName})
+  });
+  if(!cr.ok){const t=await cr.text();throw new Error(`BC attachment create failed (${cr.status}): ${t}`);}
+  const att=await cr.json();
+  const editLink=att["attachmentContent@odata.mediaEditLink"];
+  if(!editLink)throw new Error("BC did not return mediaEditLink for attachment");
+  // Step 2: upload binary content
+  const ur=await fetch(editLink,{
+    method:"PATCH",
+    headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/pdf"},
+    body:pdfArrayBuffer
+  });
+  if(!ur.ok){const t=await ur.text();throw new Error(`BC attachment upload failed (${ur.status}): ${t}`);}
+  return att;
 }
 
 async function bcCopyProjectFromTemplate(fromProjectNumber, toProjectNumber){
@@ -5580,6 +5615,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [feedbackSaved,setFeedbackSaved]=useState(false);
   const [err,setErr]=useState("");
   const [stampingDrawings,setStampingDrawings]=useState(false);
+  const [attachingPdf,setAttachingPdf]=useState(false);
+  const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [partLibrary,setPartLibrary]=useState([]);
   const [partCorrections,setPartCorrections]=useState([]);
   const [aiPricing,setAiPricing]=useState(false);
@@ -6103,6 +6140,45 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
     }catch(e){console.error('Stamp drawings failed:',e);}
     setStampingDrawings(false);
   }
+
+  async function buildAndAttachPdf(){
+    if(!pages.length||!bcProjectNumber)return;
+    setAttachingPdf(true);
+    setAttachPdfMsg("Building PDF…");
+    try{
+      const JsPDF=await ensureJsPDF();
+      // Ensure all page dataUrls are loaded
+      const loaded=await Promise.all(pages.map(pg=>ensureDataUrl(pg)));
+      // Build PDF — first page sets size, subsequent pages match
+      let doc=null;
+      for(let i=0;i<loaded.length;i++){
+        const pg=loaded[i];
+        if(!pg.dataUrl)continue;
+        // Get image dimensions
+        const dims=await new Promise(res=>{const img=new Image();img.onload=()=>res({w:img.naturalWidth,h:img.naturalHeight});img.onerror=()=>res({w:816,h:1056});img.src=pg.dataUrl;});
+        const orient=dims.w>dims.h?"landscape":"portrait";
+        if(!doc){
+          doc=new JsPDF({unit:"px",format:[dims.w,dims.h],orientation:orient,compress:true});
+        }else{
+          doc.addPage([dims.w,dims.h],orient);
+        }
+        doc.addImage(pg.dataUrl,"JPEG",0,0,dims.w,dims.h,undefined,"FAST");
+      }
+      if(!doc)throw new Error("No pages with images");
+      const fileName=[(panel.drawingNo||bcProjectNumber),(panel.drawingRev?"Rev"+panel.drawingRev:"")].filter(Boolean).join("-")+".pdf";
+      setAttachPdfMsg("Uploading to BC…");
+      const pdfBytes=doc.output("arraybuffer");
+      await bcAttachPdfToJob(bcProjectNumber,fileName,pdfBytes);
+      setAttachPdfMsg("✓ Attached: "+fileName);
+      setTimeout(()=>setAttachPdfMsg(""),4000);
+    }catch(e){
+      console.error("Attach PDF failed:",e);
+      setAttachPdfMsg("✗ "+e.message);
+      setTimeout(()=>setAttachPdfMsg(""),6000);
+    }
+    setAttachingPdf(false);
+  }
+
   // Auto-sync to BC when the number of BC-confirmed items changes (debounced 3s)
   useEffect(()=>{
     if(!bcProjectNumber)return;
@@ -6856,11 +6932,18 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             </button>
           )}
           {pages.length>0&&!readOnly&&(
-            <button data-tip="Burn overlay stamp into existing drawing images in storage (test)" onClick={stampExistingDrawings} disabled={stampingDrawings}
+            <button data-tip="Burn overlay stamp into existing drawing images in storage" onClick={stampExistingDrawings} disabled={stampingDrawings}
               style={{background:"none",border:`1px solid ${C.yellow}88`,color:C.yellow,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:stampingDrawings?0.5:1}}>
               {stampingDrawings?"Stamping…":"🔏 Stamp Drawings"}
             </button>
           )}
+          {pages.length>0&&!readOnly&&bcProjectNumber&&(
+            <button data-tip={`Combine all pages into a PDF and attach to BC Job ${bcProjectNumber}`} onClick={buildAndAttachPdf} disabled={attachingPdf}
+              style={{background:"none",border:`1px solid #38bdf888`,color:"#38bdf8",cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1}}>
+              {attachingPdf?"Working…":"📎 Attach to BC"}
+            </button>
+          )}
+          {attachPdfMsg&&<span style={{fontSize:11,color:attachPdfMsg.startsWith("✓")?C.green:attachPdfMsg.startsWith("✗")?C.red:C.muted,fontWeight:600}}>{attachPdfMsg}</span>}
         </div>
 
         {/* Thumbnail strip + drop tile */}
