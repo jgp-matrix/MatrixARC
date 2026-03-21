@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.157";
+const APP_VERSION="v1.17.158";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5530,6 +5530,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [bcBrowserOpen,setBcBrowserOpen]=useState(false);
   const [laborMoreInfo,setLaborMoreInfo]=useState(false);
   const [showUpdateBom,setShowUpdateBom]=useState(false);
+  const [deleteConfirmId,setDeleteConfirmId]=useState(null);
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
   const [bcNewlyCreated,setBcNewlyCreated]=useState(new Set());
   const [bcUpdatedRows,setBcUpdatedRows]=useState(new Set());
@@ -7137,7 +7138,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                       {row.isLaborRow?"—":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
                     </td>
                     <td style={{padding:"3px 6px",textAlign:"center",width:36}}>
-                      {!readOnly&&!row.isLaborRow&&<button onClick={()=>deleteBomRow(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
+                      {!readOnly&&!row.isLaborRow&&<button onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
                     </td>
                   </tr>
                   );});
@@ -7505,6 +7506,22 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       )}
       {showCpdSearch&&<CPDSearchModal query={cpdQuery} uid={uid} panel={panel} onClose={()=>setShowCpdSearch(false)} onImportBom={rows=>{const newBom=[...(panel.bom||[]),...rows];const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}setShowCpdSearch(false);setCpdQuery("");}}/>}
       {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
+      {deleteConfirmId&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onMouseDown={e=>{if(e.target===e.currentTarget)setDeleteConfirmId(null);}}>
+          <div style={{background:"#0d0d1a",border:"1px solid #ef444466",borderRadius:10,padding:"24px 28px",width:340,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{fontSize:15,fontWeight:800,color:"#f87171",marginBottom:8}}>Delete BOM Row?</div>
+            <div style={{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.5}}>
+              {(()=>{const r=(panel.bom||[]).find(x=>x.id===deleteConfirmId);return r?<><strong style={{color:"#f1f5f9",fontFamily:"monospace"}}>{r.partNumber||"(no part #)"}</strong>{r.description?<span style={{color:"#64748b"}}> — {r.description}</span>:null}</>:"This row";})()}
+              <span style={{display:"block",marginTop:6,color:"#64748b",fontSize:12}}>This cannot be undone.</span>
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <button onClick={()=>setDeleteConfirmId(null)} style={{background:"#1e1e2e",border:"1px solid #2a2a3e",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}}>Cancel</button>
+              <button onClick={()=>{deleteBomRow(deleteConfirmId);setDeleteConfirmId(null);}} style={{background:"#450a0a",border:"1px solid #ef444466",color:"#f87171",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:700}}>Delete</button>
+            </div>
+          </div>
+        </div>,document.body
+      )}
       {crossOrCorrectPending&&(()=>{
         const aiSug=guessCorrection(crossOrCorrectPending.origPN,crossOrCorrectPending.newPN);
         const dismiss=()=>setCrossOrCorrectPending(null);
