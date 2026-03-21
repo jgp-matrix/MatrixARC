@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.173";
+const APP_VERSION="v1.17.174";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9248,7 +9248,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
   }
   const panels=project.panels||[];
   return(<>
-    <div style={{height:"calc(100vh - 132px)",display:"flex",flexDirection:"column",background:C.bg}}>
+    <div style={{height:"calc(100vh - 88px)",display:"flex",flexDirection:"column",background:C.bg}}>
       <div style={{background:C.bg,borderBottom:`1px solid ${C.border}`,padding:"6px 24px",display:"flex",alignItems:"center",gap:12,minHeight:40,flexShrink:0}}>
         {readOnly&&<span style={{background:C.border,color:C.muted,borderRadius:20,padding:"2px 10px",fontSize:13,fontWeight:700}}>VIEW ONLY</span>}
       </div>
@@ -11292,8 +11292,8 @@ function App({user}){
           <button data-tip="Sign out of ARC" onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36}}>Sign out</button>
           </div>
         </div>
-        {/* Row 2: AI Search bar */}
-        <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"6px 32px",display:"flex",justifyContent:"center"}}>
+        {/* Row 2: AI Search bar — home page only */}
+        {view==="dashboard"&&<div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"6px 32px",display:"flex",justifyContent:"center"}}>
           <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",width:"100%",maxWidth:900}}>
             <span style={{padding:"0 12px",color:C.muted,fontSize:16,lineHeight:1,flexShrink:0}}>🔍</span>
             <input ref={sqInputRef} value={sqQuery} placeholder="AI Search — quotes, projects, suppliers…"
@@ -11304,10 +11304,10 @@ function App({user}){
             {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 10px",fontSize:18,lineHeight:1,flexShrink:0}}>×</button>}
             <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>Search</button>
           </div>
-        </div>
+        </div>}
       </div>
-      {/* Content — padded below fixed header (88px top row + ~44px search row) */}
-      <div style={{flex:1,paddingTop:132}}>
+      {/* Content — padded below fixed header (88px top row + ~44px search row when on dashboard) */}
+      <div style={{flex:1,paddingTop:view==="dashboard"?132:88}}>
       {/* BC Connection Lost popup */}
       {bcLostAlert&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
