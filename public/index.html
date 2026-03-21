@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.139";
+const APP_VERSION="v1.17.140";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1543,6 +1543,41 @@ async function bcDiscoverODataPages(){
   }
   console.warn("bcDiscoverODataPages: all URLs returned empty");
   return[];
+}
+
+// Cache planning page metadata so repeated margin changes don't re-discover every time
+let _planPageCache=null; // {planPage, FP_NO, FP_TASK_NO}
+async function bcGetPlanPageMeta(){
+  if(_planPageCache)return _planPageCache;
+  const allPages=await bcDiscoverODataPages();
+  const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p))||null;
+  if(!planPage)return null;
+  let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
+  try{
+    const pr=await fetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}}
+  }catch(e){}
+  _planPageCache={planPage,FP_NO,FP_TASK_NO};
+  return _planPageCache;
+}
+
+async function bcPatchProgressBillingLine(projectNumber,taskNo,unitPrice){
+  if(!_bcToken||!projectNumber||!taskNo)return;
+  const meta=await bcGetPlanPageMeta();
+  if(!meta)return;
+  const {planPage,FP_NO,FP_TASK_NO}=meta;
+  const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=10000)`;
+  const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  if(!gr.ok){console.warn("bcPatchProgressBilling: GET failed",gr.status);return;}
+  const rec=await gr.json();
+  const etag=rec["@odata.etag"];
+  const pr=await fetch(lineUrl,{
+    method:"PATCH",
+    headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
+    body:JSON.stringify({Unit_Price:unitPrice})
+  });
+  if(!pr.ok){const t=await pr.text();console.warn("bcPatchProgressBilling: PATCH failed",pr.status,t);}
+  else console.log("bcPatchProgressBilling: Unit_Price updated →",unitPrice,"for task",taskNo);
 }
 
 async function bcPatchJobOData(jobNo,fields){
@@ -6016,6 +6051,13 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
     const updated={...panel,pricing:{...(panel.pricing||{}),...updates}};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
+    // If markup changed and panel is synced to BC, update the PROGRESS BILLING line Unit_Price
+    if("markup"in updates&&bcProjectNumber&&_bcToken){
+      const newSellPrice=computePanelSellPrice(updated);
+      const taskNo=String(20000+(idx+1)*100+10);
+      bcPatchProgressBillingLine(bcProjectNumber,taskNo,newSellPrice)
+        .catch(e=>console.warn("bcPatchProgressBilling failed:",e));
+    }
   }
   function saveLaborOverride(field,value){
     const ld=panel.laborData||{};
