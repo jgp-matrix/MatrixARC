@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.164";
+const APP_VERSION="v1.17.165";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3267,7 +3267,7 @@ function calcConfidence(panel){
   };
 }
 
-function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate}){
+function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
   const conf=calcConfidence(panel);
   const {pricing,wiring,bomExt,overall,pricingDetail,wiringDetail,bomDetail}=conf;
   const bom=panel.bom||[];
@@ -3312,27 +3312,23 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate}){
   }
   const acceptedSet=new Set((panel.wiringAccepted||[]).map(String));
   return(
-    <div ref={barRef} style={{background:C.card,border:`1px solid #3a3a55`,borderRadius:10,padding:"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-      <div style={{display:"flex",alignItems:"center",gap:20,flexWrap:"wrap"}}>
-        <div style={{display:"flex",flexDirection:"column",gap:2,borderRight:`1px solid #3a3a55`,paddingRight:16}}>
-          <span style={{fontSize:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>Level Of Confidence</span>
-          <span style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>click bar for details</span>
+    <div ref={barRef} style={{background:C.card,border:`1px solid #3a3a55`,borderRadius:compact?8:10,padding:compact?"8px 12px":"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+      <div style={{display:"flex",alignItems:"center",gap:compact?8:20,flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,borderRight:`1px solid #3a3a55`,paddingRight:compact?10:16,marginRight:compact?0:0}}>
+          <span style={{fontSize:compact?11:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>CONFIDENCE</span>
+          <span style={{fontSize:compact?14:18,color:barColor(overall),fontWeight:800}}>{overall}%</span>
         </div>
         {items.map(it=>(
           <div key={it.key} onClick={()=>setExpanded(expanded===it.key?null:it.key)}
-            style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",userSelect:"none"}} title={`${it.label}: ${it.val}% — click for details`}>
-            <span style={{fontSize:12,color:C.muted,transition:"transform 0.15s",display:"inline-block",transform:expanded===it.key?"rotate(90deg)":"none"}}>▸</span>
-            <span style={{fontSize:15,color:expanded===it.key?C.text:C.muted,fontWeight:600}}>{it.label}</span>
-            <div style={{width:70,height:10,background:"#2a2a40",borderRadius:5,overflow:"hidden",border:"1px solid #3a3a55"}}>
+            style={{display:"flex",alignItems:"center",gap:compact?4:8,cursor:"pointer",userSelect:"none"}} title={`${it.label}: ${it.val}% — click for details`}>
+            <span style={{fontSize:compact?10:12,color:C.muted,transition:"transform 0.15s",display:"inline-block",transform:expanded===it.key?"rotate(90deg)":"none"}}>▸</span>
+            <span style={{fontSize:compact?11:15,color:expanded===it.key?C.text:C.muted,fontWeight:600}}>{it.label}</span>
+            <div style={{width:compact?44:70,height:compact?7:10,background:"#2a2a40",borderRadius:5,overflow:"hidden",border:"1px solid #3a3a55"}}>
               <div style={{width:`${it.val}%`,height:"100%",background:barColor(it.val),borderRadius:5,transition:"width 0.3s"}}/>
             </div>
-            <span style={{fontSize:15,color:barColor(it.val),fontWeight:700}}>{it.val}%</span>
+            <span style={{fontSize:compact?11:15,color:barColor(it.val),fontWeight:700}}>{it.val}%</span>
           </div>
         ))}
-        <div style={{display:"flex",alignItems:"center",gap:6,borderLeft:`1px solid #3a3a55`,paddingLeft:16}}>
-          <span style={{fontSize:18,color:barColor(overall),fontWeight:800}}>{overall}%</span>
-          <span style={{fontSize:14,color:C.muted}}>overall</span>
-        </div>
       </div>
       {expanded==="pricing"&&(
         <div style={{marginTop:12,padding:"10px 14px",background:"#0d0d14",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
@@ -9390,21 +9386,23 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             ];
             return(<>
               {/* Selected panel name header */}
-              <div style={{fontSize:14,fontWeight:800,color:C.accent,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
-                <span style={{fontSize:12,color:C.muted}}>{pricedCount}/{bom.length} priced</span>
-                {!readOnly&&bom.length>0&&(_bcToken
-                  ?<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>BC Connected</span>
-                  :<button disabled={fbcConnecting} onClick={async()=>{
-                    setFbcConnecting(true);setFbcError("");
-                    try{await acquireBcToken();setFbcError("");}
-                    catch(e){setFbcError("BC error: "+(e.message||e));}
-                    setFbcConnecting(false);
-                  }} style={btn(C.border,C.muted,{fontSize:11,padding:"2px 8px",borderRadius:10,opacity:fbcConnecting?0.5:1})}>
-                    {fbcConnecting?"Connecting…":"Connect BC"}
-                  </button>
-                )}
-                {fbcError&&<span style={{fontSize:11,color:C.red}}>{fbcError}</span>}
+              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px"}}>
+                <div style={{fontSize:14,fontWeight:800,color:C.accent,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
+                <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:12,color:C.muted}}>{pricedCount}/{bom.length} priced</span>
+                  {!readOnly&&bom.length>0&&(_bcToken
+                    ?<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>BC Connected</span>
+                    :<button disabled={fbcConnecting} onClick={async()=>{
+                      setFbcConnecting(true);setFbcError("");
+                      try{await acquireBcToken();setFbcError("");}
+                      catch(e){setFbcError("BC error: "+(e.message||e));}
+                      setFbcConnecting(false);
+                    }} style={btn(C.border,C.muted,{fontSize:11,padding:"2px 8px",borderRadius:10,opacity:fbcConnecting?0.5:1})}>
+                      {fbcConnecting?"Connecting…":"Connect BC"}
+                    </button>
+                  )}
+                  {fbcError&&<span style={{fontSize:11,color:C.red}}>{fbcError}</span>}
+                </div>
               </div>
 
               {/* Pricing Summary */}
@@ -9447,42 +9445,38 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               </div>
 
               {/* Labor */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                  <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
-                  <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:700}}>
-                    {laborEst.isOverride?"Manual Override":laborEst.isLegacy?"Legacy":laborEst.hasLayoutData?"Auto (schematic + layout)":"Schematic only"}
+              <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
+                  <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700}}>
+                    {laborEst.isOverride?"Override":laborEst.isLegacy?"Legacy":laborEst.hasLayoutData?"Auto":"Schematic"}
                   </span>
-                  {acceptedCount===laborEst.lines.length&&laborEst.lines.length>0&&<span style={{background:C.greenDim,color:C.green,borderRadius:10,padding:"1px 7px",fontSize:11,fontWeight:700}}>All Accepted</span>}
-                </div>
-                {!laborEst.isOverride&&laborEst.lines.length>0&&(
-                  <div style={{marginBottom:10}}>
-                    <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:1,textTransform:"uppercase",marginBottom:5}}>Estimated Hrs</div>
-                    <div style={{display:"flex",gap:0}}>
-                      {GDEF.map(({label,color,cats},gi)=>{
-                        const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
-                        return(
-                          <div key={label} style={{flex:1,background:"#060610",border:`1px solid ${color}55`,borderRadius:gi===0?"8px 0 0 8px":gi===GDEF.length-1?"0 8px 8px 0":"0",borderRight:gi<GDEF.length-1?"none":undefined,padding:"8px 6px",textAlign:"center"}}>
-                            <div style={{fontSize:11,fontWeight:700,color,letterSpacing:0.8,marginBottom:2}}>{label}</div>
-                            <div style={{fontSize:18,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums",lineHeight:1}}>{Math.ceil(hrs)}</div>
-                            <div style={{fontSize:10,color:C.muted,marginTop:2}}>hrs</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-                <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
-                  <span style={{fontSize:12,color:C.muted}}>$/hr</span>
+                  {acceptedCount===laborEst.lines.length&&laborEst.lines.length>0&&<span style={{background:C.greenDim,color:C.green,borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700}}>✓ All</span>}
+                  <div style={{flex:1}}/>
+                  <span style={{fontSize:11,color:C.muted}}>$/hr</span>
                   <input type="number" min="0" step="1" readOnly={readOnly} value={laborRate}
                     onChange={e=>saveSelectedPricing({laborRate:Math.max(0,+e.target.value||0)})}
                     onFocus={e=>e.target.select()}
-                    style={{...inp({padding:"3px 5px",fontSize:13,width:60,textAlign:"right",border:"1px solid #888"})}}/>
-                  <span style={{fontSize:12,color:C.muted}}>Override hrs</span>
+                    style={{...inp({padding:"2px 4px",fontSize:12,width:46,textAlign:"right",border:"1px solid #888"})}}/>
+                  <span style={{fontSize:11,color:C.muted}}>Ovr</span>
                   <input type="number" min="0" step="0.5" readOnly={readOnly} value={pr.laborHoursOverride??""} placeholder="auto"
                     onChange={e=>saveSelectedPricing({laborHoursOverride:e.target.value===""?null:Math.max(0,+e.target.value||0)})}
-                    style={{...inp({padding:"3px 5px",fontSize:13,width:60,textAlign:"right",border:"1px solid #888"})}}/>
+                    style={{...inp({padding:"2px 4px",fontSize:12,width:46,textAlign:"right",border:"1px solid #888"})}}/>
                 </div>
+                {!laborEst.isOverride&&laborEst.lines.length>0&&(
+                  <div style={{display:"flex",gap:0,marginBottom:8}}>
+                    {GDEF.map(({label,color,cats},gi)=>{
+                      const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
+                      return(
+                        <div key={label} style={{flex:1,background:"#060610",border:`1px solid ${color}55`,borderRadius:gi===0?"6px 0 0 6px":gi===GDEF.length-1?"0 6px 6px 0":"0",borderRight:gi<GDEF.length-1?"none":undefined,padding:"5px 4px",textAlign:"center"}}>
+                          <div style={{fontSize:10,fontWeight:700,color,letterSpacing:0.5,marginBottom:1}}>{label}</div>
+                          <div style={{fontSize:15,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums",lineHeight:1}}>{Math.ceil(hrs)}</div>
+                          <div style={{fontSize:9,color:C.muted,marginTop:1}}>hrs</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {laborEst.lines.length>0&&(
                   <button onClick={()=>setFbLaborMoreInfo(v=>!v)}
                     style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,cursor:"pointer",fontSize:11,padding:"3px 10px",width:"100%",textAlign:"left",display:"flex",alignItems:"center",gap:6}}>
@@ -9539,7 +9533,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               </div>
 
               {/* Level of Confidence */}
-              <ConfidenceBar panel={sp} readOnly={readOnly} onUpdate={selectedOnUpdate} onSaveImmediate={selectedOnSaveImmediate}/>
+              <ConfidenceBar panel={sp} readOnly={readOnly} onUpdate={selectedOnUpdate} onSaveImmediate={selectedOnSaveImmediate} compact/>
 
               {/* Action buttons */}
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
