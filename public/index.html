@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.207";
+const APP_VERSION="v1.17.208";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9556,14 +9556,13 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     style={{...inp({padding:"2px 4px",fontSize:12,width:46,textAlign:"right",border:"1px solid #888"})}}/>
                 </div>
                 {!laborEst.isOverride&&laborEst.lines.length>0&&(
-                  <div style={{display:"flex",gap:0,marginBottom:8}}>
-                    {GDEF.map(({label,color,cats},gi)=>{
+                  <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:8}}>
+                    {GDEF.map(({label,color,cats})=>{
                       const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
                       return(
-                        <div key={label} style={{flex:1,background:"#060610",border:`1px solid ${color}55`,borderRadius:gi===0?"6px 0 0 6px":gi===GDEF.length-1?"0 6px 6px 0":"0",borderRight:gi<GDEF.length-1?"none":undefined,padding:"5px 4px",textAlign:"center"}}>
-                          <div style={{fontSize:10,fontWeight:700,color,letterSpacing:0.5,marginBottom:1}}>{label}</div>
-                          <div style={{fontSize:15,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums",lineHeight:1}}>{Math.ceil(hrs)}</div>
-                          <div style={{fontSize:9,color:C.muted,marginTop:1}}>hrs</div>
+                        <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:13}}>
+                          <span style={{fontWeight:700,color,letterSpacing:0.5,fontSize:11}}>{label}</span>
+                          <span style={{color:"#fff",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{Math.ceil(hrs)} <span style={{color:C.muted,fontWeight:400,fontSize:11}}>hrs</span></span>
                         </div>
                       );
                     })}
