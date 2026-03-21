@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.221";
+const APP_VERSION="v1.17.222";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1955,6 +1955,100 @@ async function ensureJsPDF(){
   }
   _jsPdfReady=true;
   return window.jspdf.jsPDF;
+}
+
+async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx){
+  const W=doc.internal.pageSize.getWidth();
+  const H=doc.internal.pageSize.getHeight();
+  const q=quoteData||{};
+  const accent=[30,64,175]; // blue
+  const dark=[15,23,42];
+  const mid=[71,85,105];
+  const light=[241,245,249];
+
+  // ── Header bar ──
+  doc.setFillColor(...accent);
+  doc.rect(0,0,W,18,`F`);
+  doc.setFontSize(13);doc.setFont("helvetica","bold");doc.setTextColor(255,255,255);
+  doc.text("Matrix Systems, Inc.",10,12);
+  doc.setFontSize(10);doc.setFont("helvetica","normal");
+  doc.text("PANEL PRODUCTION TRAVELER",W-10,12,{align:"right"});
+
+  // ── Sub-header: DWG# large ──
+  doc.setFontSize(18);doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+  const dwgTitle=[panel.drawingNo||bcProjectNumber,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join("  ·  ");
+  doc.text(dwgTitle,10,30);
+  if(panel.drawingDesc){
+    doc.setFontSize(10);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.text(panel.drawingDesc,10,37,{maxWidth:W-20});
+  }
+
+  // ── Info grid ──
+  const infoY=44;
+  const col1=[
+    ["BC Job #",bcProjectNumber||"—"],
+    ["Line #","Line "+(lineIdx+1)],
+    ["DWG #",panel.drawingNo||"—"],
+    ["Rev",panel.drawingRev||"—"],
+    ["Ship Date",panel.requestedShipDate||q.requestedShipDate||"—"],
+  ];
+  const col2=[
+    ["Customer",q.company||"—"],
+    ["Contact",q.contact||"—"],
+    ["Phone",q.phone||"—"],
+    ["Salesperson",q.salesperson||"—"],
+    ["Project #",q.projectNumber||bcProjectNumber||"—"],
+  ];
+  const colW=(W-20)/2;
+  [[col1,10],[col2,10+colW]].forEach(([rows,x])=>{
+    rows.forEach(([lbl,val],i)=>{
+      const y=infoY+i*7;
+      doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+      doc.text(lbl.toUpperCase(),x,y);
+      doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+      doc.text(String(val),x+28,y);
+    });
+  });
+
+  // Divider
+  const divY=infoY+col1.length*7+3;
+  doc.setDrawColor(203,213,225);doc.setLineWidth(0.3);doc.line(10,divY,W-10,divY);
+
+  // ── BOM table ──
+  const bom=(panel.bom||[]).filter(r=>!r.isLaborRow);
+  doc.autoTable({
+    startY:divY+4,
+    margin:{left:10,right:10},
+    headStyles:{fillColor:accent,textColor:255,fontStyle:"bold",fontSize:8,cellPadding:2},
+    bodyStyles:{fontSize:8,cellPadding:2},
+    alternateRowStyles:{fillColor:light},
+    styles:{overflow:"ellipsize",cellWidth:"wrap"},
+    columnStyles:{
+      0:{cellWidth:8,halign:"center"},
+      1:{cellWidth:12,halign:"center"},
+      2:{cellWidth:32},
+      3:{cellWidth:"auto"},
+      4:{cellWidth:30},
+      5:{cellWidth:32},
+    },
+    head:[["#","Qty","Part #","Description","MFR","Supplier"]],
+    body:bom.map((r,i)=>[
+      i+1,
+      r.qty||1,
+      r.partNumber||"—",
+      r.description||"—",
+      r.manufacturer||"—",
+      r.bcVendorName||"—",
+    ]),
+    didDrawPage:(data)=>{
+      // Footer on each page
+      doc.setFontSize(7);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+      const pg=doc.internal.getCurrentPageInfo().pageNumber;
+      const total=bom.length;
+      doc.text(`${panel.drawingNo||bcProjectNumber} · ${total} items · Generated ${new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}`,10,H-6);
+      doc.text(`Page ${pg}`,W-10,H-6,{align:"right"});
+    }
+  });
 }
 
 async function buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy){
@@ -6178,22 +6272,22 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       const JsPDF=await ensureJsPDF();
       // Ensure all page dataUrls are loaded
       const loaded=await Promise.all(pages.map(pg=>ensureDataUrl(pg)));
-      // Build PDF — first page sets size, subsequent pages match
-      let doc=null;
+      // Build PDF — cover page first (letter, mm), then drawing pages
+      const doc=new JsPDF({unit:"mm",format:"letter",orientation:"portrait",compress:true});
+      setAttachPdfMsg("Building cover page…");
+      await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx);
+      // Add drawing pages
       for(let i=0;i<loaded.length;i++){
         const pg=loaded[i];
         if(!pg.dataUrl)continue;
-        // Get image dimensions
         const dims=await new Promise(res=>{const img=new Image();img.onload=()=>res({w:img.naturalWidth,h:img.naturalHeight});img.onerror=()=>res({w:816,h:1056});img.src=pg.dataUrl;});
         const orient=dims.w>dims.h?"landscape":"portrait";
-        if(!doc){
-          doc=new JsPDF({unit:"px",format:[dims.w,dims.h],orientation:orient,compress:true});
-        }else{
-          doc.addPage([dims.w,dims.h],orient);
-        }
-        doc.addImage(pg.dataUrl,"JPEG",0,0,dims.w,dims.h,undefined,"FAST");
+        // Convert px to mm (96 dpi)
+        const mmW=dims.w*25.4/96;const mmH=dims.h*25.4/96;
+        doc.addPage([mmW,mmH],orient);
+        doc.addImage(pg.dataUrl,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
-      if(!doc)throw new Error("No pages with images");
+      if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
       const stageTag=["extracted","validated","costed","quoted"].includes(panel.status)?"[QUOTED]":"[DRAFT]";
       const fileName=stageTag+" "+[(panel.drawingNo||bcProjectNumber),(panel.drawingRev?"Rev"+panel.drawingRev:"")].filter(Boolean).join("-")+".pdf";
       setAttachPdfMsg("Uploading to BC…");
