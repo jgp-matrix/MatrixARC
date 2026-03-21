@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.166";
+const APP_VERSION="v1.17.167";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3312,9 +3312,9 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
   }
   const acceptedSet=new Set((panel.wiringAccepted||[]).map(String));
   return(
-    <div ref={barRef} style={{background:C.card,border:compact?`1px solid ${C.accent}66`:`1px solid #3a3a55`,borderRadius:compact?8:10,padding:compact?"8px 12px":"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+    <div ref={barRef} style={{background:C.card,border:compact?`1px solid ${C.accent}`:`1px solid #3a3a55`,borderRadius:compact?8:10,padding:compact?"8px 12px":"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
       <div style={{display:"flex",alignItems:"center",gap:compact?8:20,flexWrap:"wrap"}}>
-        <div style={{display:"flex",alignItems:"center",gap:6,borderRight:compact?`1px solid ${C.accent}44`:`1px solid #3a3a55`,paddingRight:compact?10:16,marginRight:compact?0:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,borderRight:compact?`1px solid ${C.accent}`:`1px solid #3a3a55`,paddingRight:compact?10:16,marginRight:compact?0:0}}>
           <span style={{fontSize:compact?11:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>CONFIDENCE</span>
           <span style={{fontSize:compact?14:18,color:barColor(overall),fontWeight:800}}>{overall}%</span>
         </div>
@@ -4092,7 +4092,7 @@ function LoginScreen({invite}){
         <div style={{fontSize:13,color:C.muted,marginTop:4,opacity:0.6}}>{APP_VERSION}</div>
       </div>
       {invite&&(
-        <div style={{background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:12,padding:"14px 20px",marginBottom:20,textAlign:"center",width:"100%",maxWidth:400}}>
+        <div style={{background:C.accentDim,border:`1px solid ${C.accent}`,borderRadius:12,padding:"14px 20px",marginBottom:20,textAlign:"center",width:"100%",maxWidth:400}}>
           <div style={{fontSize:15,fontWeight:700,color:C.accent,marginBottom:4}}>You've been invited to APEX ARC</div>
           <div style={{fontSize:13,color:C.sub}}>Create an account or sign in to join your team workspace.</div>
         </div>
@@ -7062,7 +7062,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                             </div>
                           )}
                           {f==="partNumber"&&bcFuzzySuggestions[row.id]&&!readOnly&&(
-                            <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}44`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto",maxWidth:360,minWidth:200}}>
+                            <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto",maxWidth:360,minWidth:200}}>
                               <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
                                 <div style={{fontSize:10,color:C.accent,fontWeight:700,flex:1}}>BC FUZZY MATCHES</div>
                                 <button onClick={()=>setBcFuzzySuggestions(prev=>{const next={...prev};delete next[row.id];return next;})}
@@ -7233,7 +7233,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       {/* Action row */}
       <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",borderTop:`1px solid ${C.border}`,paddingTop:12}}>
         {!readOnly&&tagsChanged&&bomCount>0&&(
-          <button onClick={runExtraction} disabled={extracting} style={btn(C.accentDim,C.accent,{fontSize:14,padding:"7px 16px",border:`1px solid ${C.accent}66`,opacity:extracting?0.6:1})}>
+          <button onClick={runExtraction} disabled={extracting} style={btn(C.accentDim,C.accent,{fontSize:14,padding:"7px 16px",border:`1px solid ${C.accent}`,opacity:extracting?0.6:1})}>
             {extracting?"Extracting…":"🔄 Re-Extract BOM"}
           </button>
         )}
@@ -7681,7 +7681,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
                 <div style={{fontSize:12,color:C.muted}}>{result.length} items generated — check the items you want to import</div>
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={()=>setSelected(new Set(result.map(r=>r.id)))} style={{fontSize:11,background:"none",border:`1px solid ${C.accent}44`,borderRadius:4,color:C.accent,padding:"3px 8px",cursor:"pointer"}}>All</button>
+                  <button onClick={()=>setSelected(new Set(result.map(r=>r.id)))} style={{fontSize:11,background:"none",border:`1px solid ${C.accent}`,borderRadius:4,color:C.accent,padding:"3px 8px",cursor:"pointer"}}>All</button>
                   <button onClick={()=>setSelected(new Set())} style={{fontSize:11,background:"none",border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,padding:"3px 8px",cursor:"pointer"}}>None</button>
                 </div>
               </div>
@@ -9343,7 +9343,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               <div>
                 {onTransfer&&(
                   <button onClick={onTransfer}
-                    style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"8px 20px"})}>
+                    style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase",padding:"8px 20px"})}>
                     ⇄ Transfer Ownership
                   </button>
                 )}
@@ -9386,7 +9386,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             ];
             return(<>
               {/* Selected panel name header */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}66`,borderRadius:8,padding:"10px 12px"}}>
+              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{fontSize:14,fontWeight:800,color:C.accent,marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
                 <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                   <span style={{fontSize:12,color:C.muted}}>{pricedCount}/{bom.length} priced</span>
@@ -9406,7 +9406,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               </div>
 
               {/* Pricing Summary */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}66`,borderRadius:8,padding:"12px 14px"}}>
+              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"12px 14px"}}>
                 <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
                 {[
                   ["Materials",fmt(matCost),C.green,null,null],
@@ -9445,7 +9445,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               </div>
 
               {/* Labor */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}66`,borderRadius:8,padding:"10px 12px"}}>
+              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
                   <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
                   <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700}}>
@@ -10238,7 +10238,7 @@ function NewProjectModal({uid,onCreated,onClose}){
             {bcConnected&&!showNewCust&&<button type="button" onClick={()=>setShowNewCust(true)} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:12,padding:0,fontWeight:600}}>+ New Customer</button>}
           </div>
           {showNewCust&&(
-            <div style={{background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:8,padding:14,marginBottom:16}}>
+            <div style={{background:C.accentDim,border:`1px solid ${C.accent}`,borderRadius:8,padding:14,marginBottom:16}}>
               <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:10}}>Create New BC Customer</div>
               <input value={newCustName} onChange={e=>setNewCustName(e.target.value)} placeholder="Customer Name *" style={{...inp(),marginBottom:8}}/>
               <input value={newCustPhone} onChange={e=>setNewCustPhone(e.target.value)} placeholder="Phone (optional)" style={{...inp(),marginBottom:8}}/>
@@ -11334,7 +11334,7 @@ function App({user}){
         <>
           {/* Company setup banner */}
           {!companyId&&!setupDismissed&&(
-            <div style={{background:"#1a1a3e",borderBottom:`1px solid ${C.accent}44`,padding:"8px 32px",display:"flex",alignItems:"center",gap:12,fontSize:13,flexWrap:"wrap"}}>
+            <div style={{background:"#1a1a3e",borderBottom:`1px solid ${C.accent}`,padding:"8px 32px",display:"flex",alignItems:"center",gap:12,fontSize:13,flexWrap:"wrap"}}>
               <span style={{color:C.sub,flex:1}}>Set up a Company workspace to collaborate with your team.</span>
               <button onClick={()=>setShowSetup(true)} style={btn(C.accent,"#fff",{fontSize:12,padding:"5px 14px"})}>Set up Company</button>
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
