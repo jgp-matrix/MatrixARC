@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.203";
+const APP_VERSION="v1.17.204";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4833,12 +4833,11 @@ async function extractTitleBlock(dataUrl){
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:dataUrl.split(",")[1]}},
         {type:"text",text:`Look at the title block of this engineering drawing (typically in the bottom-right corner).
-Extract exactly four fields:
+Extract exactly three fields:
 - Drawing number (labeled DWG NO., DRAWING NO., JOB NO., DWG #, SHEET, or similar)
 - Drawing title or description (the main name/description of what is shown)
 - Revision (labeled REV, REVISION, REV NO., REV LETTER — typically a letter like A, B, C or a number; empty string if not shown)
-- Matrix part number (labeled PART NO., PART #, MATRIX PART #, MATRIX P/N, or similar — a company internal part number separate from the drawing number; empty string if not found)
-Return ONLY valid JSON, no extra text: {"drawingNo":"...","drawingDesc":"...","drawingRev":"...","matrixPartNo":"..."}`}
+Return ONLY valid JSON, no extra text: {"drawingNo":"...","drawingDesc":"...","drawingRev":"..."}`}
       ]}]
     });
     const m=text.replace(/```json|```/g,"").trim().match(/\{[\s\S]*?\}/);
@@ -6024,9 +6023,9 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       if(firstWithData){
         extractTitleBlock(firstWithData.dataUrl).then(tb=>{
           if(!tb)return;
-          const patched={...updated,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||"",name:tb.matrixPartNo||updated.name||""};
+          const patched={...updated,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
           onUpdate(patched);
-          setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");if(tb.matrixPartNo)setDraftName(tb.matrixPartNo);
+          setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
           onSaveImmediate(patched).catch(()=>{});
         }).catch(()=>{});
       }
@@ -6069,8 +6068,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
     const tb=await extractTitleBlock(ensured.dataUrl);
     setExtractingTitle(false);
     if(tb){
-      setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");if(tb.matrixPartNo)setDraftName(tb.matrixPartNo);
-      const updated={...panel,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||"",name:tb.matrixPartNo||panel.name||""};
+      setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
+      const updated={...panel,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
     }
@@ -6680,14 +6679,6 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
         </div>
         {/* Panel name + title block identity */}
         <div style={{flex:1,display:"flex",alignItems:"flex-start",gap:20,minWidth:0,flexWrap:"wrap"}}>
-          <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
-            <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Matrix Part #</div>
-            <input value={draftName} onChange={e=>setDraftName(e.target.value)} placeholder="Part #" readOnly={readOnly}
-              onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
-              onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";savePanelName();}}
-              onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftName(panel.name||"");e.target.blur();}}}
-              style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:Math.max(8,(draftName||"").length+2)+"ch",fontFamily:"inherit"}}/>
-          </div>
           <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,position:"relative"}}>
             <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>DWG #</div>
             <input value={draftNo} onChange={e=>{
@@ -9494,12 +9485,11 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               {/* Selected panel name header */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-                  <div style={{fontSize:14,fontWeight:800,color:C.accent,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
+                  <div style={{fontSize:14,fontWeight:800,color:C.accent,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{sp.drawingNo||sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
                   {sp.requestedShipDate&&<div style={{fontSize:12,color:C.green,fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>Ship: {sp.requestedShipDate}</div>}
                 </div>
-                {(sp.drawingNo||sp.drawingRev)&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,fontSize:12}}>
-                  {sp.drawingNo&&<span style={{color:C.muted}}><span style={{color:C.sub,fontWeight:600}}>DWG#</span> {sp.drawingNo}</span>}
-                  {sp.drawingRev&&<span style={{color:C.muted}}><span style={{color:C.sub,fontWeight:600}}>Rev</span> {sp.drawingRev}</span>}
+                {sp.drawingRev&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,fontSize:12}}>
+                  <span style={{color:C.muted}}><span style={{color:C.sub,fontWeight:600}}>Rev</span> {sp.drawingRev}</span>
                 </div>}
                 {sp.drawingDesc&&<div style={{fontSize:12,color:C.muted,marginTop:6,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sp.drawingDesc}</div>}
               </div>
@@ -9656,7 +9646,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                       <input type="number" min="1" className="no-spin" value={pqty} onClick={e=>e.stopPropagation()}
                         onChange={e=>{const q=Math.max(1,+e.target.value||1);saveImmediatePanel(p.id,{...p,qty:q});}}
                         style={{width:32,fontSize:12,fontWeight:700,textAlign:"center",background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 4px",color:"#fff",outline:"none"}}/>
-                      <span style={{fontSize:12,color:p.id===selectedPanelId?C.accent:C.sub,fontWeight:p.id===selectedPanelId?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{p.name||`Panel ${pi+1}`}</span>
+                      <span style={{fontSize:12,color:p.id===selectedPanelId?C.accent:C.sub,fontWeight:p.id===selectedPanelId?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{p.drawingNo||p.name||`Panel ${pi+1}`}</span>
                       <Badge status={p.status||"draft"}/>
                       <span style={{fontSize:13,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{pfmt(psp*pqty)}</span>
                     </div>
