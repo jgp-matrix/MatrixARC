@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.152";
+const APP_VERSION="v1.17.153";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6834,12 +6834,12 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             </div>
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
           </div>
-          <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
-            <table style={{width:"auto",minWidth:"100%",tableLayout:"auto",borderCollapse:"collapse",fontSize:13}}>
+          <div style={{borderRadius:8,border:`1px solid ${C.border}`}}>
+            <table style={{width:"100%",tableLayout:"auto",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {[["ARC Ln #",50],["Ref Ln #",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",220],["Manufacturer",0,"fit"],["Supplier",0,"fit"],["Unit $",100],["Ext $",80],["Priced",76],["",36]].map(([h,w,mode],hi)=>(
-                    <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                  {[["ARC Ln #",50],["Ref Ln #",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0,"auto"],["Manufacturer",0,"fit"],["Supplier",0,"fit"],["Unit $",100],["Ext $",80],["Priced",76],["",36]].map(([h,w,mode],hi)=>(
+                    <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":mode==="auto"?"auto":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
               </thead>
