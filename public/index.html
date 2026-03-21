@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.180";
+const APP_VERSION="v1.17.181";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5463,7 +5463,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect}){
+function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -6757,12 +6757,29 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
 
         {/* Thumbnail strip + drop tile */}
         <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:6,alignItems:"flex-start"}}>
-          {pages.map(pg=>{
+          {(()=>{
+            const extracted=["extracted","validated","costed","quoted"].includes(panel.status);
+            const statusLabel=panel.status==="quoted"||panel.status==="costed"?"QUOTE":panel.status==="validated"?"VALIDATED":panel.status==="extracted"?"EXTRACTED":"DRAFT";
+            const qd=quoteData||{};
+            return pages.map((pg,pgIdx)=>{
             const types=getPageTypes(pg);
             return(
               <div key={pg.id} style={{flexShrink:0,width:420,display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
                   <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
+                  {extracted&&(
+                    <div style={{position:"absolute",top:0,left:0,right:0,background:"rgba(10,10,20,0.82)",padding:"4px 8px",display:"flex",alignItems:"center",borderRadius:"6px 6px 0 0",pointerEvents:"none",gap:4}}>
+                      <div style={{fontSize:10,fontWeight:700,color:"#ef4444",whiteSpace:"nowrap",flex:"0 1 35%",overflow:"hidden",textOverflow:"ellipsis"}}>
+                        {statusLabel}{qd.date?` · ${qd.date}`:""}
+                      </div>
+                      <div style={{fontSize:10,fontWeight:800,color:"#ef4444",textAlign:"center",flex:1,whiteSpace:"nowrap"}}>
+                        {pgIdx+1} of {pages.length}
+                      </div>
+                      <div style={{fontSize:10,fontWeight:700,color:"#ef4444",textAlign:"right",flex:"0 1 40%",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {[bcProjectNumber||qd.projectNumber,panel.drawingNo,qd.expiresOn].filter(Boolean).join(" · ")}
+                      </div>
+                    </div>
+                  )}
                   {!readOnly&&<button data-tip="Remove this drawing page" onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
                 </div>
                 <div style={{lineHeight:1.4}}>
@@ -6812,7 +6829,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                 )}
               </div>
             );
-          })}
+          });})()}
 
           {/* Drop zone tile */}
           {!readOnly&&(
@@ -9301,6 +9318,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   uid={uid}
                   projectId={project.id}
                   bcProjectNumber={project.bcProjectNumber||null}
+                  quoteData={project.quote||{}}
                   readOnly={readOnly}
                   isSelected={panel.id===selectedPanelId}
                   onSelect={()=>setSelectedPanelId(panel.id)}
