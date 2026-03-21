@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.146";
+const APP_VERSION="v1.17.147";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -600,6 +600,24 @@ async function acquireBcToken(interactive=true){
     _bcToken=resp.accessToken;
     return _bcToken;
   }catch(e){console.warn("BC token acquisition failed:",e);return null;}
+}
+
+let _graphToken=null;
+async function acquireGraphToken(){
+  const inst=await ensureMsal();
+  if(!inst)return null;
+  const scopes=["https://graph.microsoft.com/Mail.Send"];
+  try{
+    const accounts=inst.getAllAccounts();
+    if(accounts.length>0){
+      const resp=await inst.acquireTokenSilent({scopes,account:accounts[0]});
+      _graphToken=resp.accessToken;return _graphToken;
+    }
+  }catch(e){}
+  try{
+    const resp=await inst.acquireTokenPopup({scopes});
+    _graphToken=resp.accessToken;return _graphToken;
+  }catch(e){console.warn("Graph token acquisition failed:",e);return null;}
 }
 
 // ── APP CONTEXT ──
@@ -1722,6 +1740,23 @@ async function bcGetVendorName(vendorNo){
   }catch(e){return"";}
 }
 
+const _vendorEmailCache={};
+async function bcGetVendorEmail(vendorNo){
+  if(!_bcToken||!vendorNo)return"";
+  if(_vendorEmailCache[vendorNo]!==undefined)return _vendorEmailCache[vendorNo];
+  const compId=await bcGetCompanyId();
+  if(!compId)return"";
+  try{
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,email`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok)return"";
+    const d=await r.json();
+    const v=(d.value||[])[0];
+    const email=v?.email||"";
+    _vendorEmailCache[vendorNo]=email;
+    return email;
+  }catch(e){return"";}
+}
+
 // Get last purchase info for an item from posted purchase invoices
 async function bcGetLastPurchase(itemNo){
   if(!_bcToken||!itemNo)return null;
@@ -1784,15 +1819,74 @@ async function buildRfqSupplierGroups(bom){
   const groupMap={};
   for(const item of eligible){
     let vendorName=item.bcVendorName||"";
+    let vendorNo="";
     if(!vendorName&&_bcToken){
       const pn=(item.partNumber||"").trim();
-      if(pn){const vNo=await bcGetItemVendorNo(pn);vendorName=vNo?await bcGetVendorName(vNo):"";}
+      if(pn){vendorNo=await bcGetItemVendorNo(pn);vendorName=vendorNo?await bcGetVendorName(vendorNo):"";}
     }
     if(!vendorName)vendorName="Unknown Supplier";
-    if(!groupMap[vendorName])groupMap[vendorName]={vendorName,items:[]};
+    if(!groupMap[vendorName])groupMap[vendorName]={vendorName,vendorNo,items:[]};
     groupMap[vendorName].items.push(item);
   }
   return{groups:Object.values(groupMap).sort((a,b)=>a.vendorName.localeCompare(b.vendorName)),noItems:false};
+}
+
+function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy){
+  const rows=group.items.map((item,i)=>`
+    <tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${i+1}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">${item.partNumber||"—"}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${item.description||"—"}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${item.manufacturer||"—"}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${item.qty||1}</td>
+      <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:right">&nbsp;</td>
+      <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:center">&nbsp;</td>
+    </tr>`).join("");
+  return`<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#1e293b;max-width:820px;margin:0 auto;padding:24px">
+  <table style="width:100%;margin-bottom:16px"><tr>
+    <td><h2 style="margin:0;color:#2563eb;font-size:22px">Matrix Systems, Inc.</h2>
+    <p style="margin:4px 0 0;color:#64748b;font-size:13px">501 S 300 W · Salt Lake City, UT 84101 · (801) 596-2953</p></td>
+    <td style="text-align:right;vertical-align:top">
+      <div style="font-size:11px;color:#64748b;letter-spacing:2px;text-transform:uppercase">Request for Quote</div>
+      <div style="font-size:18px;font-weight:700;color:#1e293b">${rfqNum}</div>
+    </td>
+  </tr></table>
+  <table style="margin-bottom:20px;font-size:13px">
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">To:</td><td style="font-weight:700">${group.vendorName}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">Project:</td><td>${projectName||"—"}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">RFQ Date:</td><td>${rfqDate}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">Response By:</td><td style="font-weight:600">${responseBy}</td></tr>
+  </table>
+  <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <thead><tr style="background:#f1f5f9">
+      <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #cbd5e1">#</th>
+      <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #cbd5e1">Part Number</th>
+      <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #cbd5e1">Description</th>
+      <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #cbd5e1">Manufacturer</th>
+      <th style="padding:8px 10px;text-align:center;border-bottom:2px solid #cbd5e1">Qty</th>
+      <th style="padding:8px 10px;text-align:right;border-bottom:2px solid #cbd5e1">Unit Price</th>
+      <th style="padding:8px 10px;text-align:center;border-bottom:2px solid #cbd5e1">Lead Time</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <p style="margin-top:20px;color:#475569;font-size:13px">Please reply to this email or send completed pricing to <strong>purchasing@matrixpci.com</strong></p>
+  </body></html>`;
+}
+
+async function sendGraphEmail(graphToken,to,subject,htmlBody){
+  const r=await fetch("https://graph.microsoft.com/v1.0/me/sendMail",{
+    method:"POST",
+    headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
+    body:JSON.stringify({
+      message:{
+        subject,
+        body:{contentType:"HTML",content:htmlBody},
+        toRecipients:[{emailAddress:{address:to}}]
+      },
+      saveToSentItems:true
+    })
+  });
+  if(!r.ok){const err=await r.text();throw new Error(err);}
 }
 
 async function bcClearAssemblyBOMLines(parentItemNo,bomPage){
@@ -4074,6 +4168,67 @@ function RfqDocument({groups,projectName}){
   );
 }
 
+// ── RFQ EMAIL MODAL ──
+function RfqEmailModal({groups,projectName,onClose}){
+  const [emails,setEmails]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=g.vendorEmail||"";});return m;});
+  const [statuses,setStatuses]=useState({});
+  const [sending,setSending]=useState(false);
+  const [done,setDone]=useState(false);
+  async function sendAll(){
+    setSending(true);
+    const graphToken=await acquireGraphToken();
+    if(!graphToken){setSending(false);alert("Could not get Microsoft 365 token. Make sure you are signed in to your Microsoft account.");return;}
+    const today=new Date();
+    const rfqNum="RFQ-"+Date.now().toString(36).toUpperCase().slice(-6);
+    const rfqDate=today.toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+    const responseBy=new Date(today.getTime()+14*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+    for(const group of groups){
+      const to=(emails[group.vendorName]||"").trim();
+      if(!to){setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:"No email address"}}));continue;}
+      setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending"}}));
+      try{
+        const subject=`Request for Quote — ${projectName||"Project"} — ${rfqNum}`;
+        const html=buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy);
+        await sendGraphEmail(graphToken,to,subject,html);
+        setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent"}}));
+      }catch(e){
+        setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:String(e.message||e)}}));
+      }
+    }
+    setSending(false);setDone(true);
+  }
+  const allSent=groups.length>0&&groups.every(g=>statuses[g.vendorName]?.state==="sent");
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #2a2a3e",borderRadius:10,padding:"24px 28px",minWidth:460,maxWidth:580,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+        <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:2}}>Send RFQ Emails</div>
+        <div style={{fontSize:12,color:"#64748b",marginBottom:16}}>Emails sent from your Microsoft 365 / Outlook account. Review and confirm each supplier's email address below.</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18,maxHeight:340,overflowY:"auto"}}>
+          {groups.map(g=>{
+            const st=statuses[g.vendorName];
+            return(
+              <div key={g.vendorName} style={{background:"#111128",border:"1px solid #2a2a3e",borderRadius:6,padding:"10px 12px"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:5}}>
+                  <span style={{fontWeight:700,color:"#f1f5f9",fontSize:13}}>{g.vendorName}</span>
+                  <span style={{fontSize:11,color:"#64748b"}}>{st?.state==="sending"?"⏳ Sending…":st?.state==="sent"?"✓ Sent":st?.state==="error"?`✗ ${st.msg||"Failed"}`:`${g.items.length} item${g.items.length!==1?"s":""}`}</span>
+                </div>
+                <input value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
+                  placeholder="supplier@email.com" disabled={sending||done}
+                  style={{width:"100%",boxSizing:"border-box",background:"#0a0a18",border:"1px solid #2a2a3e",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none"}}/>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",alignItems:"center"}}>
+          {allSent&&<span style={{fontSize:12,color:"#4ade80",marginRight:"auto"}}>✓ All RFQs sent successfully!</span>}
+          <button onClick={onClose} style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{done?"Close":"Cancel"}</button>
+          {!done&&<button onClick={sendAll} disabled={sending||groups.length===0} style={{background:"#1e1b4b",border:"none",color:"#818cf8",padding:"6px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700,opacity:sending?0.6:1}}>{sending?"Sending…":"Send All"}</button>}
+        </div>
+      </div>
+    </div>
+  ,document.body);
+}
+
 // ── QUOTE TAB ──
 function QuoteTab({project,onUpdate}){
   const [quoteTab,setQuoteTab]=useState("formal");
@@ -5158,7 +5313,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,rfqLoading,onOpenSupplierQuote}){
+function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -7139,6 +7294,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                 </div>
                 <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:8,display:"flex",flexDirection:"column",gap:6}}>
                   <button onClick={onPrintRfq} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building RFQ…":"📋 Print RFQ"}</button>
+                  <button onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#0d1520","#38bdf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>✉ Email RFQs</button>
                   <button onClick={()=>onOpenSupplierQuote(panel.bom||[])} style={btn("#0d1f0d","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>
                   <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Quote</button>
                   {!readOnly&&(<>
@@ -9436,7 +9592,7 @@ ${fullText.slice(0,12000)}`;
 }
 
 // ── PANEL LIST VIEW ──
-function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLoading,onUpdate,onDelete,onTransfer,onOpenSupplierQuote}){
+function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onUpdate,onDelete,onTransfer,onOpenSupplierQuote}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -9535,6 +9691,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLo
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
               {panels.length>0&&<button onClick={onPrintRfq} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building RFQ…":"📋 Print RFQ"}</button>}
+              {panels.length>0&&<button onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#0d1520","#38bdf8",{fontSize:13,opacity:rfqLoading?0.5:1})}>✉ Email RFQs</button>}
               {panels.length>0&&<button onClick={()=>onOpenSupplierQuote(null)} style={btn("#0d1f0d","#4ade80",{fontSize:13,border:"1px solid #4ade8044"})}>📥 Upload Supplier Quote</button>}
               {panels.length>0&&<button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13})}>🖨 Print Quote</button>}
             </div>
@@ -9565,6 +9722,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,rfqLo
                   onSaveImmediate={updatedPanel=>saveImmediatePanel(panel.id,updatedPanel)}
                   onViewQuote={onViewQuote}
                   onPrintRfq={onPrintRfq}
+                  onSendRfqEmails={onSendRfqEmails}
                   rfqLoading={rfqLoading}
                   onOpenSupplierQuote={onOpenSupplierQuote}
                 />
@@ -9716,6 +9874,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
   const [rfqLoading,setRfqLoading]=useState(false);
   const [rfqGroups,setRfqGroups]=useState(null);
   const [autoPrintRfq,setAutoPrintRfq]=useState(false);
+  const [rfqEmailModal,setRfqEmailModal]=useState(null);
   const [showSqModal,setShowSqModal]=useState(false);
   const [sqPanelBom,setSqPanelBom]=useState(null);
   const saveTimer=useRef(null);
@@ -9762,6 +9921,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
     setRfqLoading(false);
   }
 
+  async function onSendRfqEmails(){
+    setRfqLoading(true);
+    try{
+      const allBom=mergeBoms((projectRef.current.panels||[]).map(p=>p.bom||[]));
+      const result=await buildRfqSupplierGroups(allBom);
+      if(result.noItems){setRfqLoading(false);alert("No items eligible for RFQ email. Items qualify if they show 'No POs' or have a price date older than 60 days.");return;}
+      const groupsWithEmail=await Promise.all(result.groups.map(async g=>{
+        const email=g.vendorNo?await bcGetVendorEmail(g.vendorNo):"";
+        return{...g,vendorEmail:email};
+      }));
+      setRfqEmailModal({groups:groupsWithEmail,projectName:projectRef.current.name||""});
+    }catch(e){console.error("RFQ email build error:",e);alert("Failed to build RFQ: "+(e.message||e));}
+    setRfqLoading(false);
+  }
+
   // Auto-print RFQ
   useEffect(()=>{
     if(autoPrintRfq&&rfqGroups){
@@ -9790,6 +9964,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
             onBack={onBack}
             onViewQuote={()=>{setAutoPrint(true);setView("quote");}}
             onPrintRfq={onPrintRfq}
+            onSendRfqEmails={onSendRfqEmails}
             rfqLoading={rfqLoading}
             onUpdate={update}
             onDelete={onDelete}
@@ -9797,6 +9972,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
             onOpenSupplierQuote={bom=>{setSqPanelBom(bom);setShowSqModal(true);}}
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
+          {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} onClose={()=>setRfqEmailModal(null)}/>}
         </>
       )}
       <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} onClose={()=>setShowSqModal(false)}/>
