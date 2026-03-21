@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.211";
+const APP_VERSION="v1.17.212";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9556,9 +9556,10 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     {GDEF.map(({label,color,cats})=>{
                       const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
                       return(
-                        <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",fontSize:13}}>
-                          <span style={{fontWeight:700,color,letterSpacing:0.5,fontSize:11}}>{label}</span>
-                          <span style={{color:"#fff",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{Math.ceil(hrs)} <span style={{color:C.muted,fontWeight:400,fontSize:11}}>hrs</span></span>
+                        <div key={label} style={{display:"flex",alignItems:"center",gap:0,fontSize:13}}>
+                          <span style={{fontWeight:700,color,letterSpacing:0.5,fontSize:11,width:52}}>{label}</span>
+                          <span style={{color:"#fff",fontWeight:700,fontVariantNumeric:"tabular-nums",width:32,textAlign:"right"}}>{Math.ceil(hrs)}</span>
+                          <span style={{color:C.muted,fontWeight:400,fontSize:11,marginLeft:4}}>hrs</span>
                         </div>
                       );
                     })}
