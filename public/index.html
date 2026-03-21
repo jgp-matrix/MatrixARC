@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.125";
+const APP_VERSION="v1.17.126";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1120,50 +1120,70 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"WIRE",
     Quantity:Math.round(wireHrs*100)/100,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
-  // 60000+ — BOM items (non-labor, non-crossed)
-  const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isCrossed);
+  // 60000+ — ALL BOM items (non-labor; isCrossed rows ARE the replacement parts and must be included)
+  const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow);
   let lineNo=60000;
   for(const row of bomRows){
+    const desc=(row.description||"").slice(0,100);
+    const fallbackDesc=`${row.partNumber||""} - ${(row.description||"").slice(0,90)}`.slice(0,100).trim();
     lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
       Line_Type:"Budget",Type:"Item",No:row.partNumber,
-      Description:(row.description||"").slice(0,100),
+      Description:desc,
       Quantity:row.qty||1,Unit_Price:row.unitPrice||0,Location_Code:"MAIN",
+      _row:row,
       _fallback:{[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
         Line_Type:"Budget",Type:"Text",
-        Description:`${row.partNumber||""} - ${(row.description||"").slice(0,90)}`.slice(0,100).trim(),
+        Description:fallbackDesc,
         Quantity:row.qty||1}});
     lineNo+=10000;
   }
 
-  // Step 3: POST all lines
+  // Step 3: POST all lines — retry on 429, fallback to Text on item errors
   const sleep=ms=>new Promise(res=>setTimeout(res,ms));
+  const failedRows=[];
   let created=0;
-  for(const line of lines){
-    await sleep(150);
-    const {_fallback,...payload}=line;
+
+  async function postLine(payload){
     const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(payload)
     });
+    if(r.status===429){await sleep(2000);
+      const r2=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
+        method:"POST",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      return r2;
+    }
+    return r;
+  }
+
+  for(const line of lines){
+    await sleep(150);
+    const {_fallback,_row,...payload}=line;
+    const r=await postLine(payload);
     if(r.ok){created++;console.log(`bcSyncPlanningLines: line ${line.Line_No} (${line.Description}) created`);}
     else if(_fallback){
       const txt=await r.text();
       console.warn(`bcSyncPlanningLines: line ${line.Line_No} item POST failed (${r.status}), retrying as text:`,txt);
-      await sleep(300);
-      const r2=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
-        method:"POST",
-        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-        body:JSON.stringify(_fallback)
-      });
+      await sleep(400);
+      const r2=await postLine(_fallback);
       if(r2.ok){created++;console.log(`bcSyncPlanningLines: line ${line.Line_No} created as text line`);}
-      else console.warn(`bcSyncPlanningLines: line ${line.Line_No} text fallback failed (${r2.status}):`,await r2.text());
+      else{
+        const txt2=await r2.text();
+        console.error(`bcSyncPlanningLines: line ${line.Line_No} TEXT fallback also failed (${r2.status}):`,txt2);
+        if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",lineNo:line.Line_No,error:txt2});
+      }
     }else{
-      console.warn(`bcSyncPlanningLines: line ${line.Line_No} failed (${r.status}):`,await r.text());
+      const txt=await r.text();
+      console.error(`bcSyncPlanningLines: line ${line.Line_No} failed (${r.status}):`,txt);
+      if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",lineNo:line.Line_No,error:txt});
     }
   }
-  console.log(`bcSyncPlanningLines: ${created}/${lines.length} lines synced for task ${taskNo}`);
-  return created;
+  console.log(`bcSyncPlanningLines: ${created}/${lines.length} lines synced for task ${taskNo}${failedRows.length?` — ${failedRows.length} FAILED`:""}`,failedRows);
+  return{created,total:lines.length,failed:failedRows};
 }
 
 async function bcCreateProject(displayName, customerNumber){
@@ -5045,6 +5065,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [bcSyncing,setBcSyncing]=useState(false);
   const [bcSyncStatus,setBcSyncStatus]=useState(null); // null | "ok" | "error"
   const [unpricedAlert,setUnpricedAlert]=useState(null); // null | array of unpriced rows
+  const [syncFailedAlert,setSyncFailedAlert]=useState(null); // null | array of failed rows
   const bcAutoSyncTimer=useRef(null);
   const bcPrevSyncCount=useRef(-1);
   const [draftNoWarn,setDraftNoWarn]=useState(false);
@@ -5557,16 +5578,21 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
 
   async function syncPlanningLinesToBC(){
     if(!bcProjectNumber||bcSyncing)return;
-    // Guard: all non-labor, non-crossed BOM rows must have a BC or manual price
-    const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isCrossed&&r.priceSource!=="bc"&&r.priceSource!=="manual");
+    // Guard: all non-labor BOM rows (including auto-replaced) must have a BC or manual price
+    const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&r.priceSource!=="bc"&&r.priceSource!=="manual");
     if(unpriced.length){setUnpricedAlert(unpriced);return;}
-    setBcSyncing(true);setBcSyncStatus(null);
+    setBcSyncing(true);setBcSyncStatus(null);setSyncFailedAlert(null);
     try{
       if(!_bcToken){await acquireBcToken(true);}
       if(!_bcToken)throw new Error("Could not connect to Business Central");
-      await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel);
-      setBcSyncStatus("ok");
-      setTimeout(()=>setBcSyncStatus(null),4000);
+      const result=await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel);
+      if(result.failed&&result.failed.length>0){
+        setBcSyncStatus("error");
+        setSyncFailedAlert(result.failed);
+      }else{
+        setBcSyncStatus("ok");
+        setTimeout(()=>setBcSyncStatus(null),4000);
+      }
     }catch(e){
       console.error("bcSyncPlanningLines failed:",e);
       setBcSyncStatus("error");
@@ -6151,6 +6177,29 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                 <button onClick={()=>setUnpricedAlert(null)}
                   style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 24px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>
                   OK
+                </button>
+              </div>
+            </div>
+          )}
+          {syncFailedAlert&&(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+              <div style={{background:C.card,border:`2px solid ${C.red}`,borderRadius:10,padding:24,maxWidth:520,width:"100%"}}>
+                <div style={{fontSize:16,fontWeight:700,color:C.red,marginBottom:4}}>⚠ BC Sync Incomplete</div>
+                <div style={{fontSize:13,color:C.text,marginBottom:12}}>
+                  {syncFailedAlert.length} item{syncFailedAlert.length>1?"s":""} could not be pushed to Business Central and will NOT be ordered unless manually added:
+                </div>
+                <div style={{background:C.bg,borderRadius:6,padding:"8px 12px",maxHeight:220,overflowY:"auto",marginBottom:12}}>
+                  {syncFailedAlert.map((r,i)=>(
+                    <div key={i} style={{fontSize:12,padding:"4px 0",borderBottom:`1px solid ${C.border}33`}}>
+                      <span style={{color:C.yellow,fontWeight:700,fontFamily:"monospace"}}>{r.partNumber||"(no part #)"}</span>
+                      {r.description?<span style={{color:C.muted,marginLeft:8}}>{r.description.slice(0,60)}{r.description.length>60?"…":""}</span>:null}
+                    </div>
+                  ))}
+                </div>
+                <div style={{fontSize:11,color:C.muted,marginBottom:16}}>These items must be added manually in Business Central to ensure ordering. You may retry the sync after resolving any BC item setup issues.</div>
+                <button onClick={()=>setSyncFailedAlert(null)}
+                  style={{background:C.red,color:"#fff",border:"none",borderRadius:6,padding:"8px 24px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>
+                  I Understand — I Will Add These Manually
                 </button>
               </div>
             </div>
