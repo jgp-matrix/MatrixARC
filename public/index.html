@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.126";
+const APP_VERSION="v1.17.127";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1174,12 +1174,12 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
       else{
         const txt2=await r2.text();
         console.error(`bcSyncPlanningLines: line ${line.Line_No} TEXT fallback also failed (${r2.status}):`,txt2);
-        if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",lineNo:line.Line_No,error:txt2});
+        if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt2});
       }
     }else{
       const txt=await r.text();
       console.error(`bcSyncPlanningLines: line ${line.Line_No} failed (${r.status}):`,txt);
-      if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",lineNo:line.Line_No,error:txt});
+      if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt});
     }
   }
   console.log(`bcSyncPlanningLines: ${created}/${lines.length} lines synced for task ${taskNo}${failedRows.length?` — ${failedRows.length} FAILED`:""}`,failedRows);
@@ -6181,29 +6181,59 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               </div>
             </div>
           )}
-          {syncFailedAlert&&(
+          {syncFailedAlert&&(()=>{
+            function parseBcError(err){
+              if(!err)return"Unknown error";
+              if(/must select an existing item/i.test(err))return"Not found in BC catalog — use Item Browser to find the correct item";
+              if(/Gen\.?\s*Prod\.?\s*Posting Group must have a value/i.test(err))return"BC item setup incomplete (Gen. Prod. Posting Group missing)";
+              if(/Inventory Posting Group must have a value/i.test(err))return"BC item setup incomplete (Inventory Posting Group missing)";
+              if(/posting group/i.test(err))return"BC item setup incomplete (posting group missing)";
+              if(/429|Too Many/i.test(err))return"BC rate limit — retry sync";
+              if(/field.*validation/i.test(err))return"BC item validation error";
+              const m=err.match(/"message":"([^"]{0,120})/);
+              return m?m[1]:"BC error — see console for details";
+            }
+            const allRateLimit=syncFailedAlert.every(r=>/429|Too Many/i.test(r.error||""));
+            return(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-              <div style={{background:C.card,border:`2px solid ${C.red}`,borderRadius:10,padding:24,maxWidth:520,width:"100%"}}>
+              <div style={{background:C.card,border:`2px solid ${C.red}`,borderRadius:10,padding:24,maxWidth:560,width:"100%"}}>
                 <div style={{fontSize:16,fontWeight:700,color:C.red,marginBottom:4}}>⚠ BC Sync Incomplete</div>
                 <div style={{fontSize:13,color:C.text,marginBottom:12}}>
-                  {syncFailedAlert.length} item{syncFailedAlert.length>1?"s":""} could not be pushed to Business Central and will NOT be ordered unless manually added:
+                  {syncFailedAlert.length} item{syncFailedAlert.length>1?"s":""} could not be pushed to BC. Use the Item Browser to find each item and apply it, then retry sync.
                 </div>
-                <div style={{background:C.bg,borderRadius:6,padding:"8px 12px",maxHeight:220,overflowY:"auto",marginBottom:12}}>
+                <div style={{background:C.bg,borderRadius:6,padding:"8px 12px",maxHeight:280,overflowY:"auto",marginBottom:12}}>
                   {syncFailedAlert.map((r,i)=>(
-                    <div key={i} style={{fontSize:12,padding:"4px 0",borderBottom:`1px solid ${C.border}33`}}>
-                      <span style={{color:C.yellow,fontWeight:700,fontFamily:"monospace"}}>{r.partNumber||"(no part #)"}</span>
-                      {r.description?<span style={{color:C.muted,marginLeft:8}}>{r.description.slice(0,60)}{r.description.length>60?"…":""}</span>:null}
+                    <div key={i} style={{padding:"8px 0",borderBottom:`1px solid ${C.border}33`,display:"flex",flexDirection:"column",gap:4}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                        <span style={{color:C.yellow,fontWeight:700,fontFamily:"monospace",fontSize:12}}>{r.partNumber||"(no part #)"}</span>
+                        {r.description?<span style={{color:C.muted,fontSize:11}}>{r.description.slice(0,60)}{r.description.length>60?"…":""}</span>:null}
+                      </div>
+                      <div style={{fontSize:11,color:C.accent,marginBottom:2}}>{parseBcError(r.error)}</div>
+                      {!/429|Too Many/i.test(r.error||"")&&r.rowId&&(
+                        <button onClick={()=>{setSyncFailedAlert(null);setBcBrowserTarget(r.rowId);setBcBrowserQuery(r.partNumber||"");setBcBrowserOpen(true);}}
+                          style={{alignSelf:"flex-start",background:C.accent,color:"#fff",border:"none",borderRadius:5,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                          Fix in Item Browser
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
-                <div style={{fontSize:11,color:C.muted,marginBottom:16}}>These items must be added manually in Business Central to ensure ordering. You may retry the sync after resolving any BC item setup issues.</div>
-                <button onClick={()=>setSyncFailedAlert(null)}
-                  style={{background:C.red,color:"#fff",border:"none",borderRadius:6,padding:"8px 24px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>
-                  I Understand — I Will Add These Manually
-                </button>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  {allRateLimit&&(
+                    <button onClick={()=>{setSyncFailedAlert(null);syncPlanningLinesToBC();}}
+                      style={{flex:1,background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                      Retry Sync
+                    </button>
+                  )}
+                  <button onClick={()=>setSyncFailedAlert(null)}
+                    style={{flex:1,background:"#333",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 16px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                    Close
+                  </button>
+                </div>
               </div>
             </div>
-          )}
+            );
+          })()}
           <Badge status={panel.status||"draft"}/>
           {!readOnly&&<button data-tip="Delete this panel" onClick={onDelete} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
         </div>
