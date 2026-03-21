@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.218";
+const APP_VERSION="v1.17.219";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6171,8 +6171,11 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       await bcAttachPdfToJob(bcProjectNumber,fileName,pdfBytes);
-      setAttachPdfMsg("✓ Attached: "+fileName);
-      setTimeout(()=>setAttachPdfMsg(""),4000);
+      const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName};
+      onUpdate(updated);
+      try{onSaveImmediate(updated);}catch(e){}
+      setAttachPdfMsg("✓ Uploaded: "+fileName);
+      setTimeout(()=>setAttachPdfMsg(""),5000);
     }catch(e){
       console.error("Attach PDF failed:",e);
       setAttachPdfMsg("✗ "+e.message);
@@ -6940,9 +6943,10 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             </button>
           )}
           {pages.length>0&&!readOnly&&bcProjectNumber&&(
-            <button data-tip={`Combine all pages into a PDF and attach to BC Job ${bcProjectNumber}`} onClick={buildAndAttachPdf} disabled={attachingPdf}
-              style={{background:"none",border:`1px solid #38bdf888`,color:"#38bdf8",cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1}}>
-              {attachingPdf?"Working…":"📎 Attach to BC"}
+            <button data-tip={panel.bcPdfAttached?`Already uploaded: ${panel.bcPdfFileName||"PDF"} — click to re-upload`:`Combine all pages into a PDF and upload to BC Job ${bcProjectNumber}`}
+              onClick={buildAndAttachPdf} disabled={attachingPdf||panel.bcPdfAttached}
+              style={{background:panel.bcPdfAttached?C.greenDim:"none",border:`1px solid ${panel.bcPdfAttached?C.green+"88":"#38bdf888"}`,color:panel.bcPdfAttached?C.green:"#38bdf8",cursor:panel.bcPdfAttached?"default":"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1}}>
+              {attachingPdf?"Working…":panel.bcPdfAttached?"✓ Uploaded to BC":"📎 Upload to BC"}
             </button>
           )}
           {attachPdfMsg&&<span style={{fontSize:11,color:attachPdfMsg.startsWith("✓")?C.green:attachPdfMsg.startsWith("✗")?C.red:C.muted,fontWeight:600}}>{attachPdfMsg}</span>}
