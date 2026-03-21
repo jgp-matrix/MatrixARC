@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.226";
+const APP_VERSION="v1.17.227";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2041,18 +2041,44 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx){
   doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...accent);
   doc.text("BILL OF MATERIALS",12,divY+7);
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow);
+  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom);
   doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-  doc.text(`${bom.length} items`,W-12,divY+7,{align:"right"});
+  doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-12,divY+7,{align:"right"});
 
   // ── BOM table — fit to remaining page height ──
   const tableStart=divY+10;
   const tableEnd=H-14; // leave room for footer
   const availH=tableEnd-tableStart;
-  // Estimate rows per page — use dynamic fontSize to fit all on one page
   const headerH=8,rowH=6.5;
   const maxRows=Math.floor((availH-headerH)/rowH);
   const fontSize=bom.length>maxRows?Math.max(6,8*(maxRows/bom.length)):8;
   const cellPad=fontSize<7?1.2:1.8;
+  const orange=[234,88,12]; // crossed-part highlight color
+
+  // Column config differs based on whether any crosses exist
+  const colStyles=hasCrosses?{
+    0:{cellWidth:7,halign:"center"},
+    1:{cellWidth:11,halign:"center"},
+    2:{cellWidth:35},   // Part # (replacement)
+    3:{cellWidth:30},   // Original Part #
+    4:{cellWidth:"auto"},
+    5:{cellWidth:30},
+    6:{cellWidth:32},
+  }:{
+    0:{cellWidth:8,halign:"center"},
+    1:{cellWidth:13,halign:"center"},
+    2:{cellWidth:42},
+    3:{cellWidth:"auto"},
+    4:{cellWidth:36},
+    5:{cellWidth:38},
+  };
+  const head=hasCrosses
+    ?[["#","Qty","Part #","Original Part #","Description","MFR","Supplier"]]
+    :[["#","Qty","Part #","Description","MFR","Supplier"]];
+  const body=bom.map((r,i)=>hasCrosses
+    ?[i+1,r.qty||1,r.partNumber||"—",r.isCrossed?(r.crossedFrom||"—"):"",r.description||"—",r.manufacturer||"—",r.bcVendorName||"—"]
+    :[i+1,r.qty||1,r.partNumber||"—",r.description||"—",r.manufacturer||"—",r.bcVendorName||"—"]
+  );
 
   doc.autoTable({
     startY:tableStart,
@@ -2062,16 +2088,19 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx){
     bodyStyles:{fontSize,cellPadding:cellPad},
     alternateRowStyles:{fillColor:light},
     styles:{overflow:"ellipsize"},
-    columnStyles:{
-      0:{cellWidth:8,halign:"center"},
-      1:{cellWidth:13,halign:"center"},
-      2:{cellWidth:42},
-      3:{cellWidth:"auto"},
-      4:{cellWidth:36},
-      5:{cellWidth:38},
+    columnStyles:colStyles,
+    head,
+    body,
+    didParseCell:(data)=>{
+      // Highlight crossed part rows: Part # cell gets accent color, Original Part # gets muted orange
+      if(hasCrosses&&data.section==="body"){
+        const row=bom[data.row.index];
+        if(row&&row.isCrossed){
+          if(data.column.index===2){data.cell.styles.textColor=accent;}        // replacement part#
+          if(data.column.index===3){data.cell.styles.textColor=orange;data.cell.styles.fontStyle="italic";} // original part#
+        }
+      }
     },
-    head:[["#","Qty","Part #","Description","MFR","Supplier"]],
-    body:bom.map((r,i)=>[i+1,r.qty||1,r.partNumber||"—",r.description||"—",r.manufacturer||"—",r.bcVendorName||"—"]),
     didDrawPage:()=>{
       doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
       doc.text(`${panel.drawingNo||bcProjectNumber}  ·  ${bom.length} items  ·  ${generated}`,12,H-6);
