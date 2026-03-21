@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.198";
+const APP_VERSION="v1.17.199";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9507,17 +9507,17 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"12px 14px"}}>
                 <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
                 {[
-                  ["Materials",fmt(matCost),C.green,null,null],
-                  ["BOM Contingency",null,C.sub,cBOM,"contingencyBOM"],
-                  ["Consumables",null,C.sub,cCons,"contingencyConsumables"],
-                  ["Labor",fmt(laborEst.totalCost),C.sub,null,null],
-                  ["Total",fmt(grandTotal),C.text,null,null],
+                  ["Materials",fmt(matCost),"#fff",null,null],
+                  ["BOM Contingency",null,"#fff",cBOM,"contingencyBOM"],
+                  ["Consumables",null,"#fff",cCons,"contingencyConsumables"],
+                  ["Labor",fmt(laborEst.totalCost),"#fff",null,null],
+                  ["Total",fmt(grandTotal),"#fff",null,null],
                 ].map(([label,val,color,numVal,key])=>(
                   <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:13}}>
                     <span style={{color:C.muted}}>{label}</span>
                     {key?(
                       <div style={{display:"flex",alignItems:"center",gap:2}}>
-                        <span style={{color:C.muted,fontSize:12}}>$</span>
+                        <span style={{color:"#fff",fontSize:12}}>$</span>
                         <input type="number" min="0" step="50" readOnly={readOnly} value={numVal} className="no-spin"
                           onChange={e=>saveSelectedPricing({[key]:Math.max(0,+e.target.value||0)})}
                           style={{...inp({padding:"3px 5px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:4,width:80,textAlign:"right"}),color}}
@@ -9535,8 +9535,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     <input type="number" min="0" step="1" value={markup} readOnly={readOnly}
                       onChange={e=>saveSelectedPricing({markup:Math.max(0,+e.target.value||0)})}
                       onFocus={e=>e.target.select()}
-                      style={{...inp({padding:"3px 6px",fontSize:13,width:55,textAlign:"right"})}}/>
-                    <span style={{color:C.muted,fontSize:13}}>%</span>
+                      style={{...inp({padding:"3px 6px",fontSize:13,width:55,textAlign:"right"}),color:"#fff"}}/>
+                    <span style={{color:"#fff",fontSize:13}}>%</span>
                   </div>
                   <span style={{fontWeight:800,color:C.accent,fontSize:18,fontVariantNumeric:"tabular-nums"}}>{fmt(sellPrice)}</span>
                 </div>
