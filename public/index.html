@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.141";
+const APP_VERSION="v1.17.142";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6577,8 +6577,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
             {(panel.bom||[]).length>1&&(
               collapsedRows.size>0
-                ?<button onClick={()=>setCollapsedRows(new Set())} style={btn("transparent",C.accent,{fontSize:11,padding:"3px 10px",border:`1px solid ${C.accent}44`})}>⊞ Expand All</button>
-                :<button onClick={()=>setCollapsedRows(new Set((panel.bom||[]).map(r=>r.id)))} style={btn("transparent",C.muted,{fontSize:11,padding:"3px 10px",border:`1px solid ${C.border}`})}>⊟ Collapse All</button>
+                ?<button onClick={()=>setCollapsedRows(new Set())} style={{background:"#1a2a3a",color:C.accent,border:`1px solid ${C.accent}`,borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>⊞ Expand All</button>
+                :<button onClick={()=>setCollapsedRows(new Set((panel.bom||[]).map(r=>r.id)))} style={{background:"#1a1a2a",color:C.sub,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>⊟ Collapse All</button>
             )}
           </div>
           <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
@@ -6610,7 +6610,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                   <tr key={row.id} style={{borderBottom:`1px solid ${C.border}33`,background:rowBg,cursor:"default"}}>
                     <td colSpan={12} style={{padding:"3px 8px"}}>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
-                        <button onClick={()=>toggleRowCollapse(row.id)} title="Expand row" style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:13,padding:"0 2px",lineHeight:1,flexShrink:0}}>▶</button>
+                        <button onClick={()=>toggleRowCollapse(row.id)} title="Expand row" style={{background:"#1a2a3a",border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer",fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,lineHeight:1,flexShrink:0}}>+</button>
                         <span style={{color:C.muted,fontSize:11,minWidth:20,textAlign:"right"}}>{i+1}</span>
                         {row.itemNo&&<span style={{color:C.accent,fontSize:11,fontFamily:"monospace"}}>{row.itemNo}</span>}
                         <span style={{color:C.muted,fontSize:11,minWidth:28}}>×{row.qty||1}</span>
@@ -6842,7 +6842,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                     </td>
                     <td style={{padding:"3px 3px",textAlign:"center",width:56}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:0}}>
-                        <button onClick={()=>toggleRowCollapse(row.id)} title="Collapse row" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"2px 4px",lineHeight:1,opacity:0.5}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.5}>▼</button>
+                        <button onClick={()=>toggleRowCollapse(row.id)} title="Collapse row" style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.sub,cursor:"pointer",fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,lineHeight:1}}>−</button>
                         {!readOnly&&!row.isLaborRow&&<button onClick={()=>deleteBomRow(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"2px 4px",width:28,textAlign:"center"}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
                       </div>
                     </td>
