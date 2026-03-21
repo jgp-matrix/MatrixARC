@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.208";
+const APP_VERSION="v1.17.209";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3350,22 +3350,20 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
   const acceptedSet=new Set((panel.wiringAccepted||[]).map(String));
   return(
     <div ref={barRef} style={{background:C.card,border:compact?`1px solid ${C.accent}`:`1px solid #3a3a55`,borderRadius:compact?8:10,padding:compact?"8px 12px":"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-      <div style={{display:"flex",alignItems:"center",gap:compact?8:20,flexWrap:"wrap"}}>
-        <div style={{display:"flex",alignItems:"center",gap:6,borderRight:compact?`1px solid ${C.accent}`:`1px solid #3a3a55`,paddingRight:compact?10:16,marginRight:compact?0:0}}>
-          <span style={{fontSize:compact?11:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>CONFIDENCE</span>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:compact?11:13,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>OVERALL CONFIDENCE</span>
           <span style={{fontSize:compact?14:18,color:barColor(overall),fontWeight:800}}>{overall}%</span>
         </div>
-        {items.map(it=>(
-          <div key={it.key} onClick={()=>setExpanded(expanded===it.key?null:it.key)}
-            style={{display:"flex",alignItems:"center",gap:compact?4:8,cursor:"pointer",userSelect:"none"}} title={`${it.label}: ${it.val}% — click for details`}>
-            <span style={{fontSize:compact?10:12,color:C.muted,transition:"transform 0.15s",display:"inline-block",transform:expanded===it.key?"rotate(90deg)":"none"}}>▸</span>
-            <span style={{fontSize:compact?11:15,color:expanded===it.key?C.text:C.muted,fontWeight:600}}>{it.label}</span>
-            <div style={{width:compact?44:70,height:compact?7:10,background:"#2a2a40",borderRadius:5,overflow:"hidden",border:"1px solid #3a3a55"}}>
-              <div style={{width:`${it.val}%`,height:"100%",background:barColor(it.val),borderRadius:5,transition:"width 0.3s"}}/>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          {items.map(it=>(
+            <div key={it.key} onClick={()=>setExpanded(expanded===it.key?null:it.key)}
+              style={{display:"flex",alignItems:"center",gap:3,cursor:"pointer",userSelect:"none"}} title={`${it.label}: ${it.val}% — click for details`}>
+              <span style={{fontSize:11,color:C.muted,fontWeight:600}}>{it.label}</span>
+              <span style={{fontSize:11,color:barColor(it.val),fontWeight:700}}>{it.val}%</span>
             </div>
-            <span style={{fontSize:compact?11:15,color:barColor(it.val),fontWeight:700}}>{it.val}%</span>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
       {expanded==="pricing"&&(
         <div style={{marginTop:12,padding:"10px 14px",background:"#0d0d14",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
