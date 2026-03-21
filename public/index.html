@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.155";
+const APP_VERSION="v1.17.156";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10000,6 +10000,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
   const [autoPrintRfq,setAutoPrintRfq]=useState(false);
   const [rfqEmailModal,setRfqEmailModal]=useState(null);
   const [showRfqHistory,setShowRfqHistory]=useState(false);
+  const [quoteWarnRows,setQuoteWarnRows]=useState(null); // null=hidden, array=showing
   const [showSqModal,setShowSqModal]=useState(false);
   const [sqPanelBom,setSqPanelBom]=useState(null);
   const saveTimer=useRef(null);
@@ -10061,6 +10062,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
     setRfqLoading(false);
   }
 
+  function handlePrintQuote(){
+    const now=Date.now();
+    const staleMs=60*24*60*60*1000;
+    const allBom=(projectRef.current.panels||[]).flatMap(p=>p.bom||[]);
+    const warn=allBom.filter(r=>{
+      if(r.isLaborRow||r.customerSupplied)return false;
+      if(r.priceSource==="ai")return true;
+      if(r.priceSource==="manual")return false;
+      const isBC=r.priceSource==="bc"&&"bcPoDate"in r;
+      const dt=isBC?r.bcPoDate:r.priceDate;
+      return dt&&dt<now-staleMs;
+    });
+    if(warn.length>0){setQuoteWarnRows(warn);}
+    else{setAutoPrint(true);setView("quote");}
+  }
+
   function onRfqPrint(groups){
     setRfqGroups(groups);
     setAutoPrintRfq(true);
@@ -10102,7 +10119,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
             uid={uid}
             readOnly={readOnly}
             onBack={onBack}
-            onViewQuote={()=>{setAutoPrint(true);setView("quote");}}
+            onViewQuote={handlePrintQuote}
             onPrintRfq={onPrintRfq}
             onSendRfqEmails={onSendRfqEmails}
             onShowRfqHistory={()=>setShowRfqHistory(true)}
@@ -10115,6 +10132,35 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} onClose={()=>setShowRfqHistory(false)}/>}
+          {quoteWarnRows&&ReactDOM.createPortal(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+              <div style={{background:"#0d0d1a",border:"1px solid #b45309",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                  <span style={{fontSize:22}}>⚠️</span>
+                  <div style={{fontSize:15,fontWeight:800,color:"#fbbf24"}}>Pricing May Be Outdated</div>
+                </div>
+                <div style={{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}}>
+                  {quoteWarnRows.filter(r=>r.priceSource==="ai").length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{quoteWarnRows.filter(r=>r.priceSource==="ai").length} item{quoteWarnRows.filter(r=>r.priceSource==="ai").length!==1?"s":""}</strong> with <strong style={{color:"#c084fc"}}>AI-estimated pricing</strong> — not confirmed from a real source.</div>}
+                  {quoteWarnRows.filter(r=>r.priceSource!=="ai").length>0&&<div>• <strong style={{color:"#f1f5f9"}}>{quoteWarnRows.filter(r=>r.priceSource!=="ai").length} item{quoteWarnRows.filter(r=>r.priceSource!=="ai").length!==1?"s":""}</strong> with pricing <strong style={{color:"#fb923c"}}>older than 60 days</strong>.</div>}
+                </div>
+                <div style={{background:"#0a0a18",border:"1px solid #2a2a3e",borderRadius:6,maxHeight:180,overflowY:"auto",marginBottom:16}}>
+                  {quoteWarnRows.map((r,i)=>(
+                    <div key={r.id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:i<quoteWarnRows.length-1?"1px solid #1a1a2e":"none",fontSize:12}}>
+                      <span style={{color:r.priceSource==="ai"?"#c084fc":"#fb923c",fontWeight:700,fontSize:10,minWidth:24}}>{r.priceSource==="ai"?"AI":"OLD"}</span>
+                      <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:120}}>{r.partNumber||"—"}</span>
+                      <span style={{color:"#64748b",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||""}</span>
+                      <span style={{color:"#475569",fontSize:10,whiteSpace:"nowrap"}}>{r.priceSource==="ai"?"AI est.":r.bcPoDate||r.priceDate?new Date(r.bcPoDate||r.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"no date"}</span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Run <strong style={{color:"#f1f5f9"}}>Refresh Pricing</strong> or send RFQs to get current pricing before quoting, or acknowledge and proceed.</div>
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                  <button onClick={()=>setQuoteWarnRows(null)} style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
+                  <button onClick={()=>{setQuoteWarnRows(null);setAutoPrint(true);setView("quote");}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Acknowledge &amp; Proceed</button>
+                </div>
+              </div>
+            </div>
+          ,document.body)}
         </>
       )}
       <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} onClose={()=>setShowSqModal(false)}/>
