@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.143";
+const APP_VERSION="v1.17.144";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4479,15 +4479,16 @@ async function extractTitleBlock(dataUrl){
   if(!_apiKey||!dataUrl)return null;
   try{
     const text=await apiCall({
-      max_tokens:150,
+      max_tokens:200,
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:dataUrl.split(",")[1]}},
         {type:"text",text:`Look at the title block of this engineering drawing (typically in the bottom-right corner).
-Extract exactly three fields:
+Extract exactly four fields:
 - Drawing number (labeled DWG NO., DRAWING NO., JOB NO., DWG #, SHEET, or similar)
 - Drawing title or description (the main name/description of what is shown)
 - Revision (labeled REV, REVISION, REV NO., REV LETTER — typically a letter like A, B, C or a number; empty string if not shown)
-Return ONLY valid JSON, no extra text: {"drawingNo":"...","drawingDesc":"...","drawingRev":"..."}`}
+- Matrix part number (labeled PART NO., PART #, MATRIX PART #, MATRIX P/N, or similar — a company internal part number separate from the drawing number; empty string if not found)
+Return ONLY valid JSON, no extra text: {"drawingNo":"...","drawingDesc":"...","drawingRev":"...","matrixPartNo":"..."}`}
       ]}]
     });
     const m=text.replace(/```json|```/g,"").trim().match(/\{[\s\S]*?\}/);
@@ -5643,9 +5644,9 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       if(firstWithData){
         extractTitleBlock(firstWithData.dataUrl).then(tb=>{
           if(!tb)return;
-          const patched={...updated,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+          const patched={...updated,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||"",name:tb.matrixPartNo||updated.name||""};
           onUpdate(patched);
-          setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
+          setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");if(tb.matrixPartNo)setDraftName(tb.matrixPartNo);
           onSaveImmediate(patched).catch(()=>{});
         }).catch(()=>{});
       }
@@ -5678,8 +5679,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
     const tb=await extractTitleBlock(ensured.dataUrl);
     setExtractingTitle(false);
     if(tb){
-      setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
-      const updated={...panel,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+      setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");if(tb.matrixPartNo)setDraftName(tb.matrixPartNo);
+      const updated={...panel,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||"",name:tb.matrixPartNo||panel.name||""};
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
     }
