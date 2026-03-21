@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.224";
+const APP_VERSION="v1.17.225";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1955,6 +1955,23 @@ async function ensureJsPDF(){
   }
   _jsPdfReady=true;
   return window.jspdf.jsPDF;
+}
+
+function detectSheetMm(w,h){
+  // Identify ANSI engineering sheet size from pixel dimensions.
+  // Uses pixel area + aspect to select the closest standard size regardless of scan DPI.
+  const landscape=w>=h;
+  const [lw,lh]=landscape?[w,h]:[h,w];
+  const area=lw*lh;
+  // Pixel-area thresholds calibrated so any reasonable scan DPI (72–300) maps to the right size.
+  // ANSI: A=8.5×11, B=11×17, C=17×22, D=22×34, E=34×44 inches → mm × 25.4
+  let mmL,mmS;
+  if(area>20000000){mmL=1117.6;mmS=863.6;}       // E 44×34"
+  else if(area>8000000){mmL=863.6;mmS=558.8;}     // D 34×22"
+  else if(area>3500000){mmL=558.8;mmS=431.8;}     // C 22×17"
+  else if(area>1500000){mmL=431.8;mmS=279.4;}     // B 17×11"
+  else{mmL=279.4;mmS=215.9;}                       // A 11×8.5"
+  return landscape?{mmW:mmL,mmH:mmS}:{mmW:mmS,mmH:mmL};
 }
 
 async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx){
@@ -6294,8 +6311,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
         if(!pg.dataUrl)continue;
         const dims=await new Promise(res=>{const img=new Image();img.onload=()=>res({w:img.naturalWidth,h:img.naturalHeight});img.onerror=()=>res({w:816,h:1056});img.src=pg.dataUrl;});
         const orient=dims.w>dims.h?"landscape":"portrait";
-        // Convert px to mm (96 dpi)
-        const mmW=dims.w*25.4/96;const mmH=dims.h*25.4/96;
+        // Detect engineering sheet size (A/B/C/D/E) from pixel area
+        const {mmW,mmH}=detectSheetMm(dims.w,dims.h);
         doc.addPage([mmW,mmH],orient);
         doc.addImage(pg.dataUrl,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
