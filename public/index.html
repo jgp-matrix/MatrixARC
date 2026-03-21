@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.129";
+const APP_VERSION="v1.17.130";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4604,7 +4604,7 @@ function DrawingLightbox({pages,startId,onClose}){
 }
 
 // ── BC ITEM BROWSER MODAL ──
-function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
+function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError}){
   const [query,setQuery]=useState(initialQuery||"");
   const [field,setField]=useState("both");
   const [results,setResults]=useState([]);
@@ -4808,6 +4808,37 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages}){
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,flexShrink:0}}>✕</button>
         </div>
+        {/* BC Sync Error banner */}
+        {syncError&&(()=>{
+          const e=syncError.error||"";
+          const isBcSetup=/Posting Group/i.test(e);
+          const isMissing=/must select an existing item/i.test(e);
+          function friendlyErr(e){
+            if(/must select an existing item/i.test(e))return"This part number does not exist in BC. Search for the correct item below, or create a new item.";
+            if(/Gen\.?\s*Prod\.?\s*Posting Group must have a value/i.test(e))return"The BC item is missing its Gen. Prod. Posting Group.";
+            if(/Inventory Posting Group must have a value/i.test(e))return"The BC item is missing its Inventory Posting Group.";
+            if(/posting group/i.test(e))return"The BC item is missing a required Posting Group field.";
+            if(/429|Too Many/i.test(e))return"BC rate limit was hit during sync — retry sync from the panel.";
+            if(/field.*validation/i.test(e))return"A required BC item field failed validation.";
+            const m=e.match(/"message":"([^"]{0,160})/);
+            return m?m[1]:"BC returned an error when pushing this item.";
+          }
+          const msg=friendlyErr(e);
+          return(
+            <div style={{marginBottom:10,background:isBcSetup?"#1a0900":"#160a0a",border:`1px solid ${C.red}`,borderRadius:8,padding:"10px 14px",fontSize:12,display:"flex",flexDirection:"column",gap:4}}>
+              <div style={{fontWeight:700,color:C.red,fontSize:13}}>⚠ Last sync failed for this item</div>
+              <div style={{color:"#ffb3a7"}}>{msg}</div>
+              {isBcSetup&&(
+                <div style={{marginTop:4,padding:"6px 10px",background:"#2a1000",borderRadius:6,border:`1px solid ${C.red}55`,color:C.yellow,fontSize:11,fontWeight:600}}>
+                  This is a BC data setup issue. The item exists in BC but is missing required posting group fields. You or a BC administrator must open this item in Business Central and fill in the missing Posting Group values before it can be included on a project planning line.
+                </div>
+              )}
+              {isMissing&&(
+                <div style={{marginTop:4,color:C.muted,fontSize:11}}>Search for the correct BC item below and select it to replace the part on this BOM row.</div>
+              )}
+            </div>
+          );
+        })()}
         {/* Customer Supplied banner */}
         {customerSupplied&&(
           <div style={{marginBottom:10,background:"#1a0d2a",border:`1px solid #a78bfa`,borderRadius:8,padding:"7px 14px",fontSize:12,color:"#a78bfa",fontWeight:600,display:"flex",alignItems:"center",gap:8}}>
@@ -7016,6 +7047,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
           initialQuery={bcBrowserQuery}
           targetRow={bcBrowserTarget?(panel.bom||[]).find(r=>r.id===bcBrowserTarget)||null:null}
           pages={panel.pages||[]}
+          syncError={bcBrowserTarget?bcSyncErrors[bcBrowserTarget]||null:null}
           onClose={()=>{setBcBrowserOpen(false);setBcBrowserTarget(null);setBcBrowserQuery("");}}
           onSelect={item=>{
             if(bcBrowserTarget){
