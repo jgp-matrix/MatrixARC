@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.216";
+const APP_VERSION="v1.17.217";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -902,20 +902,20 @@ async function bcGetCompanyId(){
 async function bcGetJobGuid(jobNumber){
   const compId=await bcGetCompanyId();
   if(!compId||!_bcToken)throw new Error("Not connected to BC");
-  const r=await fetch(`${BC_API_BASE}/companies(${compId})/jobs?$filter=number eq '${encodeURIComponent(jobNumber)}'&$select=id,number`,{
+  const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects?$filter=number eq '${encodeURIComponent(jobNumber)}'&$select=id,number`,{
     headers:{"Authorization":`Bearer ${_bcToken}`}
   });
   if(!r.ok)throw new Error(`BC job lookup failed: ${r.status}`);
   const d=await r.json();
   const job=(d.value||[])[0];
-  if(!job)throw new Error(`BC job '${jobNumber}' not found`);
+  if(!job)throw new Error(`BC project '${jobNumber}' not found`);
   return{compId,jobId:job.id};
 }
 
 async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer){
   const {compId,jobId}=await bcGetJobGuid(jobNumber);
   // Step 1: create attachment record
-  const cr=await fetch(`${BC_API_BASE}/companies(${compId})/jobs(${jobId})/documentAttachments`,{
+  const cr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
     method:"POST",
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
     body:JSON.stringify({fileName})
