@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.130";
+const APP_VERSION="v1.17.131";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4637,6 +4637,11 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [vendorNames,setVendorNames]=useState({});
   const [purchaseData,setPurchaseData]=useState({});
   const [customerSupplied,setCustomerSupplied]=useState(false);
+  const [editVendorItem,setEditVendorItem]=useState(null); // item.number being edited
+  const [editVendorNo,setEditVendorNo]=useState("");
+  const [savingVendor,setSavingVendor]=useState(false);
+  const [vendorSaveErr,setVendorSaveErr]=useState("");
+  const [vendorListLoaded,setVendorListLoaded]=useState(false);
   const bomPages=((pages||[]).filter(p=>getPageTypes(p).includes('bom')&&(p.dataUrl||p.storageUrl)));
 
   async function locateInDrawing(pgIdx){
@@ -4787,6 +4792,30 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   function fmtDate(iso){
     if(!iso)return"—";
     try{const d=new Date(iso);return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});}catch(e){return"—";}
+  }
+
+  async function startEditVendor(item){
+    setVendorSaveErr("");
+    setEditVendorNo(vendorNames[item.number]?"":item.vendorNo||"");
+    setEditVendorItem(item.number);
+    if(!vendorListLoaded){
+      setVendorListLoaded(true);
+      const v=await bcListVendors();
+      if(v.length)setBcVendors(v);else setVendorListLoaded(false);
+    }
+  }
+
+  async function saveVendorEdit(itemNo){
+    setSavingVendor(true);setVendorSaveErr("");
+    try{
+      await bcPatchItemOData(itemNo,{Vendor_No:editVendorNo});
+      const name=editVendorNo?(bcVendors.find(v=>v.number===editVendorNo)||{}).displayName||editVendorNo:"";
+      setVendorNames(prev=>({...prev,[itemNo]:name}));
+      setEditVendorItem(null);
+    }catch(e){
+      setVendorSaveErr(e.message||"Failed to update vendor");
+    }
+    setSavingVendor(false);
   }
 
   const backdropMdRef=useRef(false);
@@ -4991,7 +5020,36 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)"}>
                   <td style={{padding:"7px 10px",fontWeight:600,whiteSpace:"nowrap"}}>{item.number}</td>
                   <td style={{padding:"7px 10px",color:C.sub}}>{item.displayName}</td>
-                  <td style={{padding:"7px 10px",color:vendorNames[item.number]?C.sub:C.muted,fontSize:12,whiteSpace:"nowrap"}}>{vendorNames[item.number]||"…"}</td>
+                  <td style={{padding:"4px 6px",fontSize:12,whiteSpace:"nowrap",minWidth:160}} onClick={e=>e.stopPropagation()}>
+                    {editVendorItem===item.number?(
+                      <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                        <select value={editVendorNo} onChange={e=>setEditVendorNo(e.target.value)}
+                          style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:6,padding:"4px 8px",color:C.text,fontSize:12,width:"100%"}}>
+                          <option value="">— None —</option>
+                          {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
+                        </select>
+                        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                          <button disabled={savingVendor} onClick={()=>saveVendorEdit(item.number)}
+                            style={{background:"#166534",color:"#4ade80",border:"none",borderRadius:5,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer",opacity:savingVendor?0.6:1}}>
+                            {savingVendor?"Saving…":"Save"}
+                          </button>
+                          <button onClick={()=>{setEditVendorItem(null);setVendorSaveErr("");}}
+                            style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,textDecoration:"underline"}}>Cancel</button>
+                          {vendorSaveErr&&<span style={{color:C.red,fontSize:10}}>{vendorSaveErr}</span>}
+                        </div>
+                      </div>
+                    ):(
+                      <div style={{display:"flex",alignItems:"center",gap:6,cursor:"default"}}>
+                        <span style={{color:vendorNames[item.number]?C.sub:C.muted}}>{vendorNames[item.number]||"—"}</span>
+                        <button title="Edit vendor in BC" onClick={()=>startEditVendor(item)}
+                          style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px",fontSize:10,color:C.muted,cursor:"pointer",flexShrink:0,opacity:0.7}}
+                          onMouseEnter={e=>{e.target.style.borderColor=C.accent;e.target.style.color=C.accent;e.target.style.opacity=1;}}
+                          onMouseLeave={e=>{e.target.style.borderColor=C.border;e.target.style.color=C.muted;e.target.style.opacity=0.7;}}>
+                          ✎
+                        </button>
+                      </div>
+                    )}
+                  </td>
                   <td style={{padding:"7px 10px",textAlign:"right",fontVariantNumeric:"tabular-nums"}}>
                     {purchaseData[item.number]?.directUnitCost!=null?(
                       <span title="Last PO cost">${purchaseData[item.number].directUnitCost.toFixed(2)}</span>
