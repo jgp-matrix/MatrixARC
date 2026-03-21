@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.145";
+const APP_VERSION="v1.17.146";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1771,7 +1771,14 @@ async function bcCheckItemOnProjects(itemNo){
 const RFQ_STALE_MS=60*24*60*60*1000; // 60 days
 async function buildRfqSupplierGroups(bom){
   const now=Date.now();
-  const eligible=bom.filter(r=>!r.isLaborRow&&r.priceSource==="ai"&&(!r.priceDate||r.priceDate<now-RFQ_STALE_MS));
+  const eligible=bom.filter(r=>{
+    if(r.isLaborRow||r.priceSource==="manual")return false;
+    // Use the same date shown in the Priced column
+    const isBC=r.priceSource==="bc"&&"bcPoDate"in r;
+    const displayDate=isBC?r.bcPoDate:r.priceDate;
+    // Include if no date (No POs / never priced) OR if older than 60 days
+    return!displayDate||displayDate<now-RFQ_STALE_MS;
+  });
   if(!eligible.length)return{groups:[],noItems:true};
   // Group by vendor — use user-assigned bcVendorName first, then BC lookup
   const groupMap={};
@@ -9748,7 +9755,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
     try{
       const allBom=mergeBoms((projectRef.current.panels||[]).map(p=>p.bom||[]));
       const result=await buildRfqSupplierGroups(allBom);
-      if(result.noItems){setRfqLoading(false);alert("No AI-estimated items eligible for RFQ (items must be AI-priced and 60+ days old, or have no price date).");return;}
+      if(result.noItems){setRfqLoading(false);alert("No items eligible for RFQ. Items qualify if they show 'No POs' or have a price date older than 60 days (manual-priced items are excluded).");return;}
       setRfqGroups(result.groups);
       setAutoPrintRfq(true);
     }catch(e){console.error("RFQ build error:",e);alert("Failed to build RFQ: "+(e.message||e));}
