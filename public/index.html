@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.144";
+const APP_VERSION="v1.17.145";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5977,7 +5977,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       if(bcItem.displayName&&!r.description)updates.description=bcItem.displayName;
       if(bcItem._vendorName&&!r.manufacturer)updates.manufacturer=bcItem._vendorName;
       if(asCross){
-        // autoReplace:true — APEX selection immediately trains the learning database
+        // autoReplace:true — ARC selection immediately trains the learning database
         saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost},true)
           .then(alts=>setAlternates([...alts])).catch(()=>{});
       }else if(correctionType){
@@ -6721,7 +6721,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>Auto-Loaded</span>
                           )}
                           {f==="partNumber"&&row.isCrossed&&(
-                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>{row.autoReplaced?"APEX crossed":"crossed item"}</span>
+                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>{row.autoReplaced?"ARC crossed":"crossed item"}</span>
                           )}
                           {f==="partNumber"&&row.isCorrection&&(
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>
@@ -6875,7 +6875,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                     {crossedItems.map((r,i)=>(
                       <div key={r.id} style={{fontSize:12,color:C.sub,marginBottom:2}}>
                         <span style={{color:C.muted}}>{i+1}.</span>{" "}
-                        {r.autoReplaced&&<span style={{fontSize:10,color:"#a78bfa",fontWeight:700,marginRight:4}}>[APEX]</span>}
+                        {r.autoReplaced&&<span style={{fontSize:10,color:"#a78bfa",fontWeight:700,marginRight:4}}>[ARC]</span>}
                         <span style={{color:C.red,fontWeight:600}}>{r.crossedFrom}</span>
                         <span style={{color:C.muted}}> → </span>
                         <span style={{color:C.accent,fontWeight:600}}>{r.partNumber}</span>
@@ -7234,7 +7234,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
             onMouseDown={e=>{if(e.target===e.currentTarget)dismiss();}}>
             <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
-              <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>APEX — Part Number Change Detected</div>
+              <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>ARC — Part Number Change Detected</div>
               <div style={{fontSize:13,color:C.muted,marginBottom:12}}>
                 <span style={{color:C.red,fontWeight:700}}>{crossOrCorrectPending.origPN}</span>
                 <span style={{color:C.muted}}> → </span>
@@ -7242,7 +7242,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               </div>
               <div style={{fontSize:11,background:"#120a2a",border:"1px solid #a78bfa",borderRadius:6,padding:"7px 10px",marginBottom:16,display:"flex",alignItems:"center",gap:6}}>
                 <span style={{fontSize:13}}>🤖</span>
-                <span style={{color:"#a78bfa",fontWeight:700}}>APEX suggests: </span>
+                <span style={{color:"#a78bfa",fontWeight:700}}>ARC suggests: </span>
                 <span style={{color:C.text,fontWeight:600}}>{aiSug==='format'?'Formatting Error':'Bad Extraction'}</span>
                 <span style={{color:C.muted,fontSize:10,marginLeft:2}}>— based on part number similarity</span>
               </div>
@@ -7615,7 +7615,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
           {phase==="thinking"&&(
             <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"48px 0",gap:14}}>
               <div style={{fontSize:36,animation:"spin 1.2s linear infinite",display:"inline-block"}}>⚙</div>
-              <div style={{fontSize:13,color:C.muted}}>APEX is generating your preliminary BOM…</div>
+              <div style={{fontSize:13,color:C.muted}}>ARC is generating your preliminary BOM…</div>
             </div>
           )}
           {phase==="error"&&(
