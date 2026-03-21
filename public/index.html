@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.136";
+const APP_VERSION="v1.17.137";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6077,23 +6077,35 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             }
             updatedBom=updatedBom.map(r=>{const key=String(r.id);return key in poMap?{...r,bcPoDate:poMap[key]}:r;});
           }
-          const eligible=bom.filter(r=>{const ps=r.priceSource;return ps!=="bc"&&ps!=="manual";});
+          // When called from Refresh button (no bomOverride), re-check bc rows too so updated costs are picked up
+          const eligible=bom.filter(r=>{if(r.isLaborRow)return false;const ps=r.priceSource;if(ps==="manual")return false;if(ps==="bc"&&bomOverride)return false;return true;});
           _pp({msg:`BC: Fuzzy-matching ${eligible.length} items…`,pct:27});
           await bcGetVendorMap();
           const bcMap={};
           const fuzzySugg={};
           for(let i=0;i<eligible.length;i++){
-            const pn=(eligible[i].partNumber||"").trim();
+            const row=eligible[i];
+            const pn=(row.partNumber||"").trim();
             if(!pn)continue;
-            _pp({msg:`BC: Fuzzy lookup ${i+1}/${eligible.length}: ${pn}`,pct:27+Math.round((i/eligible.length)*20)});
+            _pp({msg:`BC: ${row.priceSource==="bc"?"Refreshing":"Fuzzy lookup"} ${i+1}/${eligible.length}: ${pn}`,pct:27+Math.round((i/eligible.length)*20)});
+            // Already bc-priced: exact lookup to get current cost (don't fuzzy-match, avoid changing part number)
+            if(row.priceSource==="bc"){
+              const exact=await bcLookupItem(pn);
+              if(exact&&exact.unitCost!=null){
+                const vNo=await bcGetItemVendorNo(pn);
+                const lp=await bcGetLastPurchase(pn);
+                bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:lp?new Date(lp.postingDate).getTime():null};
+              }
+              continue;
+            }
             const result=await bcFuzzyLookup(pn);
             if(result.match&&result.match.unitCost!=null){
               const matchNo=result.match.number||pn;
               const vNo=await bcGetItemVendorNo(matchNo);
               const lp=await bcGetLastPurchase(matchNo);
-              bcMap[String(eligible[i].id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:lp?new Date(lp.postingDate).getTime():null};
+              bcMap[String(row.id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:lp?new Date(lp.postingDate).getTime():null};
             } else if(result.suggestions.length>0){
-              fuzzySugg[String(eligible[i].id)]=result.suggestions;
+              fuzzySugg[String(row.id)]=result.suggestions;
             }
           }
           bcCount=Object.keys(bcMap).length;
@@ -6138,7 +6150,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       }
     }
 
-    const panelBase=panelOverride||panel;
+    const panelBase=panelOverride||panelRef.current;
     const mergedFuzzy={...(panelBase.bcFuzzySuggestions||{}),...bcFuzzySuggestions};
     const updated={...panelBase,bom:updatedBom,status:"costed",bcFuzzySuggestions:Object.keys(mergedFuzzy).length?mergedFuzzy:undefined};
     onUpdate(updated);
