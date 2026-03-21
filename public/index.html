@@ -195,7 +195,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.184";
+const APP_VERSION="v1.17.185";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5579,6 +5579,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [reExtracting,setReExtracting]=useState(false);
   const [feedbackSaved,setFeedbackSaved]=useState(false);
   const [err,setErr]=useState("");
+  const [stampingDrawings,setStampingDrawings]=useState(false);
   const [partLibrary,setPartLibrary]=useState([]);
   const [partCorrections,setPartCorrections]=useState([]);
   const [aiPricing,setAiPricing]=useState(false);
@@ -6077,6 +6078,30 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
     const updated={...panel,drawingNo:draftNo.trim(),drawingDesc:draftDesc.trim(),drawingRev:draftRev.trim(),requestedShipDate:draftShipDate};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
+  }
+  // TEMP — stamp existing drawings for testing; remove after rollout
+  async function stampExistingDrawings(){
+    if(!pages.length||!projectId)return;
+    setStampingDrawings(true);
+    try{
+      const today=new Date().toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'numeric'});
+      const statusLabel=panel.status==="quoted"||panel.status==="costed"?"QUOTE":panel.status==="validated"?"VALIDATED":"EXTRACTED";
+      const updatedPages=await Promise.all(pages.map(async(pg,pgIdx)=>{
+        const withData=await ensureDataUrl(pg);
+        if(!withData.dataUrl)return pg;
+        const stamped=await burnStampCanvas(withData.dataUrl,{
+          left:`${statusLabel} · ${today}`,
+          center:`${pgIdx+1} of ${pages.length}`,
+          right:[bcProjectNumber,panel.drawingNo,panel.requestedShipDate].filter(Boolean).join(' · ')
+        });
+        const newUrl=await uploadPageImage(uid,projectId,pg.id,stamped);
+        return{...pg,storageUrl:newUrl,dataUrl:stamped};
+      }));
+      const updated={...panel,pages:updatedPages};
+      onUpdate(updated);
+      try{onSaveImmediate(updated);}catch(e){}
+    }catch(e){console.error('Stamp drawings failed:',e);}
+    setStampingDrawings(false);
   }
   // Auto-sync to BC when the number of BC-confirmed items changes (debounced 3s)
   useEffect(()=>{
@@ -6834,6 +6859,12 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             <button data-tip="Re-run AI extraction on tagged BOM pages to rebuild the bill of materials" onClick={runExtraction} disabled={extracting}
               style={{background:"none",border:`1px solid ${C.accent}88`,color:C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:extracting?0.6:1}}>
               {extracting?"Extracting…":"🔄 Re-Extract"}
+            </button>
+          )}
+          {pages.length>0&&!readOnly&&(
+            <button data-tip="Burn overlay stamp into existing drawing images in storage (test)" onClick={stampExistingDrawings} disabled={stampingDrawings}
+              style={{background:"none",border:`1px solid ${C.yellow}88`,color:C.yellow,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:stampingDrawings?0.5:1}}>
+              {stampingDrawings?"Stamping…":"🔏 Stamp Drawings"}
             </button>
           )}
         </div>
