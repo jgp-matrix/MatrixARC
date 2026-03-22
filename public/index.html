@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.235";
+const APP_VERSION="v1.17.236";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2000,17 +2000,20 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   doc.setFontSize(fs(12));doc.setFont("helvetica","normal");
   doc.text("PANEL PRODUCTION TRAVELER",W-margin,m(16),{align:"right"});
 
-  // ── DWG title block ──
-  const dwgTitle=[panel.drawingNo||bcProjectNumber,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join("  ·  ");
-  doc.setFontSize(fs(22));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
-  doc.text(dwgTitle,margin,m(38));
+  // ── Title block: Project # (primary) then DWG# ──
+  const projectNum=q.projectNumber||bcProjectNumber||"—";
+  doc.setFontSize(fs(26));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+  doc.text(projectNum,margin,m(35));
+  const dwgTitle=[panel.drawingNo,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join("  ·  ");
+  doc.setFontSize(fs(16));doc.setFont("helvetica","bold");doc.setTextColor(...mid);
+  doc.text(dwgTitle,margin,m(44));
   if(panel.drawingDesc){
-    doc.setFontSize(fs(11));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-    doc.text(panel.drawingDesc,margin,m(47),{maxWidth:W-margin*2});
+    doc.setFontSize(fs(10));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.text(panel.drawingDesc,margin,m(52),{maxWidth:W-margin*2});
   }
 
   // ── Info grid: 4 columns across full width ──
-  const infoY=m(58);
+  const infoY=m(62);
   const rowH=m(14);
   const fields=[
     ["BC JOB #",bcProjectNumber||"—"],
@@ -2018,11 +2021,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
     ["DWG #",panel.drawingNo||"—"],
     ["REV",panel.drawingRev||"—"],
     ["SHIP DATE",panel.requestedShipDate||q.requestedShipDate||"—"],
-    ["CUSTOMER",q.company||"—"],
-    ["CONTACT",q.contact||"—"],
-    ["PHONE",q.phone||"—"],
     ["SALESPERSON",q.salesperson||"—"],
-    ["PROJECT #",q.projectNumber||bcProjectNumber||"—"],
     ["GENERATED",generated],
     ["STATUS",(panel.status||"draft").toUpperCase()],
   ];
