@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.250";
+const APP_VERSION="v1.17.251";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5855,7 +5855,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               {results.map((item,i)=>(
                 <tr key={item.number+"-"+i}
                   style={{borderBottom:`1px solid ${C.border}33`,background:i%2===0?"transparent":"rgba(255,255,255,0.015)",cursor:"pointer"}}
-                  onClick={()=>onSelect(customerSupplied?{...item,unitCost:0,_customerSupplied:true}:item)}
+                  onClick={()=>{const vn=vendorNames[item.number];const it=vn?{...item,_vendorName:vn}:item;onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
                   onMouseEnter={e=>e.currentTarget.style.background=C.accentDim+"44"}
                   onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)"}>
                   <td style={{padding:"7px 10px",fontWeight:600,whiteSpace:"nowrap"}}>{item.number}</td>
@@ -5895,7 +5895,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                     {purchaseData[item.number]?.postingDate?fmtDate(purchaseData[item.number].postingDate):(purchaseData[item.number]===null?"No POs":"…")}
                   </td>
                   <td style={{padding:"7px 10px",textAlign:"center"}}>
-                    <button onClick={e=>{e.stopPropagation();onSelect(customerSupplied?{...item,unitCost:0,_customerSupplied:true}:item);}}
+                    <button onClick={e=>{e.stopPropagation();const vn=vendorNames[item.number];const it=vn?{...item,_vendorName:vn}:item;onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
                       style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`})}>Use</button>
                   </td>
                 </tr>
