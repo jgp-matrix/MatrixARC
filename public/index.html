@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.237";
+const APP_VERSION="v1.17.238";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2057,8 +2057,6 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   }));
   const otherHrs=laborEst.lines.filter(l=>!LABOR_GROUPS.some(g=>g.cats.has(l.category))).reduce((s,l)=>s+l.hours,0);
   const laborY=divY+m(8);
-  const laborRate=panel.pricing?.laborRate??45;
-  const fmt2=(n)=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 
   // Section header
   doc.setFontSize(fs(7.5));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
@@ -2073,21 +2071,17 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   const lrH=m(7); // row height
   const lrY=laborY+m(3);
   const hrsColX=margin+m(32);
-  const costColX=hrsColX+m(22);
   laborRows.forEach((g,i)=>{
     const y=lrY+i*lrH;
     const isTotal=g.label==="TOTAL";
     if(isTotal){
-      doc.setFillColor(...light);doc.rect(margin,y-m(4.5),costColX-margin+m(18),lrH,"F");
+      doc.setFillColor(...light);doc.rect(margin,y-m(4.5),hrsColX-margin+m(8),lrH,"F");
     }
     doc.setFontSize(fs(isTotal?8:7.5));doc.setFont("helvetica",isTotal?"bold":"normal");doc.setTextColor(...g.color);
     doc.text(g.label,margin+m(1),y);
     doc.setFont("helvetica","bold");
     if(isTotal){doc.setTextColor(...dark);}else{doc.setTextColor(71,85,105);}
     doc.text(`${Math.ceil(g.hrs)} hrs`,hrsColX,y,{align:"right"});
-    const cost=g.hrs*(panel.pricing?.laborRate??45);
-    if(isTotal){doc.setTextColor(...accent);}else{doc.setTextColor(...mid);}
-    doc.text(fmt2(cost),costColX,y,{align:"right"});
   });
 
   const laborDivY=lrY+laborRows.length*lrH+m(3);
