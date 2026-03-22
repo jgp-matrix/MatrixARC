@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.236";
+const APP_VERSION="v1.17.237";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2063,23 +2063,34 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   // Section header
   doc.setFontSize(fs(7.5));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
   doc.text("LABOR ESTIMATE",margin,laborY);
-  doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-  doc.text(`${Math.ceil(laborEst.totalHours)} hrs total  ·  ${fmt2(laborEst.totalCost)}`,W-margin,laborY,{align:"right"});
 
-  // Labor group boxes
-  const boxW=m(38),boxH=m(14),boxGap=m(4);
-  const laborBoxY=laborY+m(3);
-  [...groupHrs,{label:"OTHER",color:mid,hrs:otherHrs},{label:"TOTAL",color:accent,hrs:laborEst.totalHours}].forEach((g,i)=>{
-    const bx=margin+i*(boxW+boxGap);
-    doc.setFillColor(15,23,42);doc.rect(bx,laborBoxY,boxW,boxH,"F");
-    doc.setDrawColor(...g.color);doc.setLineWidth(m(0.4));doc.rect(bx,laborBoxY,boxW,boxH,"S");
-    doc.setFontSize(fs(6.5));doc.setFont("helvetica","bold");doc.setTextColor(...g.color);
-    doc.text(g.label,bx+m(3),laborBoxY+m(5));
-    doc.setFontSize(fs(9));doc.setFont("helvetica","bold");doc.setTextColor(241,245,249);
-    doc.text(`${Math.ceil(g.hrs)} hrs`,bx+m(3),laborBoxY+m(11));
+  // Labor rows: label | hrs | cost — one row per group + total
+  const laborRows=[
+    ...groupHrs,
+    {label:"OTHER",color:mid,hrs:otherHrs},
+    {label:"TOTAL",color:accent,hrs:laborEst.totalHours},
+  ];
+  const lrH=m(7); // row height
+  const lrY=laborY+m(3);
+  const hrsColX=margin+m(32);
+  const costColX=hrsColX+m(22);
+  laborRows.forEach((g,i)=>{
+    const y=lrY+i*lrH;
+    const isTotal=g.label==="TOTAL";
+    if(isTotal){
+      doc.setFillColor(...light);doc.rect(margin,y-m(4.5),costColX-margin+m(18),lrH,"F");
+    }
+    doc.setFontSize(fs(isTotal?8:7.5));doc.setFont("helvetica",isTotal?"bold":"normal");doc.setTextColor(...g.color);
+    doc.text(g.label,margin+m(1),y);
+    doc.setFont("helvetica","bold");
+    if(isTotal){doc.setTextColor(...dark);}else{doc.setTextColor(71,85,105);}
+    doc.text(`${Math.ceil(g.hrs)} hrs`,hrsColX,y,{align:"right"});
+    const cost=g.hrs*(panel.pricing?.laborRate??45);
+    if(isTotal){doc.setTextColor(...accent);}else{doc.setTextColor(...mid);}
+    doc.text(fmt2(cost),costColX,y,{align:"right"});
   });
 
-  const laborDivY=laborBoxY+boxH+m(4);
+  const laborDivY=lrY+laborRows.length*lrH+m(3);
   doc.setDrawColor(...accent);doc.setLineWidth(m(0.3));doc.line(margin,laborDivY,W-margin,laborDivY);
 
   // ── BOM section label ──
