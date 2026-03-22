@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.252";
+const APP_VERSION="v1.17.253";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12103,6 +12103,8 @@ function SupplierPortalPage({token}){
   const [file,setFile]=useState(null);
   const [uploading,setUploading]=useState(false);
   const [done,setDone]=useState(false);
+  const [unitPrices,setUnitPrices]=useState({});
+  const [leadTime,setLeadTime]=useState('');
   useEffect(()=>{
     fbDb.collection('rfqUploads').doc(token).get()
       .then(snap=>{
@@ -12114,16 +12116,31 @@ function SupplierPortalPage({token}){
       })
       .catch(e=>{setError("Could not load RFQ: "+e.message);setLoading(false);});
   },[token]);
-  async function handleUpload(){
-    if(!file||uploading)return;
+  async function handleSubmit(){
+    if(uploading)return;
+    const hasPrice=Object.values(unitPrices).some(v=>v!=='');
+    const hasLeadTime=leadTime.trim()!=='';
+    if(!file&&!hasPrice&&!hasLeadTime){alert("Please upload a PDF or enter pricing before submitting.");return;}
     setUploading(true);
     try{
-      const storageRef=fbStorage.ref(`supplierUploads/${token}/${file.name}`);
-      await storageRef.put(file);
-      const storageUrl=await storageRef.getDownloadURL();
-      await fbDb.collection('rfqUploads').doc(token).update({status:"submitted",submittedAt:Date.now(),fileName:file.name,storageUrl});
+      let storageUrl=null,fileName=null;
+      if(file){
+        const storageRef=fbStorage.ref(`supplierUploads/${token}/${file.name}`);
+        await storageRef.put(file);
+        storageUrl=await storageRef.getDownloadURL();
+        fileName=file.name;
+      }
+      const pricedItems=(info?.lineItems||[]).map((item,i)=>({
+        ...item,
+        unitPrice:unitPrices[i]!==undefined&&unitPrices[i]!==''?parseFloat(unitPrices[i])||null:null,
+      }));
+      const updateData={status:"submitted",submittedAt:Date.now(),lineItems:pricedItems};
+      if(fileName)updateData.fileName=fileName;
+      if(storageUrl)updateData.storageUrl=storageUrl;
+      if(leadTime.trim())updateData.leadTimeDays=parseInt(leadTime)||null;
+      await fbDb.collection('rfqUploads').doc(token).update(updateData);
       setDone(true);
-    }catch(e){alert("Upload failed: "+e.message);}
+    }catch(e){alert("Submission failed: "+e.message);}
     setUploading(false);
   }
   const bg="#f8fafc";const card="#ffffff";const accent="#2563eb";const dark="#1e293b";const muted="#64748b";const border="#e2e8f0";
@@ -12192,15 +12209,30 @@ function SupplierPortalPage({token}){
                   <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Part Number</th>
                   <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Description</th>
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600}}>Qty</th>
+                  <th style={{padding:"8px 12px",textAlign:"right",color:accent,fontWeight:700}}>Unit Price</th>
                 </tr>
               </thead>
               <tbody>
                 {info.lineItems.map((item,i)=>(
                   <tr key={i} style={{borderTop:`1px solid ${border}`}}>
                     <td style={{padding:"8px 12px",color:muted}}>{i+1}</td>
-                    <td style={{padding:"8px 12px",fontWeight:600,color:dark}}>{item.partNumber||"—"}</td>
+                    <td style={{padding:"8px 12px",fontWeight:600,color:dark,whiteSpace:"nowrap"}}>{item.partNumber||"—"}</td>
                     <td style={{padding:"8px 12px",color:dark}}>{item.description||"—"}</td>
                     <td style={{padding:"8px 12px",textAlign:"center",color:dark}}>{item.qty||1}</td>
+                    <td style={{padding:"6px 12px",textAlign:"right"}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:3}}>
+                        <span style={{color:muted,fontSize:13}}>$</span>
+                        <input
+                          type="number" min="0" step="0.01"
+                          placeholder="0.00"
+                          value={unitPrices[i]??''}
+                          onChange={e=>setUnitPrices(prev=>({...prev,[i]:e.target.value}))}
+                          style={{width:90,textAlign:"right",border:`1px solid ${border}`,borderRadius:6,padding:"5px 8px",fontSize:13,fontFamily:"inherit",color:dark,outline:"none",background:"#f8fafc"}}
+                          onFocus={e=>e.target.style.borderColor=accent}
+                          onBlur={e=>e.target.style.borderColor=border}
+                        />
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -12209,19 +12241,35 @@ function SupplierPortalPage({token}){
         )}
         <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"24px",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
           <div style={{fontSize:15,fontWeight:700,color:dark,marginBottom:6}}>Submit Your Quote</div>
-          <div style={{fontSize:13,color:muted,marginBottom:18,lineHeight:1.6}}>Please upload your completed quote as a PDF. It will be delivered directly to our purchasing team.</div>
-          <label style={{display:"block",border:`2px dashed ${file?accent:border}`,borderRadius:8,padding:"28px 20px",textAlign:"center",cursor:"pointer",transition:"border 0.2s",background:file?"#eff6ff":"#fafbfc"}}>
-            <input type="file" accept=".pdf,application/pdf" style={{display:"none"}} onChange={e=>setFile(e.target.files[0]||null)}/>
-            <div style={{fontSize:28,marginBottom:6}}>📄</div>
-            <div style={{fontSize:14,fontWeight:600,color:file?accent:muted}}>{file?file.name:"Click to select PDF"}</div>
-            {file&&<div style={{fontSize:12,color:muted,marginTop:4}}>{(file.size/1024/1024).toFixed(2)} MB</div>}
-          </label>
-          {file&&(
-            <button onClick={handleUpload} disabled={uploading}
-              style={{marginTop:16,width:"100%",background:accent,border:"none",color:"#fff",padding:"12px",borderRadius:8,fontSize:15,fontWeight:700,cursor:uploading?"wait":"pointer",opacity:uploading?0.7:1,fontFamily:"inherit"}}>
-              {uploading?"Uploading…":"Submit Quote →"}
-            </button>
-          )}
+          <div style={{fontSize:13,color:muted,marginBottom:18,lineHeight:1.6}}>Enter pricing above, provide a lead time, and optionally attach your quote as a PDF.</div>
+          <div style={{marginBottom:18}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:dark,marginBottom:6}}>Lead Time (days)</label>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input
+                type="number" min="0" step="1"
+                placeholder="e.g. 14"
+                value={leadTime}
+                onChange={e=>setLeadTime(e.target.value)}
+                style={{width:120,border:`1px solid ${border}`,borderRadius:6,padding:"8px 10px",fontSize:14,fontFamily:"inherit",color:dark,outline:"none",background:"#f8fafc"}}
+                onFocus={e=>e.target.style.borderColor=accent}
+                onBlur={e=>e.target.style.borderColor=border}
+              />
+              <span style={{fontSize:13,color:muted}}>calendar days ARO</span>
+            </div>
+          </div>
+          <div style={{marginBottom:16}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:dark,marginBottom:6}}>Attach Quote PDF <span style={{fontWeight:400,color:muted}}>(optional)</span></label>
+            <label style={{display:"block",border:`2px dashed ${file?accent:border}`,borderRadius:8,padding:"20px",textAlign:"center",cursor:"pointer",transition:"border 0.2s",background:file?"#eff6ff":"#fafbfc"}}>
+              <input type="file" accept=".pdf,application/pdf" style={{display:"none"}} onChange={e=>setFile(e.target.files[0]||null)}/>
+              <div style={{fontSize:24,marginBottom:4}}>📄</div>
+              <div style={{fontSize:13,fontWeight:600,color:file?accent:muted}}>{file?file.name:"Click to attach PDF"}</div>
+              {file&&<div style={{fontSize:12,color:muted,marginTop:3}}>{(file.size/1024/1024).toFixed(2)} MB</div>}
+            </label>
+          </div>
+          <button onClick={handleSubmit} disabled={uploading}
+            style={{width:"100%",background:accent,border:"none",color:"#fff",padding:"12px",borderRadius:8,fontSize:15,fontWeight:700,cursor:uploading?"wait":"pointer",opacity:uploading?0.7:1,fontFamily:"inherit"}}>
+            {uploading?"Submitting…":"Submit Quote →"}
+          </button>
         </div>
       </div>
     </div>
