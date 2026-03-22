@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.231";
+const APP_VERSION="v1.17.232";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9532,6 +9532,30 @@ ${fullText.slice(0,12000)}`;
               </button>
             }
           </div>
+          {/* TEMP TEST BUTTON — remove when BC upload is verified */}
+          {bcProjectNumber&&quoteHeader?.pdfUrl&&(
+            <div style={{marginTop:8,padding:"8px 10px",background:"#1a0d00",border:"1px dashed #f97316",borderRadius:8,display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:10,color:"#f97316",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"}}>Test</span>
+              <button onClick={async()=>{
+                setBcAttachMsg('Uploading test PDF to BC…');
+                try{
+                  const vendor=(quoteHeader.supplier||'Supplier').replace(/[^a-z0-9 &]/gi,' ').replace(/\s+/g,' ').trim();
+                  const rfqId=(quoteHeader.quoteId||'').replace(/[^a-z0-9-_]/gi,'').trim();
+                  const origName=(quoteHeader.fileName||`${vendor} Quote.pdf`).replace(/\.pdf$/i,'');
+                  const bcFileName=`[${vendor}][${rfqId||'RFQ'}] ${origName}.pdf`.replace(/\s+/g,' ');
+                  const resp=await fetch(quoteHeader.pdfUrl);
+                  if(!resp.ok)throw new Error(`Storage fetch ${resp.status}`);
+                  const ab=await resp.arrayBuffer();
+                  await bcAttachPdfToJob(bcProjectNumber,bcFileName,ab);
+                  setBcAttachMsg(`✓ Test upload OK: ${bcFileName}`);
+                  setTimeout(()=>setBcAttachMsg(''),8000);
+                }catch(e){setBcAttachMsg(`⚠ Test failed: ${e.message}`);}
+              }} style={btn('#1a0d00','#f97316',{fontSize:12,border:'1px solid #f9731644',padding:'4px 12px'})}>
+                📎 Test Upload to BC ({bcProjectNumber})
+              </button>
+              <span style={{fontSize:10,color:"#64748b"}}>→ {[quoteHeader.supplier,quoteHeader.quoteId,quoteHeader.fileName].filter(Boolean).join(' · ')}</span>
+            </div>
+          )}
           {bcAttachMsg&&(
             <div style={{fontSize:12,marginTop:6,padding:"5px 10px",borderRadius:6,
               background:bcAttachMsg.startsWith('✓')?C.greenDim:bcAttachMsg.startsWith('⚠')?C.redDim:"#0a0a1a",
