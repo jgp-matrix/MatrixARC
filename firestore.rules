@@ -1,0 +1,78 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users can read/write their own data
+    match /users/{uid}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Supplier quotes — any authenticated user can create/read/update
+    match /supplierQuotes/{quoteId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // BC price update audit log
+    match /bcPriceUpdates/{updateId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Supplier RFQ upload tokens — public read/write (token-based access)
+    match /rfqUploads/{token} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Company data
+    match /companies/{companyId} {
+      function isMember() {
+        return request.auth != null &&
+               exists(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid));
+      }
+      function memberRole() {
+        return get(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)).data.role;
+      }
+      function isAdminMember() {
+        return isMember() && memberRole() == 'admin';
+      }
+      function canWrite() {
+        return isMember() && memberRole() != 'view';
+      }
+
+      allow read: if isMember();
+      // Existing admins can update/delete; any authenticated user can create a new company they own
+      allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if isAdminMember();
+
+      match /members/{memberId} {
+        allow read: if isMember();
+        // Self-add: company creation flow, or accepting an invite
+        allow create: if request.auth != null && memberId == request.auth.uid;
+        // Admin can change roles and remove other members (not self)
+        allow update: if isAdminMember() && memberId != request.auth.uid;
+        allow delete: if isAdminMember() && memberId != request.auth.uid;
+      }
+
+      match /pendingInvites/{token} {
+        // Members can see invite list; invitee can read their own invite to accept it
+        allow read: if isMember() ||
+                    (request.auth != null && resource.data.email == request.auth.token.email);
+        // Admin can create and cancel invites
+        allow create: if isAdminMember();
+        allow delete: if isAdminMember() ||
+                      (request.auth != null && resource.data.email == request.auth.token.email);
+        allow update: if false;
+      }
+
+      match /projects/{projectId} {
+        allow read: if isMember();
+        allow write: if canWrite();
+      }
+
+      match /config/{configId} {
+        allow read: if isMember();
+        allow write: if isAdminMember();
+      }
+    }
+  }
+}
