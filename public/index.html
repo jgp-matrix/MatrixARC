@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.254";
+const APP_VERSION="v1.17.255";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4824,6 +4824,7 @@ function PoReceivedModal({project,bcProjectNumber,onClose,onDone}){
 
 // ── PORTAL SUBMISSIONS MODAL ──
 function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf}){
+  const [applying,setApplying]=useState(null); // submission.id being applied
   const fmtDate=ts=>ts?new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—";
   const fmtPrice=p=>p!=null?"$"+Number(p).toFixed(2):"—";
   return ReactDOM.createPortal(
@@ -4865,7 +4866,7 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
               </table>
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
                 {(sub.lineItems||[]).some(i=>i.unitPrice!=null)&&(
-                  <button onClick={()=>onApplyPrices(sub)} style={{background:"#0d2010",border:"1px solid #4ade80",color:"#4ade80",padding:"5px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:700}}>✓ Apply Prices to BOM</button>
+                  <button disabled={applying===sub.id} onClick={async()=>{setApplying(sub.id);await onApplyPrices(sub);setApplying(null);}} style={{background:"#0d2010",border:"1px solid #4ade80",color:"#4ade80",padding:"5px 14px",borderRadius:6,cursor:applying===sub.id?"wait":"pointer",fontSize:12,fontFamily:"inherit",fontWeight:700,opacity:applying===sub.id?0.6:1}}>{applying===sub.id?"Pushing to BC…":"✓ Apply Prices to BOM"}</button>
                 )}
                 {sub.storageUrl&&<a href={sub.storageUrl} target="_blank" rel="noopener noreferrer" style={{background:"#0d1520",border:"1px solid #0284c7",color:"#38bdf8",padding:"5px 14px",borderRadius:6,fontSize:12,fontFamily:"inherit",fontWeight:600,textDecoration:"none"}}>📄 View PDF</a>}
                 {sub.fileName&&!sub.storageUrl&&<span style={{fontSize:11,color:"#64748b"}}>📄 {sub.fileName}</span>}
@@ -10562,24 +10563,37 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
     update({...projectRef.current,panels:updatedPanels});
   }
 
-  function applyPortalPrices(submission){
+  async function applyPortalPrices(submission){
+    // Build part# → price map
     const priceMap={};
     (submission.lineItems||[]).forEach(item=>{
-      if(item.unitPrice!=null&&item.partNumber){priceMap[(item.partNumber||'').trim().toLowerCase()]=item.unitPrice;}
+      if(item.unitPrice!=null&&item.partNumber){
+        const key=(item.partNumber||'').trim().toLowerCase();
+        priceMap[key]={price:item.unitPrice,partNumber:(item.partNumber||'').trim()};
+      }
     });
     const now=Date.now();
+    // Push each price to BC item card
+    const bcPushes=Object.values(priceMap).map(({price,partNumber})=>
+      bcPatchItemOData(partNumber,{Unit_Cost:price}).catch(e=>console.warn("BC price push failed:",partNumber,e))
+    );
+    await Promise.all(bcPushes);
+    // Apply to BOM — priceSource:'bc', bcPoDate:now so rows don't get flagged
     let matched=0;
     const updatedPanels=(projectRef.current.panels||[]).map(panel=>({
       ...panel,
       bom:(panel.bom||[]).map(row=>{
         const key=(row.partNumber||'').trim().toLowerCase();
-        if(key&&priceMap[key]!=null){matched++;return{...row,unitPrice:priceMap[key],priceSource:'rfq',priceDate:now,bcVendorName:submission.vendorName||row.bcVendorName};}
+        if(key&&priceMap[key]!=null){
+          matched++;
+          return{...row,unitPrice:priceMap[key].price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName};
+        }
         return row;
       })
     }));
     update({...projectRef.current,panels:updatedPanels});
     fbDb.collection('rfqUploads').doc(submission.id).update({status:'imported',importedAt:now}).catch(()=>{});
-    alert(`Applied prices to ${matched} BOM row${matched!==1?'s':''} from ${submission.vendorName||'supplier'}.`);
+    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC.`);
     setShowPortalModal(false);
   }
 
