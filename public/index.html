@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.258";
+const APP_VERSION="v1.17.259";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12217,9 +12217,13 @@ function SupplierPortalPage({token}){
   const [done,setDone]=useState(false);
   const [unitPrices,setUnitPrices]=useState({});
   const [leadTime,setLeadTime]=useState('');
-  const [aiPhase,setAiPhase]=useState(null); // null|'converting'|'extracting'|'done'|'error'
+  const [phase,setPhase]=useState('upload'); // 'upload'|'analyzing'|'review'
+  const [analyzeMsg,setAnalyzeMsg]=useState('');
+  const [aiConfidences,setAiConfidences]=useState({});
   const [aiError,setAiError]=useState(null);
-  const [aiConfidences,setAiConfidences]=useState({}); // index → 'high'|'medium'|'low'
+  const [dragOver,setDragOver]=useState(false);
+  const [itemLeadTimes,setItemLeadTimes]=useState({});
+
   useEffect(()=>{
     fbDb.collection('rfqUploads').doc(token).get()
       .then(snap=>{
@@ -12231,16 +12235,19 @@ function SupplierPortalPage({token}){
       })
       .catch(e=>{setError("Could not load RFQ: "+e.message);setLoading(false);});
   },[token]);
-  async function runAiExtraction(selectedFile,infoData){
-    if(!selectedFile||!selectedFile.type.includes("pdf"))return;
-    setAiPhase('converting');setAiError(null);
+
+  async function processFile(f){
+    if(!f||!f.type.includes("pdf")){alert("Please select a PDF file.");return;}
+    setFile(f);setPhase('analyzing');setAiError(null);
     try{
+      setAnalyzeMsg(`Reading ${f.name}…`);
       await window.pdfjsReady;
       const pdfjs=window._pdfjs;
-      const buf=await selectedFile.arrayBuffer();
+      const buf=await f.arrayBuffer();
       const pdf=await pdfjs.getDocument({data:buf}).promise;
       const pageImages=[];
       for(let pg=1;pg<=Math.min(pdf.numPages,8);pg++){
+        setAnalyzeMsg(`Processing page ${pg} of ${Math.min(pdf.numPages,8)}…`);
         const page=await pdf.getPage(pg);
         const vp=page.getViewport({scale:2.0});
         const canvas=document.createElement("canvas");
@@ -12248,34 +12255,40 @@ function SupplierPortalPage({token}){
         await page.render({canvasContext:canvas.getContext("2d"),viewport:vp}).promise;
         const dataUrl=canvas.toDataURL("image/jpeg",0.85);
         canvas.width=0;canvas.height=0;
-        pageImages.push(dataUrl.split(",")[1]); // base64 only
+        pageImages.push(dataUrl.split(",")[1]);
       }
-      setAiPhase('extracting');
+      setAnalyzeMsg("AI is reading your quote and extracting prices…");
       const result=await fbFunctions.httpsCallable("extractSupplierQuotePricing")({token,pageImages});
       const extracted=result.data?.extracted||[];
-      // Map extracted prices back to line item indices by part number
-      const lineItems=infoData?.lineItems||[];
-      const newPrices={};
-      const newConf={};
+      const lineItems=info?.lineItems||[];
+      const newPrices={};const newConf={};const newLeadTimes={};
       extracted.forEach(ex=>{
-        if(ex.unitPrice==null)return;
         const idx=lineItems.findIndex(it=>(it.partNumber||'').trim().toLowerCase()===(ex.partNumber||'').trim().toLowerCase());
-        if(idx>=0){newPrices[idx]=String(ex.unitPrice);newConf[idx]=ex.confidence||'medium';}
+        if(idx>=0){
+          if(ex.unitPrice!=null)newPrices[idx]=String(ex.unitPrice);
+          newConf[idx]=ex.confidence||'medium';
+          if(ex.leadTimeDays!=null)newLeadTimes[idx]=String(ex.leadTimeDays);
+        }
       });
-      setUnitPrices(prev=>({...prev,...newPrices}));
+      setUnitPrices(newPrices);
       setAiConfidences(newConf);
-      setAiPhase('done');
+      setItemLeadTimes(newLeadTimes);
+      setPhase('review');
     }catch(e){
       console.warn("AI extraction failed:",e);
       setAiError(e.message||String(e));
-      setAiPhase('error');
+      setPhase('review'); // still go to review so they can enter manually
     }
   }
+
+  function handleDrop(e){
+    e.preventDefault();setDragOver(false);
+    const f=e.dataTransfer.files[0];
+    if(f)processFile(f);
+  }
+
   async function handleSubmit(){
     if(uploading)return;
-    const hasPrice=Object.values(unitPrices).some(v=>v!=='');
-    const hasLeadTime=leadTime.trim()!=='';
-    if(!file&&!hasPrice&&!hasLeadTime){alert("Please upload a PDF or enter pricing before submitting.");return;}
     setUploading(true);
     try{
       let storageUrl=null,fileName=null;
@@ -12288,6 +12301,7 @@ function SupplierPortalPage({token}){
       const pricedItems=(info?.lineItems||[]).map((item,i)=>({
         ...item,
         unitPrice:unitPrices[i]!==undefined&&unitPrices[i]!==''?parseFloat(unitPrices[i])||null:null,
+        leadTimeDays:itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:null,
       }));
       const updateData={status:"submitted",submittedAt:Date.now(),lineItems:pricedItems};
       if(fileName)updateData.fileName=fileName;
@@ -12298,54 +12312,141 @@ function SupplierPortalPage({token}){
     }catch(e){alert("Submission failed: "+e.message);}
     setUploading(false);
   }
+
   const bg="#f8fafc";const card="#ffffff";const accent="#2563eb";const dark="#1e293b";const muted="#64748b";const border="#e2e8f0";
-  if(loading)return(
-    <div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{color:muted,fontSize:15}}>Loading…</div>
-    </div>
-  );
-  if(error)return(
-    <div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"32px 36px",maxWidth:440,width:"100%",boxShadow:"0 4px 24px rgba(0,0,0,0.08)",textAlign:"center"}}>
-        <div style={{fontSize:36,marginBottom:16}}>⚠️</div>
-        <div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Link Not Valid</div>
-        <div style={{fontSize:14,color:muted}}>{error}</div>
+  const inp={border:`1px solid ${border}`,borderRadius:6,padding:"7px 10px",fontSize:14,fontFamily:"inherit",color:dark,outline:"none",background:"#f8fafc"};
+
+  function Header(){
+    return(
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
+        <div>
+          <div style={{fontSize:20,fontWeight:800,color:accent}}>Matrix Systems, Inc.</div>
+          <div style={{fontSize:12,color:muted}}>501 S 300 W · Salt Lake City, UT 84101</div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:11,color:muted,letterSpacing:2,textTransform:"uppercase"}}>Request for Quote</div>
+          <div style={{fontSize:18,fontWeight:700,color:dark}}>{info?.rfqNum||"—"}</div>
+        </div>
       </div>
-    </div>
-  );
-  if(done)return(
-    <div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"32px 36px",maxWidth:440,width:"100%",boxShadow:"0 4px 24px rgba(0,0,0,0.08)",textAlign:"center"}}>
-        <div style={{fontSize:40,marginBottom:16}}>✅</div>
-        <div style={{fontSize:18,fontWeight:700,color:dark,marginBottom:8}}>Quote Submitted</div>
-        <div style={{fontSize:14,color:muted,lineHeight:1.6}}>Your quote has been received by Matrix Systems. We will follow up shortly.</div>
-        {info?.rfqNum&&<div style={{marginTop:16,fontSize:13,color:muted}}><strong>RFQ:</strong> {info.rfqNum}</div>}
-      </div>
-    </div>
-  );
+    );
+  }
+
+  if(loading)return(<div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:muted,fontSize:15}}>Loading…</div></div>);
+  if(error)return(<div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}><div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"32px 36px",maxWidth:440,width:"100%",textAlign:"center"}}><div style={{fontSize:36,marginBottom:16}}>⚠️</div><div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Link Not Valid</div><div style={{fontSize:14,color:muted}}>{error}</div></div></div>);
+  if(done)return(<div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}><div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"32px 36px",maxWidth:440,width:"100%",textAlign:"center"}}><div style={{fontSize:40,marginBottom:16}}>✅</div><div style={{fontSize:18,fontWeight:700,color:dark,marginBottom:8}}>Quote Submitted</div><div style={{fontSize:14,color:muted,lineHeight:1.6}}>Your quote has been received by Matrix Systems. We will follow up shortly.</div>{info?.rfqNum&&<div style={{marginTop:16,fontSize:13,color:muted}}><strong>RFQ:</strong> {info.rfqNum}</div>}</div></div>);
   const expired=(info?.expiresAt||0)>0&&Date.now()>(info?.expiresAt||0);
-  if(expired)return(
+  if(expired)return(<div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}><div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"32px 36px",maxWidth:440,width:"100%",textAlign:"center"}}><div style={{fontSize:36,marginBottom:16}}>⌛</div><div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Link Expired</div><div style={{fontSize:14,color:muted}}>This RFQ link has expired. Please contact Matrix Systems for an updated link.</div></div></div>);
+
+  // ── ANALYZING PHASE ──
+  if(phase==='analyzing')return(
     <div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
-      <div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"32px 36px",maxWidth:440,width:"100%",boxShadow:"0 4px 24px rgba(0,0,0,0.08)",textAlign:"center"}}>
-        <div style={{fontSize:36,marginBottom:16}}>⌛</div>
-        <div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Link Expired</div>
-        <div style={{fontSize:14,color:muted}}>This RFQ link has expired. Please contact Matrix Systems for an updated link.</div>
+      <div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"40px 36px",maxWidth:440,width:"100%",textAlign:"center",boxShadow:"0 4px 24px rgba(0,0,0,0.08)"}}>
+        <div style={{fontSize:40,marginBottom:16}}>🤖</div>
+        <div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Analyzing Your Quote</div>
+        <div style={{fontSize:14,color:muted,marginBottom:20,lineHeight:1.6}}>{analyzeMsg}</div>
+        <div style={{height:4,background:"#e2e8f0",borderRadius:2,overflow:"hidden"}}>
+          <div style={{height:"100%",background:accent,borderRadius:2,animation:"progress-pulse 1.5s ease-in-out infinite",width:"60%"}}/>
+        </div>
       </div>
     </div>
   );
+
+  // ── REVIEW PHASE ──
+  if(phase==='review'){
+    const lineItems=info?.lineItems||[];
+    const extractedCount=Object.keys(unitPrices).filter(i=>unitPrices[i]!=='').length;
+    return(
+      <div style={{minHeight:"100vh",background:bg,padding:"32px 16px"}}>
+        <div style={{maxWidth:660,margin:"0 auto"}}>
+          <Header/>
+          <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:10,padding:"16px 20px",marginBottom:20,display:"flex",alignItems:"flex-start",gap:12}}>
+            <span style={{fontSize:22,flexShrink:0}}>📋</span>
+            <div>
+              <div style={{fontSize:14,fontWeight:700,color:"#92400e",marginBottom:3}}>Review Extracted Pricing</div>
+              {aiError
+                ?<div style={{fontSize:13,color:"#991b1b"}}>AI extraction encountered an issue: {aiError}. Please enter prices manually below.</div>
+                :<div style={{fontSize:13,color:"#78350f"}}>AI found prices for <strong>{extractedCount} of {lineItems.length}</strong> items. Please review for accuracy, correct any errors, and fill in any missing prices before submitting.</div>
+              }
+            </div>
+          </div>
+          <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+            <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span style={{fontSize:13,fontWeight:700,color:dark}}>Pricing Review</span>
+              <span style={{fontSize:12,color:muted}}>{file?.name||""}</span>
+            </div>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead>
+                <tr style={{background:"#f1f5f9"}}>
+                  <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Part Number</th>
+                  <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Description</th>
+                  <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600}}>Qty</th>
+                  <th style={{padding:"8px 12px",textAlign:"right",color:accent,fontWeight:700,minWidth:160}}>Unit Price</th>
+                  <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600,minWidth:110}}>Lead Time (days)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lineItems.map((item,i)=>{
+                  const conf=aiConfidences[i];
+                  const hasPrice=unitPrices[i]!==undefined&&unitPrices[i]!=='';
+                  const confColor=conf==='high'?"#166534":conf==='medium'?"#854d0e":"#991b1b";
+                  const confBg=conf==='high'?"#dcfce7":conf==='medium'?"#fef9c3":"#fee2e2";
+                  return(
+                    <tr key={i} style={{borderTop:`1px solid ${border}`,background:hasPrice?"#f0fdf4":!conf?"#fff":"#fff"}}>
+                      <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",fontSize:12}}>{item.partNumber||"—"}</td>
+                      <td style={{padding:"10px 12px",color:muted,fontSize:12}}>{item.description||"—"}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:dark}}>{item.qty||1}</td>
+                      <td style={{padding:"8px 12px"}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6}}>
+                          {conf&&<span style={{fontSize:10,fontWeight:700,borderRadius:4,padding:"2px 6px",background:confBg,color:confColor,flexShrink:0}}>{conf.toUpperCase()}</span>}
+                          {!conf&&!hasPrice&&<span style={{fontSize:11,color:"#dc2626",fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
+                          <span style={{color:muted}}>$</span>
+                          <input type="number" min="0" step="0.01" placeholder="0.00"
+                            value={unitPrices[i]??''}
+                            onChange={e=>setUnitPrices(prev=>({...prev,[i]:e.target.value}))}
+                            style={{width:100,textAlign:"right",...inp,border:`1px solid ${hasPrice?(conf==='high'?"#86efac":conf==='medium'?"#fde047":"#e2e8f0"):"#fca5a5"}`,background:hasPrice?"#f0fdf4":"#fff5f5"}}
+                          />
+                        </div>
+                      </td>
+                      <td style={{padding:"8px 12px",textAlign:"center"}}>
+                        <input type="number" min="0" step="1" placeholder="—"
+                          value={itemLeadTimes[i]??''}
+                          onChange={e=>setItemLeadTimes(prev=>({...prev,[i]:e.target.value}))}
+                          style={{width:70,textAlign:"center",...inp}}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:dark,marginBottom:8}}>Lead Time (days ARO)</label>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime} onChange={e=>setLeadTime(e.target.value)} style={{width:120,...inp}}/>
+              <span style={{fontSize:13,color:muted}}>calendar days after receipt of order</span>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});}}
+              style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              ← Start Over
+            </button>
+            <button onClick={handleSubmit} disabled={uploading}
+              style={{flex:3,background:accent,border:"none",color:"#fff",padding:"12px",borderRadius:8,fontSize:15,fontWeight:700,cursor:uploading?"wait":"pointer",opacity:uploading?0.7:1,fontFamily:"inherit"}}>
+              {uploading?"Submitting…":"✓ Confirm & Submit Quote"}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── UPLOAD PHASE ──
   return(
     <div style={{minHeight:"100vh",background:bg,padding:"32px 16px"}}>
       <div style={{maxWidth:620,margin:"0 auto"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:28}}>
-          <div>
-            <div style={{fontSize:20,fontWeight:800,color:accent}}>Matrix Systems, Inc.</div>
-            <div style={{fontSize:12,color:muted}}>501 S 300 W · Salt Lake City, UT 84101</div>
-          </div>
-          <div style={{textAlign:"right"}}>
-            <div style={{fontSize:11,color:muted,letterSpacing:2,textTransform:"uppercase"}}>Request for Quote</div>
-            <div style={{fontSize:18,fontWeight:700,color:dark}}>{info?.rfqNum||"—"}</div>
-          </div>
-        </div>
+        <Header/>
         <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"20px 24px",marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
           <table style={{fontSize:14,borderCollapse:"collapse"}}>
             <tbody>
@@ -12356,17 +12457,14 @@ function SupplierPortalPage({token}){
         </div>
         {(info?.lineItems||[]).length>0&&(
           <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-            <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,fontSize:13,fontWeight:700,color:dark,letterSpacing:0.3}}>Items Requested</div>
+            <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,fontSize:13,fontWeight:700,color:dark}}>Items Requested ({info.lineItems.length})</div>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-              <thead>
-                <tr style={{background:"#f1f5f9"}}>
-                  <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>#</th>
-                  <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Part Number</th>
-                  <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Description</th>
-                  <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600}}>Qty</th>
-                  <th style={{padding:"8px 12px",textAlign:"right",color:accent,fontWeight:700}}>Unit Price</th>
-                </tr>
-              </thead>
+              <thead><tr style={{background:"#f1f5f9"}}>
+                <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>#</th>
+                <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Part Number</th>
+                <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Description</th>
+                <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600}}>Qty</th>
+              </tr></thead>
               <tbody>
                 {info.lineItems.map((item,i)=>(
                   <tr key={i} style={{borderTop:`1px solid ${border}`}}>
@@ -12374,62 +12472,29 @@ function SupplierPortalPage({token}){
                     <td style={{padding:"8px 12px",fontWeight:600,color:dark,whiteSpace:"nowrap"}}>{item.partNumber||"—"}</td>
                     <td style={{padding:"8px 12px",color:dark}}>{item.description||"—"}</td>
                     <td style={{padding:"8px 12px",textAlign:"center",color:dark}}>{item.qty||1}</td>
-                    <td style={{padding:"6px 12px",textAlign:"right"}}>
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
-                        {aiConfidences[i]&&<span title={`AI confidence: ${aiConfidences[i]}`} style={{fontSize:10,fontWeight:700,borderRadius:4,padding:"1px 5px",background:aiConfidences[i]==='high'?"#dcfce7":aiConfidences[i]==='medium'?"#fef9c3":"#fee2e2",color:aiConfidences[i]==='high'?"#166534":aiConfidences[i]==='medium'?"#854d0e":"#991b1b"}}>{aiConfidences[i].toUpperCase()}</span>}
-                        <span style={{color:muted,fontSize:13}}>$</span>
-                        <input
-                          type="number" min="0" step="0.01"
-                          placeholder="0.00"
-                          value={unitPrices[i]??''}
-                          onChange={e=>setUnitPrices(prev=>({...prev,[i]:e.target.value}))}
-                          style={{width:90,textAlign:"right",border:`1px solid ${aiConfidences[i]?aiConfidences[i]==='high'?"#86efac":aiConfidences[i]==='medium'?"#fde047":"#fca5a5":border}`,borderRadius:6,padding:"5px 8px",fontSize:13,fontFamily:"inherit",color:dark,outline:"none",background:aiConfidences[i]?"#f0fdf4":"#f8fafc"}}
-                          onFocus={e=>e.target.style.borderColor=accent}
-                          onBlur={e=>e.target.style.borderColor=aiConfidences[i]?aiConfidences[i]==='high'?"#86efac":aiConfidences[i]==='medium'?"#fde047":"#fca5a5":border}
-                        />
-                      </div>
-                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-        <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"24px",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-          <div style={{fontSize:15,fontWeight:700,color:dark,marginBottom:6}}>Submit Your Quote</div>
-          <div style={{fontSize:13,color:muted,marginBottom:18,lineHeight:1.6}}>Enter pricing above, provide a lead time, and optionally attach your quote as a PDF.</div>
-          <div style={{marginBottom:18}}>
-            <label style={{display:"block",fontSize:13,fontWeight:600,color:dark,marginBottom:6}}>Lead Time (days)</label>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <input
-                type="number" min="0" step="1"
-                placeholder="e.g. 14"
-                value={leadTime}
-                onChange={e=>setLeadTime(e.target.value)}
-                style={{width:120,border:`1px solid ${border}`,borderRadius:6,padding:"8px 10px",fontSize:14,fontFamily:"inherit",color:dark,outline:"none",background:"#f8fafc"}}
-                onFocus={e=>e.target.style.borderColor=accent}
-                onBlur={e=>e.target.style.borderColor=border}
-              />
-              <span style={{fontSize:13,color:muted}}>calendar days ARO</span>
-            </div>
-          </div>
-          <div style={{marginBottom:16}}>
-            <label style={{display:"block",fontSize:13,fontWeight:600,color:dark,marginBottom:6}}>Attach Quote PDF <span style={{fontWeight:400,color:muted}}>(AI will extract pricing automatically)</span></label>
-            <label style={{display:"block",border:`2px dashed ${file?accent:border}`,borderRadius:8,padding:"20px",textAlign:"center",cursor:"pointer",transition:"border 0.2s",background:file?"#eff6ff":"#fafbfc"}}>
-              <input type="file" accept=".pdf,application/pdf" style={{display:"none"}} onChange={e=>{const f=e.target.files[0]||null;setFile(f);if(f)runAiExtraction(f,info);}}/>
-              <div style={{fontSize:24,marginBottom:4}}>📄</div>
-              <div style={{fontSize:13,fontWeight:600,color:file?accent:muted}}>{file?file.name:"Click to attach PDF"}</div>
-              {file&&<div style={{fontSize:12,color:muted,marginTop:3}}>{(file.size/1024/1024).toFixed(2)} MB</div>}
+        <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"28px 24px",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+          <div style={{fontSize:15,fontWeight:700,color:dark,marginBottom:4}}>Submit Your Quote</div>
+          <div style={{fontSize:13,color:muted,marginBottom:22,lineHeight:1.6}}>Upload your quote PDF below. AI will automatically extract pricing — you'll review before submitting.</div>
+          <div
+            onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+            onDragLeave={()=>setDragOver(false)}
+            onDrop={handleDrop}
+            style={{border:`2px dashed ${dragOver?"#2563eb":border}`,borderRadius:10,padding:"40px 20px",textAlign:"center",transition:"all 0.2s",background:dragOver?"#eff6ff":"#f8fafc",marginBottom:16}}>
+            <div style={{fontSize:36,marginBottom:10}}>📄</div>
+            <div style={{fontSize:15,fontWeight:600,color:dragOver?accent:dark,marginBottom:6}}>{dragOver?"Drop PDF here":"Drag & drop your quote PDF here"}</div>
+            <div style={{fontSize:13,color:muted,marginBottom:16}}>or</div>
+            <label style={{display:"inline-block",background:accent,color:"#fff",fontWeight:700,fontSize:13,padding:"10px 24px",borderRadius:7,cursor:"pointer",fontFamily:"inherit"}}>
+              Browse File
+              <input type="file" accept=".pdf,application/pdf" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)processFile(f);}}/>
             </label>
-            {aiPhase==='converting'&&<div style={{marginTop:10,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:6,padding:"10px 14px",fontSize:13,color:"#1d4ed8",display:"flex",alignItems:"center",gap:8}}><span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>⏳</span> Reading PDF pages…</div>}
-            {aiPhase==='extracting'&&<div style={{marginTop:10,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:6,padding:"10px 14px",fontSize:13,color:"#1d4ed8",display:"flex",alignItems:"center",gap:8}}><span>🤖</span> AI is extracting pricing from your quote… this takes a few seconds.</div>}
-            {aiPhase==='done'&&<div style={{marginTop:10,background:"#f0fdf4",border:"1px solid #86efac",borderRadius:6,padding:"10px 14px",fontSize:13,color:"#166534",display:"flex",alignItems:"center",gap:8}}>✅ Prices extracted — please review and correct any errors above before submitting.</div>}
-            {aiPhase==='error'&&<div style={{marginTop:10,background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:6,padding:"10px 14px",fontSize:13,color:"#991b1b"}}>⚠ AI extraction failed: {aiError}. Please enter prices manually above.</div>}
           </div>
-          <button onClick={handleSubmit} disabled={uploading||aiPhase==='converting'||aiPhase==='extracting'}
-            style={{width:"100%",background:accent,border:"none",color:"#fff",padding:"12px",borderRadius:8,fontSize:15,fontWeight:700,cursor:(uploading||aiPhase==='converting'||aiPhase==='extracting')?"wait":"pointer",opacity:(uploading||aiPhase==='converting'||aiPhase==='extracting')?0.7:1,fontFamily:"inherit"}}>
-            {uploading?"Submitting…":aiPhase==='converting'||aiPhase==='extracting'?"Analyzing PDF…":"Submit Quote →"}
-          </button>
+          <div style={{fontSize:12,color:muted,textAlign:"center"}}>PDF only · Up to 8 pages scanned · Pricing extracted automatically by AI</div>
         </div>
       </div>
     </div>
