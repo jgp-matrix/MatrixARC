@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.232";
+const APP_VERSION="v1.17.233";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2063,21 +2063,22 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   const fontSize=bom.length>maxRows?Math.max(fs(6),baseFontSize*(maxRows/bom.length)):baseFontSize;
   const cellPad=m(fontSize<fs(7)?1.2:1.8);
 
+  // Fixed column widths — table is only as wide as needed, not forced to full page
   const colStyles=hasCrosses?{
     0:{cellWidth:m(7),halign:"center"},
     1:{cellWidth:m(11),halign:"center"},
-    2:{cellWidth:m(35)},
-    3:{cellWidth:m(30)},
-    4:{cellWidth:"auto"},
-    5:{cellWidth:m(30)},
-    6:{cellWidth:m(32)},
+    2:{cellWidth:m(38)},   // Part # (replacement)
+    3:{cellWidth:m(30)},   // Original Part #
+    4:{cellWidth:m(100)},  // Description — fixed, not auto-expanding
+    5:{cellWidth:m(32)},   // MFR
+    6:{cellWidth:m(34)},   // Supplier
   }:{
     0:{cellWidth:m(8),halign:"center"},
     1:{cellWidth:m(13),halign:"center"},
-    2:{cellWidth:m(42)},
-    3:{cellWidth:"auto"},
-    4:{cellWidth:m(36)},
-    5:{cellWidth:m(38)},
+    2:{cellWidth:m(42)},   // Part #
+    3:{cellWidth:m(110)},  // Description — fixed, not auto-expanding
+    4:{cellWidth:m(36)},   // MFR
+    5:{cellWidth:m(38)},   // Supplier
   };
   const head=hasCrosses
     ?[["#","Qty","Part #","Original Part #","Description","MFR","Supplier"]]
@@ -2090,6 +2091,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   doc.autoTable({
     startY:tableStart,
     margin:{left:margin,right:margin,bottom:m(14)},
+    tableWidth:"wrap",
     pageBreak:"avoid",
     headStyles:{fillColor:accent,textColor:255,fontStyle:"bold",fontSize:fontSize+m(0.5),cellPadding:cellPad},
     bodyStyles:{fontSize,cellPadding:cellPad},
