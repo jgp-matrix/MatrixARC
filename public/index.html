@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.244";
+const APP_VERSION="v1.17.245";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1119,6 +1119,41 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   if(!r.ok)throw new Error(`bcAddEcoTask: task ${taskNo} failed (${r.status}): ${await r.text()}`);
   console.log(`bcAddEcoTask: ECO ${ecoNumber} task ${taskNo} created for panel ${panelIndex}`);
   return taskNo;
+}
+
+async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel){
+  // PATCHes the description fields on the four task lines for a specific panel
+  // (Begin-Total 20N00, Posting 20N10, Engineering 20N20, End-Total 20N99)
+  // to match the current drawingDesc/drawingRev values.
+  // Called automatically by bcSyncPanelPlanningLines to keep tasks in sync.
+  const n=panelIndex;
+  const suffix=n*100;
+  const pfx=`${projectNumber}-${suffix}`;
+  const panelDesc=panel.drawingDesc||panel.name||`Panel ${n}`;
+  const rev=panel.drawingRev||"-";
+  const base=20000+n*100;
+  const taskDescs={
+    [String(base)]:    `${pfx} - ${panelDesc}`,
+    [String(base+10)]: `${pfx} Rev ${rev} - ${panelDesc}`,
+    [String(base+20)]: `Engineering Design - ${panelDesc}`,
+    [String(base+99)]: `TOTAL: ${pfx} - ${panelDesc}`,
+  };
+
+  const allPages=await bcDiscoverODataPages();
+  const taskPage=allPages.find(p=>/^project.?task/i.test(p))||allPages.find(p=>/job.?task/i.test(p))||null;
+  if(!taskPage){console.warn("bcSyncPanelTaskDescriptions: no task page found");return;}
+  // Probe field names
+  let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
+  {
+    const pr=await fetch(`${BC_ODATA_BASE}/${taskPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}}
+  }
+  for(const [taskNo,desc] of Object.entries(taskDescs)){
+    const url=`${BC_ODATA_BASE}/${taskPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}')`;
+    const r=await fetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},body:JSON.stringify({Description:desc})});
+    if(r.ok){console.log(`bcSyncPanelTaskDescriptions: task ${taskNo} updated`);}
+    else{const t=await r.text();console.warn(`bcSyncPanelTaskDescriptions: task ${taskNo} PATCH failed (${r.status}):`,t);}
+  }
 }
 
 async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
@@ -6477,6 +6512,8 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       if(!_bcToken){await acquireBcToken(true);}
       if(!_bcToken)throw new Error("Could not connect to Business Central");
       const result=await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel);
+      // Always sync task descriptions so existing projects get updated
+      bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,panel).catch(e=>console.warn("task desc sync failed:",e));
       if(result.failed&&result.failed.length>0){
         setBcSyncStatus("error");
         setSyncFailedAlert(result.failed);
