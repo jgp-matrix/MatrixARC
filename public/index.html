@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.255";
+const APP_VERSION="v1.17.256";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6305,12 +6305,14 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
           const key=String(r.id);
           if(!(key in bcMap))return r;
           const {bcPoDate,unitPrice}=bcMap[key];
+          // Never downgrade a more recent local date (e.g. set from supplier quote import)
+          const newPoDate=(bcPoDate!=null&&(r.bcPoDate==null||bcPoDate>r.bcPoDate))?bcPoDate:r.bcPoDate;
           const priceChanged=unitPrice!==null&&r.unitPrice!==unitPrice;
-          const dateChanged=r.bcPoDate!==bcPoDate;
+          const dateChanged=newPoDate!==r.bcPoDate;
           if(!priceChanged&&!dateChanged)return r;
           changed=true;
           changedIds.push(key);
-          return{...r,bcPoDate,...(priceChanged?{unitPrice}:{})};
+          return{...r,bcPoDate:newPoDate,...(priceChanged?{unitPrice}:{})};
         });
         if(changed){
           const updated={...fresh,bom:newBom};
