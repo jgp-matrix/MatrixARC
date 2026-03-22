@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.238";
+const APP_VERSION="v1.17.239";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2002,19 +2002,21 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
 
   // ── Title block: Project # (primary) then DWG# ──
   const projectNum=q.projectNumber||bcProjectNumber||"—";
-  doc.setFontSize(fs(26));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
-  doc.text(projectNum,margin,m(35));
+  doc.setFontSize(fs(30));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+  doc.text(projectNum,margin,m(32));
   const dwgTitle=[panel.drawingNo,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join("  ·  ");
-  doc.setFontSize(fs(16));doc.setFont("helvetica","bold");doc.setTextColor(...mid);
-  doc.text(dwgTitle,margin,m(44));
+  doc.setFontSize(fs(18));doc.setFont("helvetica","bold");doc.setTextColor(...mid);
+  doc.text(dwgTitle,margin,m(40));
+  let descEndY=m(40);
   if(panel.drawingDesc){
-    doc.setFontSize(fs(10));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-    doc.text(panel.drawingDesc,margin,m(52),{maxWidth:W-margin*2});
+    doc.setFontSize(fs(11));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.text(panel.drawingDesc,margin,m(47),{maxWidth:W-margin*2});
+    descEndY=m(47);
   }
 
-  // ── Info grid: 4 columns across full width ──
-  const infoY=m(62);
-  const rowH=m(14);
+  // ── Info grid: 4 columns ──
+  const infoY=descEndY+m(6);
+  const rowH=m(12);
   const fields=[
     ["BC JOB #",bcProjectNumber||"—"],
     ["LINE #","Line "+(lineIdx+1)],
@@ -2032,11 +2034,11 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
     const row=Math.floor(i/cols);
     const x=margin+col*cellW;
     const y=infoY+row*rowH;
-    if(row%2===0){doc.setFillColor(...light);doc.rect(x,y-m(5),cellW-m(1),m(13),"F");}
-    doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    if(row%2===0){doc.setFillColor(...light);doc.rect(x,y-m(4),cellW-m(1),rowH-m(1),"F");}
+    doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
     doc.text(lbl,x+m(2),y);
-    doc.setFontSize(fs(10));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
-    doc.text(String(val).slice(0,28),x+m(2),y+m(7));
+    doc.setFontSize(fs(11));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+    doc.text(String(val).slice(0,28),x+m(2),y+m(6));
   });
 
   // Divider
