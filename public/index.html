@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.233";
+const APP_VERSION="v1.17.234";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2048,7 +2048,14 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   // ── BOM section label ──
   doc.setFontSize(fs(9));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
   doc.text("BILL OF MATERIALS",margin,divY+m(7));
-  const bom=(panel.bom||[]).filter(r=>!r.isLaborRow);
+  const bom=(panel.bom||[]).filter(r=>!r.isLaborRow).slice().sort((a,b)=>{
+    if(!a.itemNo&&!b.itemNo)return 0;
+    if(!a.itemNo)return 1;
+    if(!b.itemNo)return -1;
+    const an=parseFloat(a.itemNo),bn=parseFloat(b.itemNo);
+    if(!isNaN(an)&&!isNaN(bn))return an-bn;
+    return(a.itemNo||"").localeCompare(b.itemNo||"");
+  });
   const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom);
   doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
   doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,divY+m(7),{align:"right"});
