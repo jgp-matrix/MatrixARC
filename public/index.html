@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.246";
+const APP_VERSION="v1.17.247";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1937,6 +1937,19 @@ async function buildRfqSupplierGroups(bom){
     groupMap[vendorName].items.push(item);
   }
   return{groups:Object.values(groupMap).sort((a,b)=>a.vendorName.localeCompare(b.vendorName)),noItems:false};
+}
+
+function vendorCode(vendorName){
+  // Derives a 3-letter supplier code from the vendor name.
+  // Single word → first 3 letters (Royal→ROY, Siemens→SIE, Wago→WAG).
+  // Two words   → first 2 of word1 + first of word2 (Allen Bradley→ALB, Phoenix Contact→PHC).
+  // 3+ words    → first letter of each of first 3 words (Automation Direct Inc→ADI).
+  const skip=/^(inc|llc|corp|co|ltd|the|and|&)$/i;
+  const words=(vendorName||'').trim().split(/[\s\-,&]+/).filter(w=>w.length>0&&!skip.test(w));
+  if(words.length===0)return'SUP';
+  if(words.length===1)return words[0].slice(0,3).toUpperCase().padEnd(3,'X');
+  if(words.length===2)return(words[0].slice(0,2)+words[1].slice(0,1)).toUpperCase().padEnd(3,'X');
+  return words.slice(0,3).map(w=>w[0]).join('').toUpperCase();
 }
 
 function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl=null){
@@ -4584,7 +4597,7 @@ function RfqDocument({groups,projectName}){
 }
 
 // ── RFQ EMAIL MODAL ──
-function RfqEmailModal({groups,projectName,projectId,uid,userEmail,onClose,onSent,onPrint}){
+function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEmail,onClose,onSent,onPrint}){
   const [emails,setEmails]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=g.vendorEmail||"";});return m;});
   const [included,setIncluded]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;});
   const [statuses,setStatuses]=useState({});
@@ -4596,7 +4609,8 @@ function RfqEmailModal({groups,projectName,projectId,uid,userEmail,onClose,onSen
     const graphToken=await acquireGraphToken();
     if(!graphToken){setSending(false);alert("Could not get Microsoft 365 token. Make sure you are signed in to your Microsoft account.");return;}
     const today=new Date();
-    const rfqNum="RFQ-"+Date.now().toString(36).toUpperCase().slice(-6);
+    const rfqBase=bcProjectNumber||Date.now().toString(36).toUpperCase().slice(-6);
+    const makeRfqNum=vendor=>`${vendorCode(vendor)}-${rfqBase}`;
     const rfqDate=today.toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
     const responseBy=new Date(today.getTime()+14*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
     // Generate per-vendor upload tokens and store in Firestore
@@ -4605,6 +4619,7 @@ function RfqEmailModal({groups,projectName,projectId,uid,userEmail,onClose,onSen
     const currentUid=uid||fbAuth.currentUser?.uid||"";
     for(const group of groups){
       if(included[group.vendorName]&&(emails[group.vendorName]||"").trim()){
+        const rfqNum=makeRfqNum(group.vendorName);
         const tok=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
         vendorTokens[group.vendorName]=tok;
         fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,rfqNum,lineItems:group.items.map(i=>({partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""})),sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending"}).catch(e=>console.warn("rfqUpload save failed:",e));
@@ -4626,6 +4641,7 @@ function RfqEmailModal({groups,projectName,projectId,uid,userEmail,onClose,onSen
       }
       setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending"}}));
       try{
+        const rfqNum=makeRfqNum(group.vendorName);
         const uploadToken=vendorTokens[group.vendorName];
         const uploadUrl=uploadToken?`https://matrix-arc.web.app?rfqUpload=${uploadToken}`:null;
         const subject=`Request for Quote — ${projectName||"Project"} — ${rfqNum}`;
@@ -4635,15 +4651,16 @@ function RfqEmailModal({groups,projectName,projectId,uid,userEmail,onClose,onSen
         await sendGraphEmail(graphToken,to,subject,html,pdfBase64,pdfName);
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent"}}));
         group.items.forEach(item=>sentItemIds.push(item.id));
-        historyEntries.push({vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false});
+        historyEntries.push({rfqNum,vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false});
       }catch(e){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:String(e.message||e)}}));
-        historyEntries.push({vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:false,error:String(e.message||e)});
+        historyEntries.push({rfqNum:makeRfqNum(group.vendorName),vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:false,error:String(e.message||e)});
       }
     }
     // Save to Firestore history
     if(uid&&historyEntries.length>0){
-      fbDb.collection(`users/${uid}/rfq_history`).add({rfqNum,sentAt:Date.now(),projectId:projectId||"",projectName:projectName||"",sentFrom:fromEmail,entries:historyEntries}).catch(e=>console.warn("RFQ history save failed:",e));
+      const sessionRfqNum=historyEntries.find(e=>e.sent)?.rfqNum||`RFQ-${rfqBase}`;
+      fbDb.collection(`users/${uid}/rfq_history`).add({rfqNum:sessionRfqNum,sentAt:Date.now(),projectId:projectId||"",projectName:projectName||"",sentFrom:fromEmail,entries:historyEntries}).catch(e=>console.warn("RFQ history save failed:",e));
     }
     setSending(false);setDone(true);
     if(sentItemIds.length>0&&onSent)onSent(sentItemIds);
@@ -10391,7 +10408,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
             pendingRfqUploads={pendingRfqUploads}
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
-          {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint}/>}
+          {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} bcProjectNumber={project.bcProjectNumber||""} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} onClose={()=>setShowRfqHistory(false)}/>}
           {quoteWarnRows&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
