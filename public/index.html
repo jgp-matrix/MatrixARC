@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.256";
+const APP_VERSION="v1.17.257";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7832,7 +7832,14 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                     <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                       {row.isLaborRow?"—":row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
                     </td>
-                    <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,color:C.muted,whiteSpace:"nowrap"}}>
+                    <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,whiteSpace:"nowrap",...(()=>{
+                      if(row.isLaborRow)return{color:C.muted};
+                      const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
+                      if(!d)return{color:C.muted};
+                      const age=Date.now()-d;
+                      if(age<=60*24*60*60*1000)return{color:"#4ade80",fontWeight:700};
+                      return{color:"#f87171",fontWeight:700};
+                    })()}}>
                       {row.isLaborRow?"—":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
                     </td>
                     <td style={{padding:"3px 6px",textAlign:"center",width:36}}>
