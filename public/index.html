@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.239";
+const APP_VERSION="v1.17.240";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2104,15 +2104,11 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
   doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,laborDivY+m(7),{align:"right"});
 
-  // ── BOM table — fit to remaining page height ──
+  // ── BOM table — starts on cover page, continues to page 2+ as needed ──
   const tableStart=laborDivY+m(10);
-  const tableEnd=H-m(14);
-  const availH=tableEnd-tableStart;
-  const tblHeaderH=m(8),tblRowH=m(6.5);
-  const maxRows=Math.floor((availH-tblHeaderH)/tblRowH);
   const baseFontSize=fs(8);
-  const fontSize=bom.length>maxRows?Math.max(fs(6),baseFontSize*(maxRows/bom.length)):baseFontSize;
-  const cellPad=m(fontSize<fs(7)?1.2:1.8);
+  const fontSize=baseFontSize;
+  const cellPad=m(1.8);
 
   // Fixed column widths — table is only as wide as needed, not forced to full page
   const colStyles=hasCrosses?{
@@ -2139,11 +2135,11 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
     :[i+1,r.qty||1,r.partNumber||"—",r.description||"—",r.manufacturer||"—",r.bcVendorName||"—"]
   );
 
+  let coverPageCount=0;
   doc.autoTable({
     startY:tableStart,
-    margin:{left:margin,right:margin,bottom:m(14)},
+    margin:{left:margin,right:margin,bottom:m(12)},
     tableWidth:"wrap",
-    pageBreak:"avoid",
     headStyles:{fillColor:accent,textColor:255,fontStyle:"bold",fontSize:fontSize+m(0.5),cellPadding:cellPad},
     bodyStyles:{fontSize,cellPadding:cellPad},
     alternateRowStyles:{fillColor:light},
@@ -2160,10 +2156,12 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
         }
       }
     },
-    didDrawPage:()=>{
+    didDrawPage:(data)=>{
+      coverPageCount++;
       doc.setFontSize(fs(7.5));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-      doc.text(`${panel.drawingNo||bcProjectNumber}  ·  ${bom.length} items  ·  ${generated}`,margin,H-m(6));
-      doc.text("Page 1 of 1",W-margin,H-m(6),{align:"right"});
+      const ph=doc.internal.pageSize.getHeight();
+      doc.text(`${panel.drawingNo||bcProjectNumber}  ·  ${bom.length} items  ·  ${generated}`,margin,ph-m(5));
+      doc.text(`Cover ${data.pageNumber}`,W-margin,ph-m(5),{align:"right"});
     }
   });
 }
