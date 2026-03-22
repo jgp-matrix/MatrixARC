@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.251";
+const APP_VERSION="v1.17.252";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4694,12 +4694,12 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     <>
     {previewGroup&&(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:10001,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
-        <div style={{width:"100%",maxWidth:720,background:"#fff",borderRadius:10,overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,0.8)",display:"flex",flexDirection:"column",maxHeight:"calc(100vh - 80px)"}}>
+        <div style={{width:"100%",maxWidth:1440,background:"#fff",borderRadius:10,overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,0.8)",display:"flex",flexDirection:"column",maxHeight:"calc(100vh - 80px)"}}>
           <div style={{background:"#1e1b4b",padding:"10px 16px",display:"flex",alignItems:"center",gap:8}}>
             <span style={{color:"#a5b4fc",fontWeight:700,fontSize:13,flex:1}}>Preview: {previewGroup.vendorName} — {_makeRfqNum(previewGroup.vendorName)}</span>
             <button onClick={()=>setPreviewGroup(null)} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>✕</button>
           </div>
-          <iframe srcDoc={buildRfqEmailHtml(previewGroup,projectName,_makeRfqNum(previewGroup.vendorName),_rfqDate,_responseBy,null)} style={{flex:1,border:"none",minHeight:500}} title="RFQ Preview"/>
+          <iframe srcDoc={buildRfqEmailHtml(previewGroup,projectName,_makeRfqNum(previewGroup.vendorName),_rfqDate,_responseBy,null)} style={{flex:1,border:"none",minHeight:1000}} title="RFQ Preview"/>
         </div>
         <div style={{marginTop:12}}>
           <button onClick={()=>setPreviewGroup(null)} style={{background:"#1e1b4b",border:"1px solid #4f46e5",color:"#a5b4fc",padding:"7px 24px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Close Preview</button>
