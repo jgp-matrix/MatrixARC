@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.234";
+const APP_VERSION="v1.17.235";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2045,9 +2045,47 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   const divY=infoY+gridRows*rowH+m(2);
   doc.setDrawColor(...accent);doc.setLineWidth(m(0.5));doc.line(margin,divY,W-margin,divY);
 
+  // ── Labor summary ──
+  const laborEst=computeLaborEstimate(panel);
+  const LABOR_GROUPS=[
+    {label:"CUT",  color:[249,115,22], cats:new Set(["Panel Holes","Side-Mounted Components","HVAC/Fans","Side Devices"])},
+    {label:"LAYOUT",color:[167,139,250],cats:new Set(["Device Mounting","Duct & DIN Rail","Labels"])},
+    {label:"WIRE", color:[56,189,248],  cats:new Set(["Wire Time","Door Wiring"])},
+  ];
+  const groupHrs=LABOR_GROUPS.map(g=>({
+    label:g.label,color:g.color,
+    hrs:laborEst.lines.filter(l=>g.cats.has(l.category)).reduce((s,l)=>s+l.hours,0),
+  }));
+  const otherHrs=laborEst.lines.filter(l=>!LABOR_GROUPS.some(g=>g.cats.has(l.category))).reduce((s,l)=>s+l.hours,0);
+  const laborY=divY+m(8);
+  const laborRate=panel.pricing?.laborRate??45;
+  const fmt2=(n)=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+
+  // Section header
+  doc.setFontSize(fs(7.5));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
+  doc.text("LABOR ESTIMATE",margin,laborY);
+  doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+  doc.text(`${Math.ceil(laborEst.totalHours)} hrs total  ·  ${fmt2(laborEst.totalCost)}`,W-margin,laborY,{align:"right"});
+
+  // Labor group boxes
+  const boxW=m(38),boxH=m(14),boxGap=m(4);
+  const laborBoxY=laborY+m(3);
+  [...groupHrs,{label:"OTHER",color:mid,hrs:otherHrs},{label:"TOTAL",color:accent,hrs:laborEst.totalHours}].forEach((g,i)=>{
+    const bx=margin+i*(boxW+boxGap);
+    doc.setFillColor(15,23,42);doc.rect(bx,laborBoxY,boxW,boxH,"F");
+    doc.setDrawColor(...g.color);doc.setLineWidth(m(0.4));doc.rect(bx,laborBoxY,boxW,boxH,"S");
+    doc.setFontSize(fs(6.5));doc.setFont("helvetica","bold");doc.setTextColor(...g.color);
+    doc.text(g.label,bx+m(3),laborBoxY+m(5));
+    doc.setFontSize(fs(9));doc.setFont("helvetica","bold");doc.setTextColor(241,245,249);
+    doc.text(`${Math.ceil(g.hrs)} hrs`,bx+m(3),laborBoxY+m(11));
+  });
+
+  const laborDivY=laborBoxY+boxH+m(4);
+  doc.setDrawColor(...accent);doc.setLineWidth(m(0.3));doc.line(margin,laborDivY,W-margin,laborDivY);
+
   // ── BOM section label ──
   doc.setFontSize(fs(9));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
-  doc.text("BILL OF MATERIALS",margin,divY+m(7));
+  doc.text("BILL OF MATERIALS",margin,laborDivY+m(7));
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow).slice().sort((a,b)=>{
     if(!a.itemNo&&!b.itemNo)return 0;
     if(!a.itemNo)return 1;
@@ -2058,10 +2096,10 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   });
   const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom);
   doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-  doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,divY+m(7),{align:"right"});
+  doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,laborDivY+m(7),{align:"right"});
 
   // ── BOM table — fit to remaining page height ──
-  const tableStart=divY+m(10);
+  const tableStart=laborDivY+m(10);
   const tableEnd=H-m(14);
   const availH=tableEnd-tableStart;
   const tblHeaderH=m(8),tblRowH=m(6.5);
