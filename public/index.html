@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.240";
+const APP_VERSION="v1.17.241";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2061,32 +2061,32 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   const laborY=divY+m(8);
 
   // Section header
-  doc.setFontSize(fs(7.5));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
+  doc.setFontSize(fs(15));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
   doc.text("LABOR ESTIMATE",margin,laborY);
 
-  // Labor rows: label | hrs | cost — one row per group + total
+  // Labor rows: label | hrs — one row per group + total
   const laborRows=[
     ...groupHrs,
     {label:"OTHER",color:mid,hrs:otherHrs},
     {label:"TOTAL",color:accent,hrs:laborEst.totalHours},
   ];
-  const lrH=m(7); // row height
-  const lrY=laborY+m(3);
-  const hrsColX=margin+m(32);
+  const lrH=m(14); // row height (doubled)
+  const lrY=laborY+m(5);
+  const hrsColX=margin+m(60);
   laborRows.forEach((g,i)=>{
     const y=lrY+i*lrH;
     const isTotal=g.label==="TOTAL";
     if(isTotal){
-      doc.setFillColor(...light);doc.rect(margin,y-m(4.5),hrsColX-margin+m(8),lrH,"F");
+      doc.setFillColor(...light);doc.rect(margin,y-m(9),hrsColX-margin+m(14),lrH,"F");
     }
-    doc.setFontSize(fs(isTotal?8:7.5));doc.setFont("helvetica",isTotal?"bold":"normal");doc.setTextColor(...g.color);
+    doc.setFontSize(fs(isTotal?16:15));doc.setFont("helvetica",isTotal?"bold":"normal");doc.setTextColor(...g.color);
     doc.text(g.label,margin+m(1),y);
     doc.setFont("helvetica","bold");
     if(isTotal){doc.setTextColor(...dark);}else{doc.setTextColor(71,85,105);}
     doc.text(`${Math.ceil(g.hrs)} hrs`,hrsColX,y,{align:"right"});
   });
 
-  const laborDivY=lrY+laborRows.length*lrH+m(3);
+  const laborDivY=lrY+laborRows.length*lrH+m(4);
   doc.setDrawColor(...accent);doc.setLineWidth(m(0.3));doc.line(margin,laborDivY,W-margin,laborDivY);
 
   // ── BOM section label ──
