@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.263";
+const APP_VERSION="v1.17.264";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11792,11 +11792,19 @@ function App({user}){
   const [sqSearching,setSqSearching]=useState(false);
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
+  const TOUR_KEY='arc_tour_step_'+user.uid;
 
-  function startTour(){setTourStep(0);}
-  function tourNext(){setTourStep(s=>s+1<TOUR_STEPS.length?s+1:s);}
-  function tourPrev(){setTourStep(s=>s>0?s-1:s);}
-  function tourDone(){setTourStep(null);}
+  const TOUR_KEY='arc_tour_step_'+user.uid;
+  function saveTourStep(s){try{if(s===null)localStorage.removeItem(TOUR_KEY);else localStorage.setItem(TOUR_KEY,String(s));}catch(e){}}
+  function startTour(){
+    let saved=null;
+    try{const v=localStorage.getItem(TOUR_KEY);if(v!==null){const n=parseInt(v);if(!isNaN(n)&&n>=0&&n<TOUR_STEPS.length)saved=n;}}catch(e){}
+    const step=saved!==null?saved:0;
+    setTourStep(step);saveTourStep(step);
+  }
+  function tourNext(){setTourStep(prev=>{const n=Math.min(prev+1,TOUR_STEPS.length-1);saveTourStep(n);return n;});}
+  function tourPrev(){setTourStep(prev=>{const n=Math.max(prev-1,0);saveTourStep(n);return n;});}
+  function tourDone(){setTourStep(null);saveTourStep(null);}
   function tourSkip(){setTourStep(null);}
 
   async function runAiSearch(q){
@@ -12187,7 +12195,7 @@ function App({user}){
           {userRole==="admin"&&<button data-tip="View AI learning database — extracted parts and panel history" onClick={()=>setView("aidb")} style={{background:view==="aidb"?"#1a0a2a":"none",border:view==="aidb"?`1px solid #a78bfa44`:"none",color:"#a78bfa",cursor:"pointer",fontSize:13,fontWeight:700,padding:"0 10px",height:36,borderRadius:6,letterSpacing:0.5}}>🧠 AI Database</button>}
           <button data-tip="Manage team members and permissions" data-tour="team-btn" onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>👥 Team</button>
           <button data-tip="Configure pricing defaults, contingencies, and auto-add BOM items" data-tour="config-btn" onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Config</button>
-          <button data-tip="Interactive training walkthrough — complete panel quote from start to finish" data-tour="training-btn" onClick={startTour} style={{background:tourStep!==null?"#172554":"none",border:tourStep!==null?"1px solid #3b82f644":"none",color:tourStep!==null?"#93c5fd":C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36,borderRadius:6,fontWeight:tourStep!==null?700:400}}>📋 Training</button>
+          <button data-tip="Interactive training walkthrough — complete panel quote from start to finish" data-tour="training-btn" onClick={startTour} style={{background:tourStep!==null?"#172554":"none",border:tourStep!==null?"1px solid #3b82f644":"none",color:tourStep!==null?"#93c5fd":C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36,borderRadius:6,fontWeight:tourStep!==null?700:400}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Training'}</button>
           <button data-tip="App settings — API key, company, preferences" onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Settings</button>
           <div style={{width:1,height:24,background:C.border,alignSelf:"center"}}/>
           <span style={{fontSize:15,color:C.muted}}>{user.email}</span>
@@ -12257,7 +12265,7 @@ function App({user}){
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
       </div>{/* end paddingTop wrapper */}
-      {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip}/>}
+      {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip} onMinimize={()=>setTourStep(null)}/>}
     </div>
   );
 }
@@ -12396,9 +12404,9 @@ function useTourRect(target){
   return rect;
 }
 
-function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip}){
+function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize}){
   const step=TOUR_STEPS[stepIdx];
-  const PAD=10;const PW=380;
+  const PAD=12;const PW=480;
   const rect=useTourRect(step?.target||null);
   const[popStyle,setPopStyle]=useState({});
 
@@ -12413,59 +12421,59 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip}){
     let top,left;
     if(sp==='bottom'){
       top=rect.top+rect.height+PAD+16;
-      left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
+      left=Math.max(16,Math.min(cx-PW/2,vw-PW-16));
     }else if(sp==='top'){
-      top=rect.top-PAD-300;
-      left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
+      top=rect.top-PAD-380;
+      left=Math.max(16,Math.min(cx-PW/2,vw-PW-16));
     }else if(sp==='right'){
-      top=Math.max(12,Math.min(rect.top+rect.height/2-140,vh-300));
-      left=Math.min(rect.left+rect.width+PAD+16,vw-PW-12);
+      top=Math.max(16,Math.min(rect.top+rect.height/2-180,vh-380));
+      left=Math.min(rect.left+rect.width+PAD+16,vw-PW-16);
     }else if(sp==='center'){
-      top=Math.max(12,Math.min(rect.top+rect.height/2-140,vh-300));
-      left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
+      top=Math.max(16,Math.min(rect.top+rect.height/2-180,vh-380));
+      left=Math.max(16,Math.min(cx-PW/2,vw-PW-16));
     }else{
-      top=Math.max(12,Math.min(rect.top-PAD-300,vh-300));
-      left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
+      top=Math.max(16,Math.min(rect.top-PAD-380,vh-380));
+      left=Math.max(16,Math.min(cx-PW/2,vw-PW-16));
     }
-    setPopStyle({position:'fixed',top:Math.max(8,top),left:Math.max(8,left),width:PW});
+    setPopStyle({position:'fixed',top:Math.max(10,top),left:Math.max(10,left),width:PW});
   },[rect,step,stepIdx]);
 
   const isFirst=stepIdx===0;const isLast=stepIdx===TOUR_STEPS.length-1;
-  const phaseIdx=TOUR_PHASES.indexOf(step.phase);
   const phasePct=Math.round(((stepIdx+1)/TOUR_STEPS.length)*100);
 
   return(
     <div style={{position:'fixed',inset:0,zIndex:99997,pointerEvents:'all'}}>
       {!rect&&<div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.75)'}}/>}
-      {rect&&<div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:10,boxShadow:'0 0 0 9999px rgba(0,0,0,0.75)',border:'2px solid #60a5fa',pointerEvents:'none',zIndex:99998,transition:'top 0.25s ease,left 0.25s ease,width 0.25s ease,height 0.25s ease'}}/>}
-      <div style={{...popStyle,zIndex:99999,background:'#131929',border:'1px solid #1e3a5f',borderRadius:14,overflow:'hidden',boxShadow:'0 12px 48px rgba(0,0,0,0.7)',color:'#f1f5f9',pointerEvents:'all'}}>
+      {rect&&<div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:12,boxShadow:'0 0 0 9999px rgba(0,0,0,0.75)',border:'2px solid #60a5fa',pointerEvents:'none',zIndex:99998,transition:'top 0.25s ease,left 0.25s ease,width 0.25s ease,height 0.25s ease'}}/>}
+      <div style={{...popStyle,zIndex:99999,background:'#131929',border:'1px solid #1e3a5f',borderRadius:16,overflow:'hidden',boxShadow:'0 16px 56px rgba(0,0,0,0.75)',color:'#f1f5f9',pointerEvents:'all'}}>
         {/* Phase + progress header */}
-        <div style={{background:'#0d1f3c',padding:'10px 16px',borderBottom:'1px solid #1e3a5f',display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
-          <span style={{fontSize:11,fontWeight:700,color:'#60a5fa',letterSpacing:0.5,textTransform:'uppercase'}}>{step.phase}</span>
-          <div style={{flex:1,height:3,background:'#1e293b',borderRadius:2,overflow:'hidden',maxWidth:160}}>
+        <div style={{background:'#0d1f3c',padding:'13px 20px',borderBottom:'1px solid #1e3a5f',display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+          <span style={{fontSize:13,fontWeight:700,color:'#60a5fa',letterSpacing:0.5,textTransform:'uppercase'}}>{step.phase}</span>
+          <div style={{flex:1,height:4,background:'#1e293b',borderRadius:2,overflow:'hidden'}}>
             <div style={{height:'100%',width:phasePct+'%',background:'#3b82f6',borderRadius:2,transition:'width 0.3s ease'}}/>
           </div>
-          <span style={{fontSize:11,color:'#475569',flexShrink:0}}>{stepIdx+1} / {TOUR_STEPS.length}</span>
-          <button onClick={onSkip} title="End tour" style={{background:'none',border:'none',color:'#475569',cursor:'pointer',fontSize:18,lineHeight:1,padding:'0 0 0 4px',flexShrink:0}}>×</button>
+          <span style={{fontSize:13,color:'#64748b',flexShrink:0,fontWeight:600}}>{stepIdx+1} / {TOUR_STEPS.length}</span>
+          <button onClick={onMinimize} title="Minimize — your progress is saved" style={{background:'none',border:'1px solid #1e3a5f',color:'#94a3b8',cursor:'pointer',fontSize:13,lineHeight:1,padding:'3px 10px',borderRadius:5,flexShrink:0,fontFamily:'inherit'}}>– Hide</button>
         </div>
         {/* Body */}
-        <div style={{padding:'18px 20px'}}>
-          <div style={{fontSize:15,fontWeight:700,color:'#93c5fd',lineHeight:1.3,marginBottom:10}}>{step.title}</div>
-          <div style={{fontSize:13,color:'#cbd5e1',lineHeight:1.7,whiteSpace:'pre-line',marginBottom:step.action?12:18}}>{step.body}</div>
+        <div style={{padding:'22px 26px'}}>
+          <div style={{fontSize:18,fontWeight:700,color:'#93c5fd',lineHeight:1.3,marginBottom:14}}>{step.title}</div>
+          <div style={{fontSize:15,color:'#cbd5e1',lineHeight:1.75,whiteSpace:'pre-line',marginBottom:step.action?16:22}}>{step.body}</div>
           {/* Action prompt */}
           {step.action&&(
-            <div style={{background:'#0f2a1a',border:'1px solid #166534',borderRadius:8,padding:'10px 14px',marginBottom:14}}>
-              <div style={{fontSize:12,color:'#4ade80',lineHeight:1.65}}>{step.actionLabel}</div>
+            <div style={{background:'#0f2a1a',border:'1px solid #166534',borderRadius:10,padding:'14px 18px',marginBottom:18}}>
+              <div style={{fontSize:13,fontWeight:700,color:'#86efac',marginBottom:4}}>👆 Your Turn</div>
+              <div style={{fontSize:14,color:'#4ade80',lineHeight:1.7}}>{step.actionLabel}</div>
             </div>
           )}
           {/* Navigation */}
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
-            <button onClick={onSkip} style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:12,padding:0,fontFamily:'inherit',textDecoration:'underline'}}>End tour</button>
-            <div style={{display:'flex',gap:8}}>
-              {!isFirst&&<button onClick={onPrev} style={{background:'none',border:'1px solid #1e3a5f',color:'#94a3b8',borderRadius:7,padding:'7px 16px',cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>← Back</button>}
+            <button onClick={onSkip} style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:13,padding:0,fontFamily:'inherit',textDecoration:'underline'}}>End tour</button>
+            <div style={{display:'flex',gap:10}}>
+              {!isFirst&&<button onClick={onPrev} style={{background:'none',border:'1px solid #1e3a5f',color:'#94a3b8',borderRadius:8,padding:'9px 20px',cursor:'pointer',fontSize:14,fontFamily:'inherit'}}>← Back</button>}
               {isLast
-                ?<button onClick={onDone} style={{background:'#16a34a',border:'none',color:'#fff',borderRadius:7,padding:'7px 20px',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit'}}>Finish ✓</button>
-                :<button onClick={onNext} style={{background:'#2563eb',border:'none',color:'#fff',borderRadius:7,padding:'7px 20px',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit'}}>{step.action?'Done, Next →':'Next →'}</button>
+                ?<button onClick={onDone} style={{background:'#16a34a',border:'none',color:'#fff',borderRadius:8,padding:'9px 24px',cursor:'pointer',fontSize:15,fontWeight:700,fontFamily:'inherit'}}>Finish ✓</button>
+                :<button onClick={onNext} style={{background:'#2563eb',border:'none',color:'#fff',borderRadius:8,padding:'9px 24px',cursor:'pointer',fontSize:15,fontWeight:700,fontFamily:'inherit'}}>{step.action?'Done, Next →':'Next →'}</button>
               }
             </div>
           </div>
