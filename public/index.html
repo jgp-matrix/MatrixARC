@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.266";
+const APP_VERSION="v1.17.267";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6165,6 +6165,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   const [laborMoreInfo,setLaborMoreInfo]=useState(false);
   const [showUpdateBom,setShowUpdateBom]=useState(false);
   const [deleteConfirmId,setDeleteConfirmId]=useState(null);
+  const [priceTooltip,setPriceTooltip]=useState(null); // {x,y,vendor,date,price,source}
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
   const [bcNewlyCreated,setBcNewlyCreated]=useState(new Set());
   const [bcUpdatedRows,setBcUpdatedRows]=useState(new Set());
@@ -7876,14 +7877,23 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                     <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                       {row.isLaborRow?"—":row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
                     </td>
-                    <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,whiteSpace:"nowrap",...(()=>{
+                    <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,whiteSpace:"nowrap",cursor:(!row.isLaborRow&&row.unitPrice!=null)?"help":"default",...(()=>{
                       if(row.isLaborRow)return{color:C.muted};
                       const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
                       if(!d)return{color:C.muted};
                       const age=Date.now()-d;
                       if(age<=60*24*60*60*1000)return{color:"#4ade80",fontWeight:700};
                       return{color:"#f87171",fontWeight:700};
-                    })()}}>
+                    })()}}
+                    onMouseEnter={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
+                      const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
+                      const vendor=row.bcVendorName||(row.priceSource==="manual"?"Manual Entry":row.priceSource==="ai"?"AI Estimate":null);
+                      setPriceTooltip({x:e.clientX,y:e.clientY,vendor,date:d,price:row.unitPrice,source:row.priceSource});
+                    }:undefined}
+                    onMouseMove={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
+                      setPriceTooltip(prev=>prev?{...prev,x:e.clientX,y:e.clientY}:prev);
+                    }:undefined}
+                    onMouseLeave={(!row.isLaborRow&&row.unitPrice!=null)?()=>setPriceTooltip(null):undefined}>
                       {row.isLaborRow?"—":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
                     </td>
                     <td style={{padding:"3px 6px",textAlign:"center",width:36}}>
@@ -8006,6 +8016,30 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
       )}
       {showCpdSearch&&<CPDSearchModal query={cpdQuery} uid={uid} panel={panel} onClose={()=>setShowCpdSearch(false)} onImportBom={rows=>{const newBom=[...(panel.bom||[]),...rows];const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}setShowCpdSearch(false);setCpdQuery("");}}/>}
       {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
+      {priceTooltip&&ReactDOM.createPortal(
+        <div style={{position:"fixed",left:priceTooltip.x+14,top:priceTooltip.y-8,zIndex:99999,pointerEvents:"none",
+          background:"#0d0d1a",border:"1px solid #334155",borderRadius:10,boxShadow:"0 6px 28px rgba(0,0,0,0.7)",
+          padding:"10px 14px",minWidth:180,maxWidth:260,fontSize:12,lineHeight:1.6}}>
+          <div style={{fontWeight:700,color:"#f1f5f9",marginBottom:4,fontSize:13}}>
+            {priceTooltip.vendor||"Unknown Vendor"}
+          </div>
+          {priceTooltip.date&&(
+            <div style={{color:"#94a3b8",marginBottom:2}}>
+              <span style={{color:"#64748b",fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginRight:6}}>Quoted</span>
+              {new Date(priceTooltip.date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+            </div>
+          )}
+          <div style={{color:"#4ade80",fontWeight:700,fontSize:15,marginTop:2}}>
+            ${(priceTooltip.price||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
+            <span style={{color:"#64748b",fontWeight:400,fontSize:11,marginLeft:4}}>/ ea</span>
+          </div>
+          {priceTooltip.source&&(
+            <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #1e293b",fontSize:10,color:"#475569",textTransform:"uppercase",letterSpacing:0.5}}>
+              Source: {priceTooltip.source==="bc"?"Business Central":priceTooltip.source==="manual"?"Manual":priceTooltip.source==="ai"?"AI Estimate":priceTooltip.source}
+            </div>
+          )}
+        </div>,document.body
+      )}
       {deleteConfirmId&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
           onMouseDown={e=>{if(e.target===e.currentTarget)setDeleteConfirmId(null);}}>
