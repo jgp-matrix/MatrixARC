@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.261";
+const APP_VERSION="v1.17.262";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11792,24 +11792,8 @@ function App({user}){
   const [sqSearching,setSqSearching]=useState(false);
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
-  const [showChecklist,setShowChecklist]=useState(false);
-  const [checklistDone,setChecklistDone]=useState({});
 
-  useEffect(()=>{
-    fbDb.doc(`users/${user.uid}/config/training`).get()
-      .then(snap=>{if(snap.exists)setChecklistDone(snap.data().checked||{});})
-      .catch(()=>{});
-  },[user.uid]);
-
-  function toggleChecklistItem(id){
-    setChecklistDone(prev=>{
-      const next={...prev,[id]:!prev[id]};
-      fbDb.doc(`users/${user.uid}/config/training`).set({checked:next},{merge:true}).catch(()=>{});
-      return next;
-    });
-  }
-
-  function startTour(){setTourStep(0);setShowChecklist(false);}
+  function startTour(){setTourStep(0);}
   function tourNext(){setTourStep(s=>s+1<TOUR_STEPS.length?s+1:s);}
   function tourPrev(){setTourStep(s=>s>0?s-1:s);}
   function tourDone(){setTourStep(null);}
@@ -12201,7 +12185,7 @@ function App({user}){
           {userRole==="admin"&&<button data-tip="View AI learning database — extracted parts and panel history" onClick={()=>setView("aidb")} style={{background:view==="aidb"?"#1a0a2a":"none",border:view==="aidb"?`1px solid #a78bfa44`:"none",color:"#a78bfa",cursor:"pointer",fontSize:13,fontWeight:700,padding:"0 10px",height:36,borderRadius:6,letterSpacing:0.5}}>🧠 AI Database</button>}
           <button data-tip="Manage team members and permissions" data-tour="team-btn" onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>👥 Team</button>
           <button data-tip="Configure pricing defaults, contingencies, and auto-add BOM items" data-tour="config-btn" onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Config</button>
-          <button data-tip="Training checklist and guided tour for new users" data-tour="training-btn" onClick={()=>setShowChecklist(c=>!c)} style={{background:showChecklist?"#172554":"none",border:showChecklist?"1px solid #3b82f644":"none",color:showChecklist?"#93c5fd":C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36,borderRadius:6,fontWeight:showChecklist?700:400}}>📋 Training</button>
+          <button data-tip="Interactive training walkthrough — complete panel quote from start to finish" data-tour="training-btn" onClick={startTour} style={{background:tourStep!==null?"#172554":"none",border:tourStep!==null?"1px solid #3b82f644":"none",color:tourStep!==null?"#93c5fd":C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36,borderRadius:6,fontWeight:tourStep!==null?700:400}}>📋 Training</button>
           <button data-tip="App settings — API key, company, preferences" onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Settings</button>
           <div style={{width:1,height:24,background:C.border,alignSelf:"center"}}/>
           <span style={{fontSize:15,color:C.muted}}>{user.email}</span>
@@ -12271,41 +12255,125 @@ function App({user}){
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
       </div>{/* end paddingTop wrapper */}
-      {showChecklist&&<TrainingChecklist onClose={()=>setShowChecklist(false)} checked={checklistDone} onToggle={toggleChecklistItem} onStartTour={startTour}/>}
       {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip}/>}
     </div>
   );
 }
 
-// ── GUIDED TOUR + TRAINING CHECKLIST ──
+// ── INTERACTIVE TRAINING TOUR ──
+
+const TOUR_PHASES=['Overview','Create a Project','Upload Drawings','AI Extraction','Review the BOM','Generate a Quote','Send RFQs','PO Received'];
 
 const TOUR_STEPS=[
-  {title:'Welcome to ARC! 👋',body:'ARC automates your panel quoting workflow — AI-powered BOM extraction, labor estimation, quote generation, and vendor RFQs. This quick tour covers the key features. Click Next to begin.',target:null},
-  {title:'Your Projects',body:'This is your dashboard. Projects appear as cards showing the name, status, and last update time. Click any card to open it and start working.',target:'[data-tour="project-list"]',placement:'center'},
-  {title:'➕ Create a New Project',body:'Click "+ New Project" to start a new panel job. You\'ll select a customer from Business Central and give the project a name. Each project can contain multiple panels.',target:'[data-tour="new-project-btn"]',placement:'bottom'},
-  {title:'⚙ Config & Settings',body:'Config sets your labor rates, pricing contingencies, and default BOM items. Settings stores your Anthropic API key and company preferences. Configure these before your first extraction.',target:'[data-tour="config-btn"]',placement:'bottom'},
-  {title:'👥 Team Management',body:'Invite colleagues and assign roles: Admin (full access), Edit (create and modify), or View (read-only). Admins can change roles and remove members at any time.',target:'[data-tour="team-btn"]',placement:'bottom'},
-  {title:'📂 Uploading Drawings',body:'Open a panel and drop your UL508A drawing PDFs here. ARC auto-detects page types — BOM tables, schematics, backpanel layouts, and enclosure drawings. Click any thumbnail to correct misclassifications.',target:'[data-tour="add-files-zone"]',placement:'right'},
-  {title:'📋 Bill of Materials',body:'After upload and extraction, the AI-generated BOM appears here. Click any cell to edit. Red rows (qty=0 or price=$0) need attention. The first three rows — CUT, LAYOUT, WIRE — are auto-calculated labor estimates.',target:'[data-tour="bom-table"]',placement:'top'},
-  {title:'📨 Send RFQs to Vendors',body:'Once your BOM is ready, click "Send/Print RFQ\'s" to request pricing from suppliers. ARC groups items by vendor, generates formatted RFQ documents, and emails each vendor a direct upload link.',target:'[data-tour="rfq-btn"]',placement:'top'},
-  {title:'🖨 Print Quote',body:'Click "Print Quote" to open the quote editor. Set your markup percentage, review the sell price, and print to PDF via the browser print dialog. The quote includes a labor summary and Terms & Conditions page.',target:'[data-tour="print-quote-btn"]',placement:'top'},
-  {title:'Track Your Progress',body:'Use the Training Checklist to track hands-on practice tasks. Check items off as you complete them — your progress is saved automatically. Click "Start Guided Tour" any time to re-run this tour.',target:'[data-tour="training-btn"]',placement:'bottom'},
-  {title:"You're Ready! 🎉",body:'That covers the core ARC workflow. Use the Training Checklist to practice each step on a real project. For detailed guidance, refer to the ARC Training Manual. Good luck!',target:null},
-];
+  // ── OVERVIEW ──
+  {phase:'Overview',title:'Welcome to the ARC Walkthrough 👋',
+   body:'This walkthrough guides you through a complete panel quote from start to finish — creating a project, uploading drawings, extracting the BOM, pricing, quoting, sending RFQs, and recording a customer PO.\n\nFollow each step at your own pace. Action steps will tell you exactly what to do before moving on.',
+   target:null},
 
-const CHECKLIST_ITEMS=[
-  {id:'signin',       label:'Sign in to ARC',                  desc:'Log in using email, Google, or Microsoft'},
-  {id:'explore',      label:'Explore the dashboard',           desc:'Review the Projects view and understand status colors'},
-  {id:'new_project',  label:'Create your first project',       desc:'Click + New Project and select a customer'},
-  {id:'add_panel',    label:'Add a panel to a project',        desc:'Click + Add Panel inside a project'},
-  {id:'upload_files', label:'Upload drawing files',            desc:'Drop a UL508A PDF onto a panel'},
-  {id:'verify_pages', label:'Verify page type detection',      desc:'Confirm BOM, schematic, and layout pages were classified correctly'},
-  {id:'run_extract',  label:'Run AI extraction',               desc:'Wait for the BOM to populate after upload'},
-  {id:'review_bom',   label:'Review and edit the BOM',         desc:'Correct any extraction errors, check red zero-price rows'},
-  {id:'get_price',    label:'Get pricing from Business Central',desc:'Use Get Pricing or the BC Item Browser on a BOM row'},
-  {id:'check_labor',  label:'Review the labor estimate',       desc:'Check CUT / LAYOUT / WIRE hours in the Pricing section'},
-  {id:'gen_quote',    label:'Generate a quote',                desc:'Click Print Quote and print to PDF'},
-  {id:'send_rfq',     label:'Send an RFQ to a vendor',         desc:'Use the RFQ modal to email a supplier'},
+  {phase:'Overview',title:'Your Projects Dashboard',
+   body:'This is your home screen. Every job lives here as a card showing the project name, panels, current status, and last update.\n\nStatus colors show workflow progress at a glance — orange = Draft, yellow = In Progress, teal = Validated, purple = Costed, green = Quoted.',
+   target:'[data-tour="project-list"]',placement:'center'},
+
+  {phase:'Overview',title:'Before You Begin — Settings',
+   body:'Two things must be configured before your first extraction:\n\n• ⚙ Config — Set labor rates, pricing contingencies, and default BOM items\n• ⚙ Settings — Enter your Anthropic API key (required for AI extraction)\n\nBoth are accessible from the menu bar at any time.',
+   target:'[data-tour="config-btn"]',placement:'bottom'},
+
+  // ── CREATE A PROJECT ──
+  {phase:'Create a Project',title:'Step 1 — Create a New Project',
+   body:'Every panel job starts with a project. ARC links each project to a Business Central customer and can auto-create the corresponding BC Job.\n\nClick "+ New Project" in the top right, select your customer, enter a project name, then click Create.',
+   target:'[data-tour="new-project-btn"]',placement:'bottom',
+   action:true,actionLabel:'👆 Click + New Project now. Select a customer from BC, name the project, and click Create. Return here when done.'},
+
+  {phase:'Create a Project',title:'Step 2 — Add a Panel',
+   body:'Your project opens to the Panel List. Each panel represents a separate electrical assembly in the job.\n\nMost jobs have one panel. For multi-panel jobs (MCCs, systems with multiple cabinets), add one panel per assembly with a descriptive name that matches the drawing title block.',
+   target:null,
+   action:true,actionLabel:'👆 Click + Add Panel. Give it a name (e.g. "Main Control Panel"), then click Add. Return here when done.'},
+
+  // ── UPLOAD DRAWINGS ──
+  {phase:'Upload Drawings',title:'Step 3 — Open the Panel',
+   body:'Click on your new panel to open its workspace. This is where you\'ll manage drawings, review the BOM, and track the panel through the quoting workflow.',
+   target:null,
+   action:true,actionLabel:'👆 Click on your panel to open it. Return here once you\'re inside the panel workspace.'},
+
+  {phase:'Upload Drawings',title:'Step 4 — Upload Your Drawing Set',
+   body:'Drop your complete UL508A drawing PDF here — or click Browse to select a file. Upload the full drawing set in one go (BOM pages, schematics, layouts, enclosure drawings all together).\n\nHigher-quality PDFs (vector, not scanned) produce significantly better extraction results.',
+   target:'[data-tour="add-files-zone"]',placement:'right',
+   action:true,actionLabel:'👆 Drop your drawing PDF onto this zone or click to browse. Wait for the upload to finish, then return here.'},
+
+  {phase:'Upload Drawings',title:'How Page Detection Works',
+   body:'ARC automatically classifies every page using AI:\n\n• BOM — parts table (will be extracted)\n• Schematic — wiring diagram (wire count, device tags)\n• Backpanel — component layout (DIN rail, duct footage)\n• Enclosure — door view (cutouts, dimensions)\n\nEach page thumbnail shows a colored badge with its detected type.'},
+
+  {phase:'Upload Drawings',title:'Step 5 — Verify Page Classifications',
+   body:'Scan the page thumbnails. If a page was misclassified, click its thumbnail and select the correct type from the dropdown.\n\nAccurate classification is important — the schematic drives wire count labor and the layout drives door device labor. ARC learns from your corrections.',
+   target:null,
+   action:true,actionLabel:'👆 Review each page thumbnail. Correct any misclassified pages, then return here.'},
+
+  // ── AI EXTRACTION ──
+  {phase:'AI Extraction',title:'Step 6 — Extraction Runs Automatically',
+   body:'Once drawings are uploaded and classified, ARC processes everything in the background:\n\n• Claude reads the BOM table and extracts every line item with quantities and part numbers\n• The schematic is analyzed for internal wire connections\n• The layout is analyzed for door cutouts, backpanel devices, and DIN rail/duct footage\n\nExtraction typically takes 1–5 minutes. A progress bar appears while it runs.'},
+
+  {phase:'AI Extraction',title:'The BOM Is Populated',
+   body:'When complete, the BOM table fills with extracted parts. The panel status advances to Extracted.\n\nThe first three rows — CUT, LAYOUT, and WIRE — are auto-generated labor estimates calculated from the wire count and layout analysis. These drive the labor section of your quote.',
+   target:'[data-tour="bom-table"]',placement:'top'},
+
+  // ── REVIEW THE BOM ──
+  {phase:'Review the BOM',title:'Step 7 — Review Extracted Items',
+   body:'Scroll through the BOM and verify the extracted data. Common issues to look for:\n\n• Misread part numbers (OCR errors on low-quality scans)\n• Wrong quantities\n• Missing items (check against the drawing BOM)\n\nClick any cell to edit it directly. Changes save automatically.',
+   target:'[data-tour="bom-table"]',placement:'top',
+   action:true,actionLabel:'👆 Review the BOM table. Fix any extraction errors by clicking and editing cells. Return here when done.'},
+
+  {phase:'Review the BOM',title:'Red Rows Need Attention',
+   body:'Rows highlighted in red have qty = 0 or unit price = $0. These will make your quote inaccurate.\n\nFor each red row: either fix the quantity/price, look up pricing from BC, or delete the row if the item shouldn\'t be on the BOM.',
+   target:'[data-tour="bom-table"]',placement:'top'},
+
+  {phase:'Review the BOM',title:'Step 8 — Get Pricing from Business Central',
+   body:'For rows without a price, click the 🔍 icon to open the BC Item Browser. Search by part number or description, review the results, and click USE to pull the price and vendor info directly from BC.\n\nPriced items show today\'s date in green in the Priced column. Green = within 60 days, Red = stale pricing over 60 days old.',
+   target:'[data-tour="bom-table"]',placement:'top',
+   action:true,actionLabel:'👆 Use the BC Item Browser (🔍) to price unpriced rows. Return here when pricing is complete.'},
+
+  // ── GENERATE A QUOTE ──
+  {phase:'Generate a Quote',title:'Step 9 — Review the Labor Estimate',
+   body:'Scroll to the Pricing section below the BOM. ARC has calculated labor hours from the drawing analysis:\n\n• CUT — panel drilling and machining\n• LAYOUT — component mounting and assembly\n• WIRE — panel wiring\n\nVerify the totals are reasonable for the scope of work. Labor rates are configurable in ⚙ Config.',
+   target:null,
+   action:true,actionLabel:'👆 Scroll down to the Pricing section and review the CUT/LAYOUT/WIRE hours. Return here when done.'},
+
+  {phase:'Generate a Quote',title:'Step 10 — Open the Quote Editor',
+   body:'Click "Print Quote" to open the quote editor. Fill in or verify:\n\n• Salesperson name\n• Requested ship date\n• Quote notes (optional)\n• Markup % — the sell price recalculates instantly\n\nThe sell price = (BOM + Labor + Contingencies) × (1 + markup%).',
+   target:'[data-tour="print-quote-btn"]',placement:'top',
+   action:true,actionLabel:'👆 Click Print Quote. Review all fields and the sell price. Adjust markup if needed. Return here when done.'},
+
+  {phase:'Generate a Quote',title:'Step 11 — Print to PDF',
+   body:'Inside the quote editor, click the Print Quote button to open the browser print dialog. Select "Save as PDF" to export.\n\nThe quote includes:\n• Company header with logo\n• Labor summary with bar charts\n• BOM table (configurable)\n• Terms & Conditions page\n\nUse Edge or Chrome for best print formatting.',
+   target:'[data-tour="print-quote-btn"]',placement:'top'},
+
+  // ── SEND RFQs ──
+  {phase:'Send RFQs',title:'Step 12 — Open the RFQ Modal',
+   body:'An RFQ (Request for Quote) is sent to vendors to get pricing on your BOM items. ARC automatically groups BOM items by supplier and generates a separate, formatted RFQ document for each vendor.\n\nClick "Send/Print RFQ\'s" to open the RFQ modal.',
+   target:'[data-tour="rfq-btn"]',placement:'top',
+   action:true,actionLabel:'👆 Click Send/Print RFQ\'s to open the RFQ modal. Return here once it\'s open.'},
+
+  {phase:'Send RFQs',title:'Step 13 — Preview an RFQ',
+   body:'In the RFQ modal, you\'ll see one row per vendor. Click 👁 Preview next to any vendor to review the full RFQ document before it goes out.\n\nVerify the part list, quantities, RFQ number, and response deadline look correct.',
+   target:'[data-tour="rfq-btn"]',placement:'top',
+   action:true,actionLabel:'👆 Click 👁 Preview on at least one vendor. Review the document, then return here.'},
+
+  {phase:'Send RFQs',title:'Step 14 — Send the RFQ',
+   body:'Click "Send Email" next to a vendor to send the RFQ. The vendor receives:\n\n• The RFQ as a PDF attachment\n• A direct link to submit pricing via the ARC supplier portal (no login required)\n\nWhen the supplier submits pricing, the "📥 Upload Quote" button shows a badge count. Click it to review and apply their prices to your BOM.',
+   target:'[data-tour="rfq-btn"]',placement:'top',
+   action:true,actionLabel:'👆 Send the RFQ to at least one vendor. Return here when done.'},
+
+  // ── PO RECEIVED ──
+  {phase:'PO Received',title:'When the Customer Issues a PO',
+   body:'Once the customer accepts your quote and issues a Purchase Order, you\'ll record it in ARC. This writes the PO information directly to Business Central.\n\nThe "📬 PO Received" button is located below Print Quote on the Panel List — it only appears when a BC Project Number is linked.'},
+
+  {phase:'PO Received',title:'Step 15 — Record the PO',
+   body:'Click "📬 PO Received" and enter:\n\n• Customer PO Number — written to BC as External Document No.\n• Ship Date — pushed to BC planning lines as the panel Ending Date\n\nFor multi-panel jobs, click "Set per-panel dates →" to assign individual ship dates per panel.\n\nClicking Submit PO sets the BC project status to Open.',
+   target:null,
+   action:true,actionLabel:'👆 When you have a real PO in hand: click 📬 PO Received, enter the PO number and ship date, then click Submit PO. Return here after.'},
+
+  {phase:'PO Received',title:'Workflow Complete 🎉',
+   body:'You\'ve completed the full ARC panel quote process:\n\n✓ Created a project and panel\n✓ Uploaded drawings and ran AI extraction\n✓ Reviewed and priced the BOM\n✓ Generated a customer quote\n✓ Sent RFQs to vendors\n✓ Recorded the customer PO in BC\n\nFor detailed reference on any feature, see the ARC Training Manual.',
+   target:null},
 ];
 
 function useTourRect(target){
@@ -12328,7 +12396,7 @@ function useTourRect(target){
 
 function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip}){
   const step=TOUR_STEPS[stepIdx];
-  const PAD=10;const PW=340;
+  const PAD=10;const PW=380;
   const rect=useTourRect(step?.target||null);
   const[popStyle,setPopStyle]=useState({});
 
@@ -12341,87 +12409,65 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip}){
     const cx=rect.left+rect.width/2;
     const sp=step.placement||'bottom';
     let top,left;
-    const spaceBelow=vh-(rect.top+rect.height+PAD+16);
-    const spaceAbove=rect.top-PAD-16;
-    if(sp==='bottom'||(sp!=='top'&&sp!=='right'&&sp!=='left'&&spaceBelow>180)){
+    if(sp==='bottom'){
       top=rect.top+rect.height+PAD+16;
       left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
-    }else if(sp==='top'||(sp!=='right'&&sp!=='left'&&spaceAbove>180)){
-      top=rect.top-PAD-220;
+    }else if(sp==='top'){
+      top=rect.top-PAD-300;
       left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
     }else if(sp==='right'){
-      top=Math.max(12,Math.min(rect.top+rect.height/2-100,vh-220));
-      left=rect.left+rect.width+PAD+16;
+      top=Math.max(12,Math.min(rect.top+rect.height/2-140,vh-300));
+      left=Math.min(rect.left+rect.width+PAD+16,vw-PW-12);
+    }else if(sp==='center'){
+      top=Math.max(12,Math.min(rect.top+rect.height/2-140,vh-300));
+      left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
     }else{
-      top=Math.max(12,Math.min(rect.top+rect.height/2-100,vh-220));
-      left=Math.max(12,rect.left-PW-PAD-16);
+      top=Math.max(12,Math.min(rect.top-PAD-300,vh-300));
+      left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
     }
     setPopStyle({position:'fixed',top:Math.max(8,top),left:Math.max(8,left),width:PW});
   },[rect,step,stepIdx]);
 
   const isFirst=stepIdx===0;const isLast=stepIdx===TOUR_STEPS.length-1;
+  const phaseIdx=TOUR_PHASES.indexOf(step.phase);
+  const phasePct=Math.round(((stepIdx+1)/TOUR_STEPS.length)*100);
 
   return(
     <div style={{position:'fixed',inset:0,zIndex:99997,pointerEvents:'all'}}>
-      {!rect&&<div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.72)'}}/>}
-      {rect&&<div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:10,boxShadow:'0 0 0 9999px rgba(0,0,0,0.72)',border:'2px solid #60a5fa',pointerEvents:'none',zIndex:99998,transition:'all 0.25s ease'}}/>}
-      <div style={{...popStyle,zIndex:99999,background:'#1e2235',border:'1px solid #3b5bdb',borderRadius:14,padding:'22px 24px',boxShadow:'0 8px 40px rgba(0,0,0,0.6)',color:'#f1f5f9',pointerEvents:'all'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
-          <div style={{fontSize:15,fontWeight:700,color:'#93c5fd',lineHeight:1.3,flex:1}}>{step.title}</div>
-          <button onClick={onSkip} title="End tour" style={{background:'none',border:'none',color:'#64748b',cursor:'pointer',fontSize:20,lineHeight:1,padding:'0 0 0 12px',flexShrink:0}}>×</button>
+      {!rect&&<div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.75)'}}/>}
+      {rect&&<div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:10,boxShadow:'0 0 0 9999px rgba(0,0,0,0.75)',border:'2px solid #60a5fa',pointerEvents:'none',zIndex:99998,transition:'top 0.25s ease,left 0.25s ease,width 0.25s ease,height 0.25s ease'}}/>}
+      <div style={{...popStyle,zIndex:99999,background:'#131929',border:'1px solid #1e3a5f',borderRadius:14,overflow:'hidden',boxShadow:'0 12px 48px rgba(0,0,0,0.7)',color:'#f1f5f9',pointerEvents:'all'}}>
+        {/* Phase + progress header */}
+        <div style={{background:'#0d1f3c',padding:'10px 16px',borderBottom:'1px solid #1e3a5f',display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
+          <span style={{fontSize:11,fontWeight:700,color:'#60a5fa',letterSpacing:0.5,textTransform:'uppercase'}}>{step.phase}</span>
+          <div style={{flex:1,height:3,background:'#1e293b',borderRadius:2,overflow:'hidden',maxWidth:160}}>
+            <div style={{height:'100%',width:phasePct+'%',background:'#3b82f6',borderRadius:2,transition:'width 0.3s ease'}}/>
+          </div>
+          <span style={{fontSize:11,color:'#475569',flexShrink:0}}>{stepIdx+1} / {TOUR_STEPS.length}</span>
+          <button onClick={onSkip} title="End tour" style={{background:'none',border:'none',color:'#475569',cursor:'pointer',fontSize:18,lineHeight:1,padding:'0 0 0 4px',flexShrink:0}}>×</button>
         </div>
-        <div style={{fontSize:13,color:'#cbd5e1',lineHeight:1.65,marginBottom:18}}>{step.body}</div>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
-          <span style={{fontSize:11,color:'#475569'}}>{stepIdx+1} / {TOUR_STEPS.length}</span>
-          <div style={{display:'flex',gap:8}}>
-            {!isFirst&&<button onClick={onPrev} style={{background:'none',border:'1px solid #334155',color:'#94a3b8',borderRadius:7,padding:'7px 16px',cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>← Back</button>}
-            {isLast
-              ?<button onClick={onDone} style={{background:'#16a34a',border:'none',color:'#fff',borderRadius:7,padding:'7px 18px',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit'}}>Done ✓</button>
-              :<button onClick={onNext} style={{background:'#2563eb',border:'none',color:'#fff',borderRadius:7,padding:'7px 18px',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit'}}>Next →</button>
-            }
+        {/* Body */}
+        <div style={{padding:'18px 20px'}}>
+          <div style={{fontSize:15,fontWeight:700,color:'#93c5fd',lineHeight:1.3,marginBottom:10}}>{step.title}</div>
+          <div style={{fontSize:13,color:'#cbd5e1',lineHeight:1.7,whiteSpace:'pre-line',marginBottom:step.action?12:18}}>{step.body}</div>
+          {/* Action prompt */}
+          {step.action&&(
+            <div style={{background:'#0f2a1a',border:'1px solid #166534',borderRadius:8,padding:'10px 14px',marginBottom:14}}>
+              <div style={{fontSize:12,color:'#4ade80',lineHeight:1.65}}>{step.actionLabel}</div>
+            </div>
+          )}
+          {/* Navigation */}
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+            <button onClick={onSkip} style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:12,padding:0,fontFamily:'inherit',textDecoration:'underline'}}>End tour</button>
+            <div style={{display:'flex',gap:8}}>
+              {!isFirst&&<button onClick={onPrev} style={{background:'none',border:'1px solid #1e3a5f',color:'#94a3b8',borderRadius:7,padding:'7px 16px',cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>← Back</button>}
+              {isLast
+                ?<button onClick={onDone} style={{background:'#16a34a',border:'none',color:'#fff',borderRadius:7,padding:'7px 20px',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit'}}>Finish ✓</button>
+                :<button onClick={onNext} style={{background:'#2563eb',border:'none',color:'#fff',borderRadius:7,padding:'7px 20px',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit'}}>{step.action?'Done, Next →':'Next →'}</button>
+              }
+            </div>
           </div>
         </div>
-      </div>
-    </div>
-  );
-}
-
-function TrainingChecklist({onClose,checked,onToggle,onStartTour}){
-  const done=CHECKLIST_ITEMS.filter(i=>checked[i.id]).length;
-  const pct=Math.round((done/CHECKLIST_ITEMS.length)*100);
-  return(
-    <div style={{position:'fixed',right:0,top:88,bottom:0,width:310,background:'#0f172a',borderLeft:'1px solid #1e293b',zIndex:9990,display:'flex',flexDirection:'column',boxShadow:'-4px 0 24px rgba(0,0,0,0.5)'}}>
-      <div style={{padding:'16px 20px',borderBottom:'1px solid #1e293b',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
-        <div>
-          <div style={{fontSize:14,fontWeight:700,color:'#f1f5f9'}}>📋 Training Checklist</div>
-          <div style={{fontSize:11,color:'#64748b',marginTop:2}}>{done} of {CHECKLIST_ITEMS.length} complete</div>
-        </div>
-        <button onClick={onClose} style={{background:'none',border:'none',color:'#64748b',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
-      </div>
-      <div style={{padding:'14px 20px',borderBottom:'1px solid #1e293b',flexShrink:0}}>
-        <div style={{height:6,background:'#1e293b',borderRadius:3,overflow:'hidden'}}>
-          <div style={{height:'100%',width:pct+'%',background:pct===100?'#4ade80':'#3b82f6',borderRadius:3,transition:'width 0.4s ease'}}/>
-        </div>
-        <div style={{display:'flex',justifyContent:'space-between',marginTop:6}}>
-          <span style={{fontSize:11,color:'#64748b'}}>{pct}% complete</span>
-          {pct===100&&<span style={{fontSize:11,color:'#4ade80',fontWeight:700}}>🎉 All done!</span>}
-        </div>
-        <button onClick={onStartTour} style={{width:'100%',marginTop:12,background:'#172554',border:'1px solid #3b82f644',color:'#93c5fd',borderRadius:7,padding:'9px 0',fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>▶ Start Guided Tour</button>
-      </div>
-      <div style={{flex:1,overflowY:'auto'}}>
-        {CHECKLIST_ITEMS.map((item)=>{
-          const isDone=!!checked[item.id];
-          return(
-            <div key={item.id} onClick={()=>onToggle(item.id)}
-              style={{display:'flex',alignItems:'flex-start',gap:12,padding:'11px 20px',cursor:'pointer',borderBottom:'1px solid #0f172a55',background:isDone?'#0d1f1255':'transparent',transition:'background 0.15s'}}>
-              <div style={{width:20,height:20,borderRadius:5,border:`2px solid ${isDone?'#4ade80':'#334155'}`,background:isDone?'#4ade80':'transparent',flexShrink:0,marginTop:1,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#0d1f12',fontWeight:900,transition:'all 0.2s'}}>{isDone?'✓':''}</div>
-              <div>
-                <div style={{fontSize:13,fontWeight:600,color:isDone?'#4ade80':'#e2e8f0',lineHeight:1.3,textDecoration:isDone?'line-through':'none'}}>{item.label}</div>
-                <div style={{fontSize:11,color:'#475569',marginTop:3,lineHeight:1.4}}>{item.desc}</div>
-              </div>
-            </div>
-          );
-        })}
       </div>
     </div>
   );
