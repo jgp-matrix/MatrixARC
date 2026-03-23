@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.280";
+const APP_VERSION="v1.17.281";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12094,22 +12094,6 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
             <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
           </div>
         ):null}
-      </div>
-    )}
-    {onUpdateStatus&&(p.bcPoStatus==="Open"||p.bcPoStatus==="purchasing")&&(
-      <div style={{marginTop:4,display:"flex",justifyContent:"flex-end"}} onClick={e=>e.stopPropagation()}>
-        {p.bcPoStatus==="Open"&&(
-          <button onClick={e=>{e.stopPropagation();onUpdateStatus(p,"purchasing");}}
-            style={{background:"#1c1200",border:"1px solid #f59e0b66",color:"#f59e0b",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-            → Start Purchasing
-          </button>
-        )}
-        {p.bcPoStatus==="purchasing"&&(
-          <button onClick={e=>{e.stopPropagation();onUpdateStatus(p,"Open");}}
-            style={{background:"#0c2233",border:"1px solid #38bdf866",color:"#38bdf8",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-            ← Back to Active
-          </button>
-        )}
       </div>
     )}
   </div>
