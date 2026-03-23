@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.285";
+const APP_VERSION="v1.17.286";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2151,6 +2151,12 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
     <tr><td style="padding:3px 12px 3px 0;color:#64748b">RFQ Date:</td><td>${rfqDate}</td></tr>
     <tr><td style="padding:3px 12px 3px 0;color:#64748b">Response By:</td><td style="font-weight:600">${responseBy}</td></tr>
   </table>
+  ${uploadUrl?`<div style="margin-bottom:24px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 20px;text-align:center">
+    <div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:6px">&#x1F4E4; Submit Your Quote Online</div>
+    <div style="font-size:12px;color:#3b82f6;margin-bottom:10px">Upload your completed quote directly to our purchasing portal — no email required.</div>
+    <a href="${uploadUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:700;font-size:13px;padding:10px 24px;border-radius:6px;text-decoration:none">Upload Quote &#x2192;</a>
+  </div>`:""}
+
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <thead><tr style="background:#f1f5f9">
       <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #cbd5e1">#</th>
