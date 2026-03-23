@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.262";
+const APP_VERSION="v1.17.263";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4828,8 +4828,8 @@ function PoReceivedModal({project,bcProjectNumber,onClose,onDone}){
                 </div>
                 {panels.length>1&&(
                   <button onClick={perPanel?()=>setPerPanel(false):enablePerPanel}
-                    style={{background:"none",border:"none",color:"#60a5fa",fontSize:11,cursor:"pointer",padding:0,fontFamily:"inherit",textDecoration:"underline"}}>
-                    {perPanel?"← Use one date for all":"Set per-panel dates →"}
+                    style={{background:perPanel?"#1a1a2a":"#0d1a2a",border:`1px solid ${perPanel?"#475569":"#3b82f6"}`,color:perPanel?"#94a3b8":"#60a5fa",fontSize:11,fontWeight:700,cursor:"pointer",padding:"3px 10px",borderRadius:5,fontFamily:"inherit",letterSpacing:0.3}}>
+                    {perPanel?"Single Date":"Separate Dates"}
                   </button>
                 )}
               </div>
@@ -12143,19 +12143,21 @@ function App({user}){
             <span style={{fontSize:14,color:C.muted,opacity:0.6}}>{APP_VERSION}</span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:12,flex:1}}>
-            {view!=="dashboard"&&(
-              <button onClick={()=>{setView("dashboard");setOpenProject(null);}}
-                style={{display:"flex",alignItems:"center",gap:6,background:"none",border:`1px solid ${C.border}`,
-                  color:C.accent,cursor:"pointer",borderRadius:8,padding:"5px 16px",fontSize:13,fontWeight:700,
-                  whiteSpace:"nowrap",flexShrink:0}}>
-                ← Back to Projects
-              </button>
-            )}
-            {companyLogo?(
-              <img src={companyLogo} alt="Company logo" style={{maxHeight:64,maxWidth:200,objectFit:"contain"}}/>
-            ):companyName?(
-              <span style={{color:C.accent,fontSize:29,fontWeight:700}}>⬡ {companyName}</span>
-            ):null}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:6}}>
+              {companyLogo?(
+                <img src={companyLogo} alt="Company logo" style={{maxHeight:52,maxWidth:200,objectFit:"contain"}}/>
+              ):companyName?(
+                <span style={{color:C.accent,fontSize:29,fontWeight:700}}>⬡ {companyName}</span>
+              ):null}
+              {view!=="dashboard"&&(
+                <button onClick={()=>{setView("dashboard");setOpenProject(null);}}
+                  style={{display:"flex",alignItems:"center",gap:6,background:C.accentDim,border:`1px solid ${C.accent}`,
+                    color:C.accent,cursor:"pointer",borderRadius:8,padding:"4px 14px",fontSize:12,fontWeight:700,
+                    whiteSpace:"nowrap",flexShrink:0,letterSpacing:0.3}}>
+                  ← Back to Projects
+                </button>
+              )}
+            </div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center",height:36}}>
           {bgRunning.length>0&&(
