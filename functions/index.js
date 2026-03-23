@@ -116,6 +116,58 @@ exports.sendInviteEmail = functions.https.onCall(async (data, context) => {
   return { success: true };
 });
 
+// ── SUPPLIER QUOTE SUBMITTED TRIGGER ──
+
+exports.onSupplierQuoteSubmitted = functions.firestore
+  .document('rfqUploads/{token}')
+  .onUpdate(async (change, context) => {
+    const before = change.before.data();
+    const after = change.after.data();
+    if (before.status === after.status || after.status !== 'submitted') return null;
+
+    const uid = after.uid;
+    const projectName = after.projectName || '';
+    const vendorName = after.vendorName || 'Supplier';
+    const rfqNum = after.rfqNum || '';
+    const token = context.params.token;
+
+    // Create notification
+    await admin.firestore().collection(`users/${uid}/notifications`).add({
+      type: 'supplier_quote',
+      title: `New Quote from ${vendorName}`,
+      body: `${vendorName} submitted a quote${projectName ? ` for "${projectName}"` : ''}${rfqNum ? ` (${rfqNum})` : ''}.`,
+      createdAt: Date.now(),
+      read: false,
+      projectId: after.projectId || '',
+      rfqUploadId: token,
+      rfqNum,
+      vendorName,
+      projectName,
+    });
+
+    // Send email if SendGrid configured
+    if (!SENDGRID_KEY) return null;
+    try {
+      const userRecord = await admin.auth().getUser(uid);
+      const userEmail = userRecord.email;
+      if (!userEmail) return null;
+      await sgMail.send({
+        to: userEmail,
+        from: 'noreply@matrix-arc.web.app',
+        subject: `New Supplier Quote: ${vendorName}${rfqNum ? ' — ' + rfqNum : projectName ? ' — ' + projectName : ''}`,
+        html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+          <h2 style="color:#1e293b;margin-bottom:8px">New Supplier Quote Received</h2>
+          <p style="color:#64748b;margin-bottom:16px"><strong>${vendorName}</strong> has submitted a quote${projectName ? ` for <strong>${projectName}</strong>` : ''}${rfqNum ? ` (RFQ: ${rfqNum})` : ''}.</p>
+          <a href="${APP_URL}" style="display:inline-block;background:#2563eb;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review &#x2192;</a>
+          <p style="color:#94a3b8;font-size:12px;margin-top:24px">Log in to ARC and click the notification bell 🔔 to review and approve the quote.</p>
+        </div>`,
+      });
+    } catch (e) {
+      console.warn('Notification email failed:', e.message);
+    }
+    return null;
+  });
+
 // ── SUPPLIER QUOTE AI EXTRACTION ──
 
 exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, memory: '512MB' }).https.onCall(async (data, context) => {
@@ -145,13 +197,13 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
   ).join('\n');
 
   const messageContent = [
-    ...pageImages.slice(0, 8).map(img => ({
+    ...pageImages.slice(0, 20).map(img => ({
       type: 'image',
       source: { type: 'base64', media_type: 'image/jpeg', data: img }
     })),
     {
       type: 'text',
-      text: `You are extracting pricing and lead times from a supplier quote document. The following items were requested:\n\n${itemList}\n\nExtract the unit price and lead time (in calendar days) for each item from the quote images. Match items by part number. Return ONLY a JSON array with no other text:\n[{"partNumber":"...","unitPrice":number_or_null,"leadTimeDays":number_or_null,"confidence":"high|medium|low","notes":"..."}]\n\nSet unitPrice to null if price not clearly found. Set leadTimeDays to null if not stated. Look for lead time phrasing like "ARO", "days ARO", "weeks", "delivery", "lead time". Convert weeks to days (multiply by 7). Use exact part numbers from the list above.`
+      text: `You are extracting pricing and lead times from a supplier quote document. The following items were requested:\n\n${itemList}\n\nExtract the unit price and lead time (in calendar days) for each item from the quote images.\n\nMATCHING RULES — be flexible, not strict:\n- Ignore spaces, dashes, and case when comparing part numbers. "ARL 449" matches "ARL449". "CEL-550M" matches "CEL550M".\n- Supplier quotes often prepend a short manufacturer or brand code (2–6 characters) before the base part number. Strip any such prefix to find the base. Example: "HOFF CEL550M" → base "CEL550M" which matches requested "CEL550M".\n- Use contains/substring matching: if the requested part number appears anywhere inside the supplier part number (after removing spaces), treat it as a match.\n- When you find a match (exact or fuzzy), ALWAYS output the exact part number from the requested list above — not the supplier's version.\n- Confidence: "high" = exact normalized match, "medium" = prefix stripped or minor variation matched, "low" = uncertain.\n\nReturn ONLY a JSON array with no other text:\n[{"partNumber":"...","unitPrice":number_or_null,"leadTimeDays":number_or_null,"confidence":"high|medium|low","notes":"..."}]\n\nReturn an entry for every requested item — set unitPrice to null if not found. Set leadTimeDays to null if not stated. Look for lead time phrasing like "ARO", "days ARO", "weeks", "delivery", "lead time". Convert weeks to days (multiply by 7).`
     }
   ];
 
