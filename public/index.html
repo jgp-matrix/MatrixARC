@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.283";
+const APP_VERSION="v1.17.284";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5108,11 +5108,11 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
                 </thead>
                 <tbody>
                   {(sub.lineItems||[]).map((item,i)=>(
-                    <tr key={i} style={{borderTop:"1px solid #1a1a2e"}}>
-                      <td style={{padding:"5px 8px",fontWeight:600,color:"#f1f5f9",fontFamily:"monospace",fontSize:11}}>{item.partNumber||"—"}</td>
-                      <td style={{padding:"5px 8px",color:"#94a3b8"}}>{item.description||"—"}</td>
+                    <tr key={i} style={{borderTop:"1px solid #1a1a2e",opacity:item.cannotSupply?0.5:1}}>
+                      <td style={{padding:"5px 8px",fontWeight:600,color:item.cannotSupply?"#64748b":"#f1f5f9",fontFamily:"monospace",fontSize:11,textDecoration:item.cannotSupply?"line-through":undefined}}>{item.partNumber||"—"}</td>
+                      <td style={{padding:"5px 8px",color:"#94a3b8",textDecoration:item.cannotSupply?"line-through":undefined}}>{item.description||"—"}</td>
                       <td style={{padding:"5px 8px",textAlign:"center",color:"#94a3b8"}}>{item.qty||1}</td>
-                      <td style={{padding:"5px 8px",textAlign:"right",color:item.unitPrice!=null?"#4ade80":"#475569",fontWeight:item.unitPrice!=null?700:400,fontVariantNumeric:"tabular-nums"}}>{fmtPrice(item.unitPrice)}</td>
+                      <td style={{padding:"5px 8px",textAlign:"right",color:item.cannotSupply?"#ef4444":item.unitPrice!=null?"#4ade80":"#475569",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{item.cannotSupply?"Cannot Supply":fmtPrice(item.unitPrice)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -10861,9 +10861,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
   }
 
   async function applyPortalPrices(submission){
-    // Build part# → price map
+    // Save cannot-supply records to Firestore for future tracking
+    const cantItems=(submission.lineItems||[]).filter(item=>item.cannotSupply&&item.partNumber);
+    if(cantItems.length>0){
+      const records=cantItems.map(item=>({
+        vendorName:submission.vendorName||'',
+        partNumber:(item.partNumber||'').trim(),
+        description:item.description||'',
+        markedAt:Date.now(),
+        rfqNum:submission.rfqNum||'',
+      }));
+      fbDb.doc(`users/${uid}/config/supplierCantSupply`).set({records:firebase.firestore.FieldValue.arrayUnion(...records)},{merge:true}).catch(e=>console.warn("supplierCantSupply save failed:",e));
+    }
+    // Build part# → price map (skip cannot-supply items)
     const priceMap={};
     (submission.lineItems||[]).forEach(item=>{
+      if(item.cannotSupply)return;
       if(item.unitPrice!=null&&item.partNumber){
         const key=(item.partNumber||'').trim().toLowerCase();
         priceMap[key]={price:item.unitPrice,partNumber:(item.partNumber||'').trim()};
@@ -10890,7 +10903,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
     }));
     update({...projectRef.current,panels:updatedPanels});
     fbDb.collection('rfqUploads').doc(submission.id).update({status:'imported',importedAt:now}).catch(()=>{});
-    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC.`);
+    const cantCount=cantItems.length;
+    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}`);
     setShowPortalModal(false);
   }
 
@@ -12979,6 +12993,7 @@ function SupplierPortalPage({token}){
   const [aiError,setAiError]=useState(null);
   const [dragOver,setDragOver]=useState(false);
   const [itemLeadTimes,setItemLeadTimes]=useState({});
+  const [cannotSupply,setCannotSupply]=useState({});
   const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
   const pdfRef=useRef(null);
 
@@ -13069,9 +13084,10 @@ function SupplierPortalPage({token}){
       const orderLeadTime=parseInt(leadTime)||null;
       const pricedItems=(info?.lineItems||[]).map((item,i)=>({
         ...item,
-        unitPrice:unitPrices[i]!==undefined&&unitPrices[i]!==''?parseFloat(unitPrices[i])||null:null,
+        unitPrice:cannotSupply[i]===true?null:(unitPrices[i]!==undefined&&unitPrices[i]!==''?parseFloat(unitPrices[i])||null:null),
         // Row-level lead time overrides the order lead time; fall back to order lead time
-        leadTimeDays:itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:orderLeadTime,
+        leadTimeDays:cannotSupply[i]===true?null:(itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:orderLeadTime),
+        cannotSupply:cannotSupply[i]===true,
       }));
       const updateData={status:"submitted",submittedAt:Date.now(),lineItems:pricedItems,leadTimeDays:orderLeadTime};
       if(fileName)updateData.fileName=fileName;
@@ -13155,23 +13171,26 @@ function SupplierPortalPage({token}){
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600}}>Qty</th>
                   <th style={{padding:"8px 12px",textAlign:"right",color:accent,fontWeight:700,minWidth:160}}>Unit Price</th>
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600,minWidth:110}}>Lead Time (days)</th>
+                  <th style={{padding:"8px 12px",textAlign:"center",color:"#dc2626",fontWeight:600,minWidth:110}}>Cannot Supply</th>
                 </tr>
               </thead>
               <tbody>
                 {lineItems.map((item,i)=>{
                   const conf=aiConfidences[i];
-                  const hasPrice=unitPrices[i]!==undefined&&unitPrices[i]!=='';
-                  const isMatch=(conf==='high'||conf==='medium');
-                  const isNoMatch=(conf==='low');
+                  const cant=cannotSupply[i]===true;
+                  const hasPrice=!cant&&unitPrices[i]!==undefined&&unitPrices[i]!=='';
+                  const isMatch=!cant&&(conf==='high'||conf==='medium');
+                  const isNoMatch=!cant&&(conf==='low');
                   const confLabel=isMatch?"MATCH":isNoMatch?"NO MATCH":null;
                   const confColor=isMatch?"#166534":"#991b1b";
                   const confBg=isMatch?"#dcfce7":"#fee2e2";
                   return(
-                    <tr key={i} style={{borderTop:`1px solid ${border}`,background:isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff"}}>
-                      <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",fontSize:12}}>{item.partNumber||"—"}</td>
-                      <td style={{padding:"10px 12px",color:muted,fontSize:12}}>{item.description||"—"}</td>
+                    <tr key={i} style={{borderTop:`1px solid ${border}`,background:cant?"#fef2f2":isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff",opacity:cant?0.6:1}}>
+                      <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.partNumber||"—"}</td>
+                      <td style={{padding:"10px 12px",color:muted,fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.description||"—"}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:dark}}>{item.qty||1}</td>
                       <td style={{padding:"8px 12px"}}>
+                        {cant?<span style={{fontSize:11,color:"#dc2626",fontWeight:700,display:"block",textAlign:"right"}}>Cannot Supply</span>:(
                         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6}}>
                           {confLabel&&<span style={{fontSize:10,fontWeight:700,borderRadius:4,padding:"2px 6px",background:confBg,color:confColor,flexShrink:0}}>{confLabel}</span>}
                           {!conf&&!hasPrice&&<span style={{fontSize:11,color:"#dc2626",fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
@@ -13182,14 +13201,23 @@ function SupplierPortalPage({token}){
                             onChange={e=>setUnitPrices(prev=>({...prev,[i]:e.target.value}))}
                             style={{width:100,textAlign:"right",...inp,border:`1px solid ${hasPrice?(isMatch?"#86efac":"#e2e8f0"):"#fca5a5"}`,background:hasPrice?"#f0fdf4":"#fff5f5"}}
                           />
-                        </div>
+                        </div>)}
                       </td>
                       <td style={{padding:"8px 12px",textAlign:"center"}}>
-                        <input type="number" min="0" step="1" placeholder="—"
+                        {!cant&&<input type="number" min="0" step="1" placeholder="—"
                           value={itemLeadTimes[i]??''}
                           onChange={e=>setItemLeadTimes(prev=>({...prev,[i]:e.target.value}))}
                           style={{width:70,textAlign:"center",...inp}}
-                        />
+                        />}
+                      </td>
+                      <td style={{padding:"8px 12px",textAlign:"center"}}>
+                        <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer",userSelect:"none"}}>
+                          <input type="checkbox" checked={cant}
+                            onChange={e=>setCannotSupply(prev=>({...prev,[i]:e.target.checked}))}
+                            style={{width:16,height:16,accentColor:"#dc2626",cursor:"pointer"}}
+                          />
+                          {cant&&<span style={{fontSize:11,color:"#dc2626",fontWeight:700}}>Yes</span>}
+                        </label>
                       </td>
                     </tr>
                   );
