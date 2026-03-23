@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.264";
+const APP_VERSION="v1.17.265";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11792,8 +11792,6 @@ function App({user}){
   const [sqSearching,setSqSearching]=useState(false);
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
-  const TOUR_KEY='arc_tour_step_'+user.uid;
-
   const TOUR_KEY='arc_tour_step_'+user.uid;
   function saveTourStep(s){try{if(s===null)localStorage.removeItem(TOUR_KEY);else localStorage.setItem(TOUR_KEY,String(s));}catch(e){}}
   function startTour(){
