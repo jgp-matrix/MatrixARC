@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.286";
+const APP_VERSION="v1.17.287";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10886,13 +10886,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
       }));
       fbDb.doc(`users/${uid}/config/supplierCantSupply`).set({records:firebase.firestore.FieldValue.arrayUnion(...records)},{merge:true}).catch(e=>console.warn("supplierCantSupply save failed:",e));
     }
-    // Build part# → price map (skip cannot-supply items)
+    // Build normalized part# → price map (skip cannot-supply items)
     const priceMap={};
     (submission.lineItems||[]).forEach(item=>{
       if(item.cannotSupply)return;
       if(item.unitPrice!=null&&item.partNumber){
-        const key=(item.partNumber||'').trim().toLowerCase();
-        priceMap[key]={price:item.unitPrice,partNumber:(item.partNumber||'').trim()};
+        priceMap[normPart(item.partNumber)]={price:item.unitPrice,partNumber:(item.partNumber||'').trim()};
       }
     });
     const now=Date.now();
@@ -10906,10 +10905,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
     const updatedPanels=(projectRef.current.panels||[]).map(panel=>({
       ...panel,
       bom:(panel.bom||[]).map(row=>{
-        const key=(row.partNumber||'').trim().toLowerCase();
-        if(key&&priceMap[key]!=null){
+        const nk=normPart(row.partNumber);
+        // Try exact normalized match first, then fuzzy contains/prefix match
+        let hit=priceMap[nk];
+        if(!hit){
+          const supplierKey=Object.keys(priceMap).find(sk=>partMatch(nk,sk));
+          if(supplierKey)hit=priceMap[supplierKey];
+        }
+        if(hit){
           matched++;
-          return{...row,unitPrice:priceMap[key].price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName};
+          return{...row,unitPrice:hit.price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName};
         }
         return row;
       })
@@ -13034,6 +13039,20 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize}){
   );
 }
 
+// ── PART NUMBER FUZZY MATCHING ──
+// Normalize: remove spaces/dashes/dots, uppercase
+function normPart(s){return(s||'').replace(/[\s\-\.]/g,'').toUpperCase();}
+// Fuzzy match: exact after normalize, OR one contains the other (handles manufacturer prefix)
+function partMatch(a,b){
+  const na=normPart(a),nb=normPart(b);
+  if(!na||!nb||na.length<3||nb.length<3)return false;
+  if(na===nb)return true;
+  // Contains: "HOFFCEL550M" contains "CEL550M", or "ARL449" within "ARL449"
+  if(nb.length>=4&&na.includes(nb))return true;
+  if(na.length>=4&&nb.includes(na))return true;
+  return false;
+}
+
 // ── SUPPLIER PORTAL PAGE ──
 function SupplierPortalPage({token}){
   const [info,setInfo]=useState(null);
@@ -13099,7 +13118,9 @@ function SupplierPortalPage({token}){
         const result=await fbFunctions.httpsCallable("extractSupplierQuotePricing")({token,pageImages});
         const extracted=result.data?.extracted||[];
         extracted.forEach(ex=>{
-          const idx=lineItems.findIndex(it=>(it.partNumber||'').trim().toLowerCase()===(ex.partNumber||'').trim().toLowerCase());
+          // First try exact (normalized), then fuzzy prefix/contains match
+          let idx=lineItems.findIndex(it=>normPart(it.partNumber)===normPart(ex.partNumber));
+          if(idx<0)idx=lineItems.findIndex(it=>partMatch(it.partNumber,ex.partNumber));
           if(idx>=0){
             if(ex.unitPrice!=null&&(allPrices[idx]===undefined||allPrices[idx]===''))allPrices[idx]=String(ex.unitPrice);
             if(allConf[idx]===undefined)allConf[idx]=ex.confidence||'medium';
