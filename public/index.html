@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.269";
+const APP_VERSION="v1.17.270";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4588,7 +4588,9 @@ function RfqDocument({groups,projectName}){
                 {group.items.map((item,ii)=>(
                   <tr key={ii}>
                     <td>{ii+1}</td>
-                    <td style={{fontWeight:600}}>{item.partNumber||"—"}</td>
+                    <td style={{fontWeight:600}}>
+                      {(()=>{const orig=item.crossedFrom||item.partNumber||"—";const ref=item.crossedFrom?item.partNumber:null;return(<><div>{orig}</div>{ref&&<div style={{fontSize:10,color:"#94a3b8",fontWeight:400,marginTop:2}}>Matrix Part #: {ref}</div>}</>);})()}
+                    </td>
                     <td>{item.description||"—"}</td>
                     <td>{item.manufacturer||"—"}</td>
                     <td style={{textAlign:"center"}}>{item.qty||1}</td>
@@ -4683,6 +4685,18 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     if(uid&&historyEntries.length>0){
       const sessionRfqNum=historyEntries.find(e=>e.sent)?.rfqNum||`RFQ-${rfqBase}`;
       fbDb.collection(`users/${uid}/rfq_history`).add({rfqNum:sessionRfqNum,sentAt:Date.now(),projectId:projectId||"",projectName:projectName||"",sentFrom:fromEmail,entries:historyEntries}).catch(e=>console.warn("RFQ history save failed:",e));
+      // Save supplier part cross-reference for crossed items
+      const allCrossings=[];
+      historyEntries.filter(e=>e.sent).forEach(entry=>{
+        const grp=groups.find(g=>g.vendorName===entry.vendorName);
+        if(!grp)return;
+        grp.items.filter(i=>i.crossedFrom).forEach(i=>{
+          allCrossings.push({origPartNumber:i.crossedFrom,bcPartNumber:i.partNumber,description:i.description||"",manufacturer:i.manufacturer||"",vendorName:grp.vendorName,rfqNum:entry.rfqNum||"",rfqDate:Date.now()});
+        });
+      });
+      if(allCrossings.length>0){
+        fbDb.doc(`users/${uid}/config/supplierCrossRef`).set({records:firebase.firestore.FieldValue.arrayUnion(...allCrossings)},{merge:true}).catch(e=>console.warn("CrossRef save failed:",e));
+      }
     }
     setSending(false);setDone(true);
     if(sentItemIds.length>0&&onSent)onSent(sentItemIds);
@@ -11434,6 +11448,83 @@ function AIDatabasePage({uid,onBack}){
   );
 }
 
+// ── REPORTS MODAL ──
+function ReportsModal({uid,onClose}){
+  const [records,setRecords]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [activeReport,setActiveReport]=useState("crossref");
+  useEffect(()=>{
+    if(!uid)return;
+    fbDb.doc(`users/${uid}/config/supplierCrossRef`).get()
+      .then(d=>{setRecords(d.exists?(d.data().records||[]):[]);setLoading(false);})
+      .catch(()=>{setRecords([]);setLoading(false);});
+  },[uid]);
+  const byVendor={};
+  (records||[]).forEach(r=>{if(!byVendor[r.vendorName])byVendor[r.vendorName]=[];byVendor[r.vendorName].push(r);});
+  const vendorNames=Object.keys(byVendor).sort();
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #2a2a3e",borderRadius:12,width:"100%",maxWidth:960,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+        <div style={{padding:"18px 24px",borderBottom:"1px solid #2a2a3e",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{fontSize:16,fontWeight:800,color:"#f1f5f9",flex:1}}>📊 Reports</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px"}}>✕</button>
+        </div>
+        <div style={{display:"flex",borderBottom:"1px solid #1e293b"}}>
+          <button onClick={()=>setActiveReport("crossref")} style={{padding:"10px 20px",background:"none",border:"none",borderBottom:activeReport==="crossref"?"2px solid #3b82f6":"2px solid transparent",color:activeReport==="crossref"?"#60a5fa":"#64748b",cursor:"pointer",fontSize:13,fontWeight:activeReport==="crossref"?700:500}}>Supplier Part Cross-Reference</button>
+        </div>
+        <div style={{flex:1,overflowY:"auto",padding:"16px 24px"}}>
+          {activeReport==="crossref"&&(<>
+            <div style={{fontSize:12,color:"#64748b",marginBottom:16,lineHeight:1.6}}>
+              This report tracks the relationship between supplier part numbers (as quoted) and Matrix BC part numbers.<br/>
+              It is automatically populated when RFQs are sent for items where a part number crossing exists.<br/>
+              <span style={{color:"#475569",fontSize:11}}>Note: In a future release, this data will be stored in Business Central.</span>
+            </div>
+            {loading?(
+              <div style={{textAlign:"center",padding:40,color:"#64748b"}}>Loading…</div>
+            ):vendorNames.length===0?(
+              <div style={{textAlign:"center",padding:40,color:"#64748b",fontSize:13}}>
+                No cross-reference data yet.<br/>
+                <span style={{fontSize:12,color:"#475569"}}>This report auto-populates when RFQs are sent for items with crossed (BC) part numbers.</span>
+              </div>
+            ):vendorNames.map(vendor=>(
+              <div key={vendor} style={{marginBottom:28}}>
+                <div style={{fontSize:14,fontWeight:700,color:"#60a5fa",marginBottom:8,paddingBottom:6,borderBottom:"1px solid #1e293b",display:"flex",alignItems:"center",gap:8}}>
+                  <span>🏭</span><span>{vendor}</span>
+                  <span style={{fontSize:11,color:"#475569",fontWeight:400}}>({byVendor[vendor].length} item{byVendor[vendor].length!==1?"s":""})</span>
+                </div>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead>
+                    <tr style={{background:"#0a0a18"}}>
+                      {[["Supplier Part #","20%"],["Matrix BC Part #","20%"],["Description","30%"],["RFQ #","15%"],["Date","15%"]].map(([h,w])=>(
+                        <th key={h} style={{padding:"6px 10px",textAlign:"left",color:"#64748b",fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,width:w}}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {byVendor[vendor].sort((a,b)=>(b.rfqDate||0)-(a.rfqDate||0)).map((r,i)=>(
+                      <tr key={i} style={{borderBottom:"1px solid #0f1520",background:i%2===0?"transparent":"#0a0a14"}}>
+                        <td style={{padding:"7px 10px",fontWeight:700,color:"#f1f5f9",fontFamily:"monospace",fontSize:11}}>{r.origPartNumber||"—"}</td>
+                        <td style={{padding:"7px 10px",color:"#60a5fa",fontFamily:"monospace",fontSize:11}}>{r.bcPartNumber||"—"}</td>
+                        <td style={{padding:"7px 10px",color:"#94a3b8"}}>{r.description||"—"}</td>
+                        <td style={{padding:"7px 10px",color:"#64748b",fontFamily:"monospace",fontSize:11}}>{r.rfqNum||"—"}</td>
+                        <td style={{padding:"7px 10px",color:"#64748b",whiteSpace:"nowrap"}}>{r.rfqDate?new Date(r.rfqDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </>)}
+        </div>
+        <div style={{padding:"12px 24px",borderTop:"1px solid #2a2a3e",display:"flex",justifyContent:"flex-end"}}>
+          <button onClick={onClose} style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 20px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching}){
   const [groupBy,setGroupBy]=useState("status");
   const [dragProjectId,setDragProjectId]=useState(null);
@@ -11834,6 +11925,10 @@ function App({user}){
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
   const TOUR_KEY='arc_tour_step_'+user.uid;
+  const [showGearMenu,setShowGearMenu]=useState(false);
+  const [showUserMenu,setShowUserMenu]=useState(false);
+  const [showSearch,setShowSearch]=useState(false);
+  const [showReports,setShowReports]=useState(false);
   function saveTourStep(s){try{if(s===null)localStorage.removeItem(TOUR_KEY);else localStorage.setItem(TOUR_KEY,String(s));}catch(e){}}
   function startTour(){
     let saved=null;
@@ -12170,94 +12265,105 @@ function App({user}){
           )}
         </div>
       )}
-      {/* ── TOP MENU BAR (always visible) ── */}
+      {/* ── TOP MENU BAR ── */}
       <div style={{position:"fixed",top:0,left:0,right:0,zIndex:500}}>
-        {/* Row 1: original header */}
-        <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"8px 32px",display:"flex",alignItems:"center",minHeight:88}}>
-          <div style={{position:"absolute",left:"50%",top:"44px",transform:"translateX(-50%) translateY(-50%)",display:"flex",flexDirection:"column",alignItems:"center",gap:5,pointerEvents:"none"}}>
-            <div style={{display:"flex",alignItems:"center",gap:12,cursor:"pointer",pointerEvents:"auto"}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
-              <svg width="38" height="34" viewBox="0 0 100 90" fill="none">
-                <polygon points="50,4 96,86 4,86" stroke={C.accent} strokeWidth="3.5" strokeLinejoin="round" fill={C.accentDim}/>
-                <polygon points="50,4 68,38 32,38" fill={C.accent} opacity="0.85"/>
-                <line x1="50" y1="38" x2="50" y2="86" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
-                <line x1="26" y1="62" x2="74" y2="62" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
-              </svg>
-              <div style={{display:"flex",flexDirection:"column",lineHeight:1}}>
-                <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:34,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
-                <span style={{fontSize:11,color:C.muted,fontWeight:500,letterSpacing:1.5,marginTop:3}}>by APEX Software</span>
-              </div>
-            </div>
-            <span style={{fontSize:14,color:C.muted,opacity:0.6}}>{APP_VERSION}</span>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:12,flex:1}}>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:6}}>
-              {companyLogo?(
-                <img src={companyLogo} alt="Company logo" style={{maxHeight:52,maxWidth:200,objectFit:"contain"}}/>
-              ):companyName?(
-                <span style={{color:C.accent,fontSize:29,fontWeight:700}}>⬡ {companyName}</span>
-              ):null}
-              {view!=="dashboard"&&(
-                <button onClick={()=>{setView("dashboard");setOpenProject(null);}}
-                  style={{display:"flex",alignItems:"center",gap:6,background:C.accentDim,border:`1px solid ${C.accent}`,
-                    color:C.accent,cursor:"pointer",borderRadius:8,padding:"4px 14px",fontSize:12,fontWeight:700,
-                    whiteSpace:"nowrap",flexShrink:0,letterSpacing:0.3}}>
-                  ← Back to Projects
-                </button>
-              )}
+        {/* Main toolbar row */}
+        <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 20px",display:"flex",alignItems:"center",height:60,gap:6}}>
+          {/* ARC Logo — far left */}
+          <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",flexShrink:0}} onClick={()=>{setView("dashboard");setOpenProject(null);}}>
+            <svg width="26" height="23" viewBox="0 0 100 90" fill="none">
+              <polygon points="50,4 96,86 4,86" stroke={C.accent} strokeWidth="3.5" strokeLinejoin="round" fill={C.accentDim}/>
+              <polygon points="50,4 68,38 32,38" fill={C.accent} opacity="0.85"/>
+              <line x1="50" y1="38" x2="50" y2="86" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
+              <line x1="26" y1="62" x2="74" y2="62" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
+            </svg>
+            <div style={{display:"flex",flexDirection:"column",lineHeight:1}}>
+              <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:20,fontWeight:900,letterSpacing:4,color:C.accent,lineHeight:1}}>ARC</span>
+              <span style={{fontSize:9,color:C.muted,letterSpacing:1.2,marginTop:2}}>by APEX Software</span>
             </div>
           </div>
-          <div style={{display:"flex",gap:8,alignItems:"center",height:36}}>
+          <div style={{width:1,height:28,background:C.border,marginLeft:4,flexShrink:0}}/>
+          {/* Company logo + back button */}
+          <div style={{display:"flex",flexDirection:"column",alignItems:"flex-start",gap:3,flexShrink:0}}>
+            {companyLogo?(<img src={companyLogo} alt="Company logo" style={{maxHeight:34,maxWidth:130,objectFit:"contain"}}/>):companyName?(<span style={{color:C.accent,fontSize:16,fontWeight:700}}>⬡ {companyName}</span>):null}
+            {view!=="dashboard"&&(<button onClick={()=>{setView("dashboard");setOpenProject(null);}} style={{display:"flex",alignItems:"center",gap:4,background:C.accentDim,border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer",borderRadius:6,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>← Back</button>)}
+          </div>
+          {/* Flex spacer */}
+          <div style={{flex:1}}/>
+          {/* Status indicators */}
           {bgRunning.length>0&&(
             <div title={bgRunning.map(t=>t.panelName+": "+t.msg).join("\n")}
-              style={{display:"flex",alignItems:"center",gap:6,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,background:"#0d2a0d",border:"1px solid #22c55e99",cursor:"default"}}>
-              <span className="spin" style={{fontSize:12,color:"#86efac",lineHeight:1}}>◌</span>
-              <span style={{fontSize:11,fontWeight:600,color:"#86efac",whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
+              style={{display:"flex",alignItems:"center",gap:5,padding:"0 8px",height:28,borderRadius:10,background:"#0d2a0d",border:"1px solid #22c55e99",cursor:"default",flexShrink:0}}>
+              <span className="spin" style={{fontSize:11,color:"#86efac",lineHeight:1}}>◌</span>
+              <span style={{fontSize:10,fontWeight:600,color:"#86efac",whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
             </div>
           )}
           {connStatus!=="good"&&(
-            <div style={{display:"flex",alignItems:"center",gap:6,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,
+            <div style={{display:"flex",alignItems:"center",gap:5,padding:"0 8px",height:28,borderRadius:10,flexShrink:0,
               background:connStatus==="offline"?"#3b080844":"#3a1f0044",border:`1px solid ${connStatus==="offline"?"#ef444466":"#f59e0b66"}`}}>
-              <div style={{width:7,height:7,borderRadius:"50%",flexShrink:0,
-                background:connStatus==="offline"?C.red:C.yellow,
-                boxShadow:`0 0 5px ${connStatus==="offline"?C.red:C.yellow}`,
-                animation:"pulse 2s ease-in-out infinite"}}/>
-              <span style={{fontSize:11,fontWeight:600,whiteSpace:"nowrap",
-                color:connStatus==="offline"?"#fca5a5":"#fcd34d"}}>{connStatus==="offline"?"Offline":"Slow Connection"}</span>
+              <div style={{width:6,height:6,borderRadius:"50%",flexShrink:0,background:connStatus==="offline"?C.red:C.yellow,boxShadow:`0 0 4px ${connStatus==="offline"?C.red:C.yellow}`,animation:"pulse 2s ease-in-out infinite"}}/>
+              <span style={{fontSize:10,fontWeight:600,whiteSpace:"nowrap",color:connStatus==="offline"?"#fca5a5":"#fcd34d"}}>{connStatus==="offline"?"Offline":"Slow"}</span>
             </div>
           )}
           <div title={bcOnline?"Business Central is connected":"Click to connect to Business Central"}
             onClick={bcOnline?undefined:async()=>{const t=await acquireBcToken(true);if(t){setBcOnline(true);bcOnlinePrev.current=true;}}}
-            style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,boxSizing:"border-box",borderRadius:12,background:bcOnline?"#1e4a8a55":"#3a1a1a44",border:`1px solid ${bcOnline?"#3b82f699":"#7f1d1d88"}`,cursor:bcOnline?"default":"pointer"}}>
-            <div style={{width:7,height:7,borderRadius:"50%",flexShrink:0,background:bcOnline?"#3b82f6":"#ef4444",boxShadow:bcOnline?"0 0 5px #3b82f6":"0 0 5px #ef4444"}}/>
-            <span style={{fontSize:11,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline — Click to connect"}</span>
+            style={{display:"flex",alignItems:"center",gap:5,padding:"0 8px",height:28,borderRadius:10,flexShrink:0,background:bcOnline?"#1e4a8a55":"#3a1a1a44",border:`1px solid ${bcOnline?"#3b82f699":"#7f1d1d88"}`,cursor:bcOnline?"default":"pointer"}}>
+            <div style={{width:6,height:6,borderRadius:"50%",flexShrink:0,background:bcOnline?"#3b82f6":"#ef4444",boxShadow:bcOnline?"0 0 4px #3b82f6":"0 0 4px #ef4444"}}/>
+            <span style={{fontSize:10,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC":"BC Offline"}</span>
           </div>
-          {userRole==="admin"&&<button data-tip="View AI learning database — extracted parts and panel history" onClick={()=>setView("aidb")} style={{background:view==="aidb"?"#1a0a2a":"none",border:view==="aidb"?`1px solid #a78bfa44`:"none",color:"#a78bfa",cursor:"pointer",fontSize:13,fontWeight:700,padding:"0 10px",height:36,borderRadius:6,letterSpacing:0.5}}>🧠 AI Database</button>}
-          <button data-tip="Manage team members and permissions" data-tour="team-btn" onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>👥 Team</button>
-          <button data-tip="Configure pricing defaults, contingencies, and auto-add BOM items" data-tour="config-btn" onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Config</button>
-          <button data-tip="Interactive training walkthrough — complete panel quote from start to finish" data-tour="training-btn" onClick={startTour} style={{background:tourStep!==null?"#172554":"none",border:tourStep!==null?"1px solid #3b82f644":"none",color:tourStep!==null?"#93c5fd":C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36,borderRadius:6,fontWeight:tourStep!==null?700:400}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Training'}</button>
-          <button data-tip="App settings — API key, company, preferences" onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Settings</button>
-          <div style={{width:1,height:24,background:C.border,alignSelf:"center"}}/>
-          <span style={{fontSize:15,color:C.muted}}>{user.email}</span>
-          {userRole&&<span style={{fontSize:14,fontWeight:700,padding:"4px 10px",borderRadius:10,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
-          <button data-tip="Sign out of ARC" onClick={()=>fbAuth.signOut()} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36}}>Sign out</button>
+          <div style={{width:1,height:28,background:C.border,marginLeft:2,flexShrink:0}}/>
+          {/* 🔍 Search icon */}
+          <button title="AI Search" onClick={()=>setShowSearch(v=>!v)} style={{background:showSearch?C.accentDim:"none",border:showSearch?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showSearch?C.accent:C.muted,cursor:"pointer",fontSize:17,width:36,height:36,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔍</button>
+          {/* 🔔 Bell icon — notifications (future) */}
+          <button title="Notifications (coming soon)" style={{background:"none",border:"none",borderRadius:8,color:C.muted,cursor:"pointer",fontSize:17,width:36,height:36,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,opacity:0.5}}>🔔</button>
+          {/* ⚙ Gear menu */}
+          <div style={{position:"relative",flexShrink:0}}>
+            <button data-tour="config-btn" data-tour-training="training-btn" title="Settings & Tools" onClick={()=>{setShowGearMenu(v=>!v);setShowUserMenu(false);}} style={{background:showGearMenu?C.accentDim:"none",border:showGearMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showGearMenu?C.accent:C.muted,cursor:"pointer",fontSize:18,width:36,height:36,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙</button>
+            {showGearMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:210,boxShadow:"0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+              <button onClick={()=>{setShowSettings(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>⚙ Settings</button>
+              <button data-tour="config-btn" onClick={()=>{setShowConfig(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>🔧 Configuration</button>
+              <div style={{height:1,background:C.border,margin:"4px 0"}}/>
+              <button data-tour="training-btn" onClick={()=>{startTour();setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null?"#172554":"none",border:"none",color:tourStep!==null?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null?700:500}} onMouseEnter={e=>{if(tourStep===null)e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(tourStep===null)e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Training'}</button>
+              <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📊 Reports</button>
+              {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?"#1a0a2a":"none",border:"none",color:"#a78bfa",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={e=>{if(view!=="aidb")e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(view!=="aidb")e.target.style.background="none";}}>🧠 AI Database</button>}
+              <div style={{height:1,background:C.border,margin:"4px 0"}}/>
+              <div style={{padding:"6px 16px 4px",fontSize:10,color:"#334155",textAlign:"right"}}>{APP_VERSION}</div>
+            </div>)}
+          </div>
+          {/* 👤 User menu */}
+          <div style={{position:"relative",flexShrink:0}}>
+            <div data-tour="team-btn" title={user.email} onClick={()=>{setShowUserMenu(v=>!v);setShowGearMenu(false);}} style={{width:34,height:34,borderRadius:"50%",background:showUserMenu?"#1e3a5f":C.border,border:showUserMenu?`2px solid ${C.accent}`:`2px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:14,fontWeight:800,color:showUserMenu?C.accent:"#94a3b8",flexShrink:0,userSelect:"none",letterSpacing:0}}>
+              {user.email?user.email[0].toUpperCase():"?"}
+            </div>
+            {showUserMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+              <div style={{padding:"12px 16px 10px",borderBottom:`1px solid ${C.border}`}}>
+                <div style={{fontSize:13,color:C.text,fontWeight:600,marginBottom:6,wordBreak:"break-all"}}>{user.email}</div>
+                {userRole&&<span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:8,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
+              </div>
+              <button data-tour="team-btn" onClick={()=>{setShowTeam(true);setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>👥 Team & Permissions</button>
+              <div style={{height:1,background:C.border,margin:"4px 0"}}/>
+              <button onClick={()=>{fbAuth.signOut();setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:"#f87171",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:600}} onMouseEnter={e=>e.target.style.background="#1a0a0a"} onMouseLeave={e=>e.target.style.background="none"}>Sign Out</button>
+            </div>)}
           </div>
         </div>
-        {/* Row 2: AI Search bar — home page only */}
-        {view==="dashboard"&&<div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"6px 32px",display:"flex",justifyContent:"center"}}>
+        {/* Dropdown backdrop — closes menus when clicking outside */}
+        {(showGearMenu||showUserMenu)&&<div style={{position:"fixed",inset:0,zIndex:590}} onClick={()=>{setShowGearMenu(false);setShowUserMenu(false);}}/>}
+        {/* Search bar row — toggleable */}
+        {showSearch&&<div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"6px 24px",display:"flex",justifyContent:"center"}}>
           <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden",width:"100%",maxWidth:900}}>
             <span style={{padding:"0 12px",color:C.muted,fontSize:16,lineHeight:1,flexShrink:0}}>🔍</span>
             <input ref={sqInputRef} value={sqQuery} placeholder="AI Search — quotes, projects, suppliers…"
               onChange={e=>setSqQuery(e.target.value)}
-              onKeyDown={e=>{if(e.key==='Enter')runAiSearch(sqQuery);if(e.key==='Escape'){setSqQuery('');setSqResults(null);}}}
+              onKeyDown={e=>{if(e.key==='Enter'){if(view!=="dashboard"){setView("dashboard");setOpenProject(null);}runAiSearch(sqQuery);}if(e.key==='Escape'){setSqQuery('');setSqResults(null);setShowSearch(false);}}}
               style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:15,padding:"8px 4px",minWidth:0}}/>
             {sqSearching&&<span style={{padding:"0 10px",color:C.muted,fontSize:14,flexShrink:0}}>…</span>}
             {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 10px",fontSize:18,lineHeight:1,flexShrink:0}}>×</button>}
-            <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>Search</button>
+            <button onClick={()=>{if(view!=="dashboard"){setView("dashboard");setOpenProject(null);}runAiSearch(sqQuery);}} style={{background:C.accent,border:"none",color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>Search</button>
           </div>
         </div>}
       </div>
-      {/* Content — padded below fixed header (88px top row + ~44px search row when on dashboard) */}
-      <div style={{flex:1,paddingTop:view==="dashboard"?132:88}}>
+      {/* Content — padded below fixed header */}
+      <div style={{flex:1,paddingTop:showSearch?108:60}}>
       {/* BC Connection Lost popup */}
       {bcLostAlert&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -12300,6 +12406,7 @@ function App({user}){
       {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} project={deleteConfirm.project} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
       {transferProject&&<TransferProjectModal project={transferProject} companyId={companyId} uid={user.uid} userEmail={user.email} onTransferred={handleTransferDone} onClose={()=>setTransferProject(null)}/>}
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)}/>}
+      {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={url=>setCompanyLogo(url||null)}/>}
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
