@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.278";
+const APP_VERSION="v1.17.279";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11765,10 +11765,11 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return [{label:null,items:sorted}];
     }
     if(groupBy==="status"){
-      const order=["draft","in_progress","evc","active"];
-      const labels={draft:"Draft",in_progress:"In Progress",evc:"Ready",active:"Active"};
+      const order=["draft","in_progress","evc","active","purchasing"];
+      const labels={draft:"Draft",in_progress:"In Progress",evc:"Ready",active:"Active (Ready for Purchasing)",purchasing:"Purchasing In Progress"};
       const map={};
       list.forEach(p=>{
+        if(p.bcPoStatus==="purchasing"){if(!map.purchasing)map.purchasing=[];map.purchasing.push(p);return;}
         if(p.bcPoStatus==="Open"){if(!map.active)map.active=[];map.active.push(p);return;}
         let st=projectStatus(p);if(st==="extracted"||st==="validated"||st==="costed"||st==="quoted"||st==="pushed_to_bc")st="evc";if(!map[st])map[st]=[];map[st].push(p);
       });
@@ -11778,7 +11779,10 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return [{label:null,items:list.filter(p=>p.importedFromBC)}];
     }
     if(groupBy==="active"){
-      return [{label:"Active Projects",items:list.filter(p=>p.bcPoStatus==="Open")}];
+      return [{label:"Active (Ready for Purchasing)",items:list.filter(p=>p.bcPoStatus==="Open")}];
+    }
+    if(groupBy==="purchasing"){
+      return [{label:"Purchasing In Progress",items:list.filter(p=>p.bcPoStatus==="purchasing")}];
     }
     return [{label:null,items:list}];
   }
@@ -11866,7 +11870,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         {filterBtn("By Customer","customer")}
         {filterBtn("By Date","date")}
         {filterBtn("By Project #","projectnum")}
-        {filterBtn("Active","active")}
+        {filterBtn("Active (Ready for Purchasing)","active")}
+        {filterBtn("Purchasing In Progress","purchasing")}
         {filterBtn("Imported","imported")}
         {filterBtn("All","all")}
       </div>
@@ -11879,7 +11884,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       )}
 
       {(()=>{
-        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||!p.importedFromBC));
+        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||!p.importedFromBC));
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         return(<>
@@ -11894,8 +11899,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"In Progress":C.yellow,Ready:C.green,Active:"#38bdf8"};
-                const statusColBg={Draft:C.border,"In Progress":C.yellowDim,Ready:C.greenDim,Active:"#0c2233"};
+                const statusColColors={Draft:C.muted,"In Progress":C.yellow,Ready:C.green,"Active (Ready for Purchasing)":"#38bdf8","Purchasing In Progress":"#f59e0b"};
+                const statusColBg={Draft:C.border,"In Progress":C.yellowDim,Ready:C.greenDim,"Active (Ready for Purchasing)":"#0c2233","Purchasing In Progress":"#1c1200"};
                 const colColor=groupBy==="status"?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=groupBy==="status"?(statusColBg[g.label]||C.border):"#2a2a3e";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
@@ -11909,7 +11914,9 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                   {g.label&&<div style={{background:isOver?C.accent:colBg,color:isOver?"#fff":colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",transition:"background 0.15s,color 0.15s",outline:isDropTarget&&dragProjectId?(isOver?"2px solid "+C.accent:"2px dashed "+C.accent+"66"):"none",outlineOffset:2}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
                   <div style={{display:"flex",flexDirection:"column",gap:8,borderRadius:8,padding:isOver?"6px":"0",background:isOver?"#1e2e1e":"transparent",transition:"background 0.15s,padding 0.15s"}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap}
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
+                        onUpdateStatus={onUpdateProject?async(proj,newStatus)=>{const u={...proj,bcPoStatus:newStatus,updatedAt:Date.now()};await onUpdateProject(u);}:undefined}
+                        userFirstName={userFirstName} memberMap={memberMap}
                         draggable={isNoCustomer}
                         onDragStart={isNoCustomer?e=>{e.dataTransfer.effectAllowed="move";setDragProjectId(p.id);}:undefined}
                         onDragEnd={isNoCustomer?()=>{setDragProjectId(null);setDropTarget(null);}:undefined}/>
@@ -12054,7 +12061,7 @@ function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onC
 }
 
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete,onTransfer,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd}){
+function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
@@ -12087,6 +12094,22 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,userFirstName,memberMap,dragg
             <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
           </div>
         ):null}
+      </div>
+    )}
+    {onUpdateStatus&&(p.bcPoStatus==="Open"||p.bcPoStatus==="purchasing")&&(
+      <div style={{marginTop:4,display:"flex",justifyContent:"flex-end"}} onClick={e=>e.stopPropagation()}>
+        {p.bcPoStatus==="Open"&&(
+          <button onClick={e=>{e.stopPropagation();onUpdateStatus(p,"purchasing");}}
+            style={{background:"#1c1200",border:"1px solid #f59e0b66",color:"#f59e0b",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            → Start Purchasing
+          </button>
+        )}
+        {p.bcPoStatus==="purchasing"&&(
+          <button onClick={e=>{e.stopPropagation();onUpdateStatus(p,"Open");}}
+            style={{background:"#0c2233",border:"1px solid #38bdf866",color:"#38bdf8",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            ← Back to Active
+          </button>
+        )}
       </div>
     )}
   </div>
