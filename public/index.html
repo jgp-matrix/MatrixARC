@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.284";
+const APP_VERSION="v1.17.285";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10608,11 +10608,11 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               {/* Action buttons */}
               <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:4,paddingTop:8,borderTop:`1px solid ${C.border}33`}}>
                 <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
-                <div style={{display:"flex",gap:6}}>
-                  <button onClick={()=>onOpenSupplierQuote(sp.bom||[])} style={btn("#0d1f0d","#4ade80",{fontSize:13,padding:"6px 8px",flex:1,border:"1px solid #4ade8044"})}>📥 Upload Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
-                  <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:13,padding:"6px 8px",flex:1})}>📜 RFQ History</button>
+                <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
+                  <button onClick={()=>onOpenSupplierQuote(sp.bom||[])} style={btn("#0d1f0d","#4ade80",{fontSize:14,padding:"8px 12px",flex:3,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Supplier Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
+                  <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
                 </div>
-                <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Quote</button>
+                <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Client Quote</button>
                 {!readOnly&&project.bcProjectNumber&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📬 PO Received</button>}
                 {!readOnly&&sp.bcItemNumber&&(
                   <button onClick={()=>{}} disabled={pendingBcCount>0}
@@ -10742,7 +10742,7 @@ class ErrorBoundary extends React.Component{
 }
 
 // ── PROJECT VIEW ──
-function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
+function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoOpenPortal,onPortalOpened}){
   const [project,setProject]=useState(()=>migrateProject(init));
   const projectRef=useRef(migrateProject(init));
   const [view,setView]=useState("panels"); // "panels"|"quote"
@@ -10769,6 +10769,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
     },()=>{});
     return()=>unsub();
   },[uid]);
+  // Auto-open portal modal when navigated from a notification
+  useEffect(()=>{
+    if(autoOpenPortal&&portalSubmissions.length>0){
+      setShowPortalModal(true);
+      onPortalOpened?.();
+    }
+  },[autoOpenPortal,portalSubmissions.length]);
   const saveTimer=useRef(null);
   const readOnly=isReadOnly();
   const didMigrate=useRef(!init.panels);
@@ -12152,6 +12159,8 @@ function App({user}){
   const [showGearMenu,setShowGearMenu]=useState(false);
   const [showUserMenu,setShowUserMenu]=useState(false);
   const [showBellMenu,setShowBellMenu]=useState(false);
+  const [notifications,setNotifications]=useState([]);
+  const [pendingPortalOpen,setPendingPortalOpen]=useState(null); // projectId to auto-open portal modal
   const [showSearch,setShowSearch]=useState(false);
   const [showReports,setShowReports]=useState(false);
   function saveTourStep(s){try{if(s===null)localStorage.removeItem(TOUR_KEY);else localStorage.setItem(TOUR_KEY,String(s));}catch(e){}}
@@ -12165,6 +12174,28 @@ function App({user}){
   function tourPrev(){setTourStep(prev=>{const n=Math.max(prev-1,0);saveTourStep(n);return n;});}
   function tourDone(){setTourStep(null);saveTourStep(null);}
   function tourSkip(){setTourStep(null);}
+
+  // Notifications listener
+  useEffect(()=>{
+    if(!user.uid)return;
+    const unsub=fbDb.collection(`users/${user.uid}/notifications`).where('read','==',false).orderBy('createdAt','desc').limit(50).onSnapshot(snap=>{
+      setNotifications(snap.docs.map(d=>({id:d.id,...d.data()})));
+    },()=>{});
+    return()=>unsub();
+  },[user.uid]);
+
+  function handleNotifClick(notif){
+    fbDb.doc(`users/${user.uid}/notifications/${notif.id}`).update({read:true}).catch(()=>{});
+    setShowBellMenu(false);
+    if(notif.type==='supplier_quote'&&notif.projectId){
+      const proj=projects.find(p=>p.id===notif.projectId);
+      if(proj){handleOpen(proj);setPendingPortalOpen(notif.projectId);}
+    }
+  }
+
+  function markAllNotifsRead(){
+    notifications.forEach(n=>fbDb.doc(`users/${user.uid}/notifications/${n.id}`).update({read:true}).catch(()=>{}));
+  }
 
   function closeSearch(){setSqResults(null);setSqQuery('');setShowSearch(false);}
   function openProjectFromSearch(p){handleOpen(p);closeSearch();}
@@ -12615,10 +12646,30 @@ function App({user}){
           <button title="AI Search" onClick={()=>setShowSearch(v=>!v)} style={{background:showSearch?C.accentDim:"none",border:showSearch?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showSearch?C.accent:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔍</button>
           {/* 🔔 Bell icon */}
           <div style={{position:"relative",flexShrink:0}}>
-            <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔔</button>
-            {showBellMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:240,boxShadow:"0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
-              <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Notifications</div>
-              <div style={{padding:"20px 16px",textAlign:"center",color:"#475569",fontSize:13,fontStyle:"italic"}}>To Be Developed</div>
+            <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:notifications.length>0?"#fbbf24":C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔔</button>
+            {notifications.length>0&&<div style={{position:"absolute",top:5,right:5,background:"#dc2626",color:"#fff",borderRadius:"50%",fontSize:10,fontWeight:800,minWidth:17,height:17,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,pointerEvents:"none"}}>{notifications.length>9?"9+":notifications.length}</div>}
+            {showBellMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:320,maxWidth:380,boxShadow:"0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+              <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,flex:1}}>Notifications {notifications.length>0&&`(${notifications.length})`}</span>
+                {notifications.length>0&&<button onClick={markAllNotifsRead} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>Mark all read</button>}
+              </div>
+              <div style={{maxHeight:360,overflowY:"auto"}}>
+                {notifications.length===0&&<div style={{padding:"20px 16px",textAlign:"center",color:"#475569",fontSize:13}}>No new notifications</div>}
+                {notifications.map(n=>(
+                  <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:n.type==='supplier_quote'?"pointer":"default"}}
+                    onClick={()=>n.type==='supplier_quote'?handleNotifClick(n):undefined}>
+                    <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                      <span style={{fontSize:16,flexShrink:0,marginTop:1}}>{n.type==='supplier_quote'?'📥':'🔔'}</span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:700,color:"#f1f5f9",marginBottom:2,lineHeight:1.3}}>{n.title||"Notification"}</div>
+                        <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.4,marginBottom:4}}>{n.body||""}</div>
+                        {n.type==='supplier_quote'&&<span style={{fontSize:11,fontWeight:700,color:C.accent}}>Click to Review Quote →</span>}
+                        <div style={{fontSize:10,color:"#475569",marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>)}
           </div>
           {/* ⚙ Gear menu */}
@@ -12744,7 +12795,7 @@ function App({user}){
       )}
       {view==="project"&&openProject&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined}/>
+          <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)}/>
         </ErrorBoundary>
       )}
       {view==="aidb"&&userRole==="admin"&&(
@@ -12842,12 +12893,12 @@ const TOUR_STEPS=[
    action:true,actionLabel:'👆 Scroll down to the Pricing section and review the CUT/LAYOUT/WIRE hours. Return here when done.'},
 
   {phase:'Generate a Quote',title:'Step 10 — Open the Quote Editor',
-   body:'Click "Print Quote" to open the quote editor. Fill in or verify:\n\n• Salesperson name\n• Requested ship date\n• Quote notes (optional)\n• Markup % — the sell price recalculates instantly\n\nThe sell price = (BOM + Labor + Contingencies) × (1 + markup%).',
+   body:'Click "Print Client Quote" to open the quote editor. Fill in or verify:\n\n• Salesperson name\n• Requested ship date\n• Quote notes (optional)\n• Markup % — the sell price recalculates instantly\n\nThe sell price = (BOM + Labor + Contingencies) × (1 + markup%).',
    target:'[data-tour="print-quote-btn"]',placement:'top',
-   action:true,actionLabel:'👆 Click Print Quote. Review all fields and the sell price. Adjust markup if needed. Return here when done.'},
+   action:true,actionLabel:'👆 Click Print Client Quote. Review all fields and the sell price. Adjust markup if needed. Return here when done.'},
 
   {phase:'Generate a Quote',title:'Step 11 — Print to PDF',
-   body:'Inside the quote editor, click the Print Quote button to open the browser print dialog. Select "Save as PDF" to export.\n\nThe quote includes:\n• Company header with logo\n• Labor summary with bar charts\n• BOM table (configurable)\n• Terms & Conditions page\n\nUse Edge or Chrome for best print formatting.',
+   body:'Inside the quote editor, click the Print Client Quote button to open the browser print dialog. Select "Save as PDF" to export.\n\nThe quote includes:\n• Company header with logo\n• Labor summary with bar charts\n• BOM table (configurable)\n• Terms & Conditions page\n\nUse Edge or Chrome for best print formatting.',
    target:'[data-tour="print-quote-btn"]',placement:'top'},
 
   // ── SEND RFQs ──
@@ -12862,7 +12913,7 @@ const TOUR_STEPS=[
    action:true,actionLabel:'👆 Click 👁 Preview on at least one vendor. Review the document, then return here.'},
 
   {phase:'Send RFQs',title:'Step 14 — Send the RFQ',
-   body:'Click "Send Email" next to a vendor to send the RFQ. The vendor receives:\n\n• The RFQ as a PDF attachment\n• A direct link to submit pricing via the ARC supplier portal (no login required)\n\nWhen the supplier submits pricing, the "📥 Upload Quote" button shows a badge count. Click it to review and apply their prices to your BOM.',
+   body:'Click "Send Email" next to a vendor to send the RFQ. The vendor receives:\n\n• The RFQ as a PDF attachment\n• A direct link to submit pricing via the ARC supplier portal (no login required)\n\nWhen the supplier submits pricing, the "📥 Upload Supplier Quote" button shows a badge count. Click it to review and apply their prices to your BOM.',
    target:'[data-tour="rfq-btn"]',placement:'top',
    action:true,actionLabel:'👆 Send the RFQ to at least one vendor. Return here when done.'},
 
