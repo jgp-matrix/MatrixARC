@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.275";
+const APP_VERSION="v1.17.276";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4913,7 +4913,13 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
           <span style={{color:"#64748b"}}>From:</span>
           <span style={{color:"#93c5fd",fontWeight:600}}>{fromEmail}</span>
         </div>
-        <div style={{fontSize:12,color:"#64748b",marginBottom:10}}>Uncheck any supplier to skip their email this send.</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+          <div style={{fontSize:12,color:"#64748b"}}>Uncheck any supplier to skip their email this send.</div>
+          <div style={{display:"flex",gap:6}}>
+            <button onClick={()=>setIncluded(prev=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;})} disabled={sending||done} style={{background:"none",border:"1px solid #2a2a3e",color:"#94a3b8",borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Check All</button>
+            <button onClick={()=>setIncluded(prev=>{const m={};groups.forEach(g=>{m[g.vendorName]=false;});return m;})} disabled={sending||done} style={{background:"none",border:"1px solid #2a2a3e",color:"#94a3b8",borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Uncheck All</button>
+          </div>
+        </div>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18,maxHeight:360,overflowY:"auto"}}>
           {groups.map(g=>{
             const st=statuses[g.vendorName];
@@ -13040,6 +13046,7 @@ function SupplierPortalPage({token}){
 
   async function handleSubmit(){
     if(uploading)return;
+    if(!leadTime.trim()){alert("Please enter the lead time in days ARO for this order before submitting.");return;}
     setUploading(true);
     try{
       let storageUrl=null,fileName=null;
@@ -13049,15 +13056,16 @@ function SupplierPortalPage({token}){
         storageUrl=await storageRef.getDownloadURL();
         fileName=file.name;
       }
+      const orderLeadTime=parseInt(leadTime)||null;
       const pricedItems=(info?.lineItems||[]).map((item,i)=>({
         ...item,
         unitPrice:unitPrices[i]!==undefined&&unitPrices[i]!==''?parseFloat(unitPrices[i])||null:null,
-        leadTimeDays:itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:null,
+        // Row-level lead time overrides the order lead time; fall back to order lead time
+        leadTimeDays:itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:orderLeadTime,
       }));
-      const updateData={status:"submitted",submittedAt:Date.now(),lineItems:pricedItems};
+      const updateData={status:"submitted",submittedAt:Date.now(),lineItems:pricedItems,leadTimeDays:orderLeadTime};
       if(fileName)updateData.fileName=fileName;
       if(storageUrl)updateData.storageUrl=storageUrl;
-      if(leadTime.trim())updateData.leadTimeDays=parseInt(leadTime)||null;
       await fbDb.collection('rfqUploads').doc(token).update(updateData);
       setDone(true);
     }catch(e){alert("Submission failed: "+e.message);}
@@ -13143,22 +13151,26 @@ function SupplierPortalPage({token}){
                 {lineItems.map((item,i)=>{
                   const conf=aiConfidences[i];
                   const hasPrice=unitPrices[i]!==undefined&&unitPrices[i]!=='';
-                  const confColor=conf==='high'?"#166534":conf==='medium'?"#854d0e":"#991b1b";
-                  const confBg=conf==='high'?"#dcfce7":conf==='medium'?"#fef9c3":"#fee2e2";
+                  const isMatch=(conf==='high'||conf==='medium');
+                  const isNoMatch=(conf==='low');
+                  const confLabel=isMatch?"MATCH":isNoMatch?"NO MATCH":null;
+                  const confColor=isMatch?"#166534":"#991b1b";
+                  const confBg=isMatch?"#dcfce7":"#fee2e2";
                   return(
-                    <tr key={i} style={{borderTop:`1px solid ${border}`,background:hasPrice?"#f0fdf4":!conf?"#fff":"#fff"}}>
+                    <tr key={i} style={{borderTop:`1px solid ${border}`,background:isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff"}}>
                       <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",fontSize:12}}>{item.partNumber||"—"}</td>
                       <td style={{padding:"10px 12px",color:muted,fontSize:12}}>{item.description||"—"}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:dark}}>{item.qty||1}</td>
                       <td style={{padding:"8px 12px"}}>
                         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6}}>
-                          {conf&&<span style={{fontSize:10,fontWeight:700,borderRadius:4,padding:"2px 6px",background:confBg,color:confColor,flexShrink:0}}>{conf.toUpperCase()}</span>}
+                          {confLabel&&<span style={{fontSize:10,fontWeight:700,borderRadius:4,padding:"2px 6px",background:confBg,color:confColor,flexShrink:0}}>{confLabel}</span>}
                           {!conf&&!hasPrice&&<span style={{fontSize:11,color:"#dc2626",fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
+                          {isNoMatch&&<span style={{fontSize:10,color:"#991b1b",flexShrink:0}}>Please enter price</span>}
                           <span style={{color:muted}}>$</span>
                           <input type="number" min="0" step="0.01" placeholder="0.00"
                             value={unitPrices[i]??''}
                             onChange={e=>setUnitPrices(prev=>({...prev,[i]:e.target.value}))}
-                            style={{width:100,textAlign:"right",...inp,border:`1px solid ${hasPrice?(conf==='high'?"#86efac":conf==='medium'?"#fde047":"#e2e8f0"):"#fca5a5"}`,background:hasPrice?"#f0fdf4":"#fff5f5"}}
+                            style={{width:100,textAlign:"right",...inp,border:`1px solid ${hasPrice?(isMatch?"#86efac":"#e2e8f0"):"#fca5a5"}`,background:hasPrice?"#f0fdf4":"#fff5f5"}}
                           />
                         </div>
                       </td>
@@ -13175,10 +13187,11 @@ function SupplierPortalPage({token}){
               </tbody>
             </table>
           </div>
-          <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-            <label style={{display:"block",fontSize:13,fontWeight:600,color:dark,marginBottom:8}}>Lead Time (days ARO)</label>
+          <div style={{background:card,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+            <label style={{display:"block",fontSize:13,fontWeight:700,color:dark,marginBottom:4}}>Lead Time (days ARO) <span style={{color:"#dc2626"}}>*</span></label>
+            <div style={{fontSize:12,color:muted,marginBottom:8}}>Required — enter your standard lead time for this entire order. You may optionally enter different lead times per line item above to override.</div>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime} onChange={e=>setLeadTime(e.target.value)} style={{width:120,...inp}}/>
+              <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime} onChange={e=>setLeadTime(e.target.value)} style={{width:120,...inp,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`}}/>
               <span style={{fontSize:13,color:muted}}>calendar days after receipt of order</span>
             </div>
           </div>
