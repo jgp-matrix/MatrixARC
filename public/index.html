@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.272";
+const APP_VERSION="v1.17.273";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12719,6 +12719,8 @@ function SupplierPortalPage({token}){
   const [aiError,setAiError]=useState(null);
   const [dragOver,setDragOver]=useState(false);
   const [itemLeadTimes,setItemLeadTimes]=useState({});
+  const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
+  const pdfRef=useRef(null);
 
   useEffect(()=>{
     fbDb.collection('rfqUploads').doc(token).get()
@@ -12741,9 +12743,12 @@ function SupplierPortalPage({token}){
       const pdfjs=window._pdfjs;
       const buf=await f.arrayBuffer();
       const pdf=await pdfjs.getDocument({data:buf}).promise;
+      pdfRef.current=pdf;
+      const BATCH=20;
+      const endPage=Math.min(pdf.numPages,BATCH);
       const pageImages=[];
-      for(let pg=1;pg<=Math.min(pdf.numPages,8);pg++){
-        setAnalyzeMsg(`Processing page ${pg} of ${Math.min(pdf.numPages,8)}…`);
+      for(let pg=1;pg<=endPage;pg++){
+        setAnalyzeMsg(`Processing page ${pg} of ${endPage}…`);
         const page=await pdf.getPage(pg);
         const vp=page.getViewport({scale:2.0});
         const canvas=document.createElement("canvas");
@@ -12769,11 +12774,68 @@ function SupplierPortalPage({token}){
       setUnitPrices(newPrices);
       setAiConfidences(newConf);
       setItemLeadTimes(newLeadTimes);
+      setMorePages(pdf.numPages>BATCH?{nextPage:BATCH+1,totalPages:pdf.numPages}:null);
       setPhase('review');
     }catch(e){
       console.warn("AI extraction failed:",e);
       setAiError(e.message||String(e));
       setPhase('review'); // still go to review so they can enter manually
+    }
+  }
+
+  async function analyzeMorePages(){
+    if(!pdfRef.current||!morePages)return;
+    const {nextPage,totalPages}=morePages;
+    const BATCH=20;
+    const endPage=Math.min(totalPages,nextPage+BATCH-1);
+    setPhase('analyzing');setAiError(null);
+    try{
+      const pageImages=[];
+      for(let pg=nextPage;pg<=endPage;pg++){
+        setAnalyzeMsg(`Processing page ${pg} of ${totalPages}…`);
+        const page=await pdfRef.current.getPage(pg);
+        const vp=page.getViewport({scale:2.0});
+        const canvas=document.createElement("canvas");
+        canvas.width=vp.width;canvas.height=vp.height;
+        await page.render({canvasContext:canvas.getContext("2d"),viewport:vp}).promise;
+        const dataUrl=canvas.toDataURL("image/jpeg",0.85);
+        canvas.width=0;canvas.height=0;
+        pageImages.push(dataUrl.split(",")[1]);
+      }
+      setAnalyzeMsg("AI is reading additional pages…");
+      const result=await fbFunctions.httpsCallable("extractSupplierQuotePricing")({token,pageImages});
+      const extracted=result.data?.extracted||[];
+      const lineItems=info?.lineItems||[];
+      setUnitPrices(prev=>{
+        const next={...prev};
+        extracted.forEach(ex=>{
+          const idx=lineItems.findIndex(it=>(it.partNumber||'').trim().toLowerCase()===(ex.partNumber||'').trim().toLowerCase());
+          if(idx>=0&&ex.unitPrice!=null&&(next[idx]===undefined||next[idx]===''))next[idx]=String(ex.unitPrice);
+        });
+        return next;
+      });
+      setAiConfidences(prev=>{
+        const next={...prev};
+        extracted.forEach(ex=>{
+          const idx=lineItems.findIndex(it=>(it.partNumber||'').trim().toLowerCase()===(ex.partNumber||'').trim().toLowerCase());
+          if(idx>=0&&next[idx]===undefined)next[idx]=ex.confidence||'medium';
+        });
+        return next;
+      });
+      setItemLeadTimes(prev=>{
+        const next={...prev};
+        extracted.forEach(ex=>{
+          const idx=lineItems.findIndex(it=>(it.partNumber||'').trim().toLowerCase()===(ex.partNumber||'').trim().toLowerCase());
+          if(idx>=0&&ex.leadTimeDays!=null&&(next[idx]===undefined||next[idx]===''))next[idx]=String(ex.leadTimeDays);
+        });
+        return next;
+      });
+      setMorePages(endPage<totalPages?{nextPage:endPage+1,totalPages}:null);
+      setPhase('review');
+    }catch(e){
+      console.warn("Additional page analysis failed:",e);
+      setAiError(e.message||String(e));
+      setPhase('review');
     }
   }
 
@@ -12916,6 +12978,17 @@ function SupplierPortalPage({token}){
               </tbody>
             </table>
           </div>
+          {morePages&&(
+            <div style={{background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:10,padding:"16px 20px",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"space-between",gap:16,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:"#1e40af",marginBottom:3}}>📄 Additional pages not yet analyzed</div>
+                <div style={{fontSize:13,color:"#3b82f6"}}>This PDF has {morePages.totalPages} pages. Pages {morePages.nextPage}–{Math.min(morePages.totalPages,morePages.nextPage+19)} have not been read yet.</div>
+              </div>
+              <button onClick={analyzeMorePages} style={{background:"#2563eb",border:"none",color:"#fff",padding:"9px 20px",borderRadius:7,cursor:"pointer",fontSize:13,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>
+                Analyze pages {morePages.nextPage}–{Math.min(morePages.totalPages,morePages.nextPage+19)} →
+              </button>
+            </div>
+          )}
           <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
             <label style={{display:"block",fontSize:13,fontWeight:600,color:dark,marginBottom:8}}>Lead Time (days ARO)</label>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -12924,7 +12997,7 @@ function SupplierPortalPage({token}){
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});}}
+            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setMorePages(null);pdfRef.current=null;}}
               style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
               ← Start Over
             </button>
