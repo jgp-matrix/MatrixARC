@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.259";
+const APP_VERSION="v1.17.260";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7524,6 +7524,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               onDragLeave={()=>setDragging(false)}
               onDrop={e=>{e.preventDefault();setDragging(false);if(!awaitingConfirm)addFiles(e.dataTransfer.files);}}
               onClick={()=>!processing&&!detecting&&!awaitingConfirm&&fileRef.current?.click()}
+              data-tour="add-files-zone"
               style={{flexShrink:0,width:420,height:381,border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:6,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:processing||detecting?"default":"pointer",transition:"all 0.15s",background:dragging?C.accentDim+"33":"transparent",textAlign:"center",padding:12,gap:8}}>
               <input ref={fileRef} type="file" multiple accept="image/*,application/pdf" onChange={e=>{addFiles(e.target.files);e.target.value="";}} style={{display:"none"}}/>
               <div style={{fontSize:32,opacity:processing||detecting?1:0.35}}>{processing||detecting?"⏳":"+"}</div>
@@ -7595,7 +7596,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             )}
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
           </div>
-          <div style={{borderRadius:8,border:`1px solid ${C.border}`}}>
+          <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`}}>
             <table style={{width:"100%",tableLayout:"auto",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
@@ -10319,12 +10320,12 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
 
               {/* Action buttons */}
               <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:4,paddingTop:8,borderTop:`1px solid ${C.border}33`}}>
-                <button onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
+                <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
                 <div style={{display:"flex",gap:6}}>
                   <button onClick={()=>onOpenSupplierQuote(sp.bom||[])} style={btn("#0d1f0d","#4ade80",{fontSize:13,padding:"6px 8px",flex:1,border:"1px solid #4ade8044"})}>📥 Upload Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
                   <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:13,padding:"6px 8px",flex:1})}>📜 RFQ History</button>
                 </div>
-                <button onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Quote</button>
+                <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Quote</button>
                 {!readOnly&&project.bcProjectNumber&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📬 PO Received</button>}
                 {!readOnly&&sp.bcItemNumber&&(
                   <button onClick={()=>{}} disabled={pendingBcCount>0}
@@ -11439,7 +11440,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
         </div>
         <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          <button data-tip="Start a new panel extraction project" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
+          <button data-tip="Start a new panel extraction project" data-tour="new-project-btn" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
             <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
           </button>
         </div>
@@ -11548,7 +11549,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
               {groups.map((g,gi)=>(
                 <div key={gi}>
                   {g.label&&<div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:12,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>{g.label}</div>}
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
+                  <div data-tour="project-list" style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                     {g.items.map(p=>(
                       <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap}/>
                     ))}
@@ -11747,6 +11748,29 @@ function App({user}){
   const [sqResults,setSqResults]=useState(null);
   const [sqSearching,setSqSearching]=useState(false);
   const sqInputRef=useRef();
+  const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
+  const [showChecklist,setShowChecklist]=useState(false);
+  const [checklistDone,setChecklistDone]=useState({});
+
+  useEffect(()=>{
+    fbDb.doc(`users/${user.uid}/config/training`).get()
+      .then(snap=>{if(snap.exists)setChecklistDone(snap.data().checked||{});})
+      .catch(()=>{});
+  },[user.uid]);
+
+  function toggleChecklistItem(id){
+    setChecklistDone(prev=>{
+      const next={...prev,[id]:!prev[id]};
+      fbDb.doc(`users/${user.uid}/config/training`).set({checked:next},{merge:true}).catch(()=>{});
+      return next;
+    });
+  }
+
+  function startTour(){setTourStep(0);setShowChecklist(false);}
+  function tourNext(){setTourStep(s=>s+1<TOUR_STEPS.length?s+1:s);}
+  function tourPrev(){setTourStep(s=>s>0?s-1:s);}
+  function tourDone(){setTourStep(null);}
+  function tourSkip(){setTourStep(null);}
 
   async function runAiSearch(q){
     if(!q||q.trim().length<2){setSqResults(null);return;}
@@ -12132,8 +12156,9 @@ function App({user}){
             <span style={{fontSize:11,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline — Click to connect"}</span>
           </div>
           {userRole==="admin"&&<button data-tip="View AI learning database — extracted parts and panel history" onClick={()=>setView("aidb")} style={{background:view==="aidb"?"#1a0a2a":"none",border:view==="aidb"?`1px solid #a78bfa44`:"none",color:"#a78bfa",cursor:"pointer",fontSize:13,fontWeight:700,padding:"0 10px",height:36,borderRadius:6,letterSpacing:0.5}}>🧠 AI Database</button>}
-          <button data-tip="Manage team members and permissions" onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>👥 Team</button>
-          <button data-tip="Configure pricing defaults, contingencies, and auto-add BOM items" onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Config</button>
+          <button data-tip="Manage team members and permissions" data-tour="team-btn" onClick={()=>setShowTeam(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>👥 Team</button>
+          <button data-tip="Configure pricing defaults, contingencies, and auto-add BOM items" data-tour="config-btn" onClick={()=>setShowConfig(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Config</button>
+          <button data-tip="Training checklist and guided tour for new users" data-tour="training-btn" onClick={()=>setShowChecklist(c=>!c)} style={{background:showChecklist?"#172554":"none",border:showChecklist?"1px solid #3b82f644":"none",color:showChecklist?"#93c5fd":C.muted,cursor:"pointer",fontSize:15,padding:"0 10px",height:36,borderRadius:6,fontWeight:showChecklist?700:400}}>📋 Training</button>
           <button data-tip="App settings — API key, company, preferences" onClick={()=>setShowSettings(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"0 10px",height:36,borderRadius:6}}>⚙ Settings</button>
           <div style={{width:1,height:24,background:C.border,alignSelf:"center"}}/>
           <span style={{fontSize:15,color:C.muted}}>{user.email}</span>
@@ -12203,6 +12228,158 @@ function App({user}){
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
       </div>{/* end paddingTop wrapper */}
+      {showChecklist&&<TrainingChecklist onClose={()=>setShowChecklist(false)} checked={checklistDone} onToggle={toggleChecklistItem} onStartTour={startTour}/>}
+      {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip}/>}
+    </div>
+  );
+}
+
+// ── GUIDED TOUR + TRAINING CHECKLIST ──
+
+const TOUR_STEPS=[
+  {title:'Welcome to ARC! 👋',body:'ARC automates your panel quoting workflow — AI-powered BOM extraction, labor estimation, quote generation, and vendor RFQs. This quick tour covers the key features. Click Next to begin.',target:null},
+  {title:'Your Projects',body:'This is your dashboard. Projects appear as cards showing the name, status, and last update time. Click any card to open it and start working.',target:'[data-tour="project-list"]',placement:'center'},
+  {title:'➕ Create a New Project',body:'Click "+ New Project" to start a new panel job. You\'ll select a customer from Business Central and give the project a name. Each project can contain multiple panels.',target:'[data-tour="new-project-btn"]',placement:'bottom'},
+  {title:'⚙ Config & Settings',body:'Config sets your labor rates, pricing contingencies, and default BOM items. Settings stores your Anthropic API key and company preferences. Configure these before your first extraction.',target:'[data-tour="config-btn"]',placement:'bottom'},
+  {title:'👥 Team Management',body:'Invite colleagues and assign roles: Admin (full access), Edit (create and modify), or View (read-only). Admins can change roles and remove members at any time.',target:'[data-tour="team-btn"]',placement:'bottom'},
+  {title:'📂 Uploading Drawings',body:'Open a panel and drop your UL508A drawing PDFs here. ARC auto-detects page types — BOM tables, schematics, backpanel layouts, and enclosure drawings. Click any thumbnail to correct misclassifications.',target:'[data-tour="add-files-zone"]',placement:'right'},
+  {title:'📋 Bill of Materials',body:'After upload and extraction, the AI-generated BOM appears here. Click any cell to edit. Red rows (qty=0 or price=$0) need attention. The first three rows — CUT, LAYOUT, WIRE — are auto-calculated labor estimates.',target:'[data-tour="bom-table"]',placement:'top'},
+  {title:'📨 Send RFQs to Vendors',body:'Once your BOM is ready, click "Send/Print RFQ\'s" to request pricing from suppliers. ARC groups items by vendor, generates formatted RFQ documents, and emails each vendor a direct upload link.',target:'[data-tour="rfq-btn"]',placement:'top'},
+  {title:'🖨 Print Quote',body:'Click "Print Quote" to open the quote editor. Set your markup percentage, review the sell price, and print to PDF via the browser print dialog. The quote includes a labor summary and Terms & Conditions page.',target:'[data-tour="print-quote-btn"]',placement:'top'},
+  {title:'Track Your Progress',body:'Use the Training Checklist to track hands-on practice tasks. Check items off as you complete them — your progress is saved automatically. Click "Start Guided Tour" any time to re-run this tour.',target:'[data-tour="training-btn"]',placement:'bottom'},
+  {title:"You're Ready! 🎉",body:'That covers the core ARC workflow. Use the Training Checklist to practice each step on a real project. For detailed guidance, refer to the ARC Training Manual. Good luck!',target:null},
+];
+
+const CHECKLIST_ITEMS=[
+  {id:'signin',       label:'Sign in to ARC',                  desc:'Log in using email, Google, or Microsoft'},
+  {id:'explore',      label:'Explore the dashboard',           desc:'Review the Projects view and understand status colors'},
+  {id:'new_project',  label:'Create your first project',       desc:'Click + New Project and select a customer'},
+  {id:'add_panel',    label:'Add a panel to a project',        desc:'Click + Add Panel inside a project'},
+  {id:'upload_files', label:'Upload drawing files',            desc:'Drop a UL508A PDF onto a panel'},
+  {id:'verify_pages', label:'Verify page type detection',      desc:'Confirm BOM, schematic, and layout pages were classified correctly'},
+  {id:'run_extract',  label:'Run AI extraction',               desc:'Wait for the BOM to populate after upload'},
+  {id:'review_bom',   label:'Review and edit the BOM',         desc:'Correct any extraction errors, check red zero-price rows'},
+  {id:'get_price',    label:'Get pricing from Business Central',desc:'Use Get Pricing or the BC Item Browser on a BOM row'},
+  {id:'check_labor',  label:'Review the labor estimate',       desc:'Check CUT / LAYOUT / WIRE hours in the Pricing section'},
+  {id:'gen_quote',    label:'Generate a quote',                desc:'Click Print Quote and print to PDF'},
+  {id:'send_rfq',     label:'Send an RFQ to a vendor',         desc:'Use the RFQ modal to email a supplier'},
+];
+
+function useTourRect(target){
+  const[rect,setRect]=useState(null);
+  useEffect(()=>{
+    if(!target){setRect(null);return;}
+    function measure(){
+      const el=document.querySelector(target);
+      if(!el){setRect(null);return;}
+      const r=el.getBoundingClientRect();
+      setRect({top:r.top,left:r.left,width:r.width,height:r.height});
+      el.scrollIntoView({behavior:'smooth',block:'center'});
+    }
+    measure();
+    const t=setTimeout(measure,320);
+    return()=>clearTimeout(t);
+  },[target]);
+  return rect;
+}
+
+function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip}){
+  const step=TOUR_STEPS[stepIdx];
+  const PAD=10;const PW=340;
+  const rect=useTourRect(step?.target||null);
+  const[popStyle,setPopStyle]=useState({});
+
+  useEffect(()=>{
+    const vw=window.innerWidth;const vh=window.innerHeight;
+    if(!rect||!step?.target){
+      setPopStyle({position:'fixed',top:'50%',left:'50%',transform:'translate(-50%,-50%)',width:PW});
+      return;
+    }
+    const cx=rect.left+rect.width/2;
+    const sp=step.placement||'bottom';
+    let top,left;
+    const spaceBelow=vh-(rect.top+rect.height+PAD+16);
+    const spaceAbove=rect.top-PAD-16;
+    if(sp==='bottom'||(sp!=='top'&&sp!=='right'&&sp!=='left'&&spaceBelow>180)){
+      top=rect.top+rect.height+PAD+16;
+      left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
+    }else if(sp==='top'||(sp!=='right'&&sp!=='left'&&spaceAbove>180)){
+      top=rect.top-PAD-220;
+      left=Math.max(12,Math.min(cx-PW/2,vw-PW-12));
+    }else if(sp==='right'){
+      top=Math.max(12,Math.min(rect.top+rect.height/2-100,vh-220));
+      left=rect.left+rect.width+PAD+16;
+    }else{
+      top=Math.max(12,Math.min(rect.top+rect.height/2-100,vh-220));
+      left=Math.max(12,rect.left-PW-PAD-16);
+    }
+    setPopStyle({position:'fixed',top:Math.max(8,top),left:Math.max(8,left),width:PW});
+  },[rect,step,stepIdx]);
+
+  const isFirst=stepIdx===0;const isLast=stepIdx===TOUR_STEPS.length-1;
+
+  return(
+    <div style={{position:'fixed',inset:0,zIndex:99997,pointerEvents:'all'}}>
+      {!rect&&<div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.72)'}}/>}
+      {rect&&<div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:10,boxShadow:'0 0 0 9999px rgba(0,0,0,0.72)',border:'2px solid #60a5fa',pointerEvents:'none',zIndex:99998,transition:'all 0.25s ease'}}/>}
+      <div style={{...popStyle,zIndex:99999,background:'#1e2235',border:'1px solid #3b5bdb',borderRadius:14,padding:'22px 24px',boxShadow:'0 8px 40px rgba(0,0,0,0.6)',color:'#f1f5f9',pointerEvents:'all'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
+          <div style={{fontSize:15,fontWeight:700,color:'#93c5fd',lineHeight:1.3,flex:1}}>{step.title}</div>
+          <button onClick={onSkip} title="End tour" style={{background:'none',border:'none',color:'#64748b',cursor:'pointer',fontSize:20,lineHeight:1,padding:'0 0 0 12px',flexShrink:0}}>×</button>
+        </div>
+        <div style={{fontSize:13,color:'#cbd5e1',lineHeight:1.65,marginBottom:18}}>{step.body}</div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+          <span style={{fontSize:11,color:'#475569'}}>{stepIdx+1} / {TOUR_STEPS.length}</span>
+          <div style={{display:'flex',gap:8}}>
+            {!isFirst&&<button onClick={onPrev} style={{background:'none',border:'1px solid #334155',color:'#94a3b8',borderRadius:7,padding:'7px 16px',cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>← Back</button>}
+            {isLast
+              ?<button onClick={onDone} style={{background:'#16a34a',border:'none',color:'#fff',borderRadius:7,padding:'7px 18px',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit'}}>Done ✓</button>
+              :<button onClick={onNext} style={{background:'#2563eb',border:'none',color:'#fff',borderRadius:7,padding:'7px 18px',cursor:'pointer',fontSize:13,fontWeight:700,fontFamily:'inherit'}}>Next →</button>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TrainingChecklist({onClose,checked,onToggle,onStartTour}){
+  const done=CHECKLIST_ITEMS.filter(i=>checked[i.id]).length;
+  const pct=Math.round((done/CHECKLIST_ITEMS.length)*100);
+  return(
+    <div style={{position:'fixed',right:0,top:88,bottom:0,width:310,background:'#0f172a',borderLeft:'1px solid #1e293b',zIndex:9990,display:'flex',flexDirection:'column',boxShadow:'-4px 0 24px rgba(0,0,0,0.5)'}}>
+      <div style={{padding:'16px 20px',borderBottom:'1px solid #1e293b',display:'flex',alignItems:'center',justifyContent:'space-between',flexShrink:0}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:'#f1f5f9'}}>📋 Training Checklist</div>
+          <div style={{fontSize:11,color:'#64748b',marginTop:2}}>{done} of {CHECKLIST_ITEMS.length} complete</div>
+        </div>
+        <button onClick={onClose} style={{background:'none',border:'none',color:'#64748b',cursor:'pointer',fontSize:20,lineHeight:1}}>×</button>
+      </div>
+      <div style={{padding:'14px 20px',borderBottom:'1px solid #1e293b',flexShrink:0}}>
+        <div style={{height:6,background:'#1e293b',borderRadius:3,overflow:'hidden'}}>
+          <div style={{height:'100%',width:pct+'%',background:pct===100?'#4ade80':'#3b82f6',borderRadius:3,transition:'width 0.4s ease'}}/>
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',marginTop:6}}>
+          <span style={{fontSize:11,color:'#64748b'}}>{pct}% complete</span>
+          {pct===100&&<span style={{fontSize:11,color:'#4ade80',fontWeight:700}}>🎉 All done!</span>}
+        </div>
+        <button onClick={onStartTour} style={{width:'100%',marginTop:12,background:'#172554',border:'1px solid #3b82f644',color:'#93c5fd',borderRadius:7,padding:'9px 0',fontSize:13,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>▶ Start Guided Tour</button>
+      </div>
+      <div style={{flex:1,overflowY:'auto'}}>
+        {CHECKLIST_ITEMS.map((item)=>{
+          const isDone=!!checked[item.id];
+          return(
+            <div key={item.id} onClick={()=>onToggle(item.id)}
+              style={{display:'flex',alignItems:'flex-start',gap:12,padding:'11px 20px',cursor:'pointer',borderBottom:'1px solid #0f172a55',background:isDone?'#0d1f1255':'transparent',transition:'background 0.15s'}}>
+              <div style={{width:20,height:20,borderRadius:5,border:`2px solid ${isDone?'#4ade80':'#334155'}`,background:isDone?'#4ade80':'transparent',flexShrink:0,marginTop:1,display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'#0d1f12',fontWeight:900,transition:'all 0.2s'}}>{isDone?'✓':''}</div>
+              <div>
+                <div style={{fontSize:13,fontWeight:600,color:isDone?'#4ade80':'#e2e8f0',lineHeight:1.3,textDecoration:isDone?'line-through':'none'}}>{item.label}</div>
+                <div style={{fontSize:11,color:'#475569',marginTop:3,lineHeight:1.4}}>{item.desc}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
