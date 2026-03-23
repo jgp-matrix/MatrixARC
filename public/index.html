@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.281";
+const APP_VERSION="v1.17.282";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13201,7 +13201,18 @@ function SupplierPortalPage({token}){
             <label style={{display:"block",fontSize:13,fontWeight:700,color:dark,marginBottom:4}}>Lead Time (days ARO) <span style={{color:"#dc2626"}}>*</span></label>
             <div style={{fontSize:12,color:muted,marginBottom:8}}>Required — enter your standard lead time for this entire order. You may optionally enter different lead times per line item above to override.</div>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime} onChange={e=>setLeadTime(e.target.value)} style={{width:120,...inp,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`}}/>
+              <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime} onChange={e=>{
+                const val=e.target.value;
+                setLeadTime(val);
+                if(val.trim()){
+                  const lineItems=info?.lineItems||[];
+                  setItemLeadTimes(prev=>{
+                    const next={...prev};
+                    lineItems.forEach((_,i)=>{if(!next[i]||next[i]==='')next[i]=val;});
+                    return next;
+                  });
+                }
+              }} style={{width:120,...inp,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`}}/>
               <span style={{fontSize:13,color:muted}}>calendar days after receipt of order</span>
             </div>
           </div>
