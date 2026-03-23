@@ -9148,7 +9148,7 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber}){
     const targetFile=droppedFile||file;
     if(!targetFile)return;
     if(!_apiKey){setStatusMsg('API key not set — open Settings to add your Anthropic key.');return;}
-    setPhase('parsing');setStatusMsg('Extracting text from PDF…');
+    setPhase('parsing');setStatusMsg('Rendering PDF pages…');
     setParseProgress(0);setParseEta(null);
     // Load learned AI prior from Firestore concurrently with PDF init
     const aiPriorPromise=sqGetAiPrior(uid);
@@ -9157,14 +9157,19 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber}){
       const pdfjs=window._pdfjs;
       const buf=await targetFile.arrayBuffer();
       const pdf=await pdfjs.getDocument({data:buf}).promise;
-      let fullText='';
+      const pageImages=[];
       parseMetaRef.current.numPages=pdf.numPages;
       for(let pg=1;pg<=pdf.numPages;pg++){
-        setStatusMsg(`Reading page ${pg} of ${pdf.numPages}…`);
+        setStatusMsg(`Rendering page ${pg} of ${pdf.numPages}…`);
         setParseProgress(Math.round((pg/pdf.numPages)*15));
         const page=await pdf.getPage(pg);
-        const tc=await page.getTextContent();
-        fullText+=tc.items.map(i=>i.str).join(' ')+'\n';
+        const vp=page.getViewport({scale:2.0});
+        const canvas=document.createElement('canvas');
+        canvas.width=vp.width;canvas.height=vp.height;
+        await page.render({canvasContext:canvas.getContext('2d'),viewport:vp}).promise;
+        const dataUrl=canvas.toDataURL('image/jpeg',0.85);
+        pageImages.push(dataUrl.split(',')[1]);
+        canvas.width=0;canvas.height=0;
       }
       // AI phase: linear 15→60% over learned prior, then slow crawl if overrun
       setStatusMsg('Sending to AI for parsing…');
@@ -9186,7 +9191,7 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber}){
         const totalEta=Math.round(aiRemaining+SAVE_EST_SEC+meta.pricedCount*MATCH_PER_ITEM_SEC);
         setParseEta(totalEta>3?`~${totalEta}s remaining`:null);
       },300);
-      const prompt=`You are parsing a supplier quote PDF. Extract ALL information into this exact JSON structure. Return ONLY valid JSON, no commentary.
+      const promptText=`You are parsing a supplier quote PDF. Extract ALL information into this exact JSON structure. Return ONLY valid JSON, no commentary.
 
 {
   "quoteId": "string — quote/order number",
@@ -9215,10 +9220,12 @@ Rules:
 - rawPartNumber = exactly as printed including any manufacturer prefix
 - uom: use E (each), C (per 100), M (per 1000), or empty string
 - quoteDate/expiresOn: dates in YYYY-MM-DD format or null if not found
-
-PDF TEXT:
-${fullText.slice(0,12000)}`;
-      const raw=await apiCall({model:"claude-sonnet-4-6",max_tokens:8000,messages:[{role:"user",content:prompt}]});
+- Read prices carefully from the table columns — associate each line item with its correct unit price`;
+      const messageContent=[
+        ...pageImages.slice(0,20).map(img=>({type:'image',source:{type:'base64',media_type:'image/jpeg',data:img}})),
+        {type:'text',text:promptText}
+      ];
+      const raw=await apiCall({model:"claude-sonnet-4-6",max_tokens:8000,messages:[{role:"user",content:messageContent}]});
       const aiElapsed=(Date.now()-parseMetaRef.current.aiStartMs)/1000;
       sqRecordAiTime(uid,aiElapsed).catch(()=>{}); // fire-and-forget, learn from this run
       clearInterval(aiTimerRef.current);aiTimerRef.current=null;
