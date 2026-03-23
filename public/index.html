@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.17.265";
+const APP_VERSION="v1.17.266";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10691,7 +10691,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer}){
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} bcProjectNumber={project.bcProjectNumber||""} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} onClose={()=>setShowRfqHistory(false)}/>}
-          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={()=>setShowPoModal(false)}/>}
+          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={async(poNum)=>{setShowPoModal(false);const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,updatedAt:Date.now()};setProject(updated);projectRef.current=updated;onChange&&onChange(updated);try{await saveProject(uid,updated);}catch(e){console.warn("PO save failed:",e);}}}/>}
           {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
           {quoteWarnRows&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -11453,6 +11453,9 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
     if(groupBy==="imported"){
       return [{label:null,items:list.filter(p=>p.importedFromBC)}];
     }
+    if(groupBy==="active"){
+      return [{label:"Active Projects",items:list.filter(p=>p.bcPoStatus==="Open")}];
+    }
     return [{label:null,items:list}];
   }
 
@@ -11535,6 +11538,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         {filterBtn("By Customer","customer")}
         {filterBtn("By Date","date")}
         {filterBtn("By Project #","projectnum")}
+        {filterBtn("Active","active")}
         {filterBtn("Imported","imported")}
         {filterBtn("All","all")}
       </div>
@@ -11547,7 +11551,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       )}
 
       {(()=>{
-        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||!p.importedFromBC));
+        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||!p.importedFromBC));
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         return(<>
