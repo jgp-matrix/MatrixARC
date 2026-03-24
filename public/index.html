@@ -13377,8 +13377,8 @@ function SupplierPortalPage({token}){
               </div>
             </div>
           )}
-          <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-            <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+            <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",borderRadius:"10px 10px 0 0",background:card}}>
               <span style={{fontSize:13,fontWeight:700,color:dark}}>Pricing Review</span>
               <span style={{fontSize:12,color:muted}}>{file?.name||""}</span>
             </div>
@@ -13428,14 +13428,26 @@ function SupplierPortalPage({token}){
                           }
                           setOpenSpnDrop(null);
                         }
-                        return<div style={{position:"relative"}}>
-                          <button onClick={()=>setOpenSpnDrop(isOpen?null:i)} style={{...inp,padding:"4px 6px",fontSize:12,fontFamily:"monospace",width:170,textAlign:"left",cursor:"pointer",color:cur?dark:muted,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        const btnRef=useRef(null);
+                        const dropH=Math.min(200,(unique.length+1)*30+2);
+                        let dropStyle={position:"fixed",zIndex:700,background:"#fff",border:`1px solid ${border}`,borderRadius:6,width:220,boxShadow:"0 4px 16px rgba(0,0,0,0.15)"};
+                        if(isOpen&&btnRef.current){
+                          const r=btnRef.current.getBoundingClientRect();
+                          const spaceBelow=window.innerHeight-r.bottom;
+                          if(spaceBelow<dropH+10){
+                            dropStyle={...dropStyle,bottom:window.innerHeight-r.top+2,left:r.left};
+                          }else{
+                            dropStyle={...dropStyle,top:r.bottom+2,left:r.left};
+                          }
+                        }
+                        return<div>
+                          <button ref={btnRef} onClick={()=>setOpenSpnDrop(isOpen?null:i)} style={{...inp,padding:"4px 6px",fontSize:12,fontFamily:"monospace",width:170,textAlign:"left",cursor:"pointer",color:cur?dark:muted,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cur||"— Select —"}</span>
                             <span style={{fontSize:10,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
                           </button>
                           {isOpen&&<>
                             <div style={{position:"fixed",inset:0,zIndex:699}} onClick={()=>setOpenSpnDrop(null)}/>
-                            <div className="spn-drop" style={{position:"absolute",top:"100%",left:0,zIndex:700,background:"#fff",border:`1px solid ${border}`,borderRadius:6,marginTop:2,width:200,boxShadow:"0 4px 16px rgba(0,0,0,0.15)"}}>
+                            <div className="spn-drop" style={dropStyle}>
                               <div onClick={()=>pick("")} style={{padding:"6px 10px",fontSize:12,color:muted,cursor:"pointer",borderBottom:`1px solid ${border}`}} onMouseEnter={e=>e.target.style.background="#f1f5f9"} onMouseLeave={e=>e.target.style.background="#fff"}>— Clear —</div>
                               {unique.map(pn=><div key={pn} onClick={()=>pick(pn)} style={{padding:"6px 10px",fontSize:12,fontFamily:"monospace",color:pn===cur?accent:dark,fontWeight:pn===cur?700:400,cursor:"pointer",background:pn===cur?"#eff6ff":"#fff"}} onMouseEnter={e=>{if(pn!==cur)e.target.style.background="#f1f5f9";}} onMouseLeave={e=>{if(pn!==cur)e.target.style.background="#fff";}}>{pn}</div>)}
                             </div>
