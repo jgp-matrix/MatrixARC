@@ -104,7 +104,7 @@ exports.sendInviteEmail = functions.https.onCall(async (data, context) => {
 
   await sgMail.send({
     to,
-    from: 'noreply@matrix-arc.web.app',
+    from: 'sales@matrixpci.com',
     subject: 'You\'ve been invited to Matrix ARC',
     html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
       <h2 style="color:#1e293b;margin-bottom:8px">You\'re invited to Matrix ARC</h2>
@@ -155,7 +155,7 @@ exports.onSupplierQuoteSubmitted = functions.firestore
       if (userEmail) {
         await sgMail.send({
           to: userEmail,
-          from: 'noreply@matrix-arc.web.app',
+          from: 'sales@matrixpci.com',
           subject: `New Supplier Quote: ${vendorName}${rfqNum ? ' — ' + rfqNum : projectName ? ' — ' + projectName : ''}`,
           html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
             <h2 style="color:#1e293b;margin-bottom:8px">New Supplier Quote Received</h2>
@@ -176,7 +176,7 @@ exports.onSupplierQuoteSubmitted = functions.firestore
       try {
         await sgMail.send({
           to: vendorEmail,
-          from: 'noreply@matrix-arc.web.app',
+          from: 'sales@matrixpci.com',
           subject: `Quote Received — ${companyName}${rfqNum ? ' (' + rfqNum + ')' : ''}`,
           html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
             <h2 style="color:#1e293b;margin-bottom:8px">Quote Received</h2>
