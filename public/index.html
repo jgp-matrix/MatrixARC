@@ -11041,6 +11041,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   },[autoOpenPortal,portalSubmissions.length]);
   const saveTimer=useRef(null);
   const readOnly=isReadOnly();
+  const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
   const didMigrate=useRef(!init.panels);
 
   // Keep ref in sync with state for use in callbacks
@@ -11065,7 +11066,6 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   const [relinking,setRelinking]=useState(false);
   const [relinkMsg,setRelinkMsg]=useState(null);
-  const isBcDisconnected=project.bcEnv&&project.bcEnv!==_bcConfig.env;
   async function relinkToBC(){
     if(!_bcToken){alert("Connect to Business Central first.");return;}
     if(!confirm("This will create a NEW BC project in the current environment ("+_bcConfig.env+") and re-link this project. Continue?"))return;
