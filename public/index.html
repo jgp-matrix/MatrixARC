@@ -1774,7 +1774,7 @@ async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
     // Discover the OData page name for Purchase Prices
     const allPages=await bcDiscoverODataPages();
     const ppPage=allPages.find(n=>/purchase.?price/i.test(n));
-    if(!ppPage){console.warn("bcPushPurchasePrice: no PurchasePrices OData page published. Publish page 7012 as a web service in BC.");return;}
+    if(!ppPage){console.warn("bcPushPurchasePrice: no PurchasePrices OData page found. Available pages:",allPages.join(', '));return;}
     const baseUrl=`${BC_ODATA_BASE}/${ppPage}`;
     // Check if record already exists for this item+vendor
     const filterUrl=`${baseUrl}?$filter=Item_No eq '${encodeURIComponent(itemNo)}' and Vendor_No eq '${encodeURIComponent(vendorNo)}'`;
