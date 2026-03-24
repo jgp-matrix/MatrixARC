@@ -13173,6 +13173,7 @@ function SupplierPortalPage({token}){
   const [quoteHeaderInfo,setQuoteHeaderInfo]=useState(null);
   const [allExtractedItems,setAllExtractedItems]=useState([]); // all AI-extracted items from quote scan
   const [confirmedMatches,setConfirmedMatches]=useState({}); // idx→true when supplier confirms a match is correct
+  const [openSpnDrop,setOpenSpnDrop]=useState(null); // which row's supplier PN dropdown is open (index or null)
   const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
   const pdfRef=useRef(null);
 
@@ -13413,7 +13414,7 @@ function SupplierPortalPage({token}){
                         const unique=[...new Set(opts)];
                         if(!unique.length)return<span style={{color:muted}}>—</span>;
                         const cur=supplierPartNums[i]||"";
-                        const [open,setOpen]=useState(false);
+                        const isOpen=openSpnDrop===i;
                         function pick(val){
                           setSupplierPartNums(prev=>({...prev,[i]:val}));
                           setConfirmedMatches(prev=>({...prev,[i]:false}));
@@ -13425,15 +13426,15 @@ function SupplierPortalPage({token}){
                               setAiConfidences(prev=>({...prev,[i]:'medium'}));
                             }
                           }
-                          setOpen(false);
+                          setOpenSpnDrop(null);
                         }
                         return<div style={{position:"relative"}}>
-                          <button onClick={()=>setOpen(v=>!v)} style={{...inp,padding:"4px 6px",fontSize:12,fontFamily:"monospace",width:170,textAlign:"left",cursor:"pointer",color:cur?dark:muted,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <button onClick={()=>setOpenSpnDrop(isOpen?null:i)} style={{...inp,padding:"4px 6px",fontSize:12,fontFamily:"monospace",width:170,textAlign:"left",cursor:"pointer",color:cur?dark:muted,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cur||"— Select —"}</span>
-                            <span style={{fontSize:10,marginLeft:4}}>{open?"▲":"▼"}</span>
+                            <span style={{fontSize:10,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
                           </button>
-                          {open&&<>
-                            <div style={{position:"fixed",inset:0,zIndex:699}} onClick={()=>setOpen(false)}/>
+                          {isOpen&&<>
+                            <div style={{position:"fixed",inset:0,zIndex:699}} onClick={()=>setOpenSpnDrop(null)}/>
                             <div className="spn-drop" style={{position:"absolute",top:"100%",left:0,zIndex:700,background:"#fff",border:`1px solid ${border}`,borderRadius:6,marginTop:2,width:200,boxShadow:"0 4px 16px rgba(0,0,0,0.15)"}}>
                               <div onClick={()=>pick("")} style={{padding:"6px 10px",fontSize:12,color:muted,cursor:"pointer",borderBottom:`1px solid ${border}`}} onMouseEnter={e=>e.target.style.background="#f1f5f9"} onMouseLeave={e=>e.target.style.background="#fff"}>— Clear —</div>
                               {unique.map(pn=><div key={pn} onClick={()=>pick(pn)} style={{padding:"6px 10px",fontSize:12,fontFamily:"monospace",color:pn===cur?accent:dark,fontWeight:pn===cur?700:400,cursor:"pointer",background:pn===cur?"#eff6ff":"#fff"}} onMouseEnter={e=>{if(pn!==cur)e.target.style.background="#f1f5f9";}} onMouseLeave={e=>{if(pn!==cur)e.target.style.background="#fff";}}>{pn}</div>)}
