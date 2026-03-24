@@ -239,5 +239,44 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     extracted = [];
   }
 
+  // Enrich with saved cross-references: sqCrossings maps supplierPN→{bcItemNumber}
+  // Build reverse map bcItemNumber→supplierPN so we can fill missing supplierPartNumbers
+  try {
+    const [crossSnap, xrefSnap] = await Promise.all([
+      admin.firestore().doc(`users/${uid}/config/sqCrossings`).get(),
+      admin.firestore().doc(`users/${uid}/config/supplierCrossRef`).get(),
+    ]);
+    const bcToSupplier = {}; // normalized bcPartNumber → original supplier PN
+    // sqCrossings: { "supplier_pn_lower": { bcItemNumber: "ARL449", ... } }
+    if (crossSnap.exists) {
+      const data = crossSnap.data();
+      for (const [supplierPN, val] of Object.entries(data)) {
+        if (val && val.bcItemNumber) {
+          const bcKey = val.bcItemNumber.toLowerCase().replace(/[\s\-\.]/g, '');
+          if (!bcToSupplier[bcKey]) bcToSupplier[bcKey] = supplierPN;
+        }
+      }
+    }
+    // supplierCrossRef: { records: [{ origPartNumber, bcPartNumber, ... }] }
+    if (xrefSnap.exists) {
+      const records = xrefSnap.data().records || [];
+      for (const rec of records) {
+        if (rec.origPartNumber && rec.bcPartNumber) {
+          const bcKey = rec.bcPartNumber.toLowerCase().replace(/[\s\-\.]/g, '');
+          if (!bcToSupplier[bcKey]) bcToSupplier[bcKey] = rec.origPartNumber;
+        }
+      }
+    }
+    // Fill in missing supplierPartNumber from cross-ref
+    for (const item of extracted) {
+      if (!item.supplierPartNumber && item.partNumber) {
+        const key = item.partNumber.toLowerCase().replace(/[\s\-\.]/g, '');
+        if (bcToSupplier[key]) item.supplierPartNumber = bcToSupplier[key];
+      }
+    }
+  } catch (e) {
+    functions.logger.warn('Cross-ref enrichment failed:', e.message);
+  }
+
   return { extracted };
 });
