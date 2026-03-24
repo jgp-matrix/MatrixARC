@@ -8170,9 +8170,9 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
                         {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>LABOR</span>}
                         {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
-                        {!row.isLaborRow&&row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",cursor:row.aiSources&&row.aiSources.length?"pointer":"default"}}
-                          onMouseEnter={row.aiSources&&row.aiSources.length?e=>{clearTimeout(aiSourceTooltipTimer.current);setAiSourceTooltip({x:e.clientX,y:e.clientY,sources:row.aiSources});}:undefined}
-                          onMouseLeave={row.aiSources&&row.aiSources.length?()=>{aiSourceTooltipTimer.current=setTimeout(()=>setAiSourceTooltip(null),200);}:undefined}
+                        {!row.isLaborRow&&row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",cursor:"pointer"}}
+                          onMouseEnter={e=>{clearTimeout(aiSourceTooltipTimer.current);setAiSourceTooltip({x:e.clientX,y:e.clientY,sources:row.aiSources||[]});}}
+                          onMouseLeave={()=>{aiSourceTooltipTimer.current=setTimeout(()=>setAiSourceTooltip(null),200);}}
                         >ARC AI</span>}
                         {!row.isLaborRow&&row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>M</span>}
                         {bcSyncErrors[row.id]&&(()=>{const ef=bcSyncErrors[row.id];function parsePillErr(e){if(!e)return"Sync error";if(/must select an existing item/i.test(e))return"Not in BC";if(/Posting Group/i.test(e))return"BC setup";if(/429|Too Many/i.test(e))return"Rate limit";return"BC error";}return(<button title={parsePillErr(ef.error)+"\nClick to fix in Item Browser"} onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||"");setBcBrowserOpen(true);}} style={{background:C.red,color:"#fff",border:"none",borderRadius:8,padding:"1px 6px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>⚠ {parsePillErr(ef.error)}</button>);})()}
@@ -8365,7 +8365,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
           onMouseEnter={()=>{clearTimeout(aiSourceTooltipTimer.current);}}
           onMouseLeave={()=>{setAiSourceTooltip(null);}}>
           <div style={{fontWeight:700,color:C.teal,marginBottom:6,fontSize:12,textTransform:"uppercase",letterSpacing:0.5}}>ARC AI Price Sources</div>
-          {aiSourceTooltip.sources.map((s,i)=>(
+          {aiSourceTooltip.sources.length>0?aiSourceTooltip.sources.map((s,i)=>(
             <div key={i} style={{marginBottom:i<aiSourceTooltip.sources.length-1?4:0}}>
               <a href={s.url} target="_blank" rel="noopener noreferrer"
                 style={{color:s.type==="direct"?"#4ade80":"#38bdf8",textDecoration:"none",fontSize:12,fontWeight:600}}
@@ -8375,7 +8375,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               </a>
               <span style={{color:"#475569",fontSize:10,marginLeft:6}}>{s.type==="direct"?"Product page":"Search results"}</span>
             </div>
-          ))}
+          )):<div style={{color:"#64748b",fontSize:11,lineHeight:1.5}}>No source links available.<br/>Re-run AI pricing to generate sources.</div>}
         </div>,document.body
       )}
       {deleteConfirmId&&ReactDOM.createPortal(
