@@ -13233,12 +13233,10 @@ function SupplierPortalPage({token}){
   if(phase==='analyzing')return(
     <div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"40px 36px",maxWidth:440,width:"100%",textAlign:"center",boxShadow:"0 4px 24px rgba(0,0,0,0.08)"}}>
-        <div style={{fontSize:40,marginBottom:16}}>🤖</div>
+        <div style={{width:48,height:48,margin:"0 auto 16px",border:"4px solid #e2e8f0",borderTop:`4px solid ${accent}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         <div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Analyzing Your Quote</div>
-        <div style={{fontSize:14,color:muted,marginBottom:20,lineHeight:1.6}}>{analyzeMsg}</div>
-        <div style={{height:4,background:"#e2e8f0",borderRadius:2,overflow:"hidden"}}>
-          <div style={{height:"100%",background:accent,borderRadius:2,animation:"progress-pulse 1.5s ease-in-out infinite",width:"60%"}}/>
-        </div>
+        <div style={{fontSize:14,color:muted,lineHeight:1.6}}>{analyzeMsg}</div>
       </div>
     </div>
   );
