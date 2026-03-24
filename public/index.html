@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.65";
+const APP_VERSION="v1.18.66";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9853,7 +9853,20 @@ ${fullText.slice(0,8000)}`;
         // Strip markdown code fences if present, then extract outermost JSON object
         const stripped=raw.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
         const m=stripped.match(/\{[\s\S]*\}/);
-        parsed=JSON.parse(m?m[0]:stripped);
+        let jsonStr=m?m[0]:stripped;
+        try{parsed=JSON.parse(jsonStr);}catch(e1){
+          // Attempt to fix truncated JSON — close open arrays/objects
+          console.warn("SQ PARSE: initial JSON parse failed, attempting repair...",e1.message);
+          // Remove trailing incomplete item (last comma + partial object)
+          jsonStr=jsonStr.replace(/,\s*\{[^}]*$/,'');
+          // Count and close unclosed brackets
+          const opens=(jsonStr.match(/\[/g)||[]).length-(jsonStr.match(/\]/g)||[]).length;
+          const braces=(jsonStr.match(/\{/g)||[]).length-(jsonStr.match(/\}/g)||[]).length;
+          for(let i=0;i<opens;i++)jsonStr+=']';
+          for(let i=0;i<braces;i++)jsonStr+='}';
+          parsed=JSON.parse(jsonStr);
+          console.log("SQ PARSE: JSON repair succeeded, extracted",parsed.lineItems?.length||0,"line items");
+        }
       }catch(e){
         console.error("Quote parse raw response:",raw);
         throw new Error("ARC AI returned invalid JSON — the quote may be too long or in an unsupported format. Try again.");
