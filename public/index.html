@@ -11346,6 +11346,19 @@ function SettingsModal({uid,onClose,onNameChange}){
   const [bcSaved,setBcSaved]=useState(false);
   const [bcErr,setBcErr]=useState("");
   const [bcConfirm,setBcConfirm]=useState(false);
+  const [bcConnStatus,setBcConnStatus]=useState(()=>_bcToken?"connected":"unknown"); // "unknown"|"testing"|"connected"|"failed"
+  const [bcConnDetail,setBcConnDetail]=useState("");
+  async function testBcConnection(){
+    setBcConnStatus("testing");setBcConnDetail("");
+    try{
+      const token=await acquireBcToken(true);
+      if(!token){setBcConnStatus("failed");setBcConnDetail("Could not acquire token");return;}
+      _bcCompanyId=null; // force re-resolve
+      const compId=await bcGetCompanyId();
+      if(compId){setBcConnStatus("connected");setBcConnDetail(_bcConfig.companyName);}
+      else{setBcConnStatus("failed");setBcConnDetail("Company '"+_bcConfig.companyName+"' not found in environment");}
+    }catch(e){setBcConnStatus("failed");setBcConnDetail(e.message||"Connection error");}
+  }
 
   const email=fbAuth.currentUser?.email||"";
 
@@ -11472,10 +11485,18 @@ function SettingsModal({uid,onClose,onNameChange}){
         {isAdmin()&&<div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Business Central Environment <span style={{fontSize:9,color:C.red,fontWeight:700,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>ADMIN ONLY</span></div>
           <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Configure the BC environment connection. <strong style={{color:C.yellow}}>Warning:</strong> Changing the environment will disconnect all existing projects from BC.</div>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"6px 10px",background:C.surface,borderRadius:6}}>
-            <span style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}/>
-            <span style={{fontSize:12,color:C.text}}>Current: <strong>{_bcConfig.env}</strong></span>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"6px 10px",background:C.surface,borderRadius:6,flexWrap:"wrap"}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:bcConnStatus==="connected"?C.green:bcConnStatus==="failed"?C.red:bcConnStatus==="testing"?C.yellow:C.muted,flexShrink:0,boxShadow:bcConnStatus==="testing"?"0 0 6px "+C.yellow:"none"}}/>
+            <span style={{fontSize:12,color:C.text,flex:1}}>Current: <strong>{_bcConfig.env}</strong></span>
+            <span style={{fontSize:11,fontWeight:700,borderRadius:20,padding:"2px 10px",
+              background:bcConnStatus==="connected"?C.greenDim:bcConnStatus==="failed"?"rgba(239,68,68,0.1)":bcConnStatus==="testing"?"rgba(234,179,8,0.1)":"rgba(100,116,139,0.1)",
+              color:bcConnStatus==="connected"?C.green:bcConnStatus==="failed"?C.red:bcConnStatus==="testing"?C.yellow:C.muted,
+              border:`1px solid ${bcConnStatus==="connected"?C.green+"44":bcConnStatus==="failed"?C.red+"44":bcConnStatus==="testing"?C.yellow+"44":C.muted+"44"}`}}>
+              {bcConnStatus==="connected"?"BC Connected":bcConnStatus==="failed"?"Connection Failed":bcConnStatus==="testing"?"Testing…":"Not Tested"}
+            </span>
+            {bcConnStatus!=="testing"&&<button onClick={testBcConnection} style={{fontSize:11,color:C.accent,background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>Test</button>}
           </div>
+          {bcConnDetail&&bcConnStatus==="failed"&&<div style={{fontSize:11,color:C.red,marginBottom:8,marginTop:-8}}>{bcConnDetail}</div>}
           <div style={{display:"grid",gap:8,marginBottom:12}}>
             <div>
               <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Environment Name</label>
@@ -11511,6 +11532,7 @@ function SettingsModal({uid,onClose,onNameChange}){
                   try{
                     await saveBcConfig(_appCtx.companyId,{env:bcEnvName.trim(),companyName:bcCompName.trim(),clientId:bcClientIdVal.trim()});
                     setBcSaved(true);setBcConfirm(false);
+                    testBcConnection();
                   }catch(ex){setBcErr("Failed to save: "+ex.message);}
                   setBcSaving(false);
                 }} disabled={bcSaving} style={btn(C.red,"#fff",{fontSize:12,opacity:bcSaving?0.6:1})}>
