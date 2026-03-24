@@ -3754,12 +3754,11 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
 const PRICING_PROMPT=`You are a pricing assistant for industrial electrical control panel components.
 Estimate US distributor market prices (Grainger, AutomationDirect, Allied, DigiKey, etc.)
 Return ONLY a valid JSON array, same order as input:
-[{"id":"...","unitPrice":12.50,"sources":[{"name":"AutomationDirect","url":"https://www.automationdirect.com/adc/shopping/catalog/...","type":"direct"},{"name":"Grainger","url":"https://www.grainger.com/search?searchQuery=PARTNUMBER","type":"search"}]}]
-Each item must include a "sources" array with 1-2 distributor references. For each source provide:
-- "name": short distributor name (e.g. "AutomationDirect","Grainger","DigiKey","Allied","McMaster")
-- "url": direct product page URL if confident, otherwise a search URL (e.g. grainger.com/search?searchQuery=PART)
-- "type": "direct" or "search"
-Use null unitPrice for any item you cannot price. No explanation, JSON only.
+[{"id":"...","unitPrice":12.50,"basis":"Known AutomationDirect catalog price for LC1D09","sources":[{"name":"AutomationDirect","url":"https://www.automationdirect.com/adc/shopping/catalog/...","type":"direct"}]}]
+Each item must include:
+- "basis": brief explanation of how the price was determined (e.g. "Known Grainger list price", "Estimated from similar ABB contactors in this range", "Based on DigiKey pricing for this exact part")
+- "sources": array of 1-2 distributor references, each with "name", "url" (direct product URL or search URL), and "type" ("direct" or "search")
+Use null unitPrice for any item you cannot price. No explanation outside JSON.
 
 Items:`;
 
@@ -3780,7 +3779,7 @@ async function estimatePrices(items){
       const m=cleaned.match(/\[[\s\S]*\]/);
       if(m){
         const arr=JSON.parse(m[0]);
-        arr.forEach(r=>{result[r.id]={unitPrice:r.unitPrice??null,sources:r.sources||[]};});
+        arr.forEach(r=>{result[r.id]={unitPrice:r.unitPrice??null,sources:r.sources||[],basis:r.basis||""};});
       }
     }catch(e){console.error("Pricing batch error:",e);}
   },3);
@@ -7541,7 +7540,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             const key=String(r.id);
             if(key in map&&r.priceSource!=="bc"&&r.priceSource!=="manual"){
               const ai=map[key];
-              return{...r,unitPrice:ai.unitPrice,priceSource:ai.unitPrice!=null?"ai":r.priceSource||null,priceDate:Date.now(),aiSources:ai.sources||[]};
+              return{...r,unitPrice:ai.unitPrice,priceSource:ai.unitPrice!=null?"ai":r.priceSource||null,priceDate:Date.now(),aiSources:ai.sources||[],aiBasis:ai.basis||""};
             }
             return r;
           });
@@ -8171,7 +8170,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                         {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>LABOR</span>}
                         {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
                         {!row.isLaborRow&&row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",cursor:"pointer"}}
-                          onMouseEnter={e=>{clearTimeout(aiSourceTooltipTimer.current);setAiSourceTooltip({x:e.clientX,y:e.clientY,sources:row.aiSources||[]});}}
+                          onMouseEnter={e=>{clearTimeout(aiSourceTooltipTimer.current);setAiSourceTooltip({x:e.clientX,y:e.clientY,sources:row.aiSources||[],basis:row.aiBasis||""});}}
                           onMouseLeave={()=>{aiSourceTooltipTimer.current=setTimeout(()=>setAiSourceTooltip(null),200);}}
                         >ARC AI</span>}
                         {!row.isLaborRow&&row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>M</span>}
@@ -8365,6 +8364,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
           onMouseEnter={()=>{clearTimeout(aiSourceTooltipTimer.current);}}
           onMouseLeave={()=>{setAiSourceTooltip(null);}}>
           <div style={{fontWeight:700,color:C.teal,marginBottom:6,fontSize:12,textTransform:"uppercase",letterSpacing:0.5}}>ARC AI Price Sources</div>
+          {aiSourceTooltip.basis&&<div style={{color:"#c0c4cc",fontSize:11,marginBottom:6,lineHeight:1.4,fontStyle:"italic"}}>{aiSourceTooltip.basis}</div>}
           {aiSourceTooltip.sources.length>0?aiSourceTooltip.sources.map((s,i)=>(
             <div key={i} style={{marginBottom:i<aiSourceTooltip.sources.length-1?4:0}}>
               <a href={s.url} target="_blank" rel="noopener noreferrer"
