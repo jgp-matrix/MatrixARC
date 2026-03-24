@@ -12970,16 +12970,10 @@ function App({user}){
     notifications.forEach(n=>fbDb.doc(`users/${user.uid}/notifications/${n.id}`).update({read:true}).catch(()=>{}));
   }
 
-  function closeSearch(){setSqResults(null);setSqQuery('');setSqAnswer('');setSqHistory([]);setShowSearch(false);}
+  function closeSearch(){setShowSearch(false);}
   function openProjectFromSearch(p){handleOpen(p);closeSearch();}
   const sqRowRef=useRef(null);
   const sqScrollRef=useRef(null);
-  useEffect(()=>{
-    if(!showSearch)return;
-    function handleDown(e){if(sqRowRef.current&&!sqRowRef.current.contains(e.target))closeSearch();}
-    document.addEventListener('mousedown',handleDown);
-    return()=>document.removeEventListener('mousedown',handleDown);
-  },[showSearch]);
 
   function buildArcContext(){
     // Build rich context from all loaded projects
@@ -13521,72 +13515,10 @@ INSTRUCTIONS:
         </div>
         {/* Dropdown backdrop — closes menus when clicking outside */}
         {(showGearMenu||showUserMenu||showBellMenu)&&<div style={{position:"fixed",inset:0,zIndex:590}} onClick={()=>{setShowGearMenu(false);setShowUserMenu(false);setShowBellMenu(false);}}/>}
-        {/* ARC AI Assistant — input bar in header + floating chat panel */}
-        {showSearch&&<div ref={sqRowRef} style={{background:"#0a0a14",borderBottom:`1px solid ${C.border}`,padding:"6px 24px",display:"flex",justifyContent:"center",position:"relative"}}>
-          <div style={{width:"100%",maxWidth:900}}>
-            <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
-              <span style={{padding:"0 12px",fontSize:18,flexShrink:0}}>✨</span>
-              <input ref={sqInputRef} value={sqQuery} placeholder={sqHistory.length?"Follow up…":"Ask about projects, UL508A, C22, parts, pricing, or how to use ARC…"} autoFocus
-                onChange={e=>setSqQuery(e.target.value)}
-                onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runAiSearch(sqQuery);}if(e.key==='Escape')closeSearch();}}
-                style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:14,padding:"10px 4px",minWidth:0}}/>
-              {sqSearching&&<span style={{padding:"0 10px",color:C.accent,fontSize:12,flexShrink:0,fontWeight:600}}>Thinking…</span>}
-              {sqHistory.length>0&&!sqSearching&&<button onClick={()=>{setSqHistory([]);setSqAnswer('');setSqResults(null);}} title="Clear chat" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 8px",fontSize:16,flexShrink:0}}>×</button>}
-              <button onClick={()=>runAiSearch(sqQuery)} disabled={sqSearching||!sqQuery.trim()} style={{background:C.accent,border:"none",color:"#fff",padding:"10px 18px",cursor:sqSearching?"wait":"pointer",fontSize:13,fontWeight:700,flexShrink:0,opacity:sqSearching||!sqQuery.trim()?0.5:1}}>Ask</button>
-            </div>
-          </div>
-          {/* Floating chat panel */}
-          {(sqHistory.length>0||sqSearching)&&<div style={{position:"absolute",top:"100%",left:24,right:24,zIndex:700,display:"flex",justifyContent:"center"}}>
-            <div style={{width:"100%",maxWidth:900,background:"#0d0d1a",border:`1px solid ${C.accent}`,borderTop:"none",borderRadius:"0 0 12px 12px",boxShadow:"0 12px 40px rgba(0,0,0,0.8)"}}>
-              <div ref={sqScrollRef} style={{maxHeight:420,overflowY:"auto",padding:"12px 16px 8px"}}>
-                {sqHistory.map((msg,i)=>(
-                  <div key={i} style={{display:"flex",gap:10,marginBottom:12,alignItems:"flex-start"}}>
-                    <div style={{width:24,height:24,borderRadius:"50%",background:msg.role==='user'?C.accent:'#6366f1',display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0,marginTop:2}}>{msg.role==='user'?'Q':'A'}</div>
-                    <div style={{flex:1,minWidth:0}}>
-                      {msg.role==='user'
-                        ?<div style={{fontSize:14,color:C.text,fontWeight:600}}>{msg.content}</div>
-                        :<div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7}} dangerouslySetInnerHTML={{__html:(()=>{
-                          let html=msg.content
-                            .replace(/\*\*(.+?)\*\*/g,'<strong style="color:#f1f5f9">$1</strong>')
-                            .replace(/\*(.+?)\*/g,'<em>$1</em>')
-                            .replace(/`([^`]+)`/g,'<code style="background:#1e293b;padding:1px 5px;border-radius:3px;font-size:12px">$1</code>')
-                            .replace(/^### (.+)$/gm,'<div style="font-size:14px;font-weight:700;color:#f1f5f9;margin:8px 0 4px">$1</div>')
-                            .replace(/^## (.+)$/gm,'<div style="font-size:15px;font-weight:700;color:#f1f5f9;margin:10px 0 4px">$1</div>')
-                            .replace(/^- (.+)$/gm,'<div style="padding-left:12px">• $1</div>')
-                            .replace(/^\d+\. (.+)$/gm,(m,p1)=>'<div style="padding-left:12px">'+m.match(/^\d+/)[0]+'. '+p1+'</div>')
-                            .replace(/\n{2,}/g,'<br/><br/>')
-                            .replace(/\n/g,'<br/>');
-                          return html;
-                        })()}}/>
-                      }
-                    </div>
-                  </div>
-                ))}
-                {sqSearching&&<div style={{display:"flex",gap:10,alignItems:"center",padding:"8px 0"}}>
-                  <div style={{width:24,height:24,borderRadius:"50%",background:"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0}} className="spin">◌</div>
-                  <span style={{fontSize:13,color:C.muted}}>Thinking…</span>
-                </div>}
-              </div>
-              {/* Matched projects — clickable chips */}
-              {sqResults&&sqResults.projects.length>0&&<div style={{display:"flex",gap:6,padding:"4px 16px 8px",overflowX:"auto",borderTop:`1px solid ${C.border}`}}>
-                {sqResults.projects.map(p=>(
-                  <div key={p.id} onClick={()=>openProjectFromSearch(p)}
-                    style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,fontSize:12}}
-                    onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
-                    onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
-                    <span style={{fontWeight:700,color:C.accent,marginRight:6}}>{p.bcProjectNumber||'—'}</span>
-                    <span style={{color:C.text}}>{p.name}</span>
-                    <span style={{color:C.muted,marginLeft:6}}>→</span>
-                  </div>
-                ))}
-              </div>}
-              {sqResults&&sqResults.error&&<div style={{fontSize:12,color:C.red,padding:"4px 16px 8px"}}>{sqResults.error}</div>}
-            </div>
-          </div>}
-        </div>}
       </div>
-      {/* Content — padded below fixed header */}
-      <div style={{flex:1,paddingTop:showSearch?126:78}}>
+      {/* Content — padded below fixed header, with side panel */}
+      <div style={{flex:1,paddingTop:78,display:"flex"}}>
+      <div style={{flex:1,minWidth:0,transition:"margin-right 0.3s ease"}}>
       {/* BC Connection Lost popup */}
       {bcLostAlert&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -13636,7 +13568,78 @@ INSTRUCTIONS:
       {showAbout&&<AboutModal onClose={()=>setShowAbout(false)}/>}
       {showSupplierPricing&&<SupplierPricingUploadModal uid={user.uid} onClose={()=>setShowSupplierPricing(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
-      </div>{/* end paddingTop wrapper */}
+      </div>{/* end main content column */}
+      {/* ARC AI Assistant — right slide-out panel */}
+      <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
+        {showSearch&&<div style={{width:420,height:"100%",display:"flex",flexDirection:"column"}}>
+          {/* Header */}
+          <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:18}}>✨</span>
+            <span style={{fontSize:14,fontWeight:700,color:C.text,flex:1}}>ARC AI Assistant</span>
+            {sqHistory.length>0&&!sqSearching&&<button onClick={()=>{setSqHistory([]);setSqAnswer('');setSqResults(null);}} title="Clear chat" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontWeight:600,padding:"2px 8px"}}>Clear</button>}
+            <button onClick={()=>setShowSearch(false)} title="Close" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,padding:"0 4px",lineHeight:1}}>×</button>
+          </div>
+          {/* Chat history */}
+          <div ref={sqScrollRef} style={{flex:1,overflowY:"auto",padding:"12px 16px"}}>
+            {sqHistory.length===0&&!sqSearching&&<div style={{textAlign:"center",padding:"40px 16px",color:C.muted}}>
+              <div style={{fontSize:32,marginBottom:12}}>✨</div>
+              <div style={{fontSize:14,fontWeight:600,color:C.sub,marginBottom:8}}>ARC AI Assistant</div>
+              <div style={{fontSize:12,lineHeight:1.7}}>Ask about projects, UL508A, C22.2,<br/>parts, pricing, or how to use ARC.</div>
+            </div>}
+            {sqHistory.map((msg,i)=>(
+              <div key={i} style={{display:"flex",gap:10,marginBottom:14,alignItems:"flex-start"}}>
+                <div style={{width:24,height:24,borderRadius:"50%",background:msg.role==='user'?C.accent:'#6366f1',display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0,marginTop:2}}>{msg.role==='user'?'Y':'AI'}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  {msg.role==='user'
+                    ?<div style={{fontSize:13,color:C.text,fontWeight:600}}>{msg.content}</div>
+                    :<div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7}} dangerouslySetInnerHTML={{__html:(()=>{
+                      let html=msg.content
+                        .replace(/\*\*(.+?)\*\*/g,'<strong style="color:#f1f5f9">$1</strong>')
+                        .replace(/\*(.+?)\*/g,'<em>$1</em>')
+                        .replace(/`([^`]+)`/g,'<code style="background:#1e293b;padding:1px 5px;border-radius:3px;font-size:12px">$1</code>')
+                        .replace(/^### (.+)$/gm,'<div style="font-size:13px;font-weight:700;color:#f1f5f9;margin:8px 0 4px">$1</div>')
+                        .replace(/^## (.+)$/gm,'<div style="font-size:14px;font-weight:700;color:#f1f5f9;margin:10px 0 4px">$1</div>')
+                        .replace(/^- (.+)$/gm,'<div style="padding-left:12px">• $1</div>')
+                        .replace(/^\d+\. (.+)$/gm,(m,p1)=>'<div style="padding-left:12px">'+m.match(/^\d+/)[0]+'. '+p1+'</div>')
+                        .replace(/\n{2,}/g,'<br/><br/>')
+                        .replace(/\n/g,'<br/>');
+                      return html;
+                    })()}}/>
+                  }
+                </div>
+              </div>
+            ))}
+            {sqSearching&&<div style={{display:"flex",gap:10,alignItems:"center",padding:"8px 0"}}>
+              <div style={{width:24,height:24,borderRadius:"50%",background:"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}} className="spin">◌</div>
+              <span style={{fontSize:13,color:C.muted}}>Thinking…</span>
+            </div>}
+          </div>
+          {/* Matched projects — clickable chips */}
+          {sqResults&&sqResults.projects.length>0&&<div style={{display:"flex",gap:6,padding:"6px 16px",overflowX:"auto",borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+            {sqResults.projects.map(p=>(
+              <div key={p.id} onClick={()=>openProjectFromSearch(p)}
+                style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,fontSize:11}}
+                onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
+                onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                <span style={{fontWeight:700,color:C.accent,marginRight:4}}>{p.bcProjectNumber||'—'}</span>
+                <span style={{color:C.text}}>{p.name}</span>
+              </div>
+            ))}
+          </div>}
+          {sqResults&&sqResults.error&&<div style={{fontSize:11,color:C.red,padding:"4px 16px"}}>{sqResults.error}</div>}
+          {/* Input bar */}
+          <div style={{padding:"8px 12px",borderTop:`1px solid ${C.border}`,flexShrink:0}}>
+            <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
+              <input ref={sqInputRef} value={sqQuery} placeholder={sqHistory.length?"Follow up…":"Ask a question…"} autoFocus
+                onChange={e=>setSqQuery(e.target.value)}
+                onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runAiSearch(sqQuery);}}}
+                style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:13,padding:"10px 12px",minWidth:0}}/>
+              <button onClick={()=>runAiSearch(sqQuery)} disabled={sqSearching||!sqQuery.trim()} style={{background:C.accent,border:"none",color:"#fff",padding:"10px 14px",cursor:sqSearching?"wait":"pointer",fontSize:12,fontWeight:700,flexShrink:0,opacity:sqSearching||!sqQuery.trim()?0.5:1}}>{sqSearching?"…":"Ask"}</button>
+            </div>
+          </div>
+        </div>}
+      </div>
+      </div>{/* end flex row wrapper */}
       {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip} onMinimize={()=>setTourStep(null)}/>}
     </div>
   );
