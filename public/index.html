@@ -7540,7 +7540,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             const key=String(r.id);
             if(key in map&&r.priceSource!=="bc"&&r.priceSource!=="manual"){
               const ai=map[key];
-              return{...r,unitPrice:ai.unitPrice,priceSource:ai.unitPrice!=null?"ai":r.priceSource||null,priceDate:Date.now(),aiSources:ai.sources||[],aiBasis:ai.basis||""};
+              return{...r,unitPrice:ai.unitPrice,priceSource:ai.unitPrice!=null?"ai":r.priceSource||null,aiSources:ai.sources||[],aiBasis:ai.basis||""};
             }
             return r;
           });
