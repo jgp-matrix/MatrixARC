@@ -13093,6 +13093,7 @@ function SupplierPortalPage({token}){
   const [dragOver,setDragOver]=useState(false);
   const [itemLeadTimes,setItemLeadTimes]=useState({});
   const [cannotSupply,setCannotSupply]=useState({});
+  const [supplierPartNums,setSupplierPartNums]=useState({});
   const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
   const pdfRef=useRef(null);
 
@@ -13111,7 +13112,7 @@ function SupplierPortalPage({token}){
   async function processFile(f){
     if(!f||!f.type.includes("pdf")){alert("Please select a PDF file.");return;}
     setFile(f);setPhase('analyzing');setAiError(null);
-    const allPrices={};const allConf={};const allLeadTimes={};
+    const allPrices={};const allConf={};const allLeadTimes={};const allSupplierPNs={};
     try{
       setAnalyzeMsg(`Reading ${f.name}…`);
       await window.pdfjsReady;
@@ -13150,12 +13151,14 @@ function SupplierPortalPage({token}){
             if(ex.unitPrice!=null&&(allPrices[idx]===undefined||allPrices[idx]===''))allPrices[idx]=String(ex.unitPrice);
             if(allConf[idx]===undefined)allConf[idx]=ex.confidence||'medium';
             if(ex.leadTimeDays!=null&&(allLeadTimes[idx]===undefined||allLeadTimes[idx]===''))allLeadTimes[idx]=String(ex.leadTimeDays);
+            if(ex.supplierPartNumber&&!allSupplierPNs[idx])allSupplierPNs[idx]=ex.supplierPartNumber;
           }
         });
       }
       setUnitPrices(allPrices);
       setAiConfidences(allConf);
       setItemLeadTimes(allLeadTimes);
+      setSupplierPartNums(allSupplierPNs);
       setMorePages(null);
       setPhase('review');
     }catch(e){
@@ -13191,6 +13194,7 @@ function SupplierPortalPage({token}){
         // Row-level lead time overrides the order lead time; fall back to order lead time
         leadTimeDays:cannotSupply[i]===true?null:(itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:orderLeadTime),
         cannotSupply:cannotSupply[i]===true,
+        supplierPartNumber:supplierPartNums[i]||null,
       }));
       const updateData={status:"submitted",submittedAt:Date.now(),lineItems:pricedItems,leadTimeDays:orderLeadTime};
       if(fileName)updateData.fileName=fileName;
@@ -13247,7 +13251,7 @@ function SupplierPortalPage({token}){
     const extractedCount=Object.keys(unitPrices).filter(i=>unitPrices[i]!=='').length;
     return(
       <div style={{minHeight:"100vh",background:bg,padding:"32px 16px"}}>
-        <div style={{maxWidth:860,margin:"0 auto"}}>
+        <div style={{maxWidth:1020,margin:"0 auto"}}>
           <Header/>
           <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:10,padding:"16px 20px",marginBottom:20,display:"flex",alignItems:"flex-start",gap:12}}>
             <span style={{fontSize:22,flexShrink:0}}>📋</span>
@@ -13267,7 +13271,8 @@ function SupplierPortalPage({token}){
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#f1f5f9"}}>
-                  <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Part Number</th>
+                  <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Matrix Part #</th>
+                  <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Supplier Part #</th>
                   <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Description</th>
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600}}>Qty</th>
                   <th style={{padding:"8px 12px",textAlign:"right",color:accent,fontWeight:700,minWidth:160}}>Unit Price</th>
@@ -13288,6 +13293,7 @@ function SupplierPortalPage({token}){
                   return(
                     <tr key={i} style={{borderTop:`1px solid ${border}`,background:cant?"#fef2f2":isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff",opacity:cant?0.6:1}}>
                       <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.partNumber||"—"}</td>
+                      <td style={{padding:"10px 12px",color:muted,fontFamily:"monospace",fontSize:12}}>{supplierPartNums[i]||"—"}</td>
                       <td style={{padding:"10px 12px",color:muted,fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.description||"—"}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:dark}}>{item.qty||1}</td>
                       <td style={{padding:"8px 12px"}}>
@@ -13348,7 +13354,7 @@ function SupplierPortalPage({token}){
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setMorePages(null);pdfRef.current=null;}}
+            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setMorePages(null);pdfRef.current=null;}}
               style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
               ← Start Over
             </button>
