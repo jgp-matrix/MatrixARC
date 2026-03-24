@@ -349,12 +349,35 @@ async function loadApiKey(uid){
 
 // ── BUSINESS CENTRAL CONFIG ──
 const BC_TENANT="d1f2c7f7-fab2-40b5-85c1-06a715e6a157";
-const BC_ENV="MATR_SndBx_01152026";
-const BC_COMPANY_NAME="Matrix Systems LLC";
-const BC_PROJECT_TEMPLATE="PRJ402010"; // Template project to copy tasks from when creating new projects
-const BC_CLIENT_ID="75b9ff22-488d-4d4c-88ec-f803f7038716";
-const BC_API_BASE=`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/api/v2.0`;
-const BC_ODATA_BASE=`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/ODataV4/Company('${encodeURIComponent(BC_COMPANY_NAME)}')`;
+// Default BC config — can be overridden per company from Firestore
+const _BC_DEFAULTS={env:"MATR_SndBx_01152026",companyName:"Matrix Systems LLC",clientId:"75b9ff22-488d-4d4c-88ec-f803f7038716",projectTemplate:"PRJ402010"};
+let _bcConfig={..._BC_DEFAULTS};
+// Legacy constants — computed from _bcConfig, used throughout the codebase
+function _bcApiBase(){return`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${_bcConfig.env}/api/v2.0`;}
+function _bcOdataBase(){return`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${_bcConfig.env}/ODataV4/Company('${encodeURIComponent(_bcConfig.companyName)}')`;}
+// Backward-compat getters
+Object.defineProperty(window,'BC_API_BASE',{get:_bcApiBase});
+Object.defineProperty(window,'BC_ODATA_BASE',{get:_bcOdataBase});
+Object.defineProperty(window,'BC_ENV',{get:()=>_bcConfig.env});
+Object.defineProperty(window,'BC_COMPANY_NAME',{get:()=>_bcConfig.companyName});
+Object.defineProperty(window,'BC_CLIENT_ID',{get:()=>_bcConfig.clientId});
+Object.defineProperty(window,'BC_PROJECT_TEMPLATE',{get:()=>_bcConfig.projectTemplate});
+async function loadBcConfig(companyId){
+  if(!companyId)return;
+  try{
+    const doc=await fbDb.doc(`companies/${companyId}/config/bcEnvironment`).get();
+    if(doc.exists){const d=doc.data();_bcConfig={env:d.env||_BC_DEFAULTS.env,companyName:d.companyName||_BC_DEFAULTS.companyName,clientId:d.clientId||_BC_DEFAULTS.clientId,projectTemplate:d.projectTemplate||_BC_DEFAULTS.projectTemplate};
+    console.log("BC CONFIG loaded from Firestore:",_bcConfig.env,_bcConfig.companyName);}
+  }catch(e){console.warn("loadBcConfig error:",e);}
+}
+async function saveBcConfig(companyId,config){
+  if(!companyId)throw new Error("No company");
+  _bcConfig={..._bcConfig,...config};
+  await fbDb.doc(`companies/${companyId}/config/bcEnvironment`).set(_bcConfig);
+  // Reset BC connection state when env changes
+  _bcToken=null;_bcCompanyId=null;_msalInstance=null;
+  console.log("BC CONFIG saved:",_bcConfig.env,_bcConfig.companyName);
+}
 let _bcToken=null;
 let _bcCompanyId=null;
 let _msalInstance=null;
@@ -2881,6 +2904,7 @@ async function copyProject(uid,sourceProject,onProgress){
     name:src.name+" (Copy)",
     bcProjectId:bc.id,
     bcProjectNumber:bc.number,
+    bcEnv:_bcConfig.env,
     bcCustomerNumber:src.bcCustomerNumber,
     bcCustomerName:src.bcCustomerName,
     status:src.status||"draft",
@@ -4816,7 +4840,7 @@ function LoginScreen({invite}){
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{fontSize:104,marginBottom:10}}>⬡</div>
         <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:64,fontWeight:900,letterSpacing:8,color:C.accent,lineHeight:1}}>ARC</div>
-        <div style={{fontSize:14,color:C.muted,fontWeight:500,marginTop:6,letterSpacing:2}}>by RedPill Software</div>
+        <div style={{fontSize:14,color:C.muted,fontWeight:500,marginTop:6,letterSpacing:2}}>by <span style={{background:"#ef4444",color:"#fff",borderRadius:20,padding:"2px 12px",fontWeight:700,letterSpacing:1}}>RedPill</span> Software</div>
         <div style={{fontSize:13,color:C.muted,marginTop:4,opacity:0.6}}>{APP_VERSION}</div>
       </div>
       {invite&&(
@@ -6474,7 +6498,7 @@ function StampedDrawing({src,overlay,width,height,onClick}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData}){
+function PanelCard({panel,idx,uid,projectId,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -7875,7 +7899,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
               {stampingDrawings?"Stamping…":"🔏 Stamp Drawings"}
             </button>
           )}
-          {pages.length>0&&!readOnly&&bcProjectNumber&&(
+          {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(
             <button data-tip={panel.bcPdfAttached&&!bcPdfMissing?`Already uploaded: ${panel.bcPdfFileName||"PDF"}`:`Combine all pages into a PDF and upload to BC Job ${bcProjectNumber}`}
               onClick={buildAndAttachPdf} disabled={attachingPdf||(panel.bcPdfAttached&&!bcPdfMissing)}
               style={{background:panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",border:`1px solid ${panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,color:panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",cursor:panel.bcPdfAttached&&!bcPdfMissing?"default":"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1}}>
@@ -10560,7 +10584,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   <div style={{display:"flex",flexDirection:"column",gap:2}}>
                     {(project.bcProjectNumber||project.bcCustomerName)&&(
                       <div style={{display:"flex",alignItems:"baseline",gap:10}}>
-                        {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:C.accent,lineHeight:1}}>{project.bcProjectNumber}</span>}
+                        {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:project.bcEnv&&project.bcEnv!==_bcConfig.env?"#64748b":C.accent,lineHeight:1}}>{project.bcProjectNumber}</span>}
+                        {isBcDisconnected&&<span style={{fontSize:11,fontWeight:700,color:C.yellow,background:"rgba(234,179,8,0.1)",border:"1px solid rgba(234,179,8,0.3)",borderRadius:12,padding:"2px 10px",whiteSpace:"nowrap"}} title={"Linked to "+project.bcEnv}>⚠ BC Disconnected</span>}
+                        {isBcDisconnected&&!readOnly&&<button onClick={e=>{e.stopPropagation();relinkToBC();}} disabled={relinking} style={{fontSize:11,fontWeight:700,color:"#38bdf8",background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.3)",borderRadius:12,padding:"2px 10px",cursor:relinking?"wait":"pointer",whiteSpace:"nowrap",opacity:relinking?0.6:1}}>{relinking?"Re-linking…":"🔗 Re-link to BC"}</button>}
                         {project.bcCustomerName&&<span style={{fontSize:18,fontWeight:700,color:C.text}}>{project.bcCustomerName}</span>}
                       </div>
                     )}
@@ -10574,6 +10600,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                 </div>
               )}
               {bcSyncMsg&&<div style={{fontSize:12,color:bcSyncMsg.ok===null?C.muted:bcSyncMsg.ok?C.green:C.yellow,marginBottom:2}}>{bcSyncMsg.text}</div>}
+              {relinkMsg&&<div style={{fontSize:12,color:relinkMsg.startsWith("✓")?C.green:relinkMsg.startsWith("Failed")?C.red:C.muted,marginBottom:2}}>{relinkMsg}</div>}
               <div style={{fontSize:13,color:C.muted}}>{panels.length} panel{panels.length!==1?"s":""}</div>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
@@ -10606,6 +10633,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   uid={uid}
                   projectId={project.id}
                   bcProjectNumber={project.bcProjectNumber||null}
+                  bcDisconnected={!!(project.bcEnv&&project.bcEnv!==_bcConfig.env)}
                   quoteData={project.quote||{}}
                   readOnly={readOnly}
                   isSelected={panel.id===selectedPanelId}
@@ -10845,7 +10873,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
                 </div>
                 <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Client Quote</button>
-                {!readOnly&&project.bcProjectNumber&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📬 PO Received</button>}
+                {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📬 PO Received</button>}
                 {!readOnly&&sp.bcItemNumber&&(
                   <button onClick={()=>{}} disabled={pendingBcCount>0}
                     title={pendingBcCount>0?`${pendingBcCount} unverified BC parts — resolve blue circles first`:`Update Assembly BOM for item ${sp.bcItemNumber}`}
@@ -11033,6 +11061,36 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     setProject(p);projectRef.current=p;onChange(p);
     clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveProject(uid,p),1000);
+  }
+
+  const [relinking,setRelinking]=useState(false);
+  const [relinkMsg,setRelinkMsg]=useState(null);
+  const isBcDisconnected=project.bcEnv&&project.bcEnv!==_bcConfig.env;
+  async function relinkToBC(){
+    if(!_bcToken){alert("Connect to Business Central first.");return;}
+    if(!confirm("This will create a NEW BC project in the current environment ("+_bcConfig.env+") and re-link this project. Continue?"))return;
+    setRelinking(true);setRelinkMsg("Creating BC project…");
+    try{
+      const bc=await bcCreateProject(project.name,project.bcCustomerNumber||null);
+      setRelinkMsg("Creating task structure…");
+      const panels=project.panels||[];
+      await bcCreatePanelTaskStructure(bc.number,project.name,panels).catch(e=>console.warn("Relink task structure error:",e));
+      for(let i=0;i<panels.length;i++){
+        setRelinkMsg(`Syncing planning lines (panel ${i+1}/${panels.length})…`);
+        await bcSyncPanelPlanningLines(bc.number,i,panels[i]).catch(e=>console.warn("Relink planning lines error panel",i,e));
+      }
+      const updated={...projectRef.current,bcProjectNumber:bc.number,bcProjectId:bc.id,bcEnv:_bcConfig.env,bcPdfAttached:false,bcPdfFileName:null};
+      // Reset per-panel bc attachment flags
+      if(updated.panels)updated.panels=updated.panels.map(pan=>({...pan,bcPdfAttached:false,bcPdfFileName:null}));
+      setProject(updated);projectRef.current=updated;onChange(updated);
+      await saveProject(uid,updated);
+      setRelinkMsg("✓ Re-linked to "+bc.number);
+      setTimeout(()=>setRelinkMsg(null),3000);
+    }catch(e){
+      console.error("Relink error:",e);
+      setRelinkMsg("Failed: "+(e.message||e));
+    }
+    setRelinking(false);
   }
 
   // Auto-print: wait for quote DOM to render, trigger print, then go back
@@ -11277,6 +11335,16 @@ function SettingsModal({uid,onClose,onNameChange}){
   const [resetSent,setResetSent]=useState(false);
   const [graphStatus,setGraphStatus]=useState("checking"); // checking|authorized|unauthorized|loading
 
+  // BC Environment config
+  const [bcEnvName,setBcEnvName]=useState(_bcConfig.env);
+  const [bcCompName,setBcCompName]=useState(_bcConfig.companyName);
+  const [bcClientIdVal,setBcClientIdVal]=useState(_bcConfig.clientId);
+  const [bcTemplateVal,setBcTemplateVal]=useState(_bcConfig.projectTemplate);
+  const [bcSaving,setBcSaving]=useState(false);
+  const [bcSaved,setBcSaved]=useState(false);
+  const [bcErr,setBcErr]=useState("");
+  const [bcConfirm,setBcConfirm]=useState(false);
+
   const email=fbAuth.currentUser?.email||"";
 
   useEffect(()=>{
@@ -11347,7 +11415,7 @@ function SettingsModal({uid,onClose,onNameChange}){
           <div style={{fontSize:18,fontWeight:700,flex:1}}>⚙ Settings</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
         </div>
-        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>APEX ARC configuration</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>ARC configuration</div>
 
         {/* Account */}
         <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
@@ -11397,6 +11465,64 @@ function SettingsModal({uid,onClose,onNameChange}){
             </button>
           )}
         </div>
+
+        {/* BC Environment Configuration — Admin only */}
+        {isAdmin()&&<div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Business Central Environment</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Configure the BC environment connection. <strong style={{color:C.yellow}}>Warning:</strong> Changing the environment will disconnect all existing projects from BC.</div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"6px 10px",background:C.surface,borderRadius:6}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}/>
+            <span style={{fontSize:12,color:C.text}}>Current: <strong>{_bcConfig.env}</strong></span>
+          </div>
+          <div style={{display:"grid",gap:8,marginBottom:12}}>
+            <div>
+              <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Environment Name</label>
+              <input value={bcEnvName} onChange={e=>setBcEnvName(e.target.value)} style={inp()} placeholder="e.g. Production"/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Company Name</label>
+              <input value={bcCompName} onChange={e=>setBcCompName(e.target.value)} style={inp()} placeholder="e.g. Matrix Systems LLC"/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Client ID (Azure App Registration)</label>
+              <input value={bcClientIdVal} onChange={e=>setBcClientIdVal(e.target.value)} style={inp()} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"/>
+            </div>
+            <div>
+              <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Project Template</label>
+              <input value={bcTemplateVal} onChange={e=>setBcTemplateVal(e.target.value)} style={inp()} placeholder="e.g. PRJ402010"/>
+            </div>
+          </div>
+          {bcErr&&<div style={{color:C.red,fontSize:12,marginBottom:8}}>{bcErr}</div>}
+          {bcSaved&&<div style={{color:C.green,fontSize:12,marginBottom:8}}>✓ BC environment updated successfully.</div>}
+          {!bcConfirm?(
+            <button onClick={()=>{
+              setBcErr("");setBcSaved(false);
+              if(!bcEnvName.trim()||!bcCompName.trim()||!bcClientIdVal.trim()||!bcTemplateVal.trim()){setBcErr("All fields are required.");return;}
+              if(bcEnvName===_bcConfig.env&&bcCompName===_bcConfig.companyName&&bcClientIdVal===_bcConfig.clientId&&bcTemplateVal===_bcConfig.projectTemplate){setBcErr("No changes detected.");return;}
+              setBcConfirm(true);
+            }} disabled={bcSaving} style={btn("#334155","#fff",{fontSize:12})}>
+              Save Environment
+            </button>
+          ):(
+            <div style={{background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:8,padding:12}}>
+              <div style={{fontSize:13,color:C.red,fontWeight:600,marginBottom:6}}>⚠ Confirm Environment Change</div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>This will switch from <strong style={{color:C.text}}>{_bcConfig.env}</strong> to <strong style={{color:C.text}}>{bcEnvName}</strong>. All existing projects will be disconnected from BC and will need to be re-linked.</div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={async()=>{
+                  setBcSaving(true);setBcErr("");
+                  try{
+                    await saveBcConfig(_appCtx.companyId,{env:bcEnvName.trim(),companyName:bcCompName.trim(),clientId:bcClientIdVal.trim(),projectTemplate:bcTemplateVal.trim()});
+                    setBcSaved(true);setBcConfirm(false);
+                  }catch(ex){setBcErr("Failed to save: "+ex.message);}
+                  setBcSaving(false);
+                }} disabled={bcSaving} style={btn(C.red,"#fff",{fontSize:12,opacity:bcSaving?0.6:1})}>
+                  {bcSaving?"Saving…":"Yes, Switch Environment"}
+                </button>
+                <button onClick={()=>setBcConfirm(false)} disabled={bcSaving} style={btn(C.surface,C.text,{fontSize:12})}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>}
 
         <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
           <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:12,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Change Password</label>
@@ -11615,6 +11741,7 @@ function NewProjectModal({uid,onCreated,onClose}){
         name:trimmed,
         bcProjectId:bc.id,
         bcProjectNumber:bc.number,
+        bcEnv:_bcConfig.env,
         bcCustomerNumber:bc.customerNumber,
         bcCustomerName:bc.customerName||selectedCustomer.displayName,
         status:"draft",
@@ -12733,6 +12860,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
   const st=projectStatus(p);
+  const bcDisconnected=p.bcEnv&&p.bcEnv!==_bcConfig.env;
   const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.green,costed:C.green};
   const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"READY",validated:"READY",costed:"READY"};
   return(
@@ -12745,7 +12873,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
       {customerLogo&&<img src={customerLogo} alt="" style={{width:22,height:22,objectFit:"contain",borderRadius:3,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
-      <div style={{fontSize:14,fontWeight:800,color:C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>{p.bcProjectNumber||"–"}</div>
+      <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>{p.bcProjectNumber||"–"}{bcDisconnected&&<span style={{fontSize:9,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={"Linked to "+p.bcEnv}>⚠</span>}</div>
       <div style={{fontSize:14,color:C.text,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,visibility:p.bcCustomerName?"visible":"hidden"}}>{p.bcCustomerName||"–"}</div>
       {(()=>{const owner=memberMap&&p.createdBy&&memberMap[p.createdBy];const name=owner?owner.firstName||owner.email.split("@")[0]:userFirstName;return name?<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0}}>{name}</div>:null;})()}
     </div>
@@ -13062,6 +13190,8 @@ function App({user}){
             setCompanyAddress(cdat.address||null);
             setCompanyPhone(cdat.phone||null);
             _appCtx.company={name:cdat.name||null,logoUrl:cdat.logoUrl||null,address:cdat.address||null,phone:cdat.phone||null};
+            // Load BC environment config from Firestore
+            await loadBcConfig(profile.companyId);
             // Also try to pull fresh company data from BC
             if(_bcToken){
               bcFetchCompanyInfo().then(info=>{
@@ -13154,6 +13284,7 @@ function App({user}){
             name:bp.displayName||bp.number||"Imported Project",
             bcProjectId:bp.id,
             bcProjectNumber:bp.number||"",
+            bcEnv:_bcConfig.env,
             ...extractCustomer(bp),
             importedFromBC:true,
             status:"draft",
@@ -13235,7 +13366,7 @@ function App({user}){
               <line x1="26" y1="62" x2="74" y2="62" stroke={C.accent} strokeWidth="1.2" opacity="0.35"/>
             </svg>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:80,fontWeight:900,letterSpacing:8,marginBottom:4,lineHeight:1,color:C.accent}}>ARC</span>
-            <span style={{fontSize:15,color:C.muted,letterSpacing:2,marginBottom:32}}>by RedPill Software</span>
+            <span style={{fontSize:15,color:C.muted,letterSpacing:2,marginBottom:32}}>by <span style={{background:"#ef4444",color:"#fff",borderRadius:20,padding:"2px 14px",fontWeight:700,letterSpacing:1}}>RedPill</span> Software</span>
           </div>
           {splash==="loading"&&(
             <div style={{width:280,height:4,background:C.border,borderRadius:4,overflow:"hidden",transition:"opacity 0.3s",opacity:splash==="loading"?1:0}}>
@@ -13262,7 +13393,7 @@ function App({user}){
                   <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:26,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
                   <span style={{fontSize:11,fontWeight:600,color:"#ffffff",opacity:0.75,letterSpacing:0.3,lineHeight:1}}>{APP_VERSION}</span>
                 </div>
-                <span style={{fontSize:12,color:C.muted,letterSpacing:1.2,marginTop:3}}>by RedPill Software</span>
+                <span style={{fontSize:12,color:C.muted,letterSpacing:1.2,marginTop:3}}>by <span style={{background:"#ef4444",color:"#fff",borderRadius:20,padding:"1px 10px",fontWeight:700,fontSize:11,letterSpacing:0.5}}>RedPill</span> Software</span>
               </div>
             </div>
             {view!=="dashboard"&&(<button onClick={()=>{setView("dashboard");setOpenProject(null);}} style={{display:"flex",alignItems:"center",gap:4,background:C.accentDim,border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer",borderRadius:6,padding:"2px 12px",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>← Back to Projects</button>)}
