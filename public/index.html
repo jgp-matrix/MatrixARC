@@ -4945,18 +4945,9 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       }
       setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending"}}));
       try{
-        // Try to create BC Purchase Quote and use its document number
+        // RFQ number: vendor code + project number (e.g. ROY-PRJ402010)
+        // Future: integrate with BC Requisition Worksheets for proper purchasing flow
         let rfqNum=makeRfqNum(group.vendorName);
-        if(_bcToken){
-          console.log('RFQ: Creating BC Purchase Quote for',group.vendorName,'vendorNo:',group.vendorNo,'items:',group.items.length);
-          const bcNum=await bcCreatePurchaseQuote(group.vendorNo,group.vendorName,group.items).catch(e=>{console.warn('RFQ: bcCreatePurchaseQuote threw:',e);return null;});
-          console.log('RFQ: BC Purchase Quote result:',bcNum);
-          if(bcNum){rfqNum=bcNum;
-            // Update the rfqUpload doc with the real BC quote number
-            const uploadToken=vendorTokens[group.vendorName];
-            if(uploadToken)fbDb.collection('rfqUploads').doc(uploadToken).update({rfqNum}).catch(()=>{});
-          }
-        }
         const uploadToken=vendorTokens[group.vendorName];
         const uploadUrl=uploadToken?`https://matrix-arc.web.app?rfqUpload=${uploadToken}`:null;
         const subject=`Request for Quote — ${projectName||"Project"} — ${rfqNum}`;
