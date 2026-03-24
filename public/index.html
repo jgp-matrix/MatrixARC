@@ -10793,16 +10793,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
   const [showPortalModal,setShowPortalModal]=useState(false);
   const [showPoModal,setShowPoModal]=useState(false);
   useEffect(()=>{
-    if(!uid||!init.id)return;
-    const unsub=fbDb.collection('rfqUploads')
-      .where('uid','==',uid)
-      .where('projectId','==',init.id)
-      .where('status','==','submitted')
-      .onSnapshot(snap=>{
-        console.log('PORTAL SUBS: project',init.id,'found',snap.size,'submitted docs');
-        setPendingRfqUploads(snap.size);
-        setPortalSubmissions(snap.docs.map(d=>({id:d.id,...d.data()})));
-      },()=>{});
+    if(!uid||!init.id){setPendingRfqUploads(0);setPortalSubmissions([]);return;}
+    const unsub=fbDb.collection('rfqUploads').where('uid','==',uid).onSnapshot(snap=>{
+      const matching=snap.docs.filter(d=>{
+        const data=d.data();
+        return data.projectId===init.id&&data.status==='submitted';
+      });
+      console.log('PORTAL SUBS: project',init.id,'total docs',snap.size,'matching',matching.length,matching.map(d=>d.id));
+      setPendingRfqUploads(matching.length);
+      setPortalSubmissions(matching.map(d=>({id:d.id,...d.data()})));
+    },err=>{console.error('PORTAL SUBS error:',err);setPendingRfqUploads(0);setPortalSubmissions([]);});
     return()=>unsub();
   },[uid,init.id]);
   // Auto-open portal modal when navigated from a notification
