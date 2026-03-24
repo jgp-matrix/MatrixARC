@@ -9651,10 +9651,6 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,pro
         // Filter to only quotes belonging to this project
         const filtered=projectId?rows.filter(q=>q.projectId===projectId):rows;
         setSavedQuotes(filtered);
-        // Auto-open most recent quote if modal is idle (not already showing a quote)
-        if(currentPhase==='upload'&&filtered.length>0){
-          loadSavedQuote(filtered[0].id,filtered[0]);
-        }
       }).catch(e=>console.warn('Load saved quotes failed:',e)).finally(()=>setLoadingQuotes(false));
   },[show,uid]);
 
