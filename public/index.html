@@ -2036,13 +2036,15 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
       let lineFields=[];
       if(lineProbe&&lineProbe.ok){const ld=await lineProbe.json();const rec=(ld.value||[])[0];if(rec)lineFields=Object.keys(rec);console.log('BC PQ: line fields:',lineFields.join(', '));}
       const docNoField=lineFields.find(f=>/^Document_No$/i.test(f))||'Document_No';
+      const docTypeField=lineFields.find(f=>/^Document_Type$/i.test(f))||'Document_Type';
       const typeField=lineFields.find(f=>/^Type$/i.test(f))||'Type';
-      const noField=lineFields.find(f=>/^No$/i.test(f)&&!/line/i.test(f))||'No';
+      const noField=lineFields.find(f=>/^No$/i.test(f)&&!/line|doc/i.test(f))||'No';
       const qtyField=lineFields.find(f=>/^Quantity$/i.test(f))||'Quantity';
       const descField=lineFields.find(f=>/^Description$/i.test(f))||'Description';
       for(const item of items){
-        const lBody={[docNoField]:docNo,[typeField]:'Item',[descField]:item.description||item.partNumber||'',[qtyField]:item.qty||1};
+        const lBody={[docTypeField]:'Quote',[docNoField]:docNo,[typeField]:'Item',[descField]:item.description||item.partNumber||'',[qtyField]:Number(item.qty)||1};
         if(item.partNumber)lBody[noField]=item.partNumber;
+        console.log('BC PQ line POST body:',JSON.stringify(lBody));
         const lr=await fetch(`${BC_ODATA_BASE}/${linePage}`,{
           method:"POST",
           headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
