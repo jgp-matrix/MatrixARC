@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.61";
+const APP_VERSION="v1.18.62";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13914,7 +13914,7 @@ INSTRUCTIONS:
       </div>{/* end main content column */}
       {/* ARC AI Assistant — right slide-out panel */}
       <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
-        {showSearch&&<div style={{width:420,height:"100%",display:"flex",flexDirection:"column"}}>
+        <div style={{width:420,height:"100%",display:"flex",flexDirection:"column",visibility:showSearch?"visible":"hidden"}}>
           {/* Header */}
           <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:18}}>✨</span>
@@ -13980,7 +13980,7 @@ INSTRUCTIONS:
               <button onClick={()=>runAiSearch(sqQuery)} disabled={sqSearching||!sqQuery.trim()} style={{background:C.accent,border:"none",color:"#fff",padding:"10px 14px",cursor:sqSearching?"wait":"pointer",fontSize:12,fontWeight:700,flexShrink:0,opacity:sqSearching||!sqQuery.trim()?0.5:1}}>{sqSearching?"…":"Ask"}</button>
             </div>
           </div>
-        </div>}
+        </div>
       </div>
       </div>{/* end flex row wrapper */}
       {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip} onMinimize={()=>setTourStep(null)}/>}
