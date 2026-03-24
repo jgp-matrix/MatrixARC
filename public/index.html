@@ -10909,6 +10909,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
       }));
       fbDb.doc(`users/${uid}/config/supplierCantSupply`).set({records:firebase.firestore.FieldValue.arrayUnion(...records)},{merge:true}).catch(e=>console.warn("supplierCantSupply save failed:",e));
     }
+    // Save confirmed supplier PN → Matrix PN crossings to sqCrossings for future auto-matching
+    const crossings=submission.confirmedCrossings||[];
+    if(crossings.length>0){
+      const crossData={};
+      crossings.forEach(c=>{
+        const key=c.supplierPartNumber.toLowerCase().trim();
+        crossData[key]={bcItemNumber:c.matrixPartNumber,bcItemDescription:c.description||'',confirmedAt:Date.now(),source:'supplier_portal'};
+      });
+      fbDb.doc(`users/${uid}/config/sqCrossings`).set(crossData,{merge:true}).catch(e=>console.warn("sqCrossings save failed:",e));
+      console.log('PORTAL CROSSINGS: saved',crossings.length,'confirmed supplier→Matrix part crossings');
+    }
     // Build normalized part# → price map (skip cannot-supply items)
     const priceMap={};
     (submission.lineItems||[]).forEach(item=>{
@@ -13161,6 +13172,7 @@ function SupplierPortalPage({token}){
   const [supplierPartNums,setSupplierPartNums]=useState({});
   const [quoteHeaderInfo,setQuoteHeaderInfo]=useState(null);
   const [allExtractedItems,setAllExtractedItems]=useState([]); // all AI-extracted items from quote scan
+  const [confirmedMatches,setConfirmedMatches]=useState({}); // idx→true when supplier confirms a match is correct
   const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
   const pdfRef=useRef(null);
 
@@ -13266,7 +13278,15 @@ function SupplierPortalPage({token}){
         cannotSupply:cannotSupply[i]===true,
         supplierPartNumber:supplierPartNums[i]||null,
       }));
+      // Build confirmed crossings for ARC to save — supplier PN → Matrix PN
+      const confirmedCrossings=[];
+      (info?.lineItems||[]).forEach((item,i)=>{
+        if(confirmedMatches[i]&&supplierPartNums[i]&&item.partNumber){
+          confirmedCrossings.push({supplierPartNumber:supplierPartNums[i],matrixPartNumber:item.partNumber,description:item.description||''});
+        }
+      });
       const updateData={status:"submitted",submittedAt:Date.now(),lineItems:pricedItems,leadTimeDays:orderLeadTime};
+      if(confirmedCrossings.length)updateData.confirmedCrossings=confirmedCrossings;
       if(fileName)updateData.fileName=fileName;
       if(storageUrl)updateData.storageUrl=storageUrl;
       await fbDb.collection('rfqUploads').doc(token).update(updateData);
@@ -13374,11 +13394,13 @@ function SupplierPortalPage({token}){
                   const conf=aiConfidences[i];
                   const cant=cannotSupply[i]===true;
                   const hasPrice=!cant&&unitPrices[i]!==undefined&&unitPrices[i]!=='';
-                  const isMatch=!cant&&(conf==='high'||conf==='medium');
-                  const isNoMatch=!cant&&(conf==='low');
-                  const confLabel=isMatch?"MATCH":isNoMatch?"NO MATCH":null;
-                  const confColor=isMatch?"#166534":"#991b1b";
-                  const confBg=isMatch?"#dcfce7":"#fee2e2";
+                  const confirmed=confirmedMatches[i]===true;
+                  const isMatch=!cant&&(confirmed||conf==='high'||conf==='medium');
+                  const isNoMatch=!cant&&!confirmed&&(conf==='low');
+                  const confLabel=confirmed?"CONFIRMED ✓":isMatch?"MATCH":isNoMatch?"NO MATCH":null;
+                  const confColor=confirmed?"#166534":isMatch?"#166534":"#991b1b";
+                  const confBg=confirmed?"#bbf7d0":isMatch?"#dcfce7":"#fee2e2";
+                  const hasSupplierPN=!!supplierPartNums[i];
                   return(
                     <tr key={i} style={{borderTop:`1px solid ${border}`,background:cant?"#fef2f2":isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff",opacity:cant?0.6:1}}>
                       <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.partNumber||"—"}</td>
@@ -13390,6 +13412,7 @@ function SupplierPortalPage({token}){
                         return<select value={cur} onChange={e=>{
                           const val=e.target.value;
                           setSupplierPartNums(prev=>({...prev,[i]:val}));
+                          setConfirmedMatches(prev=>({...prev,[i]:false}));
                           if(val){
                             const match=allExtractedItems.find(ex=>ex.supplierPartNumber===val);
                             if(match){
@@ -13409,6 +13432,7 @@ function SupplierPortalPage({token}){
                         {cant?<span style={{fontSize:11,color:"#dc2626",fontWeight:700,display:"block",textAlign:"right"}}>No Bid</span>:(
                         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6}}>
                           {confLabel&&<span style={{fontSize:10,fontWeight:700,borderRadius:4,padding:"2px 6px",background:confBg,color:confColor,flexShrink:0}}>{confLabel}</span>}
+                          {!confirmed&&hasSupplierPN&&(isNoMatch||isMatch)&&<button onClick={()=>setConfirmedMatches(prev=>({...prev,[i]:true}))} style={{fontSize:10,fontWeight:600,borderRadius:4,padding:"2px 6px",background:"#eff6ff",color:"#2563eb",border:"1px solid #bfdbfe",cursor:"pointer",flexShrink:0,fontFamily:"inherit"}}>✓ Confirm</button>}
                           {!conf&&!hasPrice&&<span style={{fontSize:11,color:"#dc2626",fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
                           {isNoMatch&&<span style={{fontSize:10,color:"#991b1b",flexShrink:0}}>Please enter price</span>}
                           <span style={{color:muted}}>$</span>
@@ -13463,7 +13487,7 @@ function SupplierPortalPage({token}){
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setQuoteHeaderInfo(null);setAllExtractedItems([]);setMorePages(null);pdfRef.current=null;}}
+            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setConfirmedMatches({});setQuoteHeaderInfo(null);setAllExtractedItems([]);setMorePages(null);pdfRef.current=null;}}
               style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
               ← Start Over
             </button>
