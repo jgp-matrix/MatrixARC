@@ -1981,35 +1981,80 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
     return null;
   }
   try{
-    const compId=await bcGetCompanyId();
-    if(!compId)return null;
-    const quoteBody={buyFromVendorName:vendorName};
-    if(vendorNo)quoteBody.vendorNumber=vendorNo;
-    console.log('BC PQ: POST body:',JSON.stringify(quoteBody));
-    const qr=await fetch(`${BC_API_BASE}/companies(${compId})/purchaseQuotes`,{
-      method:"POST",
-      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-      body:JSON.stringify(quoteBody)
-    });
-    if(!qr.ok){const errText=await qr.text();console.warn("BC purchaseQuote create failed:",qr.status,errText);return null;}
-    const quote=await qr.json();
-    const quoteId=quote.id;
-    const docNumber=quote.number;
-    console.log('BC PQ: Created successfully, id:',quoteId,'number:',docNumber);
-    for(const item of (items||[])){
-      const lineBody={lineType:"Item",description:item.description||item.partNumber||"",quantity:item.qty||1};
-      if(item.partNumber)lineBody.lineObjectNumber=item.partNumber;
-      const lr=await fetch(`${BC_API_BASE}/companies(${compId})/purchaseQuotes(${quoteId})/purchaseQuoteLines`,{
+    // Discover OData pages for Purchase Quote Header and Lines
+    const allPages=await bcDiscoverODataPages();
+    console.log('BC PQ: available OData pages:',allPages.join(', '));
+    const headerPage=allPages.find(n=>/purchase.?quote.?header|purch.?quote.?header/i.test(n))
+      ||allPages.find(n=>/purchase.?quote/i.test(n)&&!/line/i.test(n))||null;
+    const linePage=allPages.find(n=>/purchase.?quote.?line|purch.?quote.?line/i.test(n))||null;
+    if(!headerPage){
+      console.warn('BC PQ: No Purchase Quote OData page found. Publish BC web service: Page 49 as "PurchaseQuote" or Page 42 header/lines. Available pages:',allPages.join(', '));
+      // Fall back to v2.0 API as last resort
+      const compId=await bcGetCompanyId();
+      if(!compId)return null;
+      const quoteBody={buyFromVendorName:vendorName};
+      if(vendorNo)quoteBody.vendorNumber=vendorNo;
+      console.log('BC PQ: Trying v2.0 API fallback, body:',JSON.stringify(quoteBody));
+      const qr=await fetch(`${BC_API_BASE}/companies(${compId})/purchaseQuotes`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-        body:JSON.stringify(lineBody)
-      }).catch(()=>null);
-      if(lr&&!lr.ok)console.warn("BC purchaseQuoteLine add failed:",lr.status);
+        body:JSON.stringify(quoteBody)
+      });
+      if(!qr.ok){const errText=await qr.text();console.warn("BC PQ v2.0 create failed:",qr.status,errText);return null;}
+      const quote=await qr.json();
+      console.log('BC PQ: v2.0 created, number:',quote.number);
+      return quote.number;
     }
-    return docNumber;
+    console.log('BC PQ: Using OData pages — header:',headerPage,'lines:',linePage||'(none)');
+    // Probe header fields
+    const probeR=await fetch(`${BC_ODATA_BASE}/${headerPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    let headerFields=[];
+    if(probeR.ok){const pd=await probeR.json();const rec=(pd.value||[])[0];if(rec)headerFields=Object.keys(rec);console.log('BC PQ: header fields:',headerFields.join(', '));}
+    // Build header body — try common field names
+    const hBody={};
+    const vnField=headerFields.find(f=>/^Buy_from_Vendor_No$/i.test(f))||headerFields.find(f=>/vendor.*no/i.test(f))||'Buy_from_Vendor_No';
+    if(vendorNo)hBody[vnField]=vendorNo;
+    else if(vendorName){
+      const vnameField=headerFields.find(f=>/^Buy_from_Vendor_Name$/i.test(f))||headerFields.find(f=>/vendor.*name/i.test(f));
+      if(vnameField)hBody[vnameField]=vendorName;
+    }
+    console.log('BC PQ: POST',headerPage,'body:',JSON.stringify(hBody));
+    const hr=await fetch(`${BC_ODATA_BASE}/${headerPage}`,{
+      method:"POST",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+      body:JSON.stringify(hBody)
+    });
+    if(!hr.ok){const errText=await hr.text();console.warn('BC PQ: header POST failed:',hr.status,errText);return null;}
+    const header=await hr.json();
+    const docNo=header.No||header.Document_No||header.no||header.number||null;
+    console.log('BC PQ: Created header, Doc No:',docNo,'full response keys:',Object.keys(header).join(', '));
+    if(!docNo){console.warn('BC PQ: header created but no document number found in response');return null;}
+    // Add line items if we have a lines page
+    if(linePage&&items&&items.length>0){
+      // Probe line fields
+      const lineProbe=await fetch(`${BC_ODATA_BASE}/${linePage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}}).catch(()=>null);
+      let lineFields=[];
+      if(lineProbe&&lineProbe.ok){const ld=await lineProbe.json();const rec=(ld.value||[])[0];if(rec)lineFields=Object.keys(rec);console.log('BC PQ: line fields:',lineFields.join(', '));}
+      const docNoField=lineFields.find(f=>/^Document_No$/i.test(f))||'Document_No';
+      const typeField=lineFields.find(f=>/^Type$/i.test(f))||'Type';
+      const noField=lineFields.find(f=>/^No$/i.test(f)&&!/line/i.test(f))||'No';
+      const qtyField=lineFields.find(f=>/^Quantity$/i.test(f))||'Quantity';
+      const descField=lineFields.find(f=>/^Description$/i.test(f))||'Description';
+      for(const item of items){
+        const lBody={[docNoField]:docNo,[typeField]:'Item',[descField]:item.description||item.partNumber||'',[qtyField]:item.qty||1};
+        if(item.partNumber)lBody[noField]=item.partNumber;
+        const lr=await fetch(`${BC_ODATA_BASE}/${linePage}`,{
+          method:"POST",
+          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+          body:JSON.stringify(lBody)
+        }).catch(e=>{console.warn('BC PQ line POST error:',e);return null;});
+        if(lr&&!lr.ok){const t=await lr.text();console.warn('BC PQ line failed:',lr.status,t.slice(0,200));}
+        else if(lr)console.log('BC PQ line added:',item.partNumber);
+      }
+    }
+    return docNo;
   }catch(e){
     console.warn("bcCreatePurchaseQuote error:",e);
-    // If we lost connection mid-flight, queue it
     if(!_bcToken){
       bcEnqueue('createPurchaseQuote',{vendorNo,vendorName,items},`Create BC purchase quote for ${vendorName}`);
     }
