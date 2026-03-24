@@ -4454,7 +4454,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
         {/* ── LABOR RATES (admin only) ── */}
         {isAdmin()&&(
           <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:4}}>
-            <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Labor Category Rates</label>
+            <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Labor Category Rates <span style={{fontSize:9,color:C.red,fontWeight:700,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>ADMIN ONLY</span></label>
             <div style={{fontSize:11,color:C.muted,marginBottom:12}}>Minutes per unit for each labor category. Changes apply to all future estimates.</div>
             {[
               ["wireMinPerPoint","Wire Time","min / wire point"],
@@ -11441,7 +11441,7 @@ function SettingsModal({uid,onClose,onNameChange}){
         </div>
 
         {isAdmin()&&<><div style={{marginBottom:20}}>
-          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Anthropic API Key</label>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Anthropic API Key <span style={{fontSize:9,color:C.red,fontWeight:700,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>ADMIN ONLY</span></label>
           {loading
             ?<div style={{color:C.muted,fontSize:13,padding:"9px 0"}}>Loading…</div>
             :<input value={key} onChange={e=>setKey(e.target.value)} type="password" placeholder="sk-ant-…" style={inp()}/>
@@ -11470,7 +11470,7 @@ function SettingsModal({uid,onClose,onNameChange}){
 
         {/* BC Environment Configuration — Admin only */}
         {isAdmin()&&<div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Business Central Environment</div>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Business Central Environment <span style={{fontSize:9,color:C.red,fontWeight:700,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>ADMIN ONLY</span></div>
           <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Configure the BC environment connection. <strong style={{color:C.yellow}}>Warning:</strong> Changing the environment will disconnect all existing projects from BC.</div>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"6px 10px",background:C.surface,borderRadius:6}}>
             <span style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}/>
