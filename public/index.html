@@ -13351,7 +13351,9 @@ function SupplierPortalPage({token}){
 .spn-drop{max-height:200px;overflow-y:auto;scrollbar-width:auto;}
 .spn-drop::-webkit-scrollbar{width:14px;}
 .spn-drop::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:7px;border:3px solid #fff;}
-.spn-drop::-webkit-scrollbar-track{background:#f1f5f9;border-radius:7px;}`}</style>
+.spn-drop::-webkit-scrollbar-track{background:#f1f5f9;border-radius:7px;}
+input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
+input[type=number]{-moz-appearance:textfield;}`}</style>
         <div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Analyzing Your Quote</div>
         <div style={{fontSize:14,color:muted,lineHeight:1.6}}>{analyzeMsg}</div>
       </div>
@@ -13495,9 +13497,12 @@ function SupplierPortalPage({token}){
                           {!conf&&!hasPrice&&<span style={{fontSize:11,color:"#dc2626",fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
                           {isNoMatch&&<span style={{fontSize:10,color:"#991b1b",flexShrink:0}}>Please enter price</span>}
                           <span style={{color:muted}}>$</span>
-                          <input type="number" min="0" step="0.01" placeholder="0.00"
+                          <input type="text" inputMode="decimal" placeholder="0.00"
                             value={unitPrices[i]??''}
-                            onChange={e=>setUnitPrices(prev=>({...prev,[i]:e.target.value}))}
+                            onChange={e=>{const v=e.target.value;if(v===''||/^\d*\.?\d*$/.test(v))setUnitPrices(prev=>({...prev,[i]:v}));}}
+                            onFocus={e=>e.target.select()}
+                            onBlur={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))setUnitPrices(prev=>({...prev,[i]:v.toFixed(2)}));}}
+                            onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
                             style={{width:100,textAlign:"right",...inp,border:`1px solid ${hasPrice?(isMatch?"#86efac":"#e2e8f0"):"#fca5a5"}`,background:hasPrice?"#f0fdf4":"#fff5f5"}}
                           />
                         </div>)}
@@ -13506,6 +13511,8 @@ function SupplierPortalPage({token}){
                         {!cant&&<input type="number" min="0" step="1" placeholder="—"
                           value={itemLeadTimes[i]??''}
                           onChange={e=>setItemLeadTimes(prev=>({...prev,[i]:e.target.value}))}
+                          onFocus={e=>e.target.select()}
+                          onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
                           style={{width:70,textAlign:"center",...inp}}
                         />}
                       </td>
@@ -13537,6 +13544,8 @@ function SupplierPortalPage({token}){
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime}
                 onChange={e=>setLeadTime(e.target.value)}
+                onFocus={e=>e.target.select()}
+                onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
                 onBlur={e=>{
                   const val=e.target.value;
                   if(val.trim()){
