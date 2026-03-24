@@ -10469,7 +10469,7 @@ function ContingencyInput({value,readOnly,color,onSave}){
 }
 
 // ── PANEL LIST VIEW ──
-function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived}){
+function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -10477,6 +10477,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
   const [validateMsg,setValidateMsg]=useState("");
   const [showDeleteAdminWarn,setShowDeleteAdminWarn]=useState(false);
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
+  const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
   const [selectedPanelId,setSelectedPanelId]=useState(()=>(project.panels||[])[0]?.id||null);
   const [fbLaborMoreInfo,setFbLaborMoreInfo]=useState(false);
   const [fbcConnecting,setFbcConnecting]=useState(false);
@@ -10586,7 +10587,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                       <div style={{display:"flex",alignItems:"baseline",gap:10}}>
                         {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:project.bcEnv&&project.bcEnv!==_bcConfig.env?"#64748b":C.accent,lineHeight:1}}>{project.bcProjectNumber}</span>}
                         {isBcDisconnected&&<span style={{fontSize:11,fontWeight:700,color:C.yellow,background:"rgba(234,179,8,0.1)",border:"1px solid rgba(234,179,8,0.3)",borderRadius:12,padding:"2px 10px",whiteSpace:"nowrap"}} title={"Linked to "+project.bcEnv}>⚠ BC Disconnected</span>}
-                        {isBcDisconnected&&!readOnly&&<button onClick={e=>{e.stopPropagation();relinkToBC();}} disabled={relinking} style={{fontSize:11,fontWeight:700,color:"#38bdf8",background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.3)",borderRadius:12,padding:"2px 10px",cursor:relinking?"wait":"pointer",whiteSpace:"nowrap",opacity:relinking?0.6:1}}>{relinking?"Re-linking…":"🔗 Re-link to BC"}</button>}
+                        {isBcDisconnected&&!readOnly&&onRelink&&<button onClick={e=>{e.stopPropagation();onRelink();}} disabled={relinking} style={{fontSize:11,fontWeight:700,color:"#38bdf8",background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.3)",borderRadius:12,padding:"2px 10px",cursor:relinking?"wait":"pointer",whiteSpace:"nowrap",opacity:relinking?0.6:1}}>{relinking?"Re-linking…":"🔗 Re-link to BC"}</button>}
                         {project.bcCustomerName&&<span style={{fontSize:18,fontWeight:700,color:C.text}}>{project.bcCustomerName}</span>}
                       </div>
                     )}
@@ -11273,6 +11274,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             onOpenSupplierQuote={bom=>{if(portalSubmissions.length>0){setShowPortalModal(true);}else{setSqPanelBom(bom);setShowSqModal(true);}}}
             pendingRfqUploads={pendingRfqUploads}
             onPoReceived={()=>setShowPoModal(true)}
+            relinking={relinking}
+            relinkMsg={relinkMsg}
+            onRelink={relinkToBC}
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} bcProjectNumber={project.bcProjectNumber||""} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint}/>}
