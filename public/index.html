@@ -7138,12 +7138,12 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,bcDisconnected,readO
     setAttachingPdf(false);
   }
 
-  // Auto-sync to BC when the number of BC-confirmed items changes (debounced 3s)
+  // Auto-sync to BC when BC-confirmed item count INCREASES (user priced something) — debounced 3s
   useEffect(()=>{
     if(!bcProjectNumber)return;
     const bcCount=(panel.bom||[]).filter(r=>r.priceSource==='bc').length;
     if(bcPrevSyncCount.current===-1){bcPrevSyncCount.current=bcCount;return;}
-    if(bcCount===bcPrevSyncCount.current)return;
+    if(bcCount<=bcPrevSyncCount.current){bcPrevSyncCount.current=bcCount;return;}
     bcPrevSyncCount.current=bcCount;
     if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);
     bcAutoSyncTimer.current=setTimeout(()=>syncPlanningLinesToBC(),3000);
@@ -12563,46 +12563,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         </button>
       </div>
 
-      {/* AI Search Results */}
-      {sqResults&&(
-        <div style={{background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:12,padding:16,marginBottom:20}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.muted,marginBottom:12}}>
-            Search Results — {sqResults.quotes.length} quote{sqResults.quotes.length!==1?'s':''}, {sqResults.projects.length} project{sqResults.projects.length!==1?'s':''}
-            {sqResults.error&&<span style={{color:C.red,marginLeft:8}}>({sqResults.error})</span>}
-          </div>
-          {sqResults.quotes.length>0&&(<>
-            <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Supplier Quotes</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:12}}>
-              {sqResults.quotes.map(qt=>(
-                <div key={qt.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",minWidth:220,maxWidth:320}}>
-                  <div style={{fontWeight:700,color:C.text,fontSize:13,marginBottom:3}}>{qt.supplier||'—'}</div>
-                  <div style={{fontSize:11,color:C.muted,marginBottom:2}}>Quote #{qt.quoteId||'—'}{qt.quoteDate?` · ${qt.quoteDate}`:''}</div>
-                  {qt.jobName&&<div style={{fontSize:11,color:C.sub,marginBottom:2}}>{qt.jobName}</div>}
-                  <div style={{display:"flex",gap:8,alignItems:"center",marginTop:6}}>
-                    {qt.merchandiseTotal>0&&<span style={{fontSize:12,color:C.green,fontWeight:700}}>${qt.merchandiseTotal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>}
-                    <span style={{fontSize:10,background:qt.supersededBy?'#2a1a00':C.bg,color:qt.supersededBy?C.muted:C.accent,borderRadius:6,padding:"1px 6px"}}>{qt.supersededBy?'superseded':qt.status||'—'}</span>
-                    {qt.pdfUrl&&<a href={qt.pdfUrl} target="_blank" rel="noreferrer" style={{fontSize:11,color:C.accent,marginLeft:"auto"}}>📄 PDF</a>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>)}
-          {sqResults.projects.length>0&&(<>
-            <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Projects</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-              {sqResults.projects.map(p=>(
-                <div key={p.id} onClick={()=>onOpen(p)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",minWidth:180,cursor:"pointer"}}>
-                  <div style={{fontWeight:700,color:C.text,fontSize:13}}>{p.name||'Untitled'}</div>
-                  {p.bcCustomerName&&<div style={{fontSize:11,color:C.muted}}>{p.bcCustomerName}</div>}
-                </div>
-              ))}
-            </div>
-          </>)}
-          {sqResults.quotes.length===0&&sqResults.projects.length===0&&(
-            <div style={{color:C.muted,fontSize:13}}>No results found for "{sqQuery}"</div>
-          )}
-        </div>
-      )}
+      {/* AI Search results are now shown in the floating chat panel above */}
 
       <div style={{display:"flex",gap:8,marginBottom:groupBy!=="imported"?8:24}}>
         {filterBtn("By Status","status")}
@@ -12930,6 +12891,8 @@ function App({user}){
   const [sqQuery,setSqQuery]=useState('');
   const [sqResults,setSqResults]=useState(null);
   const [sqSearching,setSqSearching]=useState(false);
+  const [sqAnswer,setSqAnswer]=useState(''); // AI conversational answer
+  const [sqHistory,setSqHistory]=useState([]); // chat history [{role,content}]
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
   const TOUR_KEY='arc_tour_step_'+user.uid;
@@ -12987,65 +12950,101 @@ function App({user}){
     notifications.forEach(n=>fbDb.doc(`users/${user.uid}/notifications/${n.id}`).update({read:true}).catch(()=>{}));
   }
 
-  function closeSearch(){setSqResults(null);setSqQuery('');setShowSearch(false);}
+  function closeSearch(){setSqResults(null);setSqQuery('');setSqAnswer('');setSqHistory([]);setShowSearch(false);}
   function openProjectFromSearch(p){handleOpen(p);closeSearch();}
-  const sqDebounceRef=useRef(null);
   const sqRowRef=useRef(null);
+  const sqScrollRef=useRef(null);
   useEffect(()=>{
     if(!showSearch)return;
     function handleDown(e){if(sqRowRef.current&&!sqRowRef.current.contains(e.target))closeSearch();}
     document.addEventListener('mousedown',handleDown);
     return()=>document.removeEventListener('mousedown',handleDown);
   },[showSearch]);
-  function onSqQueryChange(val){
-    setSqQuery(val);
-    if(sqDebounceRef.current)clearTimeout(sqDebounceRef.current);
-    if(val.trim().length>=2){
-      sqDebounceRef.current=setTimeout(()=>runAiSearch(val),420);
-    }else{
-      setSqResults(null);
-    }
+
+  function buildArcContext(){
+    // Build rich context from all loaded projects
+    const projCtx=projects.slice(0,30).map(p=>{
+      const panels=(p.panels||[]);
+      const bomCount=panels.reduce((s,pan)=>(pan.bom||[]).length+s,0);
+      const totalPrice=panels.reduce((s,pan)=>(pan.bom||[]).reduce((ss,r)=>ss+(r.qty||0)*(r.unitPrice||0),0)+s,0);
+      const statuses=panels.map(pan=>pan.status||'draft');
+      return`- ${p.bcProjectNumber||'(no BC#)'} "${p.name}" Customer:${p.bcCustomerName||'—'} Status:${projectStatus(p)} Panels:${panels.length} BOM_items:${bomCount} Total:$${totalPrice.toFixed(0)} Panel_statuses:[${statuses.join(',')}]${p.bcPoNumber?' PO:'+p.bcPoNumber:''}`;
+    }).join('\n');
+
+    // Summarize BOM parts across all projects
+    const partMap={};
+    projects.forEach(p=>(p.panels||[]).forEach(pan=>(pan.bom||[]).forEach(r=>{
+      if(r.partNumber&&!r.isLaborRow){
+        const k=r.partNumber.toUpperCase();
+        if(!partMap[k])partMap[k]={pn:r.partNumber,desc:r.description||'',mfr:r.manufacturer||'',count:0,avgPrice:0,total:0};
+        partMap[k].count++;
+        if(r.unitPrice){partMap[k].total+=r.unitPrice;partMap[k].avgPrice=partMap[k].total/partMap[k].count;}
+      }
+    })));
+    const topParts=Object.values(partMap).sort((a,b)=>b.count-a.count).slice(0,50);
+    const partsCtx=topParts.map(p=>`${p.pn} (${p.mfr||'?'}) "${p.desc}" used:${p.count}x avg:$${p.avgPrice.toFixed(2)}`).join('\n');
+
+    return{projCtx,partsCtx,projectCount:projects.length};
   }
 
   async function runAiSearch(q){
-    if(!q||q.trim().length<2){setSqResults(null);return;}
-    setSqSearching(true);setSqResults(null);
+    if(!q||q.trim().length<2)return;
+    setSqSearching(true);setSqAnswer('');setSqResults(null);
     try{
-      const snap=await fbDb.collection('supplierQuotes').where('importedBy','==',user.uid).limit(200).get();
-      const quotes=snap.docs.map(d=>{
-        const v=d.data();
-        return{id:d.id,supplier:v.supplier||'',quoteId:v.quoteId||'',jobName:v.jobName||'',
-          quoteDate:v.quoteDate||'',merchandiseTotal:v.merchandiseTotal||0,status:v.status||'',
-          pdfUrl:v.pdfUrl||null,lineCount:(v.lineItems||[]).length,
-          importedAt:v.importedAt?.toMillis?.()||0,supersededBy:v.supersededBy||null};
-      }).sort((a,b)=>b.importedAt-a.importedAt);
-      let matchedQuotes=[];
-      if(_apiKey&&quotes.length>0){
-        const ctx=quotes.map((qt,i)=>`${i+1}. ID:${qt.id} Supplier:${qt.supplier} Quote#:${qt.quoteId} Job:${qt.jobName} Date:${qt.quoteDate} Total:$${qt.merchandiseTotal} Lines:${qt.lineCount} Status:${qt.status}`).join('\n');
-        try{
-          const raw=await apiCall({model:'claude-haiku-4-5-20251001',max_tokens:400,
-            messages:[{role:'user',content:`Search query: "${q}"\n\nSupplier quotes:\n${ctx}\n\nReturn a JSON array of matching document IDs ordered by relevance. Example: ["id1","id2"]. Return [] if no matches. Only return the JSON array.`}]});
-          const m=raw.match(/\[[\s\S]*?\]/);
-          const ids=m?JSON.parse(m[0]):[];
-          matchedQuotes=ids.map(id=>quotes.find(qt=>qt.id===id)).filter(Boolean);
-        }catch(e){console.warn('AI search fallback:',e);matchedQuotes=[];}
-      }
-      if(!matchedQuotes.length){
-        const tokens=q.toLowerCase().replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(w=>w.length>1);
-        matchedQuotes=quotes.filter(qt=>{
-          const text=`${qt.supplier} ${qt.quoteId} ${qt.jobName}`.toLowerCase();
-          return tokens.some(t=>text.includes(t));
-        });
-      }
+      const{projCtx,partsCtx,projectCount}=buildArcContext();
+
+      const systemPrompt=`You are ARC AI — the intelligent assistant built into the ARC (Automated Review & Costing) platform by RedPill Software. ARC is used by Matrix Systems for industrial electrical control panel quoting.
+
+You have expert knowledge of:
+- UL508A (Standard for Industrial Control Panels) — construction, listing, labeling, SCCR, wiring methods, overcurrent protection, enclosure requirements, component spacing, temperature testing
+- CSA C22.2 No. 286 (Canadian equivalent) — harmonized requirements, delta differences from UL508A
+- NEC/NFPA 70 Articles 409 (Industrial Control Panels), 430 (Motors), 440 (A/C equipment)
+- Industrial automation components: PLCs (Allen-Bradley, Siemens, AutomationDirect), VFDs, motor starters, contactors, relays, terminal blocks, wire duct, DIN rail, HMIs, enclosures (Hoffman, Rittal, Saginaw), circuit breakers, MCCBs
+- Control panel design: layout best practices, wire sizing, short circuit calculations, thermal management, labeling requirements
+- Pricing knowledge for industrial components (approximate ranges)
+- Business Central ERP integration concepts
+
+You also have access to the user's ARC data:
+
+PROJECTS (${projectCount} total):
+${projCtx||'(none loaded)'}
+
+FREQUENTLY USED PARTS (top 50):
+${partsCtx||'(none yet)'}
+
+INSTRUCTIONS:
+- Answer questions conversationally and helpfully. Be concise but thorough.
+- When asked about specific projects, reference them by name and BC project number.
+- When asked about standards (UL508A, C22.2, NEC), cite specific clauses/sections when you can.
+- When asked about parts, include part numbers and approximate pricing when relevant.
+- When asked "how to" do something in ARC, explain the workflow step by step.
+- If the question is a simple search (e.g. "find project X" or "show me quotes from Y"), identify matching projects/quotes and present them clearly.
+- Format responses with markdown: use **bold**, bullet points, and headers for readability.
+- Keep answers focused and practical — this is a work tool, not a general chatbot.`;
+
+      // Build messages with conversation history (keep last 6 exchanges)
+      const historySlice=sqHistory.slice(-12);
+      const messages=[...historySlice,{role:'user',content:q}];
+
+      const answer=(await apiCall({model:'claude-sonnet-4-6',max_tokens:2000,system:systemPrompt,messages})).trim();
+      setSqAnswer(answer);
+      setSqHistory(prev=>[...prev,{role:'user',content:q},{role:'assistant',content:answer}].slice(-12));
+
+      // Also do quick project/quote matching for clickable results
       const qLow=q.toLowerCase();
       const matchedProjects=projects.filter(p=>
         (p.name||'').toLowerCase().includes(qLow)||
         (p.bcCustomerName||'').toLowerCase().includes(qLow)||
         (p.bcProjectNumber||'').toLowerCase().includes(qLow)
-      );
-      setSqResults({quotes:matchedQuotes,projects:matchedProjects});
-    }catch(e){setSqResults({quotes:[],projects:[],error:e.message});}
+      ).slice(0,5);
+      setSqResults({quotes:[],projects:matchedProjects});
+    }catch(e){
+      setSqAnswer('');
+      setSqResults({quotes:[],projects:[],error:e.message});
+    }
     setSqSearching(false);
+    setSqQuery('');
+    setTimeout(()=>{if(sqScrollRef.current)sqScrollRef.current.scrollTop=sqScrollRef.current.scrollHeight;},100);
   }
 
   // Load user preferences from Firestore on mount
@@ -13435,8 +13434,8 @@ function App({user}){
             </div>
           </>}
           <div style={{width:1,height:36,background:C.border,marginLeft:2,flexShrink:0}}/>
-          {/* 🔍 Search icon */}
-          <button title="ARC AI Search" onClick={()=>setShowSearch(v=>!v)} style={{background:showSearch?C.accentDim:"none",border:showSearch?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showSearch?C.accent:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔍</button>
+          {/* ✨ ARC AI Assistant */}
+          <button title="ARC AI Assistant — Ask about projects, UL508A, C22, parts, pricing" onClick={()=>setShowSearch(v=>!v)} style={{background:showSearch?C.accentDim:"none",border:showSearch?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showSearch?C.accent:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✨</button>
           {/* 🔔 Bell icon */}
           <div style={{position:"relative",flexShrink:0}}>
             <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:notifications.length>0?"#fbbf24":C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔔</button>
@@ -13502,58 +13501,67 @@ function App({user}){
         </div>
         {/* Dropdown backdrop — closes menus when clicking outside */}
         {(showGearMenu||showUserMenu||showBellMenu)&&<div style={{position:"fixed",inset:0,zIndex:590}} onClick={()=>{setShowGearMenu(false);setShowUserMenu(false);setShowBellMenu(false);}}/>}
-        {/* Search bar row — toggleable */}
-        {showSearch&&<div ref={sqRowRef} style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"6px 24px",display:"flex",justifyContent:"center",position:"relative"}}>
-          <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${sqResults||sqSearching?C.accent:C.border}`,borderRadius:sqResults||sqSearching?"10px 10px 0 0":10,overflow:"hidden",width:"100%",maxWidth:900,transition:"border-color 0.15s"}}>
-            <span style={{padding:"0 12px",color:C.muted,fontSize:16,lineHeight:1,flexShrink:0}}>🔍</span>
-            <input ref={sqInputRef} value={sqQuery} placeholder="Search projects, quotes, suppliers, parts…" autoFocus
-              onChange={e=>onSqQueryChange(e.target.value)}
-              onKeyDown={e=>{if(e.key==='Enter')runAiSearch(sqQuery);if(e.key==='Escape')closeSearch();}}
-              style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:15,padding:"8px 4px",minWidth:0}}/>
-            {sqSearching&&<span style={{padding:"0 10px",color:C.accent,fontSize:13,flexShrink:0,fontWeight:600}}>Searching…</span>}
-            {sqQuery&&!sqSearching&&<button onClick={()=>{setSqQuery('');setSqResults(null);}} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 10px",fontSize:18,lineHeight:1,flexShrink:0}}>×</button>}
-            <button onClick={()=>runAiSearch(sqQuery)} style={{background:C.accent,border:"none",color:"#fff",padding:"8px 16px",cursor:"pointer",fontSize:14,fontWeight:700,flexShrink:0}}>Search</button>
+        {/* ARC AI Assistant — input bar in header + floating chat panel */}
+        {showSearch&&<div ref={sqRowRef} style={{background:"#0a0a14",borderBottom:`1px solid ${C.border}`,padding:"6px 24px",display:"flex",justifyContent:"center",position:"relative"}}>
+          <div style={{width:"100%",maxWidth:900}}>
+            <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
+              <span style={{padding:"0 12px",fontSize:18,flexShrink:0}}>✨</span>
+              <input ref={sqInputRef} value={sqQuery} placeholder={sqHistory.length?"Follow up…":"Ask about projects, UL508A, C22, parts, pricing, or how to use ARC…"} autoFocus
+                onChange={e=>setSqQuery(e.target.value)}
+                onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runAiSearch(sqQuery);}if(e.key==='Escape')closeSearch();}}
+                style={{flex:1,background:"none",border:"none",outline:"none",color:C.text,fontSize:14,padding:"10px 4px",minWidth:0}}/>
+              {sqSearching&&<span style={{padding:"0 10px",color:C.accent,fontSize:12,flexShrink:0,fontWeight:600}}>Thinking…</span>}
+              {sqHistory.length>0&&!sqSearching&&<button onClick={()=>{setSqHistory([]);setSqAnswer('');setSqResults(null);}} title="Clear chat" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"0 8px",fontSize:16,flexShrink:0}}>×</button>}
+              <button onClick={()=>runAiSearch(sqQuery)} disabled={sqSearching||!sqQuery.trim()} style={{background:C.accent,border:"none",color:"#fff",padding:"10px 18px",cursor:sqSearching?"wait":"pointer",fontSize:13,fontWeight:700,flexShrink:0,opacity:sqSearching||!sqQuery.trim()?0.5:1}}>Ask</button>
+            </div>
           </div>
-          {/* Floating results panel */}
-          {(sqResults||sqSearching)&&<div style={{position:"absolute",top:"100%",left:"24px",right:"24px",maxWidth:900,margin:"0 auto",background:"#0d0d1a",border:`1px solid ${C.accent}`,borderTop:"none",borderRadius:"0 0 10px 10px",boxShadow:"0 12px 40px rgba(0,0,0,0.8)",zIndex:700,maxHeight:420,overflowY:"auto"}}>
-            {sqSearching&&!sqResults&&<div style={{padding:"20px",textAlign:"center",color:C.muted,fontSize:13}}>Searching…</div>}
-            {sqResults&&(<>
-              <div style={{padding:"8px 16px 4px",fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,borderBottom:`1px solid ${C.border}`}}>
-                {sqResults.quotes.length+sqResults.projects.length} result{sqResults.quotes.length+sqResults.projects.length!==1?"s":""} for "{sqQuery}"
-                {sqResults.error&&<span style={{color:C.red,marginLeft:8,textTransform:"none",fontWeight:400}}>{sqResults.error}</span>}
+          {/* Floating chat panel */}
+          {(sqHistory.length>0||sqSearching)&&<div style={{position:"absolute",top:"100%",left:24,right:24,zIndex:700,display:"flex",justifyContent:"center"}}>
+            <div style={{width:"100%",maxWidth:900,background:"#0d0d1a",border:`1px solid ${C.accent}`,borderTop:"none",borderRadius:"0 0 12px 12px",boxShadow:"0 12px 40px rgba(0,0,0,0.8)"}}>
+              <div ref={sqScrollRef} style={{maxHeight:420,overflowY:"auto",padding:"12px 16px 8px"}}>
+                {sqHistory.map((msg,i)=>(
+                  <div key={i} style={{display:"flex",gap:10,marginBottom:12,alignItems:"flex-start"}}>
+                    <div style={{width:24,height:24,borderRadius:"50%",background:msg.role==='user'?C.accent:'#6366f1',display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0,marginTop:2}}>{msg.role==='user'?'Q':'A'}</div>
+                    <div style={{flex:1,minWidth:0}}>
+                      {msg.role==='user'
+                        ?<div style={{fontSize:14,color:C.text,fontWeight:600}}>{msg.content}</div>
+                        :<div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7}} dangerouslySetInnerHTML={{__html:(()=>{
+                          let html=msg.content
+                            .replace(/\*\*(.+?)\*\*/g,'<strong style="color:#f1f5f9">$1</strong>')
+                            .replace(/\*(.+?)\*/g,'<em>$1</em>')
+                            .replace(/`([^`]+)`/g,'<code style="background:#1e293b;padding:1px 5px;border-radius:3px;font-size:12px">$1</code>')
+                            .replace(/^### (.+)$/gm,'<div style="font-size:14px;font-weight:700;color:#f1f5f9;margin:8px 0 4px">$1</div>')
+                            .replace(/^## (.+)$/gm,'<div style="font-size:15px;font-weight:700;color:#f1f5f9;margin:10px 0 4px">$1</div>')
+                            .replace(/^- (.+)$/gm,'<div style="padding-left:12px">• $1</div>')
+                            .replace(/^\d+\. (.+)$/gm,(m,p1)=>'<div style="padding-left:12px">'+m.match(/^\d+/)[0]+'. '+p1+'</div>')
+                            .replace(/\n{2,}/g,'<br/><br/>')
+                            .replace(/\n/g,'<br/>');
+                          return html;
+                        })()}}/>
+                      }
+                    </div>
+                  </div>
+                ))}
+                {sqSearching&&<div style={{display:"flex",gap:10,alignItems:"center",padding:"8px 0"}}>
+                  <div style={{width:24,height:24,borderRadius:"50%",background:"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0}} className="spin">◌</div>
+                  <span style={{fontSize:13,color:C.muted}}>Thinking…</span>
+                </div>}
               </div>
-              {sqResults.quotes.length===0&&sqResults.projects.length===0&&(
-                <div style={{padding:"20px 16px",color:C.muted,fontSize:13,textAlign:"center"}}>No results found.</div>
-              )}
-              {sqResults.projects.length>0&&(<>
-                <div style={{padding:"8px 16px 4px",fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Projects</div>
+              {/* Matched projects — clickable chips */}
+              {sqResults&&sqResults.projects.length>0&&<div style={{display:"flex",gap:6,padding:"4px 16px 8px",overflowX:"auto",borderTop:`1px solid ${C.border}`}}>
                 {sqResults.projects.map(p=>(
                   <div key={p.id} onClick={()=>openProjectFromSearch(p)}
-                    style={{padding:"10px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,borderBottom:`1px solid ${C.border}`}}
-                    onMouseEnter={e=>e.currentTarget.style.background="#1a1a2e"}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontWeight:700,color:C.text,fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.name||"Untitled"}</div>
-                      <div style={{fontSize:11,color:C.muted,marginTop:1}}>{[p.bcCustomerName,p.bcProjectNumber].filter(Boolean).join(" · ")||"No customer"}</div>
-                    </div>
-                    <span style={{fontSize:11,color:C.accent,flexShrink:0}}>Open →</span>
+                    style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0,fontSize:12}}
+                    onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent}
+                    onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}>
+                    <span style={{fontWeight:700,color:C.accent,marginRight:6}}>{p.bcProjectNumber||'—'}</span>
+                    <span style={{color:C.text}}>{p.name}</span>
+                    <span style={{color:C.muted,marginLeft:6}}>→</span>
                   </div>
                 ))}
-              </>)}
-              {sqResults.quotes.length>0&&(<>
-                <div style={{padding:"8px 16px 4px",fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Supplier Quotes</div>
-                {sqResults.quotes.map(qt=>(
-                  <div key={qt.id}
-                    style={{padding:"10px 16px",cursor:"default",display:"flex",alignItems:"center",gap:10,borderBottom:`1px solid ${C.border}`}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontWeight:700,color:C.text,fontSize:13}}>{qt.supplier||"—"}</div>
-                      <div style={{fontSize:11,color:C.muted,marginTop:1}}>Quote #{qt.quoteId||"—"}{qt.quoteDate?` · ${qt.quoteDate}`:""}{qt.jobName?` · ${qt.jobName}`:""}</div>
-                    </div>
-                    {qt.merchandiseTotal>0&&<span style={{fontSize:12,color:C.green,fontWeight:700,flexShrink:0}}>${qt.merchandiseTotal.toLocaleString()}</span>}
-                  </div>
-                ))}
-              </>)}
-            </>)}
+              </div>}
+              {sqResults&&sqResults.error&&<div style={{fontSize:12,color:C.red,padding:"4px 16px 8px"}}>{sqResults.error}</div>}
+            </div>
           </div>}
         </div>}
       </div>
