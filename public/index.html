@@ -347,6 +347,58 @@ async function loadApiKey(uid){
   try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists)_apiKey=d.data().key||null;}catch(e){}
 }
 
+// ── KNOWLEDGE BASE CACHE (module-level for use by extraction tasks) ──
+let _kbCache=null;
+async function loadKnowledgeBase(){
+  if(_kbCache)return _kbCache;
+  if(!_appCtx.companyId)return[];
+  try{
+    const snap=await fbDb.collection(`companies/${_appCtx.companyId}/knowledgeBase`).get();
+    _kbCache=snap.docs.map(d=>({id:d.id,...d.data()}));
+    console.log(`[KB] Loaded ${_kbCache.length} knowledge base docs (${_kbCache.reduce((s,d)=>(d.content||'').length+s,0)} chars)`);
+    return _kbCache;
+  }catch(e){console.warn('[KB] Load failed:',e);return[];}
+}
+function searchKB(kbDocs,terms){
+  // Search knowledge base pages for terms, return top matches (max chars)
+  if(!kbDocs?.length||!terms?.length)return'';
+  const words=terms.flatMap(t=>t.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/)).filter(w=>w.length>=3);
+  if(!words.length)return'';
+  const stopWords=new Set(['the','and','for','are','but','not','you','all','can','had','was','one','our','has','how','what','when','where','which','who','does','this','that','with','from','they','been','have','many','some','them','than','each','make','like','over','into','also']);
+  const filtered=words.filter(w=>!stopWords.has(w));
+  if(!filtered.length)return'';
+  const scores=[];
+  kbDocs.forEach(doc=>{
+    if(!doc.content)return;
+    const pages=doc.content.split(/--- PAGE (\d+) ---/).filter(Boolean);
+    for(let i=0;i<pages.length-1;i+=2){
+      const pageNum=pages[i],text=pages[i+1]||'',textLow=text.toLowerCase();
+      let score=0;
+      filtered.forEach(w=>{let idx=0;while((idx=textLow.indexOf(w,idx))!==-1){score++;idx+=w.length;}});
+      if(score>0)scores.push({pageNum,text:text.trim(),score,source:doc.source||doc.id});
+    }
+    // Also handle non-paged docs (HazLoc DOCX extracts use === filename === format)
+    if(!doc.content.includes('--- PAGE ')){
+      const sections=doc.content.split(/=== (.+?) ===/).filter(Boolean);
+      for(let i=0;i<sections.length-1;i+=2){
+        const name=sections[i],text=sections[i+1]||'',textLow=text.toLowerCase();
+        let score=0;
+        filtered.forEach(w=>{let idx=0;while((idx=textLow.indexOf(w,idx))!==-1){score++;idx+=w.length;}});
+        if(score>0)scores.push({pageNum:name.trim(),text:text.trim(),score,source:doc.source||doc.id});
+      }
+    }
+  });
+  scores.sort((a,b)=>b.score-a.score);
+  let result='',chars=0;
+  const MAX=12000;
+  for(const pg of scores){
+    if(chars+pg.text.length>MAX)break;
+    result+=`\n[${pg.source} — Page ${pg.pageNum}]\n${pg.text}\n`;
+    chars+=pg.text.length;
+  }
+  return result;
+}
+
 // ── BUSINESS CENTRAL CONFIG ──
 const BC_TENANT="d1f2c7f7-fab2-40b5-85c1-06a715e6a157";
 // Default BC config — can be overridden per company from Firestore
@@ -3740,6 +3792,131 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
   return{validation,laborData};
 }
 
+// ── COMPLIANCE REVIEW — analyzes extracted data against UL508A/C22.2 standards ──
+async function runComplianceReview(panel){
+  const bom=panel.bom||[];
+  const val=panel.validation||{};
+  const ld=panel.laborData||{};
+  const counts=ld.counts||{};
+  const layout=ld.layoutAnalysis||{};
+
+  // Build a summary of what was extracted
+  const bomSummary=bom.slice(0,60).map(r=>`${r.qty||1}x ${r.manufacturer||''} ${r.partNumber||''} — ${(r.description||'').slice(0,60)} [tag:${r.notes||''}]`).join('\n');
+  const deviceTypes={};
+  (val.schematicTags||[]).forEach(t=>{const type=typeof t==='string'?'other':(t.type||'other');deviceTypes[type]=(deviceTypes[type]||0)+1;});
+  const deviceSummary=Object.entries(deviceTypes).map(([t,c])=>`${t}: ${c}`).join(', ');
+
+  // Determine search terms for KB lookup
+  const searchTerms=['UL508A','branch circuit','overcurrent','SCCR','short circuit','wiring','marking','labeling','enclosure','spacing','grounding','bonding'];
+  // Add terms based on what's in the panel
+  if(deviceTypes.drive||deviceTypes.vfd)searchTerms.push('variable frequency drive','motor circuit','overload');
+  if(deviceTypes.transformer)searchTerms.push('transformer','control circuit','secondary');
+  if(deviceTypes.disconnect)searchTerms.push('disconnect','supply circuit','panelboard');
+  if(deviceTypes.plc_io)searchTerms.push('PLC','programmable','controller');
+  if(deviceTypes.e_stop)searchTerms.push('emergency stop','red mushroom','operator safety');
+  if(counts.wireCount>50)searchTerms.push('wire bending','wire duct fill','raceway');
+  if(layout.enclosure)searchTerms.push('enclosure type','NEMA','ventilation','thermal');
+
+  // Fetch relevant KB sections
+  const kbDocs=await loadKnowledgeBase();
+  const kbContext=searchKB(kbDocs,searchTerms);
+
+  const prompt=`You are a UL508A certified panel shop inspector and compliance reviewer. You have just reviewed the extraction results from an industrial control panel drawing set. Analyze the data below for potential compliance concerns, design issues, and things the panel builder should verify.
+
+EXTRACTED PANEL DATA:
+- Wire Count: ${counts.wireCount||0} internal wires, ${counts.wireTerminations||0} terminations
+- Door Devices: ${counts.doorDevices||0} (cutouts/operator interface)
+- Backpanel Devices: ${(counts.allDevices||0)-(counts.doorDevices||0)}
+- Total Devices: ${counts.allDevices||0}
+- Panel Holes: ${counts.panelHoles||0}
+- Duct & DIN Rail: ${counts.ductDinFeet||0} feet
+- Side Devices: ${counts.sideDeviceCount||0}
+${layout.enclosure?`- Enclosure: ${layout.enclosure.width||'?'}×${layout.enclosure.height||'?'}×${layout.enclosure.depth||'?'} ${layout.enclosure.unit||'in'}`:'- Enclosure: dimensions not extracted'}
+
+SCHEMATIC DEVICE BREAKDOWN:
+${deviceSummary||'No devices identified'}
+
+BOM (${bom.length} items):
+${bomSummary||'No BOM extracted'}
+
+VALIDATION:
+- Schematic tags found: ${(val.schematicTags||[]).length}
+- BOM-to-schematic match confidence: ${val.confidence||'N/A'}
+- Missing from schematic: ${(val.missingFromSchematic||[]).length} items
+- Unaccounted tags: ${(val.unaccountedTags||[]).join(', ')||'none'}
+${kbContext?`
+REFERENCE STANDARDS (excerpts from UL508A, CSA C22.2 No. 286, UL508A Supplement, FUII, Certification Manual):
+${kbContext}
+`:''}
+INSTRUCTIONS:
+Analyze the above and return a JSON object with this structure:
+{
+  "concerns": [
+    {
+      "severity": "warning",
+      "category": "SCCR",
+      "title": "SCCR rating may need verification",
+      "detail": "Panel contains VFDs and motor starters. The assembly SCCR must be calculated per UL508A Table SB4.1 considering the lowest-rated component in each branch circuit.",
+      "reference": "UL508A Section SB4.1, Table SB4.1",
+      "page": "67"
+    }
+  ],
+  "observations": [
+    "Panel uses 15 terminal blocks which is typical for this device count",
+    "Wire count of 45 is reasonable for 12 schematic devices"
+  ],
+  "checklist": [
+    "Verify SCCR marking matches calculated value",
+    "Confirm all branch circuits have proper overcurrent protection",
+    "Check wire sizing per UL508A Table 28.1"
+  ]
+}
+
+SEVERITY LEVELS:
+- "critical": Likely code violation or safety issue that must be addressed before UL listing
+- "warning": Potential concern that should be verified — may or may not be an issue depending on details not visible in drawings
+- "info": Best practice recommendation or design optimization
+
+CATEGORIES: SCCR, overcurrent_protection, wiring, grounding, spacing, marking, enclosure, thermal, emergency_stop, motor_circuit, control_circuit, component_rating, general
+
+RULES:
+- Only flag concerns you can support with specific UL508A/C22.2 clauses or standard practices
+- Reference specific section/table numbers from the standards when possible
+- Include the page number from the knowledge base excerpts when citing
+- Be practical — focus on things a panel builder or inspector would actually flag
+- If the BOM is missing common required items (ground bus, wire markers, SCCR label, etc.), flag it
+- Check device-to-protection coordination: are breakers properly sized for the devices downstream?
+- Consider thermal management: is the enclosure size appropriate for the heat-generating devices?
+- If you see VFDs, check for line reactors, EMC filters, or output reactors in the BOM
+- Do NOT flag things that are obviously fine or standard practice
+- Keep observations brief and practical
+- Return ONLY valid JSON, no markdown`;
+
+  try{
+    const raw=await apiCall({
+      model:'claude-sonnet-4-6',
+      max_tokens:4000,
+      system:'You are a UL508A panel shop inspector. Return only valid JSON.',
+      messages:[{role:'user',content:prompt}]
+    });
+    const cleaned=raw.replace(/```json|```/g,'').trim();
+    const m=cleaned.match(/\{[\s\S]*\}/);
+    if(!m)throw new Error('No JSON in response');
+    const result=JSON.parse(m[0]);
+    return{
+      runAt:Date.now(),
+      concerns:result.concerns||[],
+      observations:result.observations||[],
+      checklist:result.checklist||[],
+      deviceSummary,
+      kbDocsUsed:kbDocs.length
+    };
+  }catch(e){
+    console.error('Compliance review failed:',e);
+    return null;
+  }
+}
+
 // ── BURN STAMP INTO IMAGE — applies overlay text permanently to a dataUrl via canvas ──
 async function burnStampCanvas(dataUrl,overlay){
   return new Promise(resolve=>{
@@ -3818,6 +3995,14 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     if(bomToVerify.length>0&&_apiKey){
       try{const vr=await verifyPartNumbers(bomToVerify);if(vr?.length>0)await save({...latestPanel,bomVerification:vr,updatedAt:Date.now()});}
       catch(e){console.warn("Part verification failed:",e);}
+    }
+    // Compliance review — UL508A/C22.2 analysis against knowledge base
+    if(_apiKey&&(latestPanel.bom?.length>0||latestPanel.validation)){
+      try{
+        bgUpdate(panel.id,"Compliance review…");
+        const cr=await runComplianceReview(latestPanel);
+        if(cr)await save({...latestPanel,complianceReview:cr,updatedAt:Date.now()});
+      }catch(e){console.warn("Compliance review failed:",e);}
     }
     // Upload page images to Firebase Storage (with permanent stamp burned in if stampFn provided)
     const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
@@ -6524,6 +6709,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,bcDisconnected,readO
   const _rawUnified=_activePricing||(_showExtract?extractProgress:null);
   const unifiedProgress=_rawUnified?{..._rawUnified,isError:_rawUnified.isError||bgTask?.status==="error"}:null;
   const [lightboxId,setLightboxId]=useState(null);
+  const [showCompliance,setShowCompliance]=useState(false);
   const [draftName,setDraftName]=useState(panel.name||"");
   const [draftNo,setDraftNo]=useState((panel.drawingNo||"").slice(0,25));
   const [draftDesc,setDraftDesc]=useState(panel.drawingDesc||"");
@@ -8029,6 +8215,51 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,bcDisconnected,readO
             </div>
           </div>
         </div>);})()}
+
+      {/* Compliance Review */}
+      {panel.complianceReview&&panel.complianceReview.concerns?.length>0&&(()=>{
+        const cr=panel.complianceReview;
+        const sevColors={critical:'#ef4444',warning:'#f59e0b',info:'#38bdf8'};
+        const sevLabels={critical:'CRITICAL',warning:'WARNING',info:'INFO'};
+        const sevIcons={critical:'\u26D4',warning:'\u26A0\uFE0F',info:'\u2139\uFE0F'};
+        const critCount=cr.concerns.filter(c=>c.severity==='critical').length;
+        const warnCount=cr.concerns.filter(c=>c.severity==='warning').length;
+        const infoCount=cr.concerns.filter(c=>c.severity==='info').length;
+        const headerColor=critCount>0?'#ef4444':warnCount>0?'#f59e0b':'#38bdf8';
+        return <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,cursor:"pointer"}} onClick={()=>setShowCompliance(prev=>!prev)}>
+            <div style={{fontSize:12,color:headerColor,fontWeight:700,letterSpacing:0.7}}>
+              UL508A / C22.2 COMPLIANCE REVIEW
+            </div>
+            {critCount>0&&<span style={{fontSize:10,fontWeight:700,color:'#fff',background:'#ef4444',borderRadius:10,padding:'1px 7px'}}>{critCount} critical</span>}
+            {warnCount>0&&<span style={{fontSize:10,fontWeight:700,color:'#1a1a2e',background:'#f59e0b',borderRadius:10,padding:'1px 7px'}}>{warnCount} warning{warnCount>1?'s':''}</span>}
+            {infoCount>0&&<span style={{fontSize:10,fontWeight:700,color:'#fff',background:'#38bdf8',borderRadius:10,padding:'1px 7px'}}>{infoCount} info</span>}
+            <div style={{flex:1}}/>
+            <span style={{fontSize:11,color:C.muted,fontWeight:600}}>{showCompliance?'Hide':'Show'}</span>
+          </div>
+          {showCompliance&&<div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:10}}>
+            {cr.concerns.map((c,i)=><div key={i} style={{background:c.severity==='critical'?'rgba(239,68,68,0.08)':c.severity==='warning'?'rgba(245,158,11,0.08)':'rgba(56,189,248,0.06)',border:`1px solid ${c.severity==='critical'?'rgba(239,68,68,0.25)':c.severity==='warning'?'rgba(245,158,11,0.25)':'rgba(56,189,248,0.2)'}`,borderRadius:8,padding:'10px 12px'}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                <span style={{fontSize:10,fontWeight:800,color:sevColors[c.severity],background:c.severity==='critical'?'rgba(239,68,68,0.15)':c.severity==='warning'?'rgba(245,158,11,0.15)':'rgba(56,189,248,0.12)',borderRadius:4,padding:'1px 6px',letterSpacing:0.5}}>{sevLabels[c.severity]}</span>
+                <span style={{fontSize:10,fontWeight:600,color:C.muted,textTransform:'uppercase',letterSpacing:0.5}}>{(c.category||'').replace(/_/g,' ')}</span>
+              </div>
+              <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:3}}>{c.title}</div>
+              <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>{c.detail}</div>
+              {c.reference&&<div style={{fontSize:11,color:'#818cf8',marginTop:4,fontWeight:600}}>{c.reference}{c.page?' (p.'+c.page+')':''}</div>}
+            </div>)}
+            {cr.checklist?.length>0&&<div style={{background:'rgba(99,102,241,0.06)',border:'1px solid rgba(99,102,241,0.15)',borderRadius:8,padding:'10px 12px'}}>
+              <div style={{fontSize:11,fontWeight:700,color:'#818cf8',letterSpacing:0.5,marginBottom:6}}>INSPECTION CHECKLIST</div>
+              {cr.checklist.map((item,i)=><div key={i} style={{fontSize:12,color:C.muted,padding:'2px 0',display:'flex',gap:6,alignItems:'flex-start'}}>
+                <span style={{color:'#818cf8',fontSize:14,lineHeight:1}}>{'☐'}</span>
+                <span>{item}</span>
+              </div>)}
+            </div>}
+            {cr.observations?.length>0&&<div style={{fontSize:11,color:C.muted,fontStyle:'italic',padding:'4px 0'}}>
+              {cr.observations.map((o,i)=><div key={i} style={{padding:'1px 0'}}>• {o}</div>)}
+            </div>}
+          </div>}
+        </div>;
+      })()}
 
       {/* BOM Table */}
       {(panel.bom||[]).length>0&&(
@@ -10965,7 +11196,8 @@ function QuoteView({project,uid,onBack,onUpdate}){
                     <div key={p.id} style={{...card({padding:"10px 14px"}),minWidth:170}}>
                       <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>{p.name}</div>
                       <div style={{fontSize:12,color:C.muted}}>{(p.bom||[]).length} items · {(p.pages||[]).length} pages</div>
-                      {p.validation?.wireCount>0&&<div style={{fontSize:12,color:C.muted}}>⚡ {p.validation.wireCount} wires</div>}
+                      {p.validation?.wireCount>0&&<div style={{fontSize:12,color:C.muted}}>{p.validation.wireCount} wires</div>}
+                      {p.complianceReview?.concerns?.length>0&&(()=>{const cc=p.complianceReview.concerns;const crit=cc.filter(c=>c.severity==='critical').length;const warn=cc.filter(c=>c.severity==='warning').length;return <div style={{fontSize:11,marginTop:2}}>{crit>0&&<span style={{color:'#ef4444',fontWeight:700,marginRight:4}}>{crit} critical</span>}{warn>0&&<span style={{color:'#f59e0b',fontWeight:600}}>{warn} warning{warn>1?'s':''}</span>}</div>;})()}
                       {mats>0&&<div style={{fontSize:12,color:C.green,marginTop:4}}>Materials: {fmtMoney(mats)}</div>}
                     </div>
                   );
@@ -12913,7 +13145,7 @@ function App({user}){
   const [sqSearching,setSqSearching]=useState(false);
   const [sqAnswer,setSqAnswer]=useState(''); // AI conversational answer
   const [sqHistory,setSqHistory]=useState([]); // chat history [{role,content}]
-  const kbCacheRef=useRef(null); // cached knowledge base docs [{title,content,source}]
+  // KB uses module-level _kbCache via loadKnowledgeBase() and searchKB()
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
   const TOUR_KEY='arc_tour_step_'+user.uid;
@@ -13002,62 +13234,7 @@ function App({user}){
     return{projCtx,partsCtx,projectCount:projects.length};
   }
 
-  // Fetch knowledge base docs from Firestore (cached after first load)
-  async function fetchKnowledgeBase(){
-    if(kbCacheRef.current)return kbCacheRef.current;
-    if(!_appCtx.companyId)return [];
-    try{
-      const snap=await fbDb.collection(`companies/${_appCtx.companyId}/knowledgeBase`).get();
-      const docs=snap.docs.map(d=>({id:d.id,...d.data()}));
-      kbCacheRef.current=docs;
-      console.log(`[KB] Loaded ${docs.length} knowledge base docs (${docs.reduce((s,d)=>(d.content||'').length+s,0)} chars total)`);
-      return docs;
-    }catch(e){console.warn('[KB] Failed to load knowledge base:',e);return [];}
-  }
-
-  // Search knowledge base for sections relevant to user query
-  function searchKnowledgeBase(kbDocs,query){
-    if(!kbDocs||!kbDocs.length)return '';
-    // Extract keywords from query (3+ chars, skip common words)
-    const stopWords=new Set(['the','and','for','are','but','not','you','all','can','had','her','was','one','our','out','has','its','how','what','when','where','which','who','why','does','this','that','with','from','they','been','have','many','some','them','than','each','make','like','over','such','into','other','could','after','also','did','should','would','about','these','just','being','through','using','between']);
-    const words=query.toLowerCase().replace(/[^a-z0-9\s.]/g,' ').split(/\s+/).filter(w=>w.length>=3&&!stopWords.has(w));
-    if(!words.length)return '';
-
-    // Score each page within each doc
-    const pageScores=[];
-    kbDocs.forEach(doc=>{
-      if(!doc.content)return;
-      // Split into individual pages
-      const pages=doc.content.split(/--- PAGE (\d+) ---/).filter(Boolean);
-      for(let i=0;i<pages.length-1;i+=2){
-        const pageNum=pages[i];
-        const text=pages[i+1]||'';
-        const textLow=text.toLowerCase();
-        let score=0;
-        words.forEach(w=>{
-          // Count occurrences
-          let idx=0,count=0;
-          while((idx=textLow.indexOf(w,idx))!==-1){count++;idx+=w.length;}
-          score+=count;
-          // Bonus for section header matches
-          if(textLow.includes(w)&&(textLow.includes('section')||textLow.includes('clause')||textLow.includes('table')))score+=2;
-        });
-        if(score>0)pageScores.push({pageNum,text:text.trim(),score,source:doc.source||doc.title||doc.id});
-      }
-    });
-
-    // Sort by score descending, take top pages (max ~8000 chars to stay within context)
-    pageScores.sort((a,b)=>b.score-a.score);
-    let result='';
-    let charCount=0;
-    const MAX_KB_CHARS=8000;
-    for(const pg of pageScores){
-      if(charCount+pg.text.length>MAX_KB_CHARS)break;
-      result+=`\n[${pg.source} — Page ${pg.pageNum}]\n${pg.text}\n`;
-      charCount+=pg.text.length;
-    }
-    return result;
-  }
+  // KB functions use module-level loadKnowledgeBase() and searchKB()
 
   async function runAiSearch(q){
     if(!q||q.trim().length<2)return;
@@ -13066,8 +13243,8 @@ function App({user}){
       const{projCtx,partsCtx,projectCount}=buildArcContext();
 
       // Fetch knowledge base and find relevant sections
-      const kbDocs=await fetchKnowledgeBase();
-      const kbContext=searchKnowledgeBase(kbDocs,q);
+      const kbDocs=await loadKnowledgeBase();
+      const kbContext=searchKB(kbDocs,q.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w.length>=3));
 
       const systemPrompt=`You are ARC AI — the expert assistant built into the ARC (Automated Review & Costing) platform by RedPill Software.
 
@@ -13657,7 +13834,7 @@ INSTRUCTIONS:
           <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:18}}>✨</span>
             <span style={{fontSize:14,fontWeight:700,color:C.text,flex:1}}>ARC AI Assistant</span>
-            {sqHistory.length>0&&!sqSearching&&<button onClick={()=>{setSqHistory([]);setSqAnswer('');setSqResults(null);kbCacheRef.current=null;}} title="Clear chat" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontWeight:600,padding:"2px 8px"}}>Clear</button>}
+            {sqHistory.length>0&&!sqSearching&&<button onClick={()=>{setSqHistory([]);setSqAnswer('');setSqResults(null);_kbCache=null;}} title="Clear chat" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontWeight:600,padding:"2px 8px"}}>Clear</button>}
             <button onClick={()=>setShowSearch(false)} title="Close" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,padding:"0 4px",lineHeight:1}}>×</button>
           </div>
           {/* Chat history */}
