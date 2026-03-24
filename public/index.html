@@ -2585,7 +2585,7 @@ function sqValidateLineItems(items){
   const missingLn=items.filter(item=>item.ln==null).length;
   return{dupeLines,dupeParts,missingLn,hasIssues:dupeLines.length>0||dupeParts.length>0};
 }
-async function saveSupplierQuoteToFirestore(quoteData,userId,{supersedes=null}={}){
+async function saveSupplierQuoteToFirestore(quoteData,userId,{supersedes=null,projectId=null,bcProjectNumber=null}={}){
   const ref=fbDb.collection('supplierQuotes').doc();
   const lineItems=(quoteData.lineItems||[]).map(sqNormalize);
   const total=lineItems.reduce((s,i)=>s+(i.extPrice||0),0);
@@ -2603,6 +2603,7 @@ async function saveSupplierQuoteToFirestore(quoteData,userId,{supersedes=null}={
     expiresOn:quoteData.expiresOn||null,fob:quoteData.fob||'',freight:quoteData.freight||'',
     status:'pending_review',merchandiseTotal:Math.round(total*100)/100,lineItems,searchTokens,
     pdfUrl:null,fileName:'',supersedes:supersedes||null,supersededBy:null,
+    projectId:projectId||null,bcProjectNumber:bcProjectNumber||null,
     importedAt:firebase.firestore.FieldValue.serverTimestamp(),importedBy:userId});
   if(supersedes){
     fbDb.collection('supplierQuotes').doc(supersedes)
@@ -8921,7 +8922,7 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
 }
 
 // ── SUPPLIER QUOTE IMPORT MODAL ──
-function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber}){
+function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,projectId}){
   const [phase,setPhase]=useState('upload'); // upload|parsing|review|pushing|done
   const [file,setFile]=useState(null);
   const [pdfPreview,setPdfPreview]=useState(null);
@@ -9054,6 +9055,7 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber}){
           const v=d.data();
           return{id:d.id,supplier:v.supplier||'',quoteId:v.quoteId||'',revision:v.revision||'',jobName:v.jobName||'',
             quoteDate:v.quoteDate||'',status:v.status||'',pdfUrl:v.pdfUrl||null,
+            projectId:v.projectId||null,bcProjectNumber:v.bcProjectNumber||null,
             merchandiseTotal:v.merchandiseTotal||0,lineCount:(v.lineItems||[]).length,
             importedAt:v.importedAt?.toMillis?.()||0,supersededBy:v.supersededBy||null,
             // Keep full data so loadSavedQuote can use it without a second Firestore read
@@ -9061,10 +9063,12 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber}){
               freight:v.freight||'',fileName:v.fileName||'',lineItems:v.lineItems||[]}};
         });
         rows.sort((a,b)=>b.importedAt-a.importedAt);
-        setSavedQuotes(rows);
+        // Filter to only quotes belonging to this project
+        const filtered=projectId?rows.filter(q=>q.projectId===projectId):rows;
+        setSavedQuotes(filtered);
         // Auto-open most recent quote if modal is idle (not already showing a quote)
-        if(currentPhase==='upload'&&rows.length>0){
-          loadSavedQuote(rows[0].id,rows[0]);
+        if(currentPhase==='upload'&&filtered.length>0){
+          loadSavedQuote(filtered[0].id,filtered[0]);
         }
       }).catch(e=>console.warn('Load saved quotes failed:',e)).finally(()=>setLoadingQuotes(false));
   },[show,uid]);
@@ -9298,7 +9302,7 @@ ${fullText.slice(0,8000)}`;
   async function saveAndMatch(parsed,targetFile,supersedes){
     setPhase('parsing');setStatusMsg('Saving to database…');setParseProgress(68);
     try{
-      const{docId,lineItems:normalized}=await saveSupplierQuoteToFirestore(parsed,uid,{supersedes:supersedes||null});
+      const{docId,lineItems:normalized}=await saveSupplierQuoteToFirestore(parsed,uid,{supersedes:supersedes||null,projectId,bcProjectNumber});
       // Upload original PDF to Firebase Storage for preview
       let pdfUrl=null;
       try{
@@ -9363,6 +9367,7 @@ ${fullText.slice(0,8000)}`;
       setSavedQuotes(prev=>{
         const entry={id:docId,supplier:parsed.supplier||'',quoteId:parsed.quoteId||'',
           jobName:parsed.jobName||'',quoteDate:parsed.quoteDate||'',status:'pending_review',
+          projectId:projectId||null,bcProjectNumber:bcProjectNumber||null,
           pdfUrl,merchandiseTotal:0,lineCount:normalized.length,importedAt:Date.now(),supersededBy:null};
         return[entry,...prev.filter(q=>q.id!==docId)];
       });
@@ -11055,7 +11060,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
           ,document.body)}
         </>
       )}
-      <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} bcProjectNumber={project.bcProjectNumber||null} onClose={()=>setShowSqModal(false)}/>
+      <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} bcProjectNumber={project.bcProjectNumber||null} projectId={init.id} onClose={()=>setShowSqModal(false)}/>
     </>
   );
 }
