@@ -12258,7 +12258,7 @@ function ReportsModal({uid,onClose}){
   );
 }
 
-function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching}){
+function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts}){
   const [groupBy,setGroupBy]=useState("status");
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
@@ -12453,7 +12453,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                     {g.items.map(p=>(
                       <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
                         onUpdateStatus={onUpdateProject?async(proj,newStatus)=>{const u={...proj,bcPoStatus:newStatus,updatedAt:Date.now()};await onUpdateProject(u);}:undefined}
-                        userFirstName={userFirstName} memberMap={memberMap}
+                        userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}
                         draggable={isNoCustomer}
                         onDragStart={isNoCustomer?e=>{e.dataTransfer.effectAllowed="move";setDragProjectId(p.id);}:undefined}
                         onDragEnd={isNoCustomer?()=>{setDragProjectId(null);setDropTarget(null);}:undefined}/>
@@ -12470,7 +12470,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                   {g.label&&<div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:12,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>{g.label}</div>}
                   <div data-tour="project-list" style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap}/>
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}/>
                     ))}
                   </div>
                 </div>
@@ -12598,7 +12598,7 @@ function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onC
 }
 
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd}){
+function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd,rfqCount}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
@@ -12622,6 +12622,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
       <div style={{fontSize:17,fontWeight:700,color:C.green,lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{p.name}</div>
       <div style={{flexShrink:0,fontSize:"0.75em"}}><Badge status={p.importedFromBC?"imported":st}/></div>
+      {rfqCount>0&&<span style={{background:C.green+"22",color:C.green,borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>📥 {rfqCount} RFQ{rfqCount>1?"s":""}</span>}
     </div>
     {activeTask&&(
       <div style={{marginTop:4}}>
@@ -12699,6 +12700,18 @@ function App({user}){
     const unsub=fbDb.collection(`users/${user.uid}/notifications`).where('read','==',false).orderBy('createdAt','desc').limit(50).onSnapshot(snap=>{
       setNotifications(snap.docs.map(d=>({id:d.id,...d.data()})));
     },()=>{});
+    return()=>unsub();
+  },[user.uid]);
+
+  // RFQ pending counts per project (for dashboard cards)
+  const [rfqCounts,setRfqCounts]=useState({});
+  useEffect(()=>{
+    if(!user.uid)return;
+    const unsub=fbDb.collection('rfqUploads').where('uid','==',user.uid).where('status','==','submitted').onSnapshot(snap=>{
+      const counts={};
+      snap.docs.forEach(d=>{const pid=d.data().projectId;if(pid)counts[pid]=(counts[pid]||0)+1;});
+      setRfqCounts(counts);
+    },()=>{setRfqCounts({});});
     return()=>unsub();
   },[user.uid]);
 
@@ -13311,7 +13324,7 @@ function App({user}){
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts}/>
         </>
       )}
       {view==="project"&&openProject&&(
