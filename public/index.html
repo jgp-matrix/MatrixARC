@@ -350,7 +350,7 @@ async function loadApiKey(uid){
 // ── BUSINESS CENTRAL CONFIG ──
 const BC_TENANT="d1f2c7f7-fab2-40b5-85c1-06a715e6a157";
 // Default BC config — can be overridden per company from Firestore
-const _BC_DEFAULTS={env:"MATR_SndBx_01152026",companyName:"Matrix Systems LLC",clientId:"75b9ff22-488d-4d4c-88ec-f803f7038716",projectTemplate:"PRJ402010"};
+const _BC_DEFAULTS={env:"MATR_SndBx_01152026",companyName:"Matrix Systems LLC",clientId:"75b9ff22-488d-4d4c-88ec-f803f7038716"};
 let _bcConfig={..._BC_DEFAULTS};
 // Legacy constants — computed from _bcConfig, used throughout the codebase
 function _bcApiBase(){return`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${_bcConfig.env}/api/v2.0`;}
@@ -361,12 +361,11 @@ Object.defineProperty(window,'BC_ODATA_BASE',{get:_bcOdataBase});
 Object.defineProperty(window,'BC_ENV',{get:()=>_bcConfig.env});
 Object.defineProperty(window,'BC_COMPANY_NAME',{get:()=>_bcConfig.companyName});
 Object.defineProperty(window,'BC_CLIENT_ID',{get:()=>_bcConfig.clientId});
-Object.defineProperty(window,'BC_PROJECT_TEMPLATE',{get:()=>_bcConfig.projectTemplate});
 async function loadBcConfig(companyId){
   if(!companyId)return;
   try{
     const doc=await fbDb.doc(`companies/${companyId}/config/bcEnvironment`).get();
-    if(doc.exists){const d=doc.data();_bcConfig={env:d.env||_BC_DEFAULTS.env,companyName:d.companyName||_BC_DEFAULTS.companyName,clientId:d.clientId||_BC_DEFAULTS.clientId,projectTemplate:d.projectTemplate||_BC_DEFAULTS.projectTemplate};
+    if(doc.exists){const d=doc.data();_bcConfig={env:d.env||_BC_DEFAULTS.env,companyName:d.companyName||_BC_DEFAULTS.companyName,clientId:d.clientId||_BC_DEFAULTS.clientId};
     console.log("BC CONFIG loaded from Firestore:",_bcConfig.env,_bcConfig.companyName);}
   }catch(e){console.warn("loadBcConfig error:",e);}
 }
@@ -11343,7 +11342,6 @@ function SettingsModal({uid,onClose,onNameChange}){
   const [bcEnvName,setBcEnvName]=useState(_bcConfig.env);
   const [bcCompName,setBcCompName]=useState(_bcConfig.companyName);
   const [bcClientIdVal,setBcClientIdVal]=useState(_bcConfig.clientId);
-  const [bcTemplateVal,setBcTemplateVal]=useState(_bcConfig.projectTemplate);
   const [bcSaving,setBcSaving]=useState(false);
   const [bcSaved,setBcSaved]=useState(false);
   const [bcErr,setBcErr]=useState("");
@@ -11491,18 +11489,14 @@ function SettingsModal({uid,onClose,onNameChange}){
               <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Client ID (Azure App Registration)</label>
               <input value={bcClientIdVal} onChange={e=>setBcClientIdVal(e.target.value)} style={inp()} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"/>
             </div>
-            <div>
-              <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Project Template</label>
-              <input value={bcTemplateVal} onChange={e=>setBcTemplateVal(e.target.value)} style={inp()} placeholder="e.g. PRJ402010"/>
-            </div>
           </div>
           {bcErr&&<div style={{color:C.red,fontSize:12,marginBottom:8}}>{bcErr}</div>}
           {bcSaved&&<div style={{color:C.green,fontSize:12,marginBottom:8}}>✓ BC environment updated successfully.</div>}
           {!bcConfirm?(
             <button onClick={()=>{
               setBcErr("");setBcSaved(false);
-              if(!bcEnvName.trim()||!bcCompName.trim()||!bcClientIdVal.trim()||!bcTemplateVal.trim()){setBcErr("All fields are required.");return;}
-              if(bcEnvName===_bcConfig.env&&bcCompName===_bcConfig.companyName&&bcClientIdVal===_bcConfig.clientId&&bcTemplateVal===_bcConfig.projectTemplate){setBcErr("No changes detected.");return;}
+              if(!bcEnvName.trim()||!bcCompName.trim()||!bcClientIdVal.trim()){setBcErr("All fields are required.");return;}
+              if(bcEnvName===_bcConfig.env&&bcCompName===_bcConfig.companyName&&bcClientIdVal===_bcConfig.clientId){setBcErr("No changes detected.");return;}
               setBcConfirm(true);
             }} disabled={bcSaving} style={btn("#334155","#fff",{fontSize:12})}>
               Save Environment
@@ -11515,7 +11509,7 @@ function SettingsModal({uid,onClose,onNameChange}){
                 <button onClick={async()=>{
                   setBcSaving(true);setBcErr("");
                   try{
-                    await saveBcConfig(_appCtx.companyId,{env:bcEnvName.trim(),companyName:bcCompName.trim(),clientId:bcClientIdVal.trim(),projectTemplate:bcTemplateVal.trim()});
+                    await saveBcConfig(_appCtx.companyId,{env:bcEnvName.trim(),companyName:bcCompName.trim(),clientId:bcClientIdVal.trim()});
                     setBcSaved(true);setBcConfirm(false);
                   }catch(ex){setBcErr("Failed to save: "+ex.message);}
                   setBcSaving(false);
