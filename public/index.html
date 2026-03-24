@@ -13160,6 +13160,7 @@ function SupplierPortalPage({token}){
   const [cannotSupply,setCannotSupply]=useState({});
   const [supplierPartNums,setSupplierPartNums]=useState({});
   const [quoteHeaderInfo,setQuoteHeaderInfo]=useState(null);
+  const [allExtractedItems,setAllExtractedItems]=useState([]); // all AI-extracted items from quote scan
   const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
   const pdfRef=useRef(null);
 
@@ -13178,7 +13179,7 @@ function SupplierPortalPage({token}){
   async function processFile(f){
     if(!f||!f.type.includes("pdf")){alert("Please select a PDF file.");return;}
     setFile(f);setPhase('analyzing');setAiError(null);
-    const allPrices={};const allConf={};const allLeadTimes={};const allSupplierPNs={};
+    const allPrices={};const allConf={};const allLeadTimes={};const allSupplierPNs={};const collectedExtracted=[];
     try{
       setAnalyzeMsg(`Reading ${f.name}…`);
       await window.pdfjsReady;
@@ -13211,6 +13212,7 @@ function SupplierPortalPage({token}){
         if(result.data?.quoteHeader&&!quoteHeaderInfo)setQuoteHeaderInfo(result.data.quoteHeader);
         console.log('PORTAL EXTRACT: got',extracted.length,'results, header:',result.data?.quoteHeader,'sample:',JSON.stringify(extracted.slice(0,3)));
         extracted.forEach(ex=>{
+          collectedExtracted.push(ex);
           // First try exact (normalized), then fuzzy prefix/contains match
           let idx=lineItems.findIndex(it=>normPart(it.partNumber)===normPart(ex.partNumber));
           if(idx<0)idx=lineItems.findIndex(it=>partMatch(it.partNumber,ex.partNumber));
@@ -13226,6 +13228,7 @@ function SupplierPortalPage({token}){
       setAiConfidences(allConf);
       setItemLeadTimes(allLeadTimes);
       setSupplierPartNums(allSupplierPNs);
+      setAllExtractedItems(collectedExtracted);
       setMorePages(null);
       setPhase('review');
     }catch(e){
@@ -13379,7 +13382,27 @@ function SupplierPortalPage({token}){
                   return(
                     <tr key={i} style={{borderTop:`1px solid ${border}`,background:cant?"#fef2f2":isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff",opacity:cant?0.6:1}}>
                       <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.partNumber||"—"}</td>
-                      <td style={{padding:"10px 12px",color:muted,fontFamily:"monospace",fontSize:12}}>{supplierPartNums[i]||"—"}</td>
+                      <td style={{padding:"10px 12px",fontFamily:"monospace",fontSize:12}}>{(()=>{
+                        const opts=allExtractedItems.filter(ex=>ex.supplierPartNumber).map(ex=>ex.supplierPartNumber);
+                        const unique=[...new Set(opts)];
+                        if(!unique.length)return<span style={{color:muted}}>—</span>;
+                        const cur=supplierPartNums[i]||"";
+                        return<select value={cur} onChange={e=>{
+                          const val=e.target.value;
+                          setSupplierPartNums(prev=>({...prev,[i]:val}));
+                          if(val){
+                            const match=allExtractedItems.find(ex=>ex.supplierPartNumber===val);
+                            if(match){
+                              if(match.unitPrice!=null)setUnitPrices(prev=>({...prev,[i]:String(match.unitPrice)}));
+                              if(match.leadTimeDays!=null)setItemLeadTimes(prev=>({...prev,[i]:String(match.leadTimeDays)}));
+                              setAiConfidences(prev=>({...prev,[i]:'medium'}));
+                            }
+                          }
+                        }} style={{...inp,padding:"4px 6px",fontSize:12,fontFamily:"monospace",maxWidth:160,color:cur?dark:muted}}>
+                          <option value="">— Select —</option>
+                          {unique.map(pn=><option key={pn} value={pn}>{pn}</option>)}
+                        </select>;
+                      })()}</td>
                       <td style={{padding:"10px 12px",color:muted,fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.description||"—"}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:dark}}>{item.qty||1}</td>
                       <td style={{padding:"8px 12px"}}>
@@ -13440,7 +13463,7 @@ function SupplierPortalPage({token}){
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setQuoteHeaderInfo(null);setMorePages(null);pdfRef.current=null;}}
+            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setQuoteHeaderInfo(null);setAllExtractedItems([]);setMorePages(null);pdfRef.current=null;}}
               style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
               ← Start Over
             </button>
