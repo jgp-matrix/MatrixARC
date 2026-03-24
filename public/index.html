@@ -13452,8 +13452,8 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                         const isOpen=openSpnDrop===i;
                         function pick(val){
                           setSupplierPartNums(prev=>({...prev,[i]:val}));
-                          setConfirmedMatches(prev=>({...prev,[i]:false}));
                           if(val){
+                            setConfirmedMatches(prev=>({...prev,[i]:true}));
                             const match=allExtractedItems.find(ex=>ex.supplierPartNumber===val);
                             if(match){
                               if(match.unitPrice!=null)setUnitPrices(prev=>({...prev,[i]:String(match.unitPrice)}));
@@ -13461,6 +13461,8 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                               if(match.supplierLineNumber)setSupplierLineNums(prev=>({...prev,[i]:match.supplierLineNumber}));
                               setAiConfidences(prev=>({...prev,[i]:'medium'}));
                             }
+                          }else{
+                            setConfirmedMatches(prev=>({...prev,[i]:false}));
                           }
                           setOpenSpnDrop(null);setSpnDropRect(null);
                         }
@@ -13572,7 +13574,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               {uploading?"Submitting…":"✓ Confirm & Submit Quote"}
             </button>
           </div>
-          <div style={{fontSize:11,color:muted,textAlign:"center",marginTop:8,lineHeight:1.5}}>All quote submissions will be checked against the actual quote uploaded.<br/>Any unmatched items will be caught during the upload review at Matrix.</div>
+          <div style={{fontSize:11,color:muted,textAlign:"center",marginTop:8,lineHeight:1.5}}>Confirming each item is helpful, but not required.<br/>Your uploaded quote will be reviewed by the Matrix Sales Team.</div>
         </div>
       </div>
     );
