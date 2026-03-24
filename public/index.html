@@ -13171,6 +13171,7 @@ function SupplierPortalPage({token}){
   const [cannotSupply,setCannotSupply]=useState({});
   const [supplierPartNums,setSupplierPartNums]=useState({});
   const [supplierLineNums,setSupplierLineNums]=useState({}); // idx→supplier quote line #
+  const [itemNotes,setItemNotes]=useState({}); // idx→supplier note text
   const [extractionSummary,setExtractionSummary]=useState(null); // {requestedCount, matchedCount, unmatchedSupplierItems}
   const [quoteHeaderInfo,setQuoteHeaderInfo]=useState(null);
   const [allExtractedItems,setAllExtractedItems]=useState([]); // all AI-extracted items from quote scan
@@ -13250,6 +13251,10 @@ function SupplierPortalPage({token}){
       setSupplierLineNums(allSupplierLineNums);
       setAllExtractedItems(collectedExtracted);
       setExtractionSummary(lastSummary);
+      // Auto-confirm matched items (high or medium confidence)
+      const autoConfirm={};
+      Object.entries(allConf).forEach(([idx,c])=>{if(c==='high'||c==='medium')autoConfirm[idx]=true;});
+      setConfirmedMatches(autoConfirm);
       setMorePages(null);
       setPhase('review');
     }catch(e){
@@ -13287,6 +13292,7 @@ function SupplierPortalPage({token}){
         cannotSupply:cannotSupply[i]===true,
         supplierPartNumber:supplierPartNums[i]||null,
         supplierLineNumber:supplierLineNums[i]||null,
+        supplierNote:itemNotes[i]||null,
       }));
       // Build confirmed crossings for ARC to save — supplier PN → Matrix PN
       const confirmedCrossings=[];
@@ -13360,7 +13366,7 @@ function SupplierPortalPage({token}){
     const unmatchedSupplierCount=allExtractedItems.filter(ex=>ex.confidence==='unmatched').length;
     return(
       <div style={{minHeight:"100vh",background:bg,padding:"32px 16px"}}>
-        <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{maxWidth:1200,margin:"0 auto"}}>
           <Header/>
           {(unmatchedRfqCount>0||unmatchedSupplierCount>0)&&(
             <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:12}}>
@@ -13388,7 +13394,7 @@ function SupplierPortalPage({token}){
             <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"16px 20px",marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
               <div style={{fontSize:13,fontWeight:700,color:dark,marginBottom:10}}>Quote Details (extracted from PDF)</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:8}}>
-                {[['Supplier',quoteHeaderInfo.supplierName],['Quote #',quoteHeaderInfo.quoteNumber],['Job Name',quoteHeaderInfo.jobName],
+                {[['Supplier',quoteHeaderInfo.supplierName],['Quote #',quoteHeaderInfo.quoteNumber],['Revision #',quoteHeaderInfo.revisionNumber],['Job Name',quoteHeaderInfo.jobName],
                   ['Contact',quoteHeaderInfo.contactName],['Quote Date',quoteHeaderInfo.quoteDate],['Updated On',quoteHeaderInfo.updatedOn],
                   ['Expires On',quoteHeaderInfo.expiresOn],['Customer PO #',quoteHeaderInfo.customerPO],['Customer PO Date',quoteHeaderInfo.customerPODate],
                   ['FOB',quoteHeaderInfo.fob],['Freight',quoteHeaderInfo.freight]].filter(([,v])=>v).map(([label,val])=>(
@@ -13415,7 +13421,8 @@ function SupplierPortalPage({token}){
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600}}>Qty</th>
                   <th style={{padding:"8px 12px",textAlign:"right",color:accent,fontWeight:700,minWidth:160}}>Unit Price</th>
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600,minWidth:110}}>Lead Time (days)</th>
-                  <th style={{padding:"8px 12px",textAlign:"center",color:"#dc2626",fontWeight:600,minWidth:90}}>No Bid</th>
+                  <th style={{padding:"8px 12px",textAlign:"center",color:"#dc2626",fontWeight:600,minWidth:70}}>No Bid</th>
+                  <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600,minWidth:120}}>Notes</th>
                 </tr>
               </thead>
               <tbody>
@@ -13511,6 +13518,13 @@ function SupplierPortalPage({token}){
                           {cant&&<span style={{fontSize:11,color:"#dc2626",fontWeight:700}}>Yes</span>}
                         </label>
                       </td>
+                      <td style={{padding:"8px 12px"}}>
+                        <input type="text" placeholder="Add note…"
+                          value={itemNotes[i]||''}
+                          onChange={e=>setItemNotes(prev=>({...prev,[i]:e.target.value}))}
+                          style={{...inp,width:"100%",fontSize:11,padding:"4px 6px"}}
+                        />
+                      </td>
                     </tr>
                   );
                 })}
@@ -13539,7 +13553,7 @@ function SupplierPortalPage({token}){
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setSupplierLineNums({});setConfirmedMatches({});setQuoteHeaderInfo(null);setAllExtractedItems([]);setExtractionSummary(null);setMorePages(null);pdfRef.current=null;}}
+            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setSupplierLineNums({});setItemNotes({});setConfirmedMatches({});setQuoteHeaderInfo(null);setAllExtractedItems([]);setExtractionSummary(null);setMorePages(null);pdfRef.current=null;}}
               style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
               ← Start Over
             </button>
