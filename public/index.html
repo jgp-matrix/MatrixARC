@@ -12913,6 +12913,7 @@ function App({user}){
   const [sqSearching,setSqSearching]=useState(false);
   const [sqAnswer,setSqAnswer]=useState(''); // AI conversational answer
   const [sqHistory,setSqHistory]=useState([]); // chat history [{role,content}]
+  const kbCacheRef=useRef(null); // cached knowledge base docs [{title,content,source}]
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
   const TOUR_KEY='arc_tour_step_'+user.uid;
@@ -13001,11 +13002,72 @@ function App({user}){
     return{projCtx,partsCtx,projectCount:projects.length};
   }
 
+  // Fetch knowledge base docs from Firestore (cached after first load)
+  async function fetchKnowledgeBase(){
+    if(kbCacheRef.current)return kbCacheRef.current;
+    if(!_appCtx.companyId)return [];
+    try{
+      const snap=await fbDb.collection(`companies/${_appCtx.companyId}/knowledgeBase`).get();
+      const docs=snap.docs.map(d=>({id:d.id,...d.data()}));
+      kbCacheRef.current=docs;
+      console.log(`[KB] Loaded ${docs.length} knowledge base docs (${docs.reduce((s,d)=>(d.content||'').length+s,0)} chars total)`);
+      return docs;
+    }catch(e){console.warn('[KB] Failed to load knowledge base:',e);return [];}
+  }
+
+  // Search knowledge base for sections relevant to user query
+  function searchKnowledgeBase(kbDocs,query){
+    if(!kbDocs||!kbDocs.length)return '';
+    // Extract keywords from query (3+ chars, skip common words)
+    const stopWords=new Set(['the','and','for','are','but','not','you','all','can','had','her','was','one','our','out','has','its','how','what','when','where','which','who','why','does','this','that','with','from','they','been','have','many','some','them','than','each','make','like','over','such','into','other','could','after','also','did','should','would','about','these','just','being','through','using','between']);
+    const words=query.toLowerCase().replace(/[^a-z0-9\s.]/g,' ').split(/\s+/).filter(w=>w.length>=3&&!stopWords.has(w));
+    if(!words.length)return '';
+
+    // Score each page within each doc
+    const pageScores=[];
+    kbDocs.forEach(doc=>{
+      if(!doc.content)return;
+      // Split into individual pages
+      const pages=doc.content.split(/--- PAGE (\d+) ---/).filter(Boolean);
+      for(let i=0;i<pages.length-1;i+=2){
+        const pageNum=pages[i];
+        const text=pages[i+1]||'';
+        const textLow=text.toLowerCase();
+        let score=0;
+        words.forEach(w=>{
+          // Count occurrences
+          let idx=0,count=0;
+          while((idx=textLow.indexOf(w,idx))!==-1){count++;idx+=w.length;}
+          score+=count;
+          // Bonus for section header matches
+          if(textLow.includes(w)&&(textLow.includes('section')||textLow.includes('clause')||textLow.includes('table')))score+=2;
+        });
+        if(score>0)pageScores.push({pageNum,text:text.trim(),score,source:doc.source||doc.title||doc.id});
+      }
+    });
+
+    // Sort by score descending, take top pages (max ~8000 chars to stay within context)
+    pageScores.sort((a,b)=>b.score-a.score);
+    let result='';
+    let charCount=0;
+    const MAX_KB_CHARS=8000;
+    for(const pg of pageScores){
+      if(charCount+pg.text.length>MAX_KB_CHARS)break;
+      result+=`\n[${pg.source} — Page ${pg.pageNum}]\n${pg.text}\n`;
+      charCount+=pg.text.length;
+    }
+    return result;
+  }
+
   async function runAiSearch(q){
     if(!q||q.trim().length<2)return;
     setSqSearching(true);setSqAnswer('');setSqResults(null);
     try{
       const{projCtx,partsCtx,projectCount}=buildArcContext();
+
+      // Fetch knowledge base and find relevant sections
+      const kbDocs=await fetchKnowledgeBase();
+      const kbContext=searchKnowledgeBase(kbDocs,q);
 
       const systemPrompt=`You are ARC AI — the intelligent assistant built into the ARC (Automated Review & Costing) platform by RedPill Software. ARC is used by Matrix Systems for industrial electrical control panel quoting.
 
@@ -13017,7 +13079,11 @@ You have expert knowledge of:
 - Control panel design: layout best practices, wire sizing, short circuit calculations, thermal management, labeling requirements
 - Pricing knowledge for industrial components (approximate ranges)
 - Business Central ERP integration concepts
-
+${kbContext?`
+KNOWLEDGE BASE — RELEVANT STANDARD EXCERPTS:
+The following are OCR'd excerpts from the actual UL508A handbook and other standards documents. Use these as authoritative source material when answering. Cite the page numbers when referencing specific clauses.
+${kbContext}
+`:''}
 You also have access to the user's ARC data:
 
 PROJECTS (${projectCount} total):
@@ -13029,7 +13095,7 @@ ${partsCtx||'(none yet)'}
 INSTRUCTIONS:
 - Answer questions conversationally and helpfully. Be concise but thorough.
 - When asked about specific projects, reference them by name and BC project number.
-- When asked about standards (UL508A, C22.2, NEC), cite specific clauses/sections when you can.
+- When asked about standards (UL508A, C22.2, NEC), cite specific clauses/sections when you can. When knowledge base excerpts are provided, prefer citing them directly over general knowledge.
 - When asked about parts, include part numbers and approximate pricing when relevant.
 - When asked "how to" do something in ARC, explain the workflow step by step.
 - If the question is a simple search (e.g. "find project X" or "show me quotes from Y"), identify matching projects/quotes and present them clearly.
@@ -13576,7 +13642,7 @@ INSTRUCTIONS:
           <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:18}}>✨</span>
             <span style={{fontSize:14,fontWeight:700,color:C.text,flex:1}}>ARC AI Assistant</span>
-            {sqHistory.length>0&&!sqSearching&&<button onClick={()=>{setSqHistory([]);setSqAnswer('');setSqResults(null);}} title="Clear chat" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontWeight:600,padding:"2px 8px"}}>Clear</button>}
+            {sqHistory.length>0&&!sqSearching&&<button onClick={()=>{setSqHistory([]);setSqAnswer('');setSqResults(null);kbCacheRef.current=null;}} title="Clear chat" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontWeight:600,padding:"2px 8px"}}>Clear</button>}
             <button onClick={()=>setShowSearch(false)} title="Close" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,padding:"0 4px",lineHeight:1}}>×</button>
           </div>
           {/* Chat history */}
