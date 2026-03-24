@@ -2850,6 +2850,80 @@ async function deleteProject(uid,id){
   await fbDb.doc(`${path}/${id}`).delete();
 }
 
+// ── COPY PROJECT ──
+async function copyProject(uid,sourceProject,onProgress){
+  const pp=onProgress||(()=>{});
+  const src=sourceProject;
+  const srcPanels=src.panels||[];
+
+  // Step 1: Create new BC project with same customer
+  pp({step:"bc",msg:"Creating BC project…",pct:5});
+  if(!_bcToken)await acquireBcToken(true);
+  if(!_bcToken)throw new Error("Could not connect to Business Central");
+  const bc=await bcCreateProject(src.name+" (Copy)",src.bcCustomerNumber);
+
+  // Step 2: Create panel task structure in BC
+  pp({step:"tasks",msg:"Creating BC tasks…",pct:15});
+  const panelStubs=srcPanels.map((p,i)=>({id:`panel-${i+1}`,name:p.name||`Panel ${i+1}`}));
+  try{await bcCreatePanelTaskStructure(bc.number,src.name+" (Copy)",panelStubs);}catch(e){console.warn("Copy: task structure warning:",e.message);}
+
+  // Step 3: Deep clone panels (BOM, validation, labor, pages metadata)
+  pp({step:"clone",msg:"Cloning panel data…",pct:25});
+  const newPanels=srcPanels.map((panel,i)=>{
+    const newPages=(panel.pages||[]).map(pg=>({...pg,id:`pg-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,dataUrl:undefined,storageUrl:undefined,_srcStorageUrl:pg.storageUrl||null,_srcPageId:pg.id}));
+    const newBom=(panel.bom||[]).map(r=>({...r,id:`row-${Date.now()}-${Math.random().toString(36).slice(2,8)}`}));
+    return{...panel,id:`panel-${i+1}`,pages:newPages,bom:newBom};
+  });
+
+  // Step 4: Save new project to Firestore (without images yet)
+  pp({step:"save",msg:"Saving project…",pct:35});
+  const newProj=await saveProject(uid,{
+    name:src.name+" (Copy)",
+    bcProjectId:bc.id,
+    bcProjectNumber:bc.number,
+    bcCustomerNumber:src.bcCustomerNumber,
+    bcCustomerName:src.bcCustomerName,
+    status:src.status||"draft",
+    panels:newPanels,
+    quote:src.quote?{...src.quote}:undefined,
+    createdAt:Date.now(),updatedAt:Date.now()
+  });
+
+  // Step 5: Copy page images from source to new project in Storage
+  const allPages=newPanels.flatMap((panel,pi)=>(panel.pages||[]).map((pg,pgi)=>({pi,pgi,pg})));
+  const totalPages=allPages.filter(x=>x.pg._srcStorageUrl).length;
+  let copied=0;
+  for(const{pi,pgi,pg}of allPages){
+    if(!pg._srcStorageUrl)continue;
+    pp({step:"images",msg:`Copying drawing ${copied+1}/${totalPages}…`,pct:35+Math.round((copied/Math.max(totalPages,1))*40)});
+    try{
+      const loaded=await ensureDataUrl({storageUrl:pg._srcStorageUrl});
+      if(loaded.dataUrl){
+        const newUrl=await uploadPageImage(uid,newProj.id,pg.id,loaded.dataUrl);
+        newPanels[pi].pages[pgi].storageUrl=newUrl;
+        newPanels[pi].pages[pgi].dataUrl=loaded.dataUrl;
+      }
+    }catch(e){console.warn("Copy image failed for page",pg._srcPageId,e.message);}
+    copied++;
+  }
+  // Clean up temp fields
+  newPanels.forEach(panel=>(panel.pages||[]).forEach(pg=>{delete pg._srcStorageUrl;delete pg._srcPageId;}));
+
+  // Step 6: Re-save with storage URLs
+  pp({step:"save2",msg:"Saving images…",pct:80});
+  const finalProj=await saveProject(uid,{...newProj,panels:newPanels,updatedAt:Date.now()});
+
+  // Step 7: Sync planning lines to BC for each panel
+  pp({step:"sync",msg:"Syncing planning lines to BC…",pct:85});
+  for(let i=0;i<newPanels.length;i++){
+    pp({step:"sync",msg:`Syncing panel ${i+1}/${newPanels.length} to BC…`,pct:85+Math.round((i/newPanels.length)*12)});
+    try{await bcSyncPanelPlanningLines(bc.number,i+1,newPanels[i]);}catch(e){console.warn("Copy: planning line sync failed for panel",i+1,e.message);}
+  }
+
+  pp({step:"done",msg:"Project copied!",pct:100});
+  return finalProj;
+}
+
 // ── FIREBASE STORAGE HELPERS ──
 async function uploadPageImage(uid,projectId,pageId,dataUrl){
   const ref=fbStorage.ref(`pageImages/${uid}/${projectId}/${pageId}.jpg`);
@@ -10371,7 +10445,7 @@ function ContingencyInput({value,readOnly,color,onSave}){
 }
 
 // ── PANEL LIST VIEW ──
-function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onOpenSupplierQuote,pendingRfqUploads,onPoReceived}){
+function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -10504,6 +10578,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
+              {!readOnly&&onCopy&&(
+                <button onClick={onCopy} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⧉ Copy</button>
+              )}
               {!readOnly&&onTransfer&&(
                 <button onClick={onTransfer} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⇄ Transfer</button>
               )}
@@ -10897,7 +10974,7 @@ class ErrorBoundary extends React.Component{
 }
 
 // ── PROJECT VIEW ──
-function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoOpenPortal,onPortalOpened}){
+function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,autoOpenPortal,onPortalOpened}){
   const [project,setProject]=useState(()=>migrateProject(init));
   const projectRef=useRef(migrateProject(init));
   const [view,setView]=useState("panels"); // "panels"|"quote"
@@ -11134,6 +11211,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
             onUpdate={update}
             onDelete={onDelete}
             onTransfer={onTransfer}
+            onCopy={onCopy}
             onOpenSupplierQuote={bom=>{if(portalSubmissions.length>0){setShowPortalModal(true);}else{setSqPanelBom(bom);setShowSqModal(true);}}}
             pendingRfqUploads={pendingRfqUploads}
             onPoReceived={()=>setShowPoModal(true)}
@@ -12524,6 +12602,61 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
   );
 }
 
+// ── COPY PROJECT MODAL ──
+function CopyProjectModal({project,uid,onCopied,onClose}){
+  const [name,setName]=useState((project.name||"")+" (Copy)");
+  const [copying,setCopying]=useState(false);
+  const [progress,setProgress]=useState(null);
+  const [error,setError]=useState("");
+
+  async function handleCopy(){
+    if(!name.trim())return;
+    setCopying(true);setError("");
+    try{
+      const newProj=await copyProject(uid,{...project,name:name.trim()},p=>setProgress(p));
+      onCopied(newProj);
+    }catch(e){
+      setError(e.message||"Copy failed");
+      setCopying(false);setProgress(null);
+    }
+  }
+
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+      onMouseDown={e=>{if(!copying&&e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#0d0d1a",border:"1px solid "+C.accent+"66",borderRadius:10,padding:"24px 28px",width:420,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+        <div style={{fontSize:15,fontWeight:800,color:C.accent,marginBottom:12}}>Copy Project</div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.5}}>
+          Creates a new BC project with all panels, BOM data, drawings, tasks, and planning lines copied from <strong style={{color:C.text}}>{project.bcProjectNumber}</strong>.
+        </div>
+        <label style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4,display:"block"}}>New Project Name</label>
+        <input value={name} onChange={e=>setName(e.target.value)} disabled={copying}
+          style={{width:"100%",boxSizing:"border-box",background:C.card,border:"1px solid "+C.border,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:14,marginBottom:12,outline:"none"}}
+          onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border}/>
+        <div style={{fontSize:12,color:C.sub,marginBottom:12}}>
+          Customer: <strong style={{color:C.text}}>{project.bcCustomerName||"—"}</strong>
+        </div>
+        {progress&&(
+          <div style={{marginBottom:12}}>
+            <div style={{fontSize:11,color:progress.step==="done"?C.green:C.accent,marginBottom:4}}>{progress.msg}</div>
+            <div style={{width:"100%",height:6,background:C.border,borderRadius:4,overflow:"hidden"}}>
+              <div style={{height:"100%",width:(progress.pct||0)+"%",background:progress.step==="done"?C.green:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+            </div>
+          </div>
+        )}
+        {error&&<div style={{fontSize:12,color:C.red,marginBottom:8}}>{error}</div>}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          {!copying&&<button onClick={onClose} style={{background:"transparent",border:"1px solid "+C.border,borderRadius:6,padding:"8px 16px",color:C.muted,fontSize:13,cursor:"pointer"}}>Cancel</button>}
+          <button onClick={handleCopy} disabled={copying||!name.trim()}
+            style={{background:copying?"#1e293b":C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:copying?"default":"pointer",opacity:copying?0.7:1}}>
+            {copying?"Copying…":"Copy Project"}
+          </button>
+        </div>
+      </div>
+    </div>,document.body
+  );
+}
+
 // ── TRANSFER PROJECT MODAL ──
 function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onClose}){
   const [members,setMembers]=useState([]);
@@ -12660,6 +12793,7 @@ function App({user}){
   const [setupDismissed,setSetupDismissed]=useState(false);
   const [deleteConfirm,setDeleteConfirm]=useState(null); // {id, name}
   const [transferProject,setTransferProject]=useState(null); // project object
+  const [copyProject_,setCopyProject]=useState(null); // project object for copy modal
   const [userFirstName,setUserFirstName]=useState("");
   const [memberMap,setMemberMap]=useState({}); // uid → {email, firstName}
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
@@ -13330,7 +13464,7 @@ function App({user}){
       )}
       {view==="project"&&openProject&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)}/>
+          <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)}/>
         </ErrorBoundary>
       )}
       {view==="aidb"&&userRole==="admin"&&(
@@ -13339,6 +13473,7 @@ function App({user}){
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
       {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} project={deleteConfirm.project} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
       {transferProject&&<TransferProjectModal project={transferProject} companyId={companyId} uid={user.uid} userEmail={user.email} onTransferred={handleTransferDone} onClose={()=>setTransferProject(null)}/>}
+      {copyProject_&&<CopyProjectModal project={copyProject_} uid={user.uid} onCopied={p=>{setCopyProject(null);setProjects(ps=>[p,...ps]);handleOpen(p);}} onClose={()=>setCopyProject(null)}/>}
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)}/>}
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={url=>{setCompanyLogo(url||null);_appCtx.company={...(_appCtx.company||{}),logoUrl:url||null};}}/>}
