@@ -5132,6 +5132,7 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
                 )}
                 {sub.storageUrl&&<a href={sub.storageUrl} target="_blank" rel="noopener noreferrer" style={{background:"#0d1520",border:"1px solid #0284c7",color:"#38bdf8",padding:"5px 14px",borderRadius:6,fontSize:12,fontFamily:"inherit",fontWeight:600,textDecoration:"none"}}>📄 View PDF</a>}
                 {sub.fileName&&!sub.storageUrl&&<span style={{fontSize:11,color:"#64748b"}}>📄 {sub.fileName}</span>}
+                <button onClick={()=>{if(confirm("Dismiss this submission? It will no longer appear here."))fbDb.collection('rfqUploads').doc(sub.id).update({status:'dismissed'}).catch(e=>console.warn("dismiss failed:",e));}} style={{marginLeft:"auto",background:"none",border:`1px solid #475569`,color:"#64748b",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Dismiss</button>
               </div>
             </div>
           ))}
@@ -10792,15 +10793,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
   const [showPortalModal,setShowPortalModal]=useState(false);
   const [showPoModal,setShowPoModal]=useState(false);
   useEffect(()=>{
-    if(!uid)return;
-    const unsub=fbDb.collection('rfqUploads').where('uid','==',uid).onSnapshot(snap=>{
-      const docs=snap.docs.filter(d=>d.data().projectId===(init.id||""));
-      const submitted=docs.filter(d=>d.data().status==='submitted');
-      setPendingRfqUploads(submitted.length);
-      setPortalSubmissions(submitted.map(d=>({id:d.id,...d.data()})));
-    },()=>{});
+    if(!uid||!init.id)return;
+    const unsub=fbDb.collection('rfqUploads')
+      .where('uid','==',uid)
+      .where('projectId','==',init.id)
+      .where('status','==','submitted')
+      .onSnapshot(snap=>{
+        console.log('PORTAL SUBS: project',init.id,'found',snap.size,'submitted docs');
+        setPendingRfqUploads(snap.size);
+        setPortalSubmissions(snap.docs.map(d=>({id:d.id,...d.data()})));
+      },()=>{});
     return()=>unsub();
-  },[uid]);
+  },[uid,init.id]);
   // Auto-open portal modal when navigated from a notification
   useEffect(()=>{
     if(autoOpenPortal&&portalSubmissions.length>0){
