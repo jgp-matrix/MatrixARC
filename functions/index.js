@@ -145,26 +145,54 @@ exports.onSupplierQuoteSubmitted = functions.firestore
       projectName,
     });
 
-    // Send email if SendGrid configured
+    // Send emails if SendGrid configured
     if (!SENDGRID_KEY) return null;
+
+    // 1) Notify ARC user
     try {
       const userRecord = await admin.auth().getUser(uid);
       const userEmail = userRecord.email;
-      if (!userEmail) return null;
-      await sgMail.send({
-        to: userEmail,
-        from: 'noreply@matrix-arc.web.app',
-        subject: `New Supplier Quote: ${vendorName}${rfqNum ? ' — ' + rfqNum : projectName ? ' — ' + projectName : ''}`,
-        html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
-          <h2 style="color:#1e293b;margin-bottom:8px">New Supplier Quote Received</h2>
-          <p style="color:#64748b;margin-bottom:16px"><strong>${vendorName}</strong> has submitted a quote${projectName ? ` for <strong>${projectName}</strong>` : ''}${rfqNum ? ` (RFQ: ${rfqNum})` : ''}.</p>
-          <a href="${APP_URL}" style="display:inline-block;background:#2563eb;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review &#x2192;</a>
-          <p style="color:#94a3b8;font-size:12px;margin-top:24px">Log in to ARC and click the notification bell 🔔 to review and approve the quote.</p>
-        </div>`,
-      });
+      if (userEmail) {
+        await sgMail.send({
+          to: userEmail,
+          from: 'noreply@matrix-arc.web.app',
+          subject: `New Supplier Quote: ${vendorName}${rfqNum ? ' — ' + rfqNum : projectName ? ' — ' + projectName : ''}`,
+          html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+            <h2 style="color:#1e293b;margin-bottom:8px">New Supplier Quote Received</h2>
+            <p style="color:#64748b;margin-bottom:16px"><strong>${vendorName}</strong> has submitted a quote${projectName ? ` for <strong>${projectName}</strong>` : ''}${rfqNum ? ` (RFQ: ${rfqNum})` : ''}.</p>
+            <a href="${APP_URL}" style="display:inline-block;background:#2563eb;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review &#x2192;</a>
+            <p style="color:#94a3b8;font-size:12px;margin-top:24px">Log in to ARC and click the notification bell 🔔 to review and approve the quote.</p>
+          </div>`,
+        });
+      }
     } catch (e) {
-      console.warn('Notification email failed:', e.message);
+      console.warn('ARC user notification email failed:', e.message);
     }
+
+    // 2) Send confirmation to supplier
+    const vendorEmail = after.vendorEmail || '';
+    const companyName = after.companyName || 'Matrix Systems';
+    if (vendorEmail) {
+      try {
+        await sgMail.send({
+          to: vendorEmail,
+          from: 'noreply@matrix-arc.web.app',
+          subject: `Quote Received — ${companyName}${rfqNum ? ' (' + rfqNum + ')' : ''}`,
+          html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+            <h2 style="color:#1e293b;margin-bottom:8px">Quote Received</h2>
+            <p style="color:#334155;margin-bottom:16px;line-height:1.7">Thank you for using the ${companyName} Quote Upload tool. Your submission${rfqNum ? ' for <strong>' + rfqNum + '</strong>' : ''} has been received.</p>
+            <p style="color:#334155;margin-bottom:16px;line-height:1.7">You will be notified if we have any questions regarding your Quote.</p>
+            <p style="color:#334155;margin-bottom:4px;line-height:1.7">Thank you,</p>
+            <p style="color:#1e293b;font-weight:700;margin-bottom:0">${companyName} Sales Team</p>
+            <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 12px"/>
+            <p style="color:#94a3b8;font-size:11px;margin:0">This is an automated confirmation. Please do not reply to this email.</p>
+          </div>`,
+        });
+      } catch (e) {
+        console.warn('Supplier confirmation email failed:', e.message);
+      }
+    }
+
     return null;
   });
 

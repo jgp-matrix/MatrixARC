@@ -4833,7 +4833,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         const rfqNum=makeRfqNum(group.vendorName);
         const tok=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
         vendorTokens[group.vendorName]=tok;
-        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,rfqNum,lineItems:group.items.map(i=>({partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""})),sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
+        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorEmail:(emails[group.vendorName]||"").trim(),rfqNum,lineItems:group.items.map(i=>({partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""})),sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
       }
     }
     const sentItemIds=[];
