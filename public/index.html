@@ -3386,7 +3386,7 @@ function buildLayoutLearningHint(entries){
     const details=[];
     if(e.doorCutoutCount!=null)details.push("doorCutouts="+e.doorCutoutCount);
     if(e.topBeaconCount!=null)details.push("topBeacons="+e.topBeaconCount);
-    if(e.aiPanelHoles!=null)details.push("AI calculated "+e.aiPanelHoles+" panel holes");
+    if(e.aiPanelHoles!=null)details.push("ARC AI calculated "+e.aiPanelHoles+" panel holes");
     if(e.userPanelHoles!=null)details.push("user corrected to "+e.userPanelHoles+" panel holes");
     if(e.note)details.push("note: "+e.note);
     return "- "+details.join(", ");
@@ -8071,7 +8071,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
                         {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>LABOR</span>}
                         {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
-                        {!row.isLaborRow&&row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>AI</span>}
+                        {!row.isLaborRow&&row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>ARC AI</span>}
                         {!row.isLaborRow&&row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>M</span>}
                         {bcSyncErrors[row.id]&&(()=>{const ef=bcSyncErrors[row.id];function parsePillErr(e){if(!e)return"Sync error";if(/must select an existing item/i.test(e))return"Not in BC";if(/Posting Group/i.test(e))return"BC setup";if(/429|Too Many/i.test(e))return"Rate limit";return"BC error";}return(<button title={parsePillErr(ef.error)+"\nClick to fix in Item Browser"} onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||"");setBcBrowserOpen(true);}} style={{background:C.red,color:"#fff",border:"none",borderRadius:8,padding:"1px 6px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>⚠ {parsePillErr(ef.error)}</button>);})()}
                         <div style={{display:"inline-flex",alignItems:"center",gap:0,marginLeft:"auto"}}>
@@ -8251,7 +8251,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
           </div>
           {priceTooltip.source&&(
             <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #1e293b",fontSize:10,color:"#475569",textTransform:"uppercase",letterSpacing:0.5}}>
-              Source: {priceTooltip.source==="bc"?"BC (Approved)":priceTooltip.source==="manual"?"Manual Entry":priceTooltip.source==="ai"?"AI Estimated":priceTooltip.source}
+              Source: {priceTooltip.source==="bc"?"BC (Approved)":priceTooltip.source==="manual"?"Manual Entry":priceTooltip.source==="ai"?"ARC AI Estimated":priceTooltip.source}
             </div>
           )}
         </div>,document.body
@@ -9254,7 +9254,7 @@ ${fullText.slice(0,8000)}`;
         parsed=JSON.parse(m?m[0]:stripped);
       }catch(e){
         console.error("Quote parse raw response:",raw);
-        throw new Error("AI returned invalid JSON — the quote may be too long or in an unsupported format. Try again.");
+        throw new Error("ARC AI returned invalid JSON — the quote may be too long or in an unsupported format. Try again.");
       }
       // Validate line items — flag duplicates/missing row# in-place, don't block
       const liIssues=sqValidateLineItems(parsed.lineItems||[]);
@@ -9794,7 +9794,7 @@ ${fullText.slice(0,8000)}`;
             </div>
             {/* Bubble step track */}
             {(()=>{
-              const steps=[{label:"Extract",pct:0},{label:"AI Parse",pct:15},{label:"Save",pct:65},{label:"Match BC",pct:72}];
+              const steps=[{label:"Extract",pct:0},{label:"ARC AI Parse",pct:15},{label:"Save",pct:65},{label:"Match BC",pct:72}];
               // Progress line spans between bubble centers: 12.5%→87.5% = 75% of width
               const fillPct=Math.min(100,Math.max(0,parseProgress/100*75));
               return(
@@ -11012,7 +11012,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
                       <span style={{color:r.priceSource==="ai"?"#c084fc":(r.priceSource==="bc"&&"bcPoDate"in r&&!r.bcPoDate)?"#fbbf24":"#fb923c",fontWeight:700,fontSize:10,minWidth:28}}>{r.priceSource==="ai"?"AI":(r.priceSource==="bc"&&"bcPoDate"in r&&!r.bcPoDate)?"NoPO":"OLD"}</span>
                       <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:120}}>{r.partNumber||"—"}</span>
                       <span style={{color:"#64748b",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||""}</span>
-                      <span style={{color:"#475569",fontSize:10,whiteSpace:"nowrap"}}>{r.priceSource==="ai"?"AI est.":r.bcPoDate||r.priceDate?new Date(r.bcPoDate||r.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"no date"}</span>
+                      <span style={{color:"#475569",fontSize:10,whiteSpace:"nowrap"}}>{r.priceSource==="ai"?"ARC AI est.":r.bcPoDate||r.priceDate?new Date(r.bcPoDate||r.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"no date"}</span>
                     </div>
                   ))}
                 </div>
@@ -11493,8 +11493,69 @@ function NewProjectModal({uid,onCreated,onClose}){
   );
 }
 
+// ── ABOUT MODAL ──
+function AboutModal({onClose}){
+  const changelog=[
+    {ver:"v1.17.298",changes:["Add quote header details to portal pricing review","Add submission verification disclaimer text","Enrich supplier part numbers from cross-reference databases"]},
+    {ver:"v1.17.297",changes:["Move Submit Your Quote box above Items Requested on supplier portal"]},
+    {ver:"v1.17.296",changes:["Add 'Powered by ARC Software' header to supplier portal"]},
+    {ver:"v1.17.295",changes:["Add Supplier Part # column to RFQ portal review table"]},
+    {ver:"v1.17.294",changes:["Replace progress bar with spinning circle on portal analyzing phase"]},
+    {ver:"v1.17.293",changes:["Fix supplier quote extraction for large quotes (increased capacity)","Increase extraction token limit for better accuracy"]},
+    {ver:"v1.17.292",changes:["Use hybrid vision+text approach for supplier quote parsing"]},
+    {ver:"v1.17.291",changes:["Widen supplier portal review page for better column visibility"]},
+    {ver:"v1.17.290",changes:["Rename 'Cannot Supply' to 'No Bid' on supplier RFQ portal"]},
+    {ver:"v1.17.289",changes:["Switch supplier quote parsing to vision-based extraction"]},
+    {ver:"v1.17.288",changes:["Widen Supplier Quote Import modal for more columns"]},
+    {ver:"v1.17.287",changes:["Update supplier quote extraction prompt for fuzzy part number matching"]},
+    {ver:"v1.17.260",changes:["Add Cloud Functions for team management and supplier notifications"]},
+    {ver:"v1.17.259",changes:["Fix slow connection false positive detection","Auto-reacquire BC token on search failure"]},
+    {ver:"v1.17.254",changes:["BC polling: pulse updated rows green with dismissible notification"]},
+    {ver:"v1.17.250",changes:["Poll BC every 5 min to keep BOM pricing and PO dates live"]},
+    {ver:"v1.17.245",changes:["Add Gen. Prod. and Inventory Posting Group dropdowns to Create Item form"]},
+    {ver:"v1.17.240",changes:["Add Refresh Pricing button to BOM","Backfill BC PO dates for priced rows"]},
+    {ver:"v1.17.237",changes:["Show actual BC last PO date in BOM Priced column"]},
+    {ver:"v1.17.234",changes:["Add vendor selection dropdown in BOM for priced items","Write vendor selection back to BC Item Card"]},
+    {ver:"v1.17.230",changes:["Add Supplier and Last Price Date columns to BOM table","Add vendor name backfill from BC purchase invoices"]},
+    {ver:"v1.17.225",changes:["Add RFQ (Request for Quote) feature — send quotes to suppliers"]},
+    {ver:"v1.16.0",changes:["Admin-configurable labor category rates"]},
+    {ver:"v1.15.0",changes:["Quote print system overhaul: compact layout, fixed footer, auto-print flow"]},
+    {ver:"v1.14.0",changes:["ARC AI part number verification and BOM confidence scoring"]},
+    {ver:"v1.13.0",changes:["Add labor category checkboxes and inline qty editing","Harmonize labor box font sizes"]},
+    {ver:"v1.12.0",changes:["Multi-panel project support","Structured BOM extraction prompt with column mapping"]},
+    {ver:"v1.11.0",changes:["Project transfer flow for team management","Team member role management via Cloud Functions"]},
+    {ver:"v1.10.0",changes:["Price, Quote, and Validation action tabs","Wire counting and enclosure validation"]},
+    {ver:"v1.9.0",changes:["PDF support and improved BOM extraction resolution"]},
+    {ver:"v1.0.0",changes:["Initial release: BOM extraction, project management, Firebase auth"]},
+  ];
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:1100,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={onClose}>
+      <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:14,width:"min(700px,95vw)",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:"20px 24px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:20,fontWeight:800,color:C.text}}>About ARC Software</div>
+            <div style={{fontSize:13,color:C.accent,fontWeight:600,marginTop:4,fontFamily:"'Orbitron',monospace",letterSpacing:1}}>{APP_VERSION}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22}}>✕</button>
+        </div>
+        <div style={{padding:"16px 24px",overflowY:"auto",flex:1}}>
+          <div style={{fontSize:14,color:C.muted,marginBottom:16}}>Version history and release notes</div>
+          {changelog.map((entry,i)=>(
+            <div key={i} style={{marginBottom:16,paddingBottom:16,borderBottom:i<changelog.length-1?`1px solid ${C.border}`:"none"}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.accent,marginBottom:6,fontFamily:"'Orbitron',monospace",letterSpacing:0.5}}>{entry.ver}</div>
+              <ul style={{margin:0,paddingLeft:20}}>
+                {entry.changes.map((c,j)=><li key={j} style={{fontSize:13,color:C.text,lineHeight:1.6,marginBottom:2}}>{c}</li>)}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── DASHBOARD ──
-// ── AI DATABASE PAGE (admin only) ──
+// ── ARC AI DATABASE PAGE (admin only) ──
 function AIDatabasePage({uid,onBack}){
   const [cpd,setCpd]=useState(null);
   const [loading,setLoading]=useState(true);
@@ -11518,7 +11579,7 @@ function AIDatabasePage({uid,onBack}){
     setEditingId(null);
   }
 
-  if(loading)return<div style={{padding:40,color:C.muted,fontSize:14}}>Loading AI Database…</div>;
+  if(loading)return<div style={{padding:40,color:C.muted,fontSize:14}}>Loading ARC AI Database…</div>;
   const panels=cpd?.panels||[];
   const products=cpd?.products||[];
 
@@ -11542,7 +11603,7 @@ function AIDatabasePage({uid,onBack}){
       <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:24}}>
         <button onClick={onBack} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,padding:"5px 12px",cursor:"pointer"}}>← Back</button>
         <div>
-          <div style={{fontSize:20,fontWeight:800,color:"#a78bfa",letterSpacing:1}}>🧠 AI DATABASE</div>
+          <div style={{fontSize:20,fontWeight:800,color:"#a78bfa",letterSpacing:1}}>🧠 ARC AI DATABASE</div>
           <div style={{fontSize:12,color:C.muted,marginTop:2}}>{panels.length} panels cataloged · {products.length} unique parts</div>
         </div>
         <input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter by any field…"
@@ -12163,6 +12224,7 @@ function App({user}){
   const [openProject,setOpenProject]=useState(null);
   const [showNew,setShowNew]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
+  const [showAbout,setShowAbout]=useState(false);
   const [showConfig,setShowConfig]=useState(false);
   const [companyId,setCompanyId]=useState(null);
   const [userRole,setUserRole]=useState(null);
@@ -12677,7 +12739,7 @@ function App({user}){
           </>}
           <div style={{width:1,height:36,background:C.border,marginLeft:2,flexShrink:0}}/>
           {/* 🔍 Search icon */}
-          <button title="AI Search" onClick={()=>setShowSearch(v=>!v)} style={{background:showSearch?C.accentDim:"none",border:showSearch?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showSearch?C.accent:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔍</button>
+          <button title="ARC AI Search" onClick={()=>setShowSearch(v=>!v)} style={{background:showSearch?C.accentDim:"none",border:showSearch?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showSearch?C.accent:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔍</button>
           {/* 🔔 Bell icon */}
           <div style={{position:"relative",flexShrink:0}}>
             <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:notifications.length>0?"#fbbf24":C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔔</button>
@@ -12719,7 +12781,9 @@ function App({user}){
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
               <button data-tour="training-btn" onClick={()=>{startTour();setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null?"#172554":"none",border:"none",color:tourStep!==null?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null?700:500}} onMouseEnter={e=>{if(tourStep===null)e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(tourStep===null)e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Training'}</button>
               <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📊 Reports</button>
-              {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?"#1a0a2a":"none",border:"none",color:"#a78bfa",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={e=>{if(view!=="aidb")e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(view!=="aidb")e.target.style.background="none";}}>🧠 AI Database</button>}
+              {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?"#1a0a2a":"none",border:"none",color:"#a78bfa",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={e=>{if(view!=="aidb")e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(view!=="aidb")e.target.style.background="none";}}>🧠 ARC AI Database</button>}
+              <div style={{height:1,background:C.border,margin:"4px 0"}}/>
+              <button onClick={()=>{setShowAbout(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>ℹ About</button>
             </div>)}
           </div>
           {/* 👤 User menu */}
@@ -12842,6 +12906,7 @@ function App({user}){
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={url=>{setCompanyLogo(url||null);_appCtx.company={...(_appCtx.company||{}),logoUrl:url||null};}}/>}
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
+      {showAbout&&<AboutModal onClose={()=>setShowAbout(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
       </div>{/* end paddingTop wrapper */}
       {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip} onMinimize={()=>setTourStep(null)}/>}
@@ -12851,7 +12916,7 @@ function App({user}){
 
 // ── INTERACTIVE TRAINING TOUR ──
 
-const TOUR_PHASES=['Overview','Create a Project','Upload Drawings','AI Extraction','Review the BOM','Generate a Quote','Send RFQs','PO Received'];
+const TOUR_PHASES=['Overview','Create a Project','Upload Drawings','ARC AI Extraction','Review the BOM','Generate a Quote','Send RFQs','PO Received'];
 
 const TOUR_STEPS=[
   // ── OVERVIEW ──
@@ -12898,10 +12963,10 @@ const TOUR_STEPS=[
    action:true,actionLabel:'👆 Review each page thumbnail. Correct any misclassified pages, then return here.'},
 
   // ── AI EXTRACTION ──
-  {phase:'AI Extraction',title:'Step 6 — Extraction Runs Automatically',
+  {phase:'ARC AI Extraction',title:'Step 6 — Extraction Runs Automatically',
    body:'Once drawings are uploaded and classified, ARC processes everything in the background:\n\n• Claude reads the BOM table and extracts every line item with quantities and part numbers\n• The schematic is analyzed for internal wire connections\n• The layout is analyzed for door cutouts, backpanel devices, and DIN rail/duct footage\n\nExtraction typically takes 1–5 minutes. A progress bar appears while it runs.'},
 
-  {phase:'AI Extraction',title:'The BOM Is Populated',
+  {phase:'ARC AI Extraction',title:'The BOM Is Populated',
    body:'When complete, the BOM table fills with extracted parts. The panel status advances to Extracted.\n\nThe first three rows — CUT, LAYOUT, and WIRE — are auto-generated labor estimates calculated from the wire count and layout analysis. These drive the labor section of your quote.',
    target:'[data-tour="bom-table"]',placement:'top'},
 
@@ -13164,7 +13229,7 @@ function SupplierPortalPage({token}){
       setMorePages(null);
       setPhase('review');
     }catch(e){
-      console.warn("AI extraction failed:",e);
+      console.warn("ARC AI extraction failed:",e);
       setAiError(e.message||String(e));
       setUnitPrices(prev=>({...allPrices,...prev}));
       setPhase('review');
