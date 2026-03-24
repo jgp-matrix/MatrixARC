@@ -10932,10 +10932,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
       }
     });
     const now=Date.now();
-    // Push each price to BC item card
-    const bcPushes=Object.values(priceMap).map(({price,partNumber})=>
-      bcPatchItemOData(partNumber,{Unit_Cost:price}).catch(e=>console.warn("BC price push failed:",partNumber,e))
-    );
+    // Resolve vendor number from BC vendors list for Vendor_No push
+    let vendorNo=null;
+    if(_bcToken&&submission.vendorName){
+      try{
+        const vendors=await bcListVendors();
+        const vMatch=vendors.find(v=>v.displayName===submission.vendorName)||vendors.find(v=>(v.displayName||'').toLowerCase().includes((submission.vendorName||'').toLowerCase()));
+        if(vMatch)vendorNo=vMatch.number;
+      }catch(e){console.warn("Vendor lookup for portal prices failed:",e);}
+    }
+    // Push each price (and vendor if resolved) to BC item card
+    const bcPushes=Object.values(priceMap).map(({price,partNumber})=>{
+      const patch={Unit_Cost:price};
+      if(vendorNo)patch.Vendor_No=vendorNo;
+      return bcPatchItemOData(partNumber,patch).catch(e=>console.warn("BC price push failed:",partNumber,e));
+    });
     await Promise.all(bcPushes);
     // Apply to BOM — priceSource:'bc', bcPoDate:now so rows don't get flagged
     let matched=0;
@@ -10959,7 +10970,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,autoO
     update({...projectRef.current,panels:updatedPanels});
     fbDb.collection('rfqUploads').doc(submission.id).update({status:'imported',importedAt:now}).catch(()=>{});
     const cantCount=cantItems.length;
-    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}`);
+    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.`:''}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}`);
     setShowPortalModal(false);
   }
 
