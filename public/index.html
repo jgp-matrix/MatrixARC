@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.59";
+const APP_VERSION="v1.18.60";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11780,7 +11780,7 @@ function SettingsModal({uid,onClose,onNameChange}){
           <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Anthropic API Key <span style={{fontSize:9,color:C.red,fontWeight:700,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>ADMIN ONLY</span></label>
           {loading
             ?<div style={{color:C.muted,fontSize:13,padding:"9px 0"}}>Loading…</div>
-            :<input value={key} onChange={e=>setKey(e.target.value)} type="password" placeholder="sk-ant-…" style={inp()}/>
+            :<input value={key} onChange={e=>setKey(e.target.value)} type="text" placeholder="sk-ant-…" style={inp()}/>
           }
           <div style={{fontSize:11,color:C.muted,marginTop:6}}>Stored in your Firebase project. Shared across all team members.</div>
         </div>
