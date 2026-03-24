@@ -13222,7 +13222,7 @@ function SupplierPortalPage({token}){
           canvas.width=0;canvas.height=0;
           pageImages.push(dataUrl.split(",")[1]);
         }
-        setAnalyzeMsg(`ARC AI is scanning your upload…`);
+        setAnalyzeMsg(`ARC AI is securely scanning your Quote…`);
         console.log('PORTAL EXTRACT: sending',pageImages.length,'images for batch',batch+1);
         const result=await fbFunctions.httpsCallable("extractSupplierQuotePricing")({token,pageImages});
         const extracted=result.data?.extracted||[];
