@@ -13174,6 +13174,7 @@ function SupplierPortalPage({token}){
   const [allExtractedItems,setAllExtractedItems]=useState([]); // all AI-extracted items from quote scan
   const [confirmedMatches,setConfirmedMatches]=useState({}); // idx→true when supplier confirms a match is correct
   const [openSpnDrop,setOpenSpnDrop]=useState(null); // which row's supplier PN dropdown is open (index or null)
+  const [spnDropRect,setSpnDropRect]=useState(null); // bounding rect of the open dropdown button
   const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
   const pdfRef=useRef(null);
 
@@ -13426,27 +13427,25 @@ function SupplierPortalPage({token}){
                               setAiConfidences(prev=>({...prev,[i]:'medium'}));
                             }
                           }
-                          setOpenSpnDrop(null);
+                          setOpenSpnDrop(null);setSpnDropRect(null);
                         }
-                        const btnRef=useRef(null);
                         const dropH=Math.min(200,(unique.length+1)*30+2);
                         let dropStyle={position:"fixed",zIndex:700,background:"#fff",border:`1px solid ${border}`,borderRadius:6,width:220,boxShadow:"0 4px 16px rgba(0,0,0,0.15)"};
-                        if(isOpen&&btnRef.current){
-                          const r=btnRef.current.getBoundingClientRect();
-                          const spaceBelow=window.innerHeight-r.bottom;
+                        if(isOpen&&spnDropRect){
+                          const spaceBelow=window.innerHeight-spnDropRect.bottom;
                           if(spaceBelow<dropH+10){
-                            dropStyle={...dropStyle,bottom:window.innerHeight-r.top+2,left:r.left};
+                            dropStyle={...dropStyle,bottom:window.innerHeight-spnDropRect.top+2,left:spnDropRect.left};
                           }else{
-                            dropStyle={...dropStyle,top:r.bottom+2,left:r.left};
+                            dropStyle={...dropStyle,top:spnDropRect.bottom+2,left:spnDropRect.left};
                           }
                         }
                         return<div>
-                          <button ref={btnRef} onClick={()=>setOpenSpnDrop(isOpen?null:i)} style={{...inp,padding:"4px 6px",fontSize:12,fontFamily:"monospace",width:170,textAlign:"left",cursor:"pointer",color:cur?dark:muted,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <button onClick={e=>{if(isOpen){setOpenSpnDrop(null);setSpnDropRect(null);}else{setSpnDropRect(e.currentTarget.getBoundingClientRect());setOpenSpnDrop(i);}}} style={{...inp,padding:"4px 6px",fontSize:12,fontFamily:"monospace",width:170,textAlign:"left",cursor:"pointer",color:cur?dark:muted,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cur||"— Select —"}</span>
                             <span style={{fontSize:10,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
                           </button>
                           {isOpen&&<>
-                            <div style={{position:"fixed",inset:0,zIndex:699}} onClick={()=>setOpenSpnDrop(null)}/>
+                            <div style={{position:"fixed",inset:0,zIndex:699}} onClick={()=>{setOpenSpnDrop(null);setSpnDropRect(null);}}/>
                             <div className="spn-drop" style={dropStyle}>
                               <div onClick={()=>pick("")} style={{padding:"6px 10px",fontSize:12,color:muted,cursor:"pointer",borderBottom:`1px solid ${border}`}} onMouseEnter={e=>e.target.style.background="#f1f5f9"} onMouseLeave={e=>e.target.style.background="#fff"}>— Clear —</div>
                               {unique.map(pn=><div key={pn} onClick={()=>pick(pn)} style={{padding:"6px 10px",fontSize:12,fontFamily:"monospace",color:pn===cur?accent:dark,fontWeight:pn===cur?700:400,cursor:"pointer",background:pn===cur?"#eff6ff":"#fff"}} onMouseEnter={e=>{if(pn!==cur)e.target.style.background="#f1f5f9";}} onMouseLeave={e=>{if(pn!==cur)e.target.style.background="#fff";}}>{pn}</div>)}
