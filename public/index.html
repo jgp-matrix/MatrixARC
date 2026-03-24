@@ -1770,13 +1770,15 @@ async function bcPatchItemOData(itemNo,fields){
 async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
   if(!_bcToken||!itemNo||!vendorNo)return;
   try{
-    const compId=await bcGetCompanyId();
-    if(!compId){console.warn("bcPushPurchasePrice: no company ID");return;}
     const dateStr=startingDate?new Date(startingDate).toISOString().split('T')[0]:new Date().toISOString().split('T')[0];
-    const baseUrl=`${BC_API_BASE}/companies(${compId})/purchasePrices`;
+    // Discover the OData page name for Purchase Prices
+    const allPages=await bcDiscoverODataPages();
+    const ppPage=allPages.find(n=>/purchase.?price/i.test(n));
+    if(!ppPage){console.warn("bcPushPurchasePrice: no PurchasePrices OData page published. Publish page 7012 as a web service in BC.");return;}
+    const baseUrl=`${BC_ODATA_BASE}/${ppPage}`;
     // Check if record already exists for this item+vendor
-    const filterUrl=`${baseUrl}?$filter=itemNumber eq '${encodeURIComponent(itemNo)}' and vendorNumber eq '${encodeURIComponent(vendorNo)}'`;
-    console.log("bcPushPurchasePrice: checking existing for",itemNo,vendorNo);
+    const filterUrl=`${baseUrl}?$filter=Item_No eq '${encodeURIComponent(itemNo)}' and Vendor_No eq '${encodeURIComponent(vendorNo)}'`;
+    console.log("bcPushPurchasePrice: checking existing for",itemNo,vendorNo,"via",ppPage);
     const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     if(gr.ok){
       const gd=await gr.json();
@@ -1784,18 +1786,17 @@ async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
       if(existing){
         // PATCH existing record
         const etag=existing["@odata.etag"];
-        const patchUrl=`${baseUrl}(${existing.id})`;
-        const patchBody={directUnitCost:unitCost,startingDate:dateStr};
-        if(uom)patchBody.unitOfMeasureCode=uom;
-        const pr=await fetch(patchUrl,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(patchBody)});
+        const patchBody={Direct_Unit_Cost:unitCost,Starting_Date:dateStr};
+        if(uom)patchBody.Unit_of_Measure_Code=uom;
+        const pr=await fetch(`${baseUrl}('${encodeURIComponent(existing.Item_No)}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(patchBody)});
         if(pr.ok){console.log("bcPushPurchasePrice PATCH OK:",itemNo,vendorNo,unitCost,dateStr);return;}
         const ptxt=await pr.text().catch(()=>"");
         console.warn("bcPushPurchasePrice PATCH failed:",pr.status,ptxt);
       }
     }
-    // Create new record
-    const payload={itemNumber:itemNo,vendorNumber:vendorNo,startingDate:dateStr,directUnitCost:unitCost,currencyCode:"",minimumQuantity:0};
-    if(uom)payload.unitOfMeasureCode=uom;
+    // Create new record via OData POST
+    const payload={Item_No:itemNo,Vendor_No:vendorNo,Starting_Date:dateStr,Direct_Unit_Cost:unitCost};
+    if(uom)payload.Unit_of_Measure_Code=uom;
     console.log("bcPushPurchasePrice POST:",JSON.stringify(payload));
     const cr=await fetch(baseUrl,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
     if(cr.ok){console.log("bcPushPurchasePrice POST OK:",itemNo,vendorNo,unitCost,dateStr);}
