@@ -13170,6 +13170,8 @@ function SupplierPortalPage({token}){
   const [itemLeadTimes,setItemLeadTimes]=useState({});
   const [cannotSupply,setCannotSupply]=useState({});
   const [supplierPartNums,setSupplierPartNums]=useState({});
+  const [supplierLineNums,setSupplierLineNums]=useState({}); // idx→supplier quote line #
+  const [extractionSummary,setExtractionSummary]=useState(null); // {requestedCount, matchedCount, unmatchedSupplierItems}
   const [quoteHeaderInfo,setQuoteHeaderInfo]=useState(null);
   const [allExtractedItems,setAllExtractedItems]=useState([]); // all AI-extracted items from quote scan
   const [confirmedMatches,setConfirmedMatches]=useState({}); // idx→true when supplier confirms a match is correct
@@ -13193,7 +13195,7 @@ function SupplierPortalPage({token}){
   async function processFile(f){
     if(!f||!f.type.includes("pdf")){alert("Please select a PDF file.");return;}
     setFile(f);setPhase('analyzing');setAiError(null);
-    const allPrices={};const allConf={};const allLeadTimes={};const allSupplierPNs={};const collectedExtracted=[];
+    const allPrices={};const allConf={};const allLeadTimes={};const allSupplierPNs={};const allSupplierLineNums={};const collectedExtracted=[];let lastSummary=null;
     try{
       setAnalyzeMsg(`Reading ${f.name}…`);
       await window.pdfjsReady;
@@ -13224,9 +13226,11 @@ function SupplierPortalPage({token}){
         const result=await fbFunctions.httpsCallable("extractSupplierQuotePricing")({token,pageImages});
         const extracted=result.data?.extracted||[];
         if(result.data?.quoteHeader&&!quoteHeaderInfo)setQuoteHeaderInfo(result.data.quoteHeader);
-        console.log('PORTAL EXTRACT: got',extracted.length,'results, header:',result.data?.quoteHeader,'sample:',JSON.stringify(extracted.slice(0,3)));
+        if(result.data?.summary)lastSummary=result.data.summary;
+        console.log('PORTAL EXTRACT: got',extracted.length,'results, summary:',result.data?.summary,'sample:',JSON.stringify(extracted.slice(0,3)));
         extracted.forEach(ex=>{
           collectedExtracted.push(ex);
+          if(ex.confidence==='unmatched')return; // unmatched supplier items — keep in collectedExtracted for dropdown but don't assign to a row
           // First try exact (normalized), then fuzzy prefix/contains match
           let idx=lineItems.findIndex(it=>normPart(it.partNumber)===normPart(ex.partNumber));
           if(idx<0)idx=lineItems.findIndex(it=>partMatch(it.partNumber,ex.partNumber));
@@ -13235,6 +13239,7 @@ function SupplierPortalPage({token}){
             if(allConf[idx]===undefined)allConf[idx]=ex.confidence||'medium';
             if(ex.leadTimeDays!=null&&(allLeadTimes[idx]===undefined||allLeadTimes[idx]===''))allLeadTimes[idx]=String(ex.leadTimeDays);
             if(ex.supplierPartNumber&&!allSupplierPNs[idx])allSupplierPNs[idx]=ex.supplierPartNumber;
+            if(ex.supplierLineNumber&&!allSupplierLineNums[idx])allSupplierLineNums[idx]=ex.supplierLineNumber;
           }
         });
       }
@@ -13242,7 +13247,9 @@ function SupplierPortalPage({token}){
       setAiConfidences(allConf);
       setItemLeadTimes(allLeadTimes);
       setSupplierPartNums(allSupplierPNs);
+      setSupplierLineNums(allSupplierLineNums);
       setAllExtractedItems(collectedExtracted);
+      setExtractionSummary(lastSummary);
       setMorePages(null);
       setPhase('review');
     }catch(e){
@@ -13279,6 +13286,7 @@ function SupplierPortalPage({token}){
         leadTimeDays:cannotSupply[i]===true?null:(itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:orderLeadTime),
         cannotSupply:cannotSupply[i]===true,
         supplierPartNumber:supplierPartNums[i]||null,
+        supplierLineNumber:supplierLineNums[i]||null,
       }));
       // Build confirmed crossings for ARC to save — supplier PN → Matrix PN
       const confirmedCrossings=[];
@@ -13348,10 +13356,24 @@ function SupplierPortalPage({token}){
   if(phase==='review'){
     const lineItems=info?.lineItems||[];
     const extractedCount=Object.keys(unitPrices).filter(i=>unitPrices[i]!=='').length;
+    const unmatchedRfqCount=lineItems.length-extractedCount;
+    const unmatchedSupplierCount=allExtractedItems.filter(ex=>ex.confidence==='unmatched').length;
     return(
       <div style={{minHeight:"100vh",background:bg,padding:"32px 16px"}}>
-        <div style={{maxWidth:1020,margin:"0 auto"}}>
+        <div style={{maxWidth:1100,margin:"0 auto"}}>
           <Header/>
+          {(unmatchedRfqCount>0||unmatchedSupplierCount>0)&&(
+            <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:12}}>
+              <span style={{fontSize:22,flexShrink:0}}>⚠️</span>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:"#991b1b",marginBottom:3}}>Validation Check</div>
+                <div style={{fontSize:13,color:"#7f1d1d",lineHeight:1.5}}>
+                  {unmatchedRfqCount>0&&<div><strong>{unmatchedRfqCount} of {lineItems.length}</strong> requested items have no price yet. Please review and enter prices manually or select the correct Supplier Part # from the dropdown.</div>}
+                  {unmatchedSupplierCount>0&&<div style={{marginTop:unmatchedRfqCount>0?4:0}}><strong>{unmatchedSupplierCount}</strong> item{unmatchedSupplierCount!==1?'s':''} on your quote {unmatchedSupplierCount!==1?'were':'was'} not matched to any RFQ line item. Use the Supplier Part # dropdown to assign them.</div>}
+                </div>
+              </div>
+            </div>
+          )}
           <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:10,padding:"16px 20px",marginBottom:20,display:"flex",alignItems:"flex-start",gap:12}}>
             <span style={{fontSize:22,flexShrink:0}}>📋</span>
             <div>
@@ -13386,6 +13408,7 @@ function SupplierPortalPage({token}){
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#f1f5f9"}}>
+                  <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600,width:50}}>Ln #</th>
                   <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Matrix Part #</th>
                   <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Supplier Part #</th>
                   <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Description</th>
@@ -13409,6 +13432,7 @@ function SupplierPortalPage({token}){
                   const hasSupplierPN=!!supplierPartNums[i];
                   return(
                     <tr key={i} style={{borderTop:`1px solid ${border}`,background:cant?"#fef2f2":isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff",opacity:cant?0.6:1}}>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:muted,fontSize:11,fontFamily:"monospace"}}>{supplierLineNums[i]||"—"}</td>
                       <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.partNumber||"—"}</td>
                       <td style={{padding:"10px 12px",fontFamily:"monospace",fontSize:12}}>{(()=>{
                         const opts=allExtractedItems.filter(ex=>ex.supplierPartNumber).map(ex=>ex.supplierPartNumber);
@@ -13424,6 +13448,7 @@ function SupplierPortalPage({token}){
                             if(match){
                               if(match.unitPrice!=null)setUnitPrices(prev=>({...prev,[i]:String(match.unitPrice)}));
                               if(match.leadTimeDays!=null)setItemLeadTimes(prev=>({...prev,[i]:String(match.leadTimeDays)}));
+                              if(match.supplierLineNumber)setSupplierLineNums(prev=>({...prev,[i]:match.supplierLineNumber}));
                               setAiConfidences(prev=>({...prev,[i]:'medium'}));
                             }
                           }
@@ -13514,7 +13539,7 @@ function SupplierPortalPage({token}){
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setConfirmedMatches({});setQuoteHeaderInfo(null);setAllExtractedItems([]);setMorePages(null);pdfRef.current=null;}}
+            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setSupplierLineNums({});setConfirmedMatches({});setQuoteHeaderInfo(null);setAllExtractedItems([]);setExtractionSummary(null);setMorePages(null);pdfRef.current=null;}}
               style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
               ← Start Over
             </button>

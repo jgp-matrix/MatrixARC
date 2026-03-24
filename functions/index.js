@@ -203,7 +203,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     })),
     {
       type: 'text',
-      text: `You are extracting pricing, lead times, and quote header details from a supplier quote document. The following items were requested:\n\n${itemList}\n\nExtract the unit price and lead time (in calendar days) for each item, plus the quote header information from the document.\n\nMATCHING RULES — be flexible, not strict:\n- Ignore spaces, dashes, and case when comparing part numbers. "ARL 449" matches "ARL449". "CEL-550M" matches "CEL550M".\n- Supplier quotes often prepend a short manufacturer or brand code (2–6 characters) before the base part number. Strip any such prefix to find the base. Example: "HOFF CEL550M" → base "CEL550M" which matches requested "CEL550M".\n- Use contains/substring matching: if the requested part number appears anywhere inside the supplier part number (after removing spaces), treat it as a match.\n- When you find a match (exact or fuzzy), ALWAYS output the exact part number from the requested list above in the "partNumber" field — not the supplier's version.\n- "supplierPartNumber" = the part number exactly as printed on the supplier's quote document.\n- Confidence: "high" = exact normalized match, "medium" = prefix stripped or minor variation matched, "low" = uncertain.\n\nReturn ONLY a JSON object with no other text:\n{"header":{"supplierName":"string or null","quoteNumber":"string or null","quoteDate":"YYYY-MM-DD or null","updatedOn":"YYYY-MM-DD or null","expiresOn":"YYYY-MM-DD or null","jobName":"string or null","contactName":"string or null","customerPO":"string or null","customerPODate":"YYYY-MM-DD or null","fob":"string or null","freight":"string or null"},"lineItems":[{"partNumber":"...","supplierPartNumber":"...","unitPrice":number_or_null,"leadTimeDays":number_or_null,"confidence":"high|medium|low","notes":"..."}]}\n\nFor lineItems: return an entry for every requested item — set unitPrice to null if not found. Set leadTimeDays to null if not stated. Look for lead time phrasing like "ARO", "days ARO", "weeks", "delivery", "lead time". Convert weeks to days (multiply by 7).\nFor header: extract all available fields from the quote document. Set to null if not found.`
+      text: `You are extracting pricing, lead times, and quote header details from a supplier quote document. The following ${lineItems.length} items were requested:\n\n${itemList}\n\nExtract the unit price and lead time (in calendar days) for each item, plus the quote header information from the document.\n\nMATCHING RULES — be flexible, not strict:\n- Ignore spaces, dashes, and case when comparing part numbers. "ARL 449" matches "ARL449". "CEL-550M" matches "CEL550M".\n- Supplier quotes often prepend a short manufacturer or brand code (2–6 characters) before the base part number. Strip any such prefix to find the base. Example: "HOFF CEL550M" → base "CEL550M" which matches requested "CEL550M".\n- Use contains/substring matching: if the requested part number appears anywhere inside the supplier part number (after removing spaces), treat it as a match.\n- Match by description too: if part numbers don't match but the description clearly refers to the same item, match it with confidence "medium".\n- When you find a match (exact or fuzzy), ALWAYS output the exact part number from the requested list above in the "partNumber" field — not the supplier's version.\n- "supplierPartNumber" = the part number exactly as printed on the supplier's quote document.\n- "supplierLineNumber" = the line number or item number as printed on the supplier's quote (e.g. "1", "2", "001", etc.). Use the row number from the supplier's quote document.\n- Confidence: "high" = exact normalized match, "medium" = prefix stripped or minor variation matched, "low" = uncertain.\n\nIMPORTANT VALIDATION:\n- You MUST return an entry for EVERY requested item (${lineItems.length} total). Set unitPrice to null if not found on the quote.\n- ALSO return any extra items found on the supplier quote that do NOT match any requested item — include them with partNumber set to null and confidence "unmatched".\n- The total lineItems returned should be >= ${lineItems.length}.\n\nReturn ONLY a JSON object with no other text:\n{"header":{"supplierName":"string or null","quoteNumber":"string or null","quoteDate":"YYYY-MM-DD or null","updatedOn":"YYYY-MM-DD or null","expiresOn":"YYYY-MM-DD or null","jobName":"string or null","contactName":"string or null","customerPO":"string or null","customerPODate":"YYYY-MM-DD or null","fob":"string or null","freight":"string or null"},"lineItems":[{"partNumber":"...","supplierPartNumber":"...","supplierLineNumber":"string or null","unitPrice":number_or_null,"leadTimeDays":number_or_null,"confidence":"high|medium|low|unmatched","notes":"..."}],"summary":{"requestedCount":${lineItems.length},"matchedCount":"number of items matched","unmatchedSupplierItems":"number of extra supplier items not matched"}}\n\nFor lineItems: return an entry for every requested item — set unitPrice to null if not found. Set leadTimeDays to null if not stated. Look for lead time phrasing like "ARO", "days ARO", "weeks", "delivery", "lead time". Convert weeks to days (multiply by 7).\nFor header: extract all available fields from the quote document. Set to null if not found.`
     }
   ];
 
@@ -231,6 +231,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
 
   let extracted = [];
   let quoteHeader = null;
+  let summary = null;
   try {
     const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
     // Try parsing as object with header+lineItems first, fall back to array
@@ -241,6 +242,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
       if (parsed.lineItems && Array.isArray(parsed.lineItems)) {
         extracted = parsed.lineItems;
         quoteHeader = parsed.header || null;
+        summary = parsed.summary || null;
       } else if (Array.isArray(parsed)) {
         extracted = parsed;
       }
@@ -292,5 +294,10 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     functions.logger.warn('Cross-ref enrichment failed:', e.message);
   }
 
-  return { extracted, quoteHeader };
+  // Validation: log count comparison
+  const matchedCount = extracted.filter(e => e.partNumber && e.confidence !== 'unmatched').length;
+  const unmatchedCount = extracted.filter(e => e.confidence === 'unmatched').length;
+  functions.logger.info(`extractSupplierQuotePricing: requested=${lineItems.length}, matched=${matchedCount}, unmatched_supplier_items=${unmatchedCount}, total_extracted=${extracted.length}`);
+
+  return { extracted, quoteHeader, summary: summary || { requestedCount: lineItems.length, matchedCount, unmatchedSupplierItems: unmatchedCount } };
 });
