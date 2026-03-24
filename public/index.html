@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.58";
+const APP_VERSION="v1.18.59";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11635,6 +11635,8 @@ function SettingsModal({uid,onClose,onNameChange}){
   const [key,setKey]=useState("");
   const [loading,setLoading]=useState(true);
   const [saved,setSaved]=useState(false);
+  const [apiTestMsg,setApiTestMsg]=useState(null); // {ok:bool, text:string}
+  const [apiTesting,setApiTesting]=useState(false);
   const [firstName,setFirstName]=useState("");
   const [nameSaved,setNameSaved]=useState(false);
 
@@ -11699,6 +11701,18 @@ function SettingsModal({uid,onClose,onNameChange}){
   async function save(){
     await fbDb.doc(`users/${uid}/config/api`).set({key});
     _apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);
+  }
+  async function testApiKey(){
+    const k=key.trim()||_apiKey;
+    if(!k){setApiTestMsg({ok:false,text:"No API key entered"});return;}
+    setApiTesting(true);setApiTestMsg(null);
+    try{
+      const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:20,messages:[{role:"user",content:"Say OK"}]})});
+      const d=await r.json();
+      if(r.ok){setApiTestMsg({ok:true,text:"API key is working — "+d.model});}
+      else{setApiTestMsg({ok:false,text:(d.error?.message||"Error "+r.status)});}
+    }catch(e){setApiTestMsg({ok:false,text:e.message});}
+    setApiTesting(false);
   }
 
   async function sendReset(){
@@ -11770,12 +11784,17 @@ function SettingsModal({uid,onClose,onNameChange}){
           }
           <div style={{fontSize:11,color:C.muted,marginTop:6}}>Stored in your Firebase project. Shared across all team members.</div>
         </div>
-        <div style={{display:"flex",gap:10,marginBottom:24}}>
+        <div style={{display:"flex",gap:10,marginBottom:6}}>
           <button onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Close</button>
-          <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:2,opacity:loading||!key.trim()?0.5:1})}>
+          <button onClick={testApiKey} disabled={apiTesting||loading} style={btn("#1e3a5f","#93c5fd",{flex:1,opacity:apiTesting||loading?0.5:1})}>
+            {apiTesting?"Testing…":"Test Key"}
+          </button>
+          <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:1,opacity:loading||!key.trim()?0.5:1})}>
             {saved?"✓ Saved":"Save Key"}
           </button>
-        </div></>}
+        </div>
+        {apiTestMsg&&<div style={{fontSize:12,color:apiTestMsg.ok?C.green:C.red,marginBottom:16,padding:"6px 10px",background:apiTestMsg.ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",border:`1px solid ${apiTestMsg.ok?"rgba(34,197,94,0.25)":"rgba(239,68,68,0.25)"}`,borderRadius:6,wordBreak:"break-word"}}>{apiTestMsg.text}</div>}
+        </>}
 
         {/* Outlook Email Integration */}
         <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
