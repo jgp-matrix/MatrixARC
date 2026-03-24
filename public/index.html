@@ -7857,11 +7857,11 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
             )}
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
           </div>
-          <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`}}>
-            <table style={{width:"100%",tableLayout:"auto",borderCollapse:"collapse",fontSize:13}}>
+          <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"auto"}}>
+            <table style={{width:"100%",minWidth:900,tableLayout:"auto",borderCollapse:"collapse",fontSize:13}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {[["ARC Ln #",50],["Ref Ln #",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0,"auto"],["Manufacturer",0,"fit"],["Supplier",0,"fit"],["Unit $",100],["Ext $",80],["Priced",76],["",36]].map(([h,w,mode],hi)=>(
+                  {[["ARC Ln #",50],["Ref Ln #",56],["Qty",56],["Part Number",0,"fit"],["",32],["Description",0,"auto"],["Manufacturer",0,"fit"],["Supplier",0,"fit"],["Unit $",100],["Ext $",80],["Priced",76],["",44]].map(([h,w,mode],hi)=>(
                     <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",width:mode==="fit"?"1%":mode==="auto"?"auto":w||"auto",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
@@ -8113,7 +8113,7 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
                     onMouseLeave={(!row.isLaborRow&&row.unitPrice!=null)?()=>setPriceTooltip(null):undefined}>
                       {row.isLaborRow?"—":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
                     </td>
-                    <td style={{padding:"3px 6px",textAlign:"center",width:36}}>
+                    <td style={{padding:"3px 10px 3px 6px",textAlign:"center",width:44}}>
                       {!readOnly&&!row.isLaborRow&&<button onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
                     </td>
                   </tr>
