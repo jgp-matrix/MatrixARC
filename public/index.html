@@ -13318,7 +13318,7 @@ function SupplierPortalPage({token}){
   function Header(){
     return(<>
       <div style={{textAlign:"center",padding:"10px 0 12px",marginBottom:16,borderBottom:`1px solid ${border}`}}>
-        <span style={{fontSize:12,color:muted,letterSpacing:1}}>Powered by <strong style={{color:dark}}>ARC Software</strong> &copy; 2026</span>
+        <span style={{fontSize:14,color:muted,letterSpacing:1}}>Powered by <strong style={{color:dark}}>ARC Software</strong> &copy; 2026</span>
       </div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
         <div>
@@ -13327,10 +13327,10 @@ function SupplierPortalPage({token}){
             ?<img src={info.companyLogoUrl} alt="Company Logo" style={{maxHeight:52,maxWidth:180,objectFit:"contain"}}/>
             :<div style={{fontSize:20,fontWeight:800,color:accent}}>{info?.companyName||"Matrix Systems, Inc."}</div>
           }
-          {(info?.companyAddress||info?.companyPhone)&&<div style={{fontSize:12,color:muted}}>{[info?.companyAddress,info?.companyPhone].filter(Boolean).join(' · ')}</div>}
+          {(info?.companyAddress||info?.companyPhone)&&<div style={{fontSize:14,color:muted}}>{[info?.companyAddress,info?.companyPhone].filter(Boolean).join(' · ')}</div>}
         </div>
         <div style={{textAlign:"right"}}>
-          <div style={{fontSize:11,color:muted,letterSpacing:2,textTransform:"uppercase"}}>Request for Quote</div>
+          <div style={{fontSize:12,color:muted,letterSpacing:2,textTransform:"uppercase"}}>Request for Quote</div>
           <div style={{fontSize:18,fontWeight:700,color:dark}}>{info?.rfqNum||"—"}</div>
         </div>
       </div>
@@ -13376,7 +13376,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               <span style={{fontSize:22,flexShrink:0}}>⚠️</span>
               <div>
                 <div style={{fontSize:14,fontWeight:700,color:"#991b1b",marginBottom:3}}>Validation Check</div>
-                <div style={{fontSize:13,color:"#7f1d1d",lineHeight:1.5}}>
+                <div style={{fontSize:14,color:"#7f1d1d",lineHeight:1.5}}>
                   {unmatchedRfqCount>0&&<div><strong>{unmatchedRfqCount} of {lineItems.length}</strong> requested items have no price yet. Please review and enter prices manually or select the correct Supplier Part # from the dropdown.</div>}
                   {unmatchedSupplierCount>0&&<div style={{marginTop:unmatchedRfqCount>0?4:0}}><strong>{unmatchedSupplierCount}</strong> item{unmatchedSupplierCount!==1?'s':''} on your quote {unmatchedSupplierCount!==1?'were':'was'} not matched to any RFQ line item. Use the Supplier Part # dropdown to assign them.</div>}
                 </div>
@@ -13388,22 +13388,22 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
             <div>
               <div style={{fontSize:14,fontWeight:700,color:"#92400e",marginBottom:3}}>Review Extracted Pricing</div>
               {aiError
-                ?<div style={{fontSize:13,color:"#991b1b"}}>AI extraction encountered an issue: {aiError}. Please enter prices manually below.</div>
-                :<div style={{fontSize:13,color:"#78350f"}}>AI found prices for <strong>{extractedCount} of {lineItems.length}</strong> items. Please review for accuracy, correct any errors, and fill in any missing prices before submitting.</div>
+                ?<div style={{fontSize:14,color:"#991b1b"}}>AI extraction encountered an issue: {aiError}. Please enter prices manually below.</div>
+                :<div style={{fontSize:14,color:"#78350f"}}>AI found prices for <strong>{extractedCount} of {lineItems.length}</strong> items. Please review for accuracy, correct any errors, and fill in any missing prices before submitting.</div>
               }
             </div>
           </div>
           {quoteHeaderInfo&&(
             <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"16px 20px",marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-              <div style={{fontSize:13,fontWeight:700,color:dark,marginBottom:10}}>Quote Details (extracted from PDF)</div>
+              <div style={{fontSize:14,fontWeight:700,color:dark,marginBottom:10}}>Quote Details (extracted from PDF)</div>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:8}}>
                 {[['Supplier',quoteHeaderInfo.supplierName],['Quote #',quoteHeaderInfo.quoteNumber],['Revision #',quoteHeaderInfo.revisionNumber],['Job Name',quoteHeaderInfo.jobName],
                   ['Contact',quoteHeaderInfo.contactName],['Quote Date',quoteHeaderInfo.quoteDate],['Updated On',quoteHeaderInfo.updatedOn],
                   ['Expires On',quoteHeaderInfo.expiresOn],['Customer PO #',quoteHeaderInfo.customerPO],['Customer PO Date',quoteHeaderInfo.customerPODate],
                   ['FOB',quoteHeaderInfo.fob],['Freight',quoteHeaderInfo.freight]].filter(([,v])=>v).map(([label,val])=>(
                   <div key={label} style={{background:bg,borderRadius:6,padding:"6px 10px"}}>
-                    <div style={{fontSize:10,color:muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:1}}>{label}</div>
-                    <div style={{fontSize:13,color:dark,fontWeight:600}}>{val}</div>
+                    <div style={{fontSize:11,color:muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:1}}>{label}</div>
+                    <div style={{fontSize:14,color:dark,fontWeight:600}}>{val}</div>
                   </div>
                 ))}
               </div>
@@ -13411,10 +13411,10 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
           )}
           <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
             <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",borderRadius:"10px 10px 0 0",background:card}}>
-              <span style={{fontSize:13,fontWeight:700,color:dark}}>Pricing Review</span>
-              <span style={{fontSize:12,color:muted}}>{file?.name||""}</span>
+              <span style={{fontSize:14,fontWeight:700,color:dark}}>Pricing Review</span>
+              <span style={{fontSize:14,color:muted}}>{file?.name||""}</span>
             </div>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:14,fontFamily:"inherit"}}>
               <thead>
                 <tr style={{background:"#f1f5f9"}}>
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600,width:50}}>Ln #</th>
@@ -13442,8 +13442,8 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                   const hasSupplierPN=!!supplierPartNums[i];
                   return(
                     <tr key={i} style={{borderTop:`1px solid ${border}`,background:cant?"#fef2f2":isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff",opacity:cant?0.6:1}}>
-                      <td style={{padding:"10px 12px",textAlign:"center",color:muted,fontSize:11,fontFamily:"monospace"}}>{supplierLineNums[i]||"—"}</td>
-                      <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.partNumber||"—"}</td>
+                      <td style={{padding:"10px 12px",textAlign:"center",color:muted,fontFamily:"monospace"}}>{supplierLineNums[i]||"—"}</td>
+                      <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",textDecoration:cant?"line-through":undefined}}>{item.partNumber||"—"}</td>
                       <td style={{padding:"10px 12px",fontFamily:"monospace",fontSize:12}}>{(()=>{
                         const opts=allExtractedItems.filter(ex=>ex.supplierPartNumber).map(ex=>ex.supplierPartNumber);
                         const unique=[...new Set(opts)];
@@ -13466,39 +13466,44 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                           }
                           setOpenSpnDrop(null);setSpnDropRect(null);
                         }
-                        const dropH=Math.min(200,(unique.length+1)*30+2);
-                        let dropStyle={position:"fixed",zIndex:700,background:"#fff",border:`1px solid ${border}`,borderRadius:6,width:220,boxShadow:"0 4px 16px rgba(0,0,0,0.15)"};
+                        const naturalH=Math.min(200,(unique.length+1)*32+2);
+                        let dropStyle={position:"fixed",zIndex:700,background:"#fff",border:`1px solid ${border}`,borderRadius:6,width:240,boxShadow:"0 4px 16px rgba(0,0,0,0.15)"};
                         if(isOpen&&spnDropRect){
-                          const spaceBelow=window.innerHeight-spnDropRect.bottom;
-                          if(spaceBelow<dropH+10){
-                            dropStyle={...dropStyle,bottom:window.innerHeight-spnDropRect.top+2,left:spnDropRect.left};
+                          const spaceBelow=window.innerHeight-spnDropRect.bottom-10;
+                          const spaceAbove=spnDropRect.top-10;
+                          if(spaceBelow>=naturalH){
+                            dropStyle={...dropStyle,top:spnDropRect.bottom+2,left:spnDropRect.left,maxHeight:spaceBelow};
+                          }else if(spaceAbove>=naturalH){
+                            dropStyle={...dropStyle,bottom:window.innerHeight-spnDropRect.top+2,left:spnDropRect.left,maxHeight:spaceAbove};
+                          }else if(spaceAbove>spaceBelow){
+                            dropStyle={...dropStyle,bottom:window.innerHeight-spnDropRect.top+2,left:spnDropRect.left,maxHeight:spaceAbove};
                           }else{
-                            dropStyle={...dropStyle,top:spnDropRect.bottom+2,left:spnDropRect.left};
+                            dropStyle={...dropStyle,top:spnDropRect.bottom+2,left:spnDropRect.left,maxHeight:spaceBelow};
                           }
                         }
                         return<div>
-                          <button onClick={e=>{if(isOpen){setOpenSpnDrop(null);setSpnDropRect(null);}else{setSpnDropRect(e.currentTarget.getBoundingClientRect());setOpenSpnDrop(i);}}} style={{...inp,padding:"4px 6px",fontSize:12,fontFamily:"monospace",width:170,textAlign:"left",cursor:"pointer",color:cur?dark:muted,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <button onClick={e=>{if(isOpen){setOpenSpnDrop(null);setSpnDropRect(null);}else{setSpnDropRect(e.currentTarget.getBoundingClientRect());setOpenSpnDrop(i);}}} style={{...inp,padding:"4px 6px",fontSize:14,fontFamily:"monospace",width:190,textAlign:"left",cursor:"pointer",color:cur?dark:muted,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                             <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cur||"— Select —"}</span>
-                            <span style={{fontSize:10,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
+                            <span style={{fontSize:12,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
                           </button>
                           {isOpen&&<>
                             <div style={{position:"fixed",inset:0,zIndex:699}} onClick={()=>{setOpenSpnDrop(null);setSpnDropRect(null);}}/>
                             <div className="spn-drop" style={dropStyle}>
-                              <div onClick={()=>pick("")} style={{padding:"6px 10px",fontSize:12,color:muted,cursor:"pointer",borderBottom:`1px solid ${border}`}} onMouseEnter={e=>e.target.style.background="#f1f5f9"} onMouseLeave={e=>e.target.style.background="#fff"}>— Clear —</div>
-                              {unique.map(pn=><div key={pn} onClick={()=>pick(pn)} style={{padding:"6px 10px",fontSize:12,fontFamily:"monospace",color:pn===cur?accent:dark,fontWeight:pn===cur?700:400,cursor:"pointer",background:pn===cur?"#eff6ff":"#fff"}} onMouseEnter={e=>{if(pn!==cur)e.target.style.background="#f1f5f9";}} onMouseLeave={e=>{if(pn!==cur)e.target.style.background="#fff";}}>{pn}</div>)}
+                              <div onClick={()=>pick("")} style={{padding:"7px 10px",fontSize:14,color:muted,cursor:"pointer",borderBottom:`1px solid ${border}`}} onMouseEnter={e=>e.target.style.background="#f1f5f9"} onMouseLeave={e=>e.target.style.background="#fff"}>— Clear —</div>
+                              {unique.map(pn=><div key={pn} onClick={()=>pick(pn)} style={{padding:"7px 10px",fontSize:14,fontFamily:"monospace",color:pn===cur?accent:dark,fontWeight:pn===cur?700:400,cursor:"pointer",background:pn===cur?"#eff6ff":"#fff"}} onMouseEnter={e=>{if(pn!==cur)e.target.style.background="#f1f5f9";}} onMouseLeave={e=>{if(pn!==cur)e.target.style.background="#fff";}}>{pn}</div>)}
                             </div>
                           </>}
                         </div>;
                       })()}</td>
-                      <td style={{padding:"10px 12px",color:muted,fontSize:12,textDecoration:cant?"line-through":undefined}}>{item.description||"—"}</td>
+                      <td style={{padding:"10px 12px",color:muted,textDecoration:cant?"line-through":undefined}}>{item.description||"—"}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:dark}}>{item.qty||1}</td>
                       <td style={{padding:"8px 12px"}}>
-                        {cant?<span style={{fontSize:11,color:"#dc2626",fontWeight:700,display:"block",textAlign:"right"}}>No Bid</span>:(
+                        {cant?<span style={{fontSize:14,color:"#dc2626",fontWeight:700,display:"block",textAlign:"right"}}>No Bid</span>:(
                         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6}}>
-                          {confLabel&&<span style={{fontSize:10,fontWeight:700,borderRadius:4,padding:"2px 6px",background:confBg,color:confColor,flexShrink:0}}>{confLabel}</span>}
-                          {!confirmed&&hasSupplierPN&&(isNoMatch||isMatch)&&<button onClick={()=>setConfirmedMatches(prev=>({...prev,[i]:true}))} style={{fontSize:10,fontWeight:600,borderRadius:4,padding:"2px 6px",background:"#eff6ff",color:"#2563eb",border:"1px solid #bfdbfe",cursor:"pointer",flexShrink:0,fontFamily:"inherit"}}>✓ Confirm</button>}
-                          {!conf&&!hasPrice&&<span style={{fontSize:11,color:"#dc2626",fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
-                          {isNoMatch&&<span style={{fontSize:10,color:"#991b1b",flexShrink:0}}>Please enter price</span>}
+                          {confLabel&&<span style={{fontSize:12,fontWeight:700,borderRadius:4,padding:"2px 8px",background:confBg,color:confColor,flexShrink:0}}>{confLabel}</span>}
+                          {!confirmed&&hasSupplierPN&&(isNoMatch||isMatch)&&<button onClick={()=>setConfirmedMatches(prev=>({...prev,[i]:true}))} style={{fontSize:12,fontWeight:600,borderRadius:4,padding:"2px 8px",background:"#eff6ff",color:"#2563eb",border:"1px solid #bfdbfe",cursor:"pointer",flexShrink:0,fontFamily:"inherit"}}>✓ Confirm</button>}
+                          {!conf&&!hasPrice&&<span style={{fontSize:14,color:"#dc2626",fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
+                          {isNoMatch&&<span style={{fontSize:12,color:"#991b1b",flexShrink:0}}>Please enter price</span>}
                           <span style={{color:muted}}>$</span>
                           <input type="text" inputMode="decimal" placeholder="0.00"
                             value={unitPrices[i]??''}
@@ -13525,14 +13530,14 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                             onChange={e=>setCannotSupply(prev=>({...prev,[i]:e.target.checked}))}
                             style={{width:16,height:16,accentColor:"#dc2626",cursor:"pointer"}}
                           />
-                          {cant&&<span style={{fontSize:11,color:"#dc2626",fontWeight:700}}>Yes</span>}
+                          {cant&&<span style={{fontSize:14,color:"#dc2626",fontWeight:700}}>Yes</span>}
                         </label>
                       </td>
                       <td style={{padding:"8px 12px"}}>
                         <input type="text" placeholder="Add note…"
                           value={itemNotes[i]||''}
                           onChange={e=>setItemNotes(prev=>({...prev,[i]:e.target.value}))}
-                          style={{...inp,width:"100%",fontSize:11,padding:"4px 6px"}}
+                          style={{...inp,width:"100%",padding:"4px 6px"}}
                         />
                       </td>
                     </tr>
@@ -13542,8 +13547,8 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
             </table>
           </div>
           <div style={{background:card,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-            <label style={{display:"block",fontSize:13,fontWeight:700,color:dark,marginBottom:4}}>Lead Time (days ARO) <span style={{color:"#dc2626"}}>*</span></label>
-            <div style={{fontSize:12,color:muted,marginBottom:8}}>Required — enter your standard lead time for this entire order. You may optionally enter different lead times per line item above to override.</div>
+            <label style={{display:"block",fontSize:14,fontWeight:700,color:dark,marginBottom:4}}>Lead Time (days ARO) <span style={{color:"#dc2626"}}>*</span></label>
+            <div style={{fontSize:14,color:muted,marginBottom:8}}>Required — enter your standard lead time for this entire order. You may optionally enter different lead times per line item above to override.</div>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime}
                 onChange={e=>setLeadTime(e.target.value)}
@@ -13561,7 +13566,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                   }
                 }}
                 style={{width:120,...inp,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`}}/>
-              <span style={{fontSize:13,color:muted}}>calendar days after receipt of order</span>
+              <span style={{fontSize:14,color:muted}}>calendar days after receipt of order</span>
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
@@ -13574,7 +13579,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               {uploading?"Submitting…":"✓ Confirm & Submit Quote"}
             </button>
           </div>
-          <div style={{fontSize:11,color:muted,textAlign:"center",marginTop:8,lineHeight:1.5}}>Confirming each item is helpful, but not required.<br/>Your uploaded quote will be reviewed by the Matrix Sales Team.</div>
+          <div style={{fontSize:13,color:muted,textAlign:"center",marginTop:8,lineHeight:1.5}}>Confirming each item is helpful, but not required.<br/>Your uploaded quote will be reviewed by the Matrix Sales Team.</div>
         </div>
       </div>
     );
@@ -13595,7 +13600,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
         </div>
         <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"28px 24px",marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
           <div style={{fontSize:15,fontWeight:700,color:dark,marginBottom:4}}>Submit Your Quote</div>
-          <div style={{fontSize:13,color:muted,marginBottom:22,lineHeight:1.6}}>Upload your quote PDF below. AI will automatically extract pricing — you'll review before submitting.</div>
+          <div style={{fontSize:14,color:muted,marginBottom:22,lineHeight:1.6}}>Upload your quote PDF below. AI will automatically extract pricing — you'll review before submitting.</div>
           <div
             onDragOver={e=>{e.preventDefault();setDragOver(true);}}
             onDragLeave={()=>setDragOver(false)}
@@ -13603,18 +13608,18 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
             style={{border:`2px dashed ${dragOver?"#2563eb":border}`,borderRadius:10,padding:"40px 20px",textAlign:"center",transition:"all 0.2s",background:dragOver?"#eff6ff":"#f8fafc",marginBottom:16}}>
             <div style={{fontSize:36,marginBottom:10}}>📄</div>
             <div style={{fontSize:15,fontWeight:600,color:dragOver?accent:dark,marginBottom:6}}>{dragOver?"Drop PDF here":"Drag & drop your quote PDF here"}</div>
-            <div style={{fontSize:13,color:muted,marginBottom:16}}>or</div>
-            <label style={{display:"inline-block",background:accent,color:"#fff",fontWeight:700,fontSize:13,padding:"10px 24px",borderRadius:7,cursor:"pointer",fontFamily:"inherit"}}>
+            <div style={{fontSize:14,color:muted,marginBottom:16}}>or</div>
+            <label style={{display:"inline-block",background:accent,color:"#fff",fontWeight:700,fontSize:14,padding:"10px 24px",borderRadius:7,cursor:"pointer",fontFamily:"inherit"}}>
               Browse File
               <input type="file" accept=".pdf,application/pdf" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)processFile(f);}}/>
             </label>
           </div>
-          <div style={{fontSize:12,color:muted,textAlign:"center"}}>PDF only · Up to 8 pages scanned · Pricing extracted automatically by AI</div>
+          <div style={{fontSize:14,color:muted,textAlign:"center"}}>PDF only · Up to 8 pages scanned · Pricing extracted automatically by AI</div>
         </div>
         {(info?.lineItems||[]).length>0&&(
           <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-            <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,fontSize:13,fontWeight:700,color:dark}}>Items Requested ({info.lineItems.length})</div>
-            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,fontSize:14,fontWeight:700,color:dark}}>Items Requested ({info.lineItems.length})</div>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:14}}>
               <thead><tr style={{background:"#f1f5f9"}}>
                 <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>#</th>
                 <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Part Number</th>
