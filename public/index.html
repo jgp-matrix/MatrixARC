@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.64";
+const APP_VERSION="v1.18.65";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1771,31 +1771,64 @@ async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
   if(!_bcToken||!itemNo||!vendorNo)return;
   try{
     const allPages=await bcDiscoverODataPages();
-    const ppPage=allPages.find(p=>/^purchase.?price/i.test(p))||null;
-    if(!ppPage){console.warn("bcPushPurchasePrice: No PurchasePrices OData page found. Publish BC page 7012 as 'PurchasePrices'.");return;}
-    // Format date as YYYY-MM-DD
+    const ppPage=allPages.find(p=>/purchase.?price/i.test(p))||null;
+    if(!ppPage){console.warn("bcPushPurchasePrice: No PurchasePrices OData page found. Available pages:",allPages.join(", "));return;}
+    console.log("bcPushPurchasePrice: using page '"+ppPage+"' for",itemNo,vendorNo,unitCost);
     const dateStr=startingDate?new Date(startingDate).toISOString().split('T')[0]:new Date().toISOString().split('T')[0];
-    // Check if a record already exists for this item+vendor+date
-    const filterUrl=`${BC_ODATA_BASE}/${ppPage}?$filter=Item_No eq '${encodeURIComponent(itemNo)}' and Vendor_No eq '${encodeURIComponent(vendorNo)}' and Starting_Date eq ${dateStr}`;
-    const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
-    if(gr.ok){
-      const gd=await gr.json();
-      const existing=(gd.value||[])[0];
-      if(existing){
-        // Update existing record
-        const etag=existing["@odata.etag"];
-        const patchUrl=`${BC_ODATA_BASE}/${ppPage}(Item_No='${encodeURIComponent(itemNo)}',Vendor_No='${encodeURIComponent(vendorNo)}',Starting_Date=${dateStr},Currency_Code='',Variant_Code='',Unit_of_Measure_Code='${encodeURIComponent(uom||existing.Unit_of_Measure_Code||"")}')`;
-        const pr=await fetch(patchUrl,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify({Direct_Unit_Cost:unitCost})});
-        if(pr.ok){console.log("bcPushPurchasePrice PATCH OK:",itemNo,vendorNo,unitCost,dateStr);return;}
-        console.warn("bcPushPurchasePrice PATCH failed:",pr.status,await pr.text().catch(()=>""));
-      }
+    // Probe: GET one record to discover actual field names
+    const probeUrl=`${BC_ODATA_BASE}/${ppPage}?$top=1`;
+    const probeR=await fetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    let FI="Item_No",FV="Vendor_No",FD="Starting_Date",FC="Direct_Unit_Cost",FU="Unit_of_Measure_Code",FCUR="Currency_Code",FVAR="Variant_Code";
+    if(probeR.ok){
+      const probeD=await probeR.json();
+      const sample=(probeD.value||[])[0];
+      if(sample){
+        console.log("bcPushPurchasePrice: sample record fields:",Object.keys(sample).join(", "));
+        // Detect field names dynamically
+        const keys=Object.keys(sample);
+        const findField=(patterns)=>keys.find(k=>patterns.some(p=>p.test(k)));
+        FI=findField([/^Item.?No$/i])||FI;
+        FV=findField([/^Vendor.?No$/i])||FV;
+        FD=findField([/^Starting.?Date$/i])||FD;
+        FC=findField([/^Direct.?Unit.?Cost$/i])||FC;
+        FU=findField([/^Unit.?of.?Measure/i])||FU;
+        FCUR=findField([/^Currency.?Code$/i])||FCUR;
+        FVAR=findField([/^Variant.?Code$/i])||FVAR;
+        console.log("bcPushPurchasePrice: resolved fields:",{FI,FV,FD,FC,FU});
+      }else{console.log("bcPushPurchasePrice: probe returned empty — using default field names");}
     }
-    // Create new record
-    const payload={Item_No:itemNo,Vendor_No:vendorNo,Starting_Date:dateStr,Direct_Unit_Cost:unitCost,Currency_Code:"",Variant_Code:""};
-    if(uom)payload.Unit_of_Measure_Code=uom;
+    // Create new record (POST)
+    const payload={[FI]:itemNo,[FV]:vendorNo,[FD]:dateStr,[FC]:unitCost};
+    if(FCUR)payload[FCUR]="";
+    if(FVAR)payload[FVAR]="";
+    if(uom&&FU)payload[FU]=uom;
+    console.log("bcPushPurchasePrice POST payload:",JSON.stringify(payload));
     const cr=await fetch(`${BC_ODATA_BASE}/${ppPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
     if(cr.ok){console.log("bcPushPurchasePrice POST OK:",itemNo,vendorNo,unitCost,dateStr);}
-    else{const txt=await cr.text().catch(()=>"");console.warn("bcPushPurchasePrice POST failed:",cr.status,txt);}
+    else{
+      const txt=await cr.text().catch(()=>"");
+      console.warn("bcPushPurchasePrice POST failed:",cr.status,txt);
+      // If duplicate (already exists), try PATCH
+      if(cr.status===400||cr.status===409){
+        console.log("bcPushPurchasePrice: record may exist, attempting filter+PATCH...");
+        const filterUrl=`${BC_ODATA_BASE}/${ppPage}?$filter=${FI} eq '${encodeURIComponent(itemNo)}' and ${FV} eq '${encodeURIComponent(vendorNo)}'`;
+        const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+        if(gr.ok){
+          const gd=await gr.json();
+          const existing=(gd.value||[])[0];
+          if(existing){
+            const etag=existing["@odata.etag"];
+            // Build key URL from SystemId if available, else try compound key
+            const patchUrl=existing.SystemId
+              ?`${BC_ODATA_BASE}/${ppPage}(${existing.SystemId})`
+              :`${BC_ODATA_BASE}/${ppPage}(${FI}='${encodeURIComponent(itemNo)}',${FV}='${encodeURIComponent(vendorNo)}',${FD}=${existing[FD]||'0001-01-01'},${FCUR}='',${FVAR}='',${FU}='${encodeURIComponent(existing[FU]||"")}')`;
+            const pr=await fetch(patchUrl,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify({[FC]:unitCost,[FD]:dateStr})});
+            if(pr.ok)console.log("bcPushPurchasePrice PATCH OK:",itemNo);
+            else console.warn("bcPushPurchasePrice PATCH failed:",pr.status,await pr.text().catch(()=>""));
+          }else{console.warn("bcPushPurchasePrice: filter returned no existing records for",itemNo,vendorNo);}
+        }
+      }
+    }
   }catch(e){console.warn("bcPushPurchasePrice error:",itemNo,e.message);}
 }
 
