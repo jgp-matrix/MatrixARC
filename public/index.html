@@ -13217,7 +13217,7 @@ function SupplierPortalPage({token}){
           canvas.width=0;canvas.height=0;
           pageImages.push(dataUrl.split(",")[1]);
         }
-        setAnalyzeMsg(`AI is reading section ${batch+1} of ${totalBatches}…`);
+        setAnalyzeMsg(`ARC AI is scanning your upload…`);
         console.log('PORTAL EXTRACT: sending',pageImages.length,'images for batch',batch+1);
         const result=await fbFunctions.httpsCallable("extractSupplierQuotePricing")({token,pageImages});
         const extracted=result.data?.extracted||[];
