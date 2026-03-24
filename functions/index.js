@@ -216,7 +216,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 2000,
+      max_tokens: 8000,
       messages: [{ role: 'user', content: messageContent }],
     }),
   });
@@ -227,6 +227,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
 
   const result = await response.json();
   const text = result.content?.[0]?.text || '[]';
+  functions.logger.info('extractSupplierQuotePricing AI response length:', text.length, 'preview:', text.slice(0, 300));
 
   let extracted = [];
   try {
@@ -234,6 +235,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     extracted = JSON.parse(jsonMatch ? jsonMatch[0] : text);
     if (!Array.isArray(extracted)) extracted = [];
   } catch (e) {
+    functions.logger.warn('extractSupplierQuotePricing JSON parse failed:', e.message, 'raw:', text.slice(0, 500));
     extracted = [];
   }
 
