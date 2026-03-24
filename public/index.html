@@ -11440,7 +11440,7 @@ function SettingsModal({uid,onClose,onNameChange}){
           </div>
         </div>
 
-        <div style={{marginBottom:20}}>
+        {isAdmin()&&<><div style={{marginBottom:20}}>
           <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Anthropic API Key</label>
           {loading
             ?<div style={{color:C.muted,fontSize:13,padding:"9px 0"}}>Loading…</div>
@@ -11453,7 +11453,7 @@ function SettingsModal({uid,onClose,onNameChange}){
           <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:2,opacity:loading||!key.trim()?0.5:1})}>
             {saved?"✓ Saved":"Save Key"}
           </button>
-        </div>
+        </div></>}
 
         {/* Outlook Email Integration */}
         <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
