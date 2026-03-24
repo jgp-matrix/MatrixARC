@@ -10174,6 +10174,21 @@ ${fullText.slice(0,8000)}`;
         if(idx>=0)updatedItems[idx]={...updatedItems[idx],priceUpdateStatus:'error'};
       }
     }
+    // Push Purchase Prices to BC (vendor, direct unit cost, starting date)
+    if(_bcToken&&quoteHeader?.supplier){
+      try{
+        const vendors=await bcListVendors();
+        const vName=(quoteHeader.supplier||'').toLowerCase();
+        const vMatch=vendors.find(v=>v.displayName===quoteHeader.supplier)||vendors.find(v=>(v.displayName||'').toLowerCase().includes(vName));
+        if(vMatch){
+          const ppPushes=toUpdate.filter(i=>i.price&&i.partNumber).map(i=>
+            bcPushPurchasePrice(i.partNumber,vMatch.number,i.price,Date.now(),i.uom||'').catch(e=>console.warn("BC purchase price push failed:",i.partNumber,e))
+          );
+          await Promise.all(ppPushes);
+          console.log("bcPushPurchasePrice: pushed",ppPushes.length,"items for vendor",vMatch.number);
+        }else{console.warn("bcPushPurchasePrice: vendor not found in BC:",quoteHeader.supplier);}
+      }catch(e){console.warn("bcPushPurchasePrice batch error:",e);}
+    }
     const finalStatus=errors.length===0?'pushed_to_bc':'pending_review';
     await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updatedItems,status:finalStatus});
     await sqSavePushAudit(quoteDocId,quoteHeader?.supplier||'',quoteHeader?.quoteId||'',uid,auditItems);
