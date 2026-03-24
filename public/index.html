@@ -13209,7 +13209,10 @@ function SupplierPortalPage({token}){
   const inp={border:`1px solid ${border}`,borderRadius:6,padding:"7px 10px",fontSize:14,fontFamily:"inherit",color:dark,outline:"none",background:"#f8fafc"};
 
   function Header(){
-    return(
+    return(<>
+      <div style={{textAlign:"center",padding:"10px 0 12px",marginBottom:16,borderBottom:`1px solid ${border}`}}>
+        <span style={{fontSize:12,color:muted,letterSpacing:1}}>Powered by <strong style={{color:dark}}>ARC Software</strong> &copy; 2026</span>
+      </div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
         <div>
           <div style={{fontSize:16,fontWeight:700,color:muted,marginBottom:4}}>Request For Quote from</div>
@@ -13224,7 +13227,7 @@ function SupplierPortalPage({token}){
           <div style={{fontSize:18,fontWeight:700,color:dark}}>{info?.rfqNum||"—"}</div>
         </div>
       </div>
-    );
+    </>);
   }
 
   if(loading)return(<div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{color:muted,fontSize:15}}>Loading…</div></div>);
