@@ -4941,6 +4941,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                 </div>
                 {isOn&&<input value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
                   placeholder="supplier@email.com" disabled={sending||done}
+                  onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
                   style={{width:"100%",boxSizing:"border-box",background:"#0a0a18",border:"1px solid #2a2a3e",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none"}}/>}
               </div>
             );
@@ -5336,7 +5337,7 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-info-name"><input value={q.salesperson||""} onChange={e=>setQ({salesperson:e.target.value})} placeholder="Salesperson name" style={qInp({fontWeight:700,fontSize:18})}/></div>
               <div className="qd-info-detail">
                 Salesperson<br/>
-                <input value={q.salesEmail||""} onChange={e=>setQ({salesEmail:e.target.value})} placeholder="email@matrixpci.com" style={qInp({marginBottom:2})}/>
+                <input value={q.salesEmail||""} onChange={e=>setQ({salesEmail:e.target.value})} placeholder="email@matrixpci.com" onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}} style={qInp({marginBottom:2})}/>
                 <input value={q.salesPhone||""} onChange={e=>setQ({salesPhone:e.target.value})} placeholder="(___) ___-____" style={qInp({})}/>
               </div>
             </div>
@@ -11440,7 +11441,7 @@ function NewProjectModal({uid,onCreated,onClose}){
               <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:10}}>Create New BC Customer</div>
               <input value={newCustName} onChange={e=>setNewCustName(e.target.value)} placeholder="Customer Name *" style={{...inp(),marginBottom:8}}/>
               <input value={newCustPhone} onChange={e=>setNewCustPhone(e.target.value)} placeholder="Phone (optional)" style={{...inp(),marginBottom:8}}/>
-              <input value={newCustEmail} onChange={e=>setNewCustEmail(e.target.value)} placeholder="Email (optional)" style={{...inp(),marginBottom:10}}/>
+              <input value={newCustEmail} onChange={e=>setNewCustEmail(e.target.value)} placeholder="Email (optional)" onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}} style={{...inp(),marginBottom:10}}/>
               {newCustErr&&<div style={{fontSize:11,color:C.red,marginBottom:8}}>{newCustErr}</div>}
               <div style={{display:"flex",gap:8}}>
                 <button type="button" onClick={()=>{setShowNewCust(false);setNewCustName("");setNewCustPhone("");setNewCustEmail("");setNewCustErr("");}} style={btn(C.border,C.sub,{flex:1,fontSize:12})}>Cancel</button>
