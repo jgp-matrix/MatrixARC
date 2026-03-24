@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.52";
+const APP_VERSION="v1.18.53";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -347,28 +347,28 @@ async function loadApiKey(uid){
   try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists)_apiKey=d.data().key||null;}catch(e){}
 }
 
-// ── KNOWLEDGE BASE CACHE (module-level for use by extraction tasks) ──
-let _kbCache=null;
-async function loadKnowledgeBase(){
-  if(_kbCache)return _kbCache;
+// ── ARC NEURAL IQ (NIQ) — AI learning & standards knowledge engine ──
+let _niqCache=null;
+async function loadNIQ(){
+  if(_niqCache)return _niqCache;
   if(!_appCtx.companyId)return[];
   try{
     const snap=await fbDb.collection(`companies/${_appCtx.companyId}/knowledgeBase`).get();
-    _kbCache=snap.docs.map(d=>({id:d.id,...d.data()}));
-    console.log(`[KB] Loaded ${_kbCache.length} knowledge base docs (${_kbCache.reduce((s,d)=>(d.content||'').length+s,0)} chars)`);
-    return _kbCache;
-  }catch(e){console.warn('[KB] Load failed:',e);return[];}
+    _niqCache=snap.docs.map(d=>({id:d.id,...d.data()}));
+    console.log(`[NIQ] Loaded ${_niqCache.length} Neural IQ docs (${_niqCache.reduce((s,d)=>(d.content||'').length+s,0)} chars)`);
+    return _niqCache;
+  }catch(e){console.warn('[NIQ] Load failed:',e);return[];}
 }
-function searchKB(kbDocs,terms){
-  // Search knowledge base pages for terms, return top matches (max chars)
-  if(!kbDocs?.length||!terms?.length)return'';
+function searchNIQ(niqDocs,terms){
+  // Search ARC Neural IQ pages for terms, return top matches (max chars)
+  if(!niqDocs?.length||!terms?.length)return'';
   const words=terms.flatMap(t=>t.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/)).filter(w=>w.length>=3);
   if(!words.length)return'';
   const stopWords=new Set(['the','and','for','are','but','not','you','all','can','had','was','one','our','has','how','what','when','where','which','who','does','this','that','with','from','they','been','have','many','some','them','than','each','make','like','over','into','also']);
   const filtered=words.filter(w=>!stopWords.has(w));
   if(!filtered.length)return'';
   const scores=[];
-  kbDocs.forEach(doc=>{
+  niqDocs.forEach(doc=>{
     if(!doc.content)return;
     const pages=doc.content.split(/--- PAGE (\d+) ---/).filter(Boolean);
     for(let i=0;i<pages.length-1;i+=2){
@@ -3823,9 +3823,9 @@ async function runComplianceReview(panel){
   if(counts.wireCount>50)searchTerms.push('wire bending','wire duct fill','raceway');
   if(layout.enclosure)searchTerms.push('enclosure type','NEMA','ventilation','thermal');
 
-  // Fetch relevant KB sections
-  const kbDocs=await loadKnowledgeBase();
-  const kbContext=searchKB(kbDocs,searchTerms);
+  // Fetch relevant NIQ sections
+  const niqDocs=await loadNIQ();
+  const niqContext=searchNIQ(niqDocs,searchTerms);
 
   const prompt=`You are a UL508A certified panel shop inspector and compliance reviewer. You have just reviewed the extraction results from an industrial control panel drawing set. Analyze the data below for potential compliance concerns, design issues, and things the panel builder should verify.
 
@@ -3853,9 +3853,9 @@ VALIDATION:
 ${panel.extractionNotes?`
 USER NOTES ABOUT THESE DRAWINGS:
 ${panel.extractionNotes}
-`:''}${kbContext?`
-REFERENCE STANDARDS (excerpts from UL508A, CSA C22.2 No. 286, UL508A Supplement, FUII, Certification Manual):
-${kbContext}
+`:''}${niqContext?`
+ARC NEURAL IQ — REFERENCE STANDARDS (excerpts from UL508A, CSA C22.2 No. 286, UL508A Supplement, FUII, Certification Manual):
+${niqContext}
 `:''}
 INSTRUCTIONS:
 Analyze the above and return a JSON object with this structure:
@@ -3891,7 +3891,7 @@ CATEGORIES: SCCR, overcurrent_protection, wiring, grounding, spacing, marking, e
 RULES:
 - Only flag concerns you can support with specific UL508A/C22.2 clauses or standard practices
 - Reference specific section/table numbers from the standards when possible
-- Include the page number from the knowledge base excerpts when citing
+- Include the page number from the ARC Neural IQ excerpts when citing
 - Be practical — focus on things a panel builder or inspector would actually flag
 - If the BOM is missing common required items (ground bus, wire markers, SCCR label, etc.), flag it
 - Check device-to-protection coordination: are breakers properly sized for the devices downstream?
@@ -3918,7 +3918,7 @@ RULES:
       observations:result.observations||[],
       checklist:result.checklist||[],
       deviceSummary,
-      kbDocsUsed:kbDocs.length
+      niqDocsUsed:niqDocs.length
     };
   }catch(e){
     console.error('Compliance review failed:',e);
@@ -3999,13 +3999,13 @@ async function saveExtractionLearning(uid,projectId,panel,projectName,bcProjectN
       content+=bom.filter(r=>r.partNumber&&!r.isLaborRow).slice(0,30).map(r=>`${r.qty||1}x ${r.manufacturer||''} ${r.partNumber} — ${(r.description||'').slice(0,60)}`).join('\n')+'\n';
     }
     await fbDb.collection(`companies/${_appCtx.companyId}/knowledgeBase`).add({
-      type:"extraction_learning",source:"Extraction Learning",createdAt:Date.now(),
+      type:"niq_learning",source:"ARC Neural IQ",createdAt:Date.now(),
       projectName:projectName||'',panelName:panel.name||'',projectId,panelId:panel.id,
       bcProjectNumber:bcProjectNumber||'',content
     });
-    _kbCache=null; // Invalidate cache so next search picks up this record
-    console.log('[KB] Saved extraction learning record');
-  }catch(e){console.warn('[KB] Failed to save extraction learning:',e);}
+    _niqCache=null; // Invalidate cache so next search picks up this record
+    console.log('[NIQ] Saved Neural IQ learning record');
+  }catch(e){console.warn('[NIQ] Failed to save learning record:',e);}
 }
 
 async function runExtractionTask(uid,projectId,panel,cbs={}){
@@ -4060,7 +4060,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       try{const vr=await verifyPartNumbers(bomToVerify);if(vr?.length>0)await save({...latestPanel,bomVerification:vr,updatedAt:Date.now()});}
       catch(e){console.warn("Part verification failed:",e);}
     }
-    // Compliance review — UL508A/C22.2 analysis against knowledge base
+    // Compliance review — UL508A/C22.2 analysis against ARC Neural IQ
     if(_apiKey&&(latestPanel.bom?.length>0||latestPanel.validation)){
       try{
         bgUpdate(panel.id,"Compliance review…");
@@ -4088,7 +4088,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     }
     const itemCount=(latestPanel.bom||[]).length;
     bgDone(panel.id,itemCount>0?`✓ ${itemCount} items`:"✓ Complete");
-    // Save extraction learning record for AI Search knowledge base
+    // Save learning record to ARC Neural IQ
     saveExtractionLearning(uid,projectId,latestPanel,projectName||'',bcProjectNumber||'');
   }catch(ex){
     console.error("runExtractionTask error:",ex);
@@ -13221,7 +13221,7 @@ function App({user}){
   const [sqSearching,setSqSearching]=useState(false);
   const [sqAnswer,setSqAnswer]=useState(''); // AI conversational answer
   const [sqHistory,setSqHistory]=useState([]); // chat history [{role,content}]
-  // KB uses module-level _kbCache via loadKnowledgeBase() and searchKB()
+  // NIQ uses module-level _niqCache via loadNIQ() and searchNIQ()
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
   const TOUR_KEY='arc_tour_step_'+user.uid;
@@ -13310,7 +13310,7 @@ function App({user}){
     return{projCtx,partsCtx,projectCount:projects.length};
   }
 
-  // KB functions use module-level loadKnowledgeBase() and searchKB()
+  // NIQ functions use module-level loadNIQ() and searchNIQ()
 
   async function runAiSearch(q){
     if(!q||q.trim().length<2)return;
@@ -13318,11 +13318,11 @@ function App({user}){
     try{
       const{projCtx,partsCtx,projectCount}=buildArcContext();
 
-      // Fetch knowledge base and find relevant sections
-      const kbDocs=await loadKnowledgeBase();
-      const kbContext=searchKB(kbDocs,q.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w.length>=3));
+      // Fetch ARC Neural IQ and find relevant sections
+      const niqDocs=await loadNIQ();
+      const niqContext=searchNIQ(niqDocs,q.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w.length>=3));
 
-      const systemPrompt=`You are ARC AI — the expert assistant built into the ARC (Automated Review & Costing) platform by RedPill Software.
+      const systemPrompt=`You are ARC AI — the expert assistant built into the ARC (Automated Review & Costing) platform by RedPill Software, powered by ARC Neural IQ (NIQ).
 
 ABOUT MATRIX SYSTEMS:
 Matrix Systems (Matrix Panel & Control Inc.) is a UL508A and CSA C22.2 No. 286 certified industrial control panel shop. They design, build, wire, and certify custom industrial control panels for clients across manufacturing, water/wastewater, HVAC, and industrial automation. Their work includes:
@@ -13345,10 +13345,10 @@ You are a Control Panel Designer, Engineer, Inspector, and Control Panel Expert.
 - Inspection: what an inspector looks for during a UL508A listing inspection, common non-conformances, corrective actions
 - Pricing knowledge for industrial components (approximate ranges from major distributors)
 - Business Central ERP integration and purchasing workflows
-${kbContext?`
-KNOWLEDGE BASE — AUTHORITATIVE STANDARD EXCERPTS & EXTRACTION LEARNING:
-The following are excerpts from the actual UL508A handbook, CSA C22.2 No. 286, UL508A Supplement, FUII Follow-Up Instructions, UL508A Certification Manual, and extraction learning records from past panel extractions. Standards excerpts are your PRIMARY source of truth — always prefer these over general knowledge when answering standards questions. Cite the document source and page numbers. Extraction Learning records contain project-specific extraction results, user notes, feedback corrections, compliance findings, and component lists from past panels — use them to answer questions about past projects, common extraction patterns, typical component usage, and lessons learned.
-${kbContext}
+${niqContext?`
+ARC NEURAL IQ — STANDARDS, LEARNING & EXTRACTION INTELLIGENCE:
+The following are sourced from ARC Neural IQ (NIQ) — the AI learning engine that stores authoritative standard excerpts (UL508A, CSA C22.2 No. 286, Supplement, FUII, Certification Manual), plus learning records from past panel extractions including user notes, corrections, compliance findings, and component data. Standards excerpts are your PRIMARY source of truth — always prefer these over general knowledge when answering standards questions. Cite the document source and page numbers. Learning records contain project-specific intelligence — use them to answer questions about past projects, common patterns, typical components, and lessons learned.
+${niqContext}
 `:''}
 USER'S ARC DATA:
 
@@ -13360,7 +13360,7 @@ ${partsCtx||'(none yet)'}
 
 INSTRUCTIONS:
 - Answer as a fellow panel shop expert — knowledgeable, practical, and direct.
-- When asked about standards (UL508A, C22.2, FUII, etc.), cite specific clauses/sections/tables. When knowledge base excerpts are provided, quote them directly and cite the source document and page number.
+- When asked about standards (UL508A, C22.2, FUII, etc.), cite specific clauses/sections/tables. When ARC Neural IQ excerpts are provided, quote them directly and cite the source document and page number.
 - When asked about panel design, wiring, or inspection topics, give actionable guidance that a panel builder or inspector can use immediately.
 - When asked about specific projects, reference them by name and BC project number.
 - When asked about parts, include part numbers and approximate pricing when relevant.
@@ -13368,7 +13368,7 @@ INSTRUCTIONS:
 - If the question is a simple search (e.g. "find project X" or "show me quotes from Y"), identify matching projects/quotes and present them clearly.
 - Format responses with markdown: use **bold**, bullet points, and headers for readability.
 - Keep answers focused and practical — this is a work tool used by professionals, not a general chatbot.
-- If you don't have the specific standard text in your knowledge base, say so and provide your best knowledge with a note that the user should verify against the actual standard.`;
+- If you don't have the specific standard text in ARC Neural IQ, say so and provide your best knowledge with a note that the user should verify against the actual standard.`;
 
       // Build messages with conversation history (keep last 6 exchanges)
       const historySlice=sqHistory.slice(-12);
@@ -13910,7 +13910,7 @@ INSTRUCTIONS:
           <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:18}}>✨</span>
             <span style={{fontSize:14,fontWeight:700,color:C.text,flex:1}}>ARC AI Assistant</span>
-            {sqHistory.length>0&&!sqSearching&&<button onClick={()=>{setSqHistory([]);setSqAnswer('');setSqResults(null);_kbCache=null;}} title="Clear chat" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontWeight:600,padding:"2px 8px"}}>Clear</button>}
+            {sqHistory.length>0&&!sqSearching&&<button onClick={()=>{setSqHistory([]);setSqAnswer('');setSqResults(null);_niqCache=null;}} title="Clear chat" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,fontWeight:600,padding:"2px 8px"}}>Clear</button>}
             <button onClick={()=>setShowSearch(false)} title="Close" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,padding:"0 4px",lineHeight:1}}>×</button>
           </div>
           {/* Chat history */}
