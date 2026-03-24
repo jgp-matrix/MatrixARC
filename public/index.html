@@ -2029,30 +2029,71 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
     const docNo=header.No||header.Document_No||header.no||header.number||null;
     console.log('BC PQ: Created header, Doc No:',docNo,'full response keys:',Object.keys(header).join(', '));
     if(!docNo){console.warn('BC PQ: header created but no document number found in response');return null;}
-    // Add line items if we have a lines page
-    if(linePage&&items&&items.length>0){
-      // Probe line fields
-      const lineProbe=await fetch(`${BC_ODATA_BASE}/${linePage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}}).catch(()=>null);
+    // Add line items — try multiple approaches to discover the right field names
+    if(items&&items.length>0){
       let lineFields=[];
-      if(lineProbe&&lineProbe.ok){const ld=await lineProbe.json();const rec=(ld.value||[])[0];if(rec)lineFields=Object.keys(rec);console.log('BC PQ: line fields:',lineFields.join(', '));}
-      const docNoField=lineFields.find(f=>/^Document_No$/i.test(f))||'Document_No';
-      const docTypeField=lineFields.find(f=>/^Document_Type$/i.test(f))||'Document_Type';
-      const typeField=lineFields.find(f=>/^Type$/i.test(f))||'Type';
-      const noField=lineFields.find(f=>/^No$/i.test(f)&&!/line|doc/i.test(f))||'No';
-      const qtyField=lineFields.find(f=>/^Quantity$/i.test(f))||'Quantity';
-      const descField=lineFields.find(f=>/^Description$/i.test(f))||'Description';
-      for(const item of items){
-        const lBody={[docTypeField]:'Quote',[docNoField]:docNo,[typeField]:'Item',[descField]:item.description||item.partNumber||'',[qtyField]:Number(item.qty)||1};
-        if(item.partNumber)lBody[noField]=item.partNumber;
-        console.log('BC PQ line POST body:',JSON.stringify(lBody));
-        const lr=await fetch(`${BC_ODATA_BASE}/${linePage}`,{
-          method:"POST",
-          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-          body:JSON.stringify(lBody)
-        }).catch(e=>{console.warn('BC PQ line POST error:',e);return null;});
-        if(lr&&!lr.ok){const t=await lr.text();console.warn('BC PQ line failed:',lr.status,t.slice(0,200));}
-        else if(lr)console.log('BC PQ line added:',item.partNumber);
+      let linesAdded=false;
+      // Approach 1: If we have a dedicated lines page, probe its fields
+      if(linePage){
+        // Try fetching metadata from root OData to discover entity fields
+        try{
+          const metaUrl=`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/ODataV4/$metadata`;
+          const metaR=await fetch(metaUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          if(metaR.ok){
+            const metaText=await metaR.text();
+            const entityMatch=metaText.match(new RegExp('EntityType Name="'+linePage+'"[\\s\\S]*?</EntityType>'));
+            if(entityMatch){
+              const propMatches=entityMatch[0].match(/Property Name="([^"]+)"/g)||[];
+              lineFields=propMatches.map(function(m){return m.replace('Property Name="','').replace('"','')});
+              console.log('BC PQ: line fields from $metadata:',lineFields.join(', '));
+            }
+          }else{console.log('BC PQ: $metadata returned',metaR.status,'- will try probe');}
+        }catch(me){console.log('BC PQ: $metadata fetch failed:',me.message);}
+        // Fallback: probe with $top=1
+        if(!lineFields.length){
+          const lineProbe=await fetch(`${BC_ODATA_BASE}/${linePage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}}).catch(()=>null);
+          if(lineProbe&&lineProbe.ok){const ld=await lineProbe.json();const rec=(ld.value||[])[0];if(rec){lineFields=Object.keys(rec);console.log('BC PQ: line fields from probe:',lineFields.join(', '));}}
+          if(!lineFields.length)console.log('BC PQ: probe returned no records, no fields discovered');
+        }
+        if(lineFields.length){
+          const docNoField=lineFields.find(f=>/^Document_No$/i.test(f));
+          const docTypeField=lineFields.find(f=>/^Document_Type$/i.test(f));
+          const typeField=lineFields.find(f=>/^Type$/i.test(f))||'Type';
+          const noField=lineFields.find(f=>/^No$/i.test(f)&&!/line|doc/i.test(f))||'No';
+          const qtyField=lineFields.find(f=>/^Quantity$/i.test(f))||'Quantity';
+          const descField=lineFields.find(f=>/^Description$/i.test(f))||'Description';
+          console.log('BC PQ: resolved line field names:',{docNoField,docTypeField,typeField,noField,qtyField,descField});
+          for(const item of items){
+            const lBody={[typeField]:'Item',[descField]:item.description||item.partNumber||'',[qtyField]:Number(item.qty)||1};
+            if(docNoField)lBody[docNoField]=docNo;
+            if(docTypeField)lBody[docTypeField]='Quote';
+            if(item.partNumber)lBody[noField]=item.partNumber;
+            console.log('BC PQ line POST body:',JSON.stringify(lBody));
+            const lr=await fetch(`${BC_ODATA_BASE}/${linePage}`,{
+              method:"POST",
+              headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+              body:JSON.stringify(lBody)
+            }).catch(e=>{console.warn('BC PQ line POST error:',e);return null;});
+            if(lr&&!lr.ok){const t=await lr.text();console.warn('BC PQ line failed:',lr.status,t.slice(0,300));}
+            else if(lr){console.log('BC PQ line added:',item.partNumber);linesAdded=true;}
+          }
+        }else{
+          // No fields discovered — try minimal POST without doc fields (subform may auto-link)
+          console.log('BC PQ: No fields discovered, trying minimal POST to',linePage);
+          for(const item of items){
+            const lBody={Type:'Item',Description:item.description||item.partNumber||'',Quantity:Number(item.qty)||1};
+            if(item.partNumber)lBody.No=item.partNumber;
+            const lr=await fetch(`${BC_ODATA_BASE}/${linePage}`,{
+              method:"POST",
+              headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+              body:JSON.stringify(lBody)
+            }).catch(e=>{console.warn('BC PQ line minimal POST error:',e);return null;});
+            if(lr&&!lr.ok){const t=await lr.text();console.warn('BC PQ line minimal failed:',lr.status,t.slice(0,300));}
+            else if(lr){console.log('BC PQ line added (minimal):',item.partNumber);linesAdded=true;}
+          }
+        }
       }
+      if(!linesAdded){console.log('BC PQ: Lines not added via OData, quote',docNo,'created as header only');}
     }
     return docNo;
   }catch(e){
