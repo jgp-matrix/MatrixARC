@@ -1985,15 +1985,17 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
     if(!compId)return null;
     const quoteBody={buyFromVendorName:vendorName};
     if(vendorNo)quoteBody.vendorNumber=vendorNo;
+    console.log('BC PQ: POST body:',JSON.stringify(quoteBody));
     const qr=await fetch(`${BC_API_BASE}/companies(${compId})/purchaseQuotes`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(quoteBody)
     });
-    if(!qr.ok){console.warn("BC purchaseQuote create failed:",qr.status,await qr.text());return null;}
+    if(!qr.ok){const errText=await qr.text();console.warn("BC purchaseQuote create failed:",qr.status,errText);return null;}
     const quote=await qr.json();
     const quoteId=quote.id;
     const docNumber=quote.number;
+    console.log('BC PQ: Created successfully, id:',quoteId,'number:',docNumber);
     for(const item of (items||[])){
       const lineBody={lineType:"Item",description:item.description||item.partNumber||"",quantity:item.qty||1};
       if(item.partNumber)lineBody.lineObjectNumber=item.partNumber;
@@ -4858,8 +4860,14 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         // Try to create BC Purchase Quote and use its document number
         let rfqNum=makeRfqNum(group.vendorName);
         if(_bcToken){
-          const bcNum=await bcCreatePurchaseQuote(group.vendorNo,group.vendorName,group.items).catch(()=>null);
-          if(bcNum)rfqNum=bcNum;
+          console.log('RFQ: Creating BC Purchase Quote for',group.vendorName,'vendorNo:',group.vendorNo,'items:',group.items.length);
+          const bcNum=await bcCreatePurchaseQuote(group.vendorNo,group.vendorName,group.items).catch(e=>{console.warn('RFQ: bcCreatePurchaseQuote threw:',e);return null;});
+          console.log('RFQ: BC Purchase Quote result:',bcNum);
+          if(bcNum){rfqNum=bcNum;
+            // Update the rfqUpload doc with the real BC quote number
+            const uploadToken=vendorTokens[group.vendorName];
+            if(uploadToken)fbDb.collection('rfqUploads').doc(uploadToken).update({rfqNum}).catch(()=>{});
+          }
         }
         const uploadToken=vendorTokens[group.vendorName];
         const uploadUrl=uploadToken?`https://matrix-arc.web.app?rfqUpload=${uploadToken}`:null;
