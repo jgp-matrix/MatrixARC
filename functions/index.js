@@ -203,7 +203,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     })),
     {
       type: 'text',
-      text: `You are extracting pricing and lead times from a supplier quote document. The following items were requested:\n\n${itemList}\n\nExtract the unit price and lead time (in calendar days) for each item from the quote images.\n\nMATCHING RULES — be flexible, not strict:\n- Ignore spaces, dashes, and case when comparing part numbers. "ARL 449" matches "ARL449". "CEL-550M" matches "CEL550M".\n- Supplier quotes often prepend a short manufacturer or brand code (2–6 characters) before the base part number. Strip any such prefix to find the base. Example: "HOFF CEL550M" → base "CEL550M" which matches requested "CEL550M".\n- Use contains/substring matching: if the requested part number appears anywhere inside the supplier part number (after removing spaces), treat it as a match.\n- When you find a match (exact or fuzzy), ALWAYS output the exact part number from the requested list above in the "partNumber" field — not the supplier's version.\n- "supplierPartNumber" = the part number exactly as printed on the supplier's quote document.\n- Confidence: "high" = exact normalized match, "medium" = prefix stripped or minor variation matched, "low" = uncertain.\n\nReturn ONLY a JSON array with no other text:\n[{"partNumber":"...","supplierPartNumber":"...","unitPrice":number_or_null,"leadTimeDays":number_or_null,"confidence":"high|medium|low","notes":"..."}]\n\nReturn an entry for every requested item — set unitPrice to null if not found. Set leadTimeDays to null if not stated. Look for lead time phrasing like "ARO", "days ARO", "weeks", "delivery", "lead time". Convert weeks to days (multiply by 7).`
+      text: `You are extracting pricing, lead times, and quote header details from a supplier quote document. The following items were requested:\n\n${itemList}\n\nExtract the unit price and lead time (in calendar days) for each item, plus the quote header information from the document.\n\nMATCHING RULES — be flexible, not strict:\n- Ignore spaces, dashes, and case when comparing part numbers. "ARL 449" matches "ARL449". "CEL-550M" matches "CEL550M".\n- Supplier quotes often prepend a short manufacturer or brand code (2–6 characters) before the base part number. Strip any such prefix to find the base. Example: "HOFF CEL550M" → base "CEL550M" which matches requested "CEL550M".\n- Use contains/substring matching: if the requested part number appears anywhere inside the supplier part number (after removing spaces), treat it as a match.\n- When you find a match (exact or fuzzy), ALWAYS output the exact part number from the requested list above in the "partNumber" field — not the supplier's version.\n- "supplierPartNumber" = the part number exactly as printed on the supplier's quote document.\n- Confidence: "high" = exact normalized match, "medium" = prefix stripped or minor variation matched, "low" = uncertain.\n\nReturn ONLY a JSON object with no other text:\n{"header":{"supplierName":"string or null","quoteNumber":"string or null","quoteDate":"YYYY-MM-DD or null","updatedOn":"YYYY-MM-DD or null","expiresOn":"YYYY-MM-DD or null","jobName":"string or null","contactName":"string or null","customerPO":"string or null","customerPODate":"YYYY-MM-DD or null","fob":"string or null","freight":"string or null"},"lineItems":[{"partNumber":"...","supplierPartNumber":"...","unitPrice":number_or_null,"leadTimeDays":number_or_null,"confidence":"high|medium|low","notes":"..."}]}\n\nFor lineItems: return an entry for every requested item — set unitPrice to null if not found. Set leadTimeDays to null if not stated. Look for lead time phrasing like "ARO", "days ARO", "weeks", "delivery", "lead time". Convert weeks to days (multiply by 7).\nFor header: extract all available fields from the quote document. Set to null if not found.`
     }
   ];
 
@@ -226,13 +226,27 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
   }
 
   const result = await response.json();
-  const text = result.content?.[0]?.text || '[]';
+  const text = result.content?.[0]?.text || '{}';
   functions.logger.info('extractSupplierQuotePricing AI response length:', text.length, 'preview:', text.slice(0, 300));
 
   let extracted = [];
+  let quoteHeader = null;
   try {
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    extracted = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+    const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+    // Try parsing as object with header+lineItems first, fall back to array
+    const objMatch = stripped.match(/\{[\s\S]*\}/);
+    const arrMatch = stripped.match(/\[[\s\S]*\]/);
+    if (objMatch) {
+      const parsed = JSON.parse(objMatch[0]);
+      if (parsed.lineItems && Array.isArray(parsed.lineItems)) {
+        extracted = parsed.lineItems;
+        quoteHeader = parsed.header || null;
+      } else if (Array.isArray(parsed)) {
+        extracted = parsed;
+      }
+    } else if (arrMatch) {
+      extracted = JSON.parse(arrMatch[0]);
+    }
     if (!Array.isArray(extracted)) extracted = [];
   } catch (e) {
     functions.logger.warn('extractSupplierQuotePricing JSON parse failed:', e.message, 'raw:', text.slice(0, 500));
@@ -278,5 +292,5 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     functions.logger.warn('Cross-ref enrichment failed:', e.message);
   }
 
-  return { extracted };
+  return { extracted, quoteHeader };
 });

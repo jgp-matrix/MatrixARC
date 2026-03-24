@@ -13094,6 +13094,7 @@ function SupplierPortalPage({token}){
   const [itemLeadTimes,setItemLeadTimes]=useState({});
   const [cannotSupply,setCannotSupply]=useState({});
   const [supplierPartNums,setSupplierPartNums]=useState({});
+  const [quoteHeaderInfo,setQuoteHeaderInfo]=useState(null);
   const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
   const pdfRef=useRef(null);
 
@@ -13142,7 +13143,8 @@ function SupplierPortalPage({token}){
         console.log('PORTAL EXTRACT: sending',pageImages.length,'images for batch',batch+1);
         const result=await fbFunctions.httpsCallable("extractSupplierQuotePricing")({token,pageImages});
         const extracted=result.data?.extracted||[];
-        console.log('PORTAL EXTRACT: got',extracted.length,'results, sample:',JSON.stringify(extracted.slice(0,3)));
+        if(result.data?.quoteHeader&&!quoteHeaderInfo)setQuoteHeaderInfo(result.data.quoteHeader);
+        console.log('PORTAL EXTRACT: got',extracted.length,'results, header:',result.data?.quoteHeader,'sample:',JSON.stringify(extracted.slice(0,3)));
         extracted.forEach(ex=>{
           // First try exact (normalized), then fuzzy prefix/contains match
           let idx=lineItems.findIndex(it=>normPart(it.partNumber)===normPart(ex.partNumber));
@@ -13266,6 +13268,22 @@ function SupplierPortalPage({token}){
               }
             </div>
           </div>
+          {quoteHeaderInfo&&(
+            <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"16px 20px",marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+              <div style={{fontSize:13,fontWeight:700,color:dark,marginBottom:10}}>Quote Details (extracted from PDF)</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(180px,1fr))",gap:8}}>
+                {[['Supplier',quoteHeaderInfo.supplierName],['Quote #',quoteHeaderInfo.quoteNumber],['Job Name',quoteHeaderInfo.jobName],
+                  ['Contact',quoteHeaderInfo.contactName],['Quote Date',quoteHeaderInfo.quoteDate],['Updated On',quoteHeaderInfo.updatedOn],
+                  ['Expires On',quoteHeaderInfo.expiresOn],['Customer PO #',quoteHeaderInfo.customerPO],['Customer PO Date',quoteHeaderInfo.customerPODate],
+                  ['FOB',quoteHeaderInfo.fob],['Freight',quoteHeaderInfo.freight]].filter(([,v])=>v).map(([label,val])=>(
+                  <div key={label} style={{background:bg,borderRadius:6,padding:"6px 10px"}}>
+                    <div style={{fontSize:10,color:muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:1}}>{label}</div>
+                    <div style={{fontSize:13,color:dark,fontWeight:600}}>{val}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
             <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span style={{fontSize:13,fontWeight:700,color:dark}}>Pricing Review</span>
@@ -13357,7 +13375,7 @@ function SupplierPortalPage({token}){
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
-            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setMorePages(null);pdfRef.current=null;}}
+            <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setQuoteHeaderInfo(null);setMorePages(null);pdfRef.current=null;}}
               style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
               ← Start Over
             </button>
@@ -13366,6 +13384,7 @@ function SupplierPortalPage({token}){
               {uploading?"Submitting…":"✓ Confirm & Submit Quote"}
             </button>
           </div>
+          <div style={{fontSize:11,color:muted,textAlign:"center",marginTop:8,lineHeight:1.5}}>All quote submissions will be checked against the actual quote uploaded.</div>
         </div>
       </div>
     );
