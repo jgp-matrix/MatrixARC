@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.53";
+const APP_VERSION="v1.18.54";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13741,6 +13741,7 @@ INSTRUCTIONS:
                   <span style={{fontSize:11,fontWeight:600,color:"#ffffff",opacity:0.75,letterSpacing:0.3,lineHeight:1}}>{APP_VERSION}</span>
                 </div>
                 <span style={{fontSize:12,color:C.muted,letterSpacing:1.2,marginTop:3}}>by <span style={{background:"#ef4444",color:"#fff",borderRadius:20,padding:"1px 10px",fontWeight:700,fontSize:11,letterSpacing:0.5}}>RedPill</span> Software</span>
+                <span style={{fontSize:10,color:C.accent,letterSpacing:2,marginTop:2,fontWeight:700,opacity:0.6}}>NEURAL IQ</span>
               </div>
             </div>
             {view!=="dashboard"&&(<button onClick={()=>{setView("dashboard");setOpenProject(null);}} style={{display:"flex",alignItems:"center",gap:4,background:C.accentDim,border:`1px solid ${C.accent}`,color:C.accent,cursor:"pointer",borderRadius:6,padding:"2px 12px",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>← Back to Projects</button>)}
