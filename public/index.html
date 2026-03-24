@@ -5316,7 +5316,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         const rfqNum=makeRfqNum(group.vendorName);
         const tok=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
         vendorTokens[group.vendorName]=tok;
-        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorEmail:(emails[group.vendorName]||"").trim(),rfqNum,lineItems:group.items.map(i=>({partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""})),sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
+        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:(emails[group.vendorName]||"").trim(),rfqNum,lineItems:group.items.map(i=>({partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""})),sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
       }
     }
     const sentItemIds=[];
@@ -10174,25 +10174,28 @@ ${fullText.slice(0,8000)}`;
         if(idx>=0)updatedItems[idx]={...updatedItems[idx],priceUpdateStatus:'error'};
       }
     }
-    // Push Purchase Prices to BC (vendor, direct unit cost, starting date)
-    if(_bcToken&&quoteHeader?.supplier){
+    // Push Purchase Prices to BC — use autoVendor (resolved when quote was matched) or fall back to fuzzy
+    if(_bcToken){
       try{
-        const vendors=await bcListVendors();
-        const sqName=(quoteHeader.supplier||'').toLowerCase().trim();
-        const sqWords=sqName.replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(w=>w.length>2);
-        // Match: exact → contains → first significant word overlap
-        const vMatch=vendors.find(v=>v.displayName===quoteHeader.supplier)
-          ||vendors.find(v=>(v.displayName||'').toLowerCase().includes(sqName))
-          ||vendors.find(v=>sqName.includes((v.displayName||'').toLowerCase()))
-          ||vendors.find(v=>{const vWords=(v.displayName||'').toLowerCase().replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(w=>w.length>2);return sqWords.some(sw=>vWords.some(vw=>vw.includes(sw)||sw.includes(vw)));});
-        if(vMatch){
-          console.log("bcPushPurchasePrice: matched vendor",JSON.stringify(quoteHeader.supplier),"→",vMatch.number,vMatch.displayName);
+        let ppVendorNo=autoVendor.vendorNo||'';
+        if(!ppVendorNo&&quoteHeader?.supplier){
+          const vendors=await bcListVendors();
+          const sqName=(quoteHeader.supplier||'').toLowerCase().trim();
+          const sqWords=sqName.replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(w=>w.length>2);
+          const vMatch=vendors.find(v=>v.displayName===quoteHeader.supplier)
+            ||vendors.find(v=>(v.displayName||'').toLowerCase().includes(sqName))
+            ||vendors.find(v=>sqName.includes((v.displayName||'').toLowerCase()))
+            ||vendors.find(v=>{const vWords=(v.displayName||'').toLowerCase().replace(/[^a-z0-9]/g,' ').split(/\s+/).filter(w=>w.length>2);return sqWords.some(sw=>vWords.some(vw=>vw.includes(sw)||sw.includes(vw)));});
+          if(vMatch)ppVendorNo=vMatch.number;
+        }
+        if(ppVendorNo){
+          console.log("bcPushPurchasePrice: using vendor",ppVendorNo,"for",quoteHeader?.supplier);
           const ppPushes=toUpdate.filter(i=>i.price&&i.partNumber).map(i=>
-            bcPushPurchasePrice(i.partNumber,vMatch.number,i.price,Date.now(),i.uom||'').catch(e=>console.warn("BC purchase price push failed:",i.partNumber,e))
+            bcPushPurchasePrice(i.partNumber,ppVendorNo,i.price,Date.now(),i.uom||'').catch(e=>console.warn("BC purchase price push failed:",i.partNumber,e))
           );
           await Promise.all(ppPushes);
-          console.log("bcPushPurchasePrice: pushed",ppPushes.length,"items for vendor",vMatch.number);
-        }else{console.warn("bcPushPurchasePrice: vendor not found in BC:",quoteHeader.supplier,"| BC vendors:",vendors.map(v=>v.displayName).join(', '));}
+          console.log("bcPushPurchasePrice: pushed",ppPushes.length,"items for vendor",ppVendorNo);
+        }else{console.warn("bcPushPurchasePrice: no vendor resolved for",quoteHeader?.supplier);}
       }catch(e){console.warn("bcPushPurchasePrice batch error:",e);}
     }
     const finalStatus=errors.length===0?'pushed_to_bc':'pending_review';
@@ -11594,9 +11597,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }
     });
     const now=Date.now();
-    // Resolve vendor number from BC vendors list for Vendor_No push
-    let vendorNo=null;
-    if(_bcToken&&submission.vendorName){
+    // Use BC vendor number from rfqUpload doc (set when RFQ was sent), fall back to fuzzy match
+    let vendorNo=submission.vendorNumber||null;
+    if(!vendorNo&&_bcToken&&submission.vendorName){
       try{
         const vendors=await bcListVendors();
         const svName=(submission.vendorName||'').toLowerCase().trim();
@@ -11608,6 +11611,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         if(vMatch)vendorNo=vMatch.number;
       }catch(e){console.warn("Vendor lookup for portal prices failed:",e);}
     }
+    if(vendorNo)console.log("applyPortalPrices: vendor",vendorNo,submission.vendorName);
     // Push each price (and vendor if resolved) to BC item card
     const bcPushes=Object.values(priceMap).map(({price,partNumber})=>{
       const patch={Unit_Cost:price};
