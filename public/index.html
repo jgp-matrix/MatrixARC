@@ -11531,6 +11531,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   }
 
   async function applyPortalPrices(submission){
+    try{
     // Save cannot-supply records to Firestore for future tracking
     const cantItems=(submission.lineItems||[]).filter(item=>item.cannotSupply&&item.partNumber);
     if(cantItems.length>0){
@@ -11606,9 +11607,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       })
     }));
     update({...projectRef.current,panels:updatedPanels});
-    fbDb.collection('rfqUploads').doc(submission.id).update({status:'imported',importedAt:now}).catch(()=>{});
     const cantCount=cantItems.length;
     alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}`);
+    }catch(e){
+      console.error("applyPortalPrices error:",e);
+      alert("Error applying prices: "+e.message+"\nPrices may have been partially applied. Check console for details.");
+    }
+    // Always close modal and mark as imported
+    fbDb.collection('rfqUploads').doc(submission.id).update({status:'imported',importedAt:Date.now()}).catch(()=>{});
     setShowPortalModal(false);
   }
 
