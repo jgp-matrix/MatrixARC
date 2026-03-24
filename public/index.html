@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.63";
+const APP_VERSION="v1.18.64";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1765,6 +1765,38 @@ async function bcPatchItemOData(itemNo,fields){
   });
   if(!pr.ok){const txt=await pr.text();console.warn("OData PATCH failed:",pr.status,txt);return;}
   console.log("OData PATCH OK:",itemNo,"→",JSON.stringify(fields));
+}
+
+async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
+  if(!_bcToken||!itemNo||!vendorNo)return;
+  try{
+    const allPages=await bcDiscoverODataPages();
+    const ppPage=allPages.find(p=>/^purchase.?price/i.test(p))||null;
+    if(!ppPage){console.warn("bcPushPurchasePrice: No PurchasePrices OData page found. Publish BC page 7012 as 'PurchasePrices'.");return;}
+    // Format date as YYYY-MM-DD
+    const dateStr=startingDate?new Date(startingDate).toISOString().split('T')[0]:new Date().toISOString().split('T')[0];
+    // Check if a record already exists for this item+vendor+date
+    const filterUrl=`${BC_ODATA_BASE}/${ppPage}?$filter=Item_No eq '${encodeURIComponent(itemNo)}' and Vendor_No eq '${encodeURIComponent(vendorNo)}' and Starting_Date eq ${dateStr}`;
+    const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(gr.ok){
+      const gd=await gr.json();
+      const existing=(gd.value||[])[0];
+      if(existing){
+        // Update existing record
+        const etag=existing["@odata.etag"];
+        const patchUrl=`${BC_ODATA_BASE}/${ppPage}(Item_No='${encodeURIComponent(itemNo)}',Vendor_No='${encodeURIComponent(vendorNo)}',Starting_Date=${dateStr},Currency_Code='',Variant_Code='',Unit_of_Measure_Code='${encodeURIComponent(uom||existing.Unit_of_Measure_Code||"")}')`;
+        const pr=await fetch(patchUrl,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify({Direct_Unit_Cost:unitCost})});
+        if(pr.ok){console.log("bcPushPurchasePrice PATCH OK:",itemNo,vendorNo,unitCost,dateStr);return;}
+        console.warn("bcPushPurchasePrice PATCH failed:",pr.status,await pr.text().catch(()=>""));
+      }
+    }
+    // Create new record
+    const payload={Item_No:itemNo,Vendor_No:vendorNo,Starting_Date:dateStr,Direct_Unit_Cost:unitCost,Currency_Code:"",Variant_Code:""};
+    if(uom)payload.Unit_of_Measure_Code=uom;
+    const cr=await fetch(`${BC_ODATA_BASE}/${ppPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    if(cr.ok){console.log("bcPushPurchasePrice POST OK:",itemNo,vendorNo,unitCost,dateStr);}
+    else{const txt=await cr.text().catch(()=>"");console.warn("bcPushPurchasePrice POST failed:",cr.status,txt);}
+  }catch(e){console.warn("bcPushPurchasePrice error:",itemNo,e.message);}
 }
 
 async function bcDiscoverODataPages(){
@@ -11507,7 +11539,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     (submission.lineItems||[]).forEach(item=>{
       if(item.cannotSupply)return;
       if(item.unitPrice!=null&&item.partNumber){
-        priceMap[normPart(item.partNumber)]={price:item.unitPrice,partNumber:(item.partNumber||'').trim()};
+        priceMap[normPart(item.partNumber)]={price:item.unitPrice,partNumber:(item.partNumber||'').trim(),uom:item.uom||''};
       }
     });
     const now=Date.now();
@@ -11527,6 +11559,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       return bcPatchItemOData(partNumber,patch).catch(e=>console.warn("BC price push failed:",partNumber,e));
     });
     await Promise.all(bcPushes);
+    // Push Purchase Prices to BC (vendor, direct unit cost, starting date = priced date)
+    if(vendorNo&&_bcToken){
+      const ppPushes=Object.values(priceMap).map(({price,partNumber,uom})=>{
+        return bcPushPurchasePrice(partNumber,vendorNo,price,now,uom).catch(e=>console.warn("BC purchase price push failed:",partNumber,e));
+      });
+      await Promise.all(ppPushes);
+    }
     // Apply to BOM — priceSource:'bc', bcPoDate:now so rows don't get flagged
     let matched=0;
     const updatedPanels=(projectRef.current.panels||[]).map(panel=>({
@@ -11549,7 +11588,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     update({...projectRef.current,panels:updatedPanels});
     fbDb.collection('rfqUploads').doc(submission.id).update({status:'imported',importedAt:now}).catch(()=>{});
     const cantCount=cantItems.length;
-    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.`:''}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}`);
+    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}`);
     setShowPortalModal(false);
   }
 
