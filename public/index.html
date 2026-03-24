@@ -12429,15 +12429,11 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
   return(
     <div style={{maxWidth:2100,margin:"0 auto",padding:32,minWidth:0,width:"100%",boxSizing:"border-box"}}>
 
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <div>
-          <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
-        </div>
-        <div style={{display:"flex",gap:10,alignItems:"center"}}>
-          <button data-tip="Start a new panel extraction project" data-tour="new-project-btn" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
-            <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
-          </button>
-        </div>
+      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+        <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
+        <button data-tip="Start a new panel extraction project" data-tour="new-project-btn" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
+          <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
+        </button>
       </div>
 
       {/* AI Search Results */}
