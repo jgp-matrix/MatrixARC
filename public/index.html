@@ -6585,12 +6585,12 @@ function PanelCard({panel,idx,uid,projectId,bcProjectNumber,readOnly,onDelete,on
   useEffect(()=>{
     if(priceDateBackfillRan.current)return;
     const bom=panel.bom||[];
-    const needDate=bom.filter(r=>r.unitPrice!=null&&r.priceSource&&!r.priceDate);
+    const needDate=bom.filter(r=>r.unitPrice!=null&&r.priceSource&&r.priceSource!=="ai"&&!r.priceDate);
     if(!needDate.length)return;
     priceDateBackfillRan.current=true;
     const fallbackDate=panel.updatedAt||panel.createdAt||Date.now();
     const newBom=bom.map(r=>{
-      if(r.unitPrice!=null&&r.priceSource&&!r.priceDate)return{...r,priceDate:fallbackDate};
+      if(r.unitPrice!=null&&r.priceSource&&r.priceSource!=="ai"&&!r.priceDate)return{...r,priceDate:fallbackDate};
       return r;
     });
     const updated={...panel,bom:newBom};
