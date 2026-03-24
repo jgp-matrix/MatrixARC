@@ -10181,10 +10181,8 @@ ${fullText.slice(0,8000)}`;
     setQuoteHeader(h=>({...h,status:finalStatus}));
     if(errors.length===0){
       setStatusMsg(`✓ ${pushed} price${pushed!==1?'s':''} updated in BC`);
-      setTimeout(()=>setStatusMsg(''),4000);
       // Upload supplier quote PDF to BC project as attachment
       if(bcProjectNumber&&quoteHeader?.pdfUrl&&!bcAttached){
-        setBcAttachMsg('Uploading quote PDF to BC…');
         try{
           const vendor=(quoteHeader.supplier||'Supplier').replace(/[^a-z0-9 &]/gi,' ').replace(/\s+/g,' ').trim();
           const rfqId=(quoteHeader.quoteId||'').replace(/[^a-z0-9-_]/gi,'').trim();
@@ -10194,15 +10192,13 @@ ${fullText.slice(0,8000)}`;
           if(!resp.ok)throw new Error(`Storage fetch failed: ${resp.status}`);
           const ab=await resp.arrayBuffer();
           await bcAttachPdfQueued(bcProjectNumber,bcFileName,ab);
-          setBcAttached(true);
-          setBcAttachMsg(`✓ Attached to BC: ${bcFileName}`);
           await fbDb.collection('supplierQuotes').doc(quoteDocId).update({bcAttached:true,bcAttachFileName:bcFileName,bcAttachedAt:Date.now()}).catch(()=>{});
-          setTimeout(()=>setBcAttachMsg(''),6000);
         }catch(e){
           console.warn('BC PDF attach failed:',e);
-          setBcAttachMsg(`⚠ BC attach failed: ${e.message}`);
         }
       }
+      // Auto-close modal after successful push
+      setTimeout(()=>onClose(),800);
     }else{
       setStatusMsg(`⚠ ${pushed} updated, ${errors.length} failed: ${errors.join(', ')}`);
     }
