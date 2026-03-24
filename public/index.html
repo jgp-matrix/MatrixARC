@@ -13384,6 +13384,24 @@ function SupplierPortalPage({token}){
             </tbody>
           </table>
         </div>
+        <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"28px 24px",marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+          <div style={{fontSize:15,fontWeight:700,color:dark,marginBottom:4}}>Submit Your Quote</div>
+          <div style={{fontSize:13,color:muted,marginBottom:22,lineHeight:1.6}}>Upload your quote PDF below. AI will automatically extract pricing — you'll review before submitting.</div>
+          <div
+            onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+            onDragLeave={()=>setDragOver(false)}
+            onDrop={handleDrop}
+            style={{border:`2px dashed ${dragOver?"#2563eb":border}`,borderRadius:10,padding:"40px 20px",textAlign:"center",transition:"all 0.2s",background:dragOver?"#eff6ff":"#f8fafc",marginBottom:16}}>
+            <div style={{fontSize:36,marginBottom:10}}>📄</div>
+            <div style={{fontSize:15,fontWeight:600,color:dragOver?accent:dark,marginBottom:6}}>{dragOver?"Drop PDF here":"Drag & drop your quote PDF here"}</div>
+            <div style={{fontSize:13,color:muted,marginBottom:16}}>or</div>
+            <label style={{display:"inline-block",background:accent,color:"#fff",fontWeight:700,fontSize:13,padding:"10px 24px",borderRadius:7,cursor:"pointer",fontFamily:"inherit"}}>
+              Browse File
+              <input type="file" accept=".pdf,application/pdf" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)processFile(f);}}/>
+            </label>
+          </div>
+          <div style={{fontSize:12,color:muted,textAlign:"center"}}>PDF only · Up to 8 pages scanned · Pricing extracted automatically by AI</div>
+        </div>
         {(info?.lineItems||[]).length>0&&(
           <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
             <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,fontSize:13,fontWeight:700,color:dark}}>Items Requested ({info.lineItems.length})</div>
@@ -13407,24 +13425,6 @@ function SupplierPortalPage({token}){
             </table>
           </div>
         )}
-        <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"28px 24px",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-          <div style={{fontSize:15,fontWeight:700,color:dark,marginBottom:4}}>Submit Your Quote</div>
-          <div style={{fontSize:13,color:muted,marginBottom:22,lineHeight:1.6}}>Upload your quote PDF below. AI will automatically extract pricing — you'll review before submitting.</div>
-          <div
-            onDragOver={e=>{e.preventDefault();setDragOver(true);}}
-            onDragLeave={()=>setDragOver(false)}
-            onDrop={handleDrop}
-            style={{border:`2px dashed ${dragOver?"#2563eb":border}`,borderRadius:10,padding:"40px 20px",textAlign:"center",transition:"all 0.2s",background:dragOver?"#eff6ff":"#f8fafc",marginBottom:16}}>
-            <div style={{fontSize:36,marginBottom:10}}>📄</div>
-            <div style={{fontSize:15,fontWeight:600,color:dragOver?accent:dark,marginBottom:6}}>{dragOver?"Drop PDF here":"Drag & drop your quote PDF here"}</div>
-            <div style={{fontSize:13,color:muted,marginBottom:16}}>or</div>
-            <label style={{display:"inline-block",background:accent,color:"#fff",fontWeight:700,fontSize:13,padding:"10px 24px",borderRadius:7,cursor:"pointer",fontFamily:"inherit"}}>
-              Browse File
-              <input type="file" accept=".pdf,application/pdf" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)processFile(f);}}/>
-            </label>
-          </div>
-          <div style={{fontSize:12,color:muted,textAlign:"center"}}>PDF only · Up to 8 pages scanned · Pricing extracted automatically by AI</div>
-        </div>
       </div>
     </div>
   );
