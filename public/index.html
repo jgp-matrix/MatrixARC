@@ -9530,6 +9530,23 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,pro
   const dragRef=useRef(null);
   const linkDebounceRef=useRef(null);
   const fuzzySearchStarted=useRef(false);
+  const prevShowRef=useRef(false);
+  useEffect(()=>{
+    if(show&&!prevShowRef.current){
+      // Reset all state when modal freshly opens
+      setPhase('upload');setFile(null);setPdfPreview(null);setStatusMsg('');
+      setQuoteHeader(null);setLineItems([]);setQuoteDocId(null);setPushResult(null);
+      setBcConnecting(false);setParseProgress(0);setParseEta(null);
+      setNewItemIdx(null);setCreatingItem(false);setCreateError('');
+      setAutoVendor({vendorNo:'',vendorName:''});setShowVendorPrompt(null);
+      setPrecedingQuoteId(null);setModalPos(null);setSavedQuotes([]);setLoadingQuotes(false);
+      setDupWarning(null);setShowRevisions(false);setShowExportMenu(false);
+      setLinkingIdx(null);setLinkQuery('');setLinkResults([]);setLinkSearching(false);
+      setBcAttachMsg('');setBcAttached(false);setFuzzyResults({});
+      fuzzySearchStarted.current=false;
+    }
+    prevShowRef.current=show;
+  },[show]);
 
   function onTitleDrag(e){
     if(e.button!==0||e.target.closest('button'))return;
