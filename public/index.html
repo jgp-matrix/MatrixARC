@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.110";
+const APP_VERSION="v1.18.111";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3349,6 +3349,52 @@ Only ask when genuinely uncertain — do NOT ask about things you can resolve by
 
 If no BOM table exists on this page, return {"items":[],"questions":[]}.`;
 
+// Crop a region from an image using normalized coordinates (0-1)
+function cropRegionFromImage(dataUrl,region){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const W=img.naturalWidth,H=img.naturalHeight;
+      const sx=Math.round(region.x*W),sy=Math.round(region.y*H);
+      const sw=Math.round(region.w*W),sh=Math.round(region.h*H);
+      if(sw<10||sh<10){resolve(null);return;}
+      const canvas=document.createElement('canvas');
+      canvas.width=sw;canvas.height=sh;
+      canvas.getContext('2d').drawImage(img,sx,sy,sw,sh,0,0,sw,sh);
+      resolve(canvas.toDataURL('image/jpeg',0.92));
+    };
+    img.onerror=()=>resolve(null);
+    img.src=dataUrl;
+  });
+}
+
+// Build extraction units from a page — if BOM regions exist, crop them; otherwise use full page
+async function getExtractionUnits(pg){
+  const regions=(pg.regions||[]).filter(r=>r.type==="bom");
+  if(!regions.length)return[{dataUrl:pg.dataUrl,regionNote:null}];
+  const units=[];
+  for(const r of regions){
+    const cropped=await cropRegionFromImage(pg.dataUrl,r);
+    if(cropped)units.push({dataUrl:cropped,regionNote:r.note||null});
+  }
+  return units.length?units:[{dataUrl:pg.dataUrl,regionNote:null}];
+}
+
+// Build region context string for extraction notes
+function buildRegionContext(pages){
+  const hints=[];
+  for(const pg of pages){
+    if(!pg.regions?.length)continue;
+    const descs=pg.regions.filter(r=>r.note||r.type!=="bom").map(r=>{
+      const label=r.label||r.type;
+      const pos=`${Math.round(r.x*100)}%-${Math.round((r.x+r.w)*100)}% horizontal, ${Math.round(r.y*100)}%-${Math.round((r.y+r.h)*100)}% vertical`;
+      return `• ${label}${r.note?" — "+r.note:""} (${pos})`;
+    });
+    if(descs.length)hints.push(`${pg.name||"Page"}:\n${descs.join("\n")}`);
+  }
+  return hints.length?"\n\nREGION ANNOTATIONS FROM USER:\n"+hints.join("\n"):"";
+}
+
 async function extractBomPage(dataUrl,feedback="",userNotes=""){
   const small=await resizeForAnalysis(dataUrl,2400); // BOM needs higher res for small text / character accuracy
   const b64=small&&small.split(",")[1];
@@ -4133,11 +4179,12 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   const bomPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
   const hasSchOrLayout=(panel.pages||[]).some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&(p.dataUrl||p.storageUrl));
   const willValidate=!!_apiKey&&hasSchOrLayout;
-  const userNotes=panel.extractionNotes||"";
+  const regionContext=buildRegionContext(panel.pages||[]);
+  const userNotes=(panel.extractionNotes||"")+regionContext;
   const save=async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));};
   // Always update immediately so the bar never stays on "Starting extraction…"
   bgUpdate(panel.id,bomPages.length>0?"Extracting BOM…":willValidate?"Validating…":"Uploading drawings…");
-    // BOM extraction
+    // BOM extraction — use cropped regions if available
     let bomMergePromise=Promise.resolve([]);
     if(_apiKey&&bomPages.length>0){
       bgUpdate(panel.id,"Extracting BOM…");
@@ -4146,11 +4193,19 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       bomMergePromise=parallelMap(bomPages,async (pg,pgIdx)=>{
         bomDone++;
         bgSetPct(panel.id,Math.round((bomDone/bomPages.length)*40),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
-        const result=await extractBomPage(pg.dataUrl,"",userNotes);
-        const items=result.items||result;
-        const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
-        if(qs.length)allQuestions.push(...qs);
-        return items.map(item=>({...item,sourcePageIdx:pgIdx}));
+        // Get extraction units — cropped BOM regions or full page
+        const units=await getExtractionUnits(pg);
+        let pageItems=[],pageQs=[];
+        for(const unit of units){
+          const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):userNotes;
+          const result=await extractBomPage(unit.dataUrl,"",notes);
+          const items=result.items||result;
+          pageItems.push(...items);
+          const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
+          if(qs.length)pageQs.push(...qs);
+        }
+        if(pageQs.length)allQuestions.push(...pageQs);
+        return pageItems.map(item=>({...item,sourcePageIdx:pgIdx}));
       },3).then(results=>{
         const all=results.flat();if(!all.length)return{bom:[],questions:allQuestions};
         const map={};
@@ -7988,16 +8043,25 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const noData=bomPages.find(pg=>!pg.dataUrl&&!pg.storageUrl);
     if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();return;}
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
+    const rgnCtx=buildRegionContext(pages);
+    const rgnNotes=(panel.extractionNotes||"")+rgnCtx;
     let all=[];let bomDone=0;
     try{
       let reQs=[];
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
-        const result=await extractBomPage(pg.dataUrl);
-        const items=result.items||result;
-        const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
-        if(qs.length)reQs.push(...qs);
-        return items;
+        const units=await getExtractionUnits(pg);
+        let pageItems=[],pageQs=[];
+        for(const unit of units){
+          const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):rgnNotes;
+          const result=await extractBomPage(unit.dataUrl,"",notes);
+          const items=result.items||result;
+          pageItems.push(...items);
+          const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
+          if(qs.length)pageQs.push(...qs);
+        }
+        if(pageQs.length)reQs.push(...pageQs);
+        return pageItems;
       },3);
       all=bomResults.flat();
       reQs=reQs.slice(0,10);
@@ -8084,16 +8148,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
     setReExtracting(true);setErr("");ep.start("Extracting BOM — applying feedback…",bomPages.length*12);
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
+    const fbRgnCtx=buildRegionContext(pages);
     let all=[];let bomDone=0;
     try{
       let fbQs=[];
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
-        const result=await extractBomPage(pg.dataUrl,aiFeedback);
-        const items=result.items||result;
-        const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
-        if(qs.length)fbQs.push(...qs);
-        return items;
+        const units=await getExtractionUnits(pg);
+        let pageItems=[],pageQs=[];
+        for(const unit of units){
+          const notes=unit.regionNote?("Cropped BOM region: "+unit.regionNote+fbRgnCtx):fbRgnCtx;
+          const result=await extractBomPage(unit.dataUrl,aiFeedback,notes);
+          const items=result.items||result;
+          pageItems.push(...items);
+          const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
+          if(qs.length)pageQs.push(...qs);
+        }
+        if(pageQs.length)fbQs.push(...pageQs);
+        return pageItems;
       },3);
       all=bomResults.flat();
       fbQs=fbQs.slice(0,10);
