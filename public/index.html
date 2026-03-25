@@ -8508,15 +8508,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
-                <col style={{width:62}}/><col style={{width:62}}/><col style={{width:40}}/>
+                <col style={{width:42}}/><col style={{width:42}}/><col style={{width:34}}/>
                 <col style={{width:"16%"}}/><col style={{width:28}}/><col/>
-                <col style={{width:"9%"}}/><col style={{width:"9%"}}/>
+                <col style={{width:"10%"}}/><col style={{width:"10%"}}/>
                 <col style={{width:82}}/><col style={{width:72}}/><col style={{width:60}}/><col style={{width:40}}/>
               </colgroup>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {["Ln #","Ref #","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Priced",""].map((h,hi)=>(
-                    <th key={h||"bc"+hi} style={{padding:"9px 6px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:11,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                  {["#","Ref","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Priced",""].map((h,hi)=>(
+                    <th key={h||"bc"+hi} style={{padding:"9px 4px",textAlign:h==="Unit $"||h==="Ext $"?"right":hi<3?"center":"left",color:C.muted,fontWeight:700,fontSize:11,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
               </thead>
