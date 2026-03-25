@@ -8508,10 +8508,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
-                <col style={{width:52}}/><col style={{width:58}}/><col style={{width:42}}/>
-                <col style={{width:"15%"}}/><col style={{width:32}}/><col/>
-                <col style={{width:"12%"}}/><col style={{width:"11%"}}/>
-                <col style={{width:100}}/><col style={{width:80}}/><col style={{width:68}}/><col style={{width:44}}/>
+                <col style={{width:46}}/><col style={{width:52}}/><col style={{width:38}}/>
+                <col style={{width:"14%"}}/><col style={{width:28}}/><col/>
+                <col style={{width:"9%"}}/><col style={{width:"9%"}}/>
+                <col style={{width:95}}/><col style={{width:75}}/><col style={{width:62}}/><col style={{width:40}}/>
               </colgroup>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
@@ -8561,11 +8561,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           )}
                         </td>
                       ):f==="_supplier"?(
-                        <td key="_supplier" style={{padding:"3px 5px",whiteSpace:"nowrap",fontSize:11,overflow:"hidden",textOverflow:"ellipsis"}}>
+                        <td key="_supplier" title={row.bcVendorName||""} style={{padding:"3px 5px",whiteSpace:"nowrap",fontSize:11,overflow:"hidden",textOverflow:"ellipsis"}}>
                           {row.isLaborRow?"—":<span style={{color:row.bcVendorName?C.sub:C.muted}}>{row.bcVendorName||"—"}</span>}
                         </td>
                       ):
-                      <td key={f} style={{padding:"3px 5px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:f==="description"?"nowrap":"nowrap"}}>
+                      <td key={f} title={f==="description"||f==="manufacturer"?row[f]||"":undefined} style={{padding:"3px 5px",...(mode==="fit"?{overflow:"visible",whiteSpace:"nowrap"}:{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"})}}>
                         {mode==="fit"?(
                           <div>
                           <div style={{display:"flex",alignItems:"center"}}>
