@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.98";
+const APP_VERSION="v1.18.99";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6280,25 +6280,103 @@ Return ONLY valid JSON (no markdown):
 }
 
 // ── DRAWING LIGHTBOX ──
-function DrawingLightbox({pages,startId,onClose}){
+function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex(p=>p.id===startId);return i>=0?i:0;});
   const pg=pages[idx]||pages[0];
-  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted};
-  const typeLabels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout",pid:"P&ID"};
+  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted,zoomed_detail:"#fde047",ignore:"#6b7280"};
+  const typeLabels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout",pid:"P&ID",zoomed_detail:"Zoomed Detail",ignore:"Ignore"};
+  const regionTypeShort={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",pid:"P&ID",zoomed_detail:"Zoom",ignore:"Ignore"};
+
+  // Region drawing state
+  const [regionMode,setRegionMode]=useState(false);
+  const [drawStart,setDrawStart]=useState(null);
+  const [drawCurrent,setDrawCurrent]=useState(null);
+  const [regions,setRegions]=useState(pg.regions||[]);
+  const [pendingRect,setPendingRect]=useState(null);
+  const [selectedRegion,setSelectedRegion]=useState(null);
+  const imgRef=useRef(null);
+
+  // Sync regions when page changes
+  useEffect(()=>{
+    const p=pages[idx]||pages[0];
+    setRegions(p?.regions||[]);
+    setPendingRect(null);setDrawStart(null);setDrawCurrent(null);setSelectedRegion(null);
+  },[idx,pages]);
+
+  // Save regions to parent
+  function saveRegions(newRegions){
+    setRegions(newRegions);
+    if(onRegionsChange&&pg)onRegionsChange(pg.id,newRegions);
+  }
+
+  // Get normalized coords from mouse event relative to image
+  function getNormCoords(e){
+    if(!imgRef.current)return null;
+    const r=imgRef.current.getBoundingClientRect();
+    return{x:Math.max(0,Math.min(1,(e.clientX-r.left)/r.width)),y:Math.max(0,Math.min(1,(e.clientY-r.top)/r.height))};
+  }
+
+  function onImgMouseDown(e){
+    if(!regionMode||pendingRect)return;
+    e.preventDefault();e.stopPropagation();
+    const c=getNormCoords(e);if(!c)return;
+    setDrawStart(c);setDrawCurrent(c);setSelectedRegion(null);
+  }
+  function onImgMouseMove(e){
+    if(!drawStart)return;
+    e.preventDefault();
+    const c=getNormCoords(e);if(c)setDrawCurrent(c);
+  }
+  function onImgMouseUp(e){
+    if(!drawStart||!drawCurrent)return;
+    e.preventDefault();e.stopPropagation();
+    const x=Math.min(drawStart.x,drawCurrent.x),y=Math.min(drawStart.y,drawCurrent.y);
+    const w=Math.abs(drawCurrent.x-drawStart.x),h=Math.abs(drawCurrent.y-drawStart.y);
+    setDrawStart(null);setDrawCurrent(null);
+    if(w<0.02||h<0.02)return; // too small, ignore
+    setPendingRect({x,y,w,h});
+  }
+
+  function assignType(type){
+    if(!pendingRect)return;
+    const region={id:Date.now()+Math.random(),x:pendingRect.x,y:pendingRect.y,w:pendingRect.w,h:pendingRect.h,type,label:regionTypeShort[type]||type};
+    saveRegions([...regions,region]);
+    setPendingRect(null);
+  }
+
+  function deleteRegion(rid){
+    saveRegions(regions.filter(r=>r.id!==rid));
+    if(selectedRegion===rid)setSelectedRegion(null);
+  }
 
   useEffect(()=>{
     function onKey(e){
-      if(e.key==="Escape")onClose();
-      if(e.key==="ArrowRight"||e.key==="ArrowDown")setIdx(i=>Math.min(i+1,pages.length-1));
-      if(e.key==="ArrowLeft"||e.key==="ArrowUp")setIdx(i=>Math.max(i-1,0));
+      if(e.key==="Escape"){
+        if(pendingRect){setPendingRect(null);return;}
+        if(regionMode){setRegionMode(false);return;}
+        onClose();
+      }
+      if(!regionMode){
+        if(e.key==="ArrowRight"||e.key==="ArrowDown")setIdx(i=>Math.min(i+1,pages.length-1));
+        if(e.key==="ArrowLeft"||e.key==="ArrowUp")setIdx(i=>Math.max(i-1,0));
+      }
+      if(e.key==="Delete"&&selectedRegion){deleteRegion(selectedRegion);}
     }
     window.addEventListener("keydown",onKey);
     return()=>window.removeEventListener("keydown",onKey);
-  },[pages.length,onClose]);
+  },[pages.length,onClose,regionMode,pendingRect,selectedRegion,regions]);
 
   if(!pg)return null;
   const types=getPageTypes(pg);
   const hasFilmstrip=pages.length>1;
+
+  // Build rubber-band rect style
+  const rubberBand=drawStart&&drawCurrent?{
+    left:(Math.min(drawStart.x,drawCurrent.x)*100)+"%",
+    top:(Math.min(drawStart.y,drawCurrent.y)*100)+"%",
+    width:(Math.abs(drawCurrent.x-drawStart.x)*100)+"%",
+    height:(Math.abs(drawCurrent.y-drawStart.y)*100)+"%"
+  }:null;
 
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9999,display:"flex",flexDirection:"column",background:"rgba(0,0,0,0.97)"}}>
@@ -6313,22 +6391,110 @@ function DrawingLightbox({pages,startId,onClose}){
             </span>
           ))}
         </div>
+        {regions.length>0&&<span style={{fontSize:12,color:"#818cf8",fontWeight:600}}>{regions.length} region{regions.length>1?"s":""}</span>}
+        <button onClick={()=>{setRegionMode(m=>!m);setPendingRect(null);setDrawStart(null);setSelectedRegion(null);}}
+          style={{background:regionMode?C.accent+"33":"transparent",color:regionMode?C.accent:C.muted,border:`1px solid ${regionMode?C.accent:C.border}`,borderRadius:6,padding:"6px 14px",fontSize:13,fontWeight:600,cursor:"pointer",transition:"all 0.15s"}}>
+          {regionMode?"Exit Regions":"Regions"}
+        </button>
         <div style={{fontSize:13,color:C.muted,whiteSpace:"nowrap"}}>{idx+1} / {pages.length}</div>
-        <button onClick={onClose} style={{background:C.border,border:"none",color:C.text,cursor:"pointer",borderRadius:6,padding:"6px 16px",fontSize:14,fontWeight:600}}>✕ Close</button>
+        <button onClick={onClose} style={{background:C.border,border:"none",color:C.text,cursor:"pointer",borderRadius:6,padding:"6px 16px",fontSize:14,fontWeight:600}}>Close</button>
       </div>
 
-      {/* Image area */}
-      <div onClick={onClose} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",padding:"16px 64px"}}>
-        <img onClick={e=>e.stopPropagation()} src={pg.dataUrl||pg.storageUrl} alt={pg.name}
-          style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:6,boxShadow:"0 4px 40px rgba(0,0,0,0.8)"}}/>
+      {/* Region mode hint bar */}
+      {regionMode&&!pendingRect&&!drawStart&&(
+        <div style={{flexShrink:0,padding:"6px 20px",background:"rgba(99,102,241,0.08)",borderBottom:`1px solid rgba(99,102,241,0.3)`,fontSize:12,color:"#818cf8",fontWeight:600,textAlign:"center"}}>
+          Click and drag on the drawing to select a region &middot; Esc to exit
+        </div>
+      )}
 
-        {idx>0&&(
+      {/* Image area */}
+      <div onClick={e=>{if(!regionMode)onClose();}} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",padding:"16px 64px"}}>
+        <div style={{position:"relative",display:"inline-block",maxWidth:"100%",maxHeight:"100%"}}>
+          <img ref={imgRef} onClick={e=>e.stopPropagation()} src={pg.dataUrl||pg.storageUrl} alt={pg.name}
+            draggable={false}
+            style={{maxWidth:"100%",maxHeight:"calc(100vh - 180px)",objectFit:"contain",borderRadius:6,boxShadow:"0 4px 40px rgba(0,0,0,0.8)",display:"block",userSelect:"none"}}/>
+
+          {/* Region drawing overlay */}
+          {regionMode&&(
+            <div
+              onMouseDown={onImgMouseDown} onMouseMove={onImgMouseMove} onMouseUp={onImgMouseUp}
+              style={{position:"absolute",inset:0,cursor:pendingRect?"default":"crosshair",zIndex:2}}>
+
+              {/* Existing regions */}
+              {regions.map(r=>(
+                <div key={r.id} onClick={e=>{e.stopPropagation();setSelectedRegion(selectedRegion===r.id?null:r.id);}}
+                  style={{position:"absolute",left:(r.x*100)+"%",top:(r.y*100)+"%",width:(r.w*100)+"%",height:(r.h*100)+"%",
+                    border:`2px solid ${typeColors[r.type]||C.accent}`,background:(typeColors[r.type]||C.accent)+"22",
+                    borderRadius:3,cursor:"pointer",boxSizing:"border-box",transition:"box-shadow 0.1s",
+                    boxShadow:selectedRegion===r.id?`0 0 0 2px ${typeColors[r.type]||C.accent}`:"none"}}>
+                  <span style={{position:"absolute",top:-1,left:-1,background:typeColors[r.type]||C.accent,color:"#fff",fontSize:10,fontWeight:700,
+                    padding:"1px 6px",borderRadius:"3px 0 3px 0",lineHeight:"16px",whiteSpace:"nowrap"}}>
+                    {r.label||regionTypeShort[r.type]||r.type}
+                  </span>
+                  {selectedRegion===r.id&&(
+                    <button onClick={e=>{e.stopPropagation();deleteRegion(r.id);}}
+                      style={{position:"absolute",top:-8,right:-8,background:"#ef4444",color:"#fff",border:"none",borderRadius:"50%",
+                        width:20,height:20,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>
+                      x
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {/* Rubber-band preview */}
+              {rubberBand&&(
+                <div style={{position:"absolute",...rubberBand,border:`2px dashed ${C.accent}`,background:C.accent+"18",borderRadius:3,pointerEvents:"none"}}/>
+              )}
+            </div>
+          )}
+
+          {/* Show regions as faint overlays even when not in region mode */}
+          {!regionMode&&regions.length>0&&(
+            <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1}}>
+              {regions.map(r=>(
+                <div key={r.id} style={{position:"absolute",left:(r.x*100)+"%",top:(r.y*100)+"%",width:(r.w*100)+"%",height:(r.h*100)+"%",
+                  border:`1px solid ${(typeColors[r.type]||C.accent)}55`,background:(typeColors[r.type]||C.accent)+"0a",borderRadius:3}}>
+                  <span style={{position:"absolute",top:-1,left:-1,background:(typeColors[r.type]||C.accent)+"88",color:"#fff",fontSize:9,fontWeight:700,
+                    padding:"0px 5px",borderRadius:"3px 0 3px 0",lineHeight:"14px",whiteSpace:"nowrap",opacity:0.7}}>
+                    {r.label||regionTypeShort[r.type]||r.type}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Type picker popup */}
+          {pendingRect&&(
+            <div onClick={e=>e.stopPropagation()}
+              style={{position:"absolute",left:((pendingRect.x+pendingRect.w/2)*100)+"%",top:((pendingRect.y+pendingRect.h)*100)+"%",
+                transform:"translate(-50%, 8px)",zIndex:10,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,
+                padding:"10px 12px",boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:180}}>
+              <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>Region Type</div>
+              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","ignore"].map(t=>(
+                  <button key={t} onClick={()=>assignType(t)}
+                    style={{background:typeColors[t]+"22",color:typeColors[t],border:`1px solid ${typeColors[t]}66`,borderRadius:8,
+                      padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",transition:"all 0.1s",whiteSpace:"nowrap"}}>
+                    {regionTypeShort[t]}
+                  </button>
+                ))}
+              </div>
+              <button onClick={()=>setPendingRect(null)}
+                style={{marginTop:8,background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,
+                  padding:"3px 10px",fontSize:11,cursor:"pointer",width:"100%"}}>
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+
+        {idx>0&&!regionMode&&(
           <button onClick={e=>{e.stopPropagation();setIdx(i=>i-1);}}
             style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",background:"rgba(255,255,255,0.1)",border:`1px solid ${C.border}`,color:C.text,cursor:"pointer",borderRadius:8,padding:"10px 14px",fontSize:26,lineHeight:1}}>
             ‹
           </button>
         )}
-        {idx<pages.length-1&&(
+        {idx<pages.length-1&&!regionMode&&(
           <button onClick={e=>{e.stopPropagation();setIdx(i=>i+1);}}
             style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"rgba(255,255,255,0.1)",border:`1px solid ${C.border}`,color:C.text,cursor:"pointer",borderRadius:8,padding:"10px 14px",fontSize:26,lineHeight:1}}>
             ›
@@ -8342,7 +8508,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
                   {pg.isZoomedSection&&(
                     <span style={{background:"rgba(250,204,21,0.15)",color:"#fde047",border:"1px solid rgba(250,204,21,0.4)",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>
-                      ⚡ Zoomed Section
+                      Zoomed Section
+                    </span>
+                  )}
+                  {pg.regions?.length>0&&(
+                    <span style={{background:"rgba(99,102,241,0.15)",color:"#818cf8",border:"1px solid rgba(99,102,241,0.4)",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>
+                      {pg.regions.length} region{pg.regions.length>1?"s":""}
                     </span>
                   )}
                   {["bom","schematic","backpanel","enclosure","pid"].map(t=>{
@@ -8870,6 +9041,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           pages={pages.filter(p=>p.dataUrl||p.storageUrl)}
           startId={lightboxId}
           onClose={()=>setLightboxId(null)}
+          onRegionsChange={(pgId,newRegions)=>{
+            const updated={...panel,pages:pages.map(p=>p.id===pgId?{...p,regions:newRegions}:p)};
+            onUpdate(updated);
+            try{onSaveImmediate(updated);}catch(e){}
+          }}
         />
       )}
       {bcBrowserOpen&&(
