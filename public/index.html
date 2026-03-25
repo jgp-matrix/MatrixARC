@@ -8505,12 +8505,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             )}
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
           </div>
-          <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"auto"}}>
-            <table style={{borderCollapse:"collapse",fontSize:13,minWidth:1250}}>
+          <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
+            <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
+              <colgroup>
+                <col style={{width:52}}/><col style={{width:58}}/><col style={{width:42}}/>
+                <col style={{width:"15%"}}/><col style={{width:32}}/><col/>
+                <col style={{width:"12%"}}/><col style={{width:"11%"}}/>
+                <col style={{width:100}}/><col style={{width:80}}/><col style={{width:68}}/><col style={{width:44}}/>
+              </colgroup>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
                   {["ARC Ln #","Ref Ln #","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Priced",""].map((h,hi)=>(
-                    <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                    <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`,overflow:"hidden",textOverflow:"ellipsis"}}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -8555,11 +8561,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           )}
                         </td>
                       ):f==="_supplier"?(
-                        <td key="_supplier" style={{padding:"3px 5px",width:"1%",whiteSpace:"nowrap",fontSize:11}}>
+                        <td key="_supplier" style={{padding:"3px 5px",whiteSpace:"nowrap",fontSize:11,overflow:"hidden",textOverflow:"ellipsis"}}>
                           {row.isLaborRow?"—":<span style={{color:row.bcVendorName?C.sub:C.muted}}>{row.bcVendorName||"—"}</span>}
                         </td>
                       ):
-                      <td key={f} style={{padding:"3px 5px",width:mode==="fit"?"1%":w||"auto",whiteSpace:mode==="fit"?"nowrap":"normal",overflow:"visible"}}>
+                      <td key={f} style={{padding:"3px 5px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:f==="description"?"nowrap":"nowrap"}}>
                         {mode==="fit"?(
                           <div>
                           <div style={{display:"flex",alignItems:"center"}}>
