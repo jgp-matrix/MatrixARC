@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.102";
+const APP_VERSION="v1.18.103";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3306,14 +3306,26 @@ STEP 3 — EXTRACT EVERY ROW (no skipping):
 • Include ALL data rows even when some fields are blank — only skip: column header row, totals rows, title block text, revision block rows
 
 STEP 4 — CHARACTER ACCURACY (most critical step):
-Each character in a part number must be verified individually. Common industrial drawing confusions:
-• 0 (zero) vs O (letter-O): zero is narrower and has flat or angled cuts; O is a smooth oval
-• 1 (one) vs I (capital-i) vs L (capital-L): check stroke widths and serif details carefully
-• 2 vs Z — 5 vs S — 8 vs B — 6 vs G — 4 vs A — 9 vs q
-• Q has a small tail/stroke inside the circle; O does not
-• U vs V vs W — count the number of strokes and angles
-• Hyphens matter: "100-C09D10" is different from "1OOC09D10"
-• When unsure of a character: look at the full context of the part number format for that manufacturer
+Industrial part numbers are alpha-numeric codes where a SINGLE wrong character makes the part unfindable. You MUST verify each character individually by examining its actual glyph shape — do NOT rely on context or guessing.
+
+LETTER vs DIGIT confusion matrix — examine stroke shape carefully:
+• O vs D: O is a closed oval, symmetric left-right. D has a flat vertical stroke on the LEFT side. If the left side is straight/flat → it is D. If both sides are curved → it is O.
+• O vs 0 (zero): In engineering drawings, 0 often has a slash through it or is narrower. O is a smooth wider oval. When a character appears in an otherwise all-digit sequence, it is likely 0. When in an all-letter sequence, likely O.
+• B vs 8: B has flat vertical stroke on the LEFT side (like D). 8 is fully rounded on both sides with no flat edge. If left side is straight → B. If symmetric curves → 8.
+• S vs 5: S has two curves flowing into each other. 5 has a sharp horizontal top stroke and angular middle. Look for the flat horizontal bar at top → 5.
+• I vs 1 vs l (lowercase-L): 1 often has a flag/serif at top and/or a base serif. I may have serifs top and bottom. In part numbers, prefer 1 in numeric context and I/L in alpha context.
+• 2 vs Z: 2 has a curved top; Z has a straight diagonal with flat horizontal bars top and bottom.
+• 6 vs G: 6 curves inward at center; G has a horizontal bar protruding inward at right-center.
+• U vs V: U has a curved bottom; V comes to a sharp point.
+• C vs G: C is open on the right; G has a horizontal bar at mid-right.
+• Q vs O: Q has a small tail or crossbar at bottom-right; O does not.
+
+ADDITIONAL ACCURACY RULES:
+• Hyphens matter: "100-C09D10" is different from "1OOC09D10" — note how O/0 confusion changes meaning
+• When a part number contains a mix of letters and digits, use the surrounding pattern to disambiguate: e.g. in "ABB AF09-30-10-13", the "AF" section is clearly letters, "09" is digits
+• Manufacturer names provide format clues — e.g. Allen-Bradley (Rockwell) uses patterns like "100-C09D10", "1489-M1C050"; Hoffman uses "A-12N12ALP"; ABB uses "AF09-30-10-13"
+• If two adjacent characters could be read as "OD" or "0D" or "OO" or "00", zoom in mentally on each glyph and check for the flat left edge (D) vs curved (O/0)
+• NEVER assume or autocomplete a part number — if a character is genuinely unreadable, transcribe your best interpretation based on glyph shape alone
 TRANSCRIBE EXACTLY what is printed — do NOT autocomplete, normalize, or guess part numbers
 
 RETURN FORMAT:
@@ -3326,7 +3338,7 @@ x_left and x_right are the left and right edges of the entire BOM TABLE (all col
 If no BOM table exists on this page, return [].`;
 
 async function extractBomPage(dataUrl,feedback="",userNotes=""){
-  const small=await resizeForAnalysis(dataUrl,2000); // BOM needs higher res for small text
+  const small=await resizeForAnalysis(dataUrl,2400); // BOM needs higher res for small text / character accuracy
   const b64=small&&small.split(",")[1];
   if(!b64){console.warn("extractBomPage: skipping — empty or invalid dataUrl");return[];}
   const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
@@ -3338,7 +3350,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
     body:JSON.stringify({
       model:"claude-sonnet-4-6",
       max_tokens:10000,
-      thinking:{type:"enabled",budget_tokens:4000},
+      thinking:{type:"enabled",budget_tokens:5000},
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
         {type:"text",text:BOM_PROMPT+feedbackSection+notesSection}
