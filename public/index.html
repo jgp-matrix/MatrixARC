@@ -7093,23 +7093,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     console.log("PRICEDATE BACKFILL:",needDate.length,"rows for panel",panel.name);
   },[]);
 
-  // Backfill bcPoDate for BC-priced rows — same source as Item Browser "Last Purchased"
+  // Backfill bcPoDate for BC-priced rows — batch via Purchase Prices OData
   const bcNeedingPoDate=(panel.bom||[]).filter(r=>r.priceSource==="bc"&&!r.isLaborRow&&!("bcPoDate"in r)&&(r.partNumber||"").trim());
   useEffect(()=>{
     if(!bcNeedingPoDate.length)return;
-    const need=[...bcNeedingPoDate];
     let cancelled=false;
     function tryBackfill(){
       if(!_bcToken)return;
       (async()=>{
-        const poMap={};
-        for(const r of need){
-          if(cancelled)return;
-          const lp=await bcGetLastPurchase((r.partNumber||"").trim());
-          poMap[String(r.id)]=lp?new Date(lp.postingDate).getTime():null;
-        }
+        const partNums=[...new Set(bcNeedingPoDate.map(r=>(r.partNumber||"").trim()).filter(Boolean))];
+        const ppMap=await bcFetchPurchasePrices(partNums);
         if(cancelled)return;
-        const newBom=(panel.bom||[]).map(r=>{const key=String(r.id);return key in poMap?{...r,bcPoDate:poMap[key]}:r;});
+        const newBom=(panel.bom||[]).map(r=>{
+          if(r.priceSource!=="bc"||r.isLaborRow||("bcPoDate"in r))return r;
+          const pn=(r.partNumber||"").trim();
+          const pp=ppMap.get(pn);
+          return pp&&pp.startingDate?{...r,bcPoDate:pp.startingDate}:r;
+        });
         const updated={...panel,bom:newBom};
         onUpdate(updated);
         try{onSaveImmediate(updated);}catch(e){}
@@ -7128,7 +7128,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     return()=>document.removeEventListener("click",dismiss);
   },[bcUpdateNotif]);
 
-  // Poll BC every 5 minutes to keep bcPoDate and unitPrice current (picks up new POs without a manual refresh)
+  // Poll BC every 5 minutes to keep bcPoDate and unitPrice current — uses batch Purchase Prices OData
   const bcPollRunning=useRef(false);
   useEffect(()=>{
     const POLL_MS=5*60*1000;
@@ -7139,30 +7139,25 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const p=latestPanelRef.current;
         const rows=(p.bom||[]).filter(r=>r.priceSource==="bc"&&!r.isLaborRow&&(r.partNumber||"").trim());
         if(!rows.length)return;
-        const bcMap={};
-        for(const r of rows){
-          if(!_bcToken)return; // abort if token lost mid-poll
-          const lp=await bcGetLastPurchase((r.partNumber||"").trim());
-          bcMap[String(r.id)]={
-            bcPoDate:lp?new Date(lp.postingDate).getTime():null,
-            unitPrice:lp?lp.directUnitCost:null
-          };
-        }
+        const partNums=[...new Set(rows.map(r=>(r.partNumber||"").trim()).filter(Boolean))];
+        const ppMap=await bcFetchPurchasePrices(partNums);
         // Only update rows where bcPoDate or unitPrice actually changed
         const fresh=latestPanelRef.current;
         let changed=false;
         const changedIds=[];
         const newBom=(fresh.bom||[]).map(r=>{
-          const key=String(r.id);
-          if(!(key in bcMap))return r;
-          const {bcPoDate,unitPrice}=bcMap[key];
-          // Never downgrade a more recent local date (e.g. set from supplier quote import)
+          if(r.priceSource!=="bc"||r.isLaborRow)return r;
+          const pn=(r.partNumber||"").trim();
+          const pp=ppMap.get(pn);
+          if(!pp)return r;
+          const bcPoDate=pp.startingDate||null;
+          const unitPrice=pp.directUnitCost||null;
           const newPoDate=(bcPoDate!=null&&(r.bcPoDate==null||bcPoDate>r.bcPoDate))?bcPoDate:r.bcPoDate;
           const priceChanged=unitPrice!==null&&r.unitPrice!==unitPrice;
           const dateChanged=newPoDate!==r.bcPoDate;
           if(!priceChanged&&!dateChanged)return r;
           changed=true;
-          changedIds.push(key);
+          changedIds.push(String(r.id));
           return{...r,bcPoDate:newPoDate,...(priceChanged?{unitPrice}:{})};
         });
         if(changed){
