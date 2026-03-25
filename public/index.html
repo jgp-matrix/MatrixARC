@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.103";
+const APP_VERSION="v1.18.104";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6382,6 +6382,10 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
     setEditingRegion(null);setEditNote("");
   }
 
+  function changeRegionType(rid,newType){
+    saveRegions(regions.map(r=>r.id===rid?{...r,type:newType,label:regionTypeShort[newType]||newType}:r));
+  }
+
   function deleteRegion(rid){
     saveRegions(regions.filter(r=>r.id!==rid));
     if(selectedRegion===rid)setSelectedRegion(null);
@@ -6446,7 +6450,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
       {/* Region mode hint bar */}
       {regionMode&&!pendingRect&&!drawStart&&(
         <div style={{flexShrink:0,padding:"6px 20px",background:"rgba(99,102,241,0.08)",borderBottom:`1px solid rgba(99,102,241,0.3)`,fontSize:12,color:"#818cf8",fontWeight:600,textAlign:"center"}}>
-          Click and drag to select a region &middot; Double-click a region to edit its note &middot; Esc to exit
+          Draw to create a region &middot; Click a region to edit type, note, or delete &middot; Esc to exit
         </div>
       )}
 
@@ -6481,30 +6485,44 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
                       {r.note}
                     </div>
                   )}
+                  {/* Edit panel for selected region */}
                   {selectedRegion===r.id&&(
-                    <div style={{position:"absolute",top:-8,right:-8,display:"flex",gap:3}}>
-                      <button onClick={e=>{e.stopPropagation();startEditRegion(r.id);}} title="Edit note"
-                        style={{background:"#3b82f6",color:"#fff",border:"none",borderRadius:"50%",
-                          width:20,height:20,fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>
-                        +
-                      </button>
-                      <button onClick={e=>{e.stopPropagation();deleteRegion(r.id);}} title="Delete region"
-                        style={{background:"#ef4444",color:"#fff",border:"none",borderRadius:"50%",
-                          width:20,height:20,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>
-                        x
-                      </button>
-                    </div>
-                  )}
-                  {/* Inline edit note popup */}
-                  {editingRegion===r.id&&(
-                    <div onClick={e=>e.stopPropagation()} style={{position:"absolute",bottom:-60,left:0,zIndex:20,background:"#1a1a2e",border:`1px solid ${C.border}`,
-                      borderRadius:6,padding:"6px 8px",boxShadow:"0 4px 16px rgba(0,0,0,0.5)",minWidth:200,display:"flex",gap:4}}>
-                      <input ref={editNoteRef} value={editNote} onChange={e=>setEditNote(e.target.value)} placeholder="Describe what you see..."
-                        onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();saveEditRegion();}if(e.key==="Escape"){e.stopPropagation();setEditingRegion(null);}}}
-                        style={{flex:1,background:"#0d0d14",border:`1px solid ${C.border}`,color:C.text,borderRadius:4,padding:"4px 8px",fontSize:12,outline:"none"}}/>
-                      <button onClick={saveEditRegion}
-                        style={{background:C.accent,color:"#fff",border:"none",borderRadius:4,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
-                        Save
+                    <div onClick={e=>e.stopPropagation()} style={{position:"absolute",left:0,bottom:0,transform:"translateY(calc(100% + 6px))",
+                      zIndex:20,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",
+                      boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:240,maxWidth:320}}>
+                      {/* Type row */}
+                      <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:5,textTransform:"uppercase",letterSpacing:0.5}}>Type</div>
+                      <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
+                        {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","label","spec","ignore"].map(t=>(
+                          <button key={t} onClick={()=>changeRegionType(r.id,t)}
+                            style={{background:r.type===t?(typeColors[t]||C.accent)+"44":(typeColors[t]||C.accent)+"15",
+                              color:typeColors[t]||C.accent,border:`1px solid ${r.type===t?(typeColors[t]||C.accent):(typeColors[t]||C.accent)+"44"}`,
+                              borderRadius:6,padding:"3px 8px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",transition:"all 0.1s"}}>
+                            {regionTypeShort[t]}
+                          </button>
+                        ))}
+                      </div>
+                      {/* Note row */}
+                      <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Description</div>
+                      <div style={{display:"flex",gap:4,marginBottom:8}}>
+                        <input ref={editingRegion===r.id?editNoteRef:undefined} value={editingRegion===r.id?editNote:(r.note||"")}
+                          onFocus={()=>{if(editingRegion!==r.id)startEditRegion(r.id);}}
+                          onChange={e=>{if(editingRegion===r.id)setEditNote(e.target.value);}}
+                          placeholder='e.g. "9 operators on DIN rail"'
+                          onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();saveEditRegion();}if(e.key==="Escape"){e.stopPropagation();setEditingRegion(null);}}}
+                          style={{flex:1,background:"#0d0d14",border:`1px solid ${C.border}`,color:C.text,borderRadius:4,padding:"5px 8px",fontSize:12,outline:"none"}}/>
+                        {editingRegion===r.id&&(
+                          <button onClick={saveEditRegion}
+                            style={{background:C.accent,color:"#fff",border:"none",borderRadius:4,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                            Save
+                          </button>
+                        )}
+                      </div>
+                      {/* Delete */}
+                      <button onClick={e=>{e.stopPropagation();deleteRegion(r.id);}}
+                        style={{background:"rgba(239,68,68,0.1)",color:"#ef4444",border:"1px solid rgba(239,68,68,0.3)",borderRadius:6,
+                          padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer",width:"100%"}}>
+                        Delete Region
                       </button>
                     </div>
                   )}
