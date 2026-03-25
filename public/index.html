@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.105";
+const APP_VERSION="v1.18.106";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6314,11 +6314,15 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
   const noteInputRef=useRef(null);
   const editNoteRef=useRef(null);
 
-  // Sync regions when page changes
+  // Sync regions when page index changes (not on every pages prop update)
+  const prevIdxRef=useRef(idx);
   useEffect(()=>{
-    const p=pages[idx]||pages[0];
-    setRegions(p?.regions||[]);
-    setPendingRect(null);setDrawStart(null);setDrawCurrent(null);setSelectedRegion(null);
+    if(prevIdxRef.current!==idx){
+      prevIdxRef.current=idx;
+      const p=pages[idx]||pages[0];
+      setRegions(p?.regions||[]);
+      setPendingRect(null);setDrawStart(null);setDrawCurrent(null);setSelectedRegion(null);setEditingRegion(null);setEditNote("");
+    }
   },[idx,pages]);
 
   // Save regions to parent
