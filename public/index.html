@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.112";
+const APP_VERSION="v1.18.113";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8821,6 +8821,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <div>
               <div style={{fontSize:13,fontWeight:700,color:"#fde047",marginBottom:3,animation:"pulse 1.6s ease-in-out infinite"}}>Review drawing types before extracting</div>
               <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>Check that each page above is tagged correctly — <span style={{color:C.accent,fontWeight:600}}>BOM</span>, <span style={{color:C.green,fontWeight:600}}>SCH</span>, <span style={{color:C.purple,fontWeight:600}}>BP</span>, <span style={{color:C.teal||"#0d9488",fontWeight:600}}>ENC</span>, <span style={{color:C.muted,fontWeight:600}}>P&amp;ID</span>. Click a tag to add or remove it, then proceed.</div>
+              {(()=>{const rCount=(pendingPages.length>0?pendingPages:pages).reduce((n,p)=>(p.regions||[]).filter(r=>r.type==="bom").length+n,0);return rCount>0?(
+                <div style={{fontSize:12,color:"#818cf8",fontWeight:600,marginTop:4}}>{rCount} BOM region{rCount>1?"s":""} defined — extraction will use cropped regions for better accuracy</div>
+              ):null;})()}
             </div>
             <button data-tip="Confirm drawing types are correct and begin BOM extraction, validation, and pricing" onClick={confirmAndExtract} style={{flexShrink:0,background:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
               Proceed with Extraction
