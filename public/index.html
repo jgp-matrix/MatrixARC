@@ -1813,6 +1813,40 @@ async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
   }catch(e){console.warn("bcPushPurchasePrice error:",itemNo,e.message);return{ok:false,reason:'error'};}
 }
 
+// Batch-fetch Purchase Prices from BC for a list of part numbers
+// Returns Map<partNumber, {vendorNo, directUnitCost, startingDate, uom}>
+async function bcFetchPurchasePrices(partNumbers){
+  if(!_bcToken||!partNumbers.length)return new Map();
+  const allPages=await bcDiscoverODataPages();
+  const ppPage=allPages.find(n=>/purchase.?price/i.test(n));
+  if(!ppPage){console.warn("bcFetchPurchasePrices: no PurchasePrices OData page");return new Map();}
+  const baseUrl=`${BC_ODATA_BASE}/${ppPage}`;
+  const results=new Map();
+  // Batch 30 items per request to stay within URL length limits
+  const BATCH=30;
+  for(let i=0;i<partNumbers.length;i+=BATCH){
+    const batch=partNumbers.slice(i,i+BATCH);
+    const filterClauses=batch.map(pn=>`Item_No eq '${pn.replace(/'/g,"''")}'`).join(' or ');
+    const url=`${baseUrl}?$filter=${encodeURIComponent(filterClauses)}&$select=Item_No,Vendor_No,Direct_Unit_Cost,Starting_Date,Unit_of_Measure_Code`;
+    try{
+      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(!r.ok){console.warn("bcFetchPurchasePrices batch failed:",r.status);continue;}
+      const d=await r.json();
+      (d.value||[]).forEach(rec=>{
+        const pn=rec.Item_No||'';
+        const sd=rec.Starting_Date?new Date(rec.Starting_Date).getTime():0;
+        const existing=results.get(pn);
+        // Keep the record with the most recent Starting_Date
+        if(!existing||sd>(existing.startingDate||0)){
+          results.set(pn,{vendorNo:rec.Vendor_No||'',directUnitCost:rec.Direct_Unit_Cost||0,startingDate:sd||null,uom:rec.Unit_of_Measure_Code||''});
+        }
+      });
+    }catch(e){console.warn("bcFetchPurchasePrices batch error:",e);}
+  }
+  console.log("[BC] Fetched Purchase Prices for",results.size,"of",partNumbers.length,"items");
+  return results;
+}
+
 async function bcDiscoverODataPages(){
   if(!_bcToken)return[];
   const headers={"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"};
@@ -5566,6 +5600,70 @@ function PoReceivedModal({project,bcProjectNumber,onClose,onDone}){
         )}
       </div>
     </div>
+  ,document.body);
+}
+
+// ── PURCHASE PRICE CHECK MODAL ──
+function PurchasePriceCheckModal({diffs,onAccept,onClose}){
+  const [checked,setChecked]=useState(()=>{const m={};diffs.forEach((_,i)=>{m[i]=true;});return m;});
+  const allChecked=diffs.every((_,i)=>checked[i]);
+  const fmtPrice=p=>p!=null?'$'+Number(p).toFixed(2):'—';
+  const fmtDate=ms=>ms?new Date(ms).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'—';
+  const selectedCount=diffs.filter((_,i)=>checked[i]).length;
+  return ReactDOM.createPortal(
+    React.createElement('div',{style:{position:'fixed',inset:0,background:'rgba(0,0,0,0.75)',zIndex:9999,display:'flex',alignItems:'center',justifyContent:'center',padding:16}},
+      React.createElement('div',{style:{background:'#0d0d1a',border:'1px solid #2a2a3e',borderRadius:10,padding:'24px 28px',width:'100%',maxWidth:780,maxHeight:'80vh',display:'flex',flexDirection:'column',boxShadow:'0 8px 40px rgba(0,0,0,0.7)'}},
+        React.createElement('div',{style:{display:'flex',alignItems:'center',marginBottom:16}},
+          React.createElement('div',{style:{fontSize:15,fontWeight:800,color:'#f1f5f9',flex:1}},'💲 BC Purchase Price Updates'),
+          React.createElement('button',{onClick:onClose,style:{background:'none',border:'none',color:'#64748b',cursor:'pointer',fontSize:20,lineHeight:1,padding:'2px 6px'}},'✕')
+        ),
+        React.createElement('div',{style:{fontSize:12,color:'#94a3b8',marginBottom:12}},
+          `${diffs.length} item${diffs.length!==1?'s have':' has'} updated pricing in BC Purchase Prices`
+        ),
+        React.createElement('div',{style:{flex:1,overflowY:'auto'}},
+          React.createElement('table',{style:{width:'100%',borderCollapse:'collapse',fontSize:12}},
+            React.createElement('thead',null,
+              React.createElement('tr',{style:{background:'#111128',position:'sticky',top:0}},
+                React.createElement('th',{style:{padding:'6px 8px',textAlign:'center',width:30}},
+                  React.createElement('input',{type:'checkbox',checked:allChecked,onChange:e=>{const v=e.target.checked;const m={};diffs.forEach((_,i)=>{m[i]=v;});setChecked(m);}})
+                ),
+                React.createElement('th',{style:{padding:'6px 8px',textAlign:'left',color:'#64748b',fontWeight:600}},'Part #'),
+                React.createElement('th',{style:{padding:'6px 8px',textAlign:'left',color:'#64748b',fontWeight:600}},'Description'),
+                React.createElement('th',{style:{padding:'6px 8px',textAlign:'right',color:'#64748b',fontWeight:600}},'BOM Price'),
+                React.createElement('th',{style:{padding:'6px 8px',textAlign:'right',color:'#4ade80',fontWeight:700}},'BC Price'),
+                React.createElement('th',{style:{padding:'6px 8px',textAlign:'center',color:'#64748b',fontWeight:600}},'Δ'),
+                React.createElement('th',{style:{padding:'6px 8px',textAlign:'right',color:'#64748b',fontWeight:600}},'BOM Date'),
+                React.createElement('th',{style:{padding:'6px 8px',textAlign:'right',color:'#4ade80',fontWeight:600}},'BC Date')
+              )
+            ),
+            React.createElement('tbody',null,
+              diffs.map((d,i)=>{
+                const delta=d.bcPrice-d.bomPrice;
+                const deltaColor=delta>0.005?'#f87171':delta<-0.005?'#4ade80':'#64748b';
+                const deltaStr=delta>0.005?'+'+fmtPrice(delta):delta<-0.005?fmtPrice(delta):'—';
+                return React.createElement('tr',{key:i,style:{borderTop:'1px solid #1a1a2e',opacity:checked[i]?1:0.5}},
+                  React.createElement('td',{style:{padding:'5px 8px',textAlign:'center'}},
+                    React.createElement('input',{type:'checkbox',checked:!!checked[i],onChange:e=>setChecked(prev=>({...prev,[i]:e.target.checked}))})
+                  ),
+                  React.createElement('td',{style:{padding:'5px 8px',fontWeight:600,color:'#f1f5f9',fontFamily:'monospace',fontSize:11}},d.partNumber),
+                  React.createElement('td',{style:{padding:'5px 8px',color:'#94a3b8',maxWidth:180,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},d.description),
+                  React.createElement('td',{style:{padding:'5px 8px',textAlign:'right',color:'#94a3b8',fontVariantNumeric:'tabular-nums'}},fmtPrice(d.bomPrice)),
+                  React.createElement('td',{style:{padding:'5px 8px',textAlign:'right',color:'#4ade80',fontWeight:700,fontVariantNumeric:'tabular-nums'}},fmtPrice(d.bcPrice)),
+                  React.createElement('td',{style:{padding:'5px 8px',textAlign:'center',color:deltaColor,fontWeight:700,fontSize:11,fontVariantNumeric:'tabular-nums'}},deltaStr),
+                  React.createElement('td',{style:{padding:'5px 8px',textAlign:'right',color:'#64748b',fontSize:11}},fmtDate(d.bomDate)),
+                  React.createElement('td',{style:{padding:'5px 8px',textAlign:'right',color:'#4ade80',fontSize:11}},fmtDate(d.bcDate))
+                );
+              })
+            )
+          )
+        ),
+        React.createElement('div',{style:{paddingTop:12,display:'flex',gap:8,justifyContent:'flex-end',alignItems:'center'}},
+          React.createElement('span',{style:{fontSize:11,color:'#64748b',marginRight:'auto'}},`${selectedCount} of ${diffs.length} selected`),
+          React.createElement('button',{onClick:()=>{onAccept(diffs.filter((_,i)=>checked[i]));},disabled:selectedCount===0,style:{background:'#0d2010',border:'1px solid #4ade80',color:'#4ade80',padding:'6px 16px',borderRadius:6,cursor:selectedCount>0?'pointer':'not-allowed',fontSize:12,fontFamily:'inherit',fontWeight:700,opacity:selectedCount>0?1:0.5}},`✓ Accept ${selectedCount} Update${selectedCount!==1?'s':''}`),
+          React.createElement('button',{onClick:onClose,style:{background:'#1a1a2a',border:'1px solid #2a2a3e',color:'#94a3b8',padding:'6px 16px',borderRadius:6,cursor:'pointer',fontSize:12,fontFamily:'inherit'}},'Dismiss')
+        )
+      )
+    )
   ,document.body);
 }
 
@@ -11433,6 +11531,68 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [portalSubmissions,setPortalSubmissions]=useState([]);
   const [showPortalModal,setShowPortalModal]=useState(false);
   const [showPoModal,setShowPoModal]=useState(false);
+  const [showPriceCheckModal,setShowPriceCheckModal]=useState(false);
+  const [priceCheckDiffs,setPriceCheckDiffs]=useState(null);
+  // Compare BOM prices against BC Purchase Prices on project open
+  const priceCheckRan=useRef(false);
+  useEffect(()=>{
+    if(priceCheckRan.current)return;
+    function tryCheck(){
+      if(priceCheckRan.current||!_bcToken)return;
+      priceCheckRan.current=true;
+      (async()=>{
+        const panels=projectRef.current.panels||[];
+        const pnSet=new Set();
+        panels.forEach(p=>(p.bom||[]).forEach(r=>{
+          if(!r.isLaborRow&&(r.partNumber||'').trim())pnSet.add((r.partNumber||'').trim());
+        }));
+        if(!pnSet.size)return;
+        const bcPrices=await bcFetchPurchasePrices([...pnSet]);
+        if(!bcPrices.size)return;
+        const diffs=[];
+        panels.forEach((p,pi)=>(p.bom||[]).forEach(r=>{
+          if(r.isLaborRow)return;
+          const pn=(r.partNumber||'').trim();
+          const bc=bcPrices.get(pn);
+          if(!bc)return;
+          const bomPrice=r.unitPrice||0;
+          const bcPrice=bc.directUnitCost;
+          const bcDateMs=bc.startingDate||null;
+          const bomDateMs=r.bcPoDate||r.priceDate||null;
+          const priceDiff=Math.abs(bomPrice-bcPrice)>0.005;
+          const dateNewer=bcDateMs&&(!bomDateMs||bcDateMs>bomDateMs);
+          if(priceDiff||dateNewer){
+            diffs.push({panelIdx:pi,panelName:p.name||'Panel '+(pi+1),rowId:r.id,partNumber:pn,
+              description:r.description||'',bomPrice,bomDate:bomDateMs,
+              bcPrice,bcDate:bcDateMs,bcVendor:bc.vendorNo||''});
+          }
+        }));
+        if(diffs.length>0){console.log("[BC] Purchase Price diffs found:",diffs.length);setPriceCheckDiffs(diffs);setShowPriceCheckModal(true);}
+        else{console.log("[BC] Purchase Prices match BOM — no updates needed");}
+      })().catch(e=>console.warn("Purchase price check error:",e));
+    }
+    tryCheck();
+    const iv=setInterval(tryCheck,3000);
+    return()=>clearInterval(iv);
+  },[]);
+  function applyPriceCheckDiffs(selectedDiffs){
+    const diffMap={};
+    selectedDiffs.forEach(d=>{
+      if(!diffMap[d.panelIdx])diffMap[d.panelIdx]={};
+      diffMap[d.panelIdx][String(d.rowId)]=d;
+    });
+    const updatedPanels=(projectRef.current.panels||[]).map((p,pi)=>{
+      if(!diffMap[pi])return p;
+      return{...p,bom:(p.bom||[]).map(r=>{
+        const d=diffMap[pi][String(r.id)];
+        if(!d)return r;
+        return{...r,unitPrice:d.bcPrice,priceDate:d.bcDate,bcPoDate:d.bcDate,priceSource:'bc'};
+      })};
+    });
+    update({...projectRef.current,panels:updatedPanels});
+    setShowPriceCheckModal(false);setPriceCheckDiffs(null);
+    console.log("[BC] Applied",selectedDiffs.length,"Purchase Price updates to BOM");
+  }
   useEffect(()=>{
     if(!uid||!init.id){setPendingRfqUploads(0);setPortalSubmissions([]);return;}
     const unsub=fbDb.collection('rfqUploads').where('uid','==',uid).onSnapshot(snap=>{
@@ -11718,6 +11878,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} bcProjectNumber={project.bcProjectNumber||""} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} onClose={()=>setShowRfqHistory(false)}/>}
           {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={async(poNum)=>{setShowPoModal(false);const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,updatedAt:Date.now()};setProject(updated);projectRef.current=updated;onChange&&onChange(updated);try{await saveProject(uid,updated);}catch(e){console.warn("PO save failed:",e);}}}/>}
+          {showPriceCheckModal&&priceCheckDiffs&&<PurchasePriceCheckModal diffs={priceCheckDiffs} onAccept={applyPriceCheckDiffs} onClose={()=>{setShowPriceCheckModal(false);setPriceCheckDiffs(null);}}/>}
           {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
           {quoteWarnRows&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
