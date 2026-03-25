@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.101";
+const APP_VERSION="v1.18.102";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6283,9 +6283,9 @@ Return ONLY valid JSON (no markdown):
 function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex(p=>p.id===startId);return i>=0?i:0;});
   const pg=pages[idx]||pages[0];
-  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted,zoomed_detail:"#fde047",label:"#f97316",ignore:"#6b7280"};
-  const typeLabels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout",pid:"P&ID",zoomed_detail:"Zoomed Detail",label:"Label",ignore:"Ignore"};
-  const regionTypeShort={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",pid:"P&ID",zoomed_detail:"Zoom",label:"Label",ignore:"Ignore"};
+  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted,zoomed_detail:"#fde047",label:"#f97316",spec:"#38bdf8",ignore:"#6b7280"};
+  const typeLabels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout",pid:"P&ID",zoomed_detail:"Zoomed Detail",label:"Label",spec:"Spec",ignore:"Ignore"};
+  const regionTypeShort={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",pid:"P&ID",zoomed_detail:"Zoom",label:"Label",spec:"Spec",ignore:"Ignore"};
 
   // Region drawing state
   const [regionMode,setRegionMode]=useState(false);
@@ -6531,7 +6531,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
                 <>
                   <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>Region Type</div>
                   <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                    {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","label","ignore"].map(t=>(
+                    {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","label","spec","ignore"].map(t=>(
                       <button key={t} onClick={()=>assignType(t)}
                         style={{background:typeColors[t]+"22",color:typeColors[t],border:`1px solid ${typeColors[t]}66`,borderRadius:8,
                           padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",transition:"all 0.1s",whiteSpace:"nowrap"}}>
