@@ -8509,7 +8509,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
                 <col style={{width:42}}/><col style={{width:42}}/><col style={{width:34}}/>
-                <col style={{width:"15%"}}/><col style={{width:28}}/><col style={{width:"22%"}}/>
+                <col style={{width:"18%"}}/><col style={{width:28}}/><col style={{width:"22%"}}/>
                 <col style={{width:"10%"}}/><col style={{width:"11%"}}/>
                 <col style={{width:82}}/><col style={{width:72}}/><col style={{width:60}}/><col style={{width:40}}/>
               </colgroup>
@@ -11167,7 +11167,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
           )}
         </div>
         </div>
-        <div style={{width:420,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810"}}>
+        <div style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810"}}>
           {(()=>{
             const sp=(project.panels||[]).find(p=>p.id===selectedPanelId)||(project.panels||[])[0]||null;
             if(!sp)return <div style={{color:C.muted,fontSize:13,textAlign:"center",marginTop:40}}>No panels</div>;
