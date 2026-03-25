@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.99";
+const APP_VERSION="v1.18.100";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6293,8 +6293,14 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
   const [drawCurrent,setDrawCurrent]=useState(null);
   const [regions,setRegions]=useState(pg.regions||[]);
   const [pendingRect,setPendingRect]=useState(null);
+  const [pendingType,setPendingType]=useState(null);
+  const [pendingNote,setPendingNote]=useState("");
   const [selectedRegion,setSelectedRegion]=useState(null);
+  const [editingRegion,setEditingRegion]=useState(null);
+  const [editNote,setEditNote]=useState("");
   const imgRef=useRef(null);
+  const noteInputRef=useRef(null);
+  const editNoteRef=useRef(null);
 
   // Sync regions when page changes
   useEffect(()=>{
@@ -6339,32 +6345,57 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
 
   function assignType(type){
     if(!pendingRect)return;
-    const region={id:Date.now()+Math.random(),x:pendingRect.x,y:pendingRect.y,w:pendingRect.w,h:pendingRect.h,type,label:regionTypeShort[type]||type};
+    setPendingType(type);setPendingNote("");
+    setTimeout(()=>{if(noteInputRef.current)noteInputRef.current.focus();},50);
+  }
+
+  function finishRegion(overrideNote){
+    if(!pendingRect||!pendingType)return;
+    const note=typeof overrideNote==="string"?overrideNote:pendingNote;
+    const region={id:Date.now()+Math.random(),x:pendingRect.x,y:pendingRect.y,w:pendingRect.w,h:pendingRect.h,
+      type:pendingType,label:regionTypeShort[pendingType]||pendingType,note:note.trim()||""};
     saveRegions([...regions,region]);
-    setPendingRect(null);
+    setPendingRect(null);setPendingType(null);setPendingNote("");
+  }
+
+  function startEditRegion(rid){
+    const r=regions.find(x=>x.id===rid);if(!r)return;
+    setEditingRegion(rid);setEditNote(r.note||"");setSelectedRegion(rid);
+    setTimeout(()=>{if(editNoteRef.current)editNoteRef.current.focus();},50);
+  }
+
+  function saveEditRegion(){
+    if(!editingRegion)return;
+    saveRegions(regions.map(r=>r.id===editingRegion?{...r,note:editNote.trim()||""}:r));
+    setEditingRegion(null);setEditNote("");
   }
 
   function deleteRegion(rid){
     saveRegions(regions.filter(r=>r.id!==rid));
     if(selectedRegion===rid)setSelectedRegion(null);
+    if(editingRegion===rid){setEditingRegion(null);setEditNote("");}
   }
 
   useEffect(()=>{
     function onKey(e){
       if(e.key==="Escape"){
+        if(editingRegion){setEditingRegion(null);setEditNote("");return;}
+        if(pendingType){setPendingType(null);setPendingNote("");return;}
         if(pendingRect){setPendingRect(null);return;}
         if(regionMode){setRegionMode(false);return;}
         onClose();
       }
+      if(e.key==="Enter"&&pendingType){finishRegion();return;}
+      if(e.key==="Enter"&&editingRegion){saveEditRegion();return;}
       if(!regionMode){
         if(e.key==="ArrowRight"||e.key==="ArrowDown")setIdx(i=>Math.min(i+1,pages.length-1));
         if(e.key==="ArrowLeft"||e.key==="ArrowUp")setIdx(i=>Math.max(i-1,0));
       }
-      if(e.key==="Delete"&&selectedRegion){deleteRegion(selectedRegion);}
+      if(e.key==="Delete"&&selectedRegion&&!editingRegion){deleteRegion(selectedRegion);}
     }
     window.addEventListener("keydown",onKey);
     return()=>window.removeEventListener("keydown",onKey);
-  },[pages.length,onClose,regionMode,pendingRect,selectedRegion,regions]);
+  },[pages.length,onClose,regionMode,pendingRect,pendingType,selectedRegion,editingRegion,regions]);
 
   if(!pg)return null;
   const types=getPageTypes(pg);
@@ -6403,7 +6434,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
       {/* Region mode hint bar */}
       {regionMode&&!pendingRect&&!drawStart&&(
         <div style={{flexShrink:0,padding:"6px 20px",background:"rgba(99,102,241,0.08)",borderBottom:`1px solid rgba(99,102,241,0.3)`,fontSize:12,color:"#818cf8",fontWeight:600,textAlign:"center"}}>
-          Click and drag on the drawing to select a region &middot; Esc to exit
+          Click and drag to select a region &middot; Double-click a region to edit its note &middot; Esc to exit
         </div>
       )}
 
@@ -6422,7 +6453,8 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
 
               {/* Existing regions */}
               {regions.map(r=>(
-                <div key={r.id} onClick={e=>{e.stopPropagation();setSelectedRegion(selectedRegion===r.id?null:r.id);}}
+                <div key={r.id} onClick={e=>{e.stopPropagation();setSelectedRegion(selectedRegion===r.id?null:r.id);if(editingRegion&&editingRegion!==r.id)saveEditRegion();}}
+                  onDoubleClick={e=>{e.stopPropagation();startEditRegion(r.id);}}
                   style={{position:"absolute",left:(r.x*100)+"%",top:(r.y*100)+"%",width:(r.w*100)+"%",height:(r.h*100)+"%",
                     border:`2px solid ${typeColors[r.type]||C.accent}`,background:(typeColors[r.type]||C.accent)+"22",
                     borderRadius:3,cursor:"pointer",boxSizing:"border-box",transition:"box-shadow 0.1s",
@@ -6431,12 +6463,38 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
                     padding:"1px 6px",borderRadius:"3px 0 3px 0",lineHeight:"16px",whiteSpace:"nowrap"}}>
                     {r.label||regionTypeShort[r.type]||r.type}
                   </span>
+                  {r.note&&(
+                    <div style={{position:"absolute",bottom:2,left:2,right:2,background:"rgba(0,0,0,0.75)",color:"#e2e8f0",fontSize:10,
+                      padding:"2px 5px",borderRadius:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",pointerEvents:"none"}}>
+                      {r.note}
+                    </div>
+                  )}
                   {selectedRegion===r.id&&(
-                    <button onClick={e=>{e.stopPropagation();deleteRegion(r.id);}}
-                      style={{position:"absolute",top:-8,right:-8,background:"#ef4444",color:"#fff",border:"none",borderRadius:"50%",
-                        width:20,height:20,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>
-                      x
-                    </button>
+                    <div style={{position:"absolute",top:-8,right:-8,display:"flex",gap:3}}>
+                      <button onClick={e=>{e.stopPropagation();startEditRegion(r.id);}} title="Edit note"
+                        style={{background:"#3b82f6",color:"#fff",border:"none",borderRadius:"50%",
+                          width:20,height:20,fontSize:11,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>
+                        +
+                      </button>
+                      <button onClick={e=>{e.stopPropagation();deleteRegion(r.id);}} title="Delete region"
+                        style={{background:"#ef4444",color:"#fff",border:"none",borderRadius:"50%",
+                          width:20,height:20,fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,padding:0}}>
+                        x
+                      </button>
+                    </div>
+                  )}
+                  {/* Inline edit note popup */}
+                  {editingRegion===r.id&&(
+                    <div onClick={e=>e.stopPropagation()} style={{position:"absolute",bottom:-60,left:0,zIndex:20,background:"#1a1a2e",border:`1px solid ${C.border}`,
+                      borderRadius:6,padding:"6px 8px",boxShadow:"0 4px 16px rgba(0,0,0,0.5)",minWidth:200,display:"flex",gap:4}}>
+                      <input ref={editNoteRef} value={editNote} onChange={e=>setEditNote(e.target.value)} placeholder="Describe what you see..."
+                        onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();saveEditRegion();}if(e.key==="Escape"){e.stopPropagation();setEditingRegion(null);}}}
+                        style={{flex:1,background:"#0d0d14",border:`1px solid ${C.border}`,color:C.text,borderRadius:4,padding:"4px 8px",fontSize:12,outline:"none"}}/>
+                      <button onClick={saveEditRegion}
+                        style={{background:C.accent,color:"#fff",border:"none",borderRadius:4,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                        Save
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}
@@ -6452,38 +6510,65 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
           {!regionMode&&regions.length>0&&(
             <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1}}>
               {regions.map(r=>(
-                <div key={r.id} style={{position:"absolute",left:(r.x*100)+"%",top:(r.y*100)+"%",width:(r.w*100)+"%",height:(r.h*100)+"%",
+                <div key={r.id} title={r.note||""} style={{position:"absolute",left:(r.x*100)+"%",top:(r.y*100)+"%",width:(r.w*100)+"%",height:(r.h*100)+"%",
                   border:`1px solid ${(typeColors[r.type]||C.accent)}55`,background:(typeColors[r.type]||C.accent)+"0a",borderRadius:3}}>
                   <span style={{position:"absolute",top:-1,left:-1,background:(typeColors[r.type]||C.accent)+"88",color:"#fff",fontSize:9,fontWeight:700,
                     padding:"0px 5px",borderRadius:"3px 0 3px 0",lineHeight:"14px",whiteSpace:"nowrap",opacity:0.7}}>
-                    {r.label||regionTypeShort[r.type]||r.type}
+                    {r.label||regionTypeShort[r.type]||r.type}{r.note?" — "+r.note:""}
                   </span>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Type picker popup */}
+          {/* Type picker popup — two-step: pick type, then optional note */}
           {pendingRect&&(
             <div onClick={e=>e.stopPropagation()}
               style={{position:"absolute",left:((pendingRect.x+pendingRect.w/2)*100)+"%",top:((pendingRect.y+pendingRect.h)*100)+"%",
                 transform:"translate(-50%, 8px)",zIndex:10,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,
-                padding:"10px 12px",boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:180}}>
-              <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>Region Type</div>
-              <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","ignore"].map(t=>(
-                  <button key={t} onClick={()=>assignType(t)}
-                    style={{background:typeColors[t]+"22",color:typeColors[t],border:`1px solid ${typeColors[t]}66`,borderRadius:8,
-                      padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",transition:"all 0.1s",whiteSpace:"nowrap"}}>
-                    {regionTypeShort[t]}
+                padding:"10px 12px",boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:200}}>
+              {!pendingType?(
+                <>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>Region Type</div>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","ignore"].map(t=>(
+                      <button key={t} onClick={()=>assignType(t)}
+                        style={{background:typeColors[t]+"22",color:typeColors[t],border:`1px solid ${typeColors[t]}66`,borderRadius:8,
+                          padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",transition:"all 0.1s",whiteSpace:"nowrap"}}>
+                        {regionTypeShort[t]}
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={()=>{setPendingRect(null);setPendingType(null);}}
+                    style={{marginTop:8,background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,
+                      padding:"3px 10px",fontSize:11,cursor:"pointer",width:"100%"}}>
+                    Cancel
                   </button>
-                ))}
-              </div>
-              <button onClick={()=>setPendingRect(null)}
-                style={{marginTop:8,background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,
-                  padding:"3px 10px",fontSize:11,cursor:"pointer",width:"100%"}}>
-                Cancel
-              </button>
+                </>
+              ):(
+                <>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                    <span style={{background:typeColors[pendingType]+"33",color:typeColors[pendingType],border:`1px solid ${typeColors[pendingType]}66`,
+                      borderRadius:8,padding:"3px 8px",fontSize:11,fontWeight:700}}>{regionTypeShort[pendingType]}</span>
+                    <button onClick={()=>{setPendingType(null);setPendingNote("");}} style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:11}}>change</button>
+                  </div>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:600,marginBottom:4}}>Describe what you see (optional)</div>
+                  <input ref={noteInputRef} value={pendingNote} onChange={e=>setPendingNote(e.target.value)}
+                    placeholder='e.g. "9 operators on DIN rail" or "AC unit detail"'
+                    onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();finishRegion();}if(e.key==="Escape"){e.stopPropagation();setPendingType(null);setPendingNote("");}}}
+                    style={{width:"100%",background:"#0d0d14",border:`1px solid ${C.border}`,color:C.text,borderRadius:5,padding:"6px 10px",fontSize:12,outline:"none",boxSizing:"border-box",marginBottom:8}}/>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={finishRegion}
+                      style={{flex:1,background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                      Save Region
+                    </button>
+                    <button onClick={()=>finishRegion("")}
+                      style={{background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 10px",fontSize:11,cursor:"pointer",whiteSpace:"nowrap"}}>
+                      Skip
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
