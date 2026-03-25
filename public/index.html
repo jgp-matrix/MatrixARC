@@ -8506,8 +8506,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
           </div>
           <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"auto"}}>
-           <div style={{display:"inline-block",minWidth:"100%"}}>
-            <table style={{borderCollapse:"collapse",fontSize:13,width:"100%"}}>
+            <table style={{borderCollapse:"collapse",fontSize:13,minWidth:1250}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
                   {["ARC Ln #","Ref Ln #","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Priced",""].map((h,hi)=>(
@@ -8773,7 +8772,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 })()}
               </tbody>
             </table>
-           </div>
           </div>
           {!readOnly&&<div style={{display:"flex",gap:8,marginTop:8}}>
             <button onClick={addBomRow} style={btn("transparent",C.accent,{fontSize:12,padding:"8px 12px",border:`1px dashed ${C.accent}66`,flex:1})}>+ Add Row</button>
