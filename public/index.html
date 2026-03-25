@@ -8509,8 +8509,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
                 <col style={{width:42}}/><col style={{width:42}}/><col style={{width:34}}/>
-                <col style={{width:"16%"}}/><col style={{width:28}}/><col/>
-                <col style={{width:"10%"}}/><col style={{width:"10%"}}/>
+                <col style={{width:"15%"}}/><col style={{width:28}}/><col style={{width:"22%"}}/>
+                <col style={{width:"10%"}}/><col style={{width:"11%"}}/>
                 <col style={{width:82}}/><col style={{width:72}}/><col style={{width:60}}/><col style={{width:40}}/>
               </colgroup>
               <thead>
@@ -8561,11 +8561,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           )}
                         </td>
                       ):f==="_supplier"?(
-                        <td key="_supplier" title={row.bcVendorName||""} style={{padding:"3px 5px",whiteSpace:"nowrap",fontSize:11,overflow:"hidden",textOverflow:"ellipsis"}}>
-                          {row.isLaborRow?"—":<span style={{color:row.bcVendorName?C.sub:C.muted}}>{row.bcVendorName||"—"}</span>}
+                        <td key="_supplier" title={row.bcVendorName||""} style={{padding:"3px 5px",fontSize:11}}>
+                          <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.isLaborRow?"—":<span style={{color:row.bcVendorName?C.sub:C.muted}}>{row.bcVendorName||"—"}</span>}</div>
                         </td>
                       ):
-                      <td key={f} title={f==="description"||f==="manufacturer"?row[f]||"":undefined} style={{padding:"3px 5px",...(mode==="fit"?{overflow:"visible",whiteSpace:"nowrap"}:{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"})}}>
+                      <td key={f} title={f==="description"||f==="manufacturer"?row[f]||"":undefined} style={{padding:"3px 5px",...(f==="partNumber"?{overflow:"visible",whiteSpace:"nowrap"}:{overflow:"hidden",whiteSpace:"nowrap"})}}>
                         {mode==="fit"?(
                           <div>
                           <div style={{display:"flex",alignItems:"center"}}>
@@ -8716,7 +8716,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                                   .then(()=>loadPartLibrary(uid).then(setPartLibrary)).catch(()=>{});
                               }
                             }}
-                            style={{...inp({padding:"5px 14px 5px 7px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5}),width:w?w-10+"px":"100%",minWidth:w?w-10+"px":"100px",flex:1}}
+                            style={{...inp({padding:"5px 14px 5px 7px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5}),width:"100%",minWidth:0,boxSizing:"border-box"}}
                             onFocus={e=>{e.target.style.borderColor=C.accent;if(f==="qty")e.target.select();}}
                           />
                         )}
