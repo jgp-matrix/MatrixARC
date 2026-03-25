@@ -8506,11 +8506,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
           </div>
           <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"auto"}}>
-            <table style={{borderCollapse:"collapse",fontSize:13,width:"max-content",minWidth:"100%"}}>
+           <div style={{display:"inline-block",minWidth:"100%"}}>
+            <table style={{borderCollapse:"collapse",fontSize:13,width:"100%"}}>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {["ARC Ln #","Ref Ln #","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Priced","Delete"].map((h,hi)=>(
-                    <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h==="Delete"?<span style={{visibility:"hidden"}}>Delete</span>:h}</th>
+                  {["ARC Ln #","Ref Ln #","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Priced",""].map((h,hi)=>(
+                    <th key={h||"bc"+hi} style={{padding:"9px 10px",textAlign:h==="Unit $"||h==="Ext $"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -8772,6 +8773,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 })()}
               </tbody>
             </table>
+           </div>
           </div>
           {!readOnly&&<div style={{display:"flex",gap:8,marginTop:8}}>
             <button onClick={addBomRow} style={btn("transparent",C.accent,{fontSize:12,padding:"8px 12px",border:`1px dashed ${C.accent}66`,flex:1})}>+ Add Row</button>
