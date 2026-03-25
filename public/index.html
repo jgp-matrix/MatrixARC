@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.108";
+const APP_VERSION="v1.18.109";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6491,10 +6491,17 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
                       {r.note}
                     </div>
                   )}
-                  {/* Edit panel for selected region — flip above if near bottom */}
-                  {selectedRegion===r.id&&(
+                  {/* Edit panel for selected region — flip based on screen position */}
+                  {selectedRegion===r.id&&(()=>{
+                    const imgRect=imgRef.current?.getBoundingClientRect();
+                    const regionBottomPx=imgRect?(imgRect.top+(r.y+r.h)*imgRect.height):0;
+                    const regionTopPx=imgRect?(imgRect.top+r.y*imgRect.height):0;
+                    const flipAbove=imgRect&&(window.innerHeight-regionBottomPx<220);
+                    const flipBelow=imgRect&&(regionTopPx<220);
+                    const showAbove=flipAbove&&!flipBelow;
+                    return(
                     <div data-region-panel="1" onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()} style={{position:"absolute",left:0,
-                      ...((r.y+r.h)>0.55?{top:0,transform:"translateY(calc(-100% - 6px))"}:{bottom:0,transform:"translateY(calc(100% + 6px))"}),
+                      ...(showAbove?{top:0,transform:"translateY(calc(-100% - 6px))"}:{bottom:0,transform:"translateY(calc(100% + 6px))"}),
                       zIndex:20,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",
                       boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:240,maxWidth:320}}>
                       {/* Type row */}
@@ -6532,7 +6539,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
                         Delete Region
                       </button>
                     </div>
-                  )}
+                    );})()}
                 </div>
               ))}
 
