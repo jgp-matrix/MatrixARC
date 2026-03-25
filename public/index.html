@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.106";
+const APP_VERSION="v1.18.107";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6340,6 +6340,8 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
 
   function onImgMouseDown(e){
     if(!regionMode||pendingRect)return;
+    // Don't start drawing if clicking inside an edit panel or region
+    if(e.target.closest&&(e.target.closest('[data-region-panel]')||e.target.closest('[data-region-box]')))return;
     e.preventDefault();e.stopPropagation();
     const c=getNormCoords(e);if(!c)return;
     setDrawStart(c);setDrawCurrent(c);setSelectedRegion(null);
@@ -6473,7 +6475,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
 
               {/* Existing regions */}
               {regions.map(r=>(
-                <div key={r.id} onClick={e=>{e.stopPropagation();setSelectedRegion(selectedRegion===r.id?null:r.id);if(editingRegion&&editingRegion!==r.id)saveEditRegion();}}
+                <div key={r.id} data-region-box="1" onClick={e=>{e.stopPropagation();if(e.target.closest&&e.target.closest('[data-region-panel]'))return;setSelectedRegion(selectedRegion===r.id?null:r.id);if(editingRegion&&editingRegion!==r.id)saveEditRegion();}}
                   onDoubleClick={e=>{e.stopPropagation();startEditRegion(r.id);}}
                   style={{position:"absolute",left:(r.x*100)+"%",top:(r.y*100)+"%",width:(r.w*100)+"%",height:(r.h*100)+"%",
                     border:`2px solid ${typeColors[r.type]||C.accent}`,background:(typeColors[r.type]||C.accent)+"22",
@@ -6491,7 +6493,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
                   )}
                   {/* Edit panel for selected region */}
                   {selectedRegion===r.id&&(
-                    <div onClick={e=>e.stopPropagation()} style={{position:"absolute",left:0,bottom:0,transform:"translateY(calc(100% + 6px))",
+                    <div data-region-panel="1" onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()} style={{position:"absolute",left:0,bottom:0,transform:"translateY(calc(100% + 6px))",
                       zIndex:20,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",
                       boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:240,maxWidth:320}}>
                       {/* Type row */}
