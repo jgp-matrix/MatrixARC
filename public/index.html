@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.109";
+const APP_VERSION="v1.18.110";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3329,13 +3329,25 @@ ADDITIONAL ACCURACY RULES:
 TRANSCRIBE EXACTLY what is printed — do NOT autocomplete, normalize, or guess part numbers
 
 RETURN FORMAT:
-Output ONLY a valid JSON array — no markdown, no explanation. Each object must have exactly:
+Output ONLY a valid JSON object — no markdown, no explanation. Format:
+{"items":[...],"questions":[...]}
+
+Each item in the "items" array must have exactly:
 {"itemNo":"","qty":1,"partNumber":"","description":"","manufacturer":"","notes":"","y_top":0.0,"y_bottom":0.0,"x_left":0.0,"x_right":1.0}
 
 y_top and y_bottom are the top and bottom edges of this row as fractions of the total image height (0.0=top, 1.0=bottom). Be precise.
 x_left and x_right are the left and right edges of the entire BOM TABLE (all columns) as fractions of the total image width. Exclude any schematic diagram, layout drawing, or whitespace to the left of the table — crop to where the BOM table columns begin and end. All rows on the same page share the same x_left/x_right values.
 
-If no BOM table exists on this page, return [].`;
+QUESTIONS — if you are uncertain about any item or see something ambiguous, add a question to the "questions" array (max 5 per page). Each question:
+{"rowRef":"item # or part number","question":"What is unclear","options":["possible answer A","possible answer B"]}
+Examples of good questions:
+• {"rowRef":"Item 5","question":"Part number reads as 'E5CS-R1KJX-52O' — is the last character the letter O or the digit 0 (zero)?","options":["Letter O","Digit 0"]}
+• {"rowRef":"100-C09D10","question":"The 4th character could be a letter O or digit 0 — which is correct?","options":["100-C09D10 (letter O)","100-C09010 (digit zero)"]}
+• {"rowRef":"Row 12","question":"This row has no part number but references 'WIRE 14AWG'. Is this a BOM item to include or a general note?","options":["Include as BOM item","It's a note, skip it"]}
+• {"rowRef":"Item 8","question":"Manufacturer cell shows 'SQD' — is this Square D (Schneider Electric)?","options":["Yes, Square D","No, different manufacturer"]}
+Only ask when genuinely uncertain — do NOT ask about things you can resolve by careful reading. Return empty "questions":[] if nothing is unclear.
+
+If no BOM table exists on this page, return {"items":[],"questions":[]}.`;
 
 async function extractBomPage(dataUrl,feedback="",userNotes=""){
   const small=await resizeForAnalysis(dataUrl,2400); // BOM needs higher res for small text / character accuracy
@@ -3364,9 +3376,21 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
   console.log("Claude raw response:",raw);
   try{
     const cleaned=raw.replace(/```json|```/g,"").trim();
-    const m=cleaned.match(/\[[\s\S]*\]/);
-    if(!m){console.warn("No JSON array found in response");return[];}
-    const items=JSON.parse(m[0]);
+    // Try new object format first: {"items":[...],"questions":[...]}
+    let items=[],questions=[];
+    const objMatch=cleaned.match(/\{[\s\S]*\}/);
+    if(objMatch){
+      try{
+        const parsed=JSON.parse(objMatch[0]);
+        if(Array.isArray(parsed.items)){items=parsed.items;questions=parsed.questions||[];}
+        else if(parsed.itemNo!==undefined||parsed.partNumber!==undefined){items=[parsed];}// single item obj
+        else{const arrMatch=cleaned.match(/\[[\s\S]*\]/);if(arrMatch)items=JSON.parse(arrMatch[0]);}
+      }catch(e2){const arrMatch=cleaned.match(/\[[\s\S]*\]/);if(arrMatch)items=JSON.parse(arrMatch[0]);}
+    }else{
+      const arrMatch=cleaned.match(/\[[\s\S]*\]/);
+      if(!arrMatch){console.warn("No JSON found in response");return{items:[],questions:[]};}
+      items=JSON.parse(arrMatch[0]);
+    }
     // Post-process: split any rows where partNumber still contains multiple values
     const expanded=[];
     for(const item of items){
@@ -3385,8 +3409,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
         expanded.push(item);
       }
     }
-    return expanded;
-  }catch(e){console.error("JSON parse error:",e,raw);return[];}
+    return{items:expanded,questions:questions.slice(0,5)};
+  }catch(e){console.error("JSON parse error:",e,raw);return{items:[],questions:[]};}
 }
 
 // ── PART NUMBER VERIFICATION ──
@@ -3867,7 +3891,8 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
   };
 
   // 5. BOM cross-reference — await bomPromise if BOM is being extracted in parallel
-  const resolvedBom=bomPromise?(await bomPromise):(panel.bom||[]);
+  const bomRaw=bomPromise?(await bomPromise):(panel.bom||[]);
+  const resolvedBom=Array.isArray(bomRaw)?bomRaw:(bomRaw.bom||[]);
   const isAsShown=notes=>/^(as\s+shown|enclosure)$/i.test((notes||"").trim());
   const matched=[],missing=[],notTraceable=[];
   for(const item of resolvedBom){
@@ -4117,17 +4142,21 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     if(_apiKey&&bomPages.length>0){
       bgUpdate(panel.id,"Extracting BOM…");
       let bomDone=0;
+      let allQuestions=[];
       bomMergePromise=parallelMap(bomPages,async (pg,pgIdx)=>{
         bomDone++;
         bgSetPct(panel.id,Math.round((bomDone/bomPages.length)*40),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
-        const items=await extractBomPage(pg.dataUrl,"",userNotes);
+        const result=await extractBomPage(pg.dataUrl,"",userNotes);
+        const items=result.items||result;
+        const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
+        if(qs.length)allQuestions.push(...qs);
         return items.map(item=>({...item,sourcePageIdx:pgIdx}));
       },3).then(results=>{
-        const all=results.flat();if(!all.length)return[];
+        const all=results.flat();if(!all.length)return{bom:[],questions:allQuestions};
         const map={};
         all.forEach(item=>{const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}});
-        return appendDefaultBomItems(Object.values(map));
-      }).catch(ex=>{console.error("BOM extraction failed:",ex);return[];});
+        return{bom:appendDefaultBomItems(Object.values(map)),questions:allQuestions.slice(0,10)};
+      }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[]};});
     }
     // Validation (parallel with BOM)
     let valPromise=Promise.resolve(null);
@@ -4136,8 +4165,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       valPromise=runPanelValidation(latestPanel,pct=>{bgSetPct(panel.id,40+Math.round(pct*0.5),"Validating…");},bomMergePromise);
     }
     // Await BOM and save
-    const mergedBom=await bomMergePromise;
-    if(mergedBom.length>0)await save({...latestPanel,bom:mergedBom,status:"extracted",updatedAt:Date.now()});
+    const bomResult=await bomMergePromise;
+    const mergedBom=bomResult.bom||bomResult;
+    const aiQuestions=(bomResult.questions||[]).slice(0,10);
+    if(mergedBom.length>0)await save({...latestPanel,bom:mergedBom,...(aiQuestions.length?{aiQuestions}:{}),status:"extracted",updatedAt:Date.now()});
     // Await validation and save
     if(willValidate){
       try{
@@ -7242,6 +7273,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [aiFeedback,setAiFeedback]=useState("");
   const [reExtracting,setReExtracting]=useState(false);
   const [feedbackSaved,setFeedbackSaved]=useState(false);
+  const [showAiQuestions,setShowAiQuestions]=useState(false);
+  const [aiAnswers,setAiAnswers]=useState({});
   const [err,setErr]=useState("");
   const [stampingDrawings,setStampingDrawings]=useState(false);
   const [attachingPdf,setAttachingPdf]=useState(false);
@@ -7719,6 +7752,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       onDone:(finalPanel)=>{
         try{onUpdate(finalPanel);}catch(e){}
         try{setExtracting(false);setValidatingPanel(false);}catch(e){}
+        // Show AI questions if any
+        if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
         // Auto-run pricing after extraction
         if((finalPanel.bom||[]).length>0&&_apiKey){
           try{runPricingOnPanel(finalPanel.bom,finalPanel);}catch(e){}
@@ -7955,12 +7990,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     let all=[];let bomDone=0;
     try{
-      const bomResults=await parallelMap(bomPages,async(pg)=>{
+      let reQs=[];
+      const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
-        const items=await extractBomPage(pg.dataUrl);
+        const result=await extractBomPage(pg.dataUrl);
+        const items=result.items||result;
+        const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
+        if(qs.length)reQs.push(...qs);
         return items;
       },3);
       all=bomResults.flat();
+      reQs=reQs.slice(0,10);
     }catch(ex){setErr(`Failed: ${ex.message}`);setExtracting(false);return;}
     const map={};
     all.forEach(item=>{
@@ -7972,12 +8012,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     })));
-    const updated={...panel,bom,status:"extracted",updatedAt:Date.now()};
+    const updated={...panel,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),status:"extracted",updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     ep.finish(`✓ ${bom.length} items extracted`);
     setTagsChanged(false);
     setExtracting(false);
+    if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
       const categorized=bom.filter(r=>!r.isLaborRow&&r.partNumber).map(r=>({...r,cpdCategory:categorizePart(r.partNumber,r.description)}));
@@ -8045,12 +8086,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     let all=[];let bomDone=0;
     try{
-      const bomResults=await parallelMap(bomPages,async(pg)=>{
+      let fbQs=[];
+      const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
-        const items=await extractBomPage(pg.dataUrl,aiFeedback);
+        const result=await extractBomPage(pg.dataUrl,aiFeedback);
+        const items=result.items||result;
+        const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
+        if(qs.length)fbQs.push(...qs);
         return items;
       },3);
       all=bomResults.flat();
+      fbQs=fbQs.slice(0,10);
     }catch(ex){setErr(`Failed: ${ex.message}`);setReExtracting(false);return;}
     const map={};
     all.forEach(item=>{
@@ -8064,7 +8110,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     })));
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
     const feedbackLog=[...((latestPanel.extractionFeedbackLog)||[]),logEntry];
-    const updated={...latestPanel,bom,status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
+    const updated={...latestPanel,bom,...(typeof fbQs!=='undefined'&&fbQs.length?{aiQuestions:fbQs}:{}),status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     const laborMsg=laborResult?.wires!=null?` · labor set to ${updated.pricing?.laborHoursOverride} hrs`:"";
@@ -9180,6 +9226,62 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             try{onSaveImmediate(updated);}catch(e){}
           }}
         />
+      )}
+      {showAiQuestions&&(panel.aiQuestions||[]).length>0&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.85)"}}>
+          <div style={{background:"#12121f",border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",maxWidth:560,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}}>
+            <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:4}}>AI has questions about this BOM</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16,lineHeight:1.5}}>The extraction AI wasn't sure about a few items. Your answers will improve accuracy.</div>
+            {(panel.aiQuestions||[]).map((q,qi)=>(
+              <div key={qi} style={{marginBottom:14,padding:"10px 14px",background:"rgba(99,102,241,0.06)",border:`1px solid rgba(99,102,241,0.15)`,borderRadius:8}}>
+                <div style={{fontSize:12,color:"#818cf8",fontWeight:700,marginBottom:2}}>{q.pageName||"BOM"} — {q.rowRef||"Item"}</div>
+                <div style={{fontSize:13,color:C.text,marginBottom:8,lineHeight:1.5}}>{q.question}</div>
+                {q.options&&q.options.length>0?(
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:4}}>
+                    {q.options.map((opt,oi)=>(
+                      <button key={oi} onClick={()=>setAiAnswers(a=>({...a,[qi]:opt}))}
+                        style={{background:aiAnswers[qi]===opt?C.accent+"33":"rgba(255,255,255,0.04)",color:aiAnswers[qi]===opt?C.accent:C.sub,
+                          border:`1px solid ${aiAnswers[qi]===opt?C.accent:C.border}`,borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:600,cursor:"pointer",transition:"all 0.1s"}}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                ):null}
+                <input value={aiAnswers[qi]||""} onChange={e=>setAiAnswers(a=>({...a,[qi]:e.target.value}))}
+                  placeholder="Type your answer..."
+                  style={{width:"100%",background:"#0d0d14",border:`1px solid ${C.border}`,color:C.text,borderRadius:5,padding:"5px 10px",fontSize:12,outline:"none",boxSizing:"border-box",marginTop:4}}/>
+              </div>
+            ))}
+            <div style={{display:"flex",gap:10,marginTop:16}}>
+              <button onClick={()=>{
+                // Build feedback string from answers and re-apply
+                const feedback=(panel.aiQuestions||[]).map((q,qi)=>{
+                  const ans=aiAnswers[qi];
+                  return ans?`Q: ${q.question} → A: ${ans}`:"";
+                }).filter(Boolean).join("\n");
+                if(feedback){
+                  // Save answers as extraction notes for future re-extracts
+                  const existingNotes=panel.extractionNotes||"";
+                  const answerNotes="\n\nAI Q&A ANSWERS:\n"+feedback;
+                  const updated={...panel,extractionNotes:existingNotes+answerNotes,aiQuestions:[]};
+                  onUpdate(updated);
+                  try{onSaveImmediate(updated);}catch(e){}
+                }
+                setShowAiQuestions(false);setAiAnswers({});
+              }} style={{flex:1,background:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                Save Answers
+              </button>
+              <button onClick={()=>{
+                const updated={...panel,aiQuestions:[]};
+                onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+                setShowAiQuestions(false);setAiAnswers({});
+              }} style={{background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:7,padding:"9px 16px",fontSize:13,cursor:"pointer"}}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
       {bcBrowserOpen&&(
         <BCItemBrowserModal
