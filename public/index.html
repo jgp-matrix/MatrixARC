@@ -3411,6 +3411,31 @@ function buildRegionContext(pages){
   return hints.length?"\n\nREGION ANNOTATIONS FROM USER:\n"+hints.join("\n"):"";
 }
 
+// Build region context for a single page (used by validation/labor analysis)
+function buildPageRegionNotes(pg){
+  if(!pg.regions?.length)return"";
+  const descs=pg.regions.filter(r=>r.note).map(r=>{
+    const label=r.label||r.type;
+    const pos=`${Math.round(r.x*100)}%-${Math.round((r.x+r.w)*100)}% horiz, ${Math.round(r.y*100)}%-${Math.round((r.y+r.h)*100)}% vert`;
+    return `• [${label}] ${r.note} (at ${pos})`;
+  });
+  return descs.length?"\n\nUSER REGION ANNOTATIONS ON THIS PAGE (use these to improve accuracy — user has identified specific components, counts, and locations):\n"+descs.join("\n"):"";
+}
+
+// Build all-pages region summary for labor/device context
+function buildAllRegionSummary(pages){
+  const entries=[];
+  for(const pg of pages){
+    if(!pg.regions?.length)continue;
+    for(const r of pg.regions){
+      if(!r.note)continue;
+      entries.push({page:pg.name||"Page",type:r.label||r.type,note:r.note});
+    }
+  }
+  if(!entries.length)return"";
+  return"\n\nUSER REGION OBSERVATIONS (these are ground-truth observations from the user reviewing the drawings — trust these for device counts, component identification, and labor estimation):\n"+entries.map(e=>`• [${e.type}] on ${e.page}: ${e.note}`).join("\n");
+}
+
 async function extractBomPage(dataUrl,feedback="",userNotes=""){
   const small=await resizeForAnalysis(dataUrl,2400); // BOM needs higher res for small text / character accuracy
   const b64=small&&small.split(",")[1];
@@ -3929,12 +3954,13 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
   if(onProgress)onProgress(0);
   // Load layout learning for AI hints
   const llHint=buildLayoutLearningHint(await loadLayoutLearning(_appCtx.uid).catch(()=>[]));
-  const userNotes=panel.extractionNotes||"";
+  const baseNotes=panel.extractionNotes||"";
+  const allRegionSummary=buildAllRegionSummary(panel.pages||[]);
   const [schResults,bpResults,encResults,layResults]=await Promise.all([
-    parallelMap(schematicPages,async pg=>{const r=await analyzeSchematicPage(pg.dataUrl,userNotes);donePages++;reportProgress();return r;},4),
-    parallelMap(backpanelPages,async pg=>{const r=await analyzeBackpanelPage(pg.dataUrl,userNotes);donePages++;reportProgress();return r;},4),
-    parallelMap(enclosurePages,async pg=>{const r=await analyzeEnclosurePage(pg.dataUrl,llHint,userNotes);donePages++;reportProgress();return r;},4),
-    parallelMap(layoutPages,async pg=>{const r=await analyzeLayoutPage(pg.dataUrl,llHint,userNotes);donePages++;reportProgress();return r;},4)
+    parallelMap(schematicPages,async pg=>{const notes=baseNotes+buildPageRegionNotes(pg)+allRegionSummary;const r=await analyzeSchematicPage(pg.dataUrl,notes);donePages++;reportProgress();return r;},4),
+    parallelMap(backpanelPages,async pg=>{const notes=baseNotes+buildPageRegionNotes(pg)+allRegionSummary;const r=await analyzeBackpanelPage(pg.dataUrl,notes);donePages++;reportProgress();return r;},4),
+    parallelMap(enclosurePages,async pg=>{const notes=baseNotes+buildPageRegionNotes(pg)+allRegionSummary;const r=await analyzeEnclosurePage(pg.dataUrl,llHint,notes);donePages++;reportProgress();return r;},4),
+    parallelMap(layoutPages,async pg=>{const notes=baseNotes+buildPageRegionNotes(pg)+allRegionSummary;const r=await analyzeLayoutPage(pg.dataUrl,llHint,notes);donePages++;reportProgress();return r;},4)
   ]);
   if(onProgress)onProgress(92);
   for(const result of schResults){
@@ -4192,6 +4218,12 @@ async function saveExtractionLearning(uid,projectId,panel,projectName,bcProjectN
       content+=`Compliance concerns: ${crit} critical, ${warn} warning\n`;
     }
     if(panel.extractionNotes)content+=`\n=== User Notes ===\n${panel.extractionNotes}\n`;
+    // Include region annotations — user-identified components, counts, descriptions
+    const regionEntries=pages.flatMap(pg=>(pg.regions||[]).filter(r=>r.note).map(r=>({page:pg.name||'Page',type:r.label||r.type,note:r.note})));
+    if(regionEntries.length){
+      content+=`\n=== User Region Annotations ===\n`;
+      content+=regionEntries.map(e=>`[${e.type}] on ${e.page}: ${e.note}`).join('\n')+'\n';
+    }
     if(panel.extractionFeedbackLog?.length){
       content+=`\n=== Extraction Feedback History ===\n`;
       panel.extractionFeedbackLog.forEach(entry=>{
