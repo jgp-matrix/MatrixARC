@@ -3360,6 +3360,9 @@ You MUST return AT LEAST 3 questions per page. Even if you are fairly confident,
 IMPORTANT: You MUST return the wrapper object format: {"items":[...],"questions":[...]}
 Do NOT return a bare JSON array. Always wrap in the object with both keys.
 
+FINAL REMINDER — QUESTIONS ARE MANDATORY:
+The "questions" array MUST contain at least 3 entries (unless the page has fewer than 3 BOM rows). For each question, ask about any character ambiguity, unusual abbreviation, or suspicious value. If you cannot find 3 genuinely ambiguous items, pick the 3 items you are LEAST confident about and ask a confirmation question. An empty questions array when 3+ BOM rows exist is WRONG.
+
 If no BOM table exists on this page, return {"items":[],"questions":[]}.`;
 
 // Crop a region from an image using normalized coordinates (0-1)
@@ -3483,7 +3486,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
         }
       }
     }
-    if(!questions.length)console.log("BOM extraction: 0 questions returned");
+    if(!questions.length&&items.length>=3)console.warn("BOM extraction: 0 questions returned but",items.length,"items found — AI should have asked at least 3 questions");
+    else if(!questions.length)console.log("BOM extraction: 0 questions returned");
     // Post-process: split any rows where partNumber still contains multiple values
     const expanded=[];
     for(const item of items){
@@ -8183,6 +8187,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setTagsChanged(false);
     setExtracting(false);
     if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
+    // Auto-run pricing after re-extraction
+    if(bom.length>0&&_apiKey){
+      try{runPricingOnPanel(bom,updated);}catch(e){console.warn("Post-extract pricing failed:",e);}
+    }
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
       const categorized=bom.filter(r=>!r.isLaborRow&&r.partNumber).map(r=>({...r,cpdCategory:categorizePart(r.partNumber,r.description)}));
@@ -9090,7 +9098,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.isLaborRow?"—":<span style={{color:row.bcVendorName?C.sub:C.muted}}>{row.bcVendorName||"—"}</span>}</div>
                         </td>
                       ):
-                      <td key={f} title={f==="description"||f==="manufacturer"?row[f]||"":undefined} style={{padding:"3px 5px",...(f==="partNumber"?{overflow:"visible",whiteSpace:"nowrap"}:{overflow:"hidden",whiteSpace:"nowrap"})}}>
+                      <td key={f} title={f==="description"||f==="manufacturer"?row[f]||"":undefined} style={{padding:"3px 5px",...(f==="partNumber"?{overflow:"hidden",whiteSpace:"nowrap"}:{overflow:"hidden",whiteSpace:"nowrap"})}}>
                         {mode==="fit"?(
                           <div>
                           <div style={{display:"flex",alignItems:"center"}}>
@@ -9179,13 +9187,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             const avail=pn?alternates.filter(a=>a.originalPN===pn):[];
                             if(!avail.length)return null;
                             return(
-                              <div style={{marginTop:3}}>
+                              <div style={{marginTop:3,maxWidth:"100%",overflow:"hidden"}}>
                                 <select onChange={e=>{
                                   if(!e.target.value)return;
                                   const alt=avail.find(a=>a.replacement.partNumber===e.target.value);
                                   if(alt)applyBcItem(row.id,{number:alt.replacement.partNumber,unitCost:alt.replacement.unitCost,displayName:alt.replacement.description});
                                   e.target.value="";
-                                }} style={{fontSize:10,background:"#1a1040",border:`1px solid ${C.accent}`,borderRadius:4,color:C.accent,padding:"1px 4px",cursor:"pointer"}}>
+                                }} style={{fontSize:10,background:"#1a1040",border:`1px solid ${C.accent}`,borderRadius:4,color:C.accent,padding:"1px 4px",cursor:"pointer",maxWidth:"100%",boxSizing:"border-box"}}>
                                   <option value="">⇄ Alternates…</option>
                                   {avail.map(a=>(
                                     <option key={a.replacement.partNumber} value={a.replacement.partNumber}>
@@ -9197,7 +9205,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             );
                           })()}
                           {f==="partNumber"&&row.suggestedPartNumber&&!row.partNumber&&!readOnly&&(
-                            <div style={{display:"flex",alignItems:"center",gap:4,marginTop:3,paddingLeft:2,flexWrap:"nowrap"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:4,marginTop:3,paddingLeft:2,flexWrap:"nowrap",maxWidth:"100%",overflow:"hidden"}}>
                               <span style={{fontSize:10,color:C.teal}}>📚</span>
                               <span style={{fontSize:11,color:C.teal,fontWeight:700}}>{row.suggestedPartNumber}</span>
                               <button onClick={()=>confirmSuggestion(row.id)} style={{fontSize:10,color:"#000",background:C.teal,border:"none",borderRadius:3,padding:"1px 7px",cursor:"pointer",fontWeight:700,whiteSpace:"nowrap"}}>Use</button>
@@ -9205,7 +9213,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             </div>
                           )}
                           {f==="partNumber"&&bcFuzzySuggestions[row.id]&&!readOnly&&(
-                            <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto",maxWidth:360,minWidth:200}}>
+                            <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto",maxWidth:"100%",minWidth:0,boxSizing:"border-box"}}>
                               <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
                                 <div style={{fontSize:10,color:C.accent,fontWeight:700,flex:1}}>BC FUZZY MATCHES</div>
                                 <button onClick={()=>setBcFuzzySuggestions(prev=>{const next={...prev};delete next[row.id];return next;})}
