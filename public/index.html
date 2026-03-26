@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.145";
+const APP_VERSION="v1.18.146";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -938,7 +938,8 @@ async function getNextQuoteNumber(uid){
   const ref=fbDb.doc(path);
   const num=await fbDb.runTransaction(async tx=>{
     const doc=await tx.get(ref);
-    const next=doc.exists?(doc.data().next||202000):202000;
+    const stored=doc.exists?(doc.data().next||0):0;
+    const next=Math.max(stored,202000); // enforce minimum start
     tx.set(ref,{next:next+1});
     return next;
   });
@@ -6275,7 +6276,7 @@ function QuoteTab({project,onUpdate}){
             <div className="qd-hdr-right">
               <div className="qd-qlabel">{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
               <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="MTX-Q2#####" style={{...qInp({width:220,fontSize:28,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
-              {project.quoteRev>0&&<div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":C.sub,letterSpacing:0.3}}>Rev {String(project.quoteRev).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>}
+              <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":"#64748b",letterSpacing:0.3}}>Rev {String(project.quoteRev||0).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>
               <div className="qd-qmeta">{q.date||today}<br/>Page 1 of 2</div>
             </div>
           </div>
@@ -12538,7 +12539,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   async function handlePrintQuote(){
     // Auto-assign quote number if not yet set
     const proj=projectRef.current;
-    if(!proj.quote?.number){
+    if(!proj.quote?.number||!String(proj.quote.number).startsWith("MTX-Q")){
       try{
         const qNum=await getNextQuoteNumber(uid);
         const upd={...proj,quote:{...(proj.quote||{}),number:qNum}};
