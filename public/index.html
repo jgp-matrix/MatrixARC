@@ -7347,16 +7347,15 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:100,system:"You are a JSON-only API. Output ONLY a single JSON object with no explanation, no markdown, no text before or after. Never explain your reasoning.",messages:[{role:"user",content:[
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:60,system:"Output ONLY valid JSON. No explanation.",messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`Find BOM item #${refLine||'?'} with part number "${pn}" in this drawing. Return the row's vertical position and the part number's horizontal position as fractions of image dimensions.
-JSON format: {"found":true,"y_top":0.45,"y_bottom":0.47,"pn_x":0.60}
-If not found: {"found":false}`}
-        ]}]})
+          {type:"text",text:`Find BOM item #${refLine||'?'} with part number "${pn}" in this drawing's BOM table. Return JSON with the row's y_top, y_bottom (fractions of image height) and pn_x (horizontal center of part number as fraction of image width). Example: {"found":true,"y_top":0.45,"y_bottom":0.47,"pn_x":0.60} or {"found":false}`}
+        ]},{role:"assistant",content:[{type:"text",text:"{"}]}]})
       });
       const data=await resp.json();
       console.log('LOCATE: API response:',JSON.stringify(data).slice(0,500));
-      const text=data.content?.[0]?.text||'';
+      const rawText=data.content?.[0]?.text||'';
+      const text='{'+rawText; // prepend { from assistant prefill
       console.log('LOCATE: extracted text:',text);
       const m=text.match(/\{[\s\S]*?\}/);
       if(m){
