@@ -7342,7 +7342,6 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       if(!b64)return;
       const pn=(targetRow?.partNumber||initialQuery||'').trim();
       const refLine=(targetRow?.itemNo||'').trim();
-      console.log('LOCATE: searching for',pn,'refLine:',refLine,'on page',idx,'b64 length:',b64.length);
       // Ask Haiku for TABLE boundaries + total row count + part number column position (easier than finding one row)
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
@@ -7353,10 +7352,8 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
         ]},{role:"assistant",content:[{type:"text",text:"{"}]}]})
       });
       const data=await resp.json();
-      console.log('LOCATE: API response:',JSON.stringify(data).slice(0,500));
       const rawText=data.content?.[0]?.text||'';
       const text='{'+rawText;
-      console.log('LOCATE: extracted text:',text);
       const m=text.match(/\{[\s\S]*?\}/);
       if(m){
         const r=JSON.parse(m[0]);
@@ -7371,7 +7368,6 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
         const y_bottom=y_top+rowHeight;
         // Clamp pn_x — varies by customer; use AI value but cap range
         const pnX=r.pn_x!=null?Math.min(0.60,Math.max(0.35,r.pn_x)):0.50;
-        console.log('LOCATE: table',tTop,'→',tBot,totalRows,'rows, item',itemNum,'→ y:',y_top.toFixed(3),'-',y_bottom.toFixed(3),'pn_x:',pnX,'(raw:',r.pn_x,')');
         await cropRowFromImage(dataUrl,y_top,y_bottom,pnX);
       }
     }catch(e){console.warn('locateInDrawing:',e);}
