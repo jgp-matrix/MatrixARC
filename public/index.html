@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.125";
+const APP_VERSION="v1.18.126";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3420,8 +3420,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
     headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
     body:JSON.stringify({
       model:"claude-sonnet-4-6",
-      max_tokens:10000,
-      thinking:{type:"enabled",budget_tokens:5000},
+      max_tokens:16000,
+      thinking:{type:"enabled",budget_tokens:4000},
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
         {type:"text",text:BOM_PROMPT+feedbackSection+notesSection}
@@ -3430,9 +3430,10 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
   });
   const d=await resp.json();
   if(!resp.ok)throw new Error(d.error?.message||"API error");
+  if(d.stop_reason==="max_tokens")console.warn("BOM extraction: response TRUNCATED (hit max_tokens limit) — some items may be lost");
   // Find the text block (thinking blocks come first)
   const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
-  console.log("Claude raw response:",raw);
+  console.log("BOM extraction response:",raw.length,"chars, stop_reason:",d.stop_reason);
   try{
     const cleaned=raw.replace(/```json|```/gi,"").trim();
     let items=[],questions=[];
@@ -3472,7 +3473,14 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
         if(qMatch){try{questions=JSON.parse(qMatch[1]);}catch(qe){}}
         console.log("BOM extraction: array fallback,",items.length,"items,",questions.length,"questions");
       } else {
-        console.warn("No JSON found in response. Raw:",cleaned.slice(0,200));return{items:[],questions:[]};
+        // Strategy 4: Truncated JSON — extract individual complete item objects
+        const itemMatches=[...cleaned.matchAll(/\{"itemNo"[^}]*\}/g)];
+        if(itemMatches.length){
+          for(const m of itemMatches){try{items.push(JSON.parse(m[0]));}catch(e4){}}
+          console.log("BOM extraction: salvaged",items.length,"items from truncated response");
+        } else {
+          console.warn("No JSON found in response. Raw:",cleaned.slice(0,200));return{items:[],questions:[]};
+        }
       }
     }
     if(!questions.length)console.log("BOM extraction: 0 questions returned");
