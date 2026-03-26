@@ -3327,7 +3327,8 @@ function appendDefaultBomItems(bom){
 function mergeBoms(bomArrays){
   const map={};
   bomArrays.flat().forEach(item=>{
-    const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+((item.description||"").toLowerCase().slice(0,40)));
+    const pn=(item.partNumber||"").replace(/[\s\-\.\/\u00a0]+/g,"").toUpperCase();
+    const key=pn||("desc:"+((item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40)));
     if(map[key]){map[key]={...map[key],qty:(+map[key].qty||1)+(+item.qty||1)};}
     else{map[key]={...item};}
   });
@@ -3431,6 +3432,8 @@ ADDITIONAL ACCURACY RULES:
 • If two adjacent characters could be read as "OD" or "0D" or "OO" or "00", zoom in mentally on each glyph and check for the flat left edge (D) vs curved (O/0)
 • NEVER assume or autocomplete a part number — if a character is genuinely unreadable, transcribe your best interpretation based on glyph shape alone
 TRANSCRIBE EXACTLY what is printed — do NOT autocomplete, normalize, or guess part numbers
+
+DUPLICATE PART NUMBERS: If the same part number appears on multiple rows in the BOM table, combine them into ONE item with the total quantity summed. For example, if "QD100X300HW" appears 3 times each with qty 1, return ONE item with qty 3. Do NOT return separate rows for the same part number.
 
 RETURN FORMAT:
 Output ONLY a valid JSON object — no markdown, no explanation. Format:
@@ -4443,7 +4446,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       },3).then(results=>{
         const all=results.flat();if(!all.length)return{bom:[],questions:allQuestions};
         const map={};
-        all.forEach(item=>{const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}});
+        all.forEach(item=>{const pn=(item.partNumber||"").replace(/[\s\-\.\/\u00a0]+/g,"").toUpperCase();const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}});
+        console.log(`BOM MERGE: ${all.length} raw items → ${Object.keys(map).length} unique items`);
         return{bom:appendDefaultBomItems(Object.values(map)),questions:allQuestions.slice(0,10)};
       }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[]};});
     }
@@ -8315,10 +8319,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     ep.set(65,"Merging results…");
     const map={};
     all.forEach(item=>{
-      const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));
-      if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
+      const pn=(item.partNumber||"").replace(/[\s\-\.\/\u00a0]+/g,"").toUpperCase();
+      const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));
+      if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged (now qty ${map[key].qty})`);}
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
+    console.log(`BOM MERGE: ${all.length} raw items → ${Object.keys(map).length} unique items`);
     const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,Object.values(map).map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
@@ -8440,7 +8446,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }catch(ex){setErr(`Failed: ${ex.message}`);setReExtracting(false);return;}
     const map={};
     all.forEach(item=>{
-      const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));
+      const pn=(item.partNumber||"").replace(/[\s\-\.\/\u00a0]+/g,"").toUpperCase();
+      const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
