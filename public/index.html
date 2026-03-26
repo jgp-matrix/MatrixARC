@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.151";
+const APP_VERSION="v1.18.152";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7631,6 +7631,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [showAiQuestions,setShowAiQuestions]=useState(false);
   const [aiAnswers,setAiAnswers]=useState({});
   const [err,setErr]=useState("");
+  const [reExtractWarn,setReExtractWarn]=useState(false);
   const [attachingPdf,setAttachingPdf]=useState(false);
   const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [bcPdfMissing,setBcPdfMissing]=useState(false);
@@ -9034,7 +9035,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
           <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:2}}>DRAWINGS</div>
           {!readOnly&&bomCount>0&&(
-            <button data-tip="Re-run AI extraction on tagged BOM pages — uses region crops if defined" onClick={()=>runExtraction()} disabled={extracting}
+            <button data-tip="Re-run AI extraction on tagged BOM pages — uses region crops if defined" onClick={()=>{
+              if(localStorage.getItem("_arc_skip_reextract_warn")){runExtraction();return;}
+              setReExtractWarn(true);
+            }} disabled={extracting}
               style={{background:"none",border:`1px solid ${C.accent}88`,color:C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:extracting?0.6:1}}>
               {extracting?"Extracting…":"Re-Extract Drawings"}
             </button>
@@ -9779,6 +9783,25 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             </div>
           </div>
         </div>,document.body
+      )}
+      {reExtractWarn&&ReactDOM.createPortal(
+        React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onMouseDown:e=>{if(e.target===e.currentTarget)setReExtractWarn(false);}},
+          React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b66",borderRadius:10,padding:"24px 28px",width:380,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}},
+            React.createElement("div",{style:{fontSize:15,fontWeight:800,color:"#f59e0b",marginBottom:8}},"Re-Extract Drawings?"),
+            React.createElement("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.6}},"This will overwrite the current BOM, pricing, and validation data with a fresh extraction. Any manual edits will be lost."),
+            React.createElement("div",{style:{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}},
+              React.createElement("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#64748b",cursor:"pointer",marginRight:"auto"}},
+                React.createElement("input",{type:"checkbox",id:"_reextract_dismiss",style:{accentColor:C.accent}}),
+                "Don't show this again"
+              ),
+              React.createElement("button",{onClick:()=>setReExtractWarn(false),style:{background:"#1e1e2e",border:"1px solid #2a2a3e",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}},"Cancel"),
+              React.createElement("button",{onClick:()=>{
+                if(document.getElementById("_reextract_dismiss")?.checked)localStorage.setItem("_arc_skip_reextract_warn","1");
+                setReExtractWarn(false);runExtraction();
+              },style:{background:"#451a03",border:"1px solid #f59e0b66",color:"#f59e0b",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:700}},"Re-Extract")
+            )
+          )
+        ),document.body
       )}
       {crossOrCorrectPending&&(()=>{
         const aiSug=guessCorrection(crossOrCorrectPending.origPN,crossOrCorrectPending.newPN);
