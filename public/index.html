@@ -7343,6 +7343,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       const pn=(targetRow?.partNumber||initialQuery||'').trim();
       const refLine=(targetRow?.itemNo||'').trim();
       const refHint=refLine?`\nIMPORTANT: The BOM line/item number for this row is "${refLine}". Find this number in the first column (labeled ITEM, REF, LINE, #, or similar) — it uniquely identifies the row.`:'';
+      console.log('LOCATE: searching for',pn,'refLine:',refLine,'on page',idx,'b64 length:',b64.length);
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
@@ -7361,7 +7362,9 @@ If the part is not visible in this image: {"found":false}`}
         ]}]})
       });
       const data=await resp.json();
+      console.log('LOCATE: API response:',JSON.stringify(data).slice(0,500));
       const text=data.content?.[0]?.text||'';
+      console.log('LOCATE: extracted text:',text);
       const m=text.match(/\{[\s\S]*?\}/);
       if(m){
         const r=JSON.parse(m[0]);
