@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.120";
+const APP_VERSION="v1.18.121";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3461,11 +3461,16 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
       const arrMatch=cleaned.match(/\[[\s\S]*\]/);
       if(arrMatch){
         items=JSON.parse(arrMatch[0]);
-        console.log("BOM extraction: parsed bare array,",items.length,"items, 0 questions (old format)");
+        // Still try to find questions in the raw response even with bare array fallback
+        const qMatch=cleaned.match(/"questions"\s*:\s*(\[[\s\S]*?\])\s*\}/);
+        if(qMatch){try{questions=JSON.parse(qMatch[1]);}catch(qe){}}
+        console.log("BOM extraction: parsed bare array,",items.length,"items,",questions.length,"questions (fallback)");
       } else {
         console.warn("No JSON found in response");return{items:[],questions:[]};
       }
     }
+    // Log question count for debugging — if consistently 0, prompt may need adjustment
+    if(!questions.length)console.log("BOM extraction: AI returned 0 questions for this page");
     // Post-process: split any rows where partNumber still contains multiple values
     const expanded=[];
     for(const item of items){
@@ -7876,6 +7881,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       onDone:(finalPanel)=>{
         try{onUpdate(finalPanel);}catch(e){}
         try{setExtracting(false);setValidatingPanel(false);}catch(e){}
+        // Clear bg extraction bar so pricing progress can take over immediately
+        try{bgDismiss(panel.id);}catch(e){}
         // Show AI questions if any
         if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
         // Auto-run pricing after extraction
