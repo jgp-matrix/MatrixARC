@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.115";
+const APP_VERSION="v1.18.116";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8738,7 +8738,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           {!readOnly&&bomCount>0&&(
             <button data-tip="Re-run AI extraction on tagged BOM pages — uses region crops if defined" onClick={runExtraction} disabled={extracting}
               style={{background:"none",border:`1px solid ${C.accent}88`,color:C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:extracting?0.6:1}}>
-              {extracting?"Extracting…":"Re-Extract BOM"}
+              {extracting?"Extracting…":"Re-Extract Drawings"}
             </button>
           )}
           {pages.length>0&&!readOnly&&(
@@ -9325,7 +9325,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           startId={lightboxId}
           onClose={()=>setLightboxId(null)}
           onRegionsChange={(pgId,newRegions)=>{
-            const updated={...panel,pages:pages.map(p=>p.id===pgId?{...p,regions:newRegions}:p)};
+            const fresh=latestPanelRef.current;
+            const updated={...fresh,pages:(fresh.pages||[]).map(p=>p.id===pgId?{...p,regions:newRegions}:p)};
             onUpdate(updated);
             try{onSaveImmediate(updated);}catch(e){}
           }}
