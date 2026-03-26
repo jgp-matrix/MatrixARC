@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.117";
+const APP_VERSION="v1.18.118";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4212,16 +4212,36 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   const userNotes=(panel.extractionNotes||"")+regionContext;
   const save=async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));};
   // Always update immediately so the bar never stays on "Starting extraction…"
-  bgUpdate(panel.id,bomPages.length>0?"Extracting BOM…":willValidate?"Validating…":"Uploading drawings…");
+  // Calculate phase weights for progress — each phase gets a proportional slice
+    const hasBom=_apiKey&&bomPages.length>0;
+    const hasVal=willValidate;
+    const hasVerify=_apiKey;
+    const hasCompliance=_apiKey;
+    const hasUpload=(panel.pages||[]).some(pg=>pg.dataUrl&&!pg.storageUrl);
+    // Weighted phases: BOM=40, Validation=25, Verify=10, Compliance=15, Upload=10
+    let phases=[];
+    if(hasBom)phases.push({name:"bom",weight:40});
+    if(hasVal)phases.push({name:"val",weight:25});
+    if(hasVerify)phases.push({name:"verify",weight:10});
+    if(hasCompliance)phases.push({name:"compliance",weight:15});
+    if(hasUpload)phases.push({name:"upload",weight:10});
+    if(!phases.length)phases.push({name:"done",weight:100});
+    const totalWeight=phases.reduce((s,p)=>s+p.weight,0);
+    let cumWeight=0;
+    const phaseRange={};
+    for(const p of phases){const start=Math.round((cumWeight/totalWeight)*100);cumWeight+=p.weight;phaseRange[p.name]={start,end:Math.round((cumWeight/totalWeight)*100)};};
+    function phasePct(name,frac){const r=phaseRange[name];if(!r)return;const pct=r.start+Math.round(frac*(r.end-r.start));bgSetPct(panel.id,Math.min(pct,99));}
+
+    bgSetPct(panel.id,0,hasBom?"Extracting BOM…":hasVal?"Validating…":"Processing…");
     // BOM extraction — use cropped regions if available
     let bomMergePromise=Promise.resolve([]);
-    if(_apiKey&&bomPages.length>0){
-      bgUpdate(panel.id,"Extracting BOM…");
+    if(hasBom){
       let bomDone=0;
       let allQuestions=[];
       bomMergePromise=parallelMap(bomPages,async (pg,pgIdx)=>{
         bomDone++;
-        bgSetPct(panel.id,Math.round((bomDone/bomPages.length)*40),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
+        phasePct("bom",bomDone/bomPages.length);
+        bgUpdate(panel.id,`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
         // Get extraction units — cropped BOM regions or full page
         const units=await getExtractionUnits(pg);
         let pageItems=[],pageQs=[];
@@ -4244,9 +4264,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     }
     // Validation (parallel with BOM)
     let valPromise=Promise.resolve(null);
-    if(willValidate){
-      bgUpdate(panel.id,"Validating…");
-      valPromise=runPanelValidation(latestPanel,pct=>{bgSetPct(panel.id,40+Math.round(pct*0.5),"Validating…");},bomMergePromise);
+    if(hasVal){
+      valPromise=runPanelValidation(latestPanel,pct=>{phasePct("val",pct/100);bgUpdate(panel.id,"Validating…");},bomMergePromise);
     }
     // Await BOM and save
     const bomResult=await bomMergePromise;
@@ -4254,7 +4273,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const aiQuestions=(bomResult.questions||[]).slice(0,10);
     if(mergedBom.length>0)await save({...latestPanel,bom:mergedBom,...(aiQuestions.length?{aiQuestions}:{}),status:"extracted",updatedAt:Date.now()});
     // Await validation and save
-    if(willValidate){
+    if(hasVal){
       try{
         const result=await valPromise;
         if(result?.validation||result?.laborData)
@@ -4263,24 +4282,28 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     }
     // Part number verification
     const bomToVerify=(latestPanel.bom||[]).slice();
-    if(bomToVerify.length>0&&_apiKey){
-      try{const vr=await verifyPartNumbers(bomToVerify);if(vr?.length>0)await save({...latestPanel,bomVerification:vr,updatedAt:Date.now()});}
+    if(bomToVerify.length>0&&hasVerify){
+      phasePct("verify",0);bgUpdate(panel.id,"Verifying part numbers…");
+      try{const vr=await verifyPartNumbers(bomToVerify);phasePct("verify",1);if(vr?.length>0)await save({...latestPanel,bomVerification:vr,updatedAt:Date.now()});}
       catch(e){console.warn("Part verification failed:",e);}
     }
     // Compliance review — UL508A/C22.2 analysis against ARC Neural IQ
-    if(_apiKey&&(latestPanel.bom?.length>0||latestPanel.validation)){
+    if(hasCompliance&&(latestPanel.bom?.length>0||latestPanel.validation)){
+      phasePct("compliance",0);bgUpdate(panel.id,"Compliance review…");
       try{
-        bgUpdate(panel.id,"Compliance review…");
         const cr=await runComplianceReview(latestPanel);
+        phasePct("compliance",1);
         if(cr)await save({...latestPanel,complianceReview:cr,updatedAt:Date.now()});
       }catch(e){console.warn("Compliance review failed:",e);}
     }
     // Upload page images to Firebase Storage (with permanent stamp burned in if stampFn provided)
     const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
     if(pagesNeedingUpload.length>0&&projectId){
+      phasePct("upload",0);bgUpdate(panel.id,"Uploading drawings…");
       try{
         const urlMap={};
         const totalPages=latestPanel.pages.length;
+        let upDone=0;
         await parallelMap(pagesNeedingUpload,async pg=>{
           let dataUrl=pg.dataUrl;
           if(stampFn){
@@ -4288,6 +4311,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             try{dataUrl=await stampFn(dataUrl,pgIdx,totalPages)||dataUrl;}catch(e){console.warn('Stamp failed:',e);}
           }
           urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,dataUrl);
+          upDone++;phasePct("upload",upDone/pagesNeedingUpload.length);
         },4);
         const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
         await save({...latestPanel,pages:pagesWithUrls});
@@ -8068,7 +8092,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   async function runExtraction(startMsg){
     let bomPages=pages.filter(p=>getPageTypes(p).includes("bom"));
     if(!bomPages.length){setErr("No pages tagged BOM yet.");return;}
-    setExtracting(true);setErr("");ep.start(startMsg||"Extracting BOM…",bomPages.length*12);
+    setExtracting(true);setErr("");ep.start(startMsg||"Extracting BOM…",bomPages.length*15);
     const noData=bomPages.find(pg=>!pg.dataUrl&&!pg.storageUrl);
     if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();return;}
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
@@ -8078,7 +8102,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{
       let reQs=[];
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
-        ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
+        bomDone++;
+        ep.set(Math.round((bomDone/bomPages.length)*60),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
         const units=await getExtractionUnits(pg);
         let pageItems=[],pageQs=[];
         for(const unit of units){
@@ -8094,7 +8119,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       },3);
       all=bomResults.flat();
       reQs=reQs.slice(0,10);
-    }catch(ex){setErr(`Failed: ${ex.message}`);setExtracting(false);return;}
+    }catch(ex){setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();return;}
+    ep.set(65,"Merging results…");
     const map={};
     all.forEach(item=>{
       const key=(item.partNumber||"").trim().toLowerCase()||("desc:"+item.description.toLowerCase().slice(0,40));
@@ -8105,6 +8131,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     })));
+    ep.set(80,"Saving BOM…");
     const updated={...panel,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),status:"extracted",updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
