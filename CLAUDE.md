@@ -7,7 +7,7 @@
 - **Deploy functions**: `firebase deploy --only functions` — must be run separately when `functions/index.js` changes
 - **User always wants deploy after changes**
 - **Git workflow**: `deploy.sh` handles commit + push + tag automatically. Never manually set a git tag before running deploy.sh (causes double version bump).
-- **Versioning**: `vMajor.Minor.Patch` (semver). Current: **v1.18.173**
+- **Versioning**: `vMajor.Minor.Patch` (semver). Current: **v1.18.174**
   - **Patch** (x.x.+1): Bug fixes, cosmetic/wording tweaks, adjusting rates/thresholds, fixing a value that wasn't stored
   - **Minor** (x.+1.0): New AI prompt capabilities, new device types, new labor categories, new UI sections, restructuring data flow — anything that changes what the app can detect or output
   - **Major** (+1.0.0): Schema changes requiring migration, breaking changes to saved data format, `APP_SCHEMA_VERSION` bumps
