@@ -14,8 +14,9 @@ import {
   initPushNotifications, unsubscribePushNotifications,
 } from '@/core/globals';
 import Dashboard from './Dashboard';
+import ProjectView from './ProjectView';
 import {
-  ProjectView, NewProjectModal, DeleteConfirmModal, TransferProjectModal,
+  NewProjectModal, DeleteConfirmModal, TransferProjectModal,
   CopyProjectModal, SettingsModal, ReportsModal, PricingConfigModal,
   TeamModal, AboutModal, SupplierPricingUploadModal, CompanySetupModal,
   TourOverlay, AIDatabasePage, ErrorBoundary,
