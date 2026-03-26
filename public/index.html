@@ -9059,6 +9059,44 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>
         </div>);})()}
 
+      {/* Joke popup while waiting */}
+      {unifiedProgress&&!unifiedProgress.isError&&unifiedProgress.pct<100&&unifiedProgress.pct>5&&(()=>{
+        const jokes=[
+          {setup:"Why did the electrician break up with the neutral wire?",punchline:"There was no spark between them."},
+          {setup:"What did the control panel say to the VFD?",punchline:"\"You really drive me crazy.\""},
+          {setup:"Why don't electricians ever get lost?",punchline:"They always follow the current."},
+          {setup:"What's a panel builder's favorite exercise?",punchline:"Circuit training."},
+          {setup:"Why was the wire so stressed?",punchline:"It was under too much tension."},
+          {setup:"What did the breaker say to the short circuit?",punchline:"\"You trip me up every time!\""},
+          {setup:"Why did the PLC go to therapy?",punchline:"It had too many unresolved faults."},
+          {setup:"How do control panels stay cool?",punchline:"They have a lot of fans."},
+          {setup:"What did the DIN rail say to the contactor?",punchline:"\"Snap out of it!\""},
+          {setup:"Why did the terminal block file a complaint?",punchline:"It was getting too many bad connections."},
+          {setup:"What's a wire duct's life motto?",punchline:"\"Keep it all inside.\""},
+          {setup:"Why did the panel shop hire a comedian?",punchline:"To improve their delivery."},
+          {setup:"What do you call a control panel with no labels?",punchline:"An UL violation."},
+          {setup:"Why did the motor starter go on vacation?",punchline:"It needed to de-energize."},
+          {setup:"What did the inspector say to the messy panel?",punchline:"\"Wire you like this?\""},
+          {setup:"Why don't transformers ever win arguments?",punchline:"They always step down."},
+          {setup:"What did the relay say at the party?",punchline:"\"I'm normally open to new things.\""},
+          {setup:"Why was the BOM so long?",punchline:"The engineer couldn't resistor adding more parts."},
+          {setup:"What's a panel builder's least favorite music?",punchline:"Heavy metal — too much grounding."},
+          {setup:"Why did the E-stop break up with the start button?",punchline:"The relationship was too push-and-pull."}
+        ];
+        const jokeIdx=Math.floor((Date.now()/30000))%jokes.length;
+        const joke=jokes[jokeIdx];
+        return(
+          <div style={{marginBottom:12,background:"rgba(99,102,241,0.08)",border:`1px solid ${C.accent}33`,borderRadius:10,padding:"12px 16px",display:"flex",alignItems:"flex-start",gap:12}}>
+            <span style={{fontSize:22,lineHeight:1,flexShrink:0}}>&#128516;</span>
+            <div style={{minWidth:0}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.accent,marginBottom:4,letterSpacing:0.3}}>WHILE WE'RE WAITING... HAVE YOU HEARD THE ONE ABOUT THE...</div>
+              <div style={{fontSize:13,color:C.text,fontWeight:600}}>{joke.setup}</div>
+              <div style={{fontSize:13,color:C.yellow,fontStyle:"italic",marginTop:4}}>{joke.punchline}</div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Compliance Review */}
       {panel.complianceReview&&panel.complianceReview.concerns?.length>0&&(()=>{
         const cr=panel.complianceReview;
