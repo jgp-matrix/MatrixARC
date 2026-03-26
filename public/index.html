@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.121";
+const APP_VERSION="v1.18.122";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3354,7 +3354,8 @@ Examples:
 • {"rowRef":"Row 12","question":"This row has no part number but references 'WIRE 14AWG'. Is this a BOM item to include or a general note?","options":["Include as BOM item","It's a note, skip it"]}
 • {"rowRef":"Item 8","question":"Manufacturer cell shows 'SQD' — is this Square D (Schneider Electric)?","options":["Yes, Square D","No, different manufacturer"]}
 
-It is BETTER to ask too many questions than too few. If you made your best guess on an ambiguous character, STILL ask the user to confirm. Return "questions":[] ONLY if every single character and row is completely unambiguous.
+It is BETTER to ask too many questions than too few. If you made your best guess on an ambiguous character, STILL ask the user to confirm.
+You MUST return AT LEAST 3 questions per page. Even if you are fairly confident, pick the 3 most ambiguous items and ask about them. Return fewer than 3 ONLY if the page has fewer than 3 BOM rows total.
 
 IMPORTANT: You MUST return the wrapper object format: {"items":[...],"questions":[...]}
 Do NOT return a bare JSON array. Always wrap in the object with both keys.
