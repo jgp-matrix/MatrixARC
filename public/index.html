@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.141";
+const APP_VERSION="v1.18.142";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8376,9 +8376,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     ep.finish(`✓ ${bom.length} items extracted`);
     setExtracting(false);
-    // Auto re-upload drawings PDF to BC if previously uploaded (revision)
-    if(latestPanelRef.current.bcPdfAttached&&bcProjectNumber&&_bcToken){
-      try{buildAndAttachPdf();}catch(e){console.warn("Auto BC PDF re-upload failed:",e);}
+    // Auto upload/re-upload drawings PDF to BC
+    if(bcProjectNumber&&_bcToken&&(latestPanelRef.current.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
+      try{buildAndAttachPdf();}catch(e){console.warn("Auto BC PDF upload failed:",e);}
     }
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
