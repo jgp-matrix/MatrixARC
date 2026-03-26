@@ -8,6 +8,76 @@ const SENDGRID_KEY = process.env.SENDGRID_API_KEY || '';
 const APP_URL = process.env.APP_URL || 'https://matrix-arc.web.app';
 if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
 
+const db = admin.firestore();
+
+// ── PUSH NOTIFICATION HELPER ──
+
+/**
+ * Send push notification to all FCM tokens registered for a user.
+ * Automatically cleans up invalid/expired tokens.
+ * @param {string} uid - Firestore user ID
+ * @param {object} notification - { title, body, data: { url, projectId, ... } }
+ */
+async function sendPushToUser(uid, notification) {
+  try {
+    const tokensSnap = await db.collection(`users/${uid}/fcmTokens`).get();
+    if (tokensSnap.empty) return;
+
+    const tokensToDelete = [];
+    const sendPromises = [];
+
+    tokensSnap.docs.forEach(doc => {
+      const { token } = doc.data();
+      if (!token) { tokensToDelete.push(doc.ref); return; }
+
+      const message = {
+        token,
+        notification: {
+          title: notification.title || 'MatrixARC',
+          body: notification.body || '',
+        },
+        data: {},
+        webpush: {
+          fcmOptions: {
+            link: notification.data?.url || '/',
+          },
+        },
+      };
+      // FCM data values must be strings
+      if (notification.data) {
+        for (const [k, v] of Object.entries(notification.data)) {
+          if (v != null) message.data[k] = String(v);
+        }
+      }
+
+      sendPromises.push(
+        admin.messaging().send(message).catch(err => {
+          const code = err?.code || err?.errorInfo?.code || '';
+          // Clean up invalid tokens
+          if (code === 'messaging/registration-token-not-registered' ||
+              code === 'messaging/invalid-registration-token' ||
+              code === 'messaging/invalid-argument') {
+            tokensToDelete.push(doc.ref);
+          }
+          console.warn(`FCM send failed for token ${doc.id}:`, code, err.message);
+        })
+      );
+    });
+
+    await Promise.all(sendPromises);
+
+    // Clean up stale tokens
+    if (tokensToDelete.length > 0) {
+      const batch = db.batch();
+      tokensToDelete.forEach(ref => batch.delete(ref));
+      await batch.commit();
+      console.log(`Cleaned up ${tokensToDelete.length} invalid FCM token(s) for user ${uid}`);
+    }
+  } catch (e) {
+    console.warn('sendPushToUser error:', e.message);
+  }
+}
+
 // ── TEAM MANAGEMENT ──
 
 exports.inviteTeamMember = functions.https.onCall(async (data, context) => {
@@ -132,10 +202,11 @@ exports.onSupplierQuoteSubmitted = functions.firestore
     const token = context.params.token;
 
     // Create notification
+    const notifBody = `${vendorName} submitted a quote${projectName ? ` for "${projectName}"` : ''}${rfqNum ? ` (${rfqNum})` : ''}.`;
     await admin.firestore().collection(`users/${uid}/notifications`).add({
       type: 'supplier_quote',
       title: `New Quote from ${vendorName}`,
-      body: `${vendorName} submitted a quote${projectName ? ` for "${projectName}"` : ''}${rfqNum ? ` (${rfqNum})` : ''}.`,
+      body: notifBody,
       createdAt: Date.now(),
       read: false,
       projectId: after.projectId || '',
@@ -143,6 +214,18 @@ exports.onSupplierQuoteSubmitted = functions.firestore
       rfqNum,
       vendorName,
       projectName,
+    });
+
+    // Send push notification
+    await sendPushToUser(uid, {
+      title: `New Quote from ${vendorName}`,
+      body: notifBody,
+      data: {
+        url: APP_URL,
+        projectId: after.projectId || '',
+        type: 'supplier_quote',
+        tag: `quote_${token}`,
+      },
     });
 
     // Send emails if SendGrid configured
@@ -195,6 +278,63 @@ exports.onSupplierQuoteSubmitted = functions.firestore
 
     return null;
   });
+
+// ── ENGINEERING QUESTIONS EMAIL ──
+
+exports.sendEngineerQuestionEmail = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  if (!SENDGRID_KEY) throw new functions.https.HttpsError('failed-precondition', 'Email not configured');
+  const { to, projectName, bcProjectNumber, panelName, questions, recipientUid } = data;
+  if (!to || !questions?.length) throw new functions.https.HttpsError('invalid-argument', 'Missing recipient or questions');
+
+  const senderRecord = await admin.auth().getUser(context.auth.uid);
+  const senderEmail = senderRecord.email || 'ARC System';
+  const senderName = senderRecord.displayName || senderEmail.split('@')[0];
+
+  const questionsHtml = questions.map((q, i) => `
+    <tr style="border-bottom:1px solid #e2e8f0">
+      <td style="padding:8px 12px;font-size:13px;color:#1e293b;vertical-align:top">${i + 1}.</td>
+      <td style="padding:8px 12px">
+        <div style="font-size:13px;color:#1e293b;line-height:1.5">${q.question}</div>
+        <div style="font-size:10px;color:#94a3b8;margin-top:2px">${q.severity?.toUpperCase() || 'INFO'} — ${q.category || 'General'}${q.rowRef ? ' — ' + q.rowRef : ''}</div>
+      </td>
+    </tr>
+  `).join('');
+
+  await sgMail.send({
+    to,
+    from: 'sales@matrixpci.com',
+    replyTo: senderEmail,
+    subject: `Engineering Questions — ${projectName || bcProjectNumber || panelName || 'ARC Project'}`,
+    html: `<div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px 24px">
+      <h2 style="color:#1e293b;margin-bottom:4px">Engineering Questions</h2>
+      <p style="color:#64748b;margin-bottom:16px;font-size:14px">
+        <strong>${senderName}</strong> has requested your review on <strong>${projectName || 'a project'}</strong>${bcProjectNumber ? ' (' + bcProjectNumber + ')' : ''}${panelName ? ' — ' + panelName : ''}.
+      </p>
+      <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:6px;margin-bottom:20px">
+        <thead><tr style="background:#f8fafc"><th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600">#</th><th style="padding:8px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600">Question</th></tr></thead>
+        <tbody>${questionsHtml}</tbody>
+      </table>
+      <a href="${APP_URL}" style="display:inline-block;background:#2563eb;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Answer &#x2192;</a>
+      <p style="color:#94a3b8;font-size:12px;margin-top:24px">Log in to ARC, open the project, and click the question button next to the panel status badge to answer.</p>
+    </div>`,
+  });
+
+  // Send push notification to recipient if uid provided
+  if (recipientUid) {
+    await sendPushToUser(recipientUid, {
+      title: `Engineering Questions from ${senderName}`,
+      body: `${questions.length} question(s) on ${projectName || bcProjectNumber || panelName || 'a project'}`,
+      data: {
+        url: APP_URL,
+        type: 'engineer_question',
+        tag: `eng_q_${Date.now()}`,
+      },
+    });
+  }
+
+  return { success: true };
+});
 
 // ── SUPPLIER QUOTE AI EXTRACTION ──
 

@@ -4,6 +4,8 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>ARC by RedPill Software</title>
+<link rel="manifest" href="/manifest.json"/>
+<meta name="theme-color" content="#1a1a2e"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet"/>
@@ -184,6 +186,7 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-functions-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-storage-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs" type="module"></script>
 <script>
 // PDF.js setup — load via importShim after DOM ready
@@ -214,6 +217,76 @@ const fbAuth=firebase.auth();
 const fbDb=firebase.firestore();
 const fbFunctions=firebase.functions();
 const fbStorage=firebase.storage();
+
+// ── FCM (Push Notifications) ──
+let fbMessaging=null;
+try{if(firebase.messaging.isSupported()){fbMessaging=firebase.messaging();}}catch(e){console.warn("FCM not supported in this browser:",e);}
+
+// Register service worker for push notifications
+let _swRegistration=null;
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('/sw.js').then(reg=>{
+    _swRegistration=reg;
+    console.log('SW registered for push notifications');
+  }).catch(err=>console.warn('SW registration failed:',err));
+}
+
+// Helper: hash a string to use as a Firestore doc ID for the token
+function _hashToken(token){
+  let h=0;for(let i=0;i<token.length;i++){h=((h<<5)-h)+token.charCodeAt(i);h|=0;}
+  return'tk_'+Math.abs(h).toString(36);
+}
+
+// Request push notification permission, get FCM token, save to Firestore
+async function initPushNotifications(uid){
+  if(!fbMessaging){throw new Error("Push notifications not supported in this browser");}
+  const permission=await Notification.requestPermission();
+  if(permission!=='granted'){throw new Error("Notification permission denied");}
+  const token=await fbMessaging.getToken({vapidKey:"BGv8kmrC_h2FhCZh9p1YnywPX7ocBKO5pFb2dcE2vG_1u7tU1rQ9PuETiG7qFlHtnbEFvIFJ0KwFHBAF23ISFkM",serviceWorkerRegistration:_swRegistration});
+  if(!token){throw new Error("Failed to get FCM token");}
+  const tokenId=_hashToken(token);
+  await fbDb.doc(`users/${uid}/fcmTokens/${tokenId}`).set({
+    token,
+    createdAt:Date.now(),
+    userAgent:navigator.userAgent,
+  });
+  console.log('Push notifications enabled, token saved');
+  return token;
+}
+
+// Unsubscribe: delete FCM token from Firestore and deregister from FCM
+async function unsubscribePushNotifications(uid){
+  if(!fbMessaging)return;
+  try{
+    const token=await fbMessaging.getToken({vapidKey:"BGv8kmrC_h2FhCZh9p1YnywPX7ocBKO5pFb2dcE2vG_1u7tU1rQ9PuETiG7qFlHtnbEFvIFJ0KwFHBAF23ISFkM",serviceWorkerRegistration:_swRegistration});
+    if(token){
+      const tokenId=_hashToken(token);
+      await fbDb.doc(`users/${uid}/fcmTokens/${tokenId}`).delete();
+      await fbMessaging.deleteToken();
+    }
+  }catch(e){console.warn('Push unsubscribe error:',e);}
+  console.log('Push notifications disabled');
+}
+
+// Handle foreground messages (when app is open)
+if(fbMessaging){
+  fbMessaging.onMessage(payload=>{
+    console.log('FCM foreground message:',payload);
+    // Foreground messages don't auto-show a notification — the in-app bell handles it.
+    // But we can show a native notification anyway for visibility:
+    if(_swRegistration&&Notification.permission==='granted'){
+      const n=payload.notification||{};
+      const d=payload.data||{};
+      _swRegistration.showNotification(n.title||d.title||'MatrixARC',{
+        body:n.body||d.body||'',
+        icon:n.icon||'/icons/icon-192.png',
+        data:d,
+        tag:d.tag||'arc-foreground',
+        renotify:true,
+      });
+    }
+  });
+}
 </script>
 <script type="text/babel">
 const {useState,useEffect,useRef,useCallback}=React;
@@ -14654,6 +14727,24 @@ function App({user}){
   const [showBellMenu,setShowBellMenu]=useState(false);
   const [notifications,setNotifications]=useState([]);
   const [pendingPortalOpen,setPendingPortalOpen]=useState(null); // projectId to auto-open portal modal
+  const [pushEnabled,setPushEnabled]=useState(()=>{try{return localStorage.getItem('arc_push_'+user.uid)==='1';}catch(e){return false;}});
+  const [pushLoading,setPushLoading]=useState(false);
+  async function togglePush(){
+    if(pushLoading)return;
+    setPushLoading(true);
+    try{
+      if(pushEnabled){
+        await unsubscribePushNotifications(user.uid);
+        setPushEnabled(false);
+        try{localStorage.setItem('arc_push_'+user.uid,'0');}catch(e){}
+      }else{
+        await initPushNotifications(user.uid);
+        setPushEnabled(true);
+        try{localStorage.setItem('arc_push_'+user.uid,'1');}catch(e){}
+      }
+    }catch(e){console.error('Push toggle error:',e);alert('Push notification error: '+e.message);}
+    setPushLoading(false);
+  }
   const [showSearch,setShowSearch]=useState(false);
   const [showReports,setShowReports]=useState(false);
   const [showSupplierPricing,setShowSupplierPricing]=useState(false);
@@ -15235,6 +15326,13 @@ INSTRUCTIONS:
                   </div>
                 ))}
               </div>
+              {/* Push notification toggle */}
+              {fbMessaging&&<div style={{padding:"8px 16px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:12,color:C.muted,flex:1}}>{pushEnabled?"Push notifications on":"Push notifications off"}</span>
+                <button onClick={togglePush} disabled={pushLoading} style={{background:pushEnabled?"#16a34a":"#334155",border:"none",borderRadius:12,width:40,height:22,cursor:pushLoading?"wait":"pointer",position:"relative",transition:"background 0.2s",flexShrink:0,opacity:pushLoading?0.5:1}}>
+                  <div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:pushEnabled?21:3,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
+                </button>
+              </div>}
             </div>)}
           </div>
           {/* ⚙ Gear menu */}
