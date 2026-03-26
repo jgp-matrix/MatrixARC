@@ -15333,6 +15333,9 @@ INSTRUCTIONS:
                   <div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:pushEnabled?21:3,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
                 </button>
               </div>}
+              {pushEnabled&&<div style={{padding:"4px 16px 8px"}}>
+                <button onClick={()=>{if(_swRegistration&&Notification.permission==='granted'){_swRegistration.showNotification('MatrixARC',{body:'Push notifications are working!',icon:'/icons/icon-192.png',tag:'arc-test',renotify:true});}}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,padding:"4px 10px",cursor:"pointer",width:"100%"}}>Send test notification</button>
+              </div>}
             </div>)}
           </div>
           {/* ⚙ Gear menu */}
