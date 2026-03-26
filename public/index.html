@@ -7346,7 +7346,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
         body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:120,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42,"x_left":0.50,"x_right":1.0} where y_top/y_bottom are the top/bottom edges of that row as fractions of image height, and x_left/x_right are the left/right edges of the entire BOM TABLE (all columns, excluding any schematic/layout area to the left). If not found return {"found":false}.`}
+          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42,"pn_x":0.55} where y_top/y_bottom are the top/bottom edges of that row as fractions of image height, and pn_x is the horizontal center of the part number text as a fraction of image width. If not found return {"found":false}.`}
         ]}]})
       });
       const data=await resp.json();
@@ -7355,7 +7355,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       if(m){
         const r=JSON.parse(m[0]);
         if(r.found&&r.y_top!=null&&r.y_bottom!=null){
-          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom);
+          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom,r.pn_x);
         }
       }
     }catch(e){console.warn('locateInDrawing:',e);}
@@ -7363,7 +7363,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   }
 
   const _cropRowCenter=useRef({scrollToY:0,scrollToX:0});
-  function cropRowFromImage(dataUrl,yTop,yBottom){
+  function cropRowFromImage(dataUrl,yTop,yBottom,pnX){
     return new Promise(resolve=>{
       const img=new Image();
       img.onload=()=>{
@@ -7386,8 +7386,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
         ctx.fillRect(0,rowTopC,canvasW,rowH);
         ctx.strokeStyle='#fde047';ctx.lineWidth=2;
         ctx.strokeRect(1,rowTopC+1,canvasW-2,rowH-2);
-        // Store scroll targets so onLoad can center the highlighted row
-        _cropRowCenter.current={scrollToY:Math.max(0,rowTopC-80),scrollToX:canvasW};
+        // Store scroll targets so onLoad can center the highlighted row + part number column
+        const scrollX=pnX!=null?Math.max(0,Math.round(pnX*canvasW)-200):canvasW;
+        _cropRowCenter.current={scrollToY:Math.max(0,rowTopC-80),scrollToX:scrollX};
         setCroppedDataUrl(canvas.toDataURL('image/jpeg',0.95));
         resolve();
       };
@@ -7409,7 +7410,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
           try{
             let dataUrl=pg.dataUrl;
             if(!dataUrl&&pg.storageUrl){const loaded=await ensureDataUrl(pg);dataUrl=loaded.dataUrl;}
-            if(dataUrl)await cropRowFromImage(dataUrl,targetRow.y_top,targetRow.y_bottom);
+            if(dataUrl)await cropRowFromImage(dataUrl,targetRow.y_top,targetRow.y_bottom,targetRow.pn_x);
           }catch(e){console.warn('cropRowFromImage:',e);}finally{setLocating(false);}
         };
         doLoad();
@@ -7765,7 +7766,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               {bomPages.length>1&&(
                 <div style={{display:"flex",gap:4,marginLeft:"auto"}}>
                   {bomPages.map((_,i)=>(
-                    <button key={i} onClick={()=>{setDrawingPageIdx(i);const pg=bomPages[i];if(targetRow?.y_top!=null&&targetRow?.y_bottom!=null&&(targetRow.y_bottom-targetRow.y_top)>0.001&&pg){setLocating(true);const doLoad=async()=>{try{let du=pg.dataUrl;if(!du&&pg.storageUrl){const l=await ensureDataUrl(pg);du=l.dataUrl;}if(du)await cropRowFromImage(du,targetRow.y_top,targetRow.y_bottom);}catch(e){}finally{setLocating(false);}};doLoad();}else locateInDrawing(i);}}
+                    <button key={i} onClick={()=>{setDrawingPageIdx(i);const pg=bomPages[i];if(targetRow?.y_top!=null&&targetRow?.y_bottom!=null&&(targetRow.y_bottom-targetRow.y_top)>0.001&&pg){setLocating(true);const doLoad=async()=>{try{let du=pg.dataUrl;if(!du&&pg.storageUrl){const l=await ensureDataUrl(pg);du=l.dataUrl;}if(du)await cropRowFromImage(du,targetRow.y_top,targetRow.y_bottom,targetRow.pn_x);}catch(e){}finally{setLocating(false);}};doLoad();}else locateInDrawing(i);}}
                       style={{background:drawingPageIdx===i?C.accentDim:"transparent",border:`1px solid ${drawingPageIdx===i?C.accent:C.border}`,color:drawingPageIdx===i?C.accent:C.muted,borderRadius:4,padding:"2px 8px",fontSize:11,cursor:"pointer"}}>
                       Pg {i+1}
                     </button>
