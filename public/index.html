@@ -1574,12 +1574,12 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
     lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
       Line_Type:"Budget",Type:"Item",No:row.partNumber,
       Description:desc,
-      Quantity:row.qty||1,Unit_Price:row.unitPrice||0,Location_Code:"MAIN",
+      Quantity:(row.qty||1)*lineQty,Unit_Price:row.unitPrice||0,Location_Code:"MAIN",
       _row:row,
       _fallback:{[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
         Line_Type:"Budget",Type:"Text",
         Description:fallbackDesc,
-        Quantity:row.qty||1}});
+        Quantity:(row.qty||1)*lineQty}});
     lineNo+=10000;
   }
 
