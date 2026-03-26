@@ -38,6 +38,10 @@ export function setApiKey(k: string | null) { _apiKey = k; }
 export function setBcToken(t: string | null) { _bcToken = t; }
 export function setAppProjectUpdateFn(fn: ((p: Project) => void) | null) { _appProjectUpdateFn = fn; }
 export function setBcQueueCountSetter(fn: ((n: number) => void) | null) { _bcQueueCountSetter = fn; }
+export function setTooltipsEnabled(v: boolean) { _tooltipsEnabled = v; }
+export function clearNiqCache() { _niqCache = null; }
+export function setDefaultBomItems(items: any[]) { _defaultBomItems = items; }
+export function setAppCtxField(field: string, value: any) { (_appCtx as any)[field] = value; }
 
 // ─── Project CRUD ────────────────────────────────────────────────────────────
 export async function saveProject(uid: string, project: any): Promise<any> {

@@ -6,22 +6,7 @@ import { useState, useEffect } from 'react';
 import { C } from '@/core/constants';
 import { fbAuth, fbDb } from '@/core/globals';
 import LoginScreen from './LoginScreen';
-
-// Placeholder — will be replaced when App component is migrated
-function AppPlaceholder({ user }: { user: any }) {
-  return (
-    <div style={{ padding: 40, color: C.text }}>
-      <h2>Signed in as {user.email}</h2>
-      <p style={{ color: C.muted, marginTop: 8 }}>App component migration in progress...</p>
-      <button
-        onClick={() => fbAuth.signOut()}
-        style={{ marginTop: 16, background: C.red, color: '#fff', border: 'none', borderRadius: 8, padding: '8px 16px', cursor: 'pointer' }}
-      >
-        Sign Out
-      </button>
-    </div>
-  );
-}
+import App from './App';
 
 export default function Root() {
   const [rfqUploadToken] = useState(() => {
@@ -85,5 +70,5 @@ export default function Root() {
   );
 
   if (!user) return <LoginScreen invite={joinPayload} />;
-  return <AppPlaceholder user={user} />;
+  return <App user={user} />;
 }
