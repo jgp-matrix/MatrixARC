@@ -2,12 +2,12 @@
 
 ## Project Overview
 - **App**: Firebase-hosted at https://matrix-arc.web.app
-- **Architecture**: Single-file app — `public/index.html` (~800KB, no build step) + Cloud Functions in `functions/index.js`
+- **Architecture**: Single-file app — `public/index.html` (~1MB, no build step) + Cloud Functions in `functions/index.js`
 - **Deploy hosting**: `bash deploy.sh` — auto-bumps patch version, commits, tags, pushes, deploys hosting
 - **Deploy functions**: `firebase deploy --only functions` — must be run separately when `functions/index.js` changes
 - **User always wants deploy after changes**
 - **Git workflow**: `deploy.sh` handles commit + push + tag automatically. Never manually set a git tag before running deploy.sh (causes double version bump).
-- **Versioning**: `vMajor.Minor.Patch` (semver). Current: **v1.17.287**
+- **Versioning**: `vMajor.Minor.Patch` (semver). Current: **v1.18.173**
   - **Patch** (x.x.+1): Bug fixes, cosmetic/wording tweaks, adjusting rates/thresholds, fixing a value that wasn't stored
   - **Minor** (x.+1.0): New AI prompt capabilities, new device types, new labor categories, new UI sections, restructuring data flow — anything that changes what the app can detect or output
   - **Major** (+1.0.0): Schema changes requiring migration, breaking changes to saved data format, `APP_SCHEMA_VERSION` bumps
@@ -56,6 +56,8 @@ This app is used for real production projects. **No user data may ever be lost d
 | Supplier uploads | Firebase Storage `supplierUploads/{token}/{filename}` | PDF uploads from supplier portal |
 | Team members | `companies/{companyId}/members/{uid}` | Role: admin/edit/view |
 | Team invites | `companies/{companyId}/pendingInvites/{token}` | Pending email invitations |
+| FCM push tokens | `users/{uid}/fcmTokens/{tokenHash}` | Push notification device tokens |
+| Quote counter | `users/{uid}/config/quoteCounter` | Sequential quote number (next field) |
 
 ### Learning Databases
 
@@ -85,6 +87,7 @@ AI returns a classified wire list (`internal: true/false`), code filters program
 | Schematic / layout / pricing analysis | Sonnet |
 | Page detection / part verification | Haiku |
 | Supplier quote price extraction | Haiku (via Cloud Function) |
+| BC Item Browser row locate | Haiku (table boundaries + math) |
 
 ### Firebase Storage
 - Bucket: `gs://matrix-arc.firebasestorage.app`
@@ -132,10 +135,13 @@ Functions deploy separately from hosting — `firebase deploy --only functions`.
 | `sendInviteEmail` | HTTPS callable | Sends invite email via SendGrid |
 | `onSupplierQuoteSubmitted` | Firestore trigger on `rfqUploads/{token}` | Fires when status→"submitted": creates notification + sends email to ARC user |
 | `extractSupplierQuotePricing` | HTTPS callable | Sends PDF page images to Claude Haiku, returns extracted prices/lead times |
+| `sendEngineerQuestionEmail` | HTTPS callable | Sends formatted engineering questions email via SendGrid + push notification |
+| `testTeamsWebhook` | HTTPS callable | Test endpoint to verify Teams webhook integration |
 
-### Environment Variables (set via Firebase)
+### Environment Variables (set via Firebase, in `functions/.env`)
 - `SENDGRID_API_KEY` — required for email sending
 - `APP_URL` — defaults to `https://matrix-arc.web.app`
+- `TEAMS_WEBHOOK_URL` — Power Automate webhook URL for Teams channel notifications (optional)
 
 ## Business Central (BC) Integration
 
@@ -247,6 +253,28 @@ Notifications stored at `users/{uid}/notifications/{id}`:
 - Bell dropdown lists notifications with timestamp; supplier quote notifications are clickable
 - Clicking navigates to the project + auto-opens `PortalSubmissionsModal` via `autoOpenPortal` prop
 - "Mark all read" button in dropdown
+- Push notification toggle at bottom of bell dropdown
+
+### PWA + Push Notifications (v1.18.154+)
+- **PWA manifest**: `public/manifest.json` — Edge/Chromium can install to taskbar/Start Menu
+- **Service worker**: `public/sw.js` + `public/firebase-messaging-sw.js` — push notification handling only (no caching/offline)
+- **FCM tokens**: Stored at `users/{uid}/fcmTokens/{tokenHash}` in Firestore
+- **Push toggle**: In bell dropdown, persisted to localStorage `arc_push_{uid}`
+- **Persistent notifications**: All push notifications use `requireInteraction: true` — stay until user dismisses
+- **Push triggers**: Supplier quote submissions (`onSupplierQuoteSubmitted`) + engineer question emails (`sendEngineerQuestionEmail`)
+- **Teams webhook**: `postToTeams()` helper sends Adaptive Cards to Teams channel via Power Automate workflow
+- **Icons**: `public/icons/icon-192.png` and `icon-512.png` generated from `public/redpill_logo.png`
+- **Sonnet 4.6 does NOT support assistant prefill** — use Haiku for prefill-based JSON extraction
+
+### Engineering Questions System (v1.18.153+)
+- **Data**: `panel.engineeringQuestions[]` — unified array for BOM + compliance questions
+- **Statuses**: `open`, `answered`, `skipped`, `on_quote`
+- **Sources**: `bom` (from extraction) and `compliance` (from `runComplianceReview`)
+- **Modal**: `EngineeringQuestionsModal` — answer/skip/include-on-quote per question
+- **Pulsing badge**: Panels with open questions show pulsing yellow badge in QUOTE SUMMARY
+- **Print warning**: `handlePrintQuote` warns about unanswered questions before printing
+- **"Questions for Customer"**: Questions with `status:"on_quote"` appear on printed quote
+- **Email engineer**: `sendEngineerQuestionEmail` Cloud Function sends formatted email + push notification
 
 ## Quote / Print System
 
@@ -282,6 +310,18 @@ Notifications stored at `users/{uid}/notifications/{id}`:
 | Subtitle | 12px |
 | Section headings | 10.5px |
 | Body paragraphs | 10px, line-height 1.6 |
+
+### Quote Numbering (v1.18.153+)
+- Format: `MTX-Q######` (e.g. `MTX-Q202000`), auto-assigned on first print via `getNextQuoteNumber()`
+- Firestore transaction increments `users/{uid}/config/quoteCounter.next`
+- Validation regex: `/^MTX-Q\d{6}$/`
+- Quote revision (`project.quoteRev`) auto-bumps when BOM hash changes since last print
+- `computeBomHash()` uses djb2 hash of part numbers + quantities
+
+### BC Drawing Upload Filename
+- Format: `[QUOTED] CustomerDWG#-MTX-Q######.pdf`
+- Fallback: `[QUOTED] NoCust#-MTX-Q######.pdf` if no drawing number extracted
+- `bcCheckAttachmentExists` checks for any PDF attachment (not exact filename match)
 
 ### Key Constraints
 - T&C must fit on exactly one printed page
