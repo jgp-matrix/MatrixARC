@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.139";
+const APP_VERSION="v1.18.140";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12131,7 +12131,10 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
 
               {/* Quote Summary — third pane, locked to bottom */}
               <div style={{flexShrink:0,borderTop:`2px solid ${C.accent}`,background:"#06060f",padding:"12px 16px 16px",display:"flex",flexDirection:"column",gap:8}}>
-                <div style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5,marginBottom:2}}>QUOTE SUMMARY</div>
+                <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:2}}>
+                  <span style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Rev ${String(project.quoteRev).padStart(2,'0')}`:""}</span>
+                  {(project.quoteRev||0)>(project.quoteRevAtPrint||0)&&<span style={{fontSize:10,fontWeight:700,color:"#f59e0b",letterSpacing:0.3}}>unsent revision</span>}
+                </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {(project.panels||[]).map((p,pi)=>{
                   const ppr=p.pricing||{};
