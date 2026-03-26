@@ -8839,7 +8839,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
-      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost,priceSource:"bc",priceDate:Date.now()};
+      const hasCost=bcItem.unitCost!=null&&bcItem.unitCost>0;
+      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost,...(hasCost?{priceSource:"bc",priceDate:Date.now()}:{})};
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — don't block commit
