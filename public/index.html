@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.146";
+const APP_VERSION="v1.18.147";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12539,7 +12539,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   async function handlePrintQuote(){
     // Auto-assign quote number if not yet set
     const proj=projectRef.current;
-    if(!proj.quote?.number||!String(proj.quote.number).startsWith("MTX-Q")){
+    if(!proj.quote?.number||!/^MTX-Q\d{6}$/.test(String(proj.quote.number))){
       try{
         const qNum=await getNextQuoteNumber(uid);
         const upd={...proj,quote:{...(proj.quote||{}),number:qNum}};
