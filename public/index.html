@@ -7347,18 +7347,11 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:200,messages:[{role:"user",content:[
+        body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:100,system:"You are a JSON-only API. Output ONLY a single JSON object with no explanation, no markdown, no text before or after. Never explain your reasoning.",messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This is a BOM (Bill of Materials) table from an electrical panel drawing. I need you to find the EXACT row for part number "${pn}".${refHint}
-
-INSTRUCTIONS:
-1. First, find the BOM table in the image. It usually has columns like ITEM, QTY, PART NUMBER/CATALOG NUMBER, DESCRIPTION, MFR.
-2. Scan through the rows to find the one matching the part number above${refLine?' (or matching item number '+refLine+')':''}.
-3. Measure PRECISELY: y_top = fraction from image top to the TOP EDGE of that row's horizontal gridline. y_bottom = fraction from image top to the BOTTOM EDGE of that row's horizontal gridline.
-4. pn_x = fraction from image left edge to the CENTER of the part number text in that row.
-
-Return ONLY JSON: {"found":true,"y_top":0.45,"y_bottom":0.47,"pn_x":0.60}
-If the part is not visible in this image: {"found":false}`}
+          {type:"text",text:`Find BOM item #${refLine||'?'} with part number "${pn}" in this drawing. Return the row's vertical position and the part number's horizontal position as fractions of image dimensions.
+JSON format: {"found":true,"y_top":0.45,"y_bottom":0.47,"pn_x":0.60}
+If not found: {"found":false}`}
         ]}]})
       });
       const data=await resp.json();
