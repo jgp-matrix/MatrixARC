@@ -1,4 +1,5 @@
 # MatrixARC — Development Rules
+<!-- SYNC_KEY: THUNDERBOLT_2026 -->
 
 ## Project Overview
 - **App**: Firebase-hosted at https://matrix-arc.web.app
