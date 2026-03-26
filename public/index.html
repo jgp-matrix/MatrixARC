@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.123";
+const APP_VERSION="v1.18.124";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8134,11 +8134,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         bomDone++;
         ep.set(Math.round((bomDone/bomPages.length)*60),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
         const units=await getExtractionUnits(pg);
+        console.log(`[RE-EXTRACT] Page ${pgIdx+1}: ${units.length} extraction unit(s), dataUrl=${!!pg.dataUrl}, regions=${(pg.regions||[]).filter(r=>r.type==="bom").length} BOM regions`);
         let pageItems=[],pageQs=[];
         for(const unit of units){
           const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):rgnNotes;
           const result=await extractBomPage(unit.dataUrl,"",notes);
           const items=result.items||result;
+          console.log(`[RE-EXTRACT] Page ${pgIdx+1} unit: ${items.length} items, ${(result.questions||[]).length} questions`);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
           if(qs.length)pageQs.push(...qs);
@@ -8148,7 +8150,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       },3);
       all=bomResults.flat();
       reQs=reQs.slice(0,10);
-    }catch(ex){setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();return;}
+      console.log(`[RE-EXTRACT] Total: ${all.length} items, ${reQs.length} questions across all pages`);
+    }catch(ex){console.error("[RE-EXTRACT] Failed:",ex);setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();return;}
     ep.set(65,"Merging results…");
     const map={};
     all.forEach(item=>{
