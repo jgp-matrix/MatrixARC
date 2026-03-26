@@ -7341,12 +7341,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       const b64=dataUrl.split(',')[1];
       if(!b64)return;
       const pn=(targetRow?.partNumber||initialQuery||'').trim();
+      const refLine=(targetRow?.itemNo||'').trim();
+      const refHint=refLine?` This row has BOM reference/line number "${refLine}" — look for this number in the first or second column (often labeled "ITEM", "REF", "LINE", "#") to locate the exact row.`:'';
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
         body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:120,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}". Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42,"pn_x":0.55} where y_top/y_bottom are the top/bottom edges of that row as fractions of image height, and pn_x is the horizontal center of the part number text as a fraction of image width. If not found return {"found":false}.`}
+          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}".${refHint} Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42,"pn_x":0.55} where y_top/y_bottom are the top/bottom edges of that row as fractions of image height (be precise — measure from the very top of the row text to the bottom of that row's cell), and pn_x is the horizontal center of the part number text as a fraction of image width. If not found return {"found":false}.`}
         ]}]})
       });
       const data=await resp.json();
