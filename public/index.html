@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.147";
+const APP_VERSION="v1.18.148";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8076,7 +8076,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(firstWithData){
         extractTitleBlock(firstWithData.dataUrl).then(tb=>{
           if(!tb)return;
-          const patched={...updated,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+          const fresh=latestPanelRef.current;
+          const patched={...fresh,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
           onUpdate(patched);
           setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
           onSaveImmediate(patched).catch(()=>{});
@@ -8144,7 +8145,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setExtractingTitle(false);
     if(tb){
       setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
-      const updated={...panel,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+      const fresh=latestPanelRef.current;
+      const updated={...fresh,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
     }
@@ -12538,17 +12540,29 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   async function handlePrintQuote(){
     // Auto-assign quote number if not yet set
-    const proj=projectRef.current;
+    let proj=projectRef.current;
     if(!proj.quote?.number||!/^MTX-Q\d{6}$/.test(String(proj.quote.number))){
       try{
         const qNum=await getNextQuoteNumber(uid);
-        const upd={...proj,quote:{...(proj.quote||{}),number:qNum}};
-        setProject(upd);projectRef.current=upd;onChange(upd);saveProject(uid,upd);
+        proj={...proj,quote:{...(proj.quote||{}),number:qNum}};
+        setProject(proj);projectRef.current=proj;onChange(proj);saveProject(uid,proj);
         // Note in BC
         if(proj.bcProjectNumber&&_bcToken){
           bcPatchJobOData(proj.bcProjectNumber,{Description_2:"Quote "+qNum}).catch(e=>console.warn("BC quote note failed:",e));
         }
       }catch(e){console.warn("Auto quote number failed:",e);}
+    }
+    // Auto-populate quote fields from panel data if empty
+    const panels=proj.panels||[];
+    const q=proj.quote||{};
+    const firstPanel=panels[0]||{};
+    const autoFields={};
+    if(!q.description&&firstPanel.drawingDesc)autoFields.description=firstPanel.drawingDesc;
+    if(!q.drawingRev&&firstPanel.drawingRev)autoFields.drawingRev=firstPanel.drawingRev;
+    if(!q.projectNumber&&proj.bcProjectNumber)autoFields.projectNumber=proj.bcProjectNumber;
+    if(Object.keys(autoFields).length){
+      proj={...proj,quote:{...q,...autoFields}};
+      setProject(proj);projectRef.current=proj;onChange(proj);saveProject(uid,proj);
     }
     const now=Date.now();
     const staleMs=60*24*60*60*1000;
