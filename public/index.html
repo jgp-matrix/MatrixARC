@@ -7773,16 +7773,21 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 </div>
               )}
             </div>
-            <div style={{overflow:"auto",background:"#020208",borderRadius:"0 0 8px 8px",minHeight:locating?60:croppedDataUrl?undefined:0,maxHeight:300}}>
+            <div
+              onMouseDown={e=>{const c=e.currentTarget;c._drag={x:e.clientX,y:e.clientY,sl:c.scrollLeft,st:c.scrollTop};c.style.cursor='grabbing';e.preventDefault();}}
+              onMouseMove={e=>{const c=e.currentTarget;if(!c._drag)return;c.scrollLeft=c._drag.sl-(e.clientX-c._drag.x);c.scrollTop=c._drag.st-(e.clientY-c._drag.y);}}
+              onMouseUp={e=>{e.currentTarget._drag=null;e.currentTarget.style.cursor='grab';}}
+              onMouseLeave={e=>{e.currentTarget._drag=null;e.currentTarget.style.cursor='grab';}}
+              style={{overflow:"auto",background:"#020208",borderRadius:"0 0 8px 8px",minHeight:locating?60:croppedDataUrl?undefined:0,maxHeight:300,cursor:"grab",userSelect:"none"}}>
               {locating&&!croppedDataUrl&&(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:60,color:C.muted,fontSize:12,gap:8}}>
                   <span style={{animation:"pulse 1s ease-in-out infinite"}}>🔍</span> Locating row in drawing…
                 </div>
               )}
               {croppedDataUrl&&(
-                <img src={croppedDataUrl} alt="BOM row"
+                <img src={croppedDataUrl} alt="BOM row" draggable={false}
                   onLoad={e=>{const c=e.target.parentElement;if(c){c.scrollLeft=_cropRowCenter.current.scrollToX;c.scrollTop=_cropRowCenter.current.scrollToY;}}}
-                  style={{display:"block",maxWidth:"none",height:"auto"}}/>
+                  style={{display:"block",maxWidth:"none",height:"auto",pointerEvents:"none"}}/>
               )}
             </div>
           </div>
