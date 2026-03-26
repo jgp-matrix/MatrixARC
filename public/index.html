@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.124";
+const APP_VERSION="v1.18.125";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3434,44 +3434,48 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
   const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
   console.log("Claude raw response:",raw);
   try{
-    const cleaned=raw.replace(/```json|```/g,"").trim();
+    const cleaned=raw.replace(/```json|```/gi,"").trim();
     let items=[],questions=[];
-    // Try wrapper object format first: {"items":[...],"questions":[...]}
-    // Look for {"items" at the start to distinguish from bare array
-    const wrapperMatch=cleaned.match(/\{\s*"items"\s*:\s*\[[\s\S]*\]/);
-    if(wrapperMatch){
-      // Find the full wrapper object by parsing from the match start
-      const startIdx=cleaned.indexOf(wrapperMatch[0]);
-      // Find matching closing brace
-      let depth=0,endIdx=-1;
-      for(let i=startIdx;i<cleaned.length;i++){
-        if(cleaned[i]==='{')depth++;
-        if(cleaned[i]==='}'){depth--;if(depth===0){endIdx=i;break;}}
-      }
-      if(endIdx>startIdx){
-        try{
-          const parsed=JSON.parse(cleaned.slice(startIdx,endIdx+1));
-          items=parsed.items||[];
-          questions=parsed.questions||[];
-          console.log("BOM extraction: parsed wrapper format,",items.length,"items,",questions.length,"questions");
-        }catch(e2){console.warn("Wrapper parse failed, falling back to array");const arrMatch=cleaned.match(/\[[\s\S]*\]/);if(arrMatch)items=JSON.parse(arrMatch[0]);}
+    // Strategy 1: Try direct JSON.parse (works when AI returns clean JSON)
+    try{
+      const direct=JSON.parse(cleaned);
+      if(direct&&Array.isArray(direct.items)){items=direct.items;questions=direct.questions||[];console.log("BOM extraction: direct parse OK,",items.length,"items,",questions.length,"questions");}
+      else if(Array.isArray(direct)){items=direct;console.log("BOM extraction: direct parse bare array,",items.length,"items");}
+    }catch(e1){/* not clean JSON, try extraction */}
+    // Strategy 2: Find wrapper object {"items":[...],"questions":[...]}
+    if(!items.length){
+      const wStart=cleaned.indexOf('{"items"');
+      if(wStart===-1){}
+      else{
+        // Find matching closing brace via depth counting
+        let depth=0,endIdx=-1;
+        for(let i=wStart;i<cleaned.length;i++){
+          if(cleaned[i]==='{')depth++;
+          if(cleaned[i]==='}'){depth--;if(depth===0){endIdx=i;break;}}
+        }
+        if(endIdx>wStart){
+          try{
+            const parsed=JSON.parse(cleaned.slice(wStart,endIdx+1));
+            items=parsed.items||[];questions=parsed.questions||[];
+            console.log("BOM extraction: wrapper parse OK,",items.length,"items,",questions.length,"questions");
+          }catch(e2){console.warn("Wrapper parse failed:",e2.message);}
+        }
       }
     }
+    // Strategy 3: Bare array fallback
     if(!items.length){
-      // Fallback: bare array format
       const arrMatch=cleaned.match(/\[[\s\S]*\]/);
       if(arrMatch){
-        items=JSON.parse(arrMatch[0]);
-        // Still try to find questions in the raw response even with bare array fallback
-        const qMatch=cleaned.match(/"questions"\s*:\s*(\[[\s\S]*?\])\s*\}/);
+        try{items=JSON.parse(arrMatch[0]);}catch(e3){console.warn("Array parse failed:",e3.message);}
+        // Also try to find questions
+        const qMatch=cleaned.match(/"questions"\s*:\s*(\[[\s\S]*?\])/);
         if(qMatch){try{questions=JSON.parse(qMatch[1]);}catch(qe){}}
-        console.log("BOM extraction: parsed bare array,",items.length,"items,",questions.length,"questions (fallback)");
+        console.log("BOM extraction: array fallback,",items.length,"items,",questions.length,"questions");
       } else {
-        console.warn("No JSON found in response");return{items:[],questions:[]};
+        console.warn("No JSON found in response. Raw:",cleaned.slice(0,200));return{items:[],questions:[]};
       }
     }
-    // Log question count for debugging — if consistently 0, prompt may need adjustment
-    if(!questions.length)console.log("BOM extraction: AI returned 0 questions for this page");
+    if(!questions.length)console.log("BOM extraction: 0 questions returned");
     // Post-process: split any rows where partNumber still contains multiple values
     const expanded=[];
     for(const item of items){
