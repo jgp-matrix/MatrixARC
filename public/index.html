@@ -9603,6 +9603,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const updated={...fresh,pages:(fresh.pages||[]).map(p=>p.id===pgId?{...p,regions:newRegions}:p)};
             onUpdate(updated);
             try{onSaveImmediate(updated);}catch(e){}
+            // Also update pendingPages so regions persist during review phase
+            setPendingPages(pp=>pp.length>0?pp.map(p=>p.id===pgId?{...p,regions:newRegions}:p):pp);
           }}
         />
       )}
