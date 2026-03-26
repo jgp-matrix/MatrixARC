@@ -18,25 +18,17 @@ function Stub({ name, onClose, onBack }: { name: string; onClose?: () => void; o
   );
 }
 
-// ─── Modal Stubs ─────────────────────────────────────────────────────────────
+// ─── Migrated Modal Re-exports ──────────────────────────────────────────────
 
-export function NewProjectModal({ uid, onCreated, onClose }: any) {
-  return <Stub name="New Project" onClose={onClose} />;
-}
+export { default as NewProjectModal } from './modals/NewProjectModal';
+export { default as DeleteConfirmModal } from './modals/DeleteConfirmModal';
+export { default as SettingsModal } from './modals/SettingsModal';
+export { default as PricingConfigModal } from './modals/PricingConfigModal';
+export { default as TeamModal } from './modals/TeamModal';
+export { default as AboutModal } from './modals/AboutModal';
+export { default as CompanySetupModal } from './modals/CompanySetupModal';
 
-export function DeleteConfirmModal({ projectName, onConfirm, onCancel }: any) {
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24, maxWidth: 400 }}>
-        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 12 }}>Delete "{projectName}"?</div>
-        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-          <button onClick={onCancel} style={btn(C.border, C.muted)}>Cancel</button>
-          <button onClick={() => onConfirm(false)} style={btn(C.red, '#fff')}>Delete</button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── Remaining Modal Stubs (not yet migrated) ──────────────────────────────
 
 export function TransferProjectModal({ onClose }: any) {
   return <Stub name="Transfer Project" onClose={onClose} />;
@@ -46,32 +38,12 @@ export function CopyProjectModal({ onClose }: any) {
   return <Stub name="Copy Project" onClose={onClose} />;
 }
 
-export function SettingsModal({ uid, onClose }: any) {
-  return <Stub name="Settings" onClose={onClose} />;
-}
-
 export function ReportsModal({ uid, onClose }: any) {
   return <Stub name="Reports" onClose={onClose} />;
 }
 
-export function PricingConfigModal({ uid, onClose }: any) {
-  return <Stub name="Pricing Configuration" onClose={onClose} />;
-}
-
-export function TeamModal({ uid, companyId, userRole, onClose }: any) {
-  return <Stub name="Team & Permissions" onClose={onClose} />;
-}
-
-export function AboutModal({ onClose }: any) {
-  return <Stub name="About ARC" onClose={onClose} />;
-}
-
 export function SupplierPricingUploadModal({ uid, onClose }: any) {
   return <Stub name="Supplier Pricing Upload" onClose={onClose} />;
-}
-
-export function CompanySetupModal({ uid, email, onDone, onClose }: any) {
-  return <Stub name="Company Setup" onClose={onClose} />;
 }
 
 export function SupplierPortalPage({ token }: any) {
