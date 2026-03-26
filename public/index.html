@@ -2551,7 +2551,8 @@ async function buildRfqSupplierGroups(bom){
     if(!groupMap[vendorName])groupMap[vendorName]={vendorName,vendorNo,items:[]};
     groupMap[vendorName].items.push(item);
   }
-  return{groups:Object.values(groupMap).sort((a,b)=>a.vendorName.localeCompare(b.vendorName)),noItems:false};
+  const filtered=Object.values(groupMap).filter(g=>!/^matrix\s*systems/i.test(g.vendorName));
+  return{groups:filtered.sort((a,b)=>a.vendorName.localeCompare(b.vendorName)),noItems:!filtered.length};
 }
 
 function vendorCode(vendorName){
