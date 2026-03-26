@@ -7342,27 +7342,35 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       if(!b64)return;
       const pn=(targetRow?.partNumber||initialQuery||'').trim();
       const refLine=(targetRow?.itemNo||'').trim();
-      const refHint=refLine?`\nIMPORTANT: The BOM line/item number for this row is "${refLine}". Find this number in the first column (labeled ITEM, REF, LINE, #, or similar) — it uniquely identifies the row.`:'';
       console.log('LOCATE: searching for',pn,'refLine:',refLine,'on page',idx,'b64 length:',b64.length);
+      // Ask Haiku for TABLE boundaries + total row count + part number column position (easier than finding one row)
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:60,messages:[{role:"user",content:[
+        body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:80,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`Find BOM item #${refLine||'?'} with part number "${pn}" in this drawing's BOM table. Return JSON with the row's y_top, y_bottom (fractions of image height) and pn_x (horizontal center of part number as fraction of image width). Example: {"found":true,"y_top":0.45,"y_bottom":0.47,"pn_x":0.60} or {"found":false}`}
+          {type:"text",text:`This drawing has a BOM table. Return JSON with: table_top (y fraction where FIRST data row starts), table_bottom (y fraction where LAST data row ends), total_rows (count of data rows), pn_x (x fraction of center of part number/catalog column). All fractions of image dimensions 0.0-1.0.`}
         ]},{role:"assistant",content:[{type:"text",text:"{"}]}]})
       });
       const data=await resp.json();
       console.log('LOCATE: API response:',JSON.stringify(data).slice(0,500));
       const rawText=data.content?.[0]?.text||'';
-      const text='{'+rawText; // prepend { from assistant prefill
+      const text='{'+rawText;
       console.log('LOCATE: extracted text:',text);
       const m=text.match(/\{[\s\S]*?\}/);
       if(m){
         const r=JSON.parse(m[0]);
-        if(r.found&&r.y_top!=null&&r.y_bottom!=null){
-          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom,r.pn_x);
-        }
+        const itemNum=parseInt(refLine)||0;
+        const totalRows=r.total_rows||1;
+        const tTop=r.table_top||0.1;
+        const tBot=r.table_bottom||0.9;
+        const rowHeight=(tBot-tTop)/totalRows;
+        // Calculate row position from item number
+        const rowIdx=Math.max(0,itemNum-1);
+        const y_top=tTop+(rowIdx*rowHeight);
+        const y_bottom=y_top+rowHeight;
+        console.log('LOCATE: table',tTop,'→',tBot,totalRows,'rows, item',itemNum,'→ y:',y_top.toFixed(3),'-',y_bottom.toFixed(3),'pn_x:',r.pn_x);
+        await cropRowFromImage(dataUrl,y_top,y_bottom,r.pn_x);
       }
     }catch(e){console.warn('locateInDrawing:',e);}
     finally{setLocating(false);}
