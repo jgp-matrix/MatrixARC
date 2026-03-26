@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.140";
+const APP_VERSION="v1.18.141";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6259,6 +6259,7 @@ function QuoteTab({project,onUpdate}){
             <div className="qd-hdr-right">
               <div className="qd-qlabel">{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
               <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="######" style={{...qInp({width:160,fontSize:34,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
+              {project.quoteRev>0&&<div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":C.sub,letterSpacing:0.3}}>Rev {String(project.quoteRev).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>}
               <div className="qd-qmeta">{q.date||today}<br/>Page 1 of 2</div>
             </div>
           </div>
