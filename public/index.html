@@ -1910,7 +1910,7 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   if(!compId)throw new Error("Could not resolve BC company");
   const body={};
   if(number)body.number=number;
-  if(displayName)body.displayName=displayName;
+  if(displayName)body.displayName=displayName.slice(0,100);
   if(unitCost!=null&&unitCost!=="")body.unitCost=parseFloat(unitCost);
   if(itemCategoryCode)body.itemCategoryCode=itemCategoryCode;
   if(baseUnitOfMeasureCode)body.baseUnitOfMeasureCode=baseUnitOfMeasureCode;
