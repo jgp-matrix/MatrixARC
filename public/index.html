@@ -7362,38 +7362,32 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     finally{setLocating(false);}
   }
 
+  const _cropRowCenter=useRef({scrollToY:0,scrollToX:0});
   function cropRowFromImage(dataUrl,yTop,yBottom){
     return new Promise(resolve=>{
       const img=new Image();
       img.onload=()=>{
         const W=img.naturalWidth,H=img.naturalHeight;
-        // Full drawing width — no horizontal crop (BOM table position varies)
-        // The container auto-scrolls to the right where BOM tables always are
-        const srcX=0;
-        const srcW=W;
-        // Vertical crop — tight strip around the row
-        const vPad=0.015;
-        const cropTop=Math.max(0,yTop-vPad);
-        const cropBottom=Math.min(1,yBottom+vPad);
-        const srcY=Math.round(cropTop*H);
+        // Show full drawing — user can scroll in any direction
+        // Scale so the row height renders at ~50px tall for readability
         const srcRowH=Math.round((yBottom-yTop)*H);
-        const srcH=Math.round((cropBottom-cropTop)*H);
-        // Scale so the row renders at ~50px tall — natural width, container scrolls right
         const scale=Math.max(1,50/Math.max(srcRowH,1));
-        const canvasW=Math.round(srcW*scale);
-        const canvasH=Math.round(srcH*scale);
+        const canvasW=Math.round(W*scale);
+        const canvasH=Math.round(H*scale);
         const canvas=document.createElement('canvas');
         canvas.width=canvasW;canvas.height=canvasH;
         const ctx=canvas.getContext('2d');
-        ctx.drawImage(img,srcX,srcY,srcW,srcH,0,0,canvasW,canvasH);
+        ctx.drawImage(img,0,0,W,H,0,0,canvasW,canvasH);
         // Highlight the row
-        const rowTopC=Math.round(((yTop-cropTop)/(cropBottom-cropTop))*canvasH);
-        const rowBotC=Math.round(((yBottom-cropTop)/(cropBottom-cropTop))*canvasH);
+        const rowTopC=Math.round(yTop*canvasH);
+        const rowBotC=Math.round(yBottom*canvasH);
         const rowH=Math.max(3,rowBotC-rowTopC);
         ctx.fillStyle='rgba(253,224,71,0.22)';
         ctx.fillRect(0,rowTopC,canvasW,rowH);
         ctx.strokeStyle='#fde047';ctx.lineWidth=2;
         ctx.strokeRect(1,rowTopC+1,canvasW-2,rowH-2);
+        // Store scroll targets so onLoad can center the highlighted row
+        _cropRowCenter.current={scrollToY:Math.max(0,rowTopC-80),scrollToX:canvasW};
         setCroppedDataUrl(canvas.toDataURL('image/jpeg',0.95));
         resolve();
       };
@@ -7779,7 +7773,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 </div>
               )}
             </div>
-            <div style={{overflowX:"auto",background:"#020208",borderRadius:"0 0 8px 8px",minHeight:locating?60:croppedDataUrl?undefined:0}}>
+            <div style={{overflow:"auto",background:"#020208",borderRadius:"0 0 8px 8px",minHeight:locating?60:croppedDataUrl?undefined:0,maxHeight:300}}>
               {locating&&!croppedDataUrl&&(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:60,color:C.muted,fontSize:12,gap:8}}>
                   <span style={{animation:"pulse 1s ease-in-out infinite"}}>🔍</span> Locating row in drawing…
@@ -7787,7 +7781,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               )}
               {croppedDataUrl&&(
                 <img src={croppedDataUrl} alt="BOM row"
-                  onLoad={e=>{const c=e.target.parentElement;if(c)c.scrollLeft=c.scrollWidth;}}
+                  onLoad={e=>{const c=e.target.parentElement;if(c){c.scrollLeft=_cropRowCenter.current.scrollToX;c.scrollTop=_cropRowCenter.current.scrollToY;}}}
                   style={{display:"block",maxWidth:"none",height:"auto"}}/>
               )}
             </div>
