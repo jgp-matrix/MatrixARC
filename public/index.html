@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.152";
+const APP_VERSION="v1.18.153";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4187,6 +4187,29 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
 }
 
 // ── COMPLIANCE REVIEW — analyzes extracted data against UL508A/C22.2 standards ──
+// Convert BOM aiQuestions + compliance questions into unified engineeringQuestions
+function mergeEngineeringQuestions(existing,bomQs,complianceQs){
+  const eq=[...(existing||[])];
+  // Add BOM questions (avoid duplicates by question text)
+  const existingTexts=new Set(eq.map(q=>q.question));
+  (bomQs||[]).forEach(q=>{
+    if(existingTexts.has(q.question))return;
+    eq.push({id:String(Date.now()+Math.random()),source:"bom",category:"part_ambiguity",severity:"info",
+      question:q.question,options:q.options||[],rowRef:q.rowRef||q.pageName||"BOM",pageName:q.pageName||"BOM",
+      answer:null,answeredBy:null,answeredAt:null,status:"open",createdAt:Date.now()});
+    existingTexts.add(q.question);
+  });
+  // Add compliance questions
+  (complianceQs||[]).forEach(q=>{
+    if(existingTexts.has(q.question))return;
+    eq.push({id:String(Date.now()+Math.random()),source:"compliance",category:q.category||"general",severity:q.severity||"warning",
+      question:q.question,options:q.options||[],rowRef:q.rowRef||"Compliance",pageName:"Compliance Review",
+      answer:null,answeredBy:null,answeredAt:null,status:"open",createdAt:Date.now()});
+    existingTexts.add(q.question);
+  });
+  return eq;
+}
+
 async function runComplianceReview(panel){
   const bom=panel.bom||[];
   const val=panel.validation||{};
@@ -4293,8 +4316,26 @@ Analyze the above and return a JSON object with this structure:
     "Verify SCCR marking matches calculated value",
     "Confirm all branch circuits have proper overcurrent protection",
     "Check wire sizing per UL508A Table 28.1"
+  ],
+  "questions": [
+    {
+      "category": "SCCR",
+      "severity": "warning",
+      "question": "Drawing shows 480V main — is the assembly SCCR rating 65kA or higher?",
+      "options": ["Yes, 65kA or higher", "No, lower than 65kA", "Unknown"],
+      "rowRef": "SCCR verification"
+    }
   ]
 }
+
+QUESTIONS RULES:
+- Generate questions about things the AI CANNOT determine from the drawings alone but that affect compliance
+- Ask about SCCR ratings, disconnect provisions, voltage configurations, enclosure ratings (NEMA/IP), ambient temperature, harmonic requirements
+- Ask about specifications mentioned in user region annotations that need clarification
+- Ask if critical protective devices (GFI, surge protection, arc flash) are required but not shown
+- Each question should have 2-4 practical answer options
+- Generate 3-8 questions depending on complexity
+- Do NOT ask questions that are clearly answered by the drawings or BOM
 
 SEVERITY LEVELS:
 - "critical": Likely code violation or safety issue that must be addressed before UL listing
@@ -4332,6 +4373,7 @@ RULES:
       concerns:result.concerns||[],
       observations:result.observations||[],
       checklist:result.checklist||[],
+      questions:result.questions||[],
       deviceSummary,
       niqDocsUsed:niqDocs.length
     };
@@ -4501,7 +4543,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const bomResult=await bomMergePromise;
     const mergedBom=bomResult.bom||bomResult;
     const aiQuestions=(bomResult.questions||[]).slice(0,10);
-    if(mergedBom.length>0)await save({...latestPanel,bom:mergedBom,...(aiQuestions.length?{aiQuestions}:{}),status:"extracted",updatedAt:Date.now()});
+    const eqs=mergeEngineeringQuestions(latestPanel.engineeringQuestions,aiQuestions,null);
+    if(mergedBom.length>0)await save({...latestPanel,bom:mergedBom,...(aiQuestions.length?{aiQuestions}:{}),engineeringQuestions:eqs,status:"extracted",updatedAt:Date.now()});
     // Await validation and save
     if(hasVal){
       try{
@@ -4523,7 +4566,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       try{
         const cr=await runComplianceReview(latestPanel);
         phasePct("compliance",1);
-        if(cr)await save({...latestPanel,complianceReview:cr,updatedAt:Date.now()});
+        if(cr){
+          const eqs=mergeEngineeringQuestions(latestPanel.engineeringQuestions,null,cr.questions);
+          await save({...latestPanel,complianceReview:cr,engineeringQuestions:eqs,updatedAt:Date.now()});
+        }
       }catch(e){console.warn("Compliance review failed:",e);}
     }
     // Upload page images to Firebase Storage (with permanent stamp burned in if stampFn provided)
@@ -4896,6 +4942,108 @@ function Badge({status}){
   };
   const [bg,col,label]=map[status]||map.draft;
   return<span style={{background:bg,color:col,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap"}}>{label.toUpperCase()}</span>;
+}
+
+function EngineeringQuestionsModal({panel,uid,onUpdate,onSave,onClose,memberMap}){
+  const eqs=panel.engineeringQuestions||[];
+  const [answers,setAnswers]=useState(()=>{const m={};eqs.forEach(q=>{if(q.answer)m[q.id]=q.answer;});return m;});
+  const [emailPicker,setEmailPicker]=useState(false);
+  const [emailTo,setEmailTo]=useState("");
+  const [emailSending,setEmailSending]=useState(false);
+  const openCount=eqs.filter(q=>q.status==="open").length;
+  const answeredCount=eqs.filter(q=>q.status==="answered").length;
+  const skippedCount=eqs.filter(q=>q.status==="skipped").length;
+  const onQuoteCount=eqs.filter(q=>q.status==="on_quote").length;
+  function updateQ(id,fields){
+    const updated={...panel,engineeringQuestions:eqs.map(q=>q.id===id?{...q,...fields}:q)};
+    onUpdate(updated);try{onSave(updated);}catch(e){}
+  }
+  const sevColors={critical:"#ef4444",warning:"#f59e0b",info:"#818cf8"};
+  const statusLabels={open:"Open",answered:"Answered",skipped:"Skipped",on_quote:"On Quote"};
+  const statusColors={open:"#f59e0b",answered:"#4ade80",skipped:"#94a3b8",on_quote:"#38bdf8"};
+  async function sendEngineerEmail(){
+    if(!emailTo)return;
+    setEmailSending(true);
+    try{
+      const openQs=eqs.filter(q=>q.status==="open"||q.status==="skipped");
+      await firebase.app().functions().httpsCallable("sendEngineerQuestionEmail")({
+        to:emailTo,projectName:panel.drawingNo||panel.name||"Panel",
+        bcProjectNumber:panel.bcProjectNumber||"",panelName:panel.name||"Panel",
+        questions:openQs.map(q=>({question:q.question,category:q.category,severity:q.severity,rowRef:q.rowRef}))
+      });
+      setEmailPicker(false);setEmailTo("");
+    }catch(e){console.warn("Email failed:",e);}
+    setEmailSending(false);
+  }
+  return ReactDOM.createPortal(
+    React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",padding:16},onMouseDown:e=>{if(e.target===e.currentTarget)onClose();}},
+      React.createElement("div",{style:{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,padding:"20px 24px",maxWidth:620,width:"95%",maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}},
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexShrink:0}},
+          React.createElement("span",{style:{fontSize:16,fontWeight:800,color:C.text,flex:1}},"Engineering Questions"),
+          React.createElement("span",{style:{fontSize:10,fontWeight:700,color:"#f59e0b",background:"#f59e0b22",borderRadius:10,padding:"2px 8px"}},openCount+" open"),
+          answeredCount>0&&React.createElement("span",{style:{fontSize:10,fontWeight:700,color:"#4ade80",background:"#4ade8022",borderRadius:10,padding:"2px 8px"}},answeredCount+" answered"),
+          skippedCount>0&&React.createElement("span",{style:{fontSize:10,fontWeight:700,color:"#94a3b8",background:"#94a3b822",borderRadius:10,padding:"2px 8px"}},skippedCount+" skipped"),
+          onQuoteCount>0&&React.createElement("span",{style:{fontSize:10,fontWeight:700,color:"#38bdf8",background:"#38bdf822",borderRadius:10,padding:"2px 8px"}},onQuoteCount+" on quote")
+        ),
+        React.createElement("div",{style:{overflowY:"auto",flex:1,marginBottom:12}},
+          eqs.length===0?React.createElement("div",{style:{color:C.muted,fontSize:13,textAlign:"center",padding:24}},"No engineering questions yet. Questions will be generated during extraction and compliance review."):
+          eqs.map(q=>React.createElement("div",{key:q.id,style:{marginBottom:10,padding:"10px 14px",background:q.status==="open"?"rgba(250,204,21,0.04)":"rgba(255,255,255,0.02)",border:`1px solid ${q.status==="open"?"rgba(250,204,21,0.2)":"rgba(255,255,255,0.06)"}`,borderRadius:8}},
+            React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6,marginBottom:4,flexWrap:"wrap"}},
+              React.createElement("span",{style:{fontSize:9,fontWeight:800,color:sevColors[q.severity]||C.muted,textTransform:"uppercase",letterSpacing:0.5}},q.severity),
+              React.createElement("span",{style:{fontSize:9,fontWeight:700,color:C.sub,background:"rgba(255,255,255,0.06)",borderRadius:4,padding:"1px 6px"}},q.category),
+              React.createElement("span",{style:{fontSize:9,color:C.muted}},q.source==="bom"?"BOM Extraction":"Compliance Review"),
+              React.createElement("span",{style:{marginLeft:"auto",fontSize:9,fontWeight:700,color:statusColors[q.status],background:statusColors[q.status]+"22",borderRadius:4,padding:"1px 6px"}},statusLabels[q.status])
+            ),
+            React.createElement("div",{style:{fontSize:13,color:C.text,lineHeight:1.5,marginBottom:6}},q.question),
+            q.rowRef&&React.createElement("div",{style:{fontSize:10,color:C.muted,marginBottom:6}},"Ref: ",q.rowRef),
+            q.status==="answered"?
+              React.createElement("div",{style:{fontSize:12,color:"#4ade80",fontWeight:600,padding:"4px 8px",background:"rgba(74,222,128,0.08)",borderRadius:4}},"Answer: ",q.answer):
+            q.status==="on_quote"?
+              React.createElement("div",{style:{fontSize:12,color:"#38bdf8",fontWeight:600,fontStyle:"italic"}},"Included on customer quote"):
+            q.status==="skipped"?
+              React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}},
+                React.createElement("button",{onClick:()=>updateQ(q.id,{status:"open"}),style:{fontSize:11,color:C.accent,background:"none",border:`1px solid ${C.accent}44`,borderRadius:4,padding:"3px 10px",cursor:"pointer"}},"Reopen")
+              ):
+            React.createElement("div",null,
+              q.options&&q.options.length>0&&React.createElement("div",{style:{display:"flex",gap:5,flexWrap:"wrap",marginBottom:6}},
+                q.options.map((opt,oi)=>React.createElement("button",{key:oi,onClick:()=>setAnswers(a=>({...a,[q.id]:opt})),
+                  style:{background:answers[q.id]===opt?C.accent+"33":"rgba(255,255,255,0.04)",color:answers[q.id]===opt?C.accent:C.sub,
+                    border:`1px solid ${answers[q.id]===opt?C.accent:C.border}`,borderRadius:5,padding:"4px 10px",fontSize:11,fontWeight:600,cursor:"pointer"}},opt))
+              ),
+              React.createElement("input",{value:answers[q.id]||"",onChange:e=>setAnswers(a=>({...a,[q.id]:e.target.value})),placeholder:"Type your answer…",
+                style:{width:"100%",background:"#0a0a14",border:`1px solid ${C.border}`,color:C.text,borderRadius:4,padding:"5px 8px",fontSize:11,outline:"none",boxSizing:"border-box",marginBottom:6}}),
+              React.createElement("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}},
+                React.createElement("button",{onClick:()=>{if(!answers[q.id])return;updateQ(q.id,{answer:answers[q.id],answeredBy:uid,answeredAt:Date.now(),status:"answered"});},
+                  disabled:!answers[q.id],style:{fontSize:11,color:"#4ade80",background:answers[q.id]?"rgba(74,222,128,0.1)":"transparent",border:"1px solid #4ade8044",borderRadius:4,padding:"3px 10px",cursor:answers[q.id]?"pointer":"default",opacity:answers[q.id]?1:0.4,fontWeight:600}},"Answer"),
+                React.createElement("button",{onClick:()=>updateQ(q.id,{status:"skipped"}),style:{fontSize:11,color:"#94a3b8",background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"3px 10px",cursor:"pointer"}},"Skip"),
+                React.createElement("button",{onClick:()=>updateQ(q.id,{status:"on_quote"}),style:{fontSize:11,color:"#38bdf8",background:"none",border:"1px solid #38bdf844",borderRadius:4,padding:"3px 10px",cursor:"pointer"}},"Include on Quote")
+              )
+            )
+          ))
+        ),
+        React.createElement("div",{style:{display:"flex",gap:8,justifyContent:"space-between",alignItems:"center",flexShrink:0,borderTop:`1px solid ${C.border}`,paddingTop:12}},
+          React.createElement("button",{onClick:()=>setEmailPicker(true),style:{fontSize:12,color:"#818cf8",background:"none",border:"1px solid #818cf844",borderRadius:6,padding:"6px 14px",cursor:"pointer",fontWeight:600}},"Email Controls Engineer"),
+          React.createElement("button",{onClick:onClose,style:{fontSize:12,color:C.muted,background:C.surface,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 14px",cursor:"pointer"}},"Close")
+        ),
+        emailPicker&&React.createElement("div",{style:{marginTop:10,padding:"10px 14px",background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:8}},
+          React.createElement("div",{style:{fontSize:12,fontWeight:700,color:C.text,marginBottom:6}},"Send open questions to:"),
+          memberMap&&Object.keys(memberMap).length>0&&React.createElement("div",{style:{display:"flex",flexWrap:"wrap",gap:4,marginBottom:8}},
+            Object.entries(memberMap).map(([muid,m])=>React.createElement("button",{key:muid,onClick:()=>setEmailTo(m.email),
+              style:{fontSize:11,color:emailTo===m.email?C.accent:C.sub,background:emailTo===m.email?C.accent+"22":"rgba(255,255,255,0.04)",border:`1px solid ${emailTo===m.email?C.accent:C.border}`,borderRadius:4,padding:"3px 8px",cursor:"pointer"}},
+              m.firstName||m.email.split("@")[0]))
+          ),
+          React.createElement("div",{style:{display:"flex",gap:6}},
+            React.createElement("input",{value:emailTo,onChange:e=>setEmailTo(e.target.value),placeholder:"email@company.com",
+              style:{flex:1,background:"#0d0d14",border:`1px solid ${C.border}`,color:C.text,borderRadius:4,padding:"5px 8px",fontSize:11,outline:"none"}}),
+            React.createElement("button",{onClick:sendEngineerEmail,disabled:!emailTo||emailSending,
+              style:{fontSize:11,color:"#fff",background:C.accent,border:"none",borderRadius:4,padding:"5px 12px",cursor:"pointer",fontWeight:700,opacity:emailTo&&!emailSending?1:0.4}},emailSending?"Sending…":"Send"),
+            React.createElement("button",{onClick:()=>{setEmailPicker(false);setEmailTo("");},
+              style:{fontSize:11,color:C.muted,background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",cursor:"pointer"}},"Cancel")
+          )
+        )
+      )
+    ),document.body
+  );
 }
 
 function PageTags({types,onChange,detecting}){
@@ -6497,6 +6645,37 @@ function QuoteTab({project,onUpdate}){
           </div>
         </div>
 
+        {/* ═══ QUESTIONS FOR CUSTOMER (if any on_quote) ═══ */}
+        {(()=>{const onQ=(project.panels||[]).flatMap(p=>(p.engineeringQuestions||[]).filter(q=>q.status==="on_quote"));
+          return onQ.length>0?React.createElement("div",{className:"qd-page"},
+            React.createElement("div",{className:"qd-header-cont"},
+              React.createElement("div",{className:"qd-hc-name"},"Matrix Systems"),
+              React.createElement("div",{className:"qd-hc-right"},(q.date||today))
+            ),
+            React.createElement("div",{style:{padding:"24px 44px"}},
+              React.createElement("div",{style:{fontSize:16,fontWeight:700,color:"#0f172a",marginBottom:4,textTransform:"uppercase",letterSpacing:1,textAlign:"center"}},"Questions for Customer"),
+              React.createElement("div",{style:{fontSize:11,color:"#94a3b8",textAlign:"center",marginBottom:20}},"The following items require clarification before final quote acceptance."),
+              React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:12}},
+                onQ.map((eq,i)=>React.createElement("div",{key:eq.id||i,style:{padding:"10px 14px",border:"1px solid #e2e8f0",borderRadius:6}},
+                  React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:4}},
+                    React.createElement("span",{style:{fontSize:10,fontWeight:700,color:eq.severity==="critical"?"#dc2626":"#d97706",textTransform:"uppercase"}},eq.severity),
+                    React.createElement("span",{style:{fontSize:10,color:"#64748b",fontWeight:600}},eq.category)
+                  ),
+                  React.createElement("div",{style:{fontSize:12,color:"#1e293b",lineHeight:1.6}},String(i+1)+". "+eq.question),
+                  React.createElement("div",{style:{marginTop:6,borderTop:"1px dashed #e2e8f0",paddingTop:6}},
+                    React.createElement("span",{style:{fontSize:10,color:"#94a3b8"}},"Answer: "),
+                    React.createElement("span",{style:{borderBottom:"1px solid #cbd5e1",display:"inline-block",minWidth:200,fontSize:11}}," ")
+                  )
+                ))
+              )
+            ),
+            React.createElement("div",{className:"qd-footer"},
+              React.createElement("div",{className:"qd-foot-left"},"Matrix Systems, LLC"),
+              React.createElement("div",{className:"qd-foot-right"},"(801) 930-9492",React.createElement("br"),"info@matrixpci.com")
+            )
+          ):null;
+        })()}
+
         {/* ═══ PAGE 2: TERMS & CONDITIONS ═══ */}
         <div className="qd-page">
           <div className="qd-header-cont">
@@ -7629,6 +7808,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [reExtracting,setReExtracting]=useState(false);
   const [feedbackSaved,setFeedbackSaved]=useState(false);
   const [showAiQuestions,setShowAiQuestions]=useState(false);
+  const [showEqModal,setShowEqModal]=useState(false);
   const [aiAnswers,setAiAnswers]=useState({});
   const [err,setErr]=useState("");
   const [reExtractWarn,setReExtractWarn]=useState(false);
@@ -8111,7 +8291,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // Clear bg extraction bar so pricing progress can take over immediately
         try{bgDismiss(panel.id);}catch(e){}
         // Show AI questions if any
-        if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
+        if((finalPanel.engineeringQuestions||[]).some(q=>q.status==="open")){try{setShowEqModal(true);}catch(e){}}
+        else if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
         // Auto-run pricing after extraction
         if((finalPanel.bom||[]).length>0&&_apiKey){
           try{runPricingOnPanel(finalPanel.bom,finalPanel);}catch(e){}
@@ -8379,11 +8560,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     })));
     ep.set(80,"Saving BOM…");
-    let updated={...latestPanelRef.current,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),status:"extracted",updatedAt:Date.now()};
+    const reEqs=mergeEngineeringQuestions([],reQs,null); // fresh questions on re-extract
+    let updated={...latestPanelRef.current,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),engineeringQuestions:reEqs,status:"extracted",updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     setTagsChanged(false);
-    if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
+    if((updated.engineeringQuestions||[]).some(q=>q.status==="open")){setShowEqModal(true);}
+    else if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
     // Re-run validation (schematic/layout analysis) if applicable
     const valPages=(pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
     if(valPages.length>0&&_apiKey){
@@ -8510,7 +8693,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     })));
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
     const feedbackLog=[...((latestPanel.extractionFeedbackLog)||[]),logEntry];
-    const updated={...latestPanel,bom,...(typeof fbQs!=='undefined'&&fbQs.length?{aiQuestions:fbQs}:{}),status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
+    const fbEqs=mergeEngineeringQuestions([],fbQs,null);
+    const updated={...latestPanel,bom,...(typeof fbQs!=='undefined'&&fbQs.length?{aiQuestions:fbQs}:{}),engineeringQuestions:fbEqs,status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     const laborMsg=laborResult?.wires!=null?` · labor set to ${updated.pricing?.laborHoursOverride} hrs`:"";
@@ -9043,6 +9227,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               {extracting?"Extracting…":"Re-Extract Drawings"}
             </button>
           )}
+          {(()=>{const eqOpen=(panel.engineeringQuestions||[]).filter(q=>q.status==="open").length;const eqTotal=(panel.engineeringQuestions||[]).length;
+            return eqTotal>0?React.createElement("button",{onClick:()=>setShowEqModal(true),
+              style:{background:eqOpen>0?"#451a03":"none",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,color:eqOpen>0?"#f59e0b":C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
+              eqOpen>0?`❓ ${eqOpen} Question${eqOpen!==1?"s":""}`:`✓ ${eqTotal} Answered`):null;})()}
           {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(
             <button data-tip={panel.bcPdfAttached&&!bcPdfMissing?`Already uploaded: ${panel.bcPdfFileName||"PDF"}`:`Combine all pages into a PDF and upload to BC Job ${bcProjectNumber}`}
               onClick={buildAndAttachPdf} disabled={attachingPdf||(panel.bcPdfAttached&&!bcPdfMissing)}
@@ -9646,6 +9834,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           }}
         />
       )}
+      {showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
       {showAiQuestions&&(panel.aiQuestions||[]).length>0&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.85)"}}>
           <div style={{background:"#12121f",border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",maxWidth:560,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}}>
@@ -11840,6 +12029,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
   const [selectedPanelId,setSelectedPanelId]=useState(()=>(project.panels||[])[0]?.id||null);
+  const [eqModalPanelId,setEqModalPanelId]=useState(null);
   const [fbLaborMoreInfo,setFbLaborMoreInfo]=useState(false);
   const [fbcConnecting,setFbcConnecting]=useState(false);
   const [fbcError,setFbcError]=useState("");
@@ -12208,7 +12398,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                         onChange={e=>{const q=Math.max(1,+e.target.value||1);saveImmediatePanel(p.id,{...p,qty:q});}}
                         style={{width:32,fontSize:12,fontWeight:700,textAlign:"center",background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 4px",color:"#fff",outline:"none"}}/>
                       <span style={{fontSize:12,color:p.id===selectedPanelId?C.accent:C.sub,fontWeight:p.id===selectedPanelId?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{p.drawingNo||p.name||`Panel ${pi+1}`}</span>
-                      <Badge status={p.status||"draft"}/>
+                      {(()=>{const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;return openEqs>0?
+                        React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:"1px solid #fde04766",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:"#fde047",animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?"):
+                        React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer"}},React.createElement(Badge,{status:p.status||"draft"}));})()}
                       <span style={{fontSize:13,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{pfmt(psp*pqty)}</span>
                     </div>
                   );
@@ -12271,6 +12463,10 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
         </div>
       </div>
     )}
+    {eqModalPanelId&&(()=>{const ep=(project.panels||[]).find(p=>p.id===eqModalPanelId);return ep?React.createElement(EngineeringQuestionsModal,{panel:ep,uid,
+      onUpdate:updated=>onUpdate({...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)}),
+      onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
+      onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
   </>);
 }
 
@@ -12382,6 +12578,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [rfqEmailModal,setRfqEmailModal]=useState(null);
   const [showRfqHistory,setShowRfqHistory]=useState(false);
   const [quoteWarnRows,setQuoteWarnRows]=useState(null); // null=hidden, array=showing
+  const [eqWarnOpen,setEqWarnOpen]=useState(null); // null=hidden, array of open engineering questions
+  const [eqWarnPriceRows,setEqWarnPriceRows]=useState(null); // stacked price warnings after eq warning
   const [showSqModal,setShowSqModal]=useState(false);
   const [sqPanelBom,setSqPanelBom]=useState(null);
   const [pendingRfqUploads,setPendingRfqUploads]=useState(0);
@@ -12604,6 +12802,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(isBC&&!dt)return true; // No PO date = "No POs" — needs pricing
       return dt&&dt<now-staleMs;
     });
+    // Check for unanswered engineering questions
+    const openEqs=(projectRef.current.panels||[]).flatMap(p=>(p.engineeringQuestions||[]).filter(q=>q.status==="open"));
+    if(openEqs.length>0){setEqWarnOpen(openEqs);if(warn.length>0)setEqWarnPriceRows(warn);return;}
     if(warn.length>0){setQuoteWarnRows(warn);}
     else{setAutoPrint(true);setView("quote");}
   }
@@ -12769,6 +12970,29 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={async(poNum)=>{setShowPoModal(false);const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,updatedAt:Date.now()};setProject(updated);projectRef.current=updated;onChange&&onChange(updated);try{await saveProject(uid,updated);}catch(e){console.warn("PO save failed:",e);}}}/>}
           {showPriceCheckModal&&priceCheckDiffs&&<PurchasePriceCheckModal diffs={priceCheckDiffs} onAccept={applyPriceCheckDiffs} onClose={()=>{setShowPriceCheckModal(false);setPriceCheckDiffs(null);}}/>}
           {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
+          {eqWarnOpen&&ReactDOM.createPortal(
+            React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}},
+              React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}},
+                React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:8}},
+                  React.createElement("span",{style:{fontSize:22}},"❓"),
+                  React.createElement("div",{style:{fontSize:15,fontWeight:800,color:"#fbbf24"}},"Unanswered Engineering Questions")
+                ),
+                React.createElement("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}},
+                  React.createElement("strong",{style:{color:"#f1f5f9"}},eqWarnOpen.length+" question"+(eqWarnOpen.length!==1?"s":""))," still need"+(eqWarnOpen.length===1?"s":"")+" answers before this quote is finalized. Printing without answering may result in an inaccurate or incomplete quote."
+                ),
+                React.createElement("div",{style:{background:"#0a0a18",border:"1px solid #2a2a3e",borderRadius:6,maxHeight:200,overflowY:"auto",marginBottom:16}},
+                  eqWarnOpen.map((q,i)=>React.createElement("div",{key:q.id||i,style:{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 10px",borderBottom:i<eqWarnOpen.length-1?"1px solid #1a1a2e":"none",fontSize:12}},
+                    React.createElement("span",{style:{color:q.severity==="critical"?"#ef4444":q.severity==="warning"?"#f59e0b":"#818cf8",fontWeight:700,fontSize:9,textTransform:"uppercase",minWidth:40,paddingTop:2}},q.severity),
+                    React.createElement("span",{style:{color:C.text,flex:1,lineHeight:1.4}},q.question)
+                  ))
+                ),
+                React.createElement("div",{style:{display:"flex",gap:8,justifyContent:"flex-end"}},
+                  React.createElement("button",{onClick:()=>{setEqWarnOpen(null);setEqWarnPriceRows(null);},style:{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}},"Go Back"),
+                  React.createElement("button",{onClick:()=>{setEqWarnOpen(null);if(eqWarnPriceRows){setQuoteWarnRows(eqWarnPriceRows);setEqWarnPriceRows(null);}else{setAutoPrint(true);setView("quote");}},style:{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}},"Acknowledge & Proceed")
+                )
+              )
+            ),document.body
+          )}
           {quoteWarnRows&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
               <div style={{background:"#0d0d1a",border:"1px solid #b45309",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
