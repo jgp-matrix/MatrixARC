@@ -7585,7 +7585,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [showAiQuestions,setShowAiQuestions]=useState(false);
   const [aiAnswers,setAiAnswers]=useState({});
   const [err,setErr]=useState("");
-  const [stampingDrawings,setStampingDrawings]=useState(false);
   const [attachingPdf,setAttachingPdf]=useState(false);
   const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [bcPdfMissing,setBcPdfMissing]=useState(false);
@@ -8078,11 +8077,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,finalPanel).catch(e=>console.warn("Auto task desc sync failed:",e));
           }).catch(e=>console.warn("Auto BC planning lines sync failed:",e));
         }
+        // Auto-upload drawings PDF to BC (only on first upload — skip if already attached)
+        if(!finalPanel.bcPdfAttached&&bcProjectNumber&&_bcToken&&(finalPanel.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
+          try{buildAndAttachPdf();}catch(e){console.warn("Auto BC PDF upload failed:",e);}
+        }
       },
       stampFn:async(dataUrl,pgIdx,total)=>{
-        const today=new Date().toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'numeric'});
+        const d=new Date();
+        const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+        const scanned=`Scanned ${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
         return burnStampCanvas(dataUrl,{
-          left:`QUOTE · ${today}`,
+          left:`QUOTE REVIEW · ${scanned}`,
           center:`${pgIdx+1} of ${total}`,
           right:[_stampBcProjNo,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ')
         });
@@ -8109,30 +8114,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const updated={...panel,drawingNo:draftNo.trim(),drawingDesc:draftDesc.trim(),drawingRev:draftRev.trim(),requestedShipDate:draftShipDate};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
-  }
-  // TEMP — stamp existing drawings for testing; remove after rollout
-  async function stampExistingDrawings(){
-    if(!pages.length||!projectId)return;
-    setStampingDrawings(true);
-    try{
-      const today=new Date().toLocaleDateString('en-US',{month:'numeric',day:'numeric',year:'numeric'});
-      const statusLabel=panel.status==="quoted"||panel.status==="costed"?"QUOTE":panel.status==="validated"?"VALIDATED":"EXTRACTED";
-      const updatedPages=await Promise.all(pages.map(async(pg,pgIdx)=>{
-        const withData=await ensureDataUrl(pg);
-        if(!withData.dataUrl)return pg;
-        const stamped=await burnStampCanvas(withData.dataUrl,{
-          left:`${statusLabel} · ${today}`,
-          center:`${pgIdx+1} of ${pages.length}`,
-          right:[bcProjectNumber,panel.drawingNo,panel.requestedShipDate].filter(Boolean).join(' · ')
-        });
-        const newUrl=await uploadPageImage(uid,projectId,pg.id,stamped);
-        return{...pg,storageUrl:newUrl,dataUrl:stamped};
-      }));
-      const updated={...panel,pages:updatedPages};
-      onUpdate(updated);
-      try{onSaveImmediate(updated);}catch(e){}
-    }catch(e){console.error('Stamp drawings failed:',e);}
-    setStampingDrawings(false);
   }
 
   async function buildAndAttachPdf(){
@@ -8997,12 +8978,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <button data-tip="Re-run AI extraction on tagged BOM pages — uses region crops if defined" onClick={()=>runExtraction()} disabled={extracting}
               style={{background:"none",border:`1px solid ${C.accent}88`,color:C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:extracting?0.6:1}}>
               {extracting?"Extracting…":"Re-Extract Drawings"}
-            </button>
-          )}
-          {pages.length>0&&!readOnly&&(
-            <button data-tip="Burn overlay stamp into existing drawing images in storage" onClick={stampExistingDrawings} disabled={stampingDrawings}
-              style={{background:"none",border:`1px solid ${C.yellow}88`,color:C.yellow,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:stampingDrawings?0.5:1}}>
-              {stampingDrawings?"Stamping…":"🔏 Stamp Drawings"}
             </button>
           )}
           {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(
