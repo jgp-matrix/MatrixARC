@@ -7342,13 +7342,22 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       if(!b64)return;
       const pn=(targetRow?.partNumber||initialQuery||'').trim();
       const refLine=(targetRow?.itemNo||'').trim();
-      const refHint=refLine?` This row has BOM reference/line number "${refLine}" — look for this number in the first or second column (often labeled "ITEM", "REF", "LINE", "#") to locate the exact row.`:'';
+      const refHint=refLine?`\nIMPORTANT: The BOM line/item number for this row is "${refLine}". Find this number in the first column (labeled ITEM, REF, LINE, #, or similar) — it uniquely identifies the row.`:'';
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:120,messages:[{role:"user",content:[
+        body:JSON.stringify({model:"claude-sonnet-4-5-20250514",max_tokens:200,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This is a BOM table from an electrical panel drawing. Find the row containing the part number "${pn}".${refHint} Return ONLY JSON, no explanation: {"found":true,"y_top":0.38,"y_bottom":0.42,"pn_x":0.55} where y_top/y_bottom are the top/bottom edges of that row as fractions of image height (be precise — measure from the very top of the row text to the bottom of that row's cell), and pn_x is the horizontal center of the part number text as a fraction of image width. If not found return {"found":false}.`}
+          {type:"text",text:`This is a BOM (Bill of Materials) table from an electrical panel drawing. I need you to find the EXACT row for part number "${pn}".${refHint}
+
+INSTRUCTIONS:
+1. First, find the BOM table in the image. It usually has columns like ITEM, QTY, PART NUMBER/CATALOG NUMBER, DESCRIPTION, MFR.
+2. Scan through the rows to find the one matching the part number above${refLine?' (or matching item number '+refLine+')':''}.
+3. Measure PRECISELY: y_top = fraction from image top to the TOP EDGE of that row's horizontal gridline. y_bottom = fraction from image top to the BOTTOM EDGE of that row's horizontal gridline.
+4. pn_x = fraction from image left edge to the CENTER of the part number text in that row.
+
+Return ONLY JSON: {"found":true,"y_top":0.45,"y_bottom":0.47,"pn_x":0.60}
+If the part is not visible in this image: {"found":false}`}
         ]}]})
       });
       const data=await resp.json();
