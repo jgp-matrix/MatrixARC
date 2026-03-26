@@ -8542,6 +8542,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const updated={...panel,lineQty:q};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
+    // Auto-resync planning lines to BC when panel qty changes
+    if(bcProjectNumber&&_bcToken&&(updated.bom||[]).length>0){
+      bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated).then(result=>{
+        if(result.failed?.length>0)console.warn("LineQty BC sync: "+result.failed.length+" items failed");
+        else console.log("LineQty BC sync: planning lines updated for qty="+q);
+      }).catch(e=>console.warn("LineQty BC sync failed:",e));
+    }
   }
   function savePanelName(){
     if(!draftName.trim())return;
