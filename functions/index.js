@@ -88,29 +88,34 @@ async function sendPushToUser(uid, notification) {
 async function postToTeams(opts) {
   if (!TEAMS_WEBHOOK_URL) return;
   try {
+    // Power Automate "Post to channel" expects Adaptive Card format
+    const factsBody = (opts.facts || []).map(f => ({
+      type: "TextBlock", text: `**${f.name}:** ${f.value}`, wrap: true, size: "small"
+    }));
     const card = {
-      "@type": "MessageCard",
-      "@context": "http://schema.org/extensions",
-      "themeColor": "0076D7",
-      "summary": opts.title || "MatrixARC Notification",
-      "sections": [{
-        "activityTitle": opts.title || "MatrixARC",
-        "activitySubtitle": opts.body || "",
-        "facts": (opts.facts || []).map(f => ({ name: f.name, value: f.value })),
-        "markdown": true
-      }],
-      "potentialAction": opts.url ? [{
-        "@type": "OpenUri",
-        "name": "Open in ARC",
-        "targets": [{ "os": "default", "uri": opts.url }]
-      }] : []
+      type: "message",
+      attachments: [{
+        contentType: "application/vnd.microsoft.card.adaptive",
+        contentUrl: null,
+        content: {
+          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+          type: "AdaptiveCard",
+          version: "1.4",
+          body: [
+            { type: "TextBlock", text: opts.title || "MatrixARC", weight: "Bolder", size: "Medium", color: "Accent" },
+            { type: "TextBlock", text: opts.body || "", wrap: true },
+            ...factsBody,
+          ],
+          actions: opts.url ? [{ type: "Action.OpenUrl", title: "Open in ARC", url: opts.url }] : [],
+        }
+      }]
     };
     const https = require('https');
     const url = new URL(TEAMS_WEBHOOK_URL);
     const payload = JSON.stringify(card);
     await new Promise((resolve, reject) => {
       const req = https.request({
-        hostname: url.hostname, path: url.pathname + url.search,
+        hostname: url.hostname, port: url.port || 443, path: url.pathname + url.search,
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
       }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); });
       req.on('error', reject);
