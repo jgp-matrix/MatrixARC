@@ -3435,6 +3435,8 @@ TRANSCRIBE EXACTLY what is printed — do NOT autocomplete, normalize, or guess 
 
 DUPLICATE PART NUMBERS: If the same part number appears on multiple rows in the BOM table, combine them into ONE item with the total quantity summed. For example, if "QD100X300HW" appears 3 times each with qty 1, return ONE item with qty 3. Do NOT return separate rows for the same part number.
 
+QUANTITY "A/R" or "AR": If a BOM row shows quantity as "A/R", "AR", "As Required", or "As Req'd", this means the panel shop uses whatever length/amount is needed. Set qty to 1 for these items.
+
 RETURN FORMAT:
 Output ONLY a valid JSON object — no markdown, no explanation. Format:
 {"items":[...],"questions":[...]}
@@ -3637,6 +3639,11 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
       } else {
         expanded.push(item);
       }
+    }
+    // Normalize "A/R" / "AR" / "As Required" quantities to 1
+    for(const item of expanded){
+      const q=String(item.qty||"").trim().toUpperCase();
+      if(q==="A/R"||q==="AR"||q==="AS REQUIRED"||q==="AS REQ'D"||q==="A.R."||q==="A\\R"){item.qty=1;}
     }
     return{items:expanded,questions:questions.slice(0,5)};
   }catch(e){console.error("JSON parse error:",e,raw);return{items:[],questions:[]};}
