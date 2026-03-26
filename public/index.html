@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.144";
+const APP_VERSION="v1.18.145";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -932,16 +932,17 @@ function guessCorrection(origPN,newPN){
 // ── QUOTE NUMBER COUNTER ──
 // Stores next quote number in Firestore; uses transaction for atomic increment.
 // Path: {configPath}/quoteCounter  doc: {next: <number>}
+// Format: MTX-Q2##### starting at MTX-Q202000
 async function getNextQuoteNumber(uid){
   const path=(_appCtx.configPath||`users/${uid}/config`)+"/quoteCounter";
   const ref=fbDb.doc(path);
   const num=await fbDb.runTransaction(async tx=>{
     const doc=await tx.get(ref);
-    const next=doc.exists?(doc.data().next||1):1;
+    const next=doc.exists?(doc.data().next||202000):202000;
     tx.set(ref,{next:next+1});
     return next;
   });
-  return String(num).padStart(3,'0');
+  return "MTX-Q"+String(num);
 }
 
 // ── CPD (Control Panel Design) DATABASE ──
@@ -6207,7 +6208,7 @@ function QuoteTab({project,onUpdate}){
           return(
             <div style={{display:"flex",flexDirection:"column",gap:16}}>
               <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
-                {fld("Quote #","number","######",120)}
+                {fld("Quote #","number","MTX-Q2#####",160)}
                 {fld("Contact Name","contact","Contact name")}
                 {fld("Company","company","Company")}
                 {fld("Address","address","Address")}
@@ -6273,7 +6274,7 @@ function QuoteTab({project,onUpdate}){
             </div>
             <div className="qd-hdr-right">
               <div className="qd-qlabel">{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
-              <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="######" style={{...qInp({width:160,fontSize:34,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
+              <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="MTX-Q2#####" style={{...qInp({width:220,fontSize:28,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
               {project.quoteRev>0&&<div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":C.sub,letterSpacing:0.3}}>Rev {String(project.quoteRev).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>}
               <div className="qd-qmeta">{q.date||today}<br/>Page 1 of 2</div>
             </div>
@@ -8189,9 +8190,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const qNum=quoteData.number||"";
       const rev=quoteRev||0;
       const nameParts=[panel.drawingNo||bcProjectNumber];
-      if(qNum)nameParts.push("Q"+qNum);
+      if(qNum)nameParts.push(qNum);
       if(rev>0)nameParts.push("REV"+String(rev).padStart(3,'0'));
-      else if(panel.drawingRev)nameParts.push("Rev"+panel.drawingRev);
       const fileName=stageTag+" "+nameParts.filter(Boolean).join("-")+".pdf";
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
@@ -12545,7 +12545,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         setProject(upd);projectRef.current=upd;onChange(upd);saveProject(uid,upd);
         // Note in BC
         if(proj.bcProjectNumber&&_bcToken){
-          bcPatchJobOData(proj.bcProjectNumber,{Description_2:"ARC Quote #"+qNum}).catch(e=>console.warn("BC quote note failed:",e));
+          bcPatchJobOData(proj.bcProjectNumber,{Description_2:"Quote "+qNum}).catch(e=>console.warn("BC quote note failed:",e));
         }
       }catch(e){console.warn("Auto quote number failed:",e);}
     }
