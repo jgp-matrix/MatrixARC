@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.138";
+const APP_VERSION="v1.18.139";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3071,6 +3071,15 @@ function resizeImage(dataUrl,maxW=2800){
 }
 // Resize specifically for AI API calls — Claude internally caps at 1568px, so sending larger is wasted bandwidth
 function resizeForAnalysis(dataUrl,maxW=1568){return resizeImage(dataUrl,maxW);}
+
+// ── QUOTE REVISION — hash BOM state to detect changes after printing ──
+function computeBomHash(panels){
+  const data=(panels||[]).map(p=>(p.bom||[]).filter(r=>!r.isLaborRow).map(r=>({pn:(r.partNumber||'').trim(),q:r.qty||0,up:r.unitPrice||0})));
+  const str=JSON.stringify(data);
+  let h=5381;
+  for(let i=0;i<str.length;i++){h=((h<<5)+h)+str.charCodeAt(i);h=h&h;}
+  return String(h);
+}
 
 // ── FIRESTORE ──
 async function saveProject(uid,project){
@@ -6170,7 +6179,7 @@ function QuoteTab({project,onUpdate}){
               {hasSellPrice?`Sell price: ${fmtMoney(sellPrice)}`:"Complete pricing first to populate sell price."}
             </div>
           </div>
-          <button onClick={()=>window.print()} style={btn(C.accent,"#fff",{fontSize:14,padding:"10px 24px"})}>🖨 Print / Save PDF</button>
+          <button onClick={()=>{window.print();const hash=computeBomHash(project.panels);onUpdate({...project,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:project.quoteRev||0});}} style={btn(C.accent,"#fff",{fontSize:14,padding:"10px 24px"})}>🖨 Print / Save PDF</button>
         </div>
         {(()=>{
           const fld=(label,key,ph,w)=>(
@@ -8088,8 +8097,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,finalPanel).catch(e=>console.warn("Auto task desc sync failed:",e));
           }).catch(e=>console.warn("Auto BC planning lines sync failed:",e));
         }
-        // Auto-upload drawings PDF to BC (only on first upload — skip if already attached)
-        if(!finalPanel.bcPdfAttached&&bcProjectNumber&&_bcToken&&(finalPanel.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
+        // Auto-upload drawings PDF to BC
+        if(bcProjectNumber&&_bcToken&&(finalPanel.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
           try{buildAndAttachPdf();}catch(e){console.warn("Auto BC PDF upload failed:",e);}
         }
       },
@@ -8097,8 +8106,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const d=new Date();
         const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
         const scanned=`Scanned ${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
+        const upCount=_stampPanel.bcUploadCount||0;
+        const stampLabel=upCount===0?`ORIGINAL UPLOAD · ${scanned}`:`QUOTE REV ${String(upCount).padStart(2,'0')} · ${scanned}`;
         return burnStampCanvas(dataUrl,{
-          left:`QUOTE REVIEW · ${scanned}`,
+          left:stampLabel,
           center:`${pgIdx+1} of ${total}`,
           right:[_stampBcProjNo,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ')
         });
@@ -8163,7 +8174,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes);
-      const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName};
+      const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName,bcUploadCount:(panel.bcUploadCount||0)+1};
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
       setBcPdfMissing(false);
@@ -8364,6 +8375,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     ep.finish(`✓ ${bom.length} items extracted`);
     setExtracting(false);
+    // Auto re-upload drawings PDF to BC if previously uploaded (revision)
+    if(latestPanelRef.current.bcPdfAttached&&bcProjectNumber&&_bcToken){
+      try{buildAndAttachPdf();}catch(e){console.warn("Auto BC PDF re-upload failed:",e);}
+    }
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
       const categorized=bom.filter(r=>!r.isLaborRow&&r.partNumber).map(r=>({...r,cpdCategory:categorizePart(r.partNumber,r.description)}));
@@ -12168,7 +12183,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   <button onClick={()=>onOpenSupplierQuote(sp.bom||[])} style={btn("#0d1f0d","#4ade80",{fontSize:14,padding:"8px 12px",flex:3,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Supplier Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
                   <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
                 </div>
-                <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Client Quote</button>
+                <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Client Quote{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?` (Rev ${project.quoteRev} ⚠ unsent)`:project.quoteRev>0?` (Rev ${project.quoteRev})`:""}</button>
                 {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📬 PO Received</button>}
                 {!readOnly&&sp.bcItemNumber&&(
                   <button onClick={()=>{}} disabled={pendingBcCount>0}
@@ -12418,6 +12433,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   useEffect(()=>onProjectUpdated(project.id,p=>{setProject(p);projectRef.current=p;onChange(p);}),[project.id]);
 
   function update(p){
+    // Auto-bump quote revision when BOM changes after a print
+    if(p.lastPrintedBomHash){
+      const curHash=computeBomHash(p.panels);
+      if(curHash!==p.lastPrintedBomHash&&(p.quoteRev||0)===(p.quoteRevAtPrint||0)){
+        p={...p,quoteRev:(p.quoteRev||0)+1};
+      }
+    }
     setProject(p);projectRef.current=p;onChange(p);
     clearTimeout(saveTimer.current);
     saveTimer.current=setTimeout(()=>saveProject(uid,p),1000);
@@ -12455,7 +12477,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // Auto-print: wait for quote DOM to render, trigger print, then go back
   useEffect(()=>{
     if(autoPrint&&view==="quote"){
-      const t=setTimeout(()=>{window.print();setAutoPrint(false);setView("panels");},400);
+      const t=setTimeout(()=>{window.print();const hash=computeBomHash(projectRef.current.panels);const upd={...projectRef.current,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:projectRef.current.quoteRev||0};setProject(upd);projectRef.current=upd;onChange(upd);saveProject(uid,upd);setAutoPrint(false);setView("panels");},400);
       return()=>clearTimeout(t);
     }
   },[autoPrint,view]);
@@ -14285,6 +14307,8 @@ function App({user}){
   const [loading,setLoading]=useState(true);
   const [view,setView]=useState("dashboard");
   const [openProject,setOpenProject]=useState(null);
+  const [revWarnModal,setRevWarnModal]=useState(null); // {project, pendingAction}
+  const [revSnoozed,setRevSnoozed]=useState({}); // {[projectId]: true} per session
   const [showNew,setShowNew]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
   const [showAbout,setShowAbout]=useState(false);
@@ -14760,7 +14784,19 @@ INSTRUCTIONS:
     return()=>{clearTimeout(initialTimer);clearInterval(interval);};
   },[user?.uid]);
 
-  function handleOpen(p){setOpenProject(p);setView("project");}
+  function checkQuoteRevWarn(action){
+    if(!openProject){action();return;}
+    const p=openProject;
+    if(p.lastPrintedBomHash&&(p.quoteRev||0)>(p.quoteRevAtPrint||0)){
+      if(revSnoozed[p.id]){action();return;}
+      if(p.quoteRevAcknowledgedAt&&p.quoteRevAcknowledgedAt>=(p.lastQuotePrintedAt||0)){action();return;}
+      setRevWarnModal({project:p,pendingAction:action});return;
+    }
+    action();
+  }
+  function handleOpen(p){
+    checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setOpenProject(p);setView("project");});
+  }
   function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");}
   function handleChange(p){setProjects(ps=>ps.map(x=>x.id===p.id?p:x));setOpenProject(p);}
   function handleDelete(id,name,bcProjectId,bcProjectNumber,project){setDeleteConfirm({id,name,bcProjectId,bcProjectNumber,project});}
@@ -14821,7 +14857,7 @@ INSTRUCTIONS:
         {/* Main toolbar row */}
         <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",height:78,gap:6,position:"relative"}}>
           {/* RedPill logo — left side */}
-          <img src="/redpill_logo.png" alt="RedPill Software" style={{height:48,objectFit:"contain",cursor:"pointer",flexShrink:0}} onClick={()=>{setView("dashboard");setOpenProject(null);}}/>
+          <img src="/redpill_logo.png" alt="RedPill Software" style={{height:48,objectFit:"contain",cursor:"pointer",flexShrink:0}} onClick={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);})}/>
           {/* ARC branding — centered */}
           <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1,pointerEvents:"none"}}>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:28,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
@@ -14968,7 +15004,7 @@ INSTRUCTIONS:
       )}
       {view==="project"&&openProject&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>setView("dashboard")} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)}/>
+          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)}/>
         </ErrorBoundary>
       )}
       {view==="aidb"&&userRole==="admin"&&(
@@ -14985,6 +15021,18 @@ INSTRUCTIONS:
       {showAbout&&<AboutModal onClose={()=>setShowAbout(false)}/>}
       {showSupplierPricing&&<SupplierPricingUploadModal uid={user.uid} onClose={()=>setShowSupplierPricing(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
+      {revWarnModal&&(()=>{const rm=revWarnModal;const rev=rm.project.quoteRev||0;return React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onClick:e=>{if(e.target===e.currentTarget){rm.pendingAction();setRevWarnModal(null);}}},
+        React.createElement("div",{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:"32px 36px",maxWidth:440,width:"90%",textAlign:"center"}},
+          React.createElement("div",{style:{fontSize:28,marginBottom:12}},"⚠️"),
+          React.createElement("div",{style:{fontSize:16,fontWeight:700,color:C.text,marginBottom:8}},"Quote Revision "+rev+" Unsent"),
+          React.createElement("div",{style:{fontSize:13,color:C.sub,lineHeight:1.6,marginBottom:24}},"The BOM has changed since the last quote was printed. Rev "+rev+" has not been sent to the client."),
+          React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:10}},
+            React.createElement("button",{onClick:()=>{setRevSnoozed(s=>({...s,[rm.project.id]:true}));rm.pendingAction();setRevWarnModal(null);},style:{background:"#1e1b4b",color:"#818cf8",border:"1px solid #818cf844",borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Snooze — Remind Next Time I Open This Project"),
+            React.createElement("button",{onClick:()=>{const upd={...rm.project,quoteRevAcknowledgedAt:Date.now()};handleChange(upd);saveProject(user.uid,upd);rm.pendingAction();setRevWarnModal(null);},style:{background:"#1a0d0d",color:"#f87171",border:"1px solid #f8717144",borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Don't Remind Until Next Change"),
+            React.createElement("button",{onClick:()=>{rm.pendingAction();setRevWarnModal(null);},style:{background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}},"Dismiss")
+          )
+        )
+      );})()}
       </div>{/* end main content column */}
       {/* ARC AI Assistant — right slide-out panel */}
       <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
