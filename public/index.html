@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.143";
+const APP_VERSION="v1.18.144";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -927,6 +927,21 @@ function guessCorrection(origPN,newPN){
   for(const c of shorter){if(longer.includes(c))matches++;}
   const ratio=matches/Math.max(a.length,b.length,1);
   return ratio>=0.55?'format':'extraction';
+}
+
+// ── QUOTE NUMBER COUNTER ──
+// Stores next quote number in Firestore; uses transaction for atomic increment.
+// Path: {configPath}/quoteCounter  doc: {next: <number>}
+async function getNextQuoteNumber(uid){
+  const path=(_appCtx.configPath||`users/${uid}/config`)+"/quoteCounter";
+  const ref=fbDb.doc(path);
+  const num=await fbDb.runTransaction(async tx=>{
+    const doc=await tx.get(ref);
+    const next=doc.exists?(doc.data().next||1):1;
+    tx.set(ref,{next:next+1});
+    return next;
+  });
+  return String(num).padStart(3,'0');
 }
 
 // ── CPD (Control Panel Design) DATABASE ──
@@ -7552,7 +7567,7 @@ function StampedDrawing({src,overlay,width,height,onClick}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -8171,7 +8186,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
       if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
       const stageTag=["extracted","validated","costed","quoted"].includes(panel.status)?"[QUOTED]":"[DRAFT]";
-      const fileName=stageTag+" "+[(panel.drawingNo||bcProjectNumber),(panel.drawingRev?"Rev"+panel.drawingRev:"")].filter(Boolean).join("-")+".pdf";
+      const qNum=quoteData.number||"";
+      const rev=quoteRev||0;
+      const nameParts=[panel.drawingNo||bcProjectNumber];
+      if(qNum)nameParts.push("Q"+qNum);
+      if(rev>0)nameParts.push("REV"+String(rev).padStart(3,'0'));
+      else if(panel.drawingRev)nameParts.push("Rev"+panel.drawingRev);
+      const fileName=stageTag+" "+nameParts.filter(Boolean).join("-")+".pdf";
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes);
@@ -11947,6 +11968,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   bcProjectNumber={project.bcProjectNumber||null}
                   bcDisconnected={!!(project.bcEnv&&project.bcEnv!==_bcConfig.env)}
                   quoteData={project.quote||{}}
+                  quoteRev={project.quoteRev||0}
                   readOnly={readOnly}
                   isSelected={panel.id===selectedPanelId}
                   onSelect={()=>setSelectedPanelId(panel.id)}
@@ -12513,7 +12535,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     setRfqLoading(false);
   }
 
-  function handlePrintQuote(){
+  async function handlePrintQuote(){
+    // Auto-assign quote number if not yet set
+    const proj=projectRef.current;
+    if(!proj.quote?.number){
+      try{
+        const qNum=await getNextQuoteNumber(uid);
+        const upd={...proj,quote:{...(proj.quote||{}),number:qNum}};
+        setProject(upd);projectRef.current=upd;onChange(upd);saveProject(uid,upd);
+        // Note in BC
+        if(proj.bcProjectNumber&&_bcToken){
+          bcPatchJobOData(proj.bcProjectNumber,{Description_2:"ARC Quote #"+qNum}).catch(e=>console.warn("BC quote note failed:",e));
+        }
+      }catch(e){console.warn("Auto quote number failed:",e);}
+    }
     const now=Date.now();
     const staleMs=60*24*60*60*1000;
     const allBom=(projectRef.current.panels||[]).flatMap(p=>p.bom||[]);
