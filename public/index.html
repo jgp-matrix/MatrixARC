@@ -283,6 +283,7 @@ if(fbMessaging){
         data:d,
         tag:d.tag||'arc-foreground',
         renotify:true,
+        requireInteraction:true,
       });
     }
   });
@@ -15334,7 +15335,7 @@ INSTRUCTIONS:
                 </button>
               </div>}
               {pushEnabled&&<div style={{padding:"4px 16px 8px"}}>
-                <button onClick={()=>{if(_swRegistration&&Notification.permission==='granted'){_swRegistration.showNotification('MatrixARC',{body:'Push notifications are working!',icon:'/icons/icon-192.png',tag:'arc-test',renotify:true});}}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,padding:"4px 10px",cursor:"pointer",width:"100%"}}>Send test notification</button>
+                <button onClick={()=>{if(_swRegistration&&Notification.permission==='granted'){_swRegistration.showNotification('MatrixARC',{body:'Push notifications are working!',icon:'/icons/icon-192.png',tag:'arc-test',renotify:true,requireInteraction:true});}}} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:11,padding:"4px 10px",cursor:"pointer",width:"100%"}}>Send test notification</button>
               </div>}
             </div>)}
           </div>

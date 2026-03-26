@@ -6,6 +6,7 @@ admin.initializeApp();
 
 const SENDGRID_KEY = process.env.SENDGRID_API_KEY || '';
 const APP_URL = process.env.APP_URL || 'https://matrix-arc.web.app';
+const TEAMS_WEBHOOK_URL = process.env.TEAMS_WEBHOOK_URL || '';
 if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
 
 const db = admin.firestore();
@@ -75,6 +76,50 @@ async function sendPushToUser(uid, notification) {
     }
   } catch (e) {
     console.warn('sendPushToUser error:', e.message);
+  }
+}
+
+// ── TEAMS WEBHOOK HELPER ──
+
+/**
+ * Post a notification card to Microsoft Teams via Incoming Webhook.
+ * @param {object} opts - { title, body, url, facts: [{name,value}] }
+ */
+async function postToTeams(opts) {
+  if (!TEAMS_WEBHOOK_URL) return;
+  try {
+    const card = {
+      "@type": "MessageCard",
+      "@context": "http://schema.org/extensions",
+      "themeColor": "0076D7",
+      "summary": opts.title || "MatrixARC Notification",
+      "sections": [{
+        "activityTitle": opts.title || "MatrixARC",
+        "activitySubtitle": opts.body || "",
+        "facts": (opts.facts || []).map(f => ({ name: f.name, value: f.value })),
+        "markdown": true
+      }],
+      "potentialAction": opts.url ? [{
+        "@type": "OpenUri",
+        "name": "Open in ARC",
+        "targets": [{ "os": "default", "uri": opts.url }]
+      }] : []
+    };
+    const https = require('https');
+    const url = new URL(TEAMS_WEBHOOK_URL);
+    const payload = JSON.stringify(card);
+    await new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: url.hostname, path: url.pathname + url.search,
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+      }, res => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); });
+      req.on('error', reject);
+      req.write(payload);
+      req.end();
+    });
+    console.log('Teams webhook posted:', opts.title);
+  } catch (e) {
+    console.warn('Teams webhook error:', e.message);
   }
 }
 
@@ -228,6 +273,17 @@ exports.onSupplierQuoteSubmitted = functions.firestore
       },
     });
 
+    await postToTeams({
+      title: `New Supplier Quote — ${vendorName}`,
+      body: notifBody,
+      url: APP_URL,
+      facts: [
+        { name: 'Project', value: after.projectName || after.projectId || '' },
+        { name: 'Vendor', value: vendorName },
+        { name: 'RFQ', value: after.rfqNum || '' },
+      ],
+    });
+
     // Send emails if SendGrid configured
     if (!SENDGRID_KEY) return null;
 
@@ -332,6 +388,17 @@ exports.sendEngineerQuestionEmail = functions.https.onCall(async (data, context)
       },
     });
   }
+
+  await postToTeams({
+    title: `Engineering Questions — ${projectName || bcProjectNumber || 'Project'}`,
+    body: `${senderName} sent ${questions.length} question(s) for ${panelName || 'a panel'}`,
+    url: APP_URL,
+    facts: [
+      { name: 'Project', value: projectName || bcProjectNumber || '' },
+      { name: 'Panel', value: panelName || '' },
+      { name: 'Questions', value: String(questions.length) },
+    ],
+  });
 
   return { success: true };
 });

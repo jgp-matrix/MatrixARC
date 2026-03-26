@@ -32,6 +32,7 @@ self.addEventListener('push', (event) => {
     data: payload, // pass through so notificationclick can use it
     tag: payload.tag || 'arc-notification', // collapse duplicate notifications
     renotify: true,
+    requireInteraction: true, // persist until user clicks or dismisses
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
