@@ -128,6 +128,18 @@ async function postToTeams(opts) {
   }
 }
 
+// Test endpoint for Teams webhook
+exports.testTeamsWebhook = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  await postToTeams({
+    title: 'MatrixARC Test',
+    body: 'Teams webhook is working!',
+    url: APP_URL,
+    facts: [{ name: 'Triggered by', value: context.auth.token.email || context.auth.uid }],
+  });
+  return { success: true };
+});
+
 // ── TEAM MANAGEMENT ──
 
 exports.inviteTeamMember = functions.https.onCall(async (data, context) => {
