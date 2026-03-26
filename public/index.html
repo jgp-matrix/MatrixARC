@@ -7369,8 +7369,8 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
         const rowIdx=Math.max(0,itemNum-0.5);
         const y_top=tTop+(rowIdx*rowHeight);
         const y_bottom=y_top+rowHeight;
-        // Clamp pn_x — part# column is typically 0.45-0.65 (left of description)
-        const pnX=r.pn_x!=null?Math.min(0.65,Math.max(0.40,r.pn_x)):0.55;
+        // Clamp pn_x — varies by customer; use AI value but cap range
+        const pnX=r.pn_x!=null?Math.min(0.60,Math.max(0.35,r.pn_x)):0.50;
         console.log('LOCATE: table',tTop,'→',tBot,totalRows,'rows, item',itemNum,'→ y:',y_top.toFixed(3),'-',y_bottom.toFixed(3),'pn_x:',pnX,'(raw:',r.pn_x,')');
         await cropRowFromImage(dataUrl,y_top,y_bottom,pnX);
       }
