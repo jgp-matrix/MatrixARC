@@ -8180,17 +8180,33 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     })));
     ep.set(80,"Saving BOM…");
-    const updated={...latestPanelRef.current,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),status:"extracted",updatedAt:Date.now()};
+    let updated={...latestPanelRef.current,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),status:"extracted",updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
-    ep.finish(`✓ ${bom.length} items extracted`);
     setTagsChanged(false);
-    setExtracting(false);
     if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
+    // Re-run validation (schematic/layout analysis) if applicable
+    const valPages=(pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
+    if(valPages.length>0&&_apiKey){
+      ep.set(65,"Validating drawings…");
+      setValidatingPanel(true);
+      try{
+        const result=await runPanelValidation(latestPanelRef.current,pct=>{ep.set(65+Math.round(pct*0.15),"Validating…");});
+        if(result?.validation||result?.laborData){
+          updated={...latestPanelRef.current,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
+          onUpdate(updated);
+          try{await onSaveImmediate(updated);}catch(e){}
+        }
+      }catch(valEx){console.warn("Re-extract validation failed:",valEx);}
+      setValidatingPanel(false);
+    }
     // Auto-run pricing after re-extraction
     if(bom.length>0&&_apiKey){
-      try{runPricingOnPanel(bom,updated);}catch(e){console.warn("Post-extract pricing failed:",e);}
+      ep.set(82,"Getting prices…");
+      try{await runPricingOnPanel(bom,updated,pct=>{ep.set(82+Math.round(pct*0.16),null);});}catch(e){console.warn("Post-extract pricing failed:",e);}
     }
+    ep.finish(`✓ ${bom.length} items extracted`);
+    setExtracting(false);
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
       const categorized=bom.filter(r=>!r.isLaborRow&&r.partNumber).map(r=>({...r,cpdCategory:categorizePart(r.partNumber,r.description)}));
