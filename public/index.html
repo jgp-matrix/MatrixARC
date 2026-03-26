@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.114";
+const APP_VERSION="v1.18.115";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3338,14 +3338,26 @@ Each item in the "items" array must have exactly:
 y_top and y_bottom are the top and bottom edges of this row as fractions of the total image height (0.0=top, 1.0=bottom). Be precise.
 x_left and x_right are the left and right edges of the entire BOM TABLE (all columns) as fractions of the total image width. Exclude any schematic diagram, layout drawing, or whitespace to the left of the table — crop to where the BOM table columns begin and end. All rows on the same page share the same x_left/x_right values.
 
-QUESTIONS — if you are uncertain about any item or see something ambiguous, add a question to the "questions" array (max 5 per page). Each question:
-{"rowRef":"item # or part number","question":"What is unclear","options":["possible answer A","possible answer B"]}
-Examples of good questions:
-• {"rowRef":"Item 5","question":"Part number reads as 'E5CS-R1KJX-52O' — is the last character the letter O or the digit 0 (zero)?","options":["Letter O","Digit 0"]}
-• {"rowRef":"100-C09D10","question":"The 4th character could be a letter O or digit 0 — which is correct?","options":["100-C09D10 (letter O)","100-C09010 (digit zero)"]}
+QUESTIONS — You MUST include questions in the "questions" array (up to 5 per page) for ANY of these situations:
+1. Any character in a part number that could be two different characters (O/D, O/0, B/8, S/5, etc.)
+2. Abbreviations or shortened manufacturer names you're not 100% sure about
+3. Rows where it's unclear if something is a BOM line item or a note/header/subtotal
+4. Part numbers that seem unusual or don't match typical patterns for the stated manufacturer
+5. Quantities that seem unusually high or low for the type of component
+6. Any cell where text is partially obscured, cut off, or hard to read
+
+Each question: {"rowRef":"item # or part number","question":"What is unclear","options":["possible answer A","possible answer B"]}
+
+Examples:
+• {"rowRef":"Item 5","question":"Part number reads as 'E5CS-R1KJX-52O' — is the last character the letter O or the digit 0 (zero)?","options":["Letter O (E5CS-R1KJX-52O)","Digit 0 (E5CS-R1KJX-520)"]}
+• {"rowRef":"100-C09D10","question":"Character 8 could be letter D or digit 0 — which is correct?","options":["100-C09D10 (letter D)","100-C09010 (digit zero)"]}
 • {"rowRef":"Row 12","question":"This row has no part number but references 'WIRE 14AWG'. Is this a BOM item to include or a general note?","options":["Include as BOM item","It's a note, skip it"]}
 • {"rowRef":"Item 8","question":"Manufacturer cell shows 'SQD' — is this Square D (Schneider Electric)?","options":["Yes, Square D","No, different manufacturer"]}
-Only ask when genuinely uncertain — do NOT ask about things you can resolve by careful reading. Return empty "questions":[] if nothing is unclear.
+
+It is BETTER to ask too many questions than too few. If you made your best guess on an ambiguous character, STILL ask the user to confirm. Return "questions":[] ONLY if every single character and row is completely unambiguous.
+
+IMPORTANT: You MUST return the wrapper object format: {"items":[...],"questions":[...]}
+Do NOT return a bare JSON array. Always wrap in the object with both keys.
 
 If no BOM table exists on this page, return {"items":[],"questions":[]}.`;
 
@@ -3422,20 +3434,37 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
   console.log("Claude raw response:",raw);
   try{
     const cleaned=raw.replace(/```json|```/g,"").trim();
-    // Try new object format first: {"items":[...],"questions":[...]}
     let items=[],questions=[];
-    const objMatch=cleaned.match(/\{[\s\S]*\}/);
-    if(objMatch){
-      try{
-        const parsed=JSON.parse(objMatch[0]);
-        if(Array.isArray(parsed.items)){items=parsed.items;questions=parsed.questions||[];}
-        else if(parsed.itemNo!==undefined||parsed.partNumber!==undefined){items=[parsed];}// single item obj
-        else{const arrMatch=cleaned.match(/\[[\s\S]*\]/);if(arrMatch)items=JSON.parse(arrMatch[0]);}
-      }catch(e2){const arrMatch=cleaned.match(/\[[\s\S]*\]/);if(arrMatch)items=JSON.parse(arrMatch[0]);}
-    }else{
+    // Try wrapper object format first: {"items":[...],"questions":[...]}
+    // Look for {"items" at the start to distinguish from bare array
+    const wrapperMatch=cleaned.match(/\{\s*"items"\s*:\s*\[[\s\S]*\]/);
+    if(wrapperMatch){
+      // Find the full wrapper object by parsing from the match start
+      const startIdx=cleaned.indexOf(wrapperMatch[0]);
+      // Find matching closing brace
+      let depth=0,endIdx=-1;
+      for(let i=startIdx;i<cleaned.length;i++){
+        if(cleaned[i]==='{')depth++;
+        if(cleaned[i]==='}'){depth--;if(depth===0){endIdx=i;break;}}
+      }
+      if(endIdx>startIdx){
+        try{
+          const parsed=JSON.parse(cleaned.slice(startIdx,endIdx+1));
+          items=parsed.items||[];
+          questions=parsed.questions||[];
+          console.log("BOM extraction: parsed wrapper format,",items.length,"items,",questions.length,"questions");
+        }catch(e2){console.warn("Wrapper parse failed, falling back to array");const arrMatch=cleaned.match(/\[[\s\S]*\]/);if(arrMatch)items=JSON.parse(arrMatch[0]);}
+      }
+    }
+    if(!items.length){
+      // Fallback: bare array format
       const arrMatch=cleaned.match(/\[[\s\S]*\]/);
-      if(!arrMatch){console.warn("No JSON found in response");return{items:[],questions:[]};}
-      items=JSON.parse(arrMatch[0]);
+      if(arrMatch){
+        items=JSON.parse(arrMatch[0]);
+        console.log("BOM extraction: parsed bare array,",items.length,"items, 0 questions (old format)");
+      } else {
+        console.warn("No JSON found in response");return{items:[],questions:[]};
+      }
     }
     // Post-process: split any rows where partNumber still contains multiple values
     const expanded=[];
