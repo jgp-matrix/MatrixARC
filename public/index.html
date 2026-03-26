@@ -197,7 +197,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.142";
+const APP_VERSION="v1.18.143";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -325,7 +325,7 @@ function useSmoothProgress(estSeconds=15){
     // Steady progression — nearly linear with gentle ease near end
     const curve=Math.pow(t,0.9);
     const pct=baseRef.current+(97-baseRef.current)*curve;
-    setState({msg:msgRef.current,pct:Math.min(97,Math.round(pct))});
+    setState({msg:msgRef.current,pct:Math.min(97,Math.round(pct)),wentBack:wentBackRef.current});
     timer.current=requestAnimationFrame(tick);
   },[]);
 
@@ -365,7 +365,7 @@ function useSmoothProgress(estSeconds=15){
     if(rounded<prevPctRef.current-1){
       wentBackRef.current=true;
       if(wentBackTimer.current)clearTimeout(wentBackTimer.current);
-      wentBackTimer.current=setTimeout(()=>{wentBackRef.current=false;},6000);
+      wentBackTimer.current=setTimeout(()=>{wentBackRef.current=false;},15000);
     }
     prevPctRef.current=rounded;
     baseRef.current=Math.min(97,pct);
