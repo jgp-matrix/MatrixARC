@@ -4052,6 +4052,13 @@ async function runComplianceReview(panel){
   (val.schematicTags||[]).forEach(t=>{const type=typeof t==='string'?'other':(t.type||'other');deviceTypes[type]=(deviceTypes[type]||0)+1;});
   const deviceSummary=Object.entries(deviceTypes).map(([t,c])=>`${t}: ${c}`).join(', ');
 
+  // Gather all region annotations — especially Spec and Label regions for compliance
+  const allPages=panel.pages||[];
+  const regionAnnotations=allPages.flatMap(pg=>(pg.regions||[]).filter(r=>r.note).map(r=>({page:pg.name||'Page',type:r.label||r.type,note:r.note})));
+  const specRegions=regionAnnotations.filter(r=>r.type==='Spec'||r.type==='spec');
+  const labelRegions=regionAnnotations.filter(r=>r.type==='Label'||r.type==='label');
+  const otherRegions=regionAnnotations.filter(r=>r.type!=='Spec'&&r.type!=='spec'&&r.type!=='Label'&&r.type!=='label'&&r.type!=='Ignore'&&r.type!=='ignore'&&r.type!=='BOM'&&r.type!=='bom');
+
   // Determine search terms for KB lookup
   const searchTerms=['UL508A','branch circuit','overcurrent','SCCR','short circuit','wiring','marking','labeling','enclosure','spacing','grounding','bonding'];
   // Add terms based on what's in the panel
@@ -4062,6 +4069,17 @@ async function runComplianceReview(panel){
   if(deviceTypes.e_stop)searchTerms.push('emergency stop','red mushroom','operator safety');
   if(counts.wireCount>50)searchTerms.push('wire bending','wire duct fill','raceway');
   if(layout.enclosure)searchTerms.push('enclosure type','NEMA','ventilation','thermal');
+  // Add search terms from user's Spec and Label region annotations
+  for(const r of [...specRegions,...labelRegions]){
+    const words=r.note.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w.length>=3);
+    searchTerms.push(...words.slice(0,8));
+    // Detect voltage/current/SCCR mentions for targeted KB lookup
+    if(/volt|480|600|208|120|277/i.test(r.note))searchTerms.push('voltage rating','supply circuit');
+    if(/amp|breaker|fuse/i.test(r.note))searchTerms.push('overcurrent','branch circuit protection');
+    if(/sccr|short.?circuit/i.test(r.note))searchTerms.push('SCCR','short circuit current rating');
+    if(/nema|ip\d/i.test(r.note))searchTerms.push('enclosure rating','NEMA type');
+    if(/phase|3ph|1ph/i.test(r.note))searchTerms.push('power supply','phase');
+  }
 
   // Fetch relevant NIQ sections
   const niqDocs=await loadNIQ();
@@ -4093,6 +4111,15 @@ VALIDATION:
 ${panel.extractionNotes?`
 USER NOTES ABOUT THESE DRAWINGS:
 ${panel.extractionNotes}
+`:''}${specRegions.length?`
+SPEC REGIONS — USER-IDENTIFIED SPECIFICATIONS FROM THE DRAWINGS (these are ground-truth observations from the user — compare each against UL508A/CSA requirements):
+${specRegions.map(r=>`• [${r.page}] ${r.note}`).join('\n')}
+`:''}${labelRegions.length?`
+LABEL REGIONS — USER-IDENTIFIED LABELS/NAMEPLATE DATA:
+${labelRegions.map(r=>`• [${r.page}] ${r.note}`).join('\n')}
+`:''}${otherRegions.length?`
+OTHER USER ANNOTATIONS (component identifications, device counts, observations):
+${otherRegions.map(r=>`• [${r.type} on ${r.page}] ${r.note}`).join('\n')}
 `:''}${niqContext?`
 ARC NEURAL IQ — REFERENCE STANDARDS (excerpts from UL508A, CSA C22.2 No. 286, UL508A Supplement, FUII, Certification Manual):
 ${niqContext}
