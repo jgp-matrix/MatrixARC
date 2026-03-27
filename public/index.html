@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.189";
+const APP_VERSION="v1.19.0";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15482,11 +15482,227 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   );
 }
 
+// ── LEFT NAV SIDEBAR ──
+const NAV_TABS=[
+  {id:"projects",  label:"PROJECTS",   icon:"◫"},
+  {id:"purchasing",label:"PURCHASING", icon:"⬡"},
+  {id:"items",     label:"ITEMS",      icon:"⬢"},
+];
+function LeftNav({tab,onTabChange,pinned,onPinChange}){
+  const [hovered,setHovered]=useState(false);
+  const isOpen=pinned||hovered;
+  return(<>
+    {/* Flex spacer — pushes main content right when pinned */}
+    <div style={{width:pinned?200:0,flexShrink:0,transition:"width 0.25s ease"}}/>
+    {/* Fixed sidebar */}
+    <div
+      onMouseEnter={()=>{if(!pinned)setHovered(true);}}
+      onMouseLeave={()=>{if(!pinned)setHovered(false);}}
+      style={{position:"fixed",top:78,left:isOpen?0:-192,width:200,height:"calc(100vh - 78px)",
+        background:"#07070f",borderRight:"1px solid #1e293b",zIndex:450,
+        transition:"left 0.25s ease",display:"flex",flexDirection:"column",userSelect:"none"}}
+    >
+      {/* Pin toggle */}
+      <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",padding:"10px 12px",borderBottom:"1px solid #1e293b",minHeight:40}}>
+        <button onClick={()=>onPinChange(!pinned)} title={pinned?"Unpin sidebar (auto-hide)":"Pin sidebar"}
+          style={{background:"none",border:"none",cursor:"pointer",padding:"2px 4px",borderRadius:4,
+            color:pinned?"#3b82f6":"#334155",fontSize:16,lineHeight:1,transition:"color 0.15s"}}
+        >{pinned?"📌":"📍"}</button>
+      </div>
+      {/* Tab buttons */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",paddingTop:16,gap:4}}>
+        {NAV_TABS.map(t=>(
+          <button key={t.id} onClick={()=>onTabChange(t.id)}
+            style={{width:"100%",border:"none",cursor:"pointer",background:"transparent",
+              borderLeft:tab===t.id?"3px solid #3b82f6":"3px solid transparent",
+              color:tab===t.id?"#e2e8f0":"#475569",
+              display:"flex",flexDirection:"column",alignItems:"center",
+              padding:"22px 0",gap:10,transition:"background 0.15s, color 0.15s",
+              background:tab===t.id?"rgba(59,130,246,0.08)":"transparent"}}
+          >
+            <span style={{fontSize:18,opacity:tab===t.id?1:0.5}}>{t.icon}</span>
+            <span style={{writingMode:"vertical-lr",fontSize:10,fontWeight:800,letterSpacing:3,
+              textTransform:"uppercase",opacity:tab===t.id?1:0.6}}>{t.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  </>);
+}
+
+// ── PURCHASING TAB (placeholder) ──
+function PurchasingTab(){
+  return(<div style={{padding:48,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400}}>
+    <div style={{fontSize:48,marginBottom:16,opacity:0.3}}>⬡</div>
+    <div style={{fontSize:20,fontWeight:700,color:"#334155",marginBottom:8}}>Purchasing</div>
+    <div style={{fontSize:14,color:"#475569",textAlign:"center",maxWidth:360,lineHeight:1.7}}>
+      Purchase order management, RFQ workflow, and BC purchase quote integration coming soon.
+    </div>
+  </div>);
+}
+
+// ── ITEMS TAB ──
+function ItemsTab({uid}){
+  const [items,setItems]=useState([]);
+  const [loading,setLoading]=useState(false);
+  const [search,setSearch]=useState("");
+  const [skip,setSkip]=useState(0);
+  const [hasMore,setHasMore]=useState(false);
+  const [editingMfr,setEditingMfr]=useState(null); // {no, val}
+  const [savingMfr,setSavingMfr]=useState(null);
+  const [error,setError]=useState(null);
+  const [showFill,setShowFill]=useState(false);
+  const PAGE=100;
+
+  useEffect(()=>{if(_bcToken)load(0,"");},[]);
+
+  async function load(sk,q){
+    setLoading(true);setError(null);
+    try{
+      let filterStr="";
+      if(q&&q.trim()){
+        const s=q.trim().replace(/'/g,"''");
+        filterStr=`&$filter=contains(No,'${s}') or contains(Description,'${s}')`;
+      }
+      const url=`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code,Vendor_No,Last_Direct_Cost&$top=${PAGE}&$skip=${sk}&$orderby=No asc${filterStr}`;
+      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!r.ok)throw new Error(`BC ${r.status}`);
+      const d=await r.json();
+      const batch=d.value||[];
+      if(sk===0)setItems(batch);
+      else setItems(prev=>[...prev,...batch]);
+      setHasMore(batch.length===PAGE);
+      setSkip(sk);
+    }catch(e){setError(e.message);}
+    setLoading(false);
+  }
+
+  function doSearch(){load(0,search);}
+
+  async function saveMfr(no,val){
+    setSavingMfr(no);
+    try{
+      const code=val.trim().slice(0,10).toUpperCase();
+      await bcPatchItemOData(no,{Manufacturer_Code:code});
+      setItems(prev=>prev.map(i=>i.No===no?{...i,Manufacturer_Code:code}:i));
+      setEditingMfr(null);
+    }catch(e){setError("Save failed: "+e.message);}
+    setSavingMfr(null);
+  }
+
+  if(!_bcToken)return(<div style={{padding:48,textAlign:"center"}}>
+    <div style={{fontSize:40,marginBottom:12,opacity:0.3}}>📦</div>
+    <div style={{color:"#475569"}}>Connect to Business Central to browse items.</div>
+  </div>);
+
+  return(<div style={{padding:"20px 24px",minHeight:"100%"}}>
+    {/* Toolbar */}
+    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+      <h2 style={{margin:0,fontSize:20,fontWeight:800,color:"#e2e8f0",letterSpacing:0.5}}>Items</h2>
+      <div style={{flex:1,minWidth:200,maxWidth:420,display:"flex",gap:6}}>
+        <input value={search} onChange={e=>setSearch(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&doSearch()}
+          placeholder="Search by item no or description…"
+          style={{flex:1,background:"#0f172a",border:"1px solid #334155",borderRadius:6,
+            padding:"6px 10px",color:"#e2e8f0",fontSize:13,fontFamily:"inherit"}}/>
+        <button onClick={doSearch} disabled={loading}
+          style={{background:"#3b82f6",color:"#fff",border:"none",borderRadius:6,
+            padding:"6px 14px",fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+          {loading?"…":"Search"}
+        </button>
+      </div>
+      <button onClick={()=>setShowFill(v=>!v)}
+        style={{background:showFill?"#7c3aed":"#1e293b",color:showFill?"#fff":"#94a3b8",
+          border:"1px solid #334155",borderRadius:6,padding:"6px 14px",fontSize:12,
+          fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+        🏷 Fill Missing MFR Codes
+      </button>
+    </div>
+    {/* MFR Fill panel (inline, collapsible) */}
+    {showFill&&<div style={{background:"#0a0a12",border:"1px solid #1e293b",borderRadius:8,
+      padding:"12px 14px",marginBottom:16}}>
+      <BcMfrFillPanel/>
+    </div>}
+    {error&&<div style={{color:"#ef4444",fontSize:12,marginBottom:10}}>{error}</div>}
+    {/* Items table */}
+    <div style={{background:"#0a0a12",border:"1px solid #1e293b",borderRadius:8,overflow:"hidden"}}>
+      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+        <thead>
+          <tr style={{background:"#0d0d1a",borderBottom:"1px solid #1e293b"}}>
+            {["ITEM NO","DESCRIPTION","MFR CODE","VENDOR","LAST COST"].map((h,i)=>(
+              <th key={h} style={{padding:"8px 12px",textAlign:i===4?"right":"left",
+                color:"#475569",fontWeight:700,fontSize:10,letterSpacing:1}}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item,i)=>(
+            <tr key={item.No} style={{borderBottom:"1px solid #0f172a",
+              background:i%2===0?"transparent":"rgba(255,255,255,0.012)"}}>
+              <td style={{padding:"6px 12px",color:"#64748b",fontFamily:"monospace",fontSize:12,whiteSpace:"nowrap"}}>{item.No}</td>
+              <td style={{padding:"6px 12px",color:"#cbd5e1",maxWidth:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
+                title={item.Description}>{item.Description}</td>
+              <td style={{padding:"4px 12px"}}>
+                {editingMfr?.no===item.No?(
+                  <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                    <input value={editingMfr.val}
+                      onChange={e=>setEditingMfr({no:item.No,val:e.target.value})}
+                      onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
+                      maxLength={10} autoFocus
+                      style={{width:80,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
+                        padding:"3px 6px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",textTransform:"uppercase"}}/>
+                    <button onClick={()=>saveMfr(item.No,editingMfr.val)} disabled={savingMfr===item.No}
+                      style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:4,
+                        padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✓</button>
+                    <button onClick={()=>setEditingMfr(null)}
+                      style={{background:"#334155",color:"#fff",border:"none",borderRadius:4,
+                        padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✗</button>
+                  </div>
+                ):(
+                  <span onClick={()=>setEditingMfr({no:item.No,val:item.Manufacturer_Code||""})}
+                    title="Click to edit"
+                    style={{cursor:"pointer",display:"inline-block",minWidth:52,padding:"2px 7px",
+                      borderRadius:4,border:"1px solid transparent",fontSize:12,
+                      color:item.Manufacturer_Code?"#60a5fa":"#2d3748",
+                      background:item.Manufacturer_Code?"rgba(59,130,246,0.08)":"transparent",
+                      fontWeight:item.Manufacturer_Code?600:400}}>
+                    {item.Manufacturer_Code||<span style={{color:"#1e293b"}}>—</span>}
+                  </span>
+                )}
+              </td>
+              <td style={{padding:"6px 12px",color:"#475569",fontSize:12}}>{item.Vendor_No||"—"}</td>
+              <td style={{padding:"6px 12px",color:"#94a3b8",textAlign:"right",fontFamily:"monospace",fontSize:12}}>
+                {item.Last_Direct_Cost>0?`$${Number(item.Last_Direct_Cost).toFixed(2)}`:"—"}
+              </td>
+            </tr>
+          ))}
+          {items.length===0&&!loading&&(
+            <tr><td colSpan={5} style={{padding:32,textAlign:"center",color:"#334155"}}>
+              No items found.
+            </td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+    {/* Load more / status */}
+    <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,fontSize:12,color:"#475569"}}>
+      <span>{items.length} items loaded</span>
+      {hasMore&&<button onClick={()=>load(skip+PAGE,search)} disabled={loading}
+        style={{background:"#1e293b",color:"#94a3b8",border:"1px solid #334155",borderRadius:6,
+          padding:"5px 16px",fontSize:12,cursor:"pointer"}}>
+        {loading?"Loading…":"Load More"}
+      </button>}
+    </div>
+  </div>);
+}
+
 // ── APP ──
 function App({user}){
   const [projects,setProjects]=useState([]);
   const [loading,setLoading]=useState(true);
   const [view,setView]=useState("dashboard");
+  const [navTab,setNavTab]=useState("projects");
+  const [navPinned,setNavPinned]=useState(true);
   const [openProject,setOpenProject]=useState(null);
   const [revWarnModal,setRevWarnModal]=useState(null); // {project, pendingAction}
   const [revSnoozed,setRevSnoozed]=useState({}); // {[projectId]: true} per session
@@ -16180,7 +16396,11 @@ INSTRUCTIONS:
       </div>
       {/* Content — padded below fixed header, with side panel */}
       <div style={{flex:1,paddingTop:78,display:"flex",height:"100vh",overflow:"hidden"}}>
+      <LeftNav tab={navTab} onTabChange={setNavTab} pinned={navPinned} onPinChange={setNavPinned}/>
       <div style={{flex:1,minWidth:0,overflowY:"auto",transition:"margin-right 0.3s ease"}}>
+      {navTab==="purchasing"&&<PurchasingTab/>}
+      {navTab==="items"&&<ItemsTab uid={uid}/>}
+      {navTab==="projects"&&<>
       {/* BC Connection Lost popup */}
       {bcLostAlert&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -16242,6 +16462,7 @@ INSTRUCTIONS:
           )
         )
       );})()}
+      </>}{/* end projects tab */}
       </div>{/* end main content column */}
       {/* ARC AI Assistant — right slide-out panel */}
       <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
