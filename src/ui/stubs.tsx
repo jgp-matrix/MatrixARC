@@ -27,28 +27,17 @@ export { default as PricingConfigModal } from './modals/PricingConfigModal';
 export { default as TeamModal } from './modals/TeamModal';
 export { default as AboutModal } from './modals/AboutModal';
 export { default as CompanySetupModal } from './modals/CompanySetupModal';
+export { default as TransferProjectModal } from './modals/TransferProjectModal';
+export { default as CopyProjectModal } from './modals/CopyProjectModal';
+export { default as ReportsModal } from './modals/ReportsModal';
+export { default as SupplierPricingUploadModal } from './modals/SupplierPricingUploadModal';
+export { default as EngineeringQuestionsModal } from './modals/EngineeringQuestionsModal';
 
-// ─── Remaining Modal Stubs (not yet migrated) ──────────────────────────────
+// ─── View Re-exports ────────────────────────────────────────────────────────
 
-export function TransferProjectModal({ onClose }: any) {
-  return <Stub name="Transfer Project" onClose={onClose} />;
-}
-
-export function CopyProjectModal({ onClose }: any) {
-  return <Stub name="Copy Project" onClose={onClose} />;
-}
-
-export function ReportsModal({ uid, onClose }: any) {
-  return <Stub name="Reports" onClose={onClose} />;
-}
-
-export function SupplierPricingUploadModal({ uid, onClose }: any) {
-  return <Stub name="Supplier Pricing Upload" onClose={onClose} />;
-}
-
-export function SupplierPortalPage({ token }: any) {
-  return <Stub name={`Supplier Portal (token: ${token})`} />;
-}
+export { default as SupplierPortalPage } from './SupplierPortalPage';
+export { default as AIDatabasePage } from './AIDatabasePage';
+export { default as TourOverlay } from './shared/TourOverlay';
 
 // ─── View Stubs ──────────────────────────────────────────────────────────────
 
@@ -59,23 +48,6 @@ export function ProjectView({ project, uid, onBack, onChange }: any) {
       <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24 }}>
         <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{project?.name || 'Project'}</div>
         <div style={{ fontSize: 13, color: C.muted }}>ProjectView not yet migrated. {project?.panels?.length || 0} panels.</div>
-      </div>
-    </div>
-  );
-}
-
-export function AIDatabasePage({ uid, onBack }: any) {
-  return <Stub name="ARC AI Database" onBack={onBack} />;
-}
-
-export function TourOverlay({ stepIdx, onNext, onPrev, onDone, onSkip }: any) {
-  return (
-    <div style={{ position: 'fixed', bottom: 20, right: 20, background: C.card, border: `1px solid ${C.accent}`, borderRadius: 12, padding: 16, zIndex: 10000, minWidth: 280 }}>
-      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Training Step {stepIdx + 1}</div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={onPrev} style={btn(C.border, C.muted, { fontSize: 12 })}>Prev</button>
-        <button onClick={onNext} style={btn(C.accent, '#fff', { fontSize: 12 })}>Next</button>
-        <button onClick={onDone} style={btn(C.border, C.muted, { fontSize: 12 })}>Done</button>
       </div>
     </div>
   );
