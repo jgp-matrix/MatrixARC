@@ -13,6 +13,12 @@ import type { Project, Panel, BomRow, AppContext as AppCtxType } from './types';
 
 const reactHooks = { useState, useEffect };
 
+// ─── Firebase Init (must happen before any service is used) ──────────────────
+import { FIREBASE_CONFIG } from './constants';
+if (!firebase.apps.length) {
+  firebase.initializeApp(FIREBASE_CONFIG);
+}
+
 // ─── Firebase Instances ──────────────────────────────────────────────────────
 export const fbAuth = firebase.auth();
 export const fbDb = firebase.firestore();
