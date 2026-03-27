@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.13";
+const APP_VERSION="v1.19.14";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15563,23 +15563,31 @@ function ItemsTab({uid}){
 
   async function load(sk,q){
     setLoading(true);setError(null);
+    const base=`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code,Vendor_No,Last_Direct_Cost&$top=${PAGE}&$orderby=No asc`;
+    const hdrs={"Authorization":`Bearer ${_bcToken}`};
     try{
-      let filterStr="";
       if(q&&q.trim()){
+        // Two parallel queries — BC doesn't support OR across field types
         const s=q.trim().replace(/'/g,"''");
-        // BC OData: use contains on Description only (Code fields don't support contains+or)
-        // Item No matches are handled client-side after fetch
-        filterStr=`&$filter=contains(Description,'${s}')`;
+        const [rNo,rDesc]=await Promise.all([
+          fetch(`${base}&$filter=startswith(No,'${s}')`,{headers:hdrs}),
+          fetch(`${base}&$filter=contains(Description,'${s}')`,{headers:hdrs})
+        ]);
+        const noItems=rNo.ok?(await rNo.json()).value||[]:[];
+        const descItems=rDesc.ok?(await rDesc.json()).value||[]:[];
+        const seen=new Set();
+        const merged=[...noItems,...descItems].filter(i=>{if(seen.has(i.No))return false;seen.add(i.No);return true;});
+        setItems(merged);
+        setHasMore(false);
+      }else{
+        const r=await fetch(`${base}&$skip=${sk}`,{headers:hdrs});
+        if(!r.ok)throw new Error(`BC ${r.status}`);
+        const batch=(await r.json()).value||[];
+        if(sk===0)setItems(batch);
+        else setItems(prev=>[...prev,...batch]);
+        setHasMore(batch.length===PAGE);
+        setSkip(sk);
       }
-      const url=`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code,Vendor_No,Last_Direct_Cost&$top=${PAGE}&$skip=${sk}&$orderby=No asc${filterStr}`;
-      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(!r.ok)throw new Error(`BC ${r.status}`);
-      const d=await r.json();
-      const batch=d.value||[];
-      if(sk===0)setItems(batch);
-      else setItems(prev=>[...prev,...batch]);
-      setHasMore(batch.length===PAGE);
-      setSkip(sk);
     }catch(e){setError(e.message);}
     setLoading(false);
   }
