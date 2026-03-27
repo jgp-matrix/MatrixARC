@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.19";
+const APP_VERSION="v1.19.20";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15918,52 +15918,48 @@ function VendorsPanel({uid}){
       {addErr&&<span style={{color:"#f87171",fontSize:11}}>{addErr}</span>}
     </div>
 
-    {/* Vendor table */}
+    {/* Vendor list */}
     {error&&<div style={{color:"#f87171",fontSize:12,marginBottom:8}}>{error}</div>}
-    {loading?<div style={{color:"#475569",fontSize:12,padding:"12px 0"}}>Loading vendors…</div>:(
-      <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+    {loading?<div style={{color:"#475569",fontSize:12,padding:"8px 0"}}>Loading vendors…</div>:(
+      <div style={{border:`1px solid ${C.border}`,borderRadius:6,overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
           <thead>
             <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
-              {["VENDOR NO","VENDOR NAME","PHONE","ASSIGNED AS"].map((h,i)=>(
-                <th key={h} style={{padding:"8px 12px",textAlign:"left",color:"#94a3b8",
-                  fontWeight:700,fontSize:11,letterSpacing:1}}>{h}</th>
-              ))}
-              <th style={{padding:"8px 12px",width:180}}/>
+              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>NO</th>
+              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>NAME</th>
+              <th style={{padding:"7px 10px",width:120}}/>
             </tr>
           </thead>
           <tbody>
-            {vendors.length===0&&<tr><td colSpan={5} style={{padding:"20px 12px",color:"#475569",textAlign:"center",fontSize:12}}>
-              No vendors found — connect to BC or add one above.
+            {vendors.length===0&&<tr><td colSpan={3} style={{padding:"16px 10px",color:"#475569",textAlign:"center",fontSize:12}}>
+              No vendors — connect to BC or add one above.
             </td></tr>}
             {vendors.map((v,idx)=>{
               const isDk=v.No===dkVendorNo;
               const isMo=v.No===mouserVendorNo;
-              const isAuto=norm(v.Name).includes('digikey')||norm(v.Name).includes('mouser');
+              const isKnown=norm(v.Name).includes('digikey')||norm(v.Name).includes('mouser');
               return(<tr key={v.No} style={{borderBottom:`1px solid ${C.border}`,
                 background:idx%2===0?"#1a2235":"#162040"}}>
-                <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:12,whiteSpace:"nowrap"}}>{v.No}</td>
-                <td style={{padding:"7px 12px",color:"#e2e8f0",fontWeight:isAuto?600:400}}>{v.Name}</td>
-                <td style={{padding:"7px 12px",color:"#64748b",fontSize:12}}>{v.Phone_No||'—'}</td>
-                <td style={{padding:"7px 12px"}}>
-                  {isDk&&<span style={{background:"#1e3a5f",color:"#93c5fd",borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,marginRight:4}}>DigiKey</span>}
-                  {isMo&&<span style={{background:"#3b1f00",color:"#fbbf24",borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700}}>Mouser</span>}
+                <td style={{padding:"6px 10px",color:"#93c5fd",fontFamily:"monospace",fontSize:11,whiteSpace:"nowrap"}}>{v.No}</td>
+                <td style={{padding:"6px 10px",color:"#e2e8f0",fontWeight:isKnown?600:400,maxWidth:120,
+                  overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={v.Name}>
+                  {v.Name}
+                  {isDk&&<span style={{marginLeft:5,color:"#93c5fd",fontSize:10,fontWeight:700}}>DK</span>}
+                  {isMo&&<span style={{marginLeft:5,color:"#fbbf24",fontSize:10,fontWeight:700}}>Mouser</span>}
                 </td>
-                <td style={{padding:"5px 10px"}}>
-                  <div style={{display:"flex",gap:5}}>
+                <td style={{padding:"4px 8px"}}>
+                  <div style={{display:"flex",gap:4}}>
                     <button onClick={()=>assignVendor(isDk?'':v.No,'dk')}
-                      title={isDk?"Remove DigiKey assignment":"Set as DigiKey vendor"}
                       style={{background:isDk?"#1e3a5f":"#0f172a",color:isDk?"#93c5fd":"#475569",
-                        border:`1px solid ${isDk?"#3b82f6":"#334155"}`,borderRadius:4,
-                        padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:isDk?700:400}}>
-                      {isDk?"✓ DigiKey":"Set DK"}
+                        border:`1px solid ${isDk?"#3b82f6":"#334155"}`,borderRadius:3,
+                        padding:"2px 6px",fontSize:10,cursor:"pointer",fontWeight:isDk?700:400}}>
+                      DK
                     </button>
                     <button onClick={()=>assignVendor(isMo?'':v.No,'mouser')}
-                      title={isMo?"Remove Mouser assignment":"Set as Mouser vendor"}
                       style={{background:isMo?"#3b1f00":"#0f172a",color:isMo?"#fbbf24":"#475569",
-                        border:`1px solid ${isMo?"#d97706":"#334155"}`,borderRadius:4,
-                        padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:isMo?700:400}}>
-                      {isMo?"✓ Mouser":"Set Mouser"}
+                        border:`1px solid ${isMo?"#d97706":"#334155"}`,borderRadius:3,
+                        padding:"2px 6px",fontSize:10,cursor:"pointer",fontWeight:isMo?700:400}}>
+                      Mouser
                     </button>
                   </div>
                 </td>
@@ -15988,9 +15984,7 @@ function ItemsTab({uid}){
   const [error,setError]=useState(null);
   const [showFill,setShowFill]=useState(false);
   const [showVendorSync,setShowVendorSync]=useState(false);
-  const [showVendors,setShowVendors]=useState(false);
   const PAGE=100;
-  function closeAllPanels(){setShowFill(false);setShowVendorSync(false);setShowVendors(false);}
 
   useEffect(()=>{if(_bcToken)load(0,"");},[]);
 
@@ -16050,118 +16044,119 @@ function ItemsTab({uid}){
     <div style={{color:C.muted,fontSize:14}}>Connect to Business Central to browse items.</div>
   </div>);
 
-  return(<div style={{padding:"20px 24px",minHeight:"100%",maxWidth:1000,boxSizing:"border-box"}}>
+  return(<div style={{padding:"20px 24px",minHeight:"100%",boxSizing:"border-box"}}>
     {/* Toolbar */}
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
       <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.text,letterSpacing:0.5}}>Items</h2>
-      <div style={{flex:1,minWidth:200,maxWidth:420,display:"flex",gap:6}}>
+      <div style={{flex:1,minWidth:180,maxWidth:380,display:"flex",gap:6}}>
         <input value={search} onChange={e=>setSearch(e.target.value)}
           placeholder="Search by item no or description…"
           style={{flex:1,...inp(),padding:"6px 10px",fontSize:13,fontFamily:"inherit"}}/>
         {loading&&<span style={{color:C.muted,fontSize:12,whiteSpace:"nowrap",alignSelf:"center"}}>searching…</span>}
       </div>
-      <button onClick={()=>{const o=!showFill;closeAllPanels();setShowFill(o);}}
+      <button onClick={()=>setShowFill(v=>!v)}
         style={{background:showFill?"#7c3aed":"#1e3a5f",color:"#fff",
           border:`1px solid ${showFill?"#7c3aed":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
           fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
         🏷 Fill MFR Codes
       </button>
-      <button onClick={()=>{const o=!showVendors;closeAllPanels();setShowVendors(o);}}
-        style={{background:showVendors?"#0369a1":"#1e3a5f",color:"#fff",
-          border:`1px solid ${showVendors?"#0369a1":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
-          fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
-        🏢 Vendors
-      </button>
-      <button onClick={()=>{const o=!showVendorSync;closeAllPanels();setShowVendorSync(o);}}
+      <button onClick={()=>setShowVendorSync(v=>!v)}
         style={{background:showVendorSync?"#0d9488":"#1e3a5f",color:"#fff",
           border:`1px solid ${showVendorSync?"#0d9488":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
           fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
         🔄 Sync Pricing
       </button>
     </div>
-    {/* MFR Fill panel */}
+
+    {/* Collapsible panels */}
     {showFill&&<div style={{...card(),marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>🏷 Fill Missing Manufacturer Codes</div>
       <BcMfrFillPanel/>
     </div>}
-    {/* Vendors panel */}
-    {showVendors&&<div style={{...card(),marginBottom:16}}>
-      <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>🏢 BC Vendors</div>
-      <VendorsPanel uid={uid}/>
-    </div>}
-    {/* Vendor Pricing Sync panel */}
     {showVendorSync&&<div style={{...card(),marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>🔄 DigiKey & Mouser Vendor Pricing Sync</div>
       <VendorPricingSyncPanel uid={uid}/>
     </div>}
+
     {error&&<div style={{color:C.red,fontSize:12,marginBottom:10}}>{error}</div>}
-    {/* Items table */}
-    <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-      <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-        <thead>
-          <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
-            {["ITEM NO","DESCRIPTION","MFR CODE","VENDOR","LAST COST"].map((h,i)=>(
-              <th key={h} style={{padding:"9px 12px",textAlign:i===4?"right":"left",
-                color:C.sub,fontWeight:700,fontSize:11,letterSpacing:1}}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {(search.trim()?items.filter(it=>it.No.toUpperCase().includes(search.trim().toUpperCase())||it.Description.toUpperCase().includes(search.trim().toUpperCase())):items).map((item,idx)=>(
-            <tr key={item.No} style={{borderBottom:`1px solid ${C.border}`,
-              background:idx%2===0?"#1a2235":"#162040"}}>
-              <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:12,whiteSpace:"nowrap"}}>{item.No}</td>
-              <td style={{padding:"7px 12px",color:C.text,maxWidth:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
-                title={item.Description}>{item.Description}</td>
-              <td style={{padding:"4px 12px"}}>
-                {editingMfr?.no===item.No?(
-                  <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                    <input value={editingMfr.val}
-                      onChange={e=>setEditingMfr({no:item.No,val:e.target.value})}
-                      onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
-                      maxLength={10} autoFocus
-                      style={{width:80,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
-                        padding:"3px 6px",color:C.text,fontSize:12,fontFamily:"inherit",textTransform:"uppercase"}}/>
-                    <button onClick={()=>saveMfr(item.No,editingMfr.val)} disabled={savingMfr===item.No}
-                      style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:4,
-                        padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✓</button>
-                    <button onClick={()=>setEditingMfr(null)}
-                      style={{background:"#475569",color:"#fff",border:"none",borderRadius:4,
-                        padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✗</button>
-                  </div>
-                ):(
-                  <span onClick={()=>setEditingMfr({no:item.No,val:item.Manufacturer_Code||""})}
-                    title="Click to edit"
-                    style={{cursor:"pointer",display:"inline-block",minWidth:52,padding:"2px 7px",
-                      borderRadius:4,border:"1px solid transparent",fontSize:12,
-                      color:item.Manufacturer_Code?"#60a5fa":C.muted,
-                      background:item.Manufacturer_Code?"rgba(59,130,246,0.12)":"transparent",
-                      fontWeight:item.Manufacturer_Code?600:400}}>
-                    {item.Manufacturer_Code||"—"}
-                  </span>
-                )}
-              </td>
-              <td style={{padding:"7px 12px",color:C.muted,fontSize:12}}>{item.Vendor_No||"—"}</td>
-              <td style={{padding:"7px 12px",color:C.sub,textAlign:"right",fontFamily:"monospace",fontSize:12}}>
-                {item.Last_Direct_Cost>0?`$${Number(item.Last_Direct_Cost).toFixed(2)}`:"—"}
-              </td>
-            </tr>
-          ))}
-          {items.length===0&&!loading&&(
-            <tr><td colSpan={5} style={{padding:32,textAlign:"center",color:C.muted}}>
-              No items found.
-            </td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-    {/* Load more / status */}
-    <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,fontSize:12,color:C.muted}}>
-      <span>{items.length} items loaded</span>
-      {hasMore&&<button onClick={()=>load(skip+PAGE,search)} disabled={loading}
-        style={{...btn(),padding:"5px 16px",fontSize:12,color:C.text}}>
-        {loading?"Loading…":"Load More"}
-      </button>}
+
+    {/* Two-column layout: Items left, Vendors right */}
+    <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
+
+      {/* LEFT — Items table */}
+      <div style={{flex:"1 1 0",minWidth:0}}>
+        <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <thead>
+              <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
+                {["ITEM NO","DESCRIPTION","MFR CODE","VENDOR","LAST COST"].map((h,i)=>(
+                  <th key={h} style={{padding:"9px 12px",textAlign:i===4?"right":"left",
+                    color:C.sub,fontWeight:700,fontSize:11,letterSpacing:1}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item,idx)=>(
+                <tr key={item.No} style={{borderBottom:`1px solid ${C.border}`,
+                  background:idx%2===0?"#1a2235":"#162040"}}>
+                  <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:12,whiteSpace:"nowrap"}}>{item.No}</td>
+                  <td style={{padding:"7px 12px",color:C.text,maxWidth:320,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
+                    title={item.Description}>{item.Description}</td>
+                  <td style={{padding:"4px 12px"}}>
+                    {editingMfr?.no===item.No?(
+                      <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                        <input value={editingMfr.val}
+                          onChange={e=>setEditingMfr({no:item.No,val:e.target.value})}
+                          onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
+                          maxLength={10} autoFocus
+                          style={{width:80,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
+                            padding:"3px 6px",color:C.text,fontSize:12,fontFamily:"inherit",textTransform:"uppercase"}}/>
+                        <button onClick={()=>saveMfr(item.No,editingMfr.val)} disabled={savingMfr===item.No}
+                          style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✓</button>
+                        <button onClick={()=>setEditingMfr(null)}
+                          style={{background:"#475569",color:"#fff",border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✗</button>
+                      </div>
+                    ):(
+                      <span onClick={()=>setEditingMfr({no:item.No,val:item.Manufacturer_Code||""})}
+                        title="Click to edit"
+                        style={{cursor:"pointer",display:"inline-block",minWidth:52,padding:"2px 7px",
+                          borderRadius:4,border:"1px solid transparent",fontSize:12,
+                          color:item.Manufacturer_Code?"#60a5fa":C.muted,
+                          background:item.Manufacturer_Code?"rgba(59,130,246,0.12)":"transparent",
+                          fontWeight:item.Manufacturer_Code?600:400}}>
+                        {item.Manufacturer_Code||"—"}
+                      </span>
+                    )}
+                  </td>
+                  <td style={{padding:"7px 12px",color:C.muted,fontSize:12}}>{item.Vendor_No||"—"}</td>
+                  <td style={{padding:"7px 12px",color:C.sub,textAlign:"right",fontFamily:"monospace",fontSize:12}}>
+                    {item.Last_Direct_Cost>0?`$${Number(item.Last_Direct_Cost).toFixed(2)}`:"—"}
+                  </td>
+                </tr>
+              ))}
+              {items.length===0&&!loading&&(
+                <tr><td colSpan={5} style={{padding:32,textAlign:"center",color:C.muted}}>No items found.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginTop:10,fontSize:12,color:C.muted}}>
+          <span>{items.length} items loaded</span>
+          {hasMore&&<button onClick={()=>load(skip+PAGE,search)} disabled={loading}
+            style={{...btn(),padding:"5px 16px",fontSize:12,color:C.text}}>
+            {loading?"Loading…":"Load More"}
+          </button>}
+        </div>
+      </div>
+
+      {/* RIGHT — Vendors */}
+      <div style={{width:340,flexShrink:0}}>
+        <div style={{...card(),padding:"14px 16px"}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:12}}>🏢 Vendors</div>
+          <VendorsPanel uid={uid}/>
+        </div>
+      </div>
+
     </div>
   </div>);
 }
