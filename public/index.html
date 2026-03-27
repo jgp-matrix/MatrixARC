@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.9";
+const APP_VERSION="v1.19.10";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15593,7 +15593,7 @@ function ItemsTab({uid}){
     <div style={{color:C.muted,fontSize:14}}>Connect to Business Central to browse items.</div>
   </div>);
 
-  return(<div style={{padding:"20px 24px",minHeight:"100%"}}>
+  return(<div style={{padding:"20px 24px",minHeight:"100%",maxWidth:1000,boxSizing:"border-box"}}>
     {/* Toolbar */}
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
       <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.text,letterSpacing:0.5}}>Items</h2>
