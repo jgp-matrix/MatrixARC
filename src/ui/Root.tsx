@@ -8,6 +8,24 @@ import { fbAuth, fbDb } from '@/core/globals';
 import LoginScreen from './LoginScreen';
 import App from './App';
 
+const SandboxBanner = () => (
+  <div style={{
+    position: 'fixed', top: 0, left: 0, right: 0, zIndex: 99999,
+    background: 'repeating-linear-gradient(45deg, #f59e0b22, #f59e0b22 10px, transparent 10px, transparent 20px)',
+    borderBottom: '2px solid #f59e0b',
+    textAlign: 'center', padding: '4px 0',
+    pointerEvents: 'none',
+  }}>
+    <span style={{
+      color: '#f59e0b', fontWeight: 800, fontSize: 11, letterSpacing: 3,
+      textTransform: 'uppercase', fontFamily: 'Inter, sans-serif',
+      textShadow: '0 0 8px rgba(245,158,11,0.4)',
+    }}>
+      SANDBOX / TEST ENVIRONMENT
+    </span>
+  </div>
+);
+
 export default function Root() {
   const [rfqUploadToken] = useState(() => {
     try {
@@ -64,11 +82,14 @@ export default function Root() {
   // if (rfqUploadToken) return <SupplierPortalPage token={rfqUploadToken} />;
 
   if (user === undefined || !redirectDone) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.bg }}>
-      <div style={{ color: C.muted, fontSize: 14 }}>Loading…</div>
-    </div>
+    <>
+      <SandboxBanner />
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: C.bg }}>
+        <div style={{ color: C.muted, fontSize: 14 }}>Loading…</div>
+      </div>
+    </>
   );
 
-  if (!user) return <LoginScreen invite={joinPayload} />;
-  return <App user={user} />;
+  if (!user) return (<><SandboxBanner /><LoginScreen invite={joinPayload} /></>);
+  return (<><SandboxBanner /><App user={user} /></>);
 }
