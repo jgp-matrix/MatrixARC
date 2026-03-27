@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.15";
+const APP_VERSION="v1.19.16";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13850,147 +13850,154 @@ function DigikeyUpdatePanel({uid}){
   </div>);
 }
 
-// ── VENDOR PRICING SYNC PANEL ──
-// Searches both DigiKey and Mouser for all BC items and writes alternate vendor prices
+// ── VENDOR PRICING SYNC — MODULE-LEVEL STATE ──
+// Sync runs independently of any component. Components subscribe via useVendorSyncState().
+let _vSync={running:false,status:null,result:null,error:null,abort:false,uid:null};
+const _vSyncListeners=new Set();
+function _vSyncNotify(){const s={..._vSync};for(const fn of _vSyncListeners)fn(s);}
+function useVendorSyncState(){
+  const[s,set]=useState({..._vSync});
+  useEffect(()=>{_vSyncListeners.add(set);return()=>_vSyncListeners.delete(set);},[]);
+  return s;
+}
+
+async function startVendorSync(uid,dkVendor,mouserVendor){
+  if(_vSync.running)return;
+  _vSync={running:true,status:null,result:null,error:null,abort:false,uid};
+  _vSyncNotify();
+  const _start=Date.now();
+  try{
+    // 1. Fetch all BC items
+    _vSync.status={phase:"Fetching BC items…",total:0,searched:0,dkFound:0,mouserFound:0,dkWritten:0,mouserWritten:0,errors:0};
+    _vSyncNotify();
+    const allItems=[];let skip=0;
+    while(!_vSync.abort){
+      const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code&$top=200&$skip=${skip}`,
+        {headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!r.ok)break;
+      const batch=(await r.json()).value||[];
+      if(!batch.length)break;
+      allItems.push(...batch);skip+=200;
+      _vSync.status={..._vSync.status,phase:`Fetching BC items… ${allItems.length} so far`};
+      _vSyncNotify();
+      if(batch.length<200)break;
+    }
+    if(!allItems.length){_vSync.error="No items found in BC";_vSync.running=false;_vSyncNotify();return;}
+
+    const searchItems=allItems.map(i=>({
+      partNumber:i.No,
+      manufacturer:i.Manufacturer_Code?BC_MFR_CODE_NAMES[i.Manufacturer_Code]||null:null
+    }));
+    _vSync.status={..._vSync.status,phase:`Searching ${allItems.length} items…`,total:allItems.length};
+    _vSyncNotify();
+
+    // 2. Batch through Cloud Function (10 items, Mouser rate-limited)
+    const BATCH=10;
+    const fn=firebase.functions().httpsCallable("searchVendorPricing",{timeout:300000});
+    const allResults=[];
+    let dkFound=0,mouserFound=0,dkWritten=0,mouserWritten=0,errors=0;
+
+    for(let i=0;i<searchItems.length&&!_vSync.abort;i+=BATCH){
+      const batch=searchItems.slice(i,i+BATCH);
+      const batchNum=Math.floor(i/BATCH)+1;
+      const totalBatches=Math.ceil(searchItems.length/BATCH);
+      _vSync.status={..._vSync.status,
+        phase:`Batch ${batchNum}/${totalBatches} — DigiKey & Mouser…`,
+        detail:batch.map(b=>b.partNumber).join(', ').slice(0,80)};
+      _vSyncNotify();
+      let batchResults=[];
+      try{
+        const r=await fn({items:batch});
+        batchResults=r.data.results||[];
+      }catch(e){
+        console.error("VENDOR BATCH ERROR:",e.message);
+        batch.forEach(b=>batchResults.push({partNumber:b.partNumber,
+          digikey:{found:false,error:e.message},mouser:{found:false,error:e.message}}));
+      }
+      // Write found prices to BC immediately
+      for(const res of batchResults){
+        allResults.push(res);
+        const dk=res.digikey||{};const mo=res.mouser||{};
+        if(dk.found&&dk.price>0&&dkVendor){
+          dkFound++;
+          try{await bcPushPurchasePrice(res.partNumber,dkVendor,dk.price,Date.now(),"EA");dkWritten++;}
+          catch(e){errors++;console.warn("DK write failed:",res.partNumber,e.message);}
+        }
+        if(mo.found&&mo.price>0&&mouserVendor){
+          mouserFound++;
+          try{await bcPushPurchasePrice(res.partNumber,mouserVendor,mo.price,Date.now(),"EA");mouserWritten++;}
+          catch(e){errors++;console.warn("Mouser write failed:",res.partNumber,e.message);}
+        }
+      }
+      _vSync.status={..._vSync.status,searched:allResults.length,dkFound,mouserFound,dkWritten,mouserWritten,errors};
+      _vSyncNotify();
+    }
+
+    const durationMs=Date.now()-_start;
+    _vSync.status={phase:"Complete",total:allItems.length,searched:allResults.length,dkFound,mouserFound,dkWritten,mouserWritten,errors,detail:""};
+    _vSync.result={totalItems:allItems.length,dkFound,mouserFound,dkWritten,mouserWritten,errors,durationMs,results:allResults};
+    _vSyncNotify();
+
+    // Save sync log
+    try{
+      await fbDb.collection(`users/${uid}/pricingSyncLog`).add({
+        vendor:"DigiKey+Mouser",runAt:Date.now(),totalItems:allItems.length,
+        found:dkFound+mouserFound,errors,writtenToBC:dkWritten+mouserWritten,durationMs,
+        dkFound,mouserFound,dkWritten,mouserWritten,
+        results:allResults.map(r=>({
+          partNumber:r.partNumber,
+          dkFound:!!(r.digikey?.found),dkPrice:r.digikey?.price||null,dkMfr:r.digikey?.manufacturer||null,dkError:r.digikey?.error||null,
+          mouserFound:!!(r.mouser?.found),mouserPrice:r.mouser?.price||null,mouserMfr:r.mouser?.manufacturer||null,mouserError:r.mouser?.error||null,
+        }))
+      });
+    }catch(e){console.warn("Failed to save vendor sync log:",e);}
+  }catch(e){_vSync.error=e.message||"Sync failed";_vSyncNotify();}
+  _vSync.running=false;
+  _vSyncNotify();
+}
+
+// ── VENDOR PRICING SYNC PANEL (UI only — reads module state) ──
 function VendorPricingSyncPanel({uid}){
-  const [dkVendor,setDkVendor]=useState(()=>localStorage.getItem('_arc_dk_vendor')||'');
-  const [mouserVendor,setMouserVendor]=useState(()=>localStorage.getItem('_arc_mouser_vendor')||'');
-  const [running,setRunning]=useState(false);
-  const [status,setStatus]=useState(null);
-  const [result,setResult]=useState(null);
-  const [error,setError]=useState(null);
-  const [showLog,setShowLog]=useState(false);
-  const abortRef=useRef(false);
+  const[dkVendor,setDkVendor]=useState(()=>localStorage.getItem('_arc_dk_vendor')||'');
+  const[mouserVendor,setMouserVendor]=useState(()=>localStorage.getItem('_arc_mouser_vendor')||'');
+  const[showLog,setShowLog]=useState(false);
+  const sync=useVendorSyncState();
 
   function saveVendors(dk,m){
     if(dk!==undefined){setDkVendor(dk);localStorage.setItem('_arc_dk_vendor',dk);}
     if(m!==undefined){setMouserVendor(m);localStorage.setItem('_arc_mouser_vendor',m);}
   }
-
-  async function runSync(){
-    if(!_bcToken){setError("Connect to Business Central first");return;}
-    if(!dkVendor.trim()&&!mouserVendor.trim()){setError("Enter at least one BC Vendor No (DigiKey or Mouser)");return;}
-    abortRef.current=false;
-    setRunning(true);setError(null);setResult(null);setStatus(null);setShowLog(false);
-    const _start=Date.now();
-    try{
-      // 1. Fetch all BC items
-      setStatus({phase:"Fetching BC items…",total:0,searched:0,dkFound:0,mouserFound:0,dkWritten:0,mouserWritten:0,errors:0});
-      const allItems=[];
-      let skip=0;
-      while(!abortRef.current){
-        const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code&$top=200&$skip=${skip}`,
-          {headers:{"Authorization":`Bearer ${_bcToken}`}});
-        if(!r.ok)break;
-        const batch=(await r.json()).value||[];
-        if(!batch.length)break;
-        allItems.push(...batch);
-        skip+=200;
-        setStatus(prev=>({...prev,phase:`Fetching BC items… ${allItems.length} so far`}));
-        if(batch.length<200)break;
-      }
-      if(!allItems.length){setError("No items found in BC");setRunning(false);return;}
-
-      const searchItems=allItems.map(i=>({
-        partNumber:i.No,
-        manufacturer:i.Manufacturer_Code?BC_MFR_CODE_NAMES[i.Manufacturer_Code]||null:null
-      }));
-      setStatus(prev=>({...prev,phase:`Searching ${allItems.length} items across DigiKey & Mouser…`,total:allItems.length}));
-
-      // 2. Batch through searchVendorPricing (10 items per call, Mouser rate-limited)
-      const BATCH=10;
-      const fn=firebase.functions().httpsCallable("searchVendorPricing",{timeout:300000});
-      const allResults=[];
-      let dkFound=0,mouserFound=0,dkWritten=0,mouserWritten=0,errors=0;
-
-      for(let i=0;i<searchItems.length&&!abortRef.current;i+=BATCH){
-        const batch=searchItems.slice(i,i+BATCH);
-        const batchNum=Math.floor(i/BATCH)+1;
-        const totalBatches=Math.ceil(searchItems.length/BATCH);
-        setStatus(prev=>({...prev,
-          phase:`Batch ${batchNum}/${totalBatches} — DigiKey & Mouser…`,
-          detail:batch.map(b=>b.partNumber).join(', ').slice(0,80)
-        }));
-        let batchResults=[];
-        try{
-          const r=await fn({items:batch});
-          batchResults=r.data.results||[];
-        }catch(e){
-          console.error("VENDOR BATCH ERROR:",e.message);
-          batch.forEach(b=>batchResults.push({partNumber:b.partNumber,
-            digikey:{found:false,error:e.message},mouser:{found:false,error:e.message}}));
-        }
-
-        // 3. Write found prices to BC immediately after each batch
-        for(const res of batchResults){
-          allResults.push(res);
-          const dk=res.digikey||{};
-          const mo=res.mouser||{};
-          if(dk.found&&dk.price>0&&dkVendor.trim()){
-            dkFound++;
-            try{
-              await bcPushPurchasePrice(res.partNumber,dkVendor.trim(),dk.price,Date.now(),"EA");
-              dkWritten++;
-            }catch(e){errors++;console.warn("DK write failed:",res.partNumber,e.message);}
-          }else if(!dk.found&&dk.error&&!dk.error.includes('not found')&&!dk.error.includes('mismatch')){errors++;}
-          if(mo.found&&mo.price>0&&mouserVendor.trim()){
-            mouserFound++;
-            try{
-              await bcPushPurchasePrice(res.partNumber,mouserVendor.trim(),mo.price,Date.now(),"EA");
-              mouserWritten++;
-            }catch(e){errors++;console.warn("Mouser write failed:",res.partNumber,e.message);}
-          }
-        }
-        setStatus(prev=>({...prev,searched:allResults.length,dkFound,mouserFound,dkWritten,mouserWritten,errors}));
-      }
-
-      const durationMs=Date.now()-_start;
-      setStatus({phase:"Complete",total:allItems.length,searched:allResults.length,dkFound,mouserFound,dkWritten,mouserWritten,errors,detail:""});
-      setResult({totalItems:allItems.length,dkFound,mouserFound,dkWritten,mouserWritten,errors,durationMs,results:allResults});
-
-      // 4. Save sync log to Firestore
-      try{
-        await fbDb.collection(`users/${uid}/pricingSyncLog`).add({
-          vendor:"DigiKey+Mouser",runAt:Date.now(),totalItems:allItems.length,
-          found:dkFound+mouserFound,errors,writtenToBC:dkWritten+mouserWritten,durationMs,
-          dkFound,mouserFound,dkWritten,mouserWritten,
-          results:allResults.map(r=>({
-            partNumber:r.partNumber,
-            dkFound:!!(r.digikey?.found),dkPrice:r.digikey?.price||null,dkMfr:r.digikey?.manufacturer||null,dkError:r.digikey?.error||null,
-            mouserFound:!!(r.mouser?.found),mouserPrice:r.mouser?.price||null,mouserMfr:r.mouser?.manufacturer||null,mouserError:r.mouser?.error||null,
-          }))
-        });
-      }catch(e){console.warn("Failed to save vendor sync log:",e);}
-    }catch(e){setError(e.message||"Sync failed");}
-    setRunning(false);
+  function handleStart(){
+    if(!_bcToken){alert("Connect to Business Central first");return;}
+    if(!dkVendor.trim()&&!mouserVendor.trim()){alert("Enter at least one BC Vendor No");return;}
+    startVendorSync(uid,dkVendor.trim(),mouserVendor.trim());
   }
 
+  const{running,status,result,error}=sync;
   const statusColor=status?.phase==="Complete"?"#22c55e":"#94a3b8";
 
   return(<div>
     <div style={{fontSize:12,color:"#64748b",marginBottom:10,lineHeight:1.6}}>
-      Searches all BC items on both DigiKey and Mouser with manufacturer validation,
-      and writes found prices to BC as alternate vendor purchase prices.
+      Searches all BC items on DigiKey and Mouser with manufacturer validation and writes
+      prices to BC as alternate vendor purchase prices. Runs in the background — you can
+      switch tabs while it runs.
     </div>
-    {/* Vendor config */}
     <div style={{display:"flex",gap:10,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <span style={{fontSize:11,color:"#64748b",whiteSpace:"nowrap"}}>DigiKey BC Vendor No:</span>
-        <input value={dkVendor} onChange={e=>saveVendors(e.target.value,undefined)}
-          placeholder="e.g. V00010" disabled={running}
-          style={{width:110,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",
-            color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+        <input value={dkVendor} onChange={e=>saveVendors(e.target.value,undefined)} disabled={running}
+          placeholder="e.g. V00010"
+          style={{width:110,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
       </div>
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
         <span style={{fontSize:11,color:"#64748b",whiteSpace:"nowrap"}}>Mouser BC Vendor No:</span>
-        <input value={mouserVendor} onChange={e=>saveVendors(undefined,e.target.value)}
-          placeholder="e.g. V00011" disabled={running}
-          style={{width:110,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",
-            color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+        <input value={mouserVendor} onChange={e=>saveVendors(undefined,e.target.value)} disabled={running}
+          placeholder="e.g. V00011"
+          style={{width:110,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
       </div>
-      <button onClick={running?()=>{abortRef.current=true;}:runSync}
+      <button onClick={running?()=>{_vSync.abort=true;}:handleStart}
         style={{background:running?"#7f1d1d":"#0d9488",color:"#fff",border:"none",borderRadius:6,
-          padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer",opacity:1}}>
+          padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
         {running?"⏹ Stop":"🔄 Sync DigiKey & Mouser Prices"}
       </button>
     </div>
@@ -13998,8 +14005,8 @@ function VendorPricingSyncPanel({uid}){
       <span style={{color:statusColor,fontWeight:600}}>{status.phase}</span>
       {status.total>0&&<span style={{color:"#475569",marginLeft:8}}>
         {status.searched||0}/{status.total} searched
-        {" · "}DK: {status.dkFound||0} found / {status.dkWritten||0} written
-        {" · "}Mouser: {status.mouserFound||0} found / {status.mouserWritten||0} written
+        {" · "}DK: {status.dkFound||0}/{status.dkWritten||0} written
+        {" · "}Mouser: {status.mouserFound||0}/{status.mouserWritten||0} written
         {status.errors>0&&<span style={{color:"#f59e0b"}}> · {status.errors} errors</span>}
       </span>}
       {status.detail&&<div style={{color:"#475569",fontSize:11,marginTop:2,fontFamily:"monospace"}}>{status.detail}</div>}
@@ -14007,13 +14014,11 @@ function VendorPricingSyncPanel({uid}){
     {error&&<div style={{color:"#ef4444",fontSize:12,marginTop:6}}>{error}</div>}
     {result&&<div style={{marginTop:8,fontSize:12}}>
       <div style={{color:"#22c55e",marginBottom:4}}>
-        ✓ Complete — DigiKey: <strong>{result.dkWritten}</strong> written
-        {" · "}Mouser: <strong>{result.mouserWritten}</strong> written
+        ✓ Complete — DigiKey: <strong>{result.dkWritten}</strong> · Mouser: <strong>{result.mouserWritten}</strong> written to BC
         <span style={{color:"#64748b",marginLeft:8}}>| {result.errors} errors | {Math.round(result.durationMs/1000)}s</span>
       </div>
       <button onClick={()=>setShowLog(v=>!v)}
-        style={{background:"#1e293b",color:"#94a3b8",border:"1px solid #334155",borderRadius:4,
-          padding:"3px 10px",fontSize:11,cursor:"pointer"}}>
+        style={{background:"#1e293b",color:"#94a3b8",border:"1px solid #334155",borderRadius:4,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>
         {showLog?"Hide":"Show"} Results ({result.results.length} items)
       </button>
       {showLog&&<div style={{marginTop:6,maxHeight:300,overflowY:"auto",fontSize:11,fontFamily:"monospace"}}>
@@ -14021,8 +14026,7 @@ function VendorPricingSyncPanel({uid}){
           const dk=r.digikey||{};const mo=r.mouser||{};
           const hasDk=dk.found&&dk.price>0;const hasMo=mo.found&&mo.price>0;
           if(!hasDk&&!hasMo)return null;
-          return(<div key={i} style={{padding:"1px 0",
-            color:hasDk&&hasMo?"#34d399":hasDk?"#93c5fd":hasMo?"#fbbf24":"#475569"}}>
+          return(<div key={i} style={{padding:"1px 0",color:hasDk&&hasMo?"#34d399":hasDk?"#93c5fd":hasMo?"#fbbf24":"#475569"}}>
             {r.partNumber}
             {hasDk&&<span style={{color:"#93c5fd"}}> · DK ${dk.price?.toFixed(2)} ({dk.manufacturer||'?'})</span>}
             {hasMo&&<span style={{color:"#fbbf24"}}> · Mouser ${mo.price?.toFixed(2)} ({mo.manufacturer||'?'})</span>}
@@ -14030,6 +14034,47 @@ function VendorPricingSyncPanel({uid}){
         })}
       </div>}
     </div>}
+  </div>);
+}
+
+// ── VENDOR SYNC FLOATER — persistent progress pill visible from any tab ──
+function VendorSyncFloater({onSwitchToItems}){
+  const sync=useVendorSyncState();
+  if(!sync.running&&!sync.result)return null;
+  const st=sync.status||{};
+  const done=st.phase==="Complete";
+  return(<div style={{
+    position:"fixed",bottom:20,right:20,zIndex:2000,
+    background:done?"#064e3b":"#0f172a",
+    border:`1px solid ${done?"#10b981":"#0d9488"}`,
+    borderRadius:12,padding:"10px 16px",
+    boxShadow:"0 4px 20px rgba(0,0,0,0.5)",
+    display:"flex",flexDirection:"column",gap:4,minWidth:280,maxWidth:360,
+    fontSize:12,color:"#e2e8f0"
+  }}>
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+      <span style={{fontWeight:700,color:done?"#34d399":"#2dd4bf"}}>
+        {done?"✓ Vendor Sync Complete":"🔄 Vendor Sync Running…"}
+      </span>
+      <div style={{display:"flex",gap:6}}>
+        {!done&&<button onClick={()=>{_vSync.abort=true;}}
+          style={{background:"#7f1d1d",color:"#fca5a5",border:"none",borderRadius:4,
+            padding:"2px 8px",fontSize:11,cursor:"pointer",fontWeight:600}}>Stop</button>}
+        <button onClick={()=>{onSwitchToItems();}}
+          style={{background:"#1e3a5f",color:"#93c5fd",border:"none",borderRadius:4,
+            padding:"2px 8px",fontSize:11,cursor:"pointer",fontWeight:600}}>View</button>
+        {done&&<button onClick={()=>{_vSync.result=null;_vSync.status=null;_vSyncNotify();}}
+          style={{background:"transparent",color:"#475569",border:"none",cursor:"pointer",
+            fontSize:13,lineHeight:1,padding:"0 2px"}}>✕</button>}
+      </div>
+    </div>
+    {st.total>0&&<div style={{color:"#94a3b8",fontSize:11}}>
+      {st.searched||0}/{st.total} items
+      {" · "}DK {st.dkWritten||0} written
+      {" · "}Mouser {st.mouserWritten||0} written
+      {st.errors>0&&<span style={{color:"#f59e0b"}}> · {st.errors} err</span>}
+    </div>}
+    {sync.error&&<div style={{color:"#f87171",fontSize:11}}>{sync.error}</div>}
   </div>);
 }
 
@@ -16622,6 +16667,7 @@ INSTRUCTIONS:
       {/* Content — padded below fixed header + tab bar */}
       <div style={{flex:1,paddingTop:122,display:"flex",height:"100vh",overflow:"hidden"}}>
       <div style={{flex:1,minWidth:0,overflowY:"auto"}}>
+      <VendorSyncFloater onSwitchToItems={()=>{setNavTab("items");}}/>
       {navTab==="purchasing"&&<PurchasingTab/>}
       {navTab==="items"&&<ItemsTab uid={uid}/>}
       {navTab==="projects"&&<>
