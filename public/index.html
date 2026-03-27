@@ -13184,6 +13184,7 @@ function CodaleTestPanel({uid}){
         try{
           const fn=firebase.functions().httpsCallable("codaleTestScrape");
           const r=await fn({partNumbers:batch});
+          console.log("CODALE BATCH RESPONSE:",JSON.stringify(r.data));
           const batchResults=r.data.results||[];
           allResults.push(...batchResults);
           const scraped=allResults.length;
