@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.10";
+const APP_VERSION="v1.19.11";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15554,6 +15554,13 @@ function ItemsTab({uid}){
 
   useEffect(()=>{if(_bcToken)load(0,"");},[]);
 
+  // Live search — debounced 350ms
+  useEffect(()=>{
+    if(!_bcToken)return;
+    const t=setTimeout(()=>load(0,search),350);
+    return()=>clearTimeout(t);
+  },[search]);
+
   async function load(sk,q){
     setLoading(true);setError(null);
     try{
@@ -15599,14 +15606,9 @@ function ItemsTab({uid}){
       <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.text,letterSpacing:0.5}}>Items</h2>
       <div style={{flex:1,minWidth:200,maxWidth:420,display:"flex",gap:6}}>
         <input value={search} onChange={e=>setSearch(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&doSearch()}
           placeholder="Search by item no or description…"
           style={{flex:1,...inp(),padding:"6px 10px",fontSize:13,fontFamily:"inherit"}}/>
-        <button onClick={doSearch} disabled={loading}
-          style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,
-            padding:"6px 14px",fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
-          {loading?"…":"Search"}
-        </button>
+        {loading&&<span style={{color:C.muted,fontSize:12,whiteSpace:"nowrap",alignSelf:"center"}}>searching…</span>}
       </div>
       <button onClick={()=>setShowFill(v=>!v)}
         style={{background:showFill?"#7c3aed":"#1e3a5f",color:"#fff",
