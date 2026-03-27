@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.18";
+const APP_VERSION="v1.19.19";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13981,7 +13981,9 @@ function VendorPricingSyncPanel({uid}){
   async function fetchVendors(){
     setLoadingVendors(true);
     try{
-      const r=await fetch(`${BC_ODATA_BASE}/Vendor?$select=No,Name&$top=500`,
+      const allPages=await bcDiscoverODataPages();
+      const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
+      const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name&$top=500`,
         {headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(!r.ok)return;
       const list=(await r.json()).value||[];
@@ -15854,9 +15856,11 @@ function VendorsPanel({uid}){
   async function fetchVendors(){
     setLoading(true);setError(null);
     try{
-      const r=await fetch(`${BC_ODATA_BASE}/Vendor?$select=No,Name,Phone_No,Contact&$top=500&$orderby=Name asc`,
+      const allPages=await bcDiscoverODataPages();
+      const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
+      const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name,Phone_No&$top=500&$orderby=Name asc`,
         {headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(!r.ok)throw new Error(`BC ${r.status}`);
+      if(!r.ok)throw new Error(`BC ${r.status} — page: ${vPage}`);
       setVendors((await r.json()).value||[]);
     }catch(e){setError(e.message);}
     setLoading(false);
@@ -15868,7 +15872,9 @@ function VendorsPanel({uid}){
     try{
       const payload={Name:newName.trim()};
       if(newNo.trim())payload.No=newNo.trim().toUpperCase();
-      const r=await fetch(`${BC_ODATA_BASE}/Vendor`,{
+      const allPages=await bcDiscoverODataPages();
+      const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
+      const r=await fetch(`${BC_ODATA_BASE}/${vPage}`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
         body:JSON.stringify(payload)
