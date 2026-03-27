@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.6";
+const APP_VERSION="v1.19.7";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16393,7 +16393,7 @@ INSTRUCTIONS:
         {(showGearMenu||showUserMenu||showBellMenu)&&<div style={{position:"fixed",inset:0,zIndex:590}} onClick={()=>{setShowGearMenu(false);setShowUserMenu(false);setShowBellMenu(false);}}/>}
       </div>
       {/* Horizontal tab bar — fixed below header */}
-      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:440,background:"#0f172a",borderBottom:"2px solid #334155",display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
+      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:440,background:"#253354",borderBottom:"2px solid #3b82f6",display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
         {[{id:"projects",label:"PROJECTS"},{id:"purchasing",label:"PURCHASING"},{id:"items",label:"ITEMS"}].map(t=>{
           const active=navTab===t.id;
           return(
@@ -16401,12 +16401,12 @@ INSTRUCTIONS:
             style={{cursor:"pointer",padding:"0 24px",
               height:active?46:38,
               fontSize:12,fontWeight:700,letterSpacing:2,textTransform:"uppercase",
-              color:active?"#fff":"#64748b",
-              background:active?"#1e293b":"#0f172a",
-              borderTop:active?"2px solid #3b82f6":"1px solid #1e293b",
-              borderLeft:active?"1px solid #334155":"1px solid #1e293b",
-              borderRight:active?"1px solid #334155":"1px solid #1e293b",
-              borderBottom:active?"2px solid #1e293b":"1px solid #334155",
+              color:active?"#fff":"#93c5fd",
+              background:active?"#1e293b":"#1a2d4a",
+              borderTop:active?"2px solid #3b82f6":"1px solid #3b5a8a",
+              borderLeft:active?"1px solid #3b82f6":"1px solid #3b5a8a",
+              borderRight:active?"1px solid #3b82f6":"1px solid #3b5a8a",
+              borderBottom:active?"2px solid #1e293b":"1px solid #253354",
               borderRadius:"8px 8px 0 0",
               marginBottom:active?"-2px":0,
               position:"relative",zIndex:active?1:0,
