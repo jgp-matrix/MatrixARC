@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.20";
+const APP_VERSION="v1.19.21";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15842,16 +15842,49 @@ function VendorsPanel({uid}){
   const[newName,setNewName]=useState('');
   const[adding,setAdding]=useState(false);
   const[addErr,setAddErr]=useState(null);
-  const[dkVendorNo,setDkVendorNo]=useState('');
-  const[mouserVendorNo,setMouserVendorNo]=useState('');
+  const[vendorCodes,setVendorCodes]=useState({}); // {vendorNo: shortCode}
+  const[editingCode,setEditingCode]=useState(null); // vendorNo being edited
+  const[editVal,setEditVal]=useState('');
 
   useEffect(()=>{
     // Load saved vendor config from Firestore
     if(uid)fbDb.doc(`users/${uid}/config/vendorConfig`).get().then(d=>{
-      if(d.exists){const dat=d.data();setDkVendorNo(dat.digikeyVendorNo||'');setMouserVendorNo(dat.mouserVendorNo||'');}
+      if(d.exists){
+        const dat=d.data();
+        setVendorCodes(dat.vendorCodes||{});
+      }
     });
     if(_bcToken)fetchVendors();
   },[uid]);
+
+  function autoGenerateCode(name){
+    const stripped=name.replace(/\b(electric|electronics|supply|inc|llc|ltd|corp|co|gmbh|ag)\b\.?/gi,'').trim();
+    const words=stripped.split(/[\s\-]+/).filter(Boolean);
+    if(words.length===1)return words[0].slice(0,8).toUpperCase();
+    if(words.length<=4)return words.map(w=>w[0]).join('').toUpperCase().slice(0,6);
+    return words[0].slice(0,6).toUpperCase();
+  }
+
+  // Auto-generate codes for vendors that don't have one yet
+  useEffect(()=>{
+    if(!vendors.length)return;
+    const generated={};
+    vendors.forEach(v=>{
+      if(!vendorCodes[v.No])generated[v.No]=autoGenerateCode(v.Name);
+    });
+    if(Object.keys(generated).length){
+      const merged={...vendorCodes,...generated};
+      setVendorCodes(merged);
+      if(uid)fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:merged},{merge:true});
+    }
+  },[vendors,vendorCodes]);
+
+  async function saveVendorCode(vendorNo,code){
+    const updated={...vendorCodes,[vendorNo]:code.trim().toUpperCase().slice(0,10)};
+    setVendorCodes(updated);
+    setEditingCode(null);
+    await fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:updated},{merge:true});
+  }
 
   async function fetchVendors(){
     setLoading(true);setError(null);
@@ -15886,18 +15919,9 @@ function VendorsPanel({uid}){
     setAdding(false);
   }
 
-  async function assignVendor(vendorNo,type){
-    const update=type==='dk'?{digikeyVendorNo:vendorNo}:{mouserVendorNo:vendorNo};
-    await fbDb.doc(`users/${uid}/config/vendorConfig`).set(update,{merge:true});
-    if(type==='dk')setDkVendorNo(vendorNo);
-    else setMouserVendorNo(vendorNo);
-  }
-
-  const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
-
   return(<div>
     <div style={{fontSize:12,color:"#64748b",marginBottom:12,lineHeight:1.6}}>
-      Vendors from Business Central. Assign DigiKey and Mouser to enable vendor pricing sync.
+      Vendors from Business Central. Click a code to edit it.
     </div>
 
     {/* Add Vendor row */}
@@ -15925,51 +15949,62 @@ function VendorsPanel({uid}){
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
           <thead>
             <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
+              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>CODE</th>
               <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>NO</th>
               <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>NAME</th>
-              <th style={{padding:"7px 10px",width:120}}/>
             </tr>
           </thead>
           <tbody>
             {vendors.length===0&&<tr><td colSpan={3} style={{padding:"16px 10px",color:"#475569",textAlign:"center",fontSize:12}}>
               No vendors — connect to BC or add one above.
             </td></tr>}
-            {vendors.map((v,idx)=>{
-              const isDk=v.No===dkVendorNo;
-              const isMo=v.No===mouserVendorNo;
-              const isKnown=norm(v.Name).includes('digikey')||norm(v.Name).includes('mouser');
-              return(<tr key={v.No} style={{borderBottom:`1px solid ${C.border}`,
+            {vendors.map((v,idx)=>(
+              <tr key={v.No} style={{borderBottom:`1px solid ${C.border}`,
                 background:idx%2===0?"#1a2235":"#162040"}}>
+                <td style={{padding:"4px 10px"}}>
+                  {editingCode===v.No?(
+                    <input autoFocus value={editVal}
+                      onChange={e=>setEditVal(e.target.value)}
+                      onKeyDown={e=>{if(e.key==="Enter")saveVendorCode(v.No,editVal);if(e.key==="Escape")setEditingCode(null);}}
+                      onBlur={()=>saveVendorCode(v.No,editVal)}
+                      maxLength={10}
+                      style={{width:70,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
+                        padding:"2px 6px",color:C.text,fontSize:12,fontFamily:"monospace",fontWeight:700}}/>
+                  ):(
+                    <span onClick={()=>{setEditingCode(v.No);setEditVal(vendorCodes[v.No]||'');}}
+                      style={{cursor:"pointer",color:"#34d399",fontFamily:"monospace",fontWeight:700}}>
+                      {vendorCodes[v.No]||"—"}
+                    </span>
+                  )}
+                </td>
                 <td style={{padding:"6px 10px",color:"#93c5fd",fontFamily:"monospace",fontSize:11,whiteSpace:"nowrap"}}>{v.No}</td>
-                <td style={{padding:"6px 10px",color:"#e2e8f0",fontWeight:isKnown?600:400,maxWidth:120,
+                <td style={{padding:"6px 10px",color:"#e2e8f0",maxWidth:120,
                   overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={v.Name}>
                   {v.Name}
-                  {isDk&&<span style={{marginLeft:5,color:"#93c5fd",fontSize:10,fontWeight:700}}>DK</span>}
-                  {isMo&&<span style={{marginLeft:5,color:"#fbbf24",fontSize:10,fontWeight:700}}>Mouser</span>}
                 </td>
-                <td style={{padding:"4px 8px"}}>
-                  <div style={{display:"flex",gap:4}}>
-                    <button onClick={()=>assignVendor(isDk?'':v.No,'dk')}
-                      style={{background:isDk?"#1e3a5f":"#0f172a",color:isDk?"#93c5fd":"#475569",
-                        border:`1px solid ${isDk?"#3b82f6":"#334155"}`,borderRadius:3,
-                        padding:"2px 6px",fontSize:10,cursor:"pointer",fontWeight:isDk?700:400}}>
-                      DK
-                    </button>
-                    <button onClick={()=>assignVendor(isMo?'':v.No,'mouser')}
-                      style={{background:isMo?"#3b1f00":"#0f172a",color:isMo?"#fbbf24":"#475569",
-                        border:`1px solid ${isMo?"#d97706":"#334155"}`,borderRadius:3,
-                        padding:"2px 6px",fontSize:10,cursor:"pointer",fontWeight:isMo?700:400}}>
-                      Mouser
-                    </button>
-                  </div>
-                </td>
-              </tr>);
-            })}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
     )}
   </div>);
+}
+
+let _bcManufacturers = null; // [{Code, Name}]
+async function bcFetchManufacturers(){
+  if(_bcManufacturers)return _bcManufacturers;
+  if(!_bcToken)return[];
+  try{
+    const allPages=await bcDiscoverODataPages();
+    const mPage=allPages.find(n=>/manufacturer/i.test(n));
+    if(!mPage)return[];
+    const r=await fetch(`${BC_ODATA_BASE}/${mPage}?$select=Code,Name&$top=500`,
+      {headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok)return[];
+    _bcManufacturers=(await r.json()).value||[];
+    return _bcManufacturers;
+  }catch(e){return[];}
 }
 
 // ── ITEMS TAB ──
@@ -15984,9 +16019,10 @@ function ItemsTab({uid}){
   const [error,setError]=useState(null);
   const [showFill,setShowFill]=useState(false);
   const [showVendorSync,setShowVendorSync]=useState(false);
+  const [manufacturers,setManufacturers]=useState([]);
   const PAGE=100;
 
-  useEffect(()=>{if(_bcToken)load(0,"");},[]);
+  useEffect(()=>{if(_bcToken){load(0,"");bcFetchManufacturers().then(setManufacturers);}},[]);
 
   // Live search — debounced 350ms
   useEffect(()=>{
@@ -16044,7 +16080,7 @@ function ItemsTab({uid}){
     <div style={{color:C.muted,fontSize:14}}>Connect to Business Central to browse items.</div>
   </div>);
 
-  return(<div style={{padding:"20px 24px",minHeight:"100%",boxSizing:"border-box"}}>
+  return(<div style={{padding:"20px 32px",maxWidth:1600,margin:"0 auto",boxSizing:"border-box"}}>
     {/* Toolbar */}
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
       <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.text,letterSpacing:0.5}}>Items</h2>
@@ -16084,7 +16120,7 @@ function ItemsTab({uid}){
     <div style={{display:"flex",gap:16,alignItems:"flex-start"}}>
 
       {/* LEFT — Items table */}
-      <div style={{flex:"1 1 0",minWidth:0}}>
+      <div style={{flex:"0 0 75%",minWidth:0,maxHeight:"calc(100vh - 240px)",overflowY:"auto"}}>
         <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead>
@@ -16105,12 +16141,25 @@ function ItemsTab({uid}){
                   <td style={{padding:"4px 12px"}}>
                     {editingMfr?.no===item.No?(
                       <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                        <input value={editingMfr.val}
-                          onChange={e=>setEditingMfr({no:item.No,val:e.target.value})}
-                          onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
-                          maxLength={10} autoFocus
-                          style={{width:80,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
-                            padding:"3px 6px",color:C.text,fontSize:12,fontFamily:"inherit",textTransform:"uppercase"}}/>
+                        {manufacturers.length>0?(
+                          <select value={editingMfr.val}
+                            onChange={e=>setEditingMfr({no:item.No,val:e.target.value})}
+                            onBlur={()=>saveMfr(item.No,editingMfr.val)}
+                            onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
+                            autoFocus
+                            style={{background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
+                              padding:"3px 6px",color:C.text,fontSize:12,fontFamily:"inherit",minWidth:120}}>
+                            <option value="">— none —</option>
+                            {manufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
+                          </select>
+                        ):(
+                          <input value={editingMfr.val}
+                            onChange={e=>setEditingMfr({no:item.No,val:e.target.value})}
+                            onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
+                            maxLength={10} autoFocus
+                            style={{width:80,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
+                              padding:"3px 6px",color:C.text,fontSize:12,fontFamily:"inherit",textTransform:"uppercase"}}/>
+                        )}
                         <button onClick={()=>saveMfr(item.No,editingMfr.val)} disabled={savingMfr===item.No}
                           style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✓</button>
                         <button onClick={()=>setEditingMfr(null)}
@@ -16150,7 +16199,7 @@ function ItemsTab({uid}){
       </div>
 
       {/* RIGHT — Vendors */}
-      <div style={{width:340,flexShrink:0}}>
+      <div style={{flex:"0 0 25%",maxHeight:"calc(100vh - 240px)",overflowY:"auto"}}>
         <div style={{...card(),padding:"14px 16px"}}>
           <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:12}}>🏢 Vendors</div>
           <VendorsPanel uid={uid}/>
