@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.21";
+const APP_VERSION="v1.19.22";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15903,15 +15903,21 @@ function VendorsPanel({uid}){
     if(!newName.trim()){setAddErr("Name is required");return;}
     setAdding(true);setAddErr(null);
     try{
-      const payload={Name:newName.trim()};
-      if(newNo.trim())payload.No=newNo.trim().toUpperCase();
-      const allPages=await bcDiscoverODataPages();
-      const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
-      const r=await fetch(`${BC_ODATA_BASE}/${vPage}`,{
+      const compId=await bcGetCompanyId();
+      if(!compId)throw new Error("Could not resolve BC company");
+      // Use REST API v2.0 — same as bcCreateItem (OData POST is read-only for vendors)
+      const body={displayName:newName.trim().slice(0,100)};
+      if(newNo.trim())body.number=newNo.trim().toUpperCase();
+      const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-        body:JSON.stringify(payload)
+        body:JSON.stringify(body)
       });
+      if(r.status===409||r.status===400){
+        const t=await r.text();
+        if(/already exists|duplicate/i.test(t))throw new Error(`Vendor "${newNo}" already exists in BC`);
+        throw new Error(t.slice(0,200));
+      }
       if(!r.ok){const t=await r.text();throw new Error(t.slice(0,200));}
       setNewNo('');setNewName('');
       await fetchVendors();
