@@ -3,16 +3,12 @@ import { C, btn, inp, card } from '@/core/constants';
 import {
   _bcToken, _bcConfig, acquireBcToken, bcLoadAllCustomers, saveProject,
 } from '@/core/globals';
-
-// ── Inline stubs for BC functions not yet extracted ──
-async function bcCreateProject(name: string, customerNumber: string): Promise<any> { return { number: '', id: '', customerNumber, customerName: '' }; }
-async function bcCreatePanelTaskStructure(bcNo: string, name: string, panels: any[]): Promise<any> { return 0; }
-function bcFilterCustomers(all: any[], query: string): any[] {
-  if (!query.trim()) return all.slice(0, 25);
-  const q = query.toLowerCase();
-  return all.filter((c: any) => (c.displayName || '').toLowerCase().includes(q) || (c.number || '').toLowerCase().includes(q)).slice(0, 25);
-}
-async function bcCreateCustomer(name: string, phone: string, email: string): Promise<any> { return { number: '', displayName: name }; }
+import {
+  bcCreateProject,
+  bcCreatePanelTaskStructure,
+  bcFilterCustomers,
+  bcCreateCustomer,
+} from '@/services/businessCentral/projects';
 
 export default function NewProjectModal({uid,onCreated,onClose}: any){
   const [name,setName]=useState("");

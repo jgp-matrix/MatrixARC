@@ -27,10 +27,7 @@ import { computeBomHash } from '@/core/helpers';
 // ─── Stub functions not yet extracted ────────────────────────────────────────
 function migrateProject(p: any): any { return p.panels ? p : { ...p, panels: [] }; }
 function isReadOnly(): boolean { return false; }
-// TODO: buildRfqSupplierGroups — extract to dedicated module
-async function buildRfqSupplierGroups(bom: any[]): Promise<any> { return { noItems: true, groups: [] }; }
-// TODO: getNextQuoteNumber — extract to dedicated module
-async function getNextQuoteNumber(uid: string): Promise<string> { return 'MTX-Q000000'; }
+import { buildRfqSupplierGroups, getNextQuoteNumber } from '@/services/rfq';
 // TODO: onProjectUpdated — extract to dedicated module
 function onProjectUpdated(projectId: string, cb: (p: any) => void): () => void { return () => {}; }
 async function bcPatchItemOData(partNumber: string, patch: any): Promise<void> {}

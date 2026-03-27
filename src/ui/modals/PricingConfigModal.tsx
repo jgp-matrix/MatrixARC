@@ -6,6 +6,7 @@ import {
 } from '@/core/globals';
 import firebase from 'firebase/compat/app';
 import 'firebase/compat/storage';
+import { searchItems as bcSearchItems } from '@/services/businessCentral/items';
 
 // ── Inline stubs for functions not yet extracted ──
 const fbStorage = firebase.storage();
@@ -33,8 +34,6 @@ async function saveLaborRates(uid: any, rates: any) {
   const path = _appCtx.configPath ? `${_appCtx.configPath}/laborRates` : `users/${uid}/config/laborRates`;
   await fbDb.doc(path).set(rates);
 }
-
-async function bcSearchItems(q: string, opts?: any): Promise<any> { return { items: [], hasMore: false }; }
 
 function TooltipToggle() {
   return null; // stub — tooltip toggle not yet migrated

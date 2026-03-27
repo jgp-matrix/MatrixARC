@@ -1,13 +1,21 @@
 import { useState, useRef } from 'react';
 import { C } from '@/core/constants';
 import { _bcToken } from '@/core/globals';
+import { acquireToken as acquireBcToken } from '@/services/businessCentral/auth';
+import { getCompanyId as bcGetCompanyId } from '@/services/businessCentral/client';
+import {
+  searchItems,
+  patchItemOData as bcPatchItemOData,
+  createItem as bcCreateItem,
+} from '@/services/businessCentral/items';
 
-// Stubs for BC functions not yet extracted
-async function acquireBcToken(_interactive: boolean): Promise<any> { return null; }
-async function bcGetCompanyId(): Promise<any> { return null; }
-async function _bcFetchItems(_compId: any, _filter: string, _top: number, _skip: number): Promise<any[]> { return []; }
-async function bcPatchItemOData(_pn: string, _fields: any): Promise<void> {}
-async function bcCreateItem(_data: any): Promise<void> {}
+// Adapter: _bcFetchItems wraps searchItems to match legacy call pattern
+async function _bcFetchItems(_compId: any, filter: string, top: number, _skip: number): Promise<any[]> {
+  try {
+    const result = await searchItems(filter, { top });
+    return result.items;
+  } catch { return []; }
+}
 
 function SupplierPricingUploadModal({uid,onClose}: any){
   const [phase,setPhase]=useState('upload'); // upload|mapping|review|processing|done

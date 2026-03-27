@@ -1,24 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { C, btn, card } from '@/core/constants';
 import { _bcToken, acquireBcToken, setBcToken } from '@/core/globals';
-
-// ─── BC stubs (not yet extracted) ────────────────────────────────────────────
-async function bcLookupItem(partNumber: string): Promise<any> {
-  console.warn('bcLookupItem stub:', partNumber);
-  return null;
-}
-async function bcCheckItemInUse(itemNo: string): Promise<{inUse: boolean}> {
-  console.warn('bcCheckItemInUse stub:', itemNo);
-  return { inUse: false };
-}
-async function bcCheckItemOnProjects(itemNo: string): Promise<{onProjects: boolean; projects: string[]}> {
-  console.warn('bcCheckItemOnProjects stub:', itemNo);
-  return { onProjects: false, projects: [] };
-}
-async function bcReplaceAssemblyBOMLines(itemNo: string, bom: any[], onProgress: any): Promise<any> {
-  console.warn('bcReplaceAssemblyBOMLines stub:', itemNo);
-  return { added: 0, deleted: 0, errors: [], skipped: 0 };
-}
+import {
+  lookupItem as bcLookupItem,
+  bcCheckItemInUse,
+  bcCheckItemOnProjects,
+  bcReplaceAssemblyBOMLines,
+} from '@/services/businessCentral/items';
 
 function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate}: any){
   const [phase,setPhase]=useState("checking"); // checking | confirm | in_use | updating | done | error | missing_items

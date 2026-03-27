@@ -1,6 +1,6 @@
 // ─── BC Item Operations ──────────────────────────────────────────────────────
 
-import { bcGet, bcPost, bcPatch, companyApiUrl, getOdataBase } from './client';
+import { bcGet, bcPost, bcPatch, bcDelete, companyApiUrl, getOdataBase } from './client';
 import { BC_UOM_MAP } from './types';
 import type { BCItem, BCSearchResult, BCCreateItemRequest, BCFuzzyLookupResult } from './types';
 
@@ -13,6 +13,25 @@ export async function lookupItem(partNumber: string): Promise<BCItem | null> {
   const data = await bcGet(url);
   const items = (data.value || []).map(mapItem);
   return items[0] || null;
+}
+
+/**
+ * Lookup an item for quoting — tries by number, then by vendorItemNo.
+ */
+export async function bcLookupItemForQuote(partNumber: string): Promise<BCItem | null> {
+  if (!partNumber?.trim()) return null;
+  const pn = partNumber.trim().replace(/'/g, "''");
+  const base = await companyApiUrl();
+  try {
+    for (const filter of [`number eq '${pn}'`, `vendorItemNo eq '${pn}'`]) {
+      const data = await bcGet(`${base}/items?$filter=${filter}`);
+      const item = (data.value || [])[0];
+      if (item) return mapItem(item);
+    }
+  } catch (e) {
+    console.warn('bcLookupItemForQuote:', e);
+  }
+  return null;
 }
 
 /**
@@ -256,6 +275,150 @@ export async function bcUpdateItemCost(itemId: string, newCost: number): Promise
     console.warn('bcUpdateItemCost:', e);
     return false;
   }
+}
+
+// ─── Item Usage Checks ──────────────────────────────────────────────────────
+
+/**
+ * Check if an item has ledger entries (is "in use").
+ */
+export async function bcCheckItemInUse(itemNo: string): Promise<{ inUse: boolean; count: number }> {
+  if (!itemNo) return { inUse: false, count: 0 };
+  try {
+    const base = await companyApiUrl();
+    const url = `${base}/itemLedgerEntries?$filter=itemNumber eq '${encodeURIComponent(itemNo)}'&$top=1&$select=itemNumber`;
+    const d = await bcGet(url);
+    const count = (d.value || []).length;
+    return { inUse: count > 0, count };
+  } catch (e) {
+    console.warn('bcCheckItemInUse error:', e);
+    return { inUse: false, count: 0 };
+  }
+}
+
+/**
+ * Check which projects reference this item in job planning lines.
+ */
+export async function bcCheckItemOnProjects(itemNo: string): Promise<{ onProjects: boolean; projects: string[] }> {
+  if (!itemNo) return { onProjects: false, projects: [] };
+  try {
+    const base = await companyApiUrl();
+    const url = `${base}/jobPlanningLines?$filter=No eq '${encodeURIComponent(itemNo)}'&$top=10&$select=No,jobNumber,description`;
+    const d = await bcGet(url);
+    const lines = d.value || [];
+    const projects: string[] = [...new Set(lines.map((l: any) => l.jobNumber).filter(Boolean) as string[])];
+    return { onProjects: projects.length > 0, projects };
+  } catch (e) {
+    console.warn('bcCheckItemOnProjects error:', e);
+    return { onProjects: false, projects: [] };
+  }
+}
+
+// ─── Assembly BOM Operations ────────────────────────────────────────────────
+
+/**
+ * Clear all assembly BOM lines for a parent item on a given OData page.
+ */
+async function bcClearAssemblyBOMLines(parentItemNo: string, bomPage: string): Promise<{ deleted: number; total: number; errors: string[] }> {
+  const base = getOdataBase();
+  const getUrl = `${base}/${bomPage}?$filter=Parent_Item_No eq '${encodeURIComponent(parentItemNo)}'`;
+  const gr = await bcGet(getUrl);
+  const lines = (gr.value || []) as any[];
+  let deleted = 0;
+  const errors: string[] = [];
+  for (const line of lines) {
+    const lineNo = line.Line_No;
+    const etag = line['@odata.etag'];
+    const delUrl = `${base}/${bomPage}(Parent_Item_No='${encodeURIComponent(parentItemNo)}',Line_No=${lineNo})`;
+    try {
+      await bcDelete(delUrl, etag || '*');
+      deleted++;
+    } catch (e: any) {
+      errors.push(`Line ${lineNo}: ${(e.message || '').slice(0, 80)}`);
+    }
+  }
+  return { deleted, total: lines.length, errors };
+}
+
+/**
+ * Add assembly BOM lines for a parent item.
+ */
+async function bcAddAssemblyBOMLines(
+  parentItemNo: string,
+  bomRows: any[],
+  onProgress?: (idx: number, total: number, partNumber: string) => void,
+  _bomPage?: string
+): Promise<{ added: number; skipped: number; errors: string[]; warning: string }> {
+  const result = { added: 0, skipped: 0, errors: [] as string[], warning: '' };
+  if (!bomRows || !bomRows.length) return result;
+
+  const base = getOdataBase();
+  let bomPage = _bomPage || null;
+  if (!bomPage) {
+    const { discoverODataPages } = await import('./client');
+    const allPages = await discoverODataPages();
+    bomPage = allPages.find((n: string) => /assembly.*bom|bom.*comp/i.test(n)) || null;
+  }
+  if (!bomPage) {
+    result.warning = 'No Assembly BOM OData page found. In BC, go to Web Services → New → Object Type: Page, Object ID: 36, Service Name: AssemblyBOM, Published: true.';
+    return result;
+  }
+
+  for (let i = 0; i < bomRows.length; i++) {
+    const row = bomRows[i];
+    const pn = (row.partNumber || '').trim();
+    if (!pn) { result.skipped++; continue; }
+    if (onProgress) onProgress(i, bomRows.length, pn);
+    try {
+      await bcPost(`${base}/${bomPage}`, {
+        Parent_Item_No: parentItemNo,
+        Type: 'Item',
+        No: pn,
+        Quantity_per: +(row.qty || 1),
+      });
+      result.added++;
+    } catch (e: any) {
+      result.errors.push(`${pn}: ${(e.message || '').slice(0, 120)}`);
+      result.skipped++;
+    }
+  }
+  return result;
+}
+
+/**
+ * Replace all assembly BOM lines for a parent item.
+ * Clears existing lines, then adds new ones. Discovers the OData page automatically.
+ */
+export async function bcReplaceAssemblyBOMLines(
+  parentItemNo: string,
+  bomRows: any[],
+  onProgress?: (idx: number, total: number, msg: string) => void
+): Promise<{ deleted: number; added: number; skipped: number; errors: string[]; warning: string }> {
+  const result = { deleted: 0, added: 0, skipped: 0, errors: [] as string[], warning: '' };
+
+  const { discoverODataPages } = await import('./client');
+  const allPages = await discoverODataPages();
+  const bomPage = allPages.find((n: string) => /assembly.*bom|bom.*comp/i.test(n)) || null;
+  if (!bomPage) {
+    result.warning = 'No Assembly BOM OData page found. In BC, go to Web Services → New → Object Type: Page, Object ID: 36, Service Name: AssemblyBOM, Published: true.';
+    return result;
+  }
+
+  if (onProgress) onProgress(-1, bomRows.length, 'Clearing existing BOM lines…');
+  try {
+    const clear = await bcClearAssemblyBOMLines(parentItemNo, bomPage);
+    result.deleted = clear.deleted;
+    if (clear.errors.length) result.errors.push(...clear.errors.map(e => '[clear] ' + e));
+  } catch (ce: any) {
+    result.errors.push('[clear] ' + ce.message);
+  }
+
+  const addResult = await bcAddAssemblyBOMLines(parentItemNo, bomRows, onProgress, bomPage);
+  result.added = addResult.added;
+  result.skipped = addResult.skipped;
+  result.errors.push(...addResult.errors);
+  result.warning = addResult.warning;
+  return result;
 }
 
 function mapItem(raw: any): BCItem {

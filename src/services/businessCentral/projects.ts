@@ -342,6 +342,134 @@ export async function bcPatchPanelEndDate(
   }
 }
 
+// ─── PDF Attachment ─────────────────────────────────────────────────────────
+
+/**
+ * Attach a PDF to a BC project (direct upload).
+ * Creates an attachment record, then uploads the binary content.
+ */
+async function bcAttachPdfToJob(jobNumber: string, fileName: string, pdfArrayBuffer: ArrayBuffer): Promise<any> {
+  const { compId, jobId } = await bcGetJobGuid(jobNumber);
+  const base = await companyApiUrl();
+
+  // Check for existing attachment with same filename
+  const checkUrl = `${base}/projects(${jobId})/documentAttachments?$filter=fileName eq '${encodeURIComponent(fileName)}'`;
+  try {
+    const existing = await bcGet(checkUrl);
+    if ((existing.value || []).length > 0) {
+      throw new Error(`Duplicate: "${fileName}" already exists in BC. Remove it first or re-stamp to generate a new filename.`);
+    }
+  } catch (e: any) {
+    if (e.message?.includes('Duplicate')) throw e;
+    // Non-fatal check failure — continue with upload
+  }
+
+  // Step 1: create attachment record
+  const att = await bcPost(`${base}/projects(${jobId})/documentAttachments`, { fileName });
+  const editLink = att['attachmentContent@odata.mediaEditLink'];
+  if (!editLink) throw new Error('BC did not return mediaEditLink for attachment');
+
+  // Step 2: upload binary content via raw fetch (bcPatch doesn't handle binary)
+  const { acquireToken } = await import('./auth');
+  const token = await acquireToken();
+  const etag = att['@odata.etag'] || '*';
+  const ur = await fetch(editLink, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/pdf', 'If-Match': etag },
+    body: pdfArrayBuffer,
+  });
+  if (!ur.ok) {
+    const t = await ur.text().catch(() => '');
+    throw new Error(`BC attachment upload failed (${ur.status}): ${t}`);
+  }
+  return att;
+}
+
+/**
+ * Attach a PDF to a BC project, falling back to offline queue if BC is unavailable.
+ */
+export async function bcAttachPdfQueued(jobNumber: string, fileName: string, pdfArrayBuffer: ArrayBuffer): Promise<void> {
+  const { hasToken } = await import('./auth');
+  if (!hasToken() || !jobNumber) {
+    if (jobNumber && fileName && pdfArrayBuffer) {
+      try {
+        const pdfBase64 = btoa(String.fromCharCode(...new Uint8Array(pdfArrayBuffer)));
+        // Use global bcEnqueue if available
+        const { bcEnqueue } = await import('@/core/globals');
+        bcEnqueue('attachPdf', { jobNumber, fileName, pdfBase64 }, `Attach "${fileName}" to BC project ${jobNumber}`);
+      } catch (e) { console.warn('Could not queue PDF attachment:', e); }
+    }
+    return;
+  }
+  try {
+    await bcAttachPdfToJob(jobNumber, fileName, pdfArrayBuffer);
+  } catch (e: any) {
+    const { hasToken: stillHasToken } = await import('./auth');
+    if (!stillHasToken() && jobNumber && fileName && pdfArrayBuffer) {
+      try {
+        const pdfBase64 = btoa(String.fromCharCode(...new Uint8Array(pdfArrayBuffer)));
+        const { bcEnqueue } = await import('@/core/globals');
+        bcEnqueue('attachPdf', { jobNumber, fileName, pdfBase64 }, `Attach "${fileName}" to BC project ${jobNumber}`);
+      } catch (e2) { console.warn('Could not queue PDF attachment:', e2); }
+    } else {
+      throw e;
+    }
+  }
+}
+
+// ─── Progress Billing ───────────────────────────────────────────────────────
+
+/**
+ * Patch the Unit_Price on a panel's progress billing planning line.
+ */
+export async function bcPatchProgressBillingLine(
+  projectNumber: string,
+  taskNo: string,
+  unitPrice: number
+): Promise<void> {
+  if (!projectNumber || !taskNo) return;
+  const meta = await getPlanPageMeta();
+  if (!meta) return;
+
+  const { planPage, FP_NO, FP_TASK_NO } = meta;
+  const odataBase = getOdataBase();
+  const lineUrl = `${odataBase}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=10000)`;
+
+  try {
+    const rec = await bcGet(lineUrl);
+    const etag = rec['@odata.etag'] || '*';
+    await bcPatch(lineUrl, { Unit_Price: unitPrice }, etag);
+    console.log('bcPatchProgressBillingLine: Unit_Price updated →', unitPrice, 'for task', taskNo);
+  } catch (e) {
+    console.warn('bcPatchProgressBillingLine: failed', e);
+  }
+}
+
+// ─── Project Update ─────────────────────────────────────────────────────────
+
+/**
+ * Update a BC project's display name (or other fields) by its GUID.
+ */
+export async function bcUpdateProject(bcProjectId: string, displayName: string): Promise<boolean> {
+  if (!bcProjectId) return false;
+  try {
+    const { acquireToken } = await import('./auth');
+    let token = await acquireToken(false);
+    if (!token) token = await acquireToken(true);
+    if (!token) return false;
+
+    const base = await companyApiUrl();
+    const url = `${base}/projects(${bcProjectId})`;
+    const g = await bcGet(url);
+    const etag = g['@odata.etag'] || '*';
+    await bcPatch(url, { displayName }, etag);
+    return true;
+  } catch (e) {
+    console.warn('bcUpdateProject error:', e);
+    return false;
+  }
+}
+
 // ─── Customer Operations ────────────────────────────────────────────────────
 
 /**

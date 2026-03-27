@@ -129,6 +129,25 @@ export async function ensureDataUrl(page: any): Promise<any> {
   }
 }
 
+/**
+ * Detect physical sheet dimensions in mm from pixel dimensions.
+ * Identifies ANSI engineering sheet size using pixel area + aspect ratio.
+ */
+export function detectSheetMm(w: number, h: number): { mmW: number; mmH: number } {
+  const landscape = w >= h;
+  const [lw, lh] = landscape ? [w, h] : [h, w];
+  const area = lw * lh;
+  // Pixel-area thresholds calibrated so any reasonable scan DPI (72–300) maps to the right size.
+  // ANSI: A=8.5×11, B=11×17, C=17×22, D=22×34, E=34×44 inches → mm × 25.4
+  let mmL: number, mmS: number;
+  if (area > 20000000) { mmL = 1117.6; mmS = 863.6; }       // E 44×34"
+  else if (area > 8000000) { mmL = 863.6; mmS = 558.8; }     // D 34×22"
+  else if (area > 3500000) { mmL = 558.8; mmS = 431.8; }     // C 22×17"
+  else if (area > 1500000) { mmL = 431.8; mmS = 279.4; }     // B 17×11"
+  else { mmL = 279.4; mmS = 215.9; }                          // A 11×8.5"
+  return landscape ? { mmW: mmL, mmH: mmS } : { mmW: mmS, mmH: mmL };
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

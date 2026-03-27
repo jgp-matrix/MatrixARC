@@ -1,32 +1,37 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn } from '@/core/constants';
-import { _apiKey, _bcToken, fbDb, acquireBcToken, apiCall } from '@/core/globals';
+import { _apiKey, _bcToken, fbDb, fbStorage, acquireBcToken, apiCall } from '@/core/globals';
 import { _appCtx } from '@/core/globals';
 
-// Stubs for functions not yet extracted
-const fbStorage: any = { ref: () => ({ put: async () => {}, getDownloadURL: async () => '', delete: async () => {} }) };
-async function sqGetAiPrior(uid: any): Promise<number> { return 30; }
-async function sqRecordAiTime(uid: any, elapsed: any): Promise<void> {}
-function sqValidateLineItems(items: any[]): any { return { hasIssues: false, dupeLines: [], dupeParts: [] }; }
-async function saveSupplierQuoteToFirestore(parsed: any, uid: any, opts: any): Promise<any> { return { docId: '', lineItems: parsed.lineItems || [] }; }
-async function bcLookupItemForQuote(partNumber: any): Promise<any> { return null; }
-async function sqGetCrossings(uid: any): Promise<any> { return {}; }
-async function sqSaveCrossing(uid: any, partNumber: any, bcItem: any): Promise<void> {}
-async function bcSearchItems(query: any, opts: any): Promise<any> { return { items: [] }; }
-async function bcUpdateItemCost(bcItemId: any, price: any): Promise<boolean> { return false; }
-async function sqSavePushAudit(docId: any, supplier: any, quoteId: any, uid: any, items: any[]): Promise<void> {}
-async function bcListVendors(): Promise<any[]> { return []; }
-async function bcPushPurchasePrice(partNumber: any, vendorNo: any, price: any, date: any, uom: any): Promise<any> { return { ok: true }; }
-async function bcAttachPdfQueued(bcProjectNumber: any, fileName: any, ab: any): Promise<void> {}
-async function bcListItemCategories(): Promise<any[]> { return []; }
-async function bcListUnitsOfMeasure(): Promise<any[]> { return []; }
-async function bcListGenProdPostingGroups(): Promise<any[]> { return []; }
-async function bcListInventoryPostingGroups(): Promise<any[]> { return []; }
-async function bcCreateItem(opts: any): Promise<any> { return opts; }
-async function sqGetVendorMap(uid: any): Promise<any> { return {}; }
-function sqFuzzyMatchVendor(supplierName: any, vendors: any[]): any { return null; }
-async function sqSaveVendorMapping(uid: any, supplierName: any, vendorNo: any): Promise<void> {}
+// Supplier quote service
+import {
+  sqGetAiPrior,
+  sqRecordAiTime,
+  sqValidateLineItems,
+  saveSupplierQuoteToFirestore,
+  sqGetCrossings,
+  sqSaveCrossing,
+  sqGetVendorMap,
+  sqSaveVendorMapping,
+  sqSavePushAudit,
+  sqFuzzyMatchVendor,
+} from '@/services/supplierQuote';
+
+// BC service imports
+import {
+  bcLookupItemForQuote,
+  searchItems as bcSearchItems,
+  bcUpdateItemCost,
+  bcListItemCategories,
+  bcListUnitsOfMeasure,
+  bcListGenProdPostingGroups,
+  bcListInventoryPostingGroups,
+  createItem as bcCreateItem,
+} from '@/services/businessCentral/items';
+import { getAllVendors as bcListVendors } from '@/services/businessCentral/vendors';
+import { pushPurchasePrice as bcPushPurchasePrice } from '@/services/businessCentral/prices';
+import { bcAttachPdfQueued } from '@/services/businessCentral/projects';
 
 export default function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,projectId}: any){
   const [phase,setPhase]=useState('upload'); // upload|parsing|review|pushing|done
@@ -635,7 +640,7 @@ ${fullText.slice(0,8000)}`;
         if(ppVendorNo){
           console.log("bcPushPurchasePrice: using vendor",ppVendorNo,"for",quoteHeader?.supplier);
           const ppResults=await Promise.all(toUpdate.filter((i: any)=>i.price&&i.partNumber).map(async(i: any)=>{
-            try{return await bcPushPurchasePrice(i.partNumber,ppVendorNo,i.price,Date.now(),i.uom||'');}
+            try{return await bcPushPurchasePrice(i.partNumber,ppVendorNo,i.price,new Date().toISOString().slice(0,10),i.uom||'');}
             catch(e: any){console.warn("BC purchase price push failed:",i.partNumber,e);return{ok:false,reason:'error'};}
           }));
           const missingItems=ppResults.filter((r: any)=>r&&r.reason==='item_not_found').map((r: any)=>r.itemNo);

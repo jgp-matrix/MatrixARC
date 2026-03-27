@@ -2,61 +2,23 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _apiKey, _bcToken } from '@/core/globals';
-
-// ─── Stubs for functions not yet extracted ───────────────────────────────────
-function getPageTypes(page: any): string[] {
-  if (page.types && page.types.length) return page.types;
-  if (page.aiDetectedTypes && page.aiDetectedTypes.length) return page.aiDetectedTypes;
-  if (page.type) return [page.type];
-  return [];
-}
-async function ensureDataUrl(pg: any): Promise<any> {
-  console.warn('ensureDataUrl stub:', pg.id);
-  return pg;
-}
-async function bcSearchItems(query: string, opts: any): Promise<{items: any[]; hasMore: boolean}> {
-  console.warn('bcSearchItems stub:', query, opts);
-  return { items: [], hasMore: false };
-}
-async function bcGetItemVendorNo(itemNo: string): Promise<string | null> {
-  console.warn('bcGetItemVendorNo stub:', itemNo);
-  return null;
-}
-async function bcGetVendorName(vendorNo: string): Promise<string> {
-  console.warn('bcGetVendorName stub:', vendorNo);
-  return '';
-}
-async function bcGetLastPurchase(itemNo: string): Promise<any> {
-  console.warn('bcGetLastPurchase stub:', itemNo);
-  return null;
-}
-async function bcListVendors(): Promise<any[]> {
-  console.warn('bcListVendors stub');
-  return [];
-}
-async function bcPatchItemOData(itemNo: string, fields: any): Promise<void> {
-  console.warn('bcPatchItemOData stub:', itemNo, fields);
-}
-async function bcCreateItem(item: any): Promise<any> {
-  console.warn('bcCreateItem stub:', item);
-  return item;
-}
-async function bcListItemCategories(): Promise<any[]> {
-  console.warn('bcListItemCategories stub');
-  return [];
-}
-async function bcListUnitsOfMeasure(): Promise<any[]> {
-  console.warn('bcListUnitsOfMeasure stub');
-  return [];
-}
-async function bcListGenProdPostingGroups(): Promise<any[]> {
-  console.warn('bcListGenProdPostingGroups stub');
-  return [];
-}
-async function bcListInventoryPostingGroups(): Promise<any[]> {
-  console.warn('bcListInventoryPostingGroups stub');
-  return [];
-}
+import { getPageTypes } from '@/core/helpers';
+import { ensureDataUrl } from '@/scanning/pdfExtractor';
+import {
+  searchItems as bcSearchItems,
+  createItem as bcCreateItem,
+  patchItemOData as bcPatchItemOData,
+  bcListItemCategories,
+  bcListUnitsOfMeasure,
+  bcListGenProdPostingGroups,
+  bcListInventoryPostingGroups,
+} from '@/services/businessCentral/items';
+import {
+  getItemVendorNo as bcGetItemVendorNo,
+  getVendorName as bcGetVendorName,
+  getLastPurchase as bcGetLastPurchase,
+  getAllVendors as bcListVendors,
+} from '@/services/businessCentral/vendors';
 
 function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError}: any){
   const [query,setQuery]=useState(initialQuery||"");
@@ -206,7 +168,7 @@ If the part is not visible in this image: {"found":false}`}
       return;
     }
     setLoading(true);
-    const r=await bcSearchItems(q,{field,top:PAGE,skip:s});
+    const r=await bcSearchItems(q,{field: field as any,top:PAGE,skip:s});
     if(append){setResults(prev=>[...prev,...r.items]);}
     else{setResults(r.items);setSkip(0);}
     setHasMore(r.hasMore);
@@ -444,7 +406,7 @@ If the part is not visible in this image: {"found":false}`}
               <button disabled={creating||!createNumber.trim()} onClick={async()=>{
                 setCreating(true);setCreateErr("");
                 try{
-                  const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost||undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined,genProdPostingGroup:createGenProd||undefined,inventoryPostingGroup:createInvPosting||undefined});
+                  const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost?parseFloat(createCost):undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined,genProdPostingGroup:createGenProd||undefined,inventoryPostingGroup:createInvPosting||undefined});
                   const vendorName=createVendor?((bcVendors.find((v: any)=>v.number===createVendor)||{}).displayName||""):"";
                   onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName});
                 }catch(e: any){setCreateErr(e.message||"Failed to create item");}

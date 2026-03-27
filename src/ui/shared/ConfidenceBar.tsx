@@ -1,16 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { C } from '@/core/constants';
-
-// ─── Inline stubs for functions not yet extracted ────────────────────────────
-function calcConfidence(panel: any): any {
-  // stub — real implementation lives in monolith
-  return { pricing: 0, wiring: 0, bomExt: 0, overall: 0, pricingDetail: { bcCount: 0, manualCount: 0, aiCount: 0, unpricedCount: 0, total: 0 }, wiringDetail: { matched: 0, missing: [], accepted: 0, notTraceable: 0 }, bomDetail: { bomPages: 0, itemCount: 0, cleanCount: 0, flaggedRows: [], verifiedCount: 0, plausibleCount: 0, suspectCount: 0, uncheckedCount: 0 } };
-}
-
-async function verifyPartNumbers(bom: any[]): Promise<any[]> {
-  // stub — real implementation lives in monolith
-  return [];
-}
+import { calcConfidence } from '@/bom/validator';
+import { verifyPartNumbers } from '@/bom/extractor';
 
 // ─── ConfidenceBar Component ─────────────────────────────────────────────────
 

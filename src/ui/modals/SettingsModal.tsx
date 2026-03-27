@@ -7,12 +7,12 @@ import {
 import { saveBcConfig } from '@/services/firebase/firestore';
 import firebase from 'firebase/compat/app';
 
+import { getCompanyId as bcGetCompanyId } from '@/services/businessCentral/client';
+
+import { tryGraphTokenSilent, acquireGraphToken } from '@/services/graphEmail';
+
 // ── Inline stubs for functions not yet extracted ──
 function isAdmin(): boolean { return !!_appCtx.companyId && _appCtx.role === "admin"; }
-let _bcCompanyId: any = null;
-async function bcGetCompanyId(): Promise<any> { return _bcCompanyId; }
-async function tryGraphTokenSilent(): Promise<any> { return null; }
-async function acquireGraphToken(): Promise<any> { return null; }
 
 export default function SettingsModal({uid,onClose,onNameChange}: any){
   const [key,setKey]=useState("");
@@ -47,7 +47,6 @@ export default function SettingsModal({uid,onClose,onNameChange}: any){
     try{
       const token=await acquireBcToken(true);
       if(!token){setBcConnStatus("failed");setBcConnDetail("Could not acquire token");return;}
-      _bcCompanyId=null; // force re-resolve
       const compId=await bcGetCompanyId();
       if(compId){setBcConnStatus("connected");setBcConnDetail((_bcConfig as any)?.companyName || "");}
       else{setBcConnStatus("failed");setBcConnDetail("Company '"+((_bcConfig as any)?.companyName || "")+"' not found in environment");}

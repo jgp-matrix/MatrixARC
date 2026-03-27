@@ -32,6 +32,7 @@ import {
   normalizeUom as bcNormalizeUom,
   normalizePart,
   bcUpdateItemCost,
+  bcLookupItemForQuote,
 } from '@/services/businessCentral/items';
 
 // BC Vendor operations
@@ -57,6 +58,8 @@ import {
   bcSyncPanelPlanningLines,
   bcCheckAttachmentExists,
   bcSyncPanelTaskDescriptions,
+  bcAttachPdfQueued,
+  bcPatchProgressBillingLine,
 } from '@/services/businessCentral/projects';
 
 // BC Sync / BOM sync
@@ -96,9 +99,11 @@ import { computePanelSellPrice } from '@/bom/quoteBuilder';
 import { normPart, partMatch } from '@/bom/deduplicator';
 
 // Scanning / PDF
-import { resizeImage, ensureDataUrl, resizeForAnalysis } from '@/scanning/pdfExtractor';
-import { classifyPage } from '@/scanning/pageClassifier';
+import { resizeImage, ensureDataUrl, resizeForAnalysis, detectSheetMm } from '@/scanning/pdfExtractor';
+import { classifyPage, detectZoomedPages, extractPanelMetadata } from '@/scanning/pageClassifier';
 import { readTitleBlock } from '@/scanning/titleBlockReader';
+import { burnStampCanvas } from '@/scanning/imageUtils';
+import { buildCoverPage } from '@/services/rfq';
 
 // Core helpers
 import {
@@ -117,6 +122,20 @@ import {
   savePartLibraryEntry,
   savePartCorrection,
 } from '@/services/firebase/firestore';
+
+// Supplier quote service
+import {
+  sqValidateLineItems,
+  saveSupplierQuoteToFirestore,
+  sqGetAiPrior,
+  sqRecordAiTime,
+  sqGetCrossings,
+  sqSaveCrossing,
+  sqGetVendorMap,
+  sqSaveVendorMapping,
+  sqSavePushAudit,
+  sqFuzzyMatchVendor,
+} from '@/services/supplierQuote';
 
 // Child components
 import ConfidenceBar from '@/ui/shared/ConfidenceBar';
@@ -142,15 +161,7 @@ async function extractTitleBlock(dataUrl: string): Promise<any> {
 // ─── Stubs: functions not yet wired to real implementations ──────────────
 
 // TODO: wire to real implementation
-async function detectZoomedPages(pages: any[]): Promise<string[]> { return []; }
-// TODO: wire to real implementation
-async function extractPanelMetadata(pages: any[]): Promise<any> { return null; }
-// TODO: wire to real implementation
 async function ensureJsPDF(): Promise<any> { return (window as any).jspdf?.jsPDF || class {}; }
-// TODO: wire to real implementation
-function detectSheetMm(w: number, h: number): { mmW: number; mmH: number } { return { mmW: 432, mmH: 279 }; }
-// TODO: wire to real implementation
-async function burnStampCanvas(dataUrl: string, opts: any): Promise<string> { return dataUrl; }
 
 // TODO: wire to real implementation
 async function loadPageTypeLearning(uid: string): Promise<any[]> { return []; }
@@ -164,18 +175,6 @@ async function loadCPD(uid: string): Promise<any> { return { products: [], panel
 // TODO: wire to real implementation
 async function saveCPD(uid: string, cpd: any): Promise<void> {}
 
-// TODO: wire to real implementation
-async function saveSupplierQuoteToFirestore(parsed: any, uid: string, opts: any): Promise<any> { return { docId: "", lineItems: [] }; }
-// TODO: wire to real implementation
-async function sqGetAiPrior(uid: string): Promise<number> { return 30; }
-// TODO: wire to real implementation
-async function sqGetCrossings(uid: string): Promise<any> { return {}; }
-// TODO: wire to real implementation
-async function sqGetVendorMap(uid: string): Promise<any> { return {}; }
-// TODO: wire to real implementation
-function sqFuzzyMatchVendor(name: string, vendors: any[]): any { return null; }
-// TODO: wire to real implementation
-function sqValidateLineItems(items: any[]): any { return { hasIssues: false, dupeLines: [], dupeParts: [] }; }
 
 // TODO: wire to real implementation
 function useSmoothProgress(): any {
@@ -195,28 +194,14 @@ function useCustomerLogo(name: string | null): string | null { return null; }
 // Other stubs still referenced in the monolith code
 // TODO: wire to real implementation
 async function runExtractionTask(uid: string, projectId: string, panel: any, opts: any): Promise<void> {}
-// TODO: wire to real implementation
-async function buildCoverPage(doc: any, panel: any, projNo: string, quoteData: any, idx: number, w: number, h: number): Promise<void> {}
+// buildCoverPage imported from @/services/rfq
 // TODO: wire to real implementation
 async function saveCorrectionEntry(uid: string, badPN: string, correctedPN: string, type: string): Promise<void> {}
-// TODO: wire to real implementation
-async function bcAttachPdfQueued(projNo: string, fileName: string, pdfBytes: any): Promise<void> {}
-// TODO: wire to real implementation
-async function bcPatchProgressBillingLine(projNo: string, taskNo: string, sellPrice: number): Promise<void> {}
-// TODO: wire to real implementation
-async function bcLookupItemForQuote(pn: string): Promise<any> { return null; }
+// bcAttachPdfQueued, bcPatchProgressBillingLine, bcLookupItemForQuote — imported from services above
 // TODO: wire to real implementation
 async function logPanelToCPD(uid: string, panel: any, categorized: any[], metadata?: any): Promise<void> {}
 // TODO: wire to real implementation
 async function enrichProductDetails(uid: string, pn: string, desc: string, cat: string): Promise<void> {}
-// TODO: wire to real implementation
-async function sqRecordAiTime(uid: string, elapsed: number): Promise<void> {}
-// TODO: wire to real implementation
-async function sqSaveCrossing(uid: string, pn: string, bcItem: any): Promise<void> {}
-// TODO: wire to real implementation
-async function sqSaveVendorMapping(uid: string, supplierName: string, vendorNo: string): Promise<void> {}
-// TODO: wire to real implementation
-async function sqSavePushAudit(docId: string, supplier: string, quoteId: string, uid: string, items: any[]): Promise<void> {}
 
 // ─── Begin monolith verbatim copy ───────────────────────────────────────
 

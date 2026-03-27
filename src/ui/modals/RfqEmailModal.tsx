@@ -3,12 +3,9 @@ import ReactDOM from 'react-dom';
 import firebase from 'firebase/compat/app';
 import { _appCtx, fbAuth, fbDb } from '@/core/globals';
 
-// Stubs for functions not yet extracted
-function vendorCode(vendor: any): string { return (vendor||'').replace(/[^A-Z0-9]/gi,'').slice(0,3).toUpperCase()||'SUP'; }
-async function acquireGraphToken(): Promise<string|null> { return null; }
-function buildRfqEmailHtml(group: any, projectName: any, rfqNum: any, rfqDate: any, responseBy: any, uploadUrl: any, company: any): string { return ''; }
-async function buildRfqPdf(group: any, projectName: any, rfqNum: any, rfqDate: any, responseBy: any, company: any): Promise<string|null> { return null; }
-async function sendGraphEmail(graphToken: any, to: any, subject: any, html: any, pdfBase64: any, pdfName: any): Promise<void> {}
+import { vendorCode } from '@/services/supplierQuote';
+import { acquireGraphToken, sendGraphEmail } from '@/services/graphEmail';
+import { buildRfqEmailHtml, buildRfqPdf } from '@/services/rfq';
 
 export default function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEmail,onClose,onSent,onPrint}: any){
   const [emails,setEmails]=useState(()=>{const m: any={};groups.forEach((g: any)=>{m[g.vendorName]=g.vendorEmail||"";});return m;});
