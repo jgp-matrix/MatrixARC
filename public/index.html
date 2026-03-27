@@ -13145,7 +13145,7 @@ function CodaleTestPanel({uid}){
     try{
       const pns=parts.split(",").map(s=>s.trim()).filter(Boolean);
       if(!pns.length){setError("Enter at least one part number");setLoading(false);return;}
-      const fn=firebase.functions().httpsCallable("codaleTestScrape");
+      const fn=firebase.functions().httpsCallable("codaleTestScrape",{timeout:300000});
       const r=await fn({partNumbers:pns});
       setResults(r.data.results||[]);
     }catch(e){setError(e.message||"Scrape failed");}
@@ -13182,7 +13182,7 @@ function CodaleTestPanel({uid}){
         const totalBatches=Math.ceil(allItems.length/BATCH);
         setUpdateStatus(prev=>({...prev,phase:`Scraping batch ${batchNum}/${totalBatches}…`,detail:batch.join(", ")}));
         try{
-          const fn=firebase.functions().httpsCallable("codaleTestScrape");
+          const fn=firebase.functions().httpsCallable("codaleTestScrape",{timeout:300000});
           const r=await fn({partNumbers:batch});
           console.log("CODALE BATCH RESPONSE:",JSON.stringify(r.data));
           const batchResults=r.data.results||[];
