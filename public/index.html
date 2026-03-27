@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.3";
+const APP_VERSION="v1.19.4";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15182,7 +15182,6 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
     <div style={{maxWidth:2100,margin:"0 auto",padding:32,minWidth:0,width:"100%",boxSizing:"border-box"}}>
 
       <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
-        <div style={{fontSize:26,fontWeight:800,letterSpacing:-0.5}}>Projects</div>
         <button data-tip="Start a new panel extraction project" data-tour="new-project-btn" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
           <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
         </button>
@@ -16393,10 +16392,22 @@ INSTRUCTIONS:
         {/* Dropdown backdrop — closes menus when clicking outside */}
         {(showGearMenu||showUserMenu||showBellMenu)&&<div style={{position:"fixed",inset:0,zIndex:590}} onClick={()=>{setShowGearMenu(false);setShowUserMenu(false);setShowBellMenu(false);}}/>}
       </div>
-      {/* Content — padded below fixed header, with side panel */}
-      <div style={{flex:1,paddingTop:78,display:"flex",height:"100vh",overflow:"hidden"}}>
-      <LeftNav tab={navTab} onTabChange={setNavTab} pinned={navPinned} onPinChange={setNavPinned}/>
-      <div style={{flex:1,minWidth:0,overflowY:"auto",transition:"margin-right 0.3s ease"}}>
+      {/* Horizontal tab bar — fixed below header */}
+      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:440,background:"#0d1117",borderBottom:"1px solid #1e293b",display:"flex",alignItems:"center",paddingLeft:20,height:44}}>
+        {[{id:"projects",label:"PROJECTS"},{id:"purchasing",label:"PURCHASING"},{id:"items",label:"ITEMS"}].map(t=>(
+          <button key={t.id} onClick={()=>setNavTab(t.id)}
+            style={{background:"none",border:"none",cursor:"pointer",padding:"0 22px",height:44,
+              fontSize:12,fontWeight:700,letterSpacing:2,textTransform:"uppercase",
+              color:navTab===t.id?"#fff":"#4b5563",
+              borderBottom:navTab===t.id?"2px solid #3b82f6":"2px solid transparent",
+              transition:"color 0.15s,border-color 0.15s"}}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {/* Content — padded below fixed header + tab bar */}
+      <div style={{flex:1,paddingTop:122,display:"flex",height:"100vh",overflow:"hidden"}}>
+      <div style={{flex:1,minWidth:0,overflowY:"auto"}}>
       {navTab==="purchasing"&&<PurchasingTab/>}
       {navTab==="items"&&<ItemsTab uid={uid}/>}
       {navTab==="projects"&&<>
