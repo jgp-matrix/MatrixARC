@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.16";
+const APP_VERSION="v1.19.17";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13958,23 +13958,67 @@ async function startVendorSync(uid,dkVendor,mouserVendor){
 
 // ── VENDOR PRICING SYNC PANEL (UI only — reads module state) ──
 function VendorPricingSyncPanel({uid}){
-  const[dkVendor,setDkVendor]=useState(()=>localStorage.getItem('_arc_dk_vendor')||'');
-  const[mouserVendor,setMouserVendor]=useState(()=>localStorage.getItem('_arc_mouser_vendor')||'');
+  const[dkVendor,setDkVendor]=useState('');
+  const[mouserVendor,setMouserVendor]=useState('');
+  const[vendors,setVendors]=useState([]); // [{No,Name}] from BC
+  const[loadingVendors,setLoadingVendors]=useState(false);
   const[showLog,setShowLog]=useState(false);
   const sync=useVendorSyncState();
 
-  function saveVendors(dk,m){
-    if(dk!==undefined){setDkVendor(dk);localStorage.setItem('_arc_dk_vendor',dk);}
-    if(m!==undefined){setMouserVendor(m);localStorage.setItem('_arc_mouser_vendor',m);}
+  // Load vendor config from Firestore + auto-detect from BC on mount
+  useEffect(()=>{
+    if(!uid)return;
+    fbDb.doc(`users/${uid}/config/vendorConfig`).get().then(d=>{
+      if(d.exists){
+        const dat=d.data();
+        if(dat.digikeyVendorNo)setDkVendor(dat.digikeyVendorNo);
+        if(dat.mouserVendorNo)setMouserVendor(dat.mouserVendorNo);
+      }
+    });
+    if(_bcToken)fetchVendors();
+  },[uid]);
+
+  async function fetchVendors(){
+    setLoadingVendors(true);
+    try{
+      const r=await fetch(`${BC_ODATA_BASE}/Vendor?$select=No,Name&$top=500`,
+        {headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!r.ok)return;
+      const list=(await r.json()).value||[];
+      setVendors(list);
+      // Auto-detect DigiKey and Mouser by name
+      const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
+      const dk=list.find(v=>norm(v.Name).includes('digikey'));
+      const mo=list.find(v=>norm(v.Name).includes('mouser'));
+      // Only auto-fill if not already set from Firestore
+      if(dk)setDkVendor(prev=>prev||dk.No);
+      if(mo)setMouserVendor(prev=>prev||mo.No);
+    }catch(e){console.warn("fetchVendors error:",e);}
+    setLoadingVendors(false);
   }
+
+  async function saveVendors(dk,m){
+    const newDk=dk!==undefined?dk:dkVendor;
+    const newM=m!==undefined?m:mouserVendor;
+    if(dk!==undefined)setDkVendor(dk);
+    if(m!==undefined)setMouserVendor(m);
+    try{
+      await fbDb.doc(`users/${uid}/config/vendorConfig`).set(
+        {digikeyVendorNo:newDk,mouserVendorNo:newM},{merge:true});
+    }catch(e){console.warn("saveVendors error:",e);}
+  }
+
   function handleStart(){
     if(!_bcToken){alert("Connect to Business Central first");return;}
-    if(!dkVendor.trim()&&!mouserVendor.trim()){alert("Enter at least one BC Vendor No");return;}
+    if(!dkVendor.trim()&&!mouserVendor.trim()){alert("No vendor IDs set — connect to BC to auto-detect, or select manually");return;}
     startVendorSync(uid,dkVendor.trim(),mouserVendor.trim());
   }
 
   const{running,status,result,error}=sync;
   const statusColor=status?.phase==="Complete"?"#22c55e":"#94a3b8";
+  const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
+  const dkMatch=vendors.find(v=>norm(v.Name).includes('digikey'));
+  const moMatch=vendors.find(v=>norm(v.Name).includes('mouser'));
 
   return(<div>
     <div style={{fontSize:12,color:"#64748b",marginBottom:10,lineHeight:1.6}}>
@@ -13983,17 +14027,37 @@ function VendorPricingSyncPanel({uid}){
       switch tabs while it runs.
     </div>
     <div style={{display:"flex",gap:10,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+      {/* DigiKey vendor selector */}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
-        <span style={{fontSize:11,color:"#64748b",whiteSpace:"nowrap"}}>DigiKey BC Vendor No:</span>
-        <input value={dkVendor} onChange={e=>saveVendors(e.target.value,undefined)} disabled={running}
-          placeholder="e.g. V00010"
-          style={{width:110,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+        <span style={{fontSize:11,color:"#64748b",whiteSpace:"nowrap"}}>DigiKey Vendor:</span>
+        {vendors.length>0?(
+          <select value={dkVendor} onChange={e=>saveVendors(e.target.value,undefined)} disabled={running}
+            style={{background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:dkVendor?"#e2e8f0":"#475569",fontSize:12,fontFamily:"inherit",minWidth:160}}>
+            <option value="">— not set —</option>
+            {vendors.map(v=><option key={v.No} value={v.No}>{v.No} — {v.Name}</option>)}
+          </select>
+        ):(
+          <input value={dkVendor} onChange={e=>saveVendors(e.target.value,undefined)} disabled={running}
+            placeholder={loadingVendors?"Loading…":"Connect BC to auto-detect"}
+            style={{width:160,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+        )}
+        {dkMatch&&dkVendor===dkMatch.No&&<span style={{fontSize:11,color:"#22c55e"}}>✓ auto-detected</span>}
       </div>
+      {/* Mouser vendor selector */}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
-        <span style={{fontSize:11,color:"#64748b",whiteSpace:"nowrap"}}>Mouser BC Vendor No:</span>
-        <input value={mouserVendor} onChange={e=>saveVendors(undefined,e.target.value)} disabled={running}
-          placeholder="e.g. V00011"
-          style={{width:110,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+        <span style={{fontSize:11,color:"#64748b",whiteSpace:"nowrap"}}>Mouser Vendor:</span>
+        {vendors.length>0?(
+          <select value={mouserVendor} onChange={e=>saveVendors(undefined,e.target.value)} disabled={running}
+            style={{background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:mouserVendor?"#e2e8f0":"#475569",fontSize:12,fontFamily:"inherit",minWidth:160}}>
+            <option value="">— not set —</option>
+            {vendors.map(v=><option key={v.No} value={v.No}>{v.No} — {v.Name}</option>)}
+          </select>
+        ):(
+          <input value={mouserVendor} onChange={e=>saveVendors(undefined,e.target.value)} disabled={running}
+            placeholder={loadingVendors?"Loading…":"Connect BC to auto-detect"}
+            style={{width:160,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+        )}
+        {moMatch&&mouserVendor===moMatch.No&&<span style={{fontSize:11,color:"#22c55e"}}>✓ auto-detected</span>}
       </div>
       <button onClick={running?()=>{_vSync.abort=true;}:handleStart}
         style={{background:running?"#7f1d1d":"#0d9488",color:"#fff",border:"none",borderRadius:6,
