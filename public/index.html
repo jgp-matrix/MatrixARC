@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.26";
+const APP_VERSION="v1.19.27";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13962,6 +13962,7 @@ function VendorPricingSyncPanel({uid}){
   const[mouserVendor,setMouserVendor]=useState('');
   const[vendors,setVendors]=useState([]); // [{No,Name}] from BC
   const[loadingVendors,setLoadingVendors]=useState(false);
+  const[vendorLoadErr,setVendorLoadErr]=useState(null);
   const[showLog,setShowLog]=useState(false);
   const sync=useVendorSyncState();
 
@@ -13975,27 +13976,39 @@ function VendorPricingSyncPanel({uid}){
         if(dat.mouserVendorNo)setMouserVendor(dat.mouserVendorNo);
       }
     });
-    if(_bcToken)fetchVendors();
+    // Always attempt — component only mounts when panel is opened so BC should be connected
+    fetchVendors();
   },[uid]);
 
   async function fetchVendors(){
+    if(!_bcToken){setVendorLoadErr("Not connected to Business Central — connect first then retry.");return;}
     setLoadingVendors(true);
+    setVendorLoadErr(null);
     try{
       const allPages=await bcDiscoverODataPages();
       const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
       const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name&$top=500`,
         {headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(!r.ok)return;
+      if(!r.ok){
+        const txt=await r.text();
+        setVendorLoadErr(`BC ${r.status} loading vendors: ${txt.slice(0,200)}`);
+        setLoadingVendors(false);return;
+      }
       const list=(await r.json()).value||[];
       setVendors(list);
-      // Auto-detect DigiKey and Mouser by name
+      setVendorLoadErr(null);
+      // Auto-detect DigiKey and Mouser by name (fuzzy)
       const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
       const dk=list.find(v=>norm(v.Name).includes('digikey'));
       const mo=list.find(v=>norm(v.Name).includes('mouser'));
       // Only auto-fill if not already set from Firestore
       if(dk)setDkVendor(prev=>prev||dk.No);
       if(mo)setMouserVendor(prev=>prev||mo.No);
-    }catch(e){console.warn("fetchVendors error:",e);}
+      if(!dk&&!mo)console.log("VendorSync: no DigiKey/Mouser found in vendor list:",list.map(v=>v.Name));
+    }catch(e){
+      setVendorLoadErr(`Error loading vendors: ${e.message}`);
+      console.warn("fetchVendors error:",e);
+    }
     setLoadingVendors(false);
   }
 
@@ -14028,6 +14041,17 @@ function VendorPricingSyncPanel({uid}){
       prices to BC as alternate vendor purchase prices. Runs in the background — you can
       switch tabs while it runs.
     </div>
+    {/* Vendor load status */}
+    {vendorLoadErr&&<div style={{marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
+      <span style={{fontSize:12,color:"#f87171"}}>⚠ {vendorLoadErr}</span>
+      <button onClick={fetchVendors} disabled={loadingVendors}
+        style={{background:"#1e3a5f",color:"#93c5fd",border:"1px solid #3b6aad",borderRadius:4,
+          padding:"3px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>
+        {loadingVendors?"Loading…":"↺ Retry"}
+      </button>
+    </div>}
+    {loadingVendors&&!vendorLoadErr&&<div style={{fontSize:12,color:"#64748b",marginBottom:8}}>Loading BC vendors…</div>}
+
     <div style={{display:"flex",gap:10,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
       {/* DigiKey vendor selector */}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
@@ -14040,7 +14064,7 @@ function VendorPricingSyncPanel({uid}){
           </select>
         ):(
           <input value={dkVendor} onChange={e=>saveVendors(e.target.value,undefined)} disabled={running}
-            placeholder={loadingVendors?"Loading…":"Connect BC to auto-detect"}
+            placeholder={loadingVendors?"Loading…":"Enter vendor No manually"}
             style={{width:160,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
         )}
         {dkMatch&&dkVendor===dkMatch.No&&<span style={{fontSize:11,color:"#22c55e"}}>✓ auto-detected</span>}
@@ -14056,11 +14080,15 @@ function VendorPricingSyncPanel({uid}){
           </select>
         ):(
           <input value={mouserVendor} onChange={e=>saveVendors(undefined,e.target.value)} disabled={running}
-            placeholder={loadingVendors?"Loading…":"Connect BC to auto-detect"}
+            placeholder={loadingVendors?"Loading…":"Enter vendor No manually"}
             style={{width:160,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
         )}
         {moMatch&&mouserVendor===moMatch.No&&<span style={{fontSize:11,color:"#22c55e"}}>✓ auto-detected</span>}
       </div>
+      {/* Manual reload button (always visible so user can re-fetch if needed) */}
+      {!loadingVendors&&<button onClick={fetchVendors} title="Reload vendor list from BC"
+        style={{background:"none",border:"1px solid #334155",borderRadius:4,
+          padding:"4px 8px",fontSize:11,color:"#64748b",cursor:"pointer"}}>↺</button>}
       <button onClick={running?()=>{_vSync.abort=true;}:handleStart}
         style={{background:running?"#7f1d1d":"#0d9488",color:"#fff",border:"none",borderRadius:6,
           padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
