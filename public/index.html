@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.24";
+const APP_VERSION="v1.19.25";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16241,7 +16241,7 @@ function ItemsTab({uid}){
 
   async function load(sk,q){
     setLoading(true);setError(null);
-    const base=`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code,Vendor_No,Last_Direct_Cost&$top=${PAGE}&$orderby=No asc`;
+    const base=`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code,Vendor_No,Last_Direct_Cost,Last_Date_Modified&$top=${PAGE}&$orderby=No asc`;
     const hdrs={"Authorization":`Bearer ${_bcToken}`};
     try{
       if(q&&q.trim()){
@@ -16333,66 +16333,65 @@ function ItemsTab({uid}){
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead>
               <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
-                {["ITEM NO","DESCRIPTION","MFR CODE","VENDOR","LAST COST"].map((h,i)=>(
+                {["ITEM NO","DESCRIPTION","MFR CODE","VENDOR","LAST COST","PRICED DATE"].map((h,i)=>(
                   <th key={h} style={{padding:"9px 12px",textAlign:i===4?"right":"left",
-                    color:C.sub,fontWeight:700,fontSize:11,letterSpacing:1}}>{h}</th>
+                    color:C.sub,fontWeight:700,fontSize:11,letterSpacing:1,whiteSpace:"nowrap"}}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {items.map((item,idx)=>(
+              {items.map((item,idx)=>{
+                const pricedDate=item.Last_Date_Modified
+                  ?new Date(item.Last_Date_Modified).toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"})
+                  :"—";
+                return(
                 <tr key={item.No} style={{borderBottom:`1px solid ${C.border}`,
                   background:idx%2===0?"#1a2235":"#162040"}}>
-                  <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:12,whiteSpace:"nowrap"}}>{item.No}</td>
-                  <td style={{padding:"7px 12px",color:C.text,maxWidth:320,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
+                  <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:13,whiteSpace:"nowrap"}}>{item.No}</td>
+                  <td style={{padding:"7px 12px",color:C.text,fontSize:13,maxWidth:320,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
                     title={item.Description}>{item.Description}</td>
                   <td style={{padding:"4px 12px"}}>
-                    {editingMfr?.no===item.No?(
-                      <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                        {manufacturers.length>0?(
-                          <select value={editingMfr.val}
-                            onChange={e=>setEditingMfr({no:item.No,val:e.target.value})}
-                            onBlur={()=>saveMfr(item.No,editingMfr.val)}
-                            onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
-                            autoFocus
-                            style={{background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
-                              padding:"3px 6px",color:C.text,fontSize:12,fontFamily:"inherit",minWidth:120}}>
-                            <option value="">— none —</option>
-                            {manufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
-                          </select>
-                        ):(
+                    {manufacturers.length>0?(
+                      <select value={item.Manufacturer_Code||""}
+                        onChange={e=>saveMfr(item.No,e.target.value)}
+                        disabled={savingMfr===item.No}
+                        style={{background:"#1e293b",border:`1px solid ${item.Manufacturer_Code?"#3b82f6":"#334155"}`,
+                          borderRadius:4,padding:"3px 6px",
+                          color:item.Manufacturer_Code?C.text:C.muted,
+                          fontSize:13,fontFamily:"inherit",minWidth:110,cursor:"pointer",
+                          opacity:savingMfr===item.No?0.5:1}}>
+                        <option value="">— none —</option>
+                        {manufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
+                      </select>
+                    ):(
+                      <span onClick={()=>setEditingMfr({no:item.No,val:item.Manufacturer_Code||""})}
+                        title="Click to edit"
+                        style={{cursor:"pointer",display:"inline-block",minWidth:52,padding:"2px 7px",
+                          borderRadius:4,border:"1px solid transparent",fontSize:13,
+                          color:item.Manufacturer_Code?"#60a5fa":C.muted,
+                          background:item.Manufacturer_Code?"rgba(59,130,246,0.12)":"transparent",
+                          fontWeight:item.Manufacturer_Code?600:400}}>
+                        {editingMfr?.no===item.No?(
                           <input value={editingMfr.val}
                             onChange={e=>setEditingMfr({no:item.No,val:e.target.value})}
                             onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
                             maxLength={10} autoFocus
                             style={{width:80,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
-                              padding:"3px 6px",color:C.text,fontSize:12,fontFamily:"inherit",textTransform:"uppercase"}}/>
-                        )}
-                        <button onClick={()=>saveMfr(item.No,editingMfr.val)} disabled={savingMfr===item.No}
-                          style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✓</button>
-                        <button onClick={()=>setEditingMfr(null)}
-                          style={{background:"#475569",color:"#fff",border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✗</button>
-                      </div>
-                    ):(
-                      <span onClick={()=>setEditingMfr({no:item.No,val:item.Manufacturer_Code||""})}
-                        title="Click to edit"
-                        style={{cursor:"pointer",display:"inline-block",minWidth:52,padding:"2px 7px",
-                          borderRadius:4,border:"1px solid transparent",fontSize:12,
-                          color:item.Manufacturer_Code?"#60a5fa":C.muted,
-                          background:item.Manufacturer_Code?"rgba(59,130,246,0.12)":"transparent",
-                          fontWeight:item.Manufacturer_Code?600:400}}>
-                        {item.Manufacturer_Code||"—"}
+                              padding:"3px 6px",color:C.text,fontSize:13,fontFamily:"inherit",textTransform:"uppercase"}}/>
+                        ):item.Manufacturer_Code||"—"}
                       </span>
                     )}
                   </td>
-                  <td style={{padding:"7px 12px",color:C.muted,fontSize:12}}>{item.Vendor_No||"—"}</td>
-                  <td style={{padding:"7px 12px",color:C.sub,textAlign:"right",fontFamily:"monospace",fontSize:12}}>
+                  <td style={{padding:"7px 12px",color:C.muted,fontSize:13}}>{item.Vendor_No||"—"}</td>
+                  <td style={{padding:"7px 12px",color:C.sub,textAlign:"right",fontFamily:"monospace",fontSize:13}}>
                     {item.Last_Direct_Cost>0?`$${Number(item.Last_Direct_Cost).toFixed(2)}`:"—"}
                   </td>
+                  <td style={{padding:"7px 12px",color:C.muted,fontSize:13,whiteSpace:"nowrap"}}>{pricedDate}</td>
                 </tr>
-              ))}
+                );
+              })}
               {items.length===0&&!loading&&(
-                <tr><td colSpan={5} style={{padding:32,textAlign:"center",color:C.muted}}>No items found.</td></tr>
+                <tr><td colSpan={6} style={{padding:32,textAlign:"center",color:C.muted,fontSize:13}}>No items found.</td></tr>
               )}
             </tbody>
           </table>
