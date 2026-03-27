@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.22";
+const APP_VERSION="v1.19.23";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15899,8 +15899,31 @@ function VendorsPanel({uid}){
     setLoading(false);
   }
 
+  // Real-time duplicate detection — runs on every render, no debounce needed (local data)
+  function getDupMatch(){
+    const noTrimmed=newNo.trim().toUpperCase();
+    const nameTrimmed=newName.trim().toLowerCase();
+    if(!noTrimmed&&!nameTrimmed)return null;
+    const normName=s=>s.toLowerCase().replace(/\b(electric|electronics|supply|inc|llc|ltd|corp|co|gmbh|ag)\b\.?/g,'').replace(/[^a-z0-9]/g,'').trim();
+    for(const v of vendors){
+      // Exact vendor No match
+      if(noTrimmed&&v.No.toUpperCase()===noTrimmed)
+        return{type:'error',msg:`Vendor No "${v.No}" already exists: ${v.Name}`};
+      // Normalized name match
+      if(nameTrimmed.length>=3){
+        const a=normName(nameTrimmed),b=normName(v.Name);
+        if(a&&b&&(a===b||a.includes(b)||b.includes(a)))
+          return{type:'warn',msg:`Similar vendor exists: ${v.No} — ${v.Name}`};
+      }
+    }
+    return null;
+  }
+  const dupMatch=getDupMatch();
+  const dupBlocks=dupMatch?.type==='error';
+
   async function addVendor(){
     if(!newName.trim()){setAddErr("Name is required");return;}
+    if(dupBlocks){setAddErr(dupMatch.msg);return;}
     setAdding(true);setAddErr(null);
     try{
       const compId=await bcGetCompanyId();
@@ -15931,21 +15954,32 @@ function VendorsPanel({uid}){
     </div>
 
     {/* Add Vendor row */}
-    <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
-      <span style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5}}>Add New Vendor:</span>
-      <input value={newNo} onChange={e=>setNewNo(e.target.value)} placeholder="Vendor No (optional)"
-        style={{width:140,background:"#0f172a",border:"1px solid #334155",borderRadius:4,
-          padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
-      <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Vendor Name"
-        onKeyDown={e=>e.key==="Enter"&&addVendor()}
-        style={{width:200,background:"#0f172a",border:"1px solid #334155",borderRadius:4,
-          padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
-      <button onClick={addVendor} disabled={adding||!newName.trim()}
-        style={{background:adding?"#334155":"#2563eb",color:"#fff",border:"none",borderRadius:5,
-          padding:"6px 14px",fontSize:12,fontWeight:600,cursor:adding?"wait":"pointer",opacity:adding?0.6:1}}>
-        {adding?"Adding…":"+ Add Vendor"}
-      </button>
-      {addErr&&<span style={{color:"#f87171",fontSize:11}}>{addErr}</span>}
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+        <span style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5}}>Add New Vendor:</span>
+        <input value={newNo} onChange={e=>setNewNo(e.target.value)} placeholder="Vendor No (optional)"
+          style={{width:130,background:"#0f172a",
+            border:`1px solid ${dupMatch?.type==='error'&&newNo.trim()?"#ef4444":"#334155"}`,
+            borderRadius:4,padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+        <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Vendor Name"
+          onKeyDown={e=>e.key==="Enter"&&!dupBlocks&&addVendor()}
+          style={{width:190,background:"#0f172a",
+            border:`1px solid ${dupMatch?"#f59e0b":"#334155"}`,
+            borderRadius:4,padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+        <button onClick={addVendor} disabled={adding||!newName.trim()||dupBlocks}
+          style={{background:adding||dupBlocks?"#334155":"#2563eb",color:"#fff",border:"none",borderRadius:5,
+            padding:"6px 14px",fontSize:12,fontWeight:600,
+            cursor:adding||dupBlocks?"not-allowed":"pointer",opacity:adding||dupBlocks?0.5:1}}>
+          {adding?"Adding…":"+ Add Vendor"}
+        </button>
+      </div>
+      {/* Duplicate warning — shown live as user types */}
+      {dupMatch&&<div style={{marginTop:5,fontSize:11,display:"flex",alignItems:"center",gap:5,
+        color:dupMatch.type==='error'?"#f87171":"#fbbf24"}}>
+        {dupMatch.type==='error'?"🚫":"⚠️"} {dupMatch.msg}
+        {dupMatch.type==='warn'&&<span style={{color:"#64748b"}}>(you can still add if intentional)</span>}
+      </div>}
+      {addErr&&<div style={{marginTop:5,color:"#f87171",fontSize:11}}>⚠ {addErr}</div>}
     </div>
 
     {/* Vendor list */}
