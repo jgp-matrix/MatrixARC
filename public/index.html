@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.23";
+const APP_VERSION="v1.19.24";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15845,6 +15845,10 @@ function VendorsPanel({uid}){
   const[vendorCodes,setVendorCodes]=useState({}); // {vendorNo: shortCode}
   const[editingCode,setEditingCode]=useState(null); // vendorNo being edited
   const[editVal,setEditVal]=useState('');
+  const[dupScan,setDupScan]=useState(null); // null | {loading,groups,error}
+  const[dupRemoving,setDupRemoving]=useState(false);
+  const[dupProgress,setDupProgress]=useState('');
+  const[dupConfirmed,setDupConfirmed]=useState(false);
 
   useEffect(()=>{
     // Load saved vendor config from Firestore
@@ -15884,6 +15888,87 @@ function VendorsPanel({uid}){
     setVendorCodes(updated);
     setEditingCode(null);
     await fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:updated},{merge:true});
+  }
+
+  function normVendorName(s){
+    return (s||'').toLowerCase()
+      .replace(/\b(electric|electronics|supply|inc|llc|ltd|corp|co|gmbh|ag)\b\.?/g,'')
+      .replace(/[^a-z0-9]/g,'').trim();
+  }
+
+  async function scanForDuplicates(){
+    setDupScan({loading:true,groups:[],error:null});
+    setDupConfirmed(false);
+    try{
+      const compId=await bcGetCompanyId();
+      if(!compId)throw new Error("Could not resolve BC company");
+      // Fetch all vendors via REST API v2.0 (returns id GUID needed for DELETE)
+      let allVendors=[];
+      let url=`${BC_API_BASE}/companies(${compId})/vendors?$top=500&$select=id,number,displayName`;
+      while(url){
+        const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(!r.ok)throw new Error(`BC REST ${r.status}`);
+        const j=await r.json();
+        allVendors=allVendors.concat(j.value||[]);
+        url=j['@odata.nextLink']||null;
+      }
+      // Group by normalized display name
+      const byNorm={};
+      for(const v of allVendors){
+        const k=normVendorName(v.displayName||'');
+        if(!k)continue;
+        if(!byNorm[k])byNorm[k]=[];
+        byNorm[k].push(v);
+      }
+      // Find groups with duplicates
+      const groups=[];
+      for(const grp of Object.values(byNorm)){
+        if(grp.length<2)continue;
+        // Keep the vendor with the lowest/earliest vendor number
+        const sorted=[...grp].sort((a,b)=>(a.number||'').localeCompare(b.number||''));
+        groups.push({keep:sorted[0],remove:sorted.slice(1)});
+      }
+      setDupScan({loading:false,groups,error:null});
+    }catch(e){
+      setDupScan({loading:false,groups:[],error:e.message});
+    }
+  }
+
+  async function executeRemoveDuplicates(){
+    if(!dupScan||!dupScan.groups.length)return;
+    setDupRemoving(true);
+    try{
+      const compId=await bcGetCompanyId();
+      const toRemove=dupScan.groups.flatMap(g=>g.remove);
+      const removedNos=[];
+      for(let i=0;i<toRemove.length;i++){
+        const v=toRemove[i];
+        setDupProgress(`Removing ${i+1}/${toRemove.length}: ${v.number||v.displayName}…`);
+        try{
+          const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors(${v.id})`,{
+            method:"DELETE",
+            headers:{"Authorization":`Bearer ${_bcToken}`}
+          });
+          if(r.ok||r.status===204)removedNos.push(v.number);
+          else{const t=await r.text();console.warn(`Delete vendor ${v.number} failed ${r.status}:`,t.slice(0,200));}
+        }catch(e){console.warn('Delete vendor failed:',v.number,e.message);}
+      }
+      // Clean up Firestore vendorCodes for removed vendors
+      if(removedNos.length&&uid){
+        const updated={...vendorCodes};
+        removedNos.forEach(no=>delete updated[no]);
+        setVendorCodes(updated);
+        await fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:updated},{merge:true});
+      }
+      setDupProgress(`Done — removed ${removedNos.length} duplicate vendor${removedNos.length!==1?'s':''}.`);
+      setTimeout(()=>{
+        setDupScan(null);setDupConfirmed(false);setDupProgress('');
+        fetchVendors();
+      },2000);
+    }catch(e){
+      setDupProgress(`Error: ${e.message}`);
+    }
+    setDupRemoving(false);
   }
 
   async function fetchVendors(){
@@ -15980,6 +16065,89 @@ function VendorsPanel({uid}){
         {dupMatch.type==='warn'&&<span style={{color:"#64748b"}}>(you can still add if intentional)</span>}
       </div>}
       {addErr&&<div style={{marginTop:5,color:"#f87171",fontSize:11}}>⚠ {addErr}</div>}
+    </div>
+
+    {/* Find Duplicates */}
+    <div style={{marginBottom:14}}>
+      {!dupScan&&(
+        <button onClick={scanForDuplicates}
+          style={{background:"#1e293b",border:"1px solid #334155",borderRadius:5,padding:"5px 12px",
+            color:"#94a3b8",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+          🔍 Find Duplicate Vendors
+        </button>
+      )}
+      {dupScan&&dupScan.loading&&(
+        <div style={{color:"#94a3b8",fontSize:12,padding:"6px 0"}}>Scanning BC for duplicates…</div>
+      )}
+      {dupScan&&!dupScan.loading&&dupScan.error&&(
+        <div style={{color:"#f87171",fontSize:12}}>⚠ {dupScan.error}
+          <button onClick={()=>setDupScan(null)} style={{marginLeft:8,background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:11}}>✕ Close</button>
+        </div>
+      )}
+      {dupScan&&!dupScan.loading&&!dupScan.error&&(
+        <div style={{border:"1px solid #334155",borderRadius:6,padding:"12px 14px",background:"#0f172a"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <span style={{fontSize:12,fontWeight:700,color:"#e2e8f0"}}>
+              {dupScan.groups.length===0
+                ? "✅ No duplicate vendors found"
+                : `Found ${dupScan.groups.length} duplicate group${dupScan.groups.length!==1?'s':''} — ${dupScan.groups.flatMap(g=>g.remove).length} vendor${dupScan.groups.flatMap(g=>g.remove).length!==1?'s':''} to remove`}
+            </span>
+            <button onClick={()=>{setDupScan(null);setDupConfirmed(false);setDupProgress('');}}
+              style={{background:"none",border:"none",color:"#64748b",cursor:"pointer",fontSize:14,padding:"0 4px"}}>✕</button>
+          </div>
+          {dupScan.groups.length>0&&(
+            <>
+              <div style={{maxHeight:180,overflowY:"auto",marginBottom:10}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                  <thead>
+                    <tr style={{background:"#111d30"}}>
+                      <th style={{padding:"5px 8px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10}}>KEEP</th>
+                      <th style={{padding:"5px 8px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10}}>REMOVE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dupScan.groups.map((g,i)=>(
+                      <tr key={i} style={{borderBottom:"1px solid #1e293b"}}>
+                        <td style={{padding:"5px 8px",color:"#34d399",fontFamily:"monospace",fontSize:11}}>
+                          {g.keep.number||'—'} <span style={{color:"#64748b"}}>({g.keep.displayName})</span>
+                        </td>
+                        <td style={{padding:"5px 8px"}}>
+                          {g.remove.map((r,j)=>(
+                            <span key={j} style={{color:"#f87171",fontFamily:"monospace",fontSize:11,marginRight:8}}>
+                              {r.number||'—'} <span style={{color:"#64748b"}}>({r.displayName})</span>
+                            </span>
+                          ))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {!dupConfirmed?(
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12,color:"#fbbf24"}}>
+                    <input type="checkbox" checked={dupConfirmed} onChange={e=>setDupConfirmed(e.target.checked)}
+                      style={{accentColor:"#ef4444"}}/>
+                    I confirm — permanently delete {dupScan.groups.flatMap(g=>g.remove).length} vendor{dupScan.groups.flatMap(g=>g.remove).length!==1?'s':''} from BC
+                  </label>
+                </div>
+              ):(
+                <div style={{display:"flex",alignItems:"center",gap:10}}>
+                  <button onClick={executeRemoveDuplicates} disabled={dupRemoving}
+                    style={{background:dupRemoving?"#334155":"#dc2626",color:"#fff",border:"none",borderRadius:5,
+                      padding:"6px 14px",fontSize:12,fontWeight:600,cursor:dupRemoving?"not-allowed":"pointer"}}>
+                    {dupRemoving?"Removing…":"🗑 Remove Duplicates"}
+                  </button>
+                  <button onClick={()=>setDupConfirmed(false)} disabled={dupRemoving}
+                    style={{background:"none",border:"1px solid #334155",borderRadius:5,padding:"5px 12px",
+                      color:"#94a3b8",fontSize:11,cursor:"pointer"}}>Cancel</button>
+                  {dupProgress&&<span style={{fontSize:11,color:"#94a3b8"}}>{dupProgress}</span>}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
     </div>
 
     {/* Vendor list */}
