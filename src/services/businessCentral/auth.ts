@@ -58,7 +58,7 @@ async function ensureMsal(): Promise<any> {
   _msalInstance = new msal.PublicClientApplication({
     auth: {
       clientId: _bcConfig.clientId,
-      authority: `https://login.microsoftonline.com/common`,
+      authority: `https://login.microsoftonline.com/d1f2c7f7-fab2-40b5-85c1-06a715e6a157`,
       redirectUri: window.location.origin,
     },
     cache: { cacheLocation: 'sessionStorage' },

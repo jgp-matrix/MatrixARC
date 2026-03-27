@@ -26,7 +26,12 @@ import React from 'react';
 // ─── Stubs for globals not yet available in modules ─────────────────────────
 const fbMessaging: any = null;
 const _swRegistration: any = null;
-const BC_API_BASE = '';
+// Dynamic BC API base URL — reads from bcConfig loaded from Firestore
+const BC_TENANT = 'd1f2c7f7-fab2-40b5-85c1-06a715e6a157';
+const BC_API_BASE = { toString() {
+  if (_bcConfig?.env) return `https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${_bcConfig.env}/api/v2.0`;
+  return '';
+}} as any;
 const TOUR_STEPS: any[] = [];
 let _niqCache: any = null;
 const firebase: any = (window as any).firebase || { firestore: { FieldValue: { delete: () => ({}) } } };

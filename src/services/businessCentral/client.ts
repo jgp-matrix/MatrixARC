@@ -13,14 +13,16 @@ export function setClientConfig(config: BCConfig | null) {
   _bcCompanyId = null;
 }
 
+const BC_TENANT = 'd1f2c7f7-fab2-40b5-85c1-06a715e6a157';
+
 function apiBase(): string {
   if (!_bcConfig) throw new Error('BC config not set');
-  return `https://api.businesscentral.dynamics.com/v2.0/${_bcConfig.env}/api/v2.0`;
+  return `https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${_bcConfig.env}/api/v2.0`;
 }
 
 function odataBase(): string {
   if (!_bcConfig) throw new Error('BC config not set');
-  return `https://api.businesscentral.dynamics.com/v2.0/${_bcConfig.env}/ODataV4/Company('${encodeURIComponent(_bcConfig.companyName)}')`;
+  return `https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${_bcConfig.env}/ODataV4/Company('${encodeURIComponent(_bcConfig.companyName)}')`;
 }
 
 /**
