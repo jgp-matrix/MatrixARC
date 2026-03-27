@@ -13723,6 +13723,11 @@ function SettingsModal({uid,onClose,onNameChange}){
             </form>
           )}
         </div>
+
+        {/* Close button at bottom */}
+        <div style={{marginTop:24,textAlign:"center"}}>
+          <button onClick={onClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
+        </div>
       </div>
     </div>
   );
