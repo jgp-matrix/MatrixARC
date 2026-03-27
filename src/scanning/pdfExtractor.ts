@@ -92,6 +92,43 @@ export function resizeForAnalysis(dataUrl: string, maxW = 2400): Promise<string>
   return resizeImage(dataUrl, maxW);
 }
 
+/**
+ * Ensure a page has a dataUrl — loads from Firebase Storage if needed.
+ * Returns the page with dataUrl populated, or unchanged if unavailable.
+ */
+export async function ensureDataUrl(page: any): Promise<any> {
+  if (page.dataUrl) return page;
+  if (!page.storageUrl) return page;
+  try {
+    // Get a fresh download URL from Firebase Storage SDK
+    let url = page.storageUrl;
+    const pathMatch = page.storageUrl.match(/\/o\/([^?]+)/);
+    if (pathMatch) {
+      const storagePath = decodeURIComponent(pathMatch[1]);
+      const { fbStorage } = await import('@/core/globals');
+      url = await fbStorage.ref(storagePath).getDownloadURL();
+    }
+    // Load via <img> + canvas to avoid CORS fetch issues
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth;
+        c.height = img.naturalHeight;
+        c.getContext('2d')!.drawImage(img, 0, 0);
+        resolve(c.toDataURL('image/jpeg', 0.92));
+      };
+      img.onerror = () => reject(new Error('Image load failed'));
+      img.src = url;
+    });
+    return { ...page, dataUrl };
+  } catch (e) {
+    console.warn('ensureDataUrl failed for page', page.id, e);
+    return page;
+  }
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();

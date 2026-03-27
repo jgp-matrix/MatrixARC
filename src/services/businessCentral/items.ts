@@ -139,6 +139,125 @@ export function partsMatch(a: string, b: string): boolean {
   return na === nb || na.includes(nb) || nb.includes(na);
 }
 
+// ─── Fuzzy Lookup ───────────────────────────────────────────────────────────
+
+/**
+ * Fuzzy item lookup — tries exact match, stripped search, contains search,
+ * then core substring (strip common prefixes/suffixes).
+ */
+export async function bcFuzzyLookup(partNumber: string): Promise<BCFuzzyLookupResult> {
+  if (!partNumber?.trim()) return { match: null, type: null, suggestions: [] };
+  const pn = partNumber.trim();
+
+  // 1. Exact match
+  const exact = await lookupItem(pn);
+  if (exact && exact.unitCost != null) return { match: exact, type: 'exact', suggestions: [] };
+
+  // 2. Stripped search — remove dashes, spaces, special chars
+  const stripped = pn.replace(/[-\s\/\\.#_]+/g, '');
+  if (stripped.length >= 3) {
+    const r2 = await searchItems(stripped, { field: 'number', top: 10 });
+    if (r2.items.length === 1) return { match: r2.items[0], type: 'fuzzy', suggestions: [] };
+    if (r2.items.length > 1) return { match: null, type: 'fuzzy', suggestions: r2.items.slice(0, 8) };
+  }
+
+  // 3. Original as contains search
+  if (pn.length >= 3) {
+    const r3 = await searchItems(pn, { field: 'number', top: 10 });
+    if (r3.items.length === 1) return { match: r3.items[0], type: 'fuzzy', suggestions: [] };
+    if (r3.items.length > 1) return { match: null, type: 'fuzzy', suggestions: r3.items.slice(0, 8) };
+  }
+
+  // 4. Core substring — strip common prefixes/suffixes
+  const core = pn.replace(/^(mtx|mat|mx|ms)[-\s]*/i, '').replace(/[-\s]*(rev[a-z0-9]*|v\d+)$/i, '').trim();
+  if (core.length >= 3 && core !== pn && core !== stripped) {
+    const r4 = await searchItems(core, { field: 'number', top: 10 });
+    if (r4.items.length === 1) return { match: r4.items[0], type: 'fuzzy', suggestions: [] };
+    if (r4.items.length > 1) return { match: null, type: 'fuzzy', suggestions: r4.items.slice(0, 8) };
+  }
+
+  return { match: null, type: null, suggestions: [] };
+}
+
+// ─── Reference Data Lists ───────────────────────────────────────────────────
+
+/**
+ * List all item categories from BC.
+ */
+export async function bcListItemCategories(): Promise<{ code: string; description: string }[]> {
+  try {
+    const base = await companyApiUrl();
+    const url = `${base}/itemCategories?$top=250&$orderby=code`;
+    const d = await bcGet(url);
+    return (d.value || []).map((c: any) => ({ code: c.code || '', description: c.description || '' }));
+  } catch (e) {
+    console.warn('bcListItemCategories error:', e);
+    return [];
+  }
+}
+
+/**
+ * List all units of measure from BC.
+ */
+export async function bcListUnitsOfMeasure(): Promise<{ code: string; displayName: string }[]> {
+  try {
+    const base = await companyApiUrl();
+    const url = `${base}/unitsOfMeasure?$top=250&$orderby=code`;
+    const d = await bcGet(url);
+    return (d.value || []).map((u: any) => ({ code: u.code || '', displayName: u.displayName || '' }));
+  } catch (e) {
+    console.warn('bcListUnitsOfMeasure error:', e);
+    return [];
+  }
+}
+
+/**
+ * List all general product posting groups.
+ */
+export async function bcListGenProdPostingGroups(): Promise<{ code: string; description: string }[]> {
+  try {
+    const base = await companyApiUrl();
+    const url = `${base}/generalProductPostingGroups?$top=250&$orderby=code`;
+    const d = await bcGet(url);
+    return (d.value || []).map((g: any) => ({ code: g.code || '', description: g.description || '' }));
+  } catch (e) {
+    console.warn('bcListGenProdPostingGroups error:', e);
+    return [];
+  }
+}
+
+/**
+ * List all inventory posting groups.
+ */
+export async function bcListInventoryPostingGroups(): Promise<{ code: string; description: string }[]> {
+  try {
+    const base = await companyApiUrl();
+    const url = `${base}/inventoryPostingGroups?$top=250&$orderby=code`;
+    const d = await bcGet(url);
+    return (d.value || []).map((g: any) => ({ code: g.code || '', description: g.description || '' }));
+  } catch (e) {
+    console.warn('bcListInventoryPostingGroups error:', e);
+    return [];
+  }
+}
+
+// ─── Item Cost Update ───────────────────────────────────────────────────────
+
+/**
+ * Update item unit cost by BC item GUID.
+ */
+export async function bcUpdateItemCost(itemId: string, newCost: number): Promise<boolean> {
+  try {
+    const base = await companyApiUrl();
+    const url = `${base}/items(${itemId})`;
+    await bcPatch(url, { unitCost: newCost }, '*');
+    return true;
+  } catch (e) {
+    console.warn('bcUpdateItemCost:', e);
+    return false;
+  }
+}
+
 function mapItem(raw: any): BCItem {
   return {
     number: raw.number || '',

@@ -75,6 +75,57 @@ export async function getLastPurchase(itemNo: string): Promise<{ directUnitCost:
   }
 }
 
+// ─── Aliases & Convenience ──────────────────────────────────────────────────
+
+/** Alias for getAllVendors — matches legacy monolith name. */
+export const bcListVendors = getAllVendors;
+
+/**
+ * Build a vendor number → display name map from all vendors.
+ */
+let _vendorMapCache: Record<string, string> | null = null;
+
+export async function bcGetVendorMap(): Promise<Record<string, string>> {
+  if (_vendorMapCache) return _vendorMapCache;
+  const vendors = await getAllVendors();
+  if (!vendors.length) return {};
+  _vendorMapCache = {};
+  vendors.forEach(v => { _vendorMapCache![v.number] = v.displayName; });
+  return _vendorMapCache;
+}
+
+/**
+ * Resolve a vendor number to display name from the cached map.
+ */
+export function bcResolveVendorName(vendorNo: string): string {
+  if (!vendorNo || !_vendorMapCache) return '';
+  return _vendorMapCache[vendorNo] || '';
+}
+
+/**
+ * Get vendor email address by vendor number.
+ */
+const _vendorEmailCache: Record<string, string> = {};
+
+export async function bcGetVendorEmail(vendorNo: string): Promise<string> {
+  if (!vendorNo) return '';
+  if (_vendorEmailCache[vendorNo] !== undefined) return _vendorEmailCache[vendorNo];
+
+  try {
+    const base = await companyApiUrl();
+    const url = `${base}/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,email`;
+    const d = await bcGet(url);
+    const v = (d.value || [])[0];
+    const email = v?.email || '';
+    _vendorEmailCache[vendorNo] = email;
+    return email;
+  } catch {
+    return '';
+  }
+}
+
 export function clearVendorCache() {
   _vendorCache.clear();
+  _vendorMapCache = null;
+  Object.keys(_vendorEmailCache).forEach(k => delete _vendorEmailCache[k]);
 }

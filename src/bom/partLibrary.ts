@@ -1,8 +1,18 @@
 // ─── Part Library ────────────────────────────────────────────────────────────
 // Fuzzy matching, corrections, and part library management.
 
-import type { BomRow, PartLibraryEntry, PartCorrection } from '@/core/types';
+import type { BomRow, PartLibraryEntry, PartCorrection, AlternatePart } from '@/core/types';
 import { normPart } from './deduplicator';
+
+// Lazy accessors — avoids importing globals.ts at module load (which calls firebase.auth() and breaks tests)
+declare const require: any;
+let _globals: any = null;
+function globals() {
+  if (!_globals) _globals = require('@/core/globals');
+  return _globals;
+}
+function fbDb() { return globals().fbDb; }
+function appCtx() { return globals()._appCtx; }
 
 /**
  * Find a part suggestion from the library for a BOM row.
@@ -58,4 +68,107 @@ export function applyPartCorrections(corrections: PartCorrection[], bom: BomRow[
     }
     return row;
   });
+}
+
+// ─── Alternates Database ────────────────────────────────────────────────────
+
+let _altCache: AlternatePart[] | null = null;
+
+function _altPath(uid: string): string {
+  return (appCtx().configPath || `users/${uid}/config`) + '/alternates';
+}
+
+/**
+ * Load alternate parts from Firestore.
+ */
+export async function loadAlternates(uid: string): Promise<AlternatePart[]> {
+  if (_altCache) return _altCache;
+  try {
+    const d = await fbDb().doc(_altPath(uid)).get();
+    _altCache = d.exists ? ((d.data() as any).alternates || []) : [];
+  } catch {
+    _altCache = [];
+  }
+  return _altCache!;
+}
+
+/**
+ * Save an alternate part entry to Firestore.
+ */
+export async function saveAlternateEntry(
+  uid: string,
+  originalPN: string,
+  replacement: any,
+  autoReplace = false
+): Promise<AlternatePart[]> {
+  const alts = await loadAlternates(uid);
+  const idx = alts.findIndex(a => a.originalPN === originalPN);
+  if (idx >= 0) {
+    alts[idx] = { ...alts[idx], replacement, autoReplace: autoReplace || alts[idx].autoReplace, updatedAt: Date.now() };
+  } else {
+    alts.push({ originalPN, replacement, autoReplace, createdAt: Date.now() });
+  }
+  _altCache = [...alts];
+  await fbDb().doc(_altPath(uid)).set({ alternates: _altCache });
+  return _altCache;
+}
+
+/**
+ * Toggle auto-replace for an alternate part.
+ */
+export async function setAltAutoReplace(
+  uid: string,
+  originalPN: string,
+  autoReplace: boolean
+): Promise<AlternatePart[]> {
+  const alts = await loadAlternates(uid);
+  const idx = alts.findIndex(a => a.originalPN === originalPN);
+  if (idx >= 0) {
+    alts[idx] = { ...alts[idx], autoReplace };
+  }
+  _altCache = [...alts];
+  await fbDb().doc(_altPath(uid)).set({ alternates: _altCache });
+  return _altCache;
+}
+
+// ─── Corrections Database ───────────────────────────────────────────────────
+
+let _correctionsCache: PartCorrection[] | null = null;
+
+function _correctionsPath(uid: string): string {
+  return (appCtx().configPath || `users/${uid}/config`) + '/corrections';
+}
+
+/**
+ * Load correction database from Firestore.
+ */
+export async function loadCorrectionDB(uid: string): Promise<PartCorrection[]> {
+  if (_correctionsCache) return _correctionsCache;
+  try {
+    const d = await fbDb().doc(_correctionsPath(uid)).get();
+    _correctionsCache = d.exists ? ((d.data() as any).corrections || []) : [];
+  } catch {
+    _correctionsCache = [];
+  }
+  return _correctionsCache!;
+}
+
+/**
+ * Guess the correction type based on comparing original and new part numbers.
+ * Returns 'format' if same chars different formatting, 'extraction' if very different.
+ */
+export function guessCorrection(origPN: string, newPN: string): 'format' | 'extraction' {
+  const norm = (s: string) => s.replace(/[-\s./\\()]/g, '').toUpperCase();
+  const a = norm(origPN);
+  const b = norm(newPN);
+  if (a === b) return 'format';
+  // Count overlapping chars
+  let matches = 0;
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length > b.length ? a : b;
+  for (const c of shorter) {
+    if (longer.includes(c)) matches++;
+  }
+  const ratio = matches / Math.max(a.length, b.length, 1);
+  return ratio >= 0.55 ? 'format' : 'extraction';
 }

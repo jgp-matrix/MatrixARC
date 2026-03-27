@@ -8,6 +8,7 @@ import firebase from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 import 'firebase/compat/functions';
+import 'firebase/compat/storage';
 import type { Project, Panel, BomRow, AppContext as AppCtxType } from './types';
 
 const reactHooks = { useState, useEffect };
@@ -16,6 +17,7 @@ const reactHooks = { useState, useEffect };
 export const fbAuth = firebase.auth();
 export const fbDb = firebase.firestore();
 export const fbFunctions = firebase.functions();
+export const fbStorage = firebase.storage();
 
 // ─── App Version ─────────────────────────────────────────────────────────────
 export const APP_VERSION = 'v1.18.163';

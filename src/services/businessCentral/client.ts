@@ -181,6 +181,56 @@ export function getOdataBase(): string {
   return odataBase();
 }
 
+/**
+ * Discover available OData web-service pages published in BC.
+ * Tries company-level URL first, falls back to root OData.
+ */
+export async function discoverODataPages(): Promise<string[]> {
+  const base = odataBase();
+  const rootBase = (() => {
+    if (!_bcConfig) return '';
+    return `https://api.businesscentral.dynamics.com/v2.0/${_bcConfig.env}/ODataV4/`;
+  })();
+
+  const urls = [base + '/', ...(rootBase ? [rootBase] : [])];
+  for (const url of urls) {
+    try {
+      const data = await bcGet(url);
+      const names = (data.value || []).map((e: any) => e.name || e.url || '').filter(Boolean);
+      if (names.length) return names;
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
+/**
+ * Cached plan page metadata (page name + field name prefix).
+ */
+let _planPageCache: { planPage: string; FP_NO: string; FP_TASK_NO: string } | null = null;
+
+export async function getPlanPageMeta(): Promise<{ planPage: string; FP_NO: string; FP_TASK_NO: string } | null> {
+  if (_planPageCache) return _planPageCache;
+  const allPages = await discoverODataPages();
+  const planPage = allPages.find(p => /^project.?planning/i.test(p)) || allPages.find(p => /^job.?planning/i.test(p)) || null;
+  if (!planPage) return null;
+
+  let FP_NO = 'Project_No';
+  let FP_TASK_NO = 'Project_Task_No';
+  try {
+    const data = await bcGet(`${odataBase()}/${planPage}?$top=1`);
+    const rec = (data.value || [])[0];
+    if (rec && 'Job_No' in rec && !('Project_No' in rec)) {
+      FP_NO = 'Job_No';
+      FP_TASK_NO = 'Job_Task_No';
+    }
+  } catch { /* use defaults */ }
+
+  _planPageCache = { planPage, FP_NO, FP_TASK_NO };
+  return _planPageCache;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
 }
