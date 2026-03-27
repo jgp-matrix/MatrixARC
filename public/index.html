@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.8";
+const APP_VERSION="v1.19.9";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15589,56 +15589,54 @@ function ItemsTab({uid}){
   }
 
   if(!_bcToken)return(<div style={{padding:48,textAlign:"center"}}>
-    <div style={{fontSize:40,marginBottom:12,opacity:0.3}}>📦</div>
-    <div style={{color:"#475569"}}>Connect to Business Central to browse items.</div>
+    <div style={{fontSize:40,marginBottom:12,opacity:0.4}}>📦</div>
+    <div style={{color:C.muted,fontSize:14}}>Connect to Business Central to browse items.</div>
   </div>);
 
   return(<div style={{padding:"20px 24px",minHeight:"100%"}}>
     {/* Toolbar */}
     <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-      <h2 style={{margin:0,fontSize:20,fontWeight:800,color:"#e2e8f0",letterSpacing:0.5}}>Items</h2>
+      <h2 style={{margin:0,fontSize:20,fontWeight:800,color:C.text,letterSpacing:0.5}}>Items</h2>
       <div style={{flex:1,minWidth:200,maxWidth:420,display:"flex",gap:6}}>
         <input value={search} onChange={e=>setSearch(e.target.value)}
           onKeyDown={e=>e.key==="Enter"&&doSearch()}
           placeholder="Search by item no or description…"
-          style={{flex:1,background:"#0f172a",border:"1px solid #334155",borderRadius:6,
-            padding:"6px 10px",color:"#e2e8f0",fontSize:13,fontFamily:"inherit"}}/>
+          style={{flex:1,...inp(),padding:"6px 10px",fontSize:13,fontFamily:"inherit"}}/>
         <button onClick={doSearch} disabled={loading}
-          style={{background:"#3b82f6",color:"#fff",border:"none",borderRadius:6,
+          style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,
             padding:"6px 14px",fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           {loading?"…":"Search"}
         </button>
       </div>
       <button onClick={()=>setShowFill(v=>!v)}
-        style={{background:showFill?"#7c3aed":"#1e293b",color:showFill?"#fff":"#94a3b8",
-          border:"1px solid #334155",borderRadius:6,padding:"6px 14px",fontSize:12,
+        style={{background:showFill?"#7c3aed":"#1e3a5f",color:"#fff",
+          border:`1px solid ${showFill?"#7c3aed":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
           fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
         🏷 Fill Missing MFR Codes
       </button>
     </div>
     {/* MFR Fill panel (inline, collapsible) */}
-    {showFill&&<div style={{background:"#0a0a12",border:"1px solid #1e293b",borderRadius:8,
-      padding:"12px 14px",marginBottom:16}}>
+    {showFill&&<div style={{...card(),marginBottom:16}}>
       <BcMfrFillPanel/>
     </div>}
-    {error&&<div style={{color:"#ef4444",fontSize:12,marginBottom:10}}>{error}</div>}
+    {error&&<div style={{color:C.red,fontSize:12,marginBottom:10}}>{error}</div>}
     {/* Items table */}
-    <div style={{background:"#0a0a12",border:"1px solid #1e293b",borderRadius:8,overflow:"hidden"}}>
+    <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
       <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
         <thead>
-          <tr style={{background:"#0d0d1a",borderBottom:"1px solid #1e293b"}}>
+          <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
             {["ITEM NO","DESCRIPTION","MFR CODE","VENDOR","LAST COST"].map((h,i)=>(
-              <th key={h} style={{padding:"8px 12px",textAlign:i===4?"right":"left",
-                color:"#475569",fontWeight:700,fontSize:10,letterSpacing:1}}>{h}</th>
+              <th key={h} style={{padding:"9px 12px",textAlign:i===4?"right":"left",
+                color:C.sub,fontWeight:700,fontSize:11,letterSpacing:1}}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {items.map((item,i)=>(
-            <tr key={item.No} style={{borderBottom:"1px solid #0f172a",
-              background:i%2===0?"transparent":"rgba(255,255,255,0.012)"}}>
-              <td style={{padding:"6px 12px",color:"#64748b",fontFamily:"monospace",fontSize:12,whiteSpace:"nowrap"}}>{item.No}</td>
-              <td style={{padding:"6px 12px",color:"#cbd5e1",maxWidth:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
+          {items.map((item,idx)=>(
+            <tr key={item.No} style={{borderBottom:`1px solid ${C.border}`,
+              background:idx%2===0?"#1a2235":"#162040"}}>
+              <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:12,whiteSpace:"nowrap"}}>{item.No}</td>
+              <td style={{padding:"7px 12px",color:C.text,maxWidth:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
                 title={item.Description}>{item.Description}</td>
               <td style={{padding:"4px 12px"}}>
                 {editingMfr?.no===item.No?(
@@ -15648,12 +15646,12 @@ function ItemsTab({uid}){
                       onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
                       maxLength={10} autoFocus
                       style={{width:80,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
-                        padding:"3px 6px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit",textTransform:"uppercase"}}/>
+                        padding:"3px 6px",color:C.text,fontSize:12,fontFamily:"inherit",textTransform:"uppercase"}}/>
                     <button onClick={()=>saveMfr(item.No,editingMfr.val)} disabled={savingMfr===item.No}
                       style={{background:"#22c55e",color:"#fff",border:"none",borderRadius:4,
                         padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✓</button>
                     <button onClick={()=>setEditingMfr(null)}
-                      style={{background:"#334155",color:"#fff",border:"none",borderRadius:4,
+                      style={{background:"#475569",color:"#fff",border:"none",borderRadius:4,
                         padding:"3px 8px",fontSize:11,cursor:"pointer"}}>✗</button>
                   </div>
                 ):(
@@ -15661,21 +15659,21 @@ function ItemsTab({uid}){
                     title="Click to edit"
                     style={{cursor:"pointer",display:"inline-block",minWidth:52,padding:"2px 7px",
                       borderRadius:4,border:"1px solid transparent",fontSize:12,
-                      color:item.Manufacturer_Code?"#60a5fa":"#2d3748",
-                      background:item.Manufacturer_Code?"rgba(59,130,246,0.08)":"transparent",
+                      color:item.Manufacturer_Code?"#60a5fa":C.muted,
+                      background:item.Manufacturer_Code?"rgba(59,130,246,0.12)":"transparent",
                       fontWeight:item.Manufacturer_Code?600:400}}>
-                    {item.Manufacturer_Code||<span style={{color:"#1e293b"}}>—</span>}
+                    {item.Manufacturer_Code||"—"}
                   </span>
                 )}
               </td>
-              <td style={{padding:"6px 12px",color:"#475569",fontSize:12}}>{item.Vendor_No||"—"}</td>
-              <td style={{padding:"6px 12px",color:"#94a3b8",textAlign:"right",fontFamily:"monospace",fontSize:12}}>
+              <td style={{padding:"7px 12px",color:C.muted,fontSize:12}}>{item.Vendor_No||"—"}</td>
+              <td style={{padding:"7px 12px",color:C.sub,textAlign:"right",fontFamily:"monospace",fontSize:12}}>
                 {item.Last_Direct_Cost>0?`$${Number(item.Last_Direct_Cost).toFixed(2)}`:"—"}
               </td>
             </tr>
           ))}
           {items.length===0&&!loading&&(
-            <tr><td colSpan={5} style={{padding:32,textAlign:"center",color:"#334155"}}>
+            <tr><td colSpan={5} style={{padding:32,textAlign:"center",color:C.muted}}>
               No items found.
             </td></tr>
           )}
@@ -15683,11 +15681,10 @@ function ItemsTab({uid}){
       </table>
     </div>
     {/* Load more / status */}
-    <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,fontSize:12,color:"#475569"}}>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginTop:12,fontSize:12,color:C.muted}}>
       <span>{items.length} items loaded</span>
       {hasMore&&<button onClick={()=>load(skip+PAGE,search)} disabled={loading}
-        style={{background:"#1e293b",color:"#94a3b8",border:"1px solid #334155",borderRadius:6,
-          padding:"5px 16px",fontSize:12,cursor:"pointer"}}>
+        style={{...btn(),padding:"5px 16px",fontSize:12,color:C.text}}>
         {loading?"Loading…":"Load More"}
       </button>}
     </div>
