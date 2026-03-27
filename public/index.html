@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.12";
+const APP_VERSION="v1.19.13";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15567,7 +15567,9 @@ function ItemsTab({uid}){
       let filterStr="";
       if(q&&q.trim()){
         const s=q.trim().replace(/'/g,"''");
-        filterStr=`&$filter=startswith(No,'${s}') or contains(Description,'${s}')`;
+        // BC OData: use contains on Description only (Code fields don't support contains+or)
+        // Item No matches are handled client-side after fetch
+        filterStr=`&$filter=contains(Description,'${s}')`;
       }
       const url=`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code,Vendor_No,Last_Direct_Cost&$top=${PAGE}&$skip=${sk}&$orderby=No asc${filterStr}`;
       const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
@@ -15634,7 +15636,7 @@ function ItemsTab({uid}){
           </tr>
         </thead>
         <tbody>
-          {items.map((item,idx)=>(
+          {(search.trim()?items.filter(it=>it.No.toUpperCase().includes(search.trim().toUpperCase())||it.Description.toUpperCase().includes(search.trim().toUpperCase())):items).map((item,idx)=>(
             <tr key={item.No} style={{borderBottom:`1px solid ${C.border}`,
               background:idx%2===0?"#1a2235":"#162040"}}>
               <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:12,whiteSpace:"nowrap"}}>{item.No}</td>
