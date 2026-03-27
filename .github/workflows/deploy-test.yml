@@ -1,0 +1,29 @@
+name: Deploy Test Environment
+
+on:
+  push:
+    branches:
+      - claude/kind-jepsen
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_MATRIX_ARC }}
+          projectId: matrix-arc
+          channelId: test
+          expires: 30d
