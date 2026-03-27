@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import {
-  fbDb, fbAuth, _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig,
+  fbDb, fbAuth, fbStorage, _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig,
   _defaultBomItems, _tooltipsEnabled,
   saveProject, acquireBcToken, apiCall, useBgTasks,
   projectStatus, loadNIQ, searchNIQ,
@@ -16,108 +16,168 @@ import {
   loadPricingConfig, loadDefaultBomItems,
 } from '@/core/globals';
 
-// ─── Stubs: functions not yet extracted into service modules ──────────────
+// ─── Service imports ─────────────────────────────────────────────────────
 
 // BC Item / Catalog operations
-async function bcLookupItem(pn: string): Promise<any> { return null; }
-async function bcSearchItems(q: string, opts?: any): Promise<any> { return { items: [], hasMore: false }; }
-async function bcFuzzyLookup(pn: string): Promise<any> { return { match: null, suggestions: [] }; }
-async function bcGetCompanyId(): Promise<any> { return null; }
-async function bcGetItemVendorNo(pn: string): Promise<any> { return null; }
-async function bcGetVendorName(vNo: string): Promise<any> { return ""; }
-async function bcGetVendorMap(): Promise<any> { return {}; }
-async function bcListVendors(): Promise<any[]> { return []; }
-async function bcGetLastPurchase(pn: string): Promise<any> { return null; }
-async function bcFetchPurchasePrices(partNums: string[]): Promise<any> { return new Map(); }
-async function bcPatchItemOData(pn: string, fields: any): Promise<void> {}
-async function bcCreateItem(opts: any): Promise<any> { return { number: "", displayName: "" }; }
-async function bcCheckItemInUse(itemNo: string): Promise<any> { return { inUse: false }; }
-async function bcCheckItemOnProjects(itemNo: string): Promise<any> { return { onProjects: false, projects: [] }; }
-async function bcReplaceAssemblyBOMLines(itemNo: string, bom: any[], onProgress?: any): Promise<any> { return { added: 0, deleted: 0, errors: [], skipped: 0 }; }
-async function bcCheckAttachmentExists(projNo: string, fileName: string): Promise<boolean | null> { return null; }
-async function bcAttachPdfQueued(projNo: string, fileName: string, pdfBytes: any): Promise<void> {}
-async function bcSyncPanelPlanningLines(projNo: string, lineIdx: number, panel: any): Promise<any> { return { failed: [] }; }
-async function bcSyncPanelTaskDescriptions(projNo: string, lineIdx: number, panel: any): Promise<void> {}
-async function bcPatchProgressBillingLine(projNo: string, taskNo: string, sellPrice: number): Promise<void> {}
-async function bcUpdateItemCost(bcItemId: string, price: number): Promise<boolean> { return false; }
-async function bcLookupItemForQuote(pn: string): Promise<any> { return null; }
-async function bcPushPurchasePrice(pn: string, vendorNo: string, price: number, date: number, uom: string): Promise<any> { return { ok: true }; }
-async function bcListItemCategories(): Promise<any[]> { return []; }
-async function bcListUnitsOfMeasure(): Promise<any[]> { return []; }
-async function bcListGenProdPostingGroups(): Promise<any[]> { return []; }
-async function bcListInventoryPostingGroups(): Promise<any[]> { return []; }
+import {
+  lookupItem as bcLookupItem,
+  searchItems as bcSearchItems,
+  bcFuzzyLookup,
+  createItem as bcCreateItem,
+  patchItemOData as bcPatchItemOData,
+  bcListItemCategories,
+  bcListUnitsOfMeasure,
+  bcListGenProdPostingGroups,
+  bcListInventoryPostingGroups,
+  normalizeUom as bcNormalizeUom,
+  normalizePart,
+  bcUpdateItemCost,
+} from '@/services/businessCentral/items';
 
-// Extraction / AI operations
-async function extractBomPage(dataUrl: string, feedback?: string, notes?: string): Promise<any> { return { items: [], questions: [] }; }
-async function extractTitleBlock(dataUrl: string): Promise<any> { return null; }
-async function detectPageTypes(dataUrl: string, learningEx?: any[]): Promise<any> { return { types: [], sheetNo: null }; }
-async function detectZoomedPages(pages: any[]): Promise<string[]> { return []; }
-async function estimatePrices(items: any[]): Promise<any> { return {}; }
-async function runPanelValidation(panel: any, onProgress?: any): Promise<any> { return {}; }
-async function runExtractionTask(uid: string, projectId: string, panel: any, opts: any): Promise<void> {}
-async function extractPanelMetadata(pages: any[]): Promise<any> { return null; }
-function buildRegionContext(pages: any[]): string { return ""; }
-async function getExtractionUnits(pg: any): Promise<any[]> { return [{ dataUrl: pg.dataUrl, regionNote: null }]; }
+// BC Vendor operations
+import {
+  getItemVendorNo as bcGetItemVendorNo,
+  getVendorName as bcGetVendorName,
+  getAllVendors as bcListVendors,
+  getLastPurchase as bcGetLastPurchase,
+  bcGetVendorMap,
+} from '@/services/businessCentral/vendors';
 
-// Image / PDF helpers
-async function resizeImage(dataUrl: string, maxDim: number): Promise<string> { return dataUrl; }
-async function ensureDataUrl(pg: any): Promise<any> { return pg; }
-async function ensureJsPDF(): Promise<any> { return (window as any).jspdf?.jsPDF || class {}; }
-async function buildCoverPage(doc: any, panel: any, projNo: string, quoteData: any, idx: number, w: number, h: number): Promise<void> {}
-function detectSheetMm(w: number, h: number): { mmW: number; mmH: number } { return { mmW: 432, mmH: 279 }; }
-async function burnStampCanvas(dataUrl: string, opts: any): Promise<string> { return dataUrl; }
+// BC Pricing
+import {
+  fetchPurchasePrices as bcFetchPurchasePrices,
+  pushPurchasePrice as bcPushPurchasePrice,
+} from '@/services/businessCentral/prices';
+
+// BC Client
+import { getCompanyId as bcGetCompanyId } from '@/services/businessCentral/client';
+
+// BC Projects
+import {
+  bcSyncPanelPlanningLines,
+  bcCheckAttachmentExists,
+  bcSyncPanelTaskDescriptions,
+} from '@/services/businessCentral/projects';
+
+// BC Sync / BOM sync
+import {
+  checkItemInUse as bcCheckItemInUse,
+  checkItemOnProjects as bcCheckItemOnProjects,
+  replaceAssemblyBomLines as bcReplaceAssemblyBOMLines,
+} from '@/bcSync/bomSync';
+
+// BOM extraction
+import { extractBomPage, verifyPartNumbers, getExtractionUnits, buildRegionContext } from '@/bom/extractor';
+
+// BOM pricing
+import { estimatePrices } from '@/bom/pricer';
+
+// BOM validation
+import { runPanelValidation } from '@/bom/validator';
 
 // Part library / corrections / alternates
-async function loadPartLibrary(uid: string): Promise<any[]> { return []; }
-async function loadPartCorrections(uid: string): Promise<any[]> { return []; }
-async function savePartLibraryEntry(uid: string, entry: any): Promise<void> {}
-async function savePartCorrection(uid: string, entry: any): Promise<void> {}
-function findPartSuggestion(library: any[], row: any): string | null { return null; }
-function applyPartCorrections(corrections: any[], bom: any[]): any[] { return bom; }
-async function loadAlternates(uid: string): Promise<any[]> { return []; }
-async function loadCorrectionDB(uid: string): Promise<any[]> { return []; }
-async function saveAlternateEntry(uid: string, origPN: string, replacement: any, autoReplace?: boolean): Promise<any[]> { return []; }
-async function saveCorrectionEntry(uid: string, badPN: string, correctedPN: string, type: string): Promise<void> {}
-async function setAltAutoReplace(uid: string, origPN: string, auto: boolean): Promise<any[]> { return []; }
-function guessCorrection(origPN: string, newPN: string): string { return "extraction"; }
+import {
+  findPartSuggestion,
+  applyPartCorrections,
+  loadAlternates,
+  saveAlternateEntry,
+  setAltAutoReplace,
+  loadCorrectionDB as loadPartCorrections,
+  guessCorrection,
+} from '@/bom/partLibrary';
 
-// Page type learning
+// Labor estimation
+import { computeFallbackLaborHours, buildLaborBomRows, computeLaborEstimate } from '@/bom/laborEstimator';
+
+// Quote builder
+import { computePanelSellPrice } from '@/bom/quoteBuilder';
+
+// BOM deduplication
+import { normPart, partMatch } from '@/bom/deduplicator';
+
+// Scanning / PDF
+import { resizeImage, ensureDataUrl, resizeForAnalysis } from '@/scanning/pdfExtractor';
+import { classifyPage } from '@/scanning/pageClassifier';
+import { readTitleBlock } from '@/scanning/titleBlockReader';
+
+// Core helpers
+import {
+  getPageTypes,
+  appendDefaultBomItems,
+  mergeEngineeringQuestions,
+  parallelMap,
+  getNextJoke,
+  categorizePart,
+  computeBomHash,
+} from '@/core/helpers';
+
+// Firebase / Firestore
+import {
+  loadPartLibrary,
+  savePartLibraryEntry,
+  savePartCorrection,
+} from '@/services/firebase/firestore';
+
+// Child components
+import ConfidenceBar from '@/ui/shared/ConfidenceBar';
+import DrawingLightbox from '@/ui/shared/DrawingLightbox';
+import BCItemBrowserModal from '@/ui/modals/BCItemBrowserModal';
+import EngineeringQuestionsModal from '@/ui/modals/EngineeringQuestionsModal';
+import UpdateBomInBCModal from '@/ui/modals/UpdateBomInBCModal';
+import CPDSearchModal from '@/ui/modals/CPDSearchModal';
+import Badge from '@/ui/shared/Badge';
+
+// ─── Adapted wrappers ────────────────────────────────────────────────────
+
+// classifyPage takes (imageBase64) but the stub expected (dataUrl, learningEx)
+async function detectPageTypes(dataUrl: string, _learningEx?: any[]): Promise<any> {
+  return classifyPage(dataUrl);
+}
+
+// readTitleBlock takes (imageBase64) but the stub expected (dataUrl)
+async function extractTitleBlock(dataUrl: string): Promise<any> {
+  return readTitleBlock(dataUrl);
+}
+
+// ─── Stubs: functions not yet wired to real implementations ──────────────
+
+// TODO: wire to real implementation
+async function detectZoomedPages(pages: any[]): Promise<string[]> { return []; }
+// TODO: wire to real implementation
+async function extractPanelMetadata(pages: any[]): Promise<any> { return null; }
+// TODO: wire to real implementation
+async function ensureJsPDF(): Promise<any> { return (window as any).jspdf?.jsPDF || class {}; }
+// TODO: wire to real implementation
+function detectSheetMm(w: number, h: number): { mmW: number; mmH: number } { return { mmW: 432, mmH: 279 }; }
+// TODO: wire to real implementation
+async function burnStampCanvas(dataUrl: string, opts: any): Promise<string> { return dataUrl; }
+
+// TODO: wire to real implementation
 async function loadPageTypeLearning(uid: string): Promise<any[]> { return []; }
+// TODO: wire to real implementation
 async function savePageTypeLearningEntry(uid: string, entry: any): Promise<void> {}
+// TODO: wire to real implementation
 async function saveLayoutLearningEntry(uid: string, entry: any): Promise<void> {}
 
-// BOM helpers
-function appendDefaultBomItems(bom: any[]): any[] { return bom; }
-function buildLaborBomRows(panel: any): any[] { return []; }
-function computeFallbackLaborHours(wires: number): number { return Math.ceil(wires * 0.3); }
-function computePanelSellPrice(panel: any): number { return 0; }
-function mergeEngineeringQuestions(existing: any[], newQs: any[], filter: any): any[] { return [...existing, ...newQs]; }
-function getPageTypes(pg: any): string[] { return pg.types || []; }
-
-// CPD (Component Product Database)
-async function logPanelToCPD(uid: string, panel: any, categorized: any[], metadata?: any): Promise<void> {}
+// TODO: wire to real implementation
 async function loadCPD(uid: string): Promise<any> { return { products: [], panels: [] }; }
-async function enrichProductDetails(uid: string, pn: string, desc: string, cat: string): Promise<void> {}
-function categorizePart(pn: string, desc: string): string { return "Other"; }
+// TODO: wire to real implementation
+async function saveCPD(uid: string, cpd: any): Promise<void> {}
 
-// Supplier quote helpers
+// TODO: wire to real implementation
 async function saveSupplierQuoteToFirestore(parsed: any, uid: string, opts: any): Promise<any> { return { docId: "", lineItems: [] }; }
+// TODO: wire to real implementation
 async function sqGetAiPrior(uid: string): Promise<number> { return 30; }
-async function sqRecordAiTime(uid: string, elapsed: number): Promise<void> {}
+// TODO: wire to real implementation
 async function sqGetCrossings(uid: string): Promise<any> { return {}; }
-async function sqSaveCrossing(uid: string, pn: string, bcItem: any): Promise<void> {}
+// TODO: wire to real implementation
 async function sqGetVendorMap(uid: string): Promise<any> { return {}; }
-async function sqSaveVendorMapping(uid: string, supplierName: string, vendorNo: string): Promise<void> {}
-async function sqSavePushAudit(docId: string, supplier: string, quoteId: string, uid: string, items: any[]): Promise<void> {}
+// TODO: wire to real implementation
 function sqFuzzyMatchVendor(name: string, vendors: any[]): any { return null; }
+// TODO: wire to real implementation
 function sqValidateLineItems(items: any[]): any { return { hasIssues: false, dupeLines: [], dupeParts: [] }; }
 
-// Utility
-function parallelMap(arr: any[], fn: any, concurrency: number): Promise<any[]> { return Promise.all(arr.map(fn)); }
-function getNextJoke(): { setup: string; punchline: string } | null { return null; }
-const fbStorage: any = { ref: () => ({ put: async () => {}, getDownloadURL: async () => "", delete: async () => {} }) };
-
-// useSmoothProgress hook
+// TODO: wire to real implementation
 function useSmoothProgress(): any {
   const [progress, setProgress] = useState<any>(null);
   return {
@@ -129,19 +189,34 @@ function useSmoothProgress(): any {
     finish: (msg: string) => { setProgress({ msg, pct: 100 }); setTimeout(() => setProgress(null), 4000); },
   };
 }
-
-// Child component stubs
-const ConfidenceBar = (props: any) => null;
-const DrawingLightbox = (props: any) => null;
-const BCItemBrowserModal = (props: any) => null;
-const EngineeringQuestionsModal = (props: any) => null;
-const UpdateBomInBCModal = (props: any) => null;
-const CPDSearchModal = (props: any) => null;
+// TODO: wire to real implementation
 function useCustomerLogo(name: string | null): string | null { return null; }
-const Badge = (props: any) => {
-  const colors: any = { draft: "#64748b", extracted: "#3b82f6", validated: "#8b5cf6", costed: "#f59e0b", pushed_to_bc: "#10b981", complete: "#10b981" };
-  return React.createElement("span", { style: { fontSize: 11, fontWeight: 700, color: colors[props.status] || "#64748b", textTransform: "uppercase", letterSpacing: 0.5 } }, props.status);
-};
+
+// Other stubs still referenced in the monolith code
+// TODO: wire to real implementation
+async function runExtractionTask(uid: string, projectId: string, panel: any, opts: any): Promise<void> {}
+// TODO: wire to real implementation
+async function buildCoverPage(doc: any, panel: any, projNo: string, quoteData: any, idx: number, w: number, h: number): Promise<void> {}
+// TODO: wire to real implementation
+async function saveCorrectionEntry(uid: string, badPN: string, correctedPN: string, type: string): Promise<void> {}
+// TODO: wire to real implementation
+async function bcAttachPdfQueued(projNo: string, fileName: string, pdfBytes: any): Promise<void> {}
+// TODO: wire to real implementation
+async function bcPatchProgressBillingLine(projNo: string, taskNo: string, sellPrice: number): Promise<void> {}
+// TODO: wire to real implementation
+async function bcLookupItemForQuote(pn: string): Promise<any> { return null; }
+// TODO: wire to real implementation
+async function logPanelToCPD(uid: string, panel: any, categorized: any[], metadata?: any): Promise<void> {}
+// TODO: wire to real implementation
+async function enrichProductDetails(uid: string, pn: string, desc: string, cat: string): Promise<void> {}
+// TODO: wire to real implementation
+async function sqRecordAiTime(uid: string, elapsed: number): Promise<void> {}
+// TODO: wire to real implementation
+async function sqSaveCrossing(uid: string, pn: string, bcItem: any): Promise<void> {}
+// TODO: wire to real implementation
+async function sqSaveVendorMapping(uid: string, supplierName: string, vendorNo: string): Promise<void> {}
+// TODO: wire to real implementation
+async function sqSavePushAudit(docId: string, supplier: string, quoteId: string, uid: string, items: any[]): Promise<void> {}
 
 // ─── Begin monolith verbatim copy ───────────────────────────────────────
 

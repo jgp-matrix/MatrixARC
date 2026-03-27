@@ -10,45 +10,30 @@ import { ErrorBoundary } from '@/ui/stubs';
 import PanelListView from '@/ui/panels/PanelListView';
 import QuoteView from '@/ui/QuoteView';
 
-// ─── Stub child components not yet migrated ─────────────────────────────────
-const RfqDocument = (props: any) => <div>RfqDocument stub</div>;
-const RfqEmailModal = (props: any) => <div>RfqEmailModal stub</div>;
-const RfqHistoryModal = (props: any) => <div>RfqHistoryModal stub</div>;
-const PoReceivedModal = (props: any) => <div>PoReceivedModal stub</div>;
-const PurchasePriceCheckModal = (props: any) => <div>PurchasePriceCheckModal stub</div>;
-const PortalSubmissionsModal = (props: any) => <div>PortalSubmissionsModal stub</div>;
-const SupplierQuoteImportModal = (props: any) => <div>SupplierQuoteImportModal stub</div>;
+import RfqDocument from '@/ui/modals/RfqDocument';
+import RfqEmailModal from '@/ui/modals/RfqEmailModal';
+import RfqHistoryModal from '@/ui/modals/RfqHistoryModal';
+import PoReceivedModal from '@/ui/modals/PoReceivedModal';
+import PurchasePriceCheckModal from '@/ui/modals/PurchasePriceCheckModal';
+import PortalSubmissionsModal from '@/ui/modals/PortalSubmissionsModal';
+import SupplierQuoteImportModal from '@/ui/modals/SupplierQuoteImportModal';
+
+import { normPart, partMatch, mergeBoms } from '@/bom/deduplicator';
+import { fetchPurchasePrices as bcFetchPurchasePrices, pushPurchasePrice as bcPushPurchasePrice } from '@/services/businessCentral/prices';
+import { bcCreateProject, bcSyncPanelPlanningLines, bcCreatePanelTaskStructure } from '@/services/businessCentral/projects';
+import { bcListVendors, bcGetVendorEmail } from '@/services/businessCentral/vendors';
+import { computeBomHash } from '@/core/helpers';
 
 // ─── Stub functions not yet extracted ────────────────────────────────────────
 function migrateProject(p: any): any { return p.panels ? p : { ...p, panels: [] }; }
 function isReadOnly(): boolean { return false; }
-function computeBomHash(panels: any[]): string { return JSON.stringify(panels?.map((p: any) => (p.bom || []).map((r: any) => [r.partNumber, r.qty, r.unitPrice]))); }
-function mergeBoms(bomArrays: any[][]): any[] {
-  const merged: any[] = [];
-  const seen = new Set<string>();
-  bomArrays.forEach(bom => bom.forEach(row => {
-    const key = row.id || row.partNumber || Math.random().toString();
-    if (!seen.has(key)) { seen.add(key); merged.push(row); }
-    else {
-      const idx = merged.findIndex(r => (r.id || r.partNumber) === key);
-      if (idx >= 0) merged[idx] = { ...merged[idx], qty: (merged[idx].qty || 1) + (row.qty || 1) };
-    }
-  }));
-  return merged;
-}
+// TODO: buildRfqSupplierGroups — extract to dedicated module
 async function buildRfqSupplierGroups(bom: any[]): Promise<any> { return { noItems: true, groups: [] }; }
-async function bcGetVendorEmail(vendorNo: string): Promise<string> { return ''; }
+// TODO: getNextQuoteNumber — extract to dedicated module
 async function getNextQuoteNumber(uid: string): Promise<string> { return 'MTX-Q000000'; }
-async function bcFetchPurchasePrices(partNumbers: string[]): Promise<Map<string, any>> { return new Map(); }
-async function bcCreateProject(name: string, customerNumber: string | null): Promise<any> { return { number: '', id: '' }; }
-async function bcCreatePanelTaskStructure(bcNo: string, name: string, panels: any[]): Promise<any> { return {}; }
-async function bcSyncPanelPlanningLines(bcNo: string, idx: number, panel: any): Promise<any> { return { created: 0, total: 0, failed: [] }; }
-async function bcListVendors(): Promise<any[]> { return []; }
-async function bcPatchItemOData(partNumber: string, patch: any): Promise<void> {}
-async function bcPushPurchasePrice(partNumber: string, vendorNo: string, price: number, date: number, uom: string): Promise<any> { return { ok: true }; }
-function normPart(pn: string): string { return (pn || '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
-function partMatch(a: string, b: string): boolean { return a === b || a.includes(b) || b.includes(a); }
+// TODO: onProjectUpdated — extract to dedicated module
 function onProjectUpdated(projectId: string, cb: (p: any) => void): () => void { return () => {}; }
+async function bcPatchItemOData(partNumber: string, patch: any): Promise<void> {}
 
 // Firebase FieldValue stub
 const firebase = { firestore: { FieldValue: { arrayUnion: (...args: any[]) => args } } };
@@ -199,7 +184,7 @@ export default function ProjectView({project:init,uid,onBack,onChange,onDelete,o
       await bcCreatePanelTaskStructure(bc.number,project.name,panels).catch((e: any)=>console.warn("Relink task structure error:",e));
       for(let i=0;i<panels.length;i++){
         setRelinkMsg(`Syncing planning lines (panel ${i+1}/${panels.length})\u2026`);
-        await bcSyncPanelPlanningLines(bc.number,i,panels[i]).catch((e: any)=>console.warn("Relink planning lines error panel",i,e));
+        await (bcSyncPanelPlanningLines as any)(bc.number,i,panels[i]).catch((e: any)=>console.warn("Relink planning lines error panel",i,e));
       }
       const updated={...projectRef.current,bcProjectNumber:bc.number,bcProjectId:bc.id,bcEnv:(_bcConfig as any)?.env,bcPdfAttached:false,bcPdfFileName:null};
       // Reset per-panel bc attachment flags
@@ -369,7 +354,7 @@ export default function ProjectView({project:init,uid,onBack,onChange,onDelete,o
     // Push Purchase Prices to BC (vendor, direct unit cost, starting date = priced date)
     if(vendorNo&&_bcToken){
       const ppResults=await Promise.all(Object.values(priceMap).map(async({price,partNumber,uom}: any)=>{
-        try{return await bcPushPurchasePrice(partNumber,vendorNo,price,now,uom);}
+        try{return await bcPushPurchasePrice(partNumber,vendorNo,price,new Date(now).toISOString().split('T')[0],uom);}
         catch(e){console.warn("BC purchase price push failed:",partNumber,e);return{ok:false,reason:'error'};}
       }));
       const missingItems=ppResults.filter((r: any)=>r&&r.reason==='item_not_found').map((r: any)=>r.itemNo);

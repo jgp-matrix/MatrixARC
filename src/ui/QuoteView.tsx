@@ -1,27 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { C, btn, inp, card } from '@/core/constants';
 
-// ─── Stub child components not yet migrated ─────────────────────────────────
-const QuoteTab = (props: any) => <div>QuoteTab stub</div>;
-
-// ─── Stub functions not yet extracted ────────────────────────────────────────
-function mergeBoms(bomArrays: any[][]): any[] {
-  const merged: any[] = [];
-  const seen = new Set<string>();
-  bomArrays.forEach(bom => bom.forEach(row => {
-    const key = row.id || row.partNumber || Math.random().toString();
-    if (!seen.has(key)) { seen.add(key); merged.push(row); }
-    else {
-      const idx = merged.findIndex(r => (r.id || r.partNumber) === key);
-      if (idx >= 0) merged[idx] = { ...merged[idx], qty: (merged[idx].qty || 1) + (row.qty || 1) };
-    }
-  }));
-  return merged;
-}
-
-function computeLaborEstimate(panel: any): any {
-  return { lines: [], totalHours: 0, totalCost: 0, hasLayoutData: false, isLegacy: false, isOverride: false };
-}
+import QuoteTab from '@/ui/tabs/QuoteTab';
+import { mergeBoms } from '@/bom/deduplicator';
+import { computeLaborEstimate } from '@/bom/laborEstimator';
 
 export default function QuoteView({project,uid,onBack,onUpdate}: any){
   const panels=project.panels||[];

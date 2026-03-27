@@ -6,24 +6,19 @@ import {
   saveProject,
 } from '@/core/globals';
 import { ErrorBoundary } from '@/ui/stubs';
-
-// ─── Stub child components not yet migrated ─────────────────────────────────
-const PanelCard = (props: any) => <div>PanelCard stub</div>;
-const ConfidenceBar = (props: any) => <div>ConfidenceBar stub</div>;
-const ContingencyInput = (props: any) => <div>ContingencyInput stub</div>;
-const Badge = (props: any) => <span>{props.status}</span>;
-const EngineeringQuestionsModal = (props: any) => <div>EngineeringQuestionsModal stub</div>;
+import PanelCard from '@/ui/panels/PanelCard';
+import ConfidenceBar from '@/ui/shared/ConfidenceBar';
+import ContingencyInput from '@/ui/shared/ContingencyInput';
+import Badge from '@/ui/shared/Badge';
+import EngineeringQuestionsModal from '@/ui/modals/EngineeringQuestionsModal';
+import { computeLaborEstimate } from '@/bom/laborEstimator';
+import { getPageTypes, appendDefaultBomItems } from '@/core/helpers';
+import { runPanelValidation } from '@/bom/validator';
 
 // ─── Stub functions not yet extracted ────────────────────────────────────────
 function useCustomerLogo(name: any): string | null { return null; }
 function isAdmin(): boolean { return true; }
 function isReadOnly(): boolean { return false; }
-function computeLaborEstimate(panel: any): any {
-  return { lines: [], totalHours: 0, totalCost: 0, hasLayoutData: false, isLegacy: false, isOverride: false };
-}
-function getPageTypes(pg: any): string[] { return pg.types || []; }
-async function runPanelValidation(panel: any): Promise<any> { return {}; }
-function appendDefaultBomItems(bom: any[]): any[] { return bom; }
 async function bcUpdateProject(bcProjectId: string, name: string): Promise<boolean> { return false; }
 
 export default function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink}: any){
@@ -109,8 +104,8 @@ export default function PanelListView({project,uid,readOnly,onBack,onViewQuote,o
       const hasSchOrLayout=(p.pages||[]).some((pg: any)=>(getPageTypes(pg).includes("schematic")||getPageTypes(pg).includes("layout")||getPageTypes(pg).includes("backpanel")||getPageTypes(pg).includes("enclosure"))&&(pg.dataUrl||pg.storageUrl));
       if(!hasSchOrLayout)continue;
       setValidateMsg(`Validating ${p.name||"Panel "+(i+1)}\u2026`);
-      const result=await runPanelValidation(p);
-      if(result.validation||result.laborData){const bom=appendDefaultBomItems(p.bom||[]);panels[i]={...p,bom,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};}
+      const result: any=await runPanelValidation(p);
+      if(result.validation||result.laborData){const bom=await appendDefaultBomItems(p.bom||[]);panels[i]={...p,bom,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};}
     }
     const updatedProject={...project,panels};
     onUpdate(updatedProject);
