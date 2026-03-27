@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.17";
+const APP_VERSION="v1.19.18";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15831,6 +15831,145 @@ function PurchasingTab(){
   </div>);
 }
 
+// ── VENDORS PANEL ──
+function VendorsPanel({uid}){
+  const[vendors,setVendors]=useState([]);
+  const[loading,setLoading]=useState(false);
+  const[error,setError]=useState(null);
+  const[newNo,setNewNo]=useState('');
+  const[newName,setNewName]=useState('');
+  const[adding,setAdding]=useState(false);
+  const[addErr,setAddErr]=useState(null);
+  const[dkVendorNo,setDkVendorNo]=useState('');
+  const[mouserVendorNo,setMouserVendorNo]=useState('');
+
+  useEffect(()=>{
+    // Load saved vendor config from Firestore
+    if(uid)fbDb.doc(`users/${uid}/config/vendorConfig`).get().then(d=>{
+      if(d.exists){const dat=d.data();setDkVendorNo(dat.digikeyVendorNo||'');setMouserVendorNo(dat.mouserVendorNo||'');}
+    });
+    if(_bcToken)fetchVendors();
+  },[uid]);
+
+  async function fetchVendors(){
+    setLoading(true);setError(null);
+    try{
+      const r=await fetch(`${BC_ODATA_BASE}/Vendor?$select=No,Name,Phone_No,Contact&$top=500&$orderby=Name asc`,
+        {headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!r.ok)throw new Error(`BC ${r.status}`);
+      setVendors((await r.json()).value||[]);
+    }catch(e){setError(e.message);}
+    setLoading(false);
+  }
+
+  async function addVendor(){
+    if(!newName.trim()){setAddErr("Name is required");return;}
+    setAdding(true);setAddErr(null);
+    try{
+      const payload={Name:newName.trim()};
+      if(newNo.trim())payload.No=newNo.trim().toUpperCase();
+      const r=await fetch(`${BC_ODATA_BASE}/Vendor`,{
+        method:"POST",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      if(!r.ok){const t=await r.text();throw new Error(t.slice(0,200));}
+      setNewNo('');setNewName('');
+      await fetchVendors();
+    }catch(e){setAddErr(e.message);}
+    setAdding(false);
+  }
+
+  async function assignVendor(vendorNo,type){
+    const update=type==='dk'?{digikeyVendorNo:vendorNo}:{mouserVendorNo:vendorNo};
+    await fbDb.doc(`users/${uid}/config/vendorConfig`).set(update,{merge:true});
+    if(type==='dk')setDkVendorNo(vendorNo);
+    else setMouserVendorNo(vendorNo);
+  }
+
+  const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
+
+  return(<div>
+    <div style={{fontSize:12,color:"#64748b",marginBottom:12,lineHeight:1.6}}>
+      Vendors from Business Central. Assign DigiKey and Mouser to enable vendor pricing sync.
+    </div>
+
+    {/* Add Vendor row */}
+    <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:14,flexWrap:"wrap"}}>
+      <span style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5}}>Add New Vendor:</span>
+      <input value={newNo} onChange={e=>setNewNo(e.target.value)} placeholder="Vendor No (optional)"
+        style={{width:140,background:"#0f172a",border:"1px solid #334155",borderRadius:4,
+          padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+      <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Vendor Name"
+        onKeyDown={e=>e.key==="Enter"&&addVendor()}
+        style={{width:200,background:"#0f172a",border:"1px solid #334155",borderRadius:4,
+          padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+      <button onClick={addVendor} disabled={adding||!newName.trim()}
+        style={{background:adding?"#334155":"#2563eb",color:"#fff",border:"none",borderRadius:5,
+          padding:"6px 14px",fontSize:12,fontWeight:600,cursor:adding?"wait":"pointer",opacity:adding?0.6:1}}>
+        {adding?"Adding…":"+ Add Vendor"}
+      </button>
+      {addErr&&<span style={{color:"#f87171",fontSize:11}}>{addErr}</span>}
+    </div>
+
+    {/* Vendor table */}
+    {error&&<div style={{color:"#f87171",fontSize:12,marginBottom:8}}>{error}</div>}
+    {loading?<div style={{color:"#475569",fontSize:12,padding:"12px 0"}}>Loading vendors…</div>:(
+      <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <thead>
+            <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
+              {["VENDOR NO","VENDOR NAME","PHONE","ASSIGNED AS"].map((h,i)=>(
+                <th key={h} style={{padding:"8px 12px",textAlign:"left",color:"#94a3b8",
+                  fontWeight:700,fontSize:11,letterSpacing:1}}>{h}</th>
+              ))}
+              <th style={{padding:"8px 12px",width:180}}/>
+            </tr>
+          </thead>
+          <tbody>
+            {vendors.length===0&&<tr><td colSpan={5} style={{padding:"20px 12px",color:"#475569",textAlign:"center",fontSize:12}}>
+              No vendors found — connect to BC or add one above.
+            </td></tr>}
+            {vendors.map((v,idx)=>{
+              const isDk=v.No===dkVendorNo;
+              const isMo=v.No===mouserVendorNo;
+              const isAuto=norm(v.Name).includes('digikey')||norm(v.Name).includes('mouser');
+              return(<tr key={v.No} style={{borderBottom:`1px solid ${C.border}`,
+                background:idx%2===0?"#1a2235":"#162040"}}>
+                <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:12,whiteSpace:"nowrap"}}>{v.No}</td>
+                <td style={{padding:"7px 12px",color:"#e2e8f0",fontWeight:isAuto?600:400}}>{v.Name}</td>
+                <td style={{padding:"7px 12px",color:"#64748b",fontSize:12}}>{v.Phone_No||'—'}</td>
+                <td style={{padding:"7px 12px"}}>
+                  {isDk&&<span style={{background:"#1e3a5f",color:"#93c5fd",borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,marginRight:4}}>DigiKey</span>}
+                  {isMo&&<span style={{background:"#3b1f00",color:"#fbbf24",borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700}}>Mouser</span>}
+                </td>
+                <td style={{padding:"5px 10px"}}>
+                  <div style={{display:"flex",gap:5}}>
+                    <button onClick={()=>assignVendor(isDk?'':v.No,'dk')}
+                      title={isDk?"Remove DigiKey assignment":"Set as DigiKey vendor"}
+                      style={{background:isDk?"#1e3a5f":"#0f172a",color:isDk?"#93c5fd":"#475569",
+                        border:`1px solid ${isDk?"#3b82f6":"#334155"}`,borderRadius:4,
+                        padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:isDk?700:400}}>
+                      {isDk?"✓ DigiKey":"Set DK"}
+                    </button>
+                    <button onClick={()=>assignVendor(isMo?'':v.No,'mouser')}
+                      title={isMo?"Remove Mouser assignment":"Set as Mouser vendor"}
+                      style={{background:isMo?"#3b1f00":"#0f172a",color:isMo?"#fbbf24":"#475569",
+                        border:`1px solid ${isMo?"#d97706":"#334155"}`,borderRadius:4,
+                        padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:isMo?700:400}}>
+                      {isMo?"✓ Mouser":"Set Mouser"}
+                    </button>
+                  </div>
+                </td>
+              </tr>);
+            })}
+          </tbody>
+        </table>
+      </div>
+    )}
+  </div>);
+}
+
 // ── ITEMS TAB ──
 function ItemsTab({uid}){
   const [items,setItems]=useState([]);
@@ -15843,7 +15982,9 @@ function ItemsTab({uid}){
   const [error,setError]=useState(null);
   const [showFill,setShowFill]=useState(false);
   const [showVendorSync,setShowVendorSync]=useState(false);
+  const [showVendors,setShowVendors]=useState(false);
   const PAGE=100;
+  function closeAllPanels(){setShowFill(false);setShowVendorSync(false);setShowVendors(false);}
 
   useEffect(()=>{if(_bcToken)load(0,"");},[]);
 
@@ -15913,22 +16054,34 @@ function ItemsTab({uid}){
           style={{flex:1,...inp(),padding:"6px 10px",fontSize:13,fontFamily:"inherit"}}/>
         {loading&&<span style={{color:C.muted,fontSize:12,whiteSpace:"nowrap",alignSelf:"center"}}>searching…</span>}
       </div>
-      <button onClick={()=>{setShowFill(v=>!v);setShowVendorSync(false);}}
+      <button onClick={()=>{const o=!showFill;closeAllPanels();setShowFill(o);}}
         style={{background:showFill?"#7c3aed":"#1e3a5f",color:"#fff",
           border:`1px solid ${showFill?"#7c3aed":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
           fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
-        🏷 Fill Missing MFR Codes
+        🏷 Fill MFR Codes
       </button>
-      <button onClick={()=>{setShowVendorSync(v=>!v);setShowFill(false);}}
+      <button onClick={()=>{const o=!showVendors;closeAllPanels();setShowVendors(o);}}
+        style={{background:showVendors?"#0369a1":"#1e3a5f",color:"#fff",
+          border:`1px solid ${showVendors?"#0369a1":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
+          fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+        🏢 Vendors
+      </button>
+      <button onClick={()=>{const o=!showVendorSync;closeAllPanels();setShowVendorSync(o);}}
         style={{background:showVendorSync?"#0d9488":"#1e3a5f",color:"#fff",
           border:`1px solid ${showVendorSync?"#0d9488":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
           fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
-        🔄 Sync Vendor Pricing
+        🔄 Sync Pricing
       </button>
     </div>
-    {/* MFR Fill panel (inline, collapsible) */}
+    {/* MFR Fill panel */}
     {showFill&&<div style={{...card(),marginBottom:16}}>
+      <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>🏷 Fill Missing Manufacturer Codes</div>
       <BcMfrFillPanel/>
+    </div>}
+    {/* Vendors panel */}
+    {showVendors&&<div style={{...card(),marginBottom:16}}>
+      <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>🏢 BC Vendors</div>
+      <VendorsPanel uid={uid}/>
     </div>}
     {/* Vendor Pricing Sync panel */}
     {showVendorSync&&<div style={{...card(),marginBottom:16}}>
