@@ -13545,7 +13545,7 @@ function SettingsModal({uid,onClose,onNameChange}){
   const isEmailProvider=fbAuth.currentUser?.providerData?.some(p=>p.providerId==="password");
 
   return(
-    <div ref={settingsBackdropRef} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"16px"}} onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div ref={settingsBackdropRef} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"16px"}} onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{...card(),width:"100%",maxWidth:900,margin:"16px 0"}} onMouseDown={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
           <div style={{fontSize:36,fontWeight:900,flex:1}}>⚙ Settings</div>
