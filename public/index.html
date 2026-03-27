@@ -1904,7 +1904,7 @@ async function bcFuzzyLookup(partNumber){
   return{match:null,type:null,suggestions:[]};
 }
 
-async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUnitOfMeasureCode,vendorNo,genProdPostingGroup,inventoryPostingGroup}){
+async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUnitOfMeasureCode,vendorNo,genProdPostingGroup,inventoryPostingGroup,manufacturerCode}){
   if(!_bcToken)throw new Error("Not connected to Business Central");
   const compId=await bcGetCompanyId();
   if(!compId)throw new Error("Could not resolve BC company");
@@ -1934,6 +1934,7 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
       if(vendorNo)patch.Vendor_No=vendorNo;
       if(genProdPostingGroup)patch.Gen_Prod_Posting_Group=genProdPostingGroup;
       if(inventoryPostingGroup)patch.Inventory_Posting_Group=inventoryPostingGroup;
+      if(manufacturerCode)patch.Manufacturer_Code=manufacturerCode.slice(0,10);
       // Retry up to 3x — newly created items may not be indexed in OData immediately
       for(let attempt=0;attempt<3;attempt++){
         if(attempt>0)await new Promise(r=>setTimeout(r,1500));
@@ -1973,6 +1974,94 @@ async function bcPatchItemOData(itemNo,fields){
 // Map short UoM codes to BC-standard codes
 const BC_UOM_MAP={E:'EA',EA:'EA',PC:'PCS',PCS:'PCS',FT:'FT',M:'M',LB:'LB',KG:'KG',BX:'BOX',BOX:'BOX',RL:'ROLL',ROLL:'ROLL',PR:'PR',SET:'SET',PKG:'PKG',C:'C100',HR:'HOUR',HOUR:'HOUR'};
 function bcNormalizeUom(uom){if(!uom)return'';const u=(uom||'').toUpperCase().trim();return BC_UOM_MAP[u]||u;}
+
+// ── MANUFACTURER CODE MAP ──
+// Maps free-text manufacturer names (from BOM AI extraction) → BC Manufacturer Code (Code[10])
+// Add entries here as new manufacturers are encountered.
+const BC_MFR_MAP=[
+  // Allen-Bradley / Rockwell Automation
+  {code:'AB',terms:['allen-bradley','allen bradley','allen brad','rockwell automation','rockwell','a-b','ab ','a/b']},
+  // Schneider Electric / Square D / Modicon / Telemecanique
+  {code:'SE',terms:['schneider electric','schneider','square d','squared','squaredee','modicon','telemecanique','télémécanique','merlin gerin']},
+  // Siemens
+  {code:'SIEMENS',terms:['siemens']},
+  // ABB
+  {code:'ABB',terms:['abb']},
+  // Eaton / Cutler-Hammer / Moeller
+  {code:'EATON',terms:['eaton','cutler-hammer','cutler hammer','ch ','c-h','moeller','klockner moeller']},
+  // Hoffman / Pentair
+  {code:'HOFFMAN',terms:['hoffman','pentair','pentair/hoffman']},
+  // Rittal
+  {code:'RITTAL',terms:['rittal']},
+  // Hammond
+  {code:'HAMMOND',terms:['hammond','hammond mfg']},
+  // Saginaw
+  {code:'SAGINAW',terms:['saginaw','saginaw control','sce']},
+  // Phoenix Contact
+  {code:'PHOENIX',terms:['phoenix contact','phoenix','phoenixcontact']},
+  // Weidmuller
+  {code:'WEIDMULLER',terms:['weidmuller','weidmüller']},
+  // Turck
+  {code:'TURCK',terms:['turck','banner']},
+  // Omron
+  {code:'OMRON',terms:['omron']},
+  // Pilz
+  {code:'PILZ',terms:['pilz']},
+  // IDEC
+  {code:'IDEC',terms:['idec']},
+  // Panduit
+  {code:'PANDUIT',terms:['panduit']},
+  // Brady
+  {code:'BRADY',terms:['brady']},
+  // Hubbell / Kellems
+  {code:'HUBBELL',terms:['hubbell','kellems']},
+  // Leviton
+  {code:'LEVITON',terms:['leviton']},
+  // Belden
+  {code:'BELDEN',terms:['belden']},
+  // Lapp
+  {code:'LAPP',terms:['lapp','lapp group','ölflex','olflex']},
+  // Pepperl+Fuchs
+  {code:'PF',terms:['pepperl','pepperl+fuchs','pepperl fuchs']},
+  // Sick
+  {code:'SICK',terms:['sick','sick ag']},
+  // Keyence
+  {code:'KEYENCE',terms:['keyence']},
+  // Automation Direct
+  {code:'AUTOMDIR',terms:['automation direct','automationdirect','adirect']},
+  // Murr Elektronik
+  {code:'MURR',terms:['murr','murr elektronik']},
+  // Wago
+  {code:'WAGO',terms:['wago']},
+  // Leuze
+  {code:'LEUZE',terms:['leuze']},
+  // Cognex
+  {code:'COGNEX',terms:['cognex']},
+];
+
+/**
+ * Normalize a raw manufacturer string from BOM extraction to a BC Manufacturer Code.
+ * Returns the Code[10] string, or null if no match found.
+ * Unknown manufacturers are logged to Firestore for review.
+ */
+function bcNormalizeMfrCode(rawMfr,uid){
+  if(!rawMfr||!rawMfr.trim())return null;
+  const s=rawMfr.trim().toLowerCase();
+  for(const entry of BC_MFR_MAP){
+    for(const term of entry.terms){
+      if(s.includes(term)||term.includes(s))return entry.code;
+    }
+  }
+  // No match — log to Firestore review queue if uid available
+  if(uid&&_appCtx?.uid){
+    const path=`users/${_appCtx.uid}/config/unknownManufacturers`;
+    fbDb.doc(path).set({records:firebase.firestore.FieldValue.arrayUnion({
+      raw:rawMfr.trim(),firstSeen:Date.now()
+    })},{merge:true}).catch(()=>{});
+  }
+  console.warn(`bcNormalizeMfrCode: no BC code for "${rawMfr}" — logged for review`);
+  return null;
+}
 
 async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
   if(!_bcToken||!itemNo||!vendorNo)return{ok:true};
@@ -11515,6 +11604,7 @@ ${fullText.slice(0,8000)}`;
         vendorNo:newItemForm.vendor||undefined,
         genProdPostingGroup:newItemForm.genGroup||undefined,
         inventoryPostingGroup:newItemForm.invGroup||undefined,
+        manufacturerCode:bcNormalizeMfrCode(item.manufacturer)||undefined,
       });
       // Look up the newly created item to get its GUID
       const bcItem=await bcLookupItemForQuote(created.number);
