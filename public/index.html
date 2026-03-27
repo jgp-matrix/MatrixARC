@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.5";
+const APP_VERSION="v1.19.6";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16393,17 +16393,27 @@ INSTRUCTIONS:
         {(showGearMenu||showUserMenu||showBellMenu)&&<div style={{position:"fixed",inset:0,zIndex:590}} onClick={()=>{setShowGearMenu(false);setShowUserMenu(false);setShowBellMenu(false);}}/>}
       </div>
       {/* Horizontal tab bar — fixed below header */}
-      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:440,background:"#1e293b",borderBottom:"2px solid #334155",display:"flex",alignItems:"center",paddingLeft:20,height:44}}>
-        {[{id:"projects",label:"PROJECTS"},{id:"purchasing",label:"PURCHASING"},{id:"items",label:"ITEMS"}].map(t=>(
+      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:440,background:"#0f172a",borderBottom:"2px solid #334155",display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
+        {[{id:"projects",label:"PROJECTS"},{id:"purchasing",label:"PURCHASING"},{id:"items",label:"ITEMS"}].map(t=>{
+          const active=navTab===t.id;
+          return(
           <button key={t.id} onClick={()=>setNavTab(t.id)}
-            style={{background:"none",border:"none",cursor:"pointer",padding:"0 22px",height:44,
+            style={{cursor:"pointer",padding:"0 24px",
+              height:active?46:38,
               fontSize:12,fontWeight:700,letterSpacing:2,textTransform:"uppercase",
-              color:navTab===t.id?"#fff":"#94a3b8",
-              borderBottom:navTab===t.id?"2px solid #3b82f6":"2px solid transparent",
-              transition:"color 0.15s,border-color 0.15s"}}>
+              color:active?"#fff":"#64748b",
+              background:active?"#1e293b":"#0f172a",
+              borderTop:active?"2px solid #3b82f6":"1px solid #1e293b",
+              borderLeft:active?"1px solid #334155":"1px solid #1e293b",
+              borderRight:active?"1px solid #334155":"1px solid #1e293b",
+              borderBottom:active?"2px solid #1e293b":"1px solid #334155",
+              borderRadius:"8px 8px 0 0",
+              marginBottom:active?"-2px":0,
+              position:"relative",zIndex:active?1:0,
+              transition:"color 0.15s,height 0.15s"}}>
             {t.label}
-          </button>
-        ))}
+          </button>);
+        })}
       </div>
       {/* Content — padded below fixed header + tab bar */}
       <div style={{flex:1,paddingTop:122,display:"flex",height:"100vh",overflow:"hidden"}}>
