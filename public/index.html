@@ -13191,7 +13191,7 @@ function CodaleTestPanel({uid}){
           const errors=allResults.filter(r=>!r.found).length;
           setUpdateStatus(prev=>({...prev,scraped,errors}));
         }catch(e){
-          console.warn("Batch failed:",e.message);
+          console.error("CODALE BATCH ERROR:",e.code,e.message,e.details,JSON.stringify(e));
           batch.forEach(pn=>allResults.push({partNumber:pn,found:false,error:e.message}));
           setUpdateStatus(prev=>({...prev,scraped:allResults.length,errors:allResults.filter(r=>!r.found).length}));
         }
