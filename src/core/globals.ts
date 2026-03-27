@@ -155,8 +155,15 @@ export async function unsubscribePushNotifications(uid: string) {
 export async function loadBcConfig(companyId: string) {
   try {
     const d = await fbDb.doc(`companies/${companyId}/config/bcEnvironment`).get();
-    if (d.exists) _bcConfig = d.data();
-  } catch {}
+    if (d.exists) {
+      _bcConfig = d.data();
+      // Propagate config to service modules
+      const { setClientConfig } = await import('@/services/businessCentral/client');
+      const { setBcConfig } = await import('@/services/businessCentral/auth');
+      setClientConfig(_bcConfig);
+      setBcConfig(_bcConfig);
+    }
+  } catch (e) { console.error('loadBcConfig error:', e); }
 }
 
 // ─── BC Token ────────────────────────────────────────────────────────────────
@@ -168,16 +175,83 @@ export async function acquireBcToken(interactive = true): Promise<string | null>
   return token;
 }
 
-// ─── BC Operations (stubs for functions not yet extracted) ───────────────────
-export async function bcFetchCompanyInfo() { return null; }
-export async function bcProcessQueue() {}
-export async function bcLoadAllProjects() { return []; }
-export async function bcLoadAllCustomers() { return []; }
-export async function bcLoadAllProjectsOData() { return []; }
-export async function bcPatchJobOData(jobNo: string, fields: any) {}
-export async function bcDeleteProject(bcProjectId: string) {}
-export function bcEnqueue(type: string, params: any, description: string) {}
-export function _bcQGet(): any[] { return []; }
+// ─── BC Operations (delegating to service modules) ──────────────────────────
+export async function bcFetchCompanyInfo() {
+  try {
+    const mod = await import('@/services/businessCentral/projects');
+    const info = await mod.bcFetchCompanyInfo();
+    if (info) {
+      _appCtx.company = { name: info.name, logoUrl: _appCtx.company?.logoUrl || null, address: info.address, phone: info.phone };
+    }
+    return info;
+  } catch (e) { console.error('bcFetchCompanyInfo error:', e); return null; }
+}
+
+// BC offline queue — stored in localStorage
+const BC_QUEUE_KEY = '_arc_bc_queue';
+function _bcQueueLoad(): any[] {
+  try { return JSON.parse(localStorage.getItem(BC_QUEUE_KEY) || '[]'); } catch { return []; }
+}
+function _bcQueueSave(q: any[]) { localStorage.setItem(BC_QUEUE_KEY, JSON.stringify(q)); }
+
+export function bcEnqueue(type: string, params: any, description: string) {
+  const q = _bcQueueLoad();
+  q.push({ type, params, description, addedAt: Date.now(), retries: 0 });
+  _bcQueueSave(q);
+  if (_bcQueueCountSetter) _bcQueueCountSetter(q.length);
+}
+export function _bcQGet(): any[] { return _bcQueueLoad(); }
+
+export async function bcProcessQueue() {
+  const q = _bcQueueLoad();
+  if (!q.length) return;
+  const remaining: any[] = [];
+  for (const item of q) {
+    try {
+      // Process each queue item based on type
+      if (item.type === 'patchJob') {
+        const mod = await import('@/services/businessCentral/projects');
+        await mod.bcPatchJobOData(item.params.jobNo, item.params.fields);
+      } else {
+        // Unknown type — keep in queue
+        remaining.push(item);
+        continue;
+      }
+    } catch {
+      item.retries = (item.retries || 0) + 1;
+      if (item.retries < 5) remaining.push(item);
+    }
+  }
+  _bcQueueSave(remaining);
+  if (_bcQueueCountSetter) _bcQueueCountSetter(remaining.length);
+}
+
+export async function bcLoadAllProjects() {
+  try {
+    const mod = await import('@/services/businessCentral/projects');
+    return await mod.bcLoadAllProjects();
+  } catch (e) { console.error('bcLoadAllProjects error:', e); return []; }
+}
+export async function bcLoadAllCustomers() {
+  try {
+    const mod = await import('@/services/businessCentral/projects');
+    return await mod.bcLoadAllCustomers();
+  } catch (e) { console.error('bcLoadAllCustomers error:', e); return []; }
+}
+export async function bcLoadAllProjectsOData() {
+  try {
+    const mod = await import('@/services/businessCentral/projects');
+    return await mod.bcLoadAllProjectsOData();
+  } catch (e) { console.error('bcLoadAllProjectsOData error:', e); return []; }
+}
+export async function bcPatchJobOData(jobNo: string, fields: any) {
+  const mod = await import('@/services/businessCentral/projects');
+  return await mod.bcPatchJobOData(jobNo, fields);
+}
+export async function bcDeleteProject(bcProjectId: string) {
+  const mod = await import('@/services/businessCentral/projects');
+  return await mod.bcDeleteProject(bcProjectId);
+}
 
 // ─── NIQ (Knowledge Base) ────────────────────────────────────────────────────
 let _niqCache: any[] | null = null;
