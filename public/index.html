@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.18.163";
+const APP_VERSION="v1.18.174";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1574,12 +1574,12 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
     lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
       Line_Type:"Budget",Type:"Item",No:row.partNumber,
       Description:desc,
-      Quantity:row.qty||1,Unit_Price:row.unitPrice||0,Location_Code:"MAIN",
+      Quantity:(row.qty||1)*lineQty,Unit_Price:row.unitPrice||0,Location_Code:"MAIN",
       _row:row,
       _fallback:{[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
         Line_Type:"Budget",Type:"Text",
         Description:fallbackDesc,
-        Quantity:row.qty||1}});
+        Quantity:(row.qty||1)*lineQty}});
     lineNo+=10000;
   }
 
@@ -1910,7 +1910,7 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   if(!compId)throw new Error("Could not resolve BC company");
   const body={};
   if(number)body.number=number;
-  if(displayName)body.displayName=displayName;
+  if(displayName)body.displayName=displayName.slice(0,100);
   if(unitCost!=null&&unitCost!=="")body.unitCost=parseFloat(unitCost);
   if(itemCategoryCode)body.itemCategoryCode=itemCategoryCode;
   if(baseUnitOfMeasureCode)body.baseUnitOfMeasureCode=baseUnitOfMeasureCode;
@@ -2551,7 +2551,8 @@ async function buildRfqSupplierGroups(bom){
     if(!groupMap[vendorName])groupMap[vendorName]={vendorName,vendorNo,items:[]};
     groupMap[vendorName].items.push(item);
   }
-  return{groups:Object.values(groupMap).sort((a,b)=>a.vendorName.localeCompare(b.vendorName)),noItems:false};
+  const filtered=Object.values(groupMap).filter(g=>!/^matrix\s*systems/i.test(g.vendorName));
+  return{groups:filtered.sort((a,b)=>a.vendorName.localeCompare(b.vendorName)),noItems:!filtered.length};
 }
 
 function vendorCode(vendorName){
@@ -5267,10 +5268,10 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   useEffect(()=>()=>{if(bcDebounce.current)clearTimeout(bcDebounce.current);},[]);
 
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
-      <div style={{...card(),width:"100%",maxWidth:540,maxHeight:"90vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"16px"}} onClick={onClose}>
+      <div style={{...card(),width:"100%",maxWidth:540,margin:"16px 0"}} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-          <div style={{fontSize:18,fontWeight:700}}>Pricing Configuration</div>
+          <div style={{fontSize:36,fontWeight:900}}>Configuration</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,padding:"0 2px",lineHeight:1}}>✕</button>
         </div>
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Default contingencies applied when opening a new project</div>
@@ -7342,32 +7343,33 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       if(!b64)return;
       const pn=(targetRow?.partNumber||initialQuery||'').trim();
       const refLine=(targetRow?.itemNo||'').trim();
-      const refHint=refLine?`\nIMPORTANT: The BOM line/item number for this row is "${refLine}". Find this number in the first column (labeled ITEM, REF, LINE, #, or similar) — it uniquely identifies the row.`:'';
+      // Ask Haiku for TABLE boundaries + total row count + part number column position (easier than finding one row)
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-sonnet-4-5-20250514",max_tokens:200,messages:[{role:"user",content:[
+        body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:80,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This is a BOM (Bill of Materials) table from an electrical panel drawing. I need you to find the EXACT row for part number "${pn}".${refHint}
-
-INSTRUCTIONS:
-1. First, find the BOM table in the image. It usually has columns like ITEM, QTY, PART NUMBER/CATALOG NUMBER, DESCRIPTION, MFR.
-2. Scan through the rows to find the one matching the part number above${refLine?' (or matching item number '+refLine+')':''}.
-3. Measure PRECISELY: y_top = fraction from image top to the TOP EDGE of that row's horizontal gridline. y_bottom = fraction from image top to the BOTTOM EDGE of that row's horizontal gridline.
-4. pn_x = fraction from image left edge to the CENTER of the part number text in that row.
-
-Return ONLY JSON: {"found":true,"y_top":0.45,"y_bottom":0.47,"pn_x":0.60}
-If the part is not visible in this image: {"found":false}`}
-        ]}]})
+          {type:"text",text:`This drawing has a BOM table. Return JSON with: table_top (y fraction where FIRST data row starts), table_bottom (y fraction where LAST data row ends), total_rows (count of data rows), pn_x (x fraction of center of part number/catalog column). All fractions of image dimensions 0.0-1.0.`}
+        ]},{role:"assistant",content:[{type:"text",text:"{"}]}]})
       });
       const data=await resp.json();
-      const text=data.content?.[0]?.text||'';
+      const rawText=data.content?.[0]?.text||'';
+      const text='{'+rawText;
       const m=text.match(/\{[\s\S]*?\}/);
       if(m){
         const r=JSON.parse(m[0]);
-        if(r.found&&r.y_top!=null&&r.y_bottom!=null){
-          await cropRowFromImage(dataUrl,r.y_top,r.y_bottom,r.pn_x);
-        }
+        const itemNum=parseInt(refLine)||0;
+        const totalRows=r.total_rows||1;
+        const tTop=r.table_top||0.1;
+        const tBot=r.table_bottom||0.9;
+        const rowHeight=(tBot-tTop)/totalRows;
+        // Item number maps directly to row index — nudge down half a row to center on the row
+        const rowIdx=Math.max(0,itemNum-0.5);
+        const y_top=tTop+(rowIdx*rowHeight);
+        const y_bottom=y_top+rowHeight;
+        // Clamp pn_x — varies by customer; use AI value but cap range
+        const pnX=r.pn_x!=null?Math.min(0.60,Math.max(0.35,r.pn_x)):0.50;
+        await cropRowFromImage(dataUrl,y_top,y_bottom,pnX);
       }
     }catch(e){console.warn('locateInDrawing:',e);}
     finally{setLocating(false);}
@@ -8541,6 +8543,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const updated={...panel,lineQty:q};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
+    // Auto-resync planning lines to BC when panel qty changes
+    if(bcProjectNumber&&_bcToken&&(updated.bom||[]).length>0){
+      bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated).then(result=>{
+        if(result.failed?.length>0)console.warn("LineQty BC sync: "+result.failed.length+" items failed");
+        else console.log("LineQty BC sync: planning lines updated for qty="+q);
+      }).catch(e=>console.warn("LineQty BC sync failed:",e));
+    }
   }
   function savePanelName(){
     if(!draftName.trim())return;
@@ -8830,7 +8839,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
-      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost,priceSource:"bc",priceDate:Date.now()};
+      const hasCost=bcItem.unitCost!=null&&bcItem.unitCost>0;
+      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost,...(hasCost?{priceSource:"bc",priceDate:Date.now()}:{})};
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — don't block commit
@@ -13120,6 +13130,347 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   );
 }
 
+// ── CODALE PRICE PANEL ──
+function CodaleTestPanel({uid}){
+  const [parts,setParts]=useState("25B-D4P0N114, 5069-OB16, 1734-AENTR");
+  const [results,setResults]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState(null);
+  // Full update state
+  const [updating,setUpdating]=useState(false);
+  const [updateStatus,setUpdateStatus]=useState(null); // {phase,detail,scraped,written,total,errors}
+
+  async function runTest(){
+    setLoading(true);setError(null);setResults(null);
+    try{
+      const pns=parts.split(",").map(s=>s.trim()).filter(Boolean);
+      if(!pns.length){setError("Enter at least one part number");setLoading(false);return;}
+      const fn=firebase.functions().httpsCallable("codaleTestScrape",{timeout:300000});
+      const r=await fn({partNumbers:pns});
+      setResults(r.data.results||[]);
+    }catch(e){setError(e.message||"Scrape failed");}
+    setLoading(false);
+  }
+
+  async function runFullUpdate(){
+    if(!_bcToken){setError("Connect to Business Central first");return;}
+    const _syncStart=Date.now();
+    setUpdating(true);setError(null);setResults(null);setUpdateStatus({phase:"Fetching Codale items from BC…",detail:"",scraped:0,written:0,total:0,errors:0});
+    try{
+      // Step 1: Fetch all items with Vendor_No = V00165 from BC via OData ItemCard
+      const allItems=[];
+      let skip=0;
+      while(true){
+        const url=`${BC_ODATA_BASE}/ItemCard?$filter=Vendor_No eq 'V00165'&$select=No,Description,Vendor_No&$top=100&$skip=${skip}`;
+        const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(!r.ok)break;
+        const d=await r.json();
+        const batch=d.value||[];
+        if(!batch.length)break;
+        allItems.push(...batch.map(i=>({number:i.No,description:i.Description||""})));
+        skip+=100;
+        if(batch.length<100)break;
+      }
+      if(!allItems.length){setError("No items found with vendor V00165 in BC");setUpdating(false);setUpdateStatus(null);return;}
+      setUpdateStatus({phase:`Found ${allItems.length} Codale items. Scraping prices…`,detail:"This may take several minutes.",scraped:0,written:0,total:allItems.length,errors:0});
+
+      // Step 2: Scrape in batches of 5 via Cloud Function
+      const BATCH=5;
+      const allResults=[];
+      for(let i=0;i<allItems.length;i+=BATCH){
+        const batch=allItems.slice(i,i+BATCH).map(it=>it.number);
+        const batchNum=Math.floor(i/BATCH)+1;
+        const totalBatches=Math.ceil(allItems.length/BATCH);
+        setUpdateStatus(prev=>({...prev,phase:`Scraping batch ${batchNum}/${totalBatches}…`,detail:batch.join(", ")}));
+        try{
+          const fn=firebase.functions().httpsCallable("codaleTestScrape",{timeout:300000});
+          const r=await fn({partNumbers:batch});
+          console.log("CODALE BATCH RESPONSE:",JSON.stringify(r.data));
+          const batchResults=r.data.results||[];
+          allResults.push(...batchResults);
+          const scraped=allResults.length;
+          const errors=allResults.filter(r=>!r.found).length;
+          setUpdateStatus(prev=>({...prev,scraped,errors}));
+        }catch(e){
+          console.error("CODALE BATCH ERROR:",e.code,e.message,e.details,JSON.stringify(e));
+          batch.forEach(pn=>allResults.push({partNumber:pn,found:false,error:e.message}));
+          setUpdateStatus(prev=>({...prev,scraped:allResults.length,errors:allResults.filter(r=>!r.found).length}));
+        }
+      }
+
+      // Step 3: Write prices to BC Purchase Prices
+      const found=allResults.filter(r=>r.found&&r.price>0);
+      setUpdateStatus(prev=>({...prev,phase:`Writing ${found.length} prices to BC…`,detail:""}));
+      let written=0;
+      for(const r of found){
+        try{
+          await bcPushPurchasePrice(r.partNumber,"V00165",r.price,Date.now(),r.uom||"EA");
+          written++;
+          setUpdateStatus(prev=>({...prev,written}));
+        }catch(e){
+          console.warn("BC price write failed:",r.partNumber,e.message);
+        }
+      }
+
+      const finalErrors=allResults.filter(r=>!r.found).length;
+      setUpdateStatus({phase:"Complete",detail:`Scraped ${allResults.length} items, ${found.length} prices found, ${written} written to BC.`,scraped:allResults.length,written,total:allItems.length,errors:finalErrors});
+      setResults(allResults);
+      // Save sync log to Firestore
+      try{
+        await fbDb.collection(`users/${uid}/pricingSyncLog`).add({
+          vendor:"Codale",runAt:Date.now(),totalItems:allItems.length,
+          found:found.length,errors:finalErrors,writtenToBC:written,
+          durationMs:Date.now()-_syncStart,
+          results:allResults.map(r=>({partNumber:r.partNumber,found:!!r.found,price:r.price||null,uom:r.uom||null,availability:r.availability||null,manufacturer:r.manufacturer||null,productName:r.productName||null,error:r.error||null}))
+        });
+      }catch(e){console.warn("Failed to save pricing sync log:",e);}
+    }catch(e){setError(e.message||"Update failed");}
+    setUpdating(false);
+  }
+
+  return(<div>
+    {/* Test scrape */}
+    <input value={parts} onChange={e=>setParts(e.target.value)} placeholder="Part numbers, comma-separated"
+      style={{width:"100%",boxSizing:"border-box",background:"#111",border:`1px solid #333`,borderRadius:6,padding:"8px 10px",color:"#e2e8f0",fontSize:12,marginBottom:8,fontFamily:"inherit"}}/>
+    <div style={{display:"flex",gap:8,marginBottom:10}}>
+      <button onClick={runTest} disabled={loading||updating}
+        style={{background:loading?"#334155":"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:loading?"wait":"pointer",opacity:loading?0.7:1,fontFamily:"inherit"}}>
+        {loading?"Scraping…":"Test Scrape"}
+      </button>
+      <button onClick={runFullUpdate} disabled={loading||updating}
+        style={{background:updating?"#334155":"#16a34a",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:updating?"wait":"pointer",opacity:updating?0.7:1,fontFamily:"inherit"}}>
+        {updating?"Updating…":"Update All Codale Prices"}
+      </button>
+    </div>
+    {/* Progress */}
+    {updateStatus&&<div style={{background:"rgba(37,99,235,0.08)",border:"1px solid rgba(37,99,235,0.25)",borderRadius:6,padding:"8px 10px",marginBottom:8,fontSize:12}}>
+      <div style={{fontWeight:600,color:"#60a5fa"}}>{updateStatus.phase}</div>
+      {updateStatus.detail&&<div style={{color:"#94a3b8",marginTop:2}}>{updateStatus.detail}</div>}
+      {updateStatus.total>0&&<div style={{color:"#94a3b8",marginTop:4,display:"flex",gap:12}}>
+        <span>Scraped: {updateStatus.scraped}/{updateStatus.total}</span>
+        <span style={{color:"#22c55e"}}>Written: {updateStatus.written}</span>
+        {updateStatus.errors>0&&<span style={{color:"#ef4444"}}>Errors: {updateStatus.errors}</span>}
+      </div>}
+    </div>}
+    {error&&<div style={{color:"#ef4444",fontSize:12,marginTop:8}}>{error}</div>}
+    {results&&<div style={{marginTop:10,maxHeight:400,overflowY:"auto"}}>
+      {results.map((r,i)=><div key={i} style={{background:r.found?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",border:`1px solid ${r.found?"rgba(34,197,94,0.25)":"rgba(239,68,68,0.25)"}`,borderRadius:6,padding:"8px 10px",marginBottom:4,fontSize:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontWeight:700,color:r.found?"#22c55e":"#ef4444"}}>{r.partNumber}</span>
+          {r.found?<span style={{color:"#22c55e",fontWeight:700}}>${r.price.toLocaleString("en-US",{minimumFractionDigits:2})}/{r.uom||"EA"}</span>
+          :<span style={{color:"#94a3b8"}}>{r.error||"Not found"}{r.debug&&<div style={{color:"#475569",fontSize:10,marginTop:2,whiteSpace:"pre-wrap",maxHeight:60,overflow:"hidden"}}>{r.debug}</div>}</span>}
+          {r.availability&&<span style={{color:"#64748b",fontSize:11,marginLeft:"auto"}}>{r.availability}</span>}
+        </div>
+      </div>)}
+    </div>}
+  </div>);
+}
+
+// ── MOUSER TEST PANEL ──
+function MouserTestPanel({uid}){
+  const [parts,setParts]=useState("");
+  const [results,setResults]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState(null);
+
+  async function runTest(){
+    setLoading(true);setError(null);setResults(null);
+    try{
+      const pns=parts.split(",").map(s=>s.trim()).filter(Boolean);
+      if(!pns.length){setError("Enter at least one part number");setLoading(false);return;}
+      const fn=firebase.functions().httpsCallable("mouserSearch",{timeout:120000});
+      const r=await fn({partNumbers:pns});
+      setResults(r.data.results||[]);
+    }catch(e){setError(e.message||"Search failed");}
+    setLoading(false);
+  }
+
+  return(<div>
+    <input value={parts} onChange={e=>setParts(e.target.value)} placeholder="Part numbers, comma-separated"
+      style={{width:"100%",boxSizing:"border-box",background:"#111",border:`1px solid #333`,borderRadius:6,padding:"8px 10px",color:"#e2e8f0",fontSize:12,marginBottom:8,fontFamily:"inherit"}}/>
+    <button onClick={runTest} disabled={loading}
+      style={{background:loading?"#334155":"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:loading?"wait":"pointer",opacity:loading?0.7:1,fontFamily:"inherit"}}>
+      {loading?"Searching…":"Search Mouser"}
+    </button>
+    {error&&<div style={{color:"#ef4444",fontSize:12,marginTop:8}}>{error}</div>}
+    {results&&<div style={{marginTop:10,maxHeight:400,overflowY:"auto"}}>
+      {results.map((r,i)=><div key={i} style={{background:r.found?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",border:`1px solid ${r.found?"rgba(34,197,94,0.25)":"rgba(239,68,68,0.25)"}`,borderRadius:6,padding:"8px 10px",marginBottom:4,fontSize:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <span style={{fontWeight:700,color:r.found?"#22c55e":"#ef4444"}}>{r.partNumber}</span>
+          {r.found?<>
+            <span style={{color:"#22c55e",fontWeight:700}}>${r.price.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+            {r.manufacturer&&<span style={{color:"#64748b"}}>| {r.manufacturer}</span>}
+            {r.availability&&<span style={{color:"#64748b"}}>| {r.availability}</span>}
+            {r.leadTime&&<span style={{color:"#64748b"}}>| Lead: {r.leadTime}</span>}
+          </>:<span style={{color:"#94a3b8"}}>{r.error||"Not found"}</span>}
+        </div>
+        {r.found&&r.description&&<div style={{color:"#475569",fontSize:11,marginTop:2}}>{r.description}</div>}
+        {r.found&&r.priceBreaks&&r.priceBreaks.length>1&&<div style={{color:"#475569",fontSize:10,marginTop:2}}>
+          Price breaks: {r.priceBreaks.map(pb=>`${pb.quantity}+: $${pb.price.toFixed(2)}`).join(" | ")}
+        </div>}
+      </div>)}
+    </div>}
+  </div>);
+}
+
+// ── PRICING REPORTS MODAL ──
+function PricingReportsModal({uid,onClose}){
+  const [runs,setRuns]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [expandedId,setExpandedId]=useState(null);
+
+  useEffect(()=>{
+    fbDb.collection(`users/${uid}/pricingSyncLog`).orderBy("runAt","desc").limit(50).get()
+      .then(snap=>{
+        const docs=[];
+        snap.forEach(d=>docs.push({id:d.id,...d.data()}));
+        setRuns(docs);
+      }).catch(e=>console.warn("Failed to load sync log:",e))
+      .finally(()=>setLoading(false));
+  },[uid]);
+
+  function exportRunCSV(run){
+    const header=["Part Number","Vendor","Price","UOM","Availability","Manufacturer","Product Name","Status","Error","Sync Date"];
+    const dateStr=new Date(run.runAt).toLocaleDateString();
+    const rows=(run.results||[]).map(r=>[
+      r.partNumber, run.vendor, r.found?r.price:"", r.uom||"", (r.availability||"").replace(/[\n\r,]/g," "),
+      r.manufacturer||"", (r.productName||"").replace(/,/g," "), r.found?"Found":"Error", r.error||"", dateStr
+    ]);
+    const csv=[header,...rows].map(r=>r.map(c=>`"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a=document.createElement("a");
+    a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+    a.download=`${run.vendor}_pricing_${new Date(run.runAt).toISOString().slice(0,10)}.csv`;
+    a.click();
+  }
+
+  function exportAllLatest(){
+    // Aggregate most recent price per part across all runs
+    const latest={};
+    // runs are already sorted by runAt desc — first occurrence wins (most recent)
+    runs.forEach(run=>{
+      (run.results||[]).forEach(r=>{
+        if(r.found&&r.price&&!latest[r.partNumber+"_"+run.vendor]){
+          latest[r.partNumber+"_"+run.vendor]={partNumber:r.partNumber,vendor:run.vendor,price:r.price,uom:r.uom||"EA",availability:r.availability||"",manufacturer:r.manufacturer||"",productName:r.productName||"",date:new Date(run.runAt).toLocaleDateString()};
+        }
+      });
+    });
+    const rows=Object.values(latest).sort((a,b)=>a.partNumber.localeCompare(b.partNumber));
+    const header=["Part Number","Vendor","Price","UOM","Availability","Manufacturer","Product Name","Last Sync Date"];
+    const csv=[header,...rows.map(r=>[r.partNumber,r.vendor,r.price,r.uom,(r.availability||"").replace(/[\n\r,]/g," "),r.manufacturer,(r.productName||"").replace(/,/g," "),r.date])].map(r=>r.map(c=>`"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a=document.createElement("a");
+    a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+    a.download=`all_latest_pricing_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+  }
+
+  function fmtDuration(ms){
+    if(!ms)return"—";
+    const s=Math.round(ms/1000);
+    if(s<60)return s+"s";
+    const m=Math.floor(s/60),rs=s%60;
+    return m+"m "+rs+"s";
+  }
+
+  return(<div style={{position:"fixed",inset:0,zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.7)"}} onClick={onClose}>
+    <div style={{background:"#0f0f1a",borderRadius:12,border:`1px solid ${C.border}`,width:800,maxWidth:"95vw",maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
+      {/* Header */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 18px",borderBottom:`1px solid ${C.border}`}}>
+        <div style={{fontSize:15,fontWeight:700,color:"#e2e8f0"}}>Pricing Sync Reports</div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {runs.length>0&&<button onClick={exportAllLatest} style={{background:"#16a34a",color:"#fff",border:"none",borderRadius:6,padding:"6px 14px",fontSize:11,fontWeight:600,cursor:"pointer"}}>Export All Latest Prices (CSV)</button>}
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer",padding:"2px 6px"}}>✕</button>
+        </div>
+      </div>
+      {/* Body */}
+      <div style={{flex:1,overflowY:"auto",padding:"14px 18px"}}>
+        {loading?<div style={{color:C.muted,fontSize:13,padding:20,textAlign:"center"}}>Loading sync history…</div>
+        :runs.length===0?<div style={{color:C.muted,fontSize:13,padding:20,textAlign:"center"}}>No pricing sync runs yet. Run a Codale or Mouser update to see results here.</div>
+        :<div>
+          {runs.map(run=>{
+            const expanded=expandedId===run.id;
+            const dt=new Date(run.runAt);
+            return(<div key={run.id} style={{marginBottom:8,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+              {/* Run summary row */}
+              <div onClick={()=>setExpandedId(expanded?null:run.id)} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 14px",cursor:"pointer",flexWrap:"wrap"}}>
+                <span style={{fontWeight:700,color:run.vendor==="Codale"?"#22d3ee":"#a78bfa",fontSize:12,minWidth:60}}>{run.vendor}</span>
+                <span style={{color:"#94a3b8",fontSize:12}}>{dt.toLocaleDateString()} {dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
+                <span style={{color:"#22c55e",fontSize:12,fontWeight:600}}>{run.found} found</span>
+                {run.errors>0&&<span style={{color:"#ef4444",fontSize:12,fontWeight:600}}>{run.errors} errors</span>}
+                <span style={{color:"#64748b",fontSize:12}}>{run.totalItems} total</span>
+                {run.writtenToBC>0&&<span style={{color:"#60a5fa",fontSize:12}}>→ {run.writtenToBC} written to BC</span>}
+                <span style={{color:"#475569",fontSize:11}}>{fmtDuration(run.durationMs)}</span>
+                <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center"}}>
+                  <button onClick={e=>{e.stopPropagation();exportRunCSV(run);}} style={{background:"#334155",color:"#e2e8f0",border:"none",borderRadius:4,padding:"4px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>CSV</button>
+                  <span style={{color:"#475569",fontSize:14}}>{expanded?"▲":"▼"}</span>
+                </div>
+              </div>
+              {/* Expanded results */}
+              {expanded&&<div style={{borderTop:`1px solid ${C.border}`,padding:"8px 14px",maxHeight:400,overflowY:"auto"}}>
+                {(run.results||[]).length===0?<div style={{color:C.muted,fontSize:12}}>No detailed results stored.</div>
+                :(run.results||[]).map((r,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",borderBottom:`1px solid rgba(255,255,255,0.03)`,fontSize:12,flexWrap:"wrap"}}>
+                  <span style={{fontWeight:700,color:r.found?"#22c55e":"#ef4444",minWidth:140}}>{r.partNumber}</span>
+                  {r.found?<>
+                    <span style={{color:"#22c55e",fontWeight:700,minWidth:80}}>${Number(r.price).toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+                    <span style={{color:"#64748b"}}>{r.uom||"EA"}</span>
+                    {r.manufacturer&&<span style={{color:"#475569"}}>| {r.manufacturer}</span>}
+                    {r.productName&&<span style={{color:"#475569",fontSize:11}}>{r.productName}</span>}
+                  </>:<span style={{color:"#94a3b8"}}>{r.error||"Not found"}</span>}
+                </div>)}
+              </div>}
+            </div>);
+          })}
+        </div>}
+      </div>
+    </div>
+  </div>);
+}
+
+// ── DIGIKEY TEST PANEL ──
+function DigikeyTestPanel({uid}){
+  const [parts,setParts]=useState("LM358,25B-D4P0N114");
+  const [results,setResults]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState(null);
+
+  async function runTest(){
+    setLoading(true);setError(null);setResults(null);
+    try{
+      const pns=parts.split(",").map(s=>s.trim()).filter(Boolean);
+      if(!pns.length){setError("Enter at least one part number");setLoading(false);return;}
+      const fn=firebase.functions().httpsCallable("digikeySearch",{timeout:120000});
+      const r=await fn({partNumbers:pns});
+      setResults(r.data.results||[]);
+    }catch(e){setError(e.message||"Search failed");}
+    setLoading(false);
+  }
+
+  return(<div>
+    <input value={parts} onChange={e=>setParts(e.target.value)} placeholder="Part numbers, comma-separated"
+      style={{width:"100%",boxSizing:"border-box",background:"#111",border:`1px solid #333`,borderRadius:6,padding:"8px 10px",color:"#e2e8f0",fontSize:12,marginBottom:8,fontFamily:"inherit"}}/>
+    <button onClick={runTest} disabled={loading}
+      style={{background:loading?"#334155":"#f97316",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:loading?"wait":"pointer",opacity:loading?0.7:1,fontFamily:"inherit"}}>
+      {loading?"Searching…":"Test DigiKey Search"}
+    </button>
+    {error&&<div style={{color:"#ef4444",fontSize:12,marginTop:8}}>{error}</div>}
+    {results&&<div style={{marginTop:10,maxHeight:400,overflowY:"auto"}}>
+      {results.map((r,i)=><div key={i} style={{background:r.found?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",border:`1px solid ${r.found?"rgba(34,197,94,0.25)":"rgba(239,68,68,0.25)"}`,borderRadius:6,padding:"8px 10px",marginBottom:4,fontSize:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <span style={{fontWeight:700,color:r.found?"#22c55e":"#ef4444"}}>{r.partNumber}</span>
+          {r.found?<>
+            <span style={{color:"#22c55e",fontWeight:700}}>${r.price.toLocaleString("en-US",{minimumFractionDigits:2})}</span>
+            {r.manufacturer&&<span style={{color:"#64748b"}}>| {r.manufacturer}</span>}
+            {r.availability&&<span style={{color:"#64748b"}}>| {r.availability}</span>}
+          </>:<span style={{color:"#94a3b8"}}>{r.error||"Not found"}</span>}
+        </div>
+        {r.found&&r.description&&<div style={{color:"#475569",fontSize:11,marginTop:2}}>{r.description}</div>}
+        {r.found&&r.priceBreaks&&r.priceBreaks.length>1&&<div style={{color:"#475569",fontSize:10,marginTop:2}}>
+          Price breaks: {r.priceBreaks.map(pb=>`${pb.quantity}+: $${pb.price.toFixed(2)}`).join(" | ")}
+        </div>}
+      </div>)}
+    </div>}
+  </div>);
+}
+
 // ── SETTINGS MODAL ──
 function SettingsModal({uid,onClose,onNameChange}){
   const [key,setKey]=useState("");
@@ -13138,6 +13489,9 @@ function SettingsModal({uid,onClose,onNameChange}){
   const [pwOk,setPwOk]=useState(false);
   const [resetSent,setResetSent]=useState(false);
   const [graphStatus,setGraphStatus]=useState("checking"); // checking|authorized|unauthorized|loading
+  const [showPricingReports,setShowPricingReports]=useState(false);
+  const settingsBackdropRef=useRef(null);
+  useEffect(()=>{if(settingsBackdropRef.current)settingsBackdropRef.current.scrollTop=0;},[]);
 
   // BC Environment config
   const [bcEnvName,setBcEnvName]=useState(_bcConfig.env);
@@ -13237,13 +13591,13 @@ function SettingsModal({uid,onClose,onNameChange}){
   const isEmailProvider=fbAuth.currentUser?.providerData?.some(p=>p.providerId==="password");
 
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
-      <div style={{...card(),width:"100%",maxWidth:460}} onClick={e=>e.stopPropagation()}>
+    <div ref={settingsBackdropRef} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"16px"}} onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{...card(),width:"100%",maxWidth:900,margin:"16px 0"}} onMouseDown={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
-          <div style={{fontSize:18,fontWeight:700,flex:1}}>⚙ Settings</div>
+          <div style={{fontSize:36,fontWeight:900,flex:1}}>⚙ Settings</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
         </div>
-        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>ARC configuration</div>
+        <div style={{marginBottom:20}}/>
 
         {/* Account */}
         <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
@@ -13362,6 +13716,45 @@ function SettingsModal({uid,onClose,onNameChange}){
           )}
         </div>}
 
+        {/* Codale Price Scraper */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Codale Price Scraper</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
+            Test price lookup from Codale Electric Supply. Enter part numbers (comma-separated) to fetch live pricing.
+          </div>
+          <CodaleTestPanel uid={uid}/>
+        </div>
+
+        {/* Mouser API */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Mouser Electronics API</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
+            Real-time pricing and availability via Mouser's official API. No login needed — uses API key.
+          </div>
+          <MouserTestPanel uid={uid}/>
+        </div>
+
+        {/* DigiKey API */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>DigiKey API</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
+            Real-time pricing and availability via DigiKey's Product Information V4 API.
+          </div>
+          <DigikeyTestPanel uid={uid}/>
+        </div>
+
+        {/* Pricing Reports */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Pricing Sync Reports</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
+            View history of all pricing sync runs (Codale, Mouser) with detailed results and CSV export.
+          </div>
+          <button onClick={()=>setShowPricingReports(true)} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+            View Pricing Reports
+          </button>
+        </div>
+        {showPricingReports&&<PricingReportsModal uid={uid} onClose={()=>setShowPricingReports(false)}/>}
+
         <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
           <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:12,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Change Password</label>
           {!isEmailProvider?(
@@ -13386,6 +13779,11 @@ function SettingsModal({uid,onClose,onNameChange}){
               </button>
             </form>
           )}
+        </div>
+
+        {/* Close button at bottom */}
+        <div style={{marginTop:24,textAlign:"center"}}>
+          <button onClick={onClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
         </div>
       </div>
     </div>
