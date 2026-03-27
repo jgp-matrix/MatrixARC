@@ -2,17 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { C, btn } from '@/core/constants';
 import { fbDb, apiCall } from '@/core/globals';
 
-// ─── Stubs (not yet extracted) ───────────────────────────────────────────────
+// ─── Wired implementations ──────────────────────────────────────────────────
+import { loadCPD } from '@/services/cpd';
+
 function isBomQuoteAnalysis(query: string): boolean {
   return /quote\s*analysis|compare.*quote|quote.*compare/i.test(query);
-}
-async function loadCPD(uid: string): Promise<any> {
-  try {
-    const snap = await fbDb.collection(`users/${uid}/cpd`).get();
-    if (snap.empty) return { products: [], panels: [] };
-    const all = snap.docs.map((d: any) => d.data());
-    return all[0] || { products: [], panels: [] };
-  } catch { return { products: [], panels: [] }; }
 }
 
 function CPDSearchModal({query,uid,panel,onClose,onImportBom}: any){

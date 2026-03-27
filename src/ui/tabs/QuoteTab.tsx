@@ -2,25 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { C, btn, inp, card } from '@/core/constants';
 import { _pricingConfig, _appCtx } from '@/core/globals';
 
-// ─── Inline stubs for functions not yet extracted ────────────────────────────
-
-function computeLaborEstimate(project: any): any {
-  // stub — real implementation lives in monolith
-  return { totalHours: 0, totalCost: 0 };
-}
-
-function isPanelBudgetary(panel: any): boolean {
-  // stub — real implementation lives in monolith
-  const bom = panel.bom || [];
-  return bom.some((r: any) => !r.priceSource || r.priceSource === 'ai');
-}
-
-function computeBomHash(panels: any[]): string {
-  // stub — real implementation lives in monolith
-  try {
-    return JSON.stringify((panels || []).map((p: any) => (p.bom || []).map((r: any) => r.partNumber + ':' + r.qty + ':' + r.unitPrice))).slice(0, 64);
-  } catch { return ''; }
-}
+// ─── Wired implementations ──────────────────────────────────────────────────
+import { computeLaborEstimate } from '@/bom/laborEstimator';
+import { isPanelBudgetary, computeBomHash } from '@/core/helpers';
 
 // ─── QuoteTab Component ──────────────────────────────────────────────────────
 

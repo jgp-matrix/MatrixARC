@@ -24,16 +24,11 @@ import { bcCreateProject, bcSyncPanelPlanningLines, bcCreatePanelTaskStructure }
 import { bcListVendors, bcGetVendorEmail } from '@/services/businessCentral/vendors';
 import { computeBomHash } from '@/core/helpers';
 
-// ─── Stub functions not yet extracted ────────────────────────────────────────
-function migrateProject(p: any): any { return p.panels ? p : { ...p, panels: [] }; }
-function isReadOnly(): boolean { return false; }
+// ─── Wired implementations ──────────────────────────────────────────────────
+import { migrateProject, isReadOnly, onProjectUpdated } from '@/core/globals';
 import { buildRfqSupplierGroups, getNextQuoteNumber } from '@/services/rfq';
-// TODO: onProjectUpdated — extract to dedicated module
-function onProjectUpdated(projectId: string, cb: (p: any) => void): () => void { return () => {}; }
-async function bcPatchItemOData(partNumber: string, patch: any): Promise<void> {}
-
-// Firebase FieldValue stub
-const firebase = { firestore: { FieldValue: { arrayUnion: (...args: any[]) => args } } };
+import { patchItemOData as bcPatchItemOData } from '@/services/businessCentral/items';
+import firebase from 'firebase/compat/app';
 
 export default function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,autoOpenPortal,onPortalOpened}: any){
   const [project,setProject]=useState(()=>migrateProject(init));

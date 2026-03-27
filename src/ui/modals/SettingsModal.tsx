@@ -11,8 +11,8 @@ import { getCompanyId as bcGetCompanyId } from '@/services/businessCentral/clien
 
 import { tryGraphTokenSilent, acquireGraphToken } from '@/services/graphEmail';
 
-// ── Inline stubs for functions not yet extracted ──
-function isAdmin(): boolean { return !!_appCtx.companyId && _appCtx.role === "admin"; }
+// ─── Wired implementations ──────────────────────────────────────────────────
+import { isAdmin } from '@/core/globals';
 
 export default function SettingsModal({uid,onClose,onNameChange}: any){
   const [key,setKey]=useState("");

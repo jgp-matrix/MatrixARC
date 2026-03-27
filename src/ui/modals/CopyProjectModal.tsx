@@ -2,10 +2,7 @@ import { useState } from 'react';
 import ReactDOM from 'react-dom';
 import { C } from '@/core/constants';
 
-// Stub — copyProject not yet extracted
-async function copyProject(_uid: any, _project: any, _onProgress: any): Promise<any> {
-  throw new Error('copyProject not yet migrated');
-}
+import { copyProject } from '@/core/globals';
 
 function CopyProjectModal({project,uid,onCopied,onClose}: any){
   const [name,setName]=useState((project.name||"")+" (Copy)");

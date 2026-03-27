@@ -157,6 +157,88 @@ export async function loadCorrectionDB(uid: string): Promise<PartCorrection[]> {
  * Guess the correction type based on comparing original and new part numbers.
  * Returns 'format' if same chars different formatting, 'extraction' if very different.
  */
+// ─── Page Type Learning Database ──────────────────────────────────────────────
+
+let _pageTypeLearningCache: any[] | null = null;
+
+function _ptlPath(uid: string): string {
+  return (appCtx().configPath || `users/${uid}/config`) + '/page_type_learning';
+}
+
+/**
+ * Load page type learning examples from Firestore.
+ */
+export async function loadPageTypeLearning(uid: string): Promise<any[]> {
+  if (_pageTypeLearningCache) return _pageTypeLearningCache;
+  try {
+    const d = await fbDb().doc(_ptlPath(uid)).get();
+    _pageTypeLearningCache = d.exists ? (d.data().examples || []) : [];
+  } catch {
+    _pageTypeLearningCache = [];
+  }
+  return _pageTypeLearningCache!;
+}
+
+/**
+ * Save a page type learning entry to Firestore.
+ */
+export async function savePageTypeLearningEntry(uid: string, entry: any): Promise<void> {
+  const examples = await loadPageTypeLearning(uid);
+  examples.push({ ...entry, savedAt: Date.now() });
+  _pageTypeLearningCache = examples;
+  await fbDb().doc(_ptlPath(uid)).set({ examples }).catch(() => {});
+}
+
+// ─── Layout Learning Database ────────────────────────────────────────────────
+
+let _layoutLearningCache: any[] | null = null;
+
+function _llPath(uid: string): string {
+  return (appCtx().configPath || `users/${uid}/config`) + '/layout_learning';
+}
+
+/**
+ * Load layout learning entries from Firestore.
+ */
+export async function loadLayoutLearning(uid: string): Promise<any[]> {
+  if (_layoutLearningCache) return _layoutLearningCache;
+  try {
+    const d = await fbDb().doc(_llPath(uid)).get();
+    _layoutLearningCache = d.exists ? (d.data().entries || []) : [];
+  } catch {
+    _layoutLearningCache = [];
+  }
+  return _layoutLearningCache!;
+}
+
+/**
+ * Save a layout learning entry to Firestore.
+ */
+export async function saveLayoutLearningEntry(uid: string, entry: any): Promise<void> {
+  const entries = await loadLayoutLearning(uid);
+  entries.push({ ...entry, savedAt: Date.now() });
+  _layoutLearningCache = entries;
+  await fbDb().doc(_llPath(uid)).set({ entries }).catch(() => {});
+}
+
+// ─── Save Correction Entry ───────────────────────────────────────────────────
+
+/**
+ * Save a part number correction entry to the corrections database.
+ */
+export async function saveCorrectionEntry(
+  uid: string,
+  badPN: string,
+  correctedPN: string,
+  type: string
+): Promise<any[]> {
+  const corrs = await loadCorrectionDB(uid);
+  corrs.push({ badPN, correctedPN, type, createdAt: Date.now() });
+  _correctionsCache = [...corrs];
+  await fbDb().doc(_correctionsPath(uid)).set({ corrections: _correctionsCache });
+  return _correctionsCache;
+}
+
 export function guessCorrection(origPN: string, newPN: string): 'format' | 'extraction' {
   const norm = (s: string) => s.replace(/[-\s./\\()]/g, '').toUpperCase();
   const a = norm(origPN);

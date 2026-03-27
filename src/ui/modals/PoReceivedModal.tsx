@@ -2,8 +2,7 @@ import React, { useState } from 'react';
 import ReactDOM from 'react-dom';
 import { _bcToken, bcPatchJobOData, bcEnqueue } from '@/core/globals';
 
-// Stub for function not yet extracted
-async function bcPatchPanelEndDate(bcProjectNumber: any, panelIdx: any, date: any): Promise<void> {}
+import { bcPatchPanelEndDate } from '@/services/businessCentral/projects';
 
 export default function PoReceivedModal({project,bcProjectNumber,onClose,onDone}: any){
   const panels=project.panels||[];

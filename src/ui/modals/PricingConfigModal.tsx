@@ -8,7 +8,9 @@ import firebase from 'firebase/compat/app';
 import 'firebase/compat/storage';
 import { searchItems as bcSearchItems } from '@/services/businessCentral/items';
 
-// ── Inline stubs for functions not yet extracted ──
+// ─── Wired implementations ──────────────────────────────────────────────────
+import { isAdmin } from '@/core/globals';
+import TooltipToggle from '@/ui/shared/TooltipToggle';
 const fbStorage = firebase.storage();
 
 const LABOR_RATE_DEFAULTS: any = {
@@ -18,8 +20,6 @@ const LABOR_RATE_DEFAULTS: any = {
   squareCutoutMinPerCut:180,
 };
 let LABOR_RATES: any = {...LABOR_RATE_DEFAULTS};
-
-function isAdmin(): boolean { return !!_appCtx.companyId && _appCtx.role === "admin"; }
 
 async function savePricingConfig(uid: any, cfg: any) {
   (_pricingConfig as any).contingencyBOM = cfg.contingencyBOM;
@@ -35,9 +35,7 @@ async function saveLaborRates(uid: any, rates: any) {
   await fbDb.doc(path).set(rates);
 }
 
-function TooltipToggle() {
-  return null; // stub — tooltip toggle not yet migrated
-}
+// TooltipToggle imported from @/ui/shared/TooltipToggle
 
 export default function PricingConfigModal({uid,onClose,onLogoChange}: any){
   const [bomVal,setBomVal]=useState((_pricingConfig as any).contingencyBOM);

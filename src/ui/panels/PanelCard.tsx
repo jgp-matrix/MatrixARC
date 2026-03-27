@@ -158,25 +158,24 @@ async function extractTitleBlock(dataUrl: string): Promise<any> {
   return readTitleBlock(dataUrl);
 }
 
-// ─── Stubs: functions not yet wired to real implementations ──────────────
+// ─── Wired implementations ──────────────────────────────────────────────
 
-// TODO: wire to real implementation
-async function ensureJsPDF(): Promise<any> { return (window as any).jspdf?.jsPDF || class {}; }
+import { ensureJsPDF, isPanelBudgetary } from '@/core/helpers';
 
-// TODO: wire to real implementation
-async function loadPageTypeLearning(uid: string): Promise<any[]> { return []; }
-// TODO: wire to real implementation
-async function savePageTypeLearningEntry(uid: string, entry: any): Promise<void> {}
-// TODO: wire to real implementation
-async function saveLayoutLearningEntry(uid: string, entry: any): Promise<void> {}
+import {
+  loadPageTypeLearning,
+  savePageTypeLearningEntry,
+  saveLayoutLearningEntry,
+  saveCorrectionEntry,
+} from '@/bom/partLibrary';
 
-// TODO: wire to real implementation
-async function loadCPD(uid: string): Promise<any> { return { products: [], panels: [] }; }
-// TODO: wire to real implementation
-async function saveCPD(uid: string, cpd: any): Promise<void> {}
+import { loadCPD, saveCPD, logPanelToCPD, enrichProductDetails } from '@/services/cpd';
 
+import useCustomerLogo from '@/ui/hooks/useCustomerLogo';
 
-// TODO: wire to real implementation
+import { runExtractionTask } from '@/bom/extractionPipeline';
+
+// useSmoothProgress — self-contained inline hook (no external dependency)
 function useSmoothProgress(): any {
   const [progress, setProgress] = useState<any>(null);
   return {
@@ -188,20 +187,6 @@ function useSmoothProgress(): any {
     finish: (msg: string) => { setProgress({ msg, pct: 100 }); setTimeout(() => setProgress(null), 4000); },
   };
 }
-// TODO: wire to real implementation
-function useCustomerLogo(name: string | null): string | null { return null; }
-
-// Other stubs still referenced in the monolith code
-// TODO: wire to real implementation
-async function runExtractionTask(uid: string, projectId: string, panel: any, opts: any): Promise<void> {}
-// buildCoverPage imported from @/services/rfq
-// TODO: wire to real implementation
-async function saveCorrectionEntry(uid: string, badPN: string, correctedPN: string, type: string): Promise<void> {}
-// bcAttachPdfQueued, bcPatchProgressBillingLine, bcLookupItemForQuote — imported from services above
-// TODO: wire to real implementation
-async function logPanelToCPD(uid: string, panel: any, categorized: any[], metadata?: any): Promise<void> {}
-// TODO: wire to real implementation
-async function enrichProductDetails(uid: string, pn: string, desc: string, cat: string): Promise<void> {}
 
 // ─── Begin monolith verbatim copy ───────────────────────────────────────
 

@@ -289,6 +289,51 @@ export function getNextJoke(): Joke {
   return _currentJoke;
 }
 
+// ─── Panel Budgetary Check ──────────────────────────────────────────────────
+
+/**
+ * A panel is BUDGETARY if it has at least one BOM item that is not confirmed in BC.
+ * Panels with no BOM items are treated as non-budgetary (blank/not-yet-extracted).
+ */
+export function isPanelBudgetary(panel: any): boolean {
+  const bom = (panel.bom || []).filter((r: any) => !r.isLaborRow && !r.isCrossed);
+  if (!bom.length) return false;
+  return !bom.every((r: any) => r.priceSource === 'bc');
+}
+
+// ─── Ensure jsPDF ───────────────────────────────────────────────────────────
+
+let _jsPdfReady = false;
+
+/**
+ * Ensure jsPDF and autoTable plugin are loaded.
+ * Returns the jsPDF constructor.
+ */
+export async function ensureJsPDF(): Promise<any> {
+  const w = window as any;
+  if (_jsPdfReady && w.jspdf) return w.jspdf.jsPDF;
+  if (!w.jspdf) {
+    await new Promise<void>((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+      s.onload = () => res();
+      s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+  if (!w.jspdf?.jsPDF?.prototype?.autoTable) {
+    await new Promise<void>((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js';
+      s.onload = () => res();
+      s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+  _jsPdfReady = true;
+  return w.jspdf.jsPDF;
+}
+
 // ─── Categorize Part ────────────────────────────────────────────────────────
 
 /**

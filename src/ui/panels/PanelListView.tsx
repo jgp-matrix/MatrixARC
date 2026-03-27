@@ -15,11 +15,10 @@ import { computeLaborEstimate } from '@/bom/laborEstimator';
 import { getPageTypes, appendDefaultBomItems } from '@/core/helpers';
 import { runPanelValidation } from '@/bom/validator';
 
-// ─── Stub functions not yet extracted ────────────────────────────────────────
-function useCustomerLogo(name: any): string | null { return null; }
-function isAdmin(): boolean { return true; }
-function isReadOnly(): boolean { return false; }
-async function bcUpdateProject(bcProjectId: string, name: string): Promise<boolean> { return false; }
+// ─── Wired implementations ──────────────────────────────────────────────────
+import useCustomerLogo from '@/ui/hooks/useCustomerLogo';
+import { isAdmin, isReadOnly } from '@/core/globals';
+import { bcUpdateProject } from '@/services/businessCentral/projects';
 
 export default function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink}: any){
   const [editingName,setEditingName]=useState(false);

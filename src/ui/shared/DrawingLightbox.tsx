@@ -2,14 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C } from '@/core/constants';
 
-// Stub — not yet extracted
-function getPageTypes(page: any): string[] {
-  const types: string[] = [];
-  if (page.types && page.types.length) return page.types;
-  if (page.aiDetectedTypes && page.aiDetectedTypes.length) return page.aiDetectedTypes;
-  if (page.type) return [page.type];
-  return types;
-}
+import { getPageTypes } from '@/core/helpers';
 
 function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex((p: any)=>p.id===startId);return i>=0?i:0;});

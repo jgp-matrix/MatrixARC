@@ -240,6 +240,188 @@ export function useBgTasks() {
   return { ..._bgTasks };
 }
 
+// ─── Project Migration ──────────────────────────────────────────────────────
+/**
+ * Migrate flat project format to panels format.
+ */
+export function migrateProject(p: any): any {
+  if (p.panels) return p;
+  const panel = {
+    id: 'panel-1', name: 'Panel 1',
+    pages: p.pages || [], bom: p.bom || [],
+    validation: p.validation || null, pricing: p.pricing || null,
+    budgetaryQuote: p.budgetaryQuote || null, status: p.status || 'draft',
+  };
+  const { pages, bom, validation, pricing, budgetaryQuote, ...rest } = p;
+  return { ...rest, panels: [panel] };
+}
+
+// ─── Project Live Update System ─────────────────────────────────────────────
+const _projectListeners: Record<string, (p: any) => void> = {};
+
+/**
+ * Register a listener for project updates (used by background extraction).
+ * Returns an unsubscribe function.
+ */
+export function onProjectUpdated(projectId: string, cb: (p: any) => void): () => void {
+  _projectListeners[projectId] = cb;
+  return () => { delete _projectListeners[projectId]; };
+}
+
+/**
+ * Notify all listeners that a project has been updated.
+ */
+export function notifyProjectListeners(projectId: string, liveProject: any): void {
+  if (_projectListeners[projectId]) _projectListeners[projectId](liveProject);
+  if (_appProjectUpdateFn) _appProjectUpdateFn(liveProject);
+}
+
+// ─── Role Helpers ────────────────────────────────────────────────────────────
+
+export function isAdmin(): boolean {
+  return !!_appCtx.companyId && _appCtx.role === 'admin';
+}
+
+export function isReadOnly(): boolean {
+  return _appCtx.role === 'view';
+}
+
+// ─── Save Project Panel ─────────────────────────────────────────────────────
+
+/**
+ * Save a single panel within a project (used by background extraction).
+ */
+export async function saveProjectPanel(
+  uid: string,
+  projectId: string,
+  panelId: string,
+  updatedPanel: any
+): Promise<void> {
+  const path = _appCtx.projectsPath || `users/${uid}/projects`;
+  const ref = fbDb.collection(path).doc(projectId);
+  const snap = await ref.get();
+  if (!snap.exists) return;
+  const proj: any = { id: ref.id, ...snap.data() };
+  const panels = (proj.panels || []).map((p: any) => p.id === panelId ? updatedPanel : p);
+  const liveProject = { ...proj, panels, updatedAt: Date.now() };
+  const stripped = JSON.parse(JSON.stringify({
+    ...liveProject,
+    panels: panels.map((p: any) => ({
+      ...p,
+      pages: (p.pages || []).map((pg: any) => { const { dataUrl, ...r } = pg; return r; }),
+    })),
+  }));
+  await ref.set(stripped);
+  notifyProjectListeners(projectId, liveProject);
+}
+
+// ─── Copy Project ───────────────────────────────────────────────────────────
+
+/**
+ * Deep copy a project including BC project, tasks, images, and planning lines.
+ */
+export async function copyProject(
+  uid: string,
+  sourceProject: any,
+  onProgress?: (p: any) => void
+): Promise<any> {
+  const pp = onProgress || (() => {});
+  const src = sourceProject;
+  const srcPanels = src.panels || [];
+
+  const { bcCreateProject, bcCreatePanelTaskStructure, bcSyncPanelPlanningLines } = await import('@/services/businessCentral/projects');
+  const { ensureDataUrl } = await import('@/scanning/pdfExtractor');
+
+  // Step 1: Create new BC project with same customer
+  pp({ step: 'bc', msg: 'Creating BC project...', pct: 5 });
+  if (!_bcToken) await acquireBcToken(true);
+  if (!_bcToken) throw new Error('Could not connect to Business Central');
+  const bc = await bcCreateProject(src.name + ' (Copy)', src.bcCustomerNumber);
+
+  // Step 2: Create panel task structure in BC
+  pp({ step: 'tasks', msg: 'Creating BC tasks...', pct: 15 });
+  const panelStubs = srcPanels.map((p: any, i: number) => ({ id: `panel-${i + 1}`, name: p.name || `Panel ${i + 1}` }));
+  try { await bcCreatePanelTaskStructure(bc.number, src.name + ' (Copy)', panelStubs); } catch (e: any) { console.warn('Copy: task structure warning:', e.message); }
+
+  // Step 3: Deep clone panels
+  pp({ step: 'clone', msg: 'Cloning panel data...', pct: 25 });
+  const newPanels = srcPanels.map((panel: any, i: number) => {
+    const newPages = (panel.pages || []).map((pg: any) => ({
+      ...pg,
+      id: `pg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      dataUrl: undefined, storageUrl: undefined,
+      _srcStorageUrl: pg.storageUrl || null, _srcPageId: pg.id,
+    }));
+    const newBom = (panel.bom || []).map((r: any) => ({
+      ...r, id: `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    }));
+    return { ...panel, id: `panel-${i + 1}`, pages: newPages, bom: newBom };
+  });
+
+  // Step 4: Save new project to Firestore
+  pp({ step: 'save', msg: 'Saving project...', pct: 35 });
+  const newProj = await saveProject(uid, {
+    name: src.name + ' (Copy)',
+    bcProjectId: bc.id, bcProjectNumber: bc.number,
+    bcEnv: _bcConfig?.env,
+    bcCustomerNumber: src.bcCustomerNumber,
+    bcCustomerName: src.bcCustomerName,
+    status: src.status || 'draft',
+    panels: newPanels,
+    quote: src.quote ? { ...src.quote } : undefined,
+    createdAt: Date.now(), updatedAt: Date.now(),
+  });
+
+  // Step 5: Copy page images
+  const allPages = newPanels.flatMap((panel: any, pi: number) =>
+    (panel.pages || []).map((pg: any, pgi: number) => ({ pi, pgi, pg }))
+  );
+  const totalPages = allPages.filter((x: any) => x.pg._srcStorageUrl).length;
+  let copied = 0;
+  for (const { pi, pgi, pg } of allPages) {
+    if (!pg._srcStorageUrl) continue;
+    pp({ step: 'images', msg: `Copying drawing ${copied + 1}/${totalPages}...`, pct: 35 + Math.round((copied / Math.max(totalPages, 1)) * 40) });
+    try {
+      const loaded = await ensureDataUrl({ storageUrl: pg._srcStorageUrl });
+      if (loaded.dataUrl) {
+        const newUrl = await uploadPageImage(uid, newProj.id, pg.id, loaded.dataUrl);
+        newPanels[pi].pages[pgi].storageUrl = newUrl;
+        newPanels[pi].pages[pgi].dataUrl = loaded.dataUrl;
+      }
+    } catch (e: any) { console.warn('Copy image failed for page', pg._srcPageId, e.message); }
+    copied++;
+  }
+  // Clean up temp fields
+  newPanels.forEach((panel: any) => (panel.pages || []).forEach((pg: any) => { delete pg._srcStorageUrl; delete pg._srcPageId; }));
+
+  // Step 6: Re-save with storage URLs
+  pp({ step: 'save2', msg: 'Saving images...', pct: 80 });
+  const finalProj = await saveProject(uid, { ...newProj, panels: newPanels, updatedAt: Date.now() });
+
+  // Step 7: Sync planning lines
+  pp({ step: 'sync', msg: 'Syncing planning lines to BC...', pct: 85 });
+  for (let i = 0; i < newPanels.length; i++) {
+    pp({ step: 'sync', msg: `Syncing panel ${i + 1}/${newPanels.length} to BC...`, pct: 85 + Math.round((i / newPanels.length) * 12) });
+    try { await bcSyncPanelPlanningLines(bc.number, { ...newPanels[i], panelIndex: i + 1 }); } catch (e: any) { console.warn('Copy: planning line sync failed for panel', i + 1, e.message); }
+  }
+
+  pp({ step: 'done', msg: 'Project copied!', pct: 100 });
+  return finalProj;
+}
+
+/**
+ * Upload a page image to Firebase Storage.
+ */
+export async function uploadPageImage(uid: string, projectId: string, pageId: string, dataUrl: string): Promise<string> {
+  const ref = fbStorage.ref(`pageImages/${uid}/${projectId}/${pageId}.jpg`);
+  console.log('UPLOAD IMAGE: starting', pageId, 'to', ref.fullPath);
+  const snap = await ref.putString(dataUrl, 'data_url');
+  console.log('UPLOAD IMAGE: uploaded', pageId, 'state=' + snap.state);
+  const url = await ref.getDownloadURL();
+  console.log('UPLOAD IMAGE: got URL', pageId);
+  return url;
+}
+
 // ─── Misc Helpers ────────────────────────────────────────────────────────────
 export function apiCall(body: any): Promise<string> {
   return import('@/services/anthropic/client').then(m => m.apiCall(body));
