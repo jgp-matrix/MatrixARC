@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.28";
+const APP_VERSION="v1.19.29";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15903,6 +15903,7 @@ function VendorsPanel({uid}){
   const[showPartsOnly,setShowPartsOnly]=useState(false);
   const[showMigrate,setShowMigrate]=useState(false);
   const[migrateStatus,setMigrateStatus]=useState(null); // null | {running,done,total,patched,errors,needsSetup,log}
+  const[vpgSaving,setVpgSaving]=useState({}); // {vendorNo: true} while PATCH in flight
   // Posting group fields for new vendor form
   const[genBusGroups,setGenBusGroups]=useState([]);
   const[vendorPostingGroups,setVendorPostingGroups]=useState([]);
@@ -15950,6 +15951,32 @@ function VendorsPanel({uid}){
     setVendorCodes(updated);
     setEditingCode(null);
     await fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:updated},{merge:true});
+  }
+
+  async function saveVendorPostingGroup(vendorNo,newVPG){
+    setVpgSaving(s=>({...s,[vendorNo]:true}));
+    // Optimistic update
+    setVendors(prev=>prev.map(v=>v.No===vendorNo?{...v,Vendor_Posting_Group:newVPG}:v));
+    try{
+      const allPages=await bcDiscoverODataPages();
+      const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
+      const r=await fetch(`${BC_ODATA_BASE}/${vPage}('${vendorNo}')`,{
+        method:'PATCH',
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
+        body:JSON.stringify({Vendor_Posting_Group:newVPG})
+      });
+      if(!r.ok){
+        const txt=await r.text();
+        console.warn(`VPG patch failed for ${vendorNo}:`,txt);
+        // Revert optimistic update
+        setVendors(prev=>prev.map(v=>v.No===vendorNo?{...v,Vendor_Posting_Group:v._prevVPG||'TRADE'}:v));
+        setError(`Could not update ${vendorNo}: ${txt.slice(0,120)}`);
+      }
+    }catch(e){
+      console.warn('saveVendorPostingGroup error:',e);
+      setError(e.message);
+    }
+    setVpgSaving(s=>{const n={...s};delete n[vendorNo];return n;});
   }
 
   function normVendorName(s){
@@ -16423,10 +16450,11 @@ function VendorsPanel({uid}){
               <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>CODE</th>
               <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>NO</th>
               <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>NAME</th>
+              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>POST. GROUP</th>
             </tr>
           </thead>
           <tbody>
-            {vendors.length===0&&<tr><td colSpan={3} style={{padding:"16px 10px",color:"#475569",textAlign:"center",fontSize:12}}>
+            {vendors.length===0&&<tr><td colSpan={4} style={{padding:"16px 10px",color:"#475569",textAlign:"center",fontSize:12}}>
               No vendors — connect to BC or add one above.
             </td></tr>}
             {vendors.filter(v=>!showPartsOnly||v.Vendor_Posting_Group==='PARTS').map((v,idx)=>(
@@ -16452,6 +16480,25 @@ function VendorsPanel({uid}){
                 <td style={{padding:"6px 10px",color:"#e2e8f0",maxWidth:120,
                   overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={v.Name}>
                   {v.Name}
+                </td>
+                <td style={{padding:"4px 8px",whiteSpace:"nowrap"}}>
+                  {vpgSaving[v.No]
+                    ? <span style={{fontSize:10,color:"#64748b"}}>saving…</span>
+                    : <select
+                        value={v.Vendor_Posting_Group||''}
+                        onChange={e=>saveVendorPostingGroup(v.No,e.target.value)}
+                        style={{background:"#1e293b",border:"1px solid #334155",borderRadius:4,
+                          padding:"2px 5px",color:v.Vendor_Posting_Group==='PARTS'?"#a78bfa":
+                            v.Vendor_Posting_Group==='TRADE'?"#60a5fa":"#94a3b8",
+                          fontSize:10,fontWeight:700,fontFamily:"monospace",cursor:"pointer"}}>
+                        <option value="">—</option>
+                        <option value="PARTS">PARTS</option>
+                        <option value="TRADE">TRADE</option>
+                        <option value="GOVERNMENT">GOVERNMENT</option>
+                        {v.Vendor_Posting_Group&&!['PARTS','TRADE','GOVERNMENT',''].includes(v.Vendor_Posting_Group)&&
+                          <option value={v.Vendor_Posting_Group}>{v.Vendor_Posting_Group}</option>}
+                      </select>
+                  }
                 </td>
               </tr>
             ))}
