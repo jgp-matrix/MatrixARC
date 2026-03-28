@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.63";
+const APP_VERSION="v1.19.64";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1967,7 +1967,7 @@ async function bcPatchItemOData(itemNo,fields){
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
     body:JSON.stringify(fields)
   });
-  if(!pr.ok){const txt=await pr.text();console.warn("OData PATCH failed:",pr.status,txt);return;}
+  if(!pr.ok){const txt=await pr.text();console.warn("OData PATCH failed:",pr.status,txt);throw new Error(`BC rejected: ${txt.slice(0,120)}`);}
   console.log("OData PATCH OK:",itemNo,"→",JSON.stringify(fields));
 }
 
@@ -16429,7 +16429,25 @@ async function bcFetchManufacturers(){
       }
     }
   }catch(e){}
-  // Fallback: build list from BC_MFR_MAP
+  // Fallback: scan distinct Manufacturer_Code values from BC items + merge with BC_MFR_MAP
+  try{
+    const codes=new Set();
+    let sk=0;
+    while(true){
+      const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=Manufacturer_Code ne ''&$select=Manufacturer_Code&$top=200&$skip=${sk}`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!r.ok)break;
+      const batch=(await r.json()).value||[];
+      if(!batch.length)break;
+      batch.forEach(i=>codes.add(i.Manufacturer_Code));
+      sk+=200;
+      if(batch.length<200)break;
+    }
+    // Build list from actual BC codes + BC_MFR_MAP names
+    const mfrNames=Object.fromEntries(BC_MFR_MAP.map(m=>[m.code,m.terms[0].split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ')]));
+    _bcManufacturers=Array.from(codes).sort().map(c=>({Code:c,Name:mfrNames[c]||c}));
+    if(_bcManufacturers.length)return _bcManufacturers;
+  }catch(e){}
+  // Last resort: use BC_MFR_MAP directly
   _bcManufacturers=BC_MFR_MAP.map(m=>({Code:m.code,Name:m.terms[0].split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ')}));
   return _bcManufacturers;
 }
