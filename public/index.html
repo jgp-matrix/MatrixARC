@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.38";
+const APP_VERSION="v1.19.39";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16321,7 +16321,14 @@ function VendorsPanel({uid}){
     </div>
 
     {/* Add Vendor form */}
-    <div style={{marginBottom:14,border:"1px solid #1e3a5f",borderRadius:6,padding:"10px 12px",background:"#0d1926"}}>
+    {(()=>{
+    const hasName=!!newName.trim();
+    const hasCode=!!newCode.trim();
+    const nameOk=hasName&&dupMatch?.type!=='error';
+    const codeOk=hasCode&&!codeDupMatch;
+    const canAdd=nameOk&&codeOk&&!adding;
+    return(
+    <div style={{marginBottom:14,border:`1px solid ${canAdd?"#166534":"#1e3a5f"}`,borderRadius:6,padding:"10px 12px",background:"#0d1926",transition:"border-color 0.2s"}}>
       <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Add New Vendor</div>
       {/* Row 1 — Name + Code */}
       <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap",marginBottom:8}}>
@@ -16342,10 +16349,11 @@ function VendorsPanel({uid}){
               placeholder="e.g. CODALE" maxLength={10}
               onKeyDown={e=>e.key==="Enter"&&addVendor()}
               style={{width:110,background:"#0f172a",
-                border:`1px solid ${codeDupMatch?.type==='error'?"#ef4444":"#334155"}`,
+                border:`1px solid ${codeDupMatch?"#ef4444":canAdd?"#22c55e":"#334155"}`,
                 borderRadius:4,padding:"5px 9px",color:"#34d399",fontSize:12,
                 fontFamily:"monospace",fontWeight:700,textTransform:"uppercase"}}/>
             {codeDupMatch&&<span style={{fontSize:11,color:"#f87171",whiteSpace:"nowrap"}}>🚫 {codeDupMatch.msg}</span>}
+            {canAdd&&<span style={{fontSize:12,fontWeight:700,color:"#22c55e",whiteSpace:"nowrap"}}>✅ Ready to add</span>}
           </div>
         </div>
       </div>
@@ -16396,32 +16404,19 @@ function VendorsPanel({uid}){
                 borderRadius:4,padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
           )}
         </div>
-        {(()=>{
-          const hasName=!!newName.trim();
-          const hasCode=!!newCode.trim();
-          const nameOk=hasName&&dupMatch?.type!=='error';
-          const codeOk=hasCode&&!codeDupMatch;
-          const canAdd=nameOk&&codeOk&&!adding;
-          return(<>
-            {canAdd&&<div style={{display:"flex",alignItems:"center",gap:5,alignSelf:"flex-end",marginBottom:4,
-              color:"#22c55e",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>
-              ✅ Ready to add
-            </div>}
-            {!canAdd&&!adding&&newName.trim()&&<div style={{display:"flex",flexDirection:"column",gap:2,
-              alignSelf:"flex-end",marginBottom:4,fontSize:11,color:"#64748b"}}>
-              {!hasCode&&<span style={{color:"#f59e0b"}}>⚠ Code required</span>}
-              {dupMatch?.type==='error'&&<span style={{color:"#f87171"}}>✗ Name taken</span>}
-              {codeDupMatch&&<span style={{color:"#f87171"}}>✗ Code taken</span>}
-            </div>}
-            <button onClick={addVendor} disabled={!canAdd}
-              style={{background:canAdd?"#2563eb":"#1e293b",color:canAdd?"#fff":"#475569",
-                border:`1px solid ${canAdd?"#2563eb":"#334155"}`,borderRadius:5,
-                padding:"6px 14px",fontSize:12,fontWeight:600,alignSelf:"flex-end",marginBottom:1,
-                cursor:canAdd?"pointer":"not-allowed",transition:"all 0.15s"}}>
-              {adding?"Adding…":"+ Add Vendor"}
-            </button>
-          </>);
-        })()}
+        {!canAdd&&!adding&&newName.trim()&&<div style={{display:"flex",flexDirection:"column",gap:2,
+          alignSelf:"flex-end",marginBottom:4,fontSize:11}}>
+          {!hasCode&&<span style={{color:"#f59e0b"}}>⚠ Code required</span>}
+          {dupMatch?.type==='error'&&<span style={{color:"#f87171"}}>✗ Name taken</span>}
+          {codeDupMatch&&<span style={{color:"#f87171"}}>✗ Code taken</span>}
+        </div>}
+        <button onClick={addVendor} disabled={!canAdd}
+          style={{background:canAdd?"#2563eb":"#1e293b",color:canAdd?"#fff":"#475569",
+            border:`1px solid ${canAdd?"#2563eb":"#334155"}`,borderRadius:5,
+            padding:"6px 14px",fontSize:12,fontWeight:600,alignSelf:"flex-end",marginBottom:1,
+            cursor:canAdd?"pointer":"not-allowed",transition:"all 0.15s"}}>
+          {adding?"Adding…":"+ Add Vendor"}
+        </button>
       </div>
       {/* Success banner */}
       {lastCreated&&<div style={{marginTop:6,padding:"6px 10px",background:"#052e16",border:"1px solid #22c55e",
@@ -16448,6 +16443,7 @@ function VendorsPanel({uid}){
       </div>}
       {addErr&&<div style={{marginTop:4,color:"#f87171",fontSize:11}}>⚠ {addErr}</div>}
     </div>
+    );})()}
 
     {/* PARTS Migration Panel */}
     <div style={{marginBottom:12}}>
