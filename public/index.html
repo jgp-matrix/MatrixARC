@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.52";
+const APP_VERSION="v1.19.53";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15939,19 +15939,22 @@ function VendorsPanel({uid}){
     return words[0].slice(0,6).toUpperCase();
   }
 
-  // Auto-generate codes for vendors that don't have one yet
+  // Auto-generate codes for vendors that don't have one yet (runs once when vendors load)
+  const vendorCodesRef=useRef(vendorCodes);
+  vendorCodesRef.current=vendorCodes;
   useEffect(()=>{
     if(!vendors.length)return;
+    const cur=vendorCodesRef.current;
     const generated={};
     vendors.forEach(v=>{
-      if(!vendorCodes[v.No])generated[v.No]=autoGenerateCode(v.Name);
+      if(!cur[v.No])generated[v.No]=autoGenerateCode(v.Name);
     });
     if(Object.keys(generated).length){
-      const merged={...vendorCodes,...generated};
+      const merged={...cur,...generated};
       setVendorCodes(merged);
       if(uid)fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:merged},{merge:true});
     }
-  },[vendors,vendorCodes]);
+  },[vendors]);
 
   async function saveVendorCode(vendorNo,code){
     const clean=code.trim().toUpperCase().slice(0,10);
