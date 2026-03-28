@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.71";
+const APP_VERSION="v1.19.72";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4693,13 +4693,13 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const hasVerify=_apiKey;
     const hasCompliance=_apiKey;
     const hasUpload=(panel.pages||[]).some(pg=>pg.dataUrl&&!pg.storageUrl);
-    // Weighted phases: BOM=40, Validation=25, Verify=10, Compliance=15, Upload=10
+    // Weighted phases: Upload=10 (first), BOM=40, Validation=25, Verify=10, Compliance=15
     let phases=[];
+    if(hasUpload)phases.push({name:"upload",weight:10});
     if(hasBom)phases.push({name:"bom",weight:40});
     if(hasVal)phases.push({name:"val",weight:25});
     if(hasVerify)phases.push({name:"verify",weight:10});
     if(hasCompliance)phases.push({name:"compliance",weight:15});
-    if(hasUpload)phases.push({name:"upload",weight:10});
     if(!phases.length)phases.push({name:"done",weight:100});
     const totalWeight=phases.reduce((s,p)=>s+p.weight,0);
     let cumWeight=0;
@@ -4707,6 +4707,29 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     for(const p of phases){const start=Math.round((cumWeight/totalWeight)*100);cumWeight+=p.weight;phaseRange[p.name]={start,end:Math.round((cumWeight/totalWeight)*100)};};
     function phasePct(name,frac){const r=phaseRange[name];if(!r)return;const pct=r.start+Math.round(frac*(r.end-r.start));bgSetPct(panel.id,Math.min(pct,99));}
 
+    bgSetPct(panel.id,0,"Uploading drawings…");
+    // Upload page images FIRST — ensures storageUrl exists before any save strips dataUrl
+    const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
+    if(pagesNeedingUpload.length>0&&projectId){
+      phasePct("upload",0);bgUpdate(panel.id,"Uploading drawings…");
+      try{
+        const urlMap={};
+        const totalPages=latestPanel.pages.length;
+        let upDone=0;
+        await parallelMap(pagesNeedingUpload,async pg=>{
+          let dataUrl=pg.dataUrl;
+          if(stampFn){
+            const pgIdx=latestPanel.pages.findIndex(p=>p.id===pg.id);
+            try{dataUrl=await stampFn(dataUrl,pgIdx,totalPages)||dataUrl;}catch(e){console.warn('Stamp failed:',e);}
+          }
+          urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,dataUrl);
+          upDone++;phasePct("upload",upDone/pagesNeedingUpload.length);
+        },4);
+        const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
+        latestPanel={...latestPanel,pages:pagesWithUrls};
+        await save(latestPanel);
+      }catch(e){console.warn("Storage upload failed:",e);}
+    }
     bgSetPct(panel.id,0,hasBom?"Extracting BOM…":hasVal?"Validating…":"Processing…");
     // BOM extraction — use cropped regions if available
     let bomMergePromise=Promise.resolve([]);
@@ -4775,27 +4798,6 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           await save({...latestPanel,complianceReview:cr,engineeringQuestions:eqs,updatedAt:Date.now()});
         }
       }catch(e){console.warn("Compliance review failed:",e);}
-    }
-    // Upload page images to Firebase Storage (with permanent stamp burned in if stampFn provided)
-    const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
-    if(pagesNeedingUpload.length>0&&projectId){
-      phasePct("upload",0);bgUpdate(panel.id,"Uploading drawings…");
-      try{
-        const urlMap={};
-        const totalPages=latestPanel.pages.length;
-        let upDone=0;
-        await parallelMap(pagesNeedingUpload,async pg=>{
-          let dataUrl=pg.dataUrl;
-          if(stampFn){
-            const pgIdx=latestPanel.pages.findIndex(p=>p.id===pg.id);
-            try{dataUrl=await stampFn(dataUrl,pgIdx,totalPages)||dataUrl;}catch(e){console.warn('Stamp failed:',e);}
-          }
-          urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,dataUrl);
-          upDone++;phasePct("upload",upDone/pagesNeedingUpload.length);
-        },4);
-        const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
-        await save({...latestPanel,pages:pagesWithUrls});
-      }catch(e){console.warn("Storage upload failed:",e);}
     }
     const itemCount=(latestPanel.bom||[]).length;
     bgDone(panel.id,itemCount>0?`✓ ${itemCount} items`:"✓ Complete");
