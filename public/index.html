@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.53";
+const APP_VERSION="v1.19.54";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16533,6 +16533,10 @@ function ItemsTab({uid}){
   const [manufacturers,setManufacturers]=useState([]);
   const [vendorMap,setVendorMap]=useState({});
   const [priceDateMap,setPriceDateMap]=useState({}); // {itemNo: mostRecentStartingDateMs}
+  const [showMfrLookup,setShowMfrLookup]=useState(false);
+  const [mfrLookupRunning,setMfrLookupRunning]=useState(false);
+  const [mfrLookupResult,setMfrLookupResult]=useState(null);
+  const [mfrLookupProgress,setMfrLookupProgress]=useState("");
   const PAGE=100;
 
   async function fetchPurchasePriceDates(itemNos){
@@ -16676,6 +16680,12 @@ function ItemsTab({uid}){
           fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
         🔄 Sync Pricing
       </button>
+      <button onClick={()=>setShowMfrLookup(v=>!v)}
+        style={{background:showMfrLookup?"#2563eb":"#1e3a5f",color:"#fff",
+          border:`1px solid ${showMfrLookup?"#2563eb":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
+          fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+        🔍 Lookup MFR Codes
+      </button>
     </div>
 
     {/* Collapsible panels */}
@@ -16686,6 +16696,76 @@ function ItemsTab({uid}){
     {showVendorSync&&<div style={{...card(),marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>🔄 DigiKey & Mouser Vendor Pricing Sync</div>
       <VendorPricingSyncPanel uid={uid}/>
+    </div>}
+    {showMfrLookup&&<div style={{...card(),marginBottom:16}}>
+      <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>🔍 Bulk MFR Code Lookup (DigiKey + Mouser)</div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.6}}>
+        Finds BC items with empty Manufacturer Code, looks up each part number on DigiKey/Mouser to identify the manufacturer, then pushes the BC manufacturer code back to the Item Card.
+      </div>
+      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:12}}>
+        <button disabled={mfrLookupRunning} onClick={async()=>{
+          setMfrLookupRunning(true);setMfrLookupResult(null);setMfrLookupProgress("Starting dry run…");
+          try{
+            const fn=firebase.functions().httpsCallable('bulkMfrLookup');
+            const r=await fn({bcToken:_bcToken,bcODataBase:BC_ODATA_BASE,dryRun:true,batchStart:0,batchSize:100});
+            setMfrLookupResult(r.data);setMfrLookupProgress("");
+          }catch(e){setMfrLookupProgress("Error: "+e.message);}
+          setMfrLookupRunning(false);
+        }} style={btn(mfrLookupRunning?"#334155":"#1e3a5f","#93c5fd",{fontSize:12,fontWeight:600,border:"1px solid #3b82f655"})}>
+          {mfrLookupRunning?"Running…":"Preview (Dry Run)"}
+        </button>
+        <button disabled={mfrLookupRunning||!mfrLookupResult} onClick={async()=>{
+          if(!confirm("This will write Manufacturer Codes to BC for all matched items. Continue?"))return;
+          setMfrLookupRunning(true);setMfrLookupProgress("Pushing to BC…");
+          try{
+            const fn=firebase.functions().httpsCallable('bulkMfrLookup');
+            const total=mfrLookupResult?.totalInBC||0;
+            const allResults=[];
+            let totalPatched=0;
+            for(let start=0;start<total;start+=100){
+              setMfrLookupProgress(`Processing batch ${start}–${Math.min(start+100,total)} of ${total}…`);
+              const r=await fn({bcToken:_bcToken,bcODataBase:BC_ODATA_BASE,dryRun:false,batchStart:start,batchSize:100});
+              allResults.push(...(r.data.results||[]));
+              totalPatched+=r.data.patched||0;
+            }
+            setMfrLookupResult(prev=>({...prev,results:allResults,patched:totalPatched,dryRun:false}));
+            setMfrLookupProgress(`Done! Patched ${totalPatched} items.`);
+          }catch(e){setMfrLookupProgress("Error: "+e.message);}
+          setMfrLookupRunning(false);
+        }} style={btn(mfrLookupRunning||!mfrLookupResult?"#334155":"#064e3b",mfrLookupResult?"#34d399":"#475569",{fontSize:12,fontWeight:600,border:`1px solid ${mfrLookupResult?"#059669":"#334155"}`})}>
+          Push to BC
+        </button>
+        {mfrLookupProgress&&<span style={{fontSize:11,color:mfrLookupProgress.startsWith("Error")?"#f87171":"#93c5fd"}}>{mfrLookupProgress}</span>}
+      </div>
+      {mfrLookupResult&&<div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:8}}>
+          {mfrLookupResult.totalInBC} items missing MFR in BC · Batch: {mfrLookupResult.batchSize} items · Found: {mfrLookupResult.found} · Not found: {mfrLookupResult.notFound} · Patched: {mfrLookupResult.patched||0}
+        </div>
+        {mfrLookupResult.unknownMfr?.length>0&&<div style={{marginBottom:8}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#fbbf24",marginBottom:4}}>Unknown manufacturers (no BC code mapping):</div>
+          {mfrLookupResult.unknownMfr.map((u,i)=><div key={i} style={{fontSize:11,color:C.muted}}>{u.itemNo} → {u.manufacturer}</div>)}
+        </div>}
+        <div style={{maxHeight:300,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:6}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+            <thead><tr style={{background:"#111d30"}}>
+              <th style={{padding:"5px 8px",textAlign:"left",color:C.sub,fontWeight:700}}>ITEM</th>
+              <th style={{padding:"5px 8px",textAlign:"left",color:C.sub,fontWeight:700}}>MANUFACTURER</th>
+              <th style={{padding:"5px 8px",textAlign:"left",color:C.sub,fontWeight:700}}>CODE</th>
+              <th style={{padding:"5px 8px",textAlign:"left",color:C.sub,fontWeight:700}}>SOURCE</th>
+              <th style={{padding:"5px 8px",textAlign:"left",color:C.sub,fontWeight:700}}>STATUS</th>
+            </tr></thead>
+            <tbody>{(mfrLookupResult.results||[]).map((r,i)=>(
+              <tr key={i} style={{borderBottom:`1px solid ${C.border}`,background:r.status==="patched"||r.status==="dry_run"?"rgba(34,197,94,0.06)":r.status==="not_found"?"rgba(239,68,68,0.06)":"rgba(251,191,36,0.06)"}}>
+                <td style={{padding:"4px 8px",color:"#93c5fd",fontFamily:"monospace"}}>{r.itemNo}</td>
+                <td style={{padding:"4px 8px",color:C.text}}>{r.manufacturer||"—"}</td>
+                <td style={{padding:"4px 8px",color:r.code?"#22c55e":"#ef4444",fontWeight:700}}>{r.code||"—"}</td>
+                <td style={{padding:"4px 8px",color:C.muted}}>{r.source||"—"}</td>
+                <td style={{padding:"4px 8px",color:r.status==="patched"?"#22c55e":r.status==="not_found"?"#ef4444":"#fbbf24"}}>{r.status}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </div>}
     </div>}
 
     {error&&<div style={{color:C.red,fontSize:12,marginBottom:10}}>{error}</div>}
