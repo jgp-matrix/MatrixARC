@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.39";
+const APP_VERSION="v1.19.40";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16353,6 +16353,7 @@ function VendorsPanel({uid}){
                 borderRadius:4,padding:"5px 9px",color:"#34d399",fontSize:12,
                 fontFamily:"monospace",fontWeight:700,textTransform:"uppercase"}}/>
             {codeDupMatch&&<span style={{fontSize:11,color:"#f87171",whiteSpace:"nowrap"}}>🚫 {codeDupMatch.msg}</span>}
+            {!codeDupMatch&&hasName&&!hasCode&&<span style={{fontSize:11,color:"#f59e0b",whiteSpace:"nowrap"}}>⚠ Code required</span>}
             {canAdd&&<span style={{fontSize:12,fontWeight:700,color:"#22c55e",whiteSpace:"nowrap"}}>✅ Ready to add</span>}
           </div>
         </div>
@@ -16404,12 +16405,6 @@ function VendorsPanel({uid}){
                 borderRadius:4,padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
           )}
         </div>
-        {!canAdd&&!adding&&newName.trim()&&<div style={{display:"flex",flexDirection:"column",gap:2,
-          alignSelf:"flex-end",marginBottom:4,fontSize:11}}>
-          {!hasCode&&<span style={{color:"#f59e0b"}}>⚠ Code required</span>}
-          {dupMatch?.type==='error'&&<span style={{color:"#f87171"}}>✗ Name taken</span>}
-          {codeDupMatch&&<span style={{color:"#f87171"}}>✗ Code taken</span>}
-        </div>}
         <button onClick={addVendor} disabled={!canAdd}
           style={{background:canAdd?"#2563eb":"#1e293b",color:canAdd?"#fff":"#475569",
             border:`1px solid ${canAdd?"#2563eb":"#334155"}`,borderRadius:5,
