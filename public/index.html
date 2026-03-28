@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.37";
+const APP_VERSION="v1.19.38";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16224,8 +16224,10 @@ function VendorsPanel({uid}){
   const codeDupMatch=getCodeDupMatch();
 
   async function addVendor(){
-    if(!newName.trim()){setAddErr("Name is required");return;}
-    if(codeDupMatch?.type==='error'){setAddErr(codeDupMatch.msg);return;}
+    if(!newName.trim()){setAddErr("Vendor name is required");return;}
+    if(!newCode.trim()){setAddErr("Vendor code is required");return;}
+    if(dupMatch?.type==='error'){setAddErr(dupMatch.msg);return;}
+    if(codeDupMatch){setAddErr(codeDupMatch.msg);return;}
     setAdding(true);setAddErr(null);
     try{
       const compId=await bcGetCompanyId();
@@ -16394,13 +16396,32 @@ function VendorsPanel({uid}){
                 borderRadius:4,padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
           )}
         </div>
-        <button onClick={addVendor} disabled={adding||!newName.trim()||!!codeDupMatch}
-          style={{background:adding||!newName.trim()||codeDupMatch?"#334155":"#2563eb",color:"#fff",border:"none",borderRadius:5,
-            padding:"6px 14px",fontSize:12,fontWeight:600,alignSelf:"flex-end",marginBottom:1,
-            cursor:adding||!newName.trim()||codeDupMatch?"not-allowed":"pointer",
-            opacity:adding||!newName.trim()||codeDupMatch?0.5:1}}>
-          {adding?"Adding…":"+ Add Vendor"}
-        </button>
+        {(()=>{
+          const hasName=!!newName.trim();
+          const hasCode=!!newCode.trim();
+          const nameOk=hasName&&dupMatch?.type!=='error';
+          const codeOk=hasCode&&!codeDupMatch;
+          const canAdd=nameOk&&codeOk&&!adding;
+          return(<>
+            {canAdd&&<div style={{display:"flex",alignItems:"center",gap:5,alignSelf:"flex-end",marginBottom:4,
+              color:"#22c55e",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>
+              ✅ Ready to add
+            </div>}
+            {!canAdd&&!adding&&newName.trim()&&<div style={{display:"flex",flexDirection:"column",gap:2,
+              alignSelf:"flex-end",marginBottom:4,fontSize:11,color:"#64748b"}}>
+              {!hasCode&&<span style={{color:"#f59e0b"}}>⚠ Code required</span>}
+              {dupMatch?.type==='error'&&<span style={{color:"#f87171"}}>✗ Name taken</span>}
+              {codeDupMatch&&<span style={{color:"#f87171"}}>✗ Code taken</span>}
+            </div>}
+            <button onClick={addVendor} disabled={!canAdd}
+              style={{background:canAdd?"#2563eb":"#1e293b",color:canAdd?"#fff":"#475569",
+                border:`1px solid ${canAdd?"#2563eb":"#334155"}`,borderRadius:5,
+                padding:"6px 14px",fontSize:12,fontWeight:600,alignSelf:"flex-end",marginBottom:1,
+                cursor:canAdd?"pointer":"not-allowed",transition:"all 0.15s"}}>
+              {adding?"Adding…":"+ Add Vendor"}
+            </button>
+          </>);
+        })()}
       </div>
       {/* Success banner */}
       {lastCreated&&<div style={{marginTop:6,padding:"6px 10px",background:"#052e16",border:"1px solid #22c55e",
