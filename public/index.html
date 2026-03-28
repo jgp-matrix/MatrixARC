@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.74";
+const APP_VERSION="v1.19.75";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12552,13 +12552,14 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   </button>
                 )}
                 {fbLaborMoreInfo&&laborEst.lines.length>0&&(
-                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginTop:8}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginTop:8,tableLayout:"fixed"}}>
+                    <colgroup><col style={{width:22}}/><col/><col style={{width:68}}/><col style={{width:34}}/><col style={{width:44}}/></colgroup>
                     <thead><tr style={{borderBottom:`1px solid ${C.border}`}}>
-                      <th style={{textAlign:"center",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:11,width:24}}>✓</th>
-                      <th style={{textAlign:"left",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:11}}>Category</th>
-                      <th style={{textAlign:"right",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:11}}>Qty</th>
-                      <th style={{textAlign:"right",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:11}}>Hrs</th>
-                      <th style={{textAlign:"right",padding:"3px 4px",color:C.muted,fontWeight:600,fontSize:11}}>Cost</th>
+                      <th style={{textAlign:"center",padding:"2px 2px",color:C.muted,fontWeight:600,fontSize:10,width:22}}>✓</th>
+                      <th style={{textAlign:"left",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Category</th>
+                      <th style={{textAlign:"right",padding:"2px 3px",color:C.muted,fontWeight:600,fontSize:10}}>Qty</th>
+                      <th style={{textAlign:"right",padding:"2px 2px",color:C.muted,fontWeight:600,fontSize:10}}>Hrs</th>
+                      <th style={{textAlign:"right",padding:"2px 2px",color:C.muted,fontWeight:600,fontSize:10}}>Cost</th>
                     </tr></thead>
                     <tbody>
                       {laborEst.lines.map((l,i)=>{
@@ -12570,29 +12571,29 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                               onChange={e=>saveSelectedLaborAccepted(l.category,e.target.checked)}
                               style={{accentColor:C.green,cursor:readOnly?"default":"pointer",margin:0}}/>
                           </td>
-                          <td style={{padding:"3px 4px",color:isAcc?C.green:C.sub,whiteSpace:"nowrap"}}>{l.category}</td>
-                          <td style={{padding:"3px 4px",textAlign:"right",whiteSpace:"nowrap"}}>
+                          <td style={{padding:"2px 3px",color:isAcc?C.green:C.sub,fontSize:11,overflow:"hidden",textOverflow:"ellipsis"}}>{l.category}</td>
+                          <td style={{padding:"2px 3px",textAlign:"right"}}>
                             {l.field&&!readOnly?(
                               <input type="text" inputMode="decimal" defaultValue={l.qty} key={l.field+"-"+l.qty}
                                 onFocus={e=>e.target.select()}
                                 onBlur={e=>{const v=parseFloat(e.target.value);if(!isNaN(v)&&v!==l.qty)saveSelectedLaborOverride(l.field,Math.max(0,v));}}
                                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
-                                style={{background:"transparent",border:"1px solid #888",borderRadius:4,color:C.text,padding:"1px 4px",fontSize:12,width:44,textAlign:"right"}}/>
+                                style={{background:"transparent",border:"1px solid #888",borderRadius:4,color:C.text,padding:"1px 2px",fontSize:11,width:36,textAlign:"right"}}/>
                             ):(
-                              <span style={{color:C.text}}>{l.qty}</span>
+                              <span style={{color:C.text,fontSize:11}}>{l.qty}</span>
                             )}
-                            {" "}<span style={{color:C.muted,fontSize:11}}>{l.unit}</span>
+                            <span style={{color:C.muted,fontSize:9,marginLeft:1}}>{l.unit}</span>
                           </td>
-                          <td style={{padding:"3px 4px",textAlign:"right",color:C.muted,fontSize:11}}>{l.hours.toFixed(1)}</td>
-                          <td style={{padding:"3px 4px",textAlign:"right",color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmt(l.cost)}</td>
+                          <td style={{padding:"2px 2px",textAlign:"right",color:C.muted,fontSize:10}}>{l.hours.toFixed(1)}</td>
+                          <td style={{padding:"2px 2px",textAlign:"right",color:C.text,fontVariantNumeric:"tabular-nums",fontSize:10}}>{fmt(l.cost)}</td>
                         </tr>);
                       })}
                       <tr style={{borderTop:`1px solid ${C.border}`}}>
-                        <td style={{padding:"3px 4px",textAlign:"center",fontSize:10,color:C.muted}}>{acceptedCount}/{laborEst.lines.length}</td>
-                        <td style={{padding:"3px 4px",fontWeight:700,color:C.text,fontSize:12}}>TOTAL</td>
+                        <td style={{padding:"2px 2px",textAlign:"center",fontSize:9,color:C.muted}}>{acceptedCount}/{laborEst.lines.length}</td>
+                        <td style={{padding:"2px 3px",fontWeight:700,color:C.text,fontSize:11}}>TOTAL</td>
                         <td></td>
-                        <td style={{padding:"3px 4px",textAlign:"right",fontWeight:700,color:C.text,fontSize:12}}>{laborEst.totalHours.toFixed(1)}</td>
-                        <td style={{padding:"3px 4px",textAlign:"right",fontWeight:700,color:C.accent,fontVariantNumeric:"tabular-nums",fontSize:12}}>{fmt(laborEst.totalCost)}</td>
+                        <td style={{padding:"2px 2px",textAlign:"right",fontWeight:700,color:C.text,fontSize:11}}>{laborEst.totalHours.toFixed(1)}</td>
+                        <td style={{padding:"2px 2px",textAlign:"right",fontWeight:700,color:C.accent,fontVariantNumeric:"tabular-nums",fontSize:11}}>{fmt(laborEst.totalCost)}</td>
                       </tr>
                     </tbody>
                   </table>
