@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.55";
+const APP_VERSION="v1.19.56";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2072,53 +2072,6 @@ function bcGuessMfrFromDesc(desc){
  * and patch matching items via OData.
  * @param {function} progressCb - called with {phase, total, done, patched, skipped, errors}
  */
-async function bcFillMissingManufacturers(progressCb){
-  if(!_bcToken)throw new Error("Not connected to Business Central");
-  // Step 1: fetch all items
-  progressCb({phase:"Fetching all BC items…",total:0,done:0,patched:0,skipped:0,errors:0});
-  const allItems=[];
-  let skip=0;
-  while(true){
-    const url=`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code&$top=200&$skip=${skip}`;
-    const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-    if(!r.ok)break;
-    const d=await r.json();
-    const batch=d.value||[];
-    if(!batch.length)break;
-    allItems.push(...batch);
-    skip+=200;
-    progressCb({phase:`Fetching… ${allItems.length} items so far`,total:0,done:0,patched:0,skipped:0,errors:0});
-    if(batch.length<200)break;
-  }
-  // Step 2: filter items missing manufacturer code
-  const needsMfr=allItems.filter(i=>!i.Manufacturer_Code||!i.Manufacturer_Code.trim());
-  const total=needsMfr.length;
-  progressCb({phase:`${allItems.length} total items, ${total} missing manufacturer. Matching…`,total,done:0,patched:0,skipped:0,errors:0});
-  let patched=0,skipped=0,errors=0;
-  const log=[];
-  for(let i=0;i<needsMfr.length;i++){
-    const item=needsMfr[i];
-    const code=bcGuessMfrFromDesc(item.Description);
-    if(code){
-      try{
-        await bcPatchItemOData(item.No,{Manufacturer_Code:code});
-        patched++;
-        log.push({no:item.No,desc:item.Description,code,status:'patched'});
-      }catch(e){
-        errors++;
-        log.push({no:item.No,desc:item.Description,code,status:'error',error:e.message});
-      }
-    }else{
-      skipped++;
-      log.push({no:item.No,desc:item.Description,code:null,status:'no_match'});
-    }
-    if(i%20===0||i===needsMfr.length-1){
-      progressCb({phase:`Patching items…`,total,done:i+1,patched,skipped,errors});
-    }
-  }
-  return{totalItems:allItems.length,needsMfr:total,patched,skipped,errors,log};
-}
-
 /**
  * Normalize a raw manufacturer string from BOM extraction to a BC Manufacturer Code.
  * Returns the Code[10] string, or null if no match found.
@@ -13658,62 +13611,6 @@ function DigikeyTestPanel({uid}){
   </div>);
 }
 
-// ── BC MANUFACTURER FILL PANEL ──
-function BcMfrFillPanel(){
-  const [running,setRunning]=useState(false);
-  const [status,setStatus]=useState(null);
-  const [result,setResult]=useState(null);
-  const [error,setError]=useState(null);
-  const [showLog,setShowLog]=useState(false);
-
-  async function runFill(){
-    if(!_bcToken){setError("Connect to Business Central first");return;}
-    setRunning(true);setError(null);setResult(null);setStatus(null);setShowLog(false);
-    try{
-      const r=await bcFillMissingManufacturers(s=>setStatus({...s}));
-      setResult(r);
-    }catch(e){setError(e.message);}
-    setRunning(false);setStatus(null);
-  }
-
-  const patchedLog=result?.log?.filter(l=>l.status==='patched')||[];
-  const errorLog=result?.log?.filter(l=>l.status==='error')||[];
-
-  return(<div>
-    <div style={{fontSize:12,color:"#94a3b8",marginBottom:10,lineHeight:1.6}}>
-      Scans all BC items with no Manufacturer Code and attempts to detect the manufacturer from the item description.
-      Only matches terms ≥ 4 characters to avoid false positives.
-    </div>
-    <button onClick={runFill} disabled={running}
-      style={{background:running?"#334155":"#7c3aed",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:running?"wait":"pointer",opacity:running?0.7:1}}>
-      {running?"Running…":"Fill Missing Manufacturers"}
-    </button>
-    {status&&<div style={{marginTop:8,fontSize:12,color:"#94a3b8"}}>
-      {status.phase}
-      {status.total>0&&<span style={{marginLeft:8,color:"#94a3b8"}}>{status.done}/{status.total} — {status.patched} patched, {status.skipped} no match, {status.errors} errors</span>}
-    </div>}
-    {error&&<div style={{color:"#ef4444",fontSize:12,marginTop:8}}>{error}</div>}
-    {result&&<div style={{marginTop:10,fontSize:12}}>
-      <div style={{color:"#22c55e",marginBottom:4}}>
-        ✓ Complete — <strong>{result.patched}</strong> patched, <strong>{result.skipped}</strong> no match, <strong>{result.errors}</strong> errors
-        <span style={{color:"#94a3b8",marginLeft:8}}>({result.needsMfr} of {result.totalItems} items had no manufacturer)</span>
-      </div>
-      {(patchedLog.length>0||errorLog.length>0)&&<button onClick={()=>setShowLog(v=>!v)}
-        style={{background:"#1e293b",color:"#94a3b8",border:"1px solid #334155",borderRadius:4,padding:"3px 10px",fontSize:11,cursor:"pointer",marginTop:4}}>
-        {showLog?"Hide":"Show"} Details ({patchedLog.length} patched{errorLog.length>0?`, ${errorLog.length} errors`:''})
-      </button>}
-      {showLog&&<div style={{marginTop:6,maxHeight:200,overflowY:"auto",fontSize:11}}>
-        {patchedLog.map((l,i)=><div key={i} style={{color:"#22c55e",padding:"1px 0"}}>
-          ✓ {l.no} → <strong>{l.code}</strong> <span style={{color:"#94a3b8"}}>{l.desc?.slice(0,60)}</span>
-        </div>)}
-        {errorLog.map((l,i)=><div key={i} style={{color:"#ef4444",padding:"1px 0"}}>
-          ✗ {l.no} ({l.code}) — {l.error}
-        </div>)}
-      </div>}
-    </div>}
-  </div>);
-}
-
 // ── DIGIKEY FULL UPDATE PANEL ──
 function DigikeyUpdatePanel({uid}){
   const [vendorNo,setVendorNo]=useState(()=>localStorage.getItem('_arc_dk_vendor')||'');
@@ -14448,14 +14345,6 @@ function SettingsModal({uid,onClose,onNameChange}){
         </div>
 
         {/* BC Manufacturer Codes */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>BC Manufacturer Codes</div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
-            Auto-fill missing Manufacturer Code fields on BC items by matching the item description against known manufacturer names.
-          </div>
-          <BcMfrFillPanel/>
-        </div>
-
         {/* DigiKey API */}
         <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>DigiKey API</div>
@@ -16528,7 +16417,6 @@ function ItemsTab({uid}){
   const [editingMfr,setEditingMfr]=useState(null); // {no, val}
   const [savingMfr,setSavingMfr]=useState(null);
   const [error,setError]=useState(null);
-  const [showFill,setShowFill]=useState(false);
   const [showVendorSync,setShowVendorSync]=useState(false);
   const [manufacturers,setManufacturers]=useState([]);
   const [vendorMap,setVendorMap]=useState({});
@@ -16668,12 +16556,6 @@ function ItemsTab({uid}){
           style={{flex:1,...inp(),padding:"6px 10px",fontSize:13,fontFamily:"inherit"}}/>
         {loading&&<span style={{color:C.muted,fontSize:12,whiteSpace:"nowrap",alignSelf:"center"}}>searching…</span>}
       </div>
-      <button onClick={()=>setShowFill(v=>!v)}
-        style={{background:showFill?"#7c3aed":"#1e3a5f",color:"#fff",
-          border:`1px solid ${showFill?"#7c3aed":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
-          fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
-        🏷 Fill MFR Codes
-      </button>
       <button onClick={()=>setShowVendorSync(v=>!v)}
         style={{background:showVendorSync?"#0d9488":"#1e3a5f",color:"#fff",
           border:`1px solid ${showVendorSync?"#0d9488":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
@@ -16689,10 +16571,6 @@ function ItemsTab({uid}){
     </div>
 
     {/* Collapsible panels */}
-    {showFill&&<div style={{...card(),marginBottom:16}}>
-      <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>🏷 Fill Missing Manufacturer Codes</div>
-      <BcMfrFillPanel/>
-    </div>}
     {showVendorSync&&<div style={{...card(),marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>🔄 DigiKey & Mouser Vendor Pricing Sync</div>
       <VendorPricingSyncPanel uid={uid}/>
