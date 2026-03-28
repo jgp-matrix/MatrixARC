@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.27";
+const APP_VERSION="v1.19.28";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13987,24 +13987,29 @@ function VendorPricingSyncPanel({uid}){
     try{
       const allPages=await bcDiscoverODataPages();
       const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
-      const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name&$top=500`,
+      // Try PARTS-filtered list first; fall back to all vendors if PARTS group not yet set up
+      const partsR=await fetch(
+        `${BC_ODATA_BASE}/${vPage}?$select=No,Name,Vendor_Posting_Group&$top=500&$filter=Vendor_Posting_Group eq 'PARTS'`,
         {headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(!r.ok){
-        const txt=await r.text();
-        setVendorLoadErr(`BC ${r.status} loading vendors: ${txt.slice(0,200)}`);
-        setLoadingVendors(false);return;
+      const partsList=partsR.ok?(await partsR.json()).value||[]:[];
+      let list=partsList;
+      let partsFiltered=partsList.length>0;
+      if(!partsFiltered){
+        // PARTS group not set up yet — load all vendors
+        const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name,Vendor_Posting_Group&$top=500`,
+          {headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(!r.ok){const txt=await r.text();setVendorLoadErr(`BC ${r.status}: ${txt.slice(0,200)}`);setLoadingVendors(false);return;}
+        list=(await r.json()).value||[];
       }
-      const list=(await r.json()).value||[];
       setVendors(list);
-      setVendorLoadErr(null);
-      // Auto-detect DigiKey and Mouser by name (fuzzy)
+      setVendorLoadErr(partsFiltered?null:`ℹ PARTS posting group not set up yet — showing all ${list.length} vendors. Use "Tag Parts & Electrical Vendors" in the Vendors panel to migrate.`);
+      // Auto-detect DigiKey and Mouser by name
       const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
       const dk=list.find(v=>norm(v.Name).includes('digikey'));
       const mo=list.find(v=>norm(v.Name).includes('mouser'));
-      // Only auto-fill if not already set from Firestore
       if(dk)setDkVendor(prev=>prev||dk.No);
       if(mo)setMouserVendor(prev=>prev||mo.No);
-      if(!dk&&!mo)console.log("VendorSync: no DigiKey/Mouser found in vendor list:",list.map(v=>v.Name));
+      if(!dk&&!mo)console.log("VendorSync: no DigiKey/Mouser found:",list.map(v=>v.Name));
     }catch(e){
       setVendorLoadErr(`Error loading vendors: ${e.message}`);
       console.warn("fetchVendors error:",e);
@@ -15861,6 +15866,24 @@ function PurchasingTab(){
   </div>);
 }
 
+// ── VENDOR CLASSIFIER — used by migration tool and sync panel ──
+function classifyVendor(name){
+  const n=(name||'').toLowerCase().trim();
+  if(!n)return 'TRADE';
+  // Person-name check (2-3 words, each capitalized, no company suffixes)
+  const words=name.trim().split(/\s+/);
+  if(words.length>=2&&words.length<=3
+    &&!/\b(inc|llc|ltd|corp|co\.|supply|electric|systems|controls|solutions|services|technologies|industrial|automation)\b/i.test(name)
+    &&words.every(w=>/^[A-Z][a-z]{1,}$/.test(w)))return 'TRADE';
+  // Hard exclusions
+  if(/steakhouse|chick.fil|chilis|cafe rio|cafe zupas|costa vida|cooler runnings|black angus|restaurant|food vendor|airline|american airlines|delta air|cache valley bank|american express|chase ihg|insurance|janitorial|cleaning|restoration|shred|construction company|builders|concept kitchen|custom audio|alphagraphics|diamond rental|dell computer|dhl express|comcast|dominion energy|gas station|appliance exchange|cal ranch|best buy|costco|amazon|palo alto software/.test(n))return 'TRADE';
+  // Known parts brands & distributors
+  if(/digikey|digi.key|mouser|beckhoff|siemens|rockwell|allen.bradley|schneider|phoenix contact|wago|cognex|keyence|ifm efector|pepperl|turck|balluff|smcusa|ametek|bender|c3 controls|codale|ced corp|crescent electric|crum electric|cache valley electric|db roberts|jepco|thermal.edge|dbk usa|rittal|navepoint|datapro|cable ties|ctc connection|precision digital|stored energy|anti vibration|bolt & nut|mcnichols|anr fabrication|avatar metal|arduino store|batteries \+|cate industrial|clarion safety|crane.controls|control equipment|ddl traffic|royal direct|css america|newark|platt electric|plc central|rust automation|northeast electrical|orange electric|products for automation|lesman|jmc instrument|inmotion controls|industrial networking|instrumentors|industrial power|intermountain fuse|ifm efector|gordon electric|hope industrial|industrial automation|electric motion|electro.sensor|standard supply|trc electronics|true cable|wiautomation|waterford systems|marshall.s industrial|onlinecomponents|lgg industrial/.test(n))return 'PARTS';
+  // General keywords
+  if(/\belectric\b|\belectrical\b|\belectronics\b|controls|automation|industrial|instruments?|sensors?|\bwire\b|\bwiring\b|\bcable\b|connectors?|drives|vfd|inverter|relays?|breakers?|fuses?|contactor|transformer|switchgear|enclosure|pneumatic|hydraulic|\bplc\b|\bhmi\b|\bscada\b|fabrication|metal works|fastener|power supply|power systems|certification lab|components?|safety systems|anti.vibration|transmitter|transducer/.test(n))return 'PARTS';
+  return 'TRADE';
+}
+
 // ── VENDORS PANEL ──
 function VendorsPanel({uid}){
   const[vendors,setVendors]=useState([]);
@@ -15877,6 +15900,9 @@ function VendorsPanel({uid}){
   const[dupRemoving,setDupRemoving]=useState(false);
   const[dupProgress,setDupProgress]=useState('');
   const[dupConfirmed,setDupConfirmed]=useState(false);
+  const[showPartsOnly,setShowPartsOnly]=useState(false);
+  const[showMigrate,setShowMigrate]=useState(false);
+  const[migrateStatus,setMigrateStatus]=useState(null); // null | {running,done,total,patched,errors,needsSetup,log}
   // Posting group fields for new vendor form
   const[genBusGroups,setGenBusGroups]=useState([]);
   const[vendorPostingGroups,setVendorPostingGroups]=useState([]);
@@ -16005,6 +16031,50 @@ function VendorsPanel({uid}){
       setDupProgress(`Error: ${e.message}`);
     }
     setDupRemoving(false);
+  }
+
+  async function runMigration(){
+    setMigrateStatus({running:true,total:0,patched:0,errors:[],needsSetup:false,log:[]});
+    try{
+      const allPages=await bcDiscoverODataPages();
+      const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor_Card_Excel';
+      // Fetch all vendors
+      const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name,Vendor_Posting_Group&$top=500`,
+        {headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!r.ok)throw new Error(`BC ${r.status}`);
+      const all=(await r.json()).value||[];
+      const toPatch=all.filter(v=>classifyVendor(v.Name)==='PARTS'&&v.Vendor_Posting_Group!=='PARTS');
+      setMigrateStatus(s=>({...s,total:toPatch.length}));
+      let patched=0;const errors=[];const log=[];
+      for(let i=0;i<toPatch.length;i++){
+        const v=toPatch[i];
+        const pr=await fetch(`${BC_ODATA_BASE}/${vPage}('${v.No}')`,{
+          method:'PATCH',
+          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
+          body:JSON.stringify({Vendor_Posting_Group:'PARTS'})
+        });
+        if(pr.ok||pr.status===204){
+          patched++;log.push(`✓ ${v.No} — ${v.Name}`);
+          setMigrateStatus(s=>({...s,patched,log:[...log]}));
+        }else{
+          const txt=await pr.text();
+          // Detect "PARTS posting group doesn't exist" error
+          if(/posting group|does not exist|invalid.*parts|parts.*invalid/i.test(txt)){
+            setMigrateStatus(s=>({...s,running:false,needsSetup:true,
+              log:[...log,`✗ ${v.No}: PARTS posting group not found in BC`]}));
+            return;
+          }
+          errors.push(`${v.No}: ${txt.slice(0,120)}`);
+          log.push(`✗ ${v.No} — ${v.Name}: error`);
+          setMigrateStatus(s=>({...s,errors:[...errors],log:[...log]}));
+        }
+        if(i<toPatch.length-1)await new Promise(res=>setTimeout(res,150));
+      }
+      setMigrateStatus({running:false,done:true,total:toPatch.length,patched,errors,needsSetup:false,log});
+      await fetchVendors();
+    }catch(e){
+      setMigrateStatus(s=>({...s,running:false,errors:[e.message]}));
+    }
   }
 
   async function fetchVendors(){
@@ -16199,6 +16269,60 @@ function VendorsPanel({uid}){
       {addErr&&<div style={{marginTop:4,color:"#f87171",fontSize:11}}>⚠ {addErr}</div>}
     </div>
 
+    {/* PARTS Migration Panel */}
+    <div style={{marginBottom:12}}>
+      <button onClick={()=>setShowMigrate(v=>!v)}
+        style={{background:showMigrate?"#7c3aed":"#1e293b",border:`1px solid ${showMigrate?"#7c3aed":"#334155"}`,
+          borderRadius:5,padding:"5px 12px",color:showMigrate?"#fff":"#94a3b8",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+        🔖 Tag Parts &amp; Electrical Vendors
+      </button>
+      {showMigrate&&<div style={{border:"1px solid #4c1d95",borderRadius:6,padding:"12px 14px",background:"#0d0a1f",marginTop:8}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#c4b5fd",marginBottom:8}}>Migrate Vendors → PARTS Posting Group</div>
+        {/* Step 1 instructions */}
+        <div style={{background:"#1e1a3a",borderRadius:5,padding:"10px 12px",marginBottom:10,fontSize:11,color:"#a78bfa",lineHeight:1.7}}>
+          <div style={{fontWeight:700,color:"#e2e8f0",marginBottom:4}}>Step 1 — Create PARTS posting group in BC (one-time, ~2 min)</div>
+          <div>1. Log into <strong>Business Central</strong> → search <strong>"Vendor Posting Groups"</strong></div>
+          <div>2. Click <strong>New</strong> → set Code: <code style={{background:"#2d1a5e",padding:"1px 5px",borderRadius:3}}>PARTS</code>, Description: <em>Parts &amp; Electrical Suppliers</em></div>
+          <div>3. Set <strong>Payables Account</strong> to the same GL account as the <code style={{background:"#2d1a5e",padding:"1px 5px",borderRadius:3}}>TRADE</code> group</div>
+          <div>4. Save, then come back and click <strong>Run Migration</strong> below</div>
+        </div>
+        {/* Step 2 — run migration */}
+        <div style={{fontSize:11,color:"#94a3b8",marginBottom:8}}>
+          Step 2 — ARC will auto-classify and patch <strong style={{color:"#c4b5fd"}}>~65 electrical &amp; parts vendors</strong> from TRADE → PARTS.
+        </div>
+        {migrateStatus?.needsSetup&&<div style={{background:"#450a0a",border:"1px solid #ef4444",borderRadius:5,padding:"8px 12px",marginBottom:8,fontSize:11,color:"#fca5a5"}}>
+          ⚠ <strong>PARTS posting group not found in BC.</strong> Complete Step 1 above first, then retry.
+        </div>}
+        {migrateStatus?.done&&<div style={{background:"#052e16",border:"1px solid #22c55e",borderRadius:5,padding:"8px 12px",marginBottom:8,fontSize:11,color:"#86efac"}}>
+          ✓ Migration complete — {migrateStatus.patched}/{migrateStatus.total} vendors moved to PARTS.
+          {migrateStatus.errors.length>0&&<span style={{color:"#fca5a5"}}> {migrateStatus.errors.length} errors.</span>}
+        </div>}
+        {migrateStatus?.running&&<div style={{fontSize:11,color:"#a78bfa",marginBottom:8}}>
+          Patching… {migrateStatus.patched}/{migrateStatus.total} vendors
+          <div style={{height:4,background:"#2d1a5e",borderRadius:2,marginTop:4}}>
+            <div style={{height:"100%",background:"#7c3aed",borderRadius:2,
+              width:migrateStatus.total>0?`${Math.round(migrateStatus.patched/migrateStatus.total*100)}%`:"0%",transition:"width 0.3s"}}/>
+          </div>
+        </div>}
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button onClick={runMigration} disabled={migrateStatus?.running}
+            style={{background:migrateStatus?.running?"#334155":"#7c3aed",color:"#fff",border:"none",
+              borderRadius:5,padding:"6px 14px",fontSize:12,fontWeight:600,
+              cursor:migrateStatus?.running?"not-allowed":"pointer"}}>
+            {migrateStatus?.running?"Running…":migrateStatus?.done?"↺ Re-run":"▶ Run Migration"}
+          </button>
+          {migrateStatus?.running===false&&migrateStatus?.log?.length>0&&(
+            <details style={{fontSize:10,color:"#64748b"}}>
+              <summary style={{cursor:"pointer"}}>View log ({migrateStatus.log.length})</summary>
+              <div style={{maxHeight:120,overflowY:"auto",fontFamily:"monospace",marginTop:4}}>
+                {migrateStatus.log.map((l,i)=><div key={i} style={{color:l.startsWith('✓')?"#86efac":"#fca5a5"}}>{l}</div>)}
+              </div>
+            </details>
+          )}
+        </div>
+      </div>}
+    </div>
+
     {/* Find Duplicates */}
     <div style={{marginBottom:14}}>
       {!dupScan&&(
@@ -16282,7 +16406,14 @@ function VendorsPanel({uid}){
       )}
     </div>
 
-    {/* Vendor list */}
+    {/* Vendor list header + filter */}
+    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+      <span style={{fontSize:11,color:"#64748b"}}>{vendors.filter(v=>!showPartsOnly||v.Vendor_Posting_Group==='PARTS').length} vendors</span>
+      <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,color:showPartsOnly?"#a78bfa":"#64748b"}}>
+        <input type="checkbox" checked={showPartsOnly} onChange={e=>setShowPartsOnly(e.target.checked)} style={{accentColor:"#7c3aed"}}/>
+        PARTS only
+      </label>
+    </div>
     {error&&<div style={{color:"#f87171",fontSize:12,marginBottom:8}}>{error}</div>}
     {loading?<div style={{color:"#475569",fontSize:12,padding:"8px 0"}}>Loading vendors…</div>:(
       <div style={{border:`1px solid ${C.border}`,borderRadius:6,overflow:"hidden"}}>
@@ -16298,7 +16429,7 @@ function VendorsPanel({uid}){
             {vendors.length===0&&<tr><td colSpan={3} style={{padding:"16px 10px",color:"#475569",textAlign:"center",fontSize:12}}>
               No vendors — connect to BC or add one above.
             </td></tr>}
-            {vendors.map((v,idx)=>(
+            {vendors.filter(v=>!showPartsOnly||v.Vendor_Posting_Group==='PARTS').map((v,idx)=>(
               <tr key={v.No} style={{borderBottom:`1px solid ${C.border}`,
                 background:idx%2===0?"#1a2235":"#162040"}}>
                 <td style={{padding:"4px 10px"}}>
