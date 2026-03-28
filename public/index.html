@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.35";
+const APP_VERSION="v1.19.36";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16302,13 +16302,16 @@ function VendorsPanel({uid}){
           <label style={{fontSize:10,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5}}>
             Vendor Code <span style={{color:"#475569"}}>(ARC short code)</span>
           </label>
-          <input value={newCode} onChange={e=>{setNewCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,''));setAddErr(null);}}
-            placeholder="e.g. CODALE" maxLength={10}
-            onKeyDown={e=>e.key==="Enter"&&addVendor()}
-            style={{width:110,background:"#0f172a",
-              border:`1px solid ${codeDupMatch?.type==='error'?"#ef4444":"#334155"}`,
-              borderRadius:4,padding:"5px 9px",color:"#34d399",fontSize:12,
-              fontFamily:"monospace",fontWeight:700,textTransform:"uppercase"}}/>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <input value={newCode} onChange={e=>{setNewCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,''));setAddErr(null);}}
+              placeholder="e.g. CODALE" maxLength={10}
+              onKeyDown={e=>e.key==="Enter"&&addVendor()}
+              style={{width:110,background:"#0f172a",
+                border:`1px solid ${codeDupMatch?.type==='error'?"#ef4444":"#334155"}`,
+                borderRadius:4,padding:"5px 9px",color:"#34d399",fontSize:12,
+                fontFamily:"monospace",fontWeight:700,textTransform:"uppercase"}}/>
+            {codeDupMatch&&<span style={{fontSize:11,color:"#f87171",whiteSpace:"nowrap"}}>🚫 {codeDupMatch.msg}</span>}
+          </div>
         </div>
       </div>
       {/* Row 2 — Posting groups + Tax area */}
@@ -16385,9 +16388,6 @@ function VendorsPanel({uid}){
           {dupMatch.score&&<span style={{color:"#64748b",fontFamily:"monospace"}}>({Math.round(dupMatch.score*100)}% match)</span>}
           <span style={{color:"#64748b"}}>· add anyway if intentional</span>
         </>}
-      </div>}
-      {codeDupMatch&&<div style={{marginTop:4,fontSize:11,color:"#f87171",display:"flex",alignItems:"center",gap:5}}>
-        🚫 {codeDupMatch.msg}
       </div>}
       {(!newGenBus||!newVendorPosting)&&newName.trim()&&<div style={{marginTop:4,fontSize:11,color:"#fbbf24"}}>
         ⚠ Gen. Bus. Posting Group and Vendor Posting Group are required in BC — vendor may be unusable without them.
