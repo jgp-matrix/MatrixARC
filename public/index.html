@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.70";
+const APP_VERSION="v1.19.71";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5440,13 +5440,13 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
               style={{...inp(),width:"100%",boxSizing:"border-box",fontSize:13,opacity:_bcToken?1:0.5}}/>
             {bcSearching&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Searching…</div>}
             {bcResults.length>0&&(
-              <div style={{border:`1px solid ${C.accent}55`,borderRadius:8,marginTop:6,maxHeight:200,overflowY:"auto",background:"#1e3050"}}>
-                <div style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,fontSize:10,color:C.muted,fontWeight:600,padding:"5px 10px",borderBottom:`1px solid ${C.accent}44`,textTransform:"uppercase",letterSpacing:0.3,position:"sticky",top:0,background:"#1e3050"}}>
+              <div style={{border:`1px solid ${C.accent}55`,borderRadius:8,marginTop:6,maxHeight:200,overflowY:"auto",background:"#2a4a6e"}}>
+                <div style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,fontSize:10,color:C.muted,fontWeight:600,padding:"5px 10px",borderBottom:`1px solid ${C.accent}44`,textTransform:"uppercase",letterSpacing:0.3,position:"sticky",top:0,background:"#2a4a6e"}}>
                   <div>Part #</div><div>Description</div><div style={{textAlign:"right"}}>Unit Cost</div><div style={{textAlign:"right"}}>Modified</div>
                 </div>
                 {bcResults.map((item,i)=>(
                   <div key={i} onClick={()=>addBcItem(item)} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,padding:"7px 10px",cursor:"pointer",borderBottom:`1px solid ${C.border}33`,fontSize:12,transition:"background 0.1s"}}
-                    onMouseEnter={e=>e.currentTarget.style.background="#263d5e"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    onMouseEnter={e=>e.currentTarget.style.background="#345880"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.number}</div>
                     <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:8}}>{item.displayName}</div>
                     <div style={{textAlign:"right",color:C.green}}>{item.unitCost!=null?"$"+item.unitCost.toFixed(2):"—"}</div>
@@ -14662,11 +14662,11 @@ function NewProjectModal({uid,onCreated,onClose}){
               />
               {selectedCustomer&&<div style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:C.green,fontSize:14}}>✓</div>}
               {showDropdown&&customerResults.length>0&&(
-                <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1e3050",border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,maxHeight:200,overflowY:"auto",marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
+                <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#2a4a6e",border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,maxHeight:200,overflowY:"auto",marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
                   {customerResults.map(c=>(
                     <div key={c.number} onMouseDown={()=>selectCustomer(c)}
                       style={{padding:"9px 12px",cursor:"pointer",display:"flex",gap:10,alignItems:"center",borderBottom:`1px solid ${C.border}33`}}
-                      onMouseEnter={e=>e.currentTarget.style.background="#263d5e"}
+                      onMouseEnter={e=>e.currentTarget.style.background="#345880"}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                       <span style={{fontSize:11,color:C.muted,minWidth:60,fontFamily:"monospace"}}>{c.number}</span>
                       <span style={{fontSize:13,color:C.text}}>{c.displayName}</span>
@@ -14675,7 +14675,7 @@ function NewProjectModal({uid,onCreated,onClose}){
                 </div>
               )}
               {showDropdown&&!customerSearching&&customerResults.length===0&&customerQuery&&(
-                <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#1e3050",border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,padding:"10px 12px",marginTop:4,fontSize:12,color:C.muted}}>No customers found</div>
+                <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#2a4a6e",border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,padding:"10px 12px",marginTop:4,fontSize:12,color:C.muted}}>No customers found</div>
               )}
             </div>
           )}
