@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.34";
+const APP_VERSION="v1.19.35";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15939,7 +15939,11 @@ function VendorsPanel({uid}){
     if(!vendors.length)return;
     const generated={};
     vendors.forEach(v=>{
-      if(!vendorCodes[v.No])generated[v.No]=autoGenerateCode(v.Name);
+      if(!vendorCodes[v.No]){
+        // Prefer BC Search_Name as the code source; fall back to auto-generate
+        const fromBC=(v.Search_Name||'').trim().toUpperCase().slice(0,10);
+        generated[v.No]=fromBC||autoGenerateCode(v.Name);
+      }
     });
     if(Object.keys(generated).length){
       const merged={...vendorCodes,...generated};
@@ -15949,10 +15953,24 @@ function VendorsPanel({uid}){
   },[vendors,vendorCodes]);
 
   async function saveVendorCode(vendorNo,code){
-    const updated={...vendorCodes,[vendorNo]:code.trim().toUpperCase().slice(0,10)};
+    const clean=code.trim().toUpperCase().slice(0,10);
+    const updated={...vendorCodes,[vendorNo]:clean};
     setVendorCodes(updated);
     setEditingCode(null);
+    // Save to Firestore
     await fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:updated},{merge:true});
+    // Mirror to BC Search_Name field
+    if(_bcToken&&clean){
+      try{
+        const allPages=await bcDiscoverODataPages();
+        const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
+        await fetch(`${BC_ODATA_BASE}/${vPage}('${vendorNo}')`,{
+          method:'PATCH',
+          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
+          body:JSON.stringify({Search_Name:clean})
+        });
+      }catch(e){console.warn('Search_Name BC sync failed:',e.message);}
+    }
   }
 
   async function saveVendorPostingGroup(vendorNo,newVPG){
@@ -16112,7 +16130,7 @@ function VendorsPanel({uid}){
       const allPages=await bcDiscoverODataPages();
       const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
       const r=await fetch(
-        `${BC_ODATA_BASE}/${vPage}?$select=No,Name,Phone_No,Gen_Bus_Posting_Group,Vendor_Posting_Group,Tax_Area_Code&$top=500&$orderby=Name asc`,
+        `${BC_ODATA_BASE}/${vPage}?$select=No,Name,Search_Name,Phone_No,Gen_Bus_Posting_Group,Vendor_Posting_Group,Tax_Area_Code&$top=500&$orderby=Name asc`,
         {headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(!r.ok)throw new Error(`BC ${r.status} — page: ${vPage}`);
       const vs=(await r.json()).value||[];
@@ -16240,6 +16258,7 @@ function VendorsPanel({uid}){
           if(newGenBus)patch.Gen_Bus_Posting_Group=newGenBus;
           if(newVendorPosting)patch.Vendor_Posting_Group=newVendorPosting;
           if(newTaxArea)patch.Tax_Area_Code=newTaxArea;
+          if(newCode.trim())patch.Search_Name=newCode.trim().toUpperCase().slice(0,10);
           const pr=await fetch(`${BC_ODATA_BASE}/${vPage}('${createdNo}')`,{
             method:"PATCH",
             headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
