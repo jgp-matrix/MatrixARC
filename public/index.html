@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.46";
+const APP_VERSION="v1.19.47";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15900,7 +15900,7 @@ function VendorsPanel({uid}){
   const[dupRemoving,setDupRemoving]=useState(false);
   const[dupProgress,setDupProgress]=useState('');
   const[dupConfirmed,setDupConfirmed]=useState(false);
-  const[showPartsOnly,setShowPartsOnly]=useState(false);
+  const[showAll,setShowAll]=useState(false);
   const[showMigrate,setShowMigrate]=useState(false);
   const[migrateStatus,setMigrateStatus]=useState(null); // null | {running,done,total,patched,errors,needsSetup,log}
   const[vpgSaving,setVpgSaving]=useState({}); // {vendorNo: true} while PATCH in flight
@@ -16496,10 +16496,10 @@ function VendorsPanel({uid}){
 
     {/* Vendor list header + filter */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-      <span style={{fontSize:11,color:"#94a3b8"}}>{vendors.filter(v=>!showPartsOnly||v.Vendor_Posting_Group==='PARTS').length} vendors</span>
-      <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,color:showPartsOnly?"#a78bfa":"#64748b"}}>
-        <input type="checkbox" checked={showPartsOnly} onChange={e=>setShowPartsOnly(e.target.checked)} style={{accentColor:"#7c3aed"}}/>
-        PARTS only
+      <span style={{fontSize:11,color:"#94a3b8"}}>{vendors.filter(v=>showAll||v.Vendor_Posting_Group==='PARTS').length} vendors</span>
+      <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,color:showAll?"#a78bfa":"#94a3b8"}}>
+        <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} style={{accentColor:"#7c3aed"}}/>
+        Show all
       </label>
     </div>
     {error&&<div style={{color:"#f87171",fontSize:12,marginBottom:8}}>{error}</div>}
@@ -16518,7 +16518,7 @@ function VendorsPanel({uid}){
             {vendors.length===0&&<tr><td colSpan={4} style={{padding:"16px 10px",color:"#94a3b8",textAlign:"center",fontSize:12}}>
               No vendors — connect to BC or add one above.
             </td></tr>}
-            {vendors.filter(v=>!showPartsOnly||v.Vendor_Posting_Group==='PARTS').map((v,idx)=>(
+            {vendors.filter(v=>showAll||v.Vendor_Posting_Group==='PARTS').map((v,idx)=>(
               <tr key={v.No} style={{borderBottom:`1px solid ${C.border}`,
                 background:idx%2===0?"#1a2235":"#162040"}}>
                 <td style={{padding:"4px 10px",whiteSpace:"nowrap"}}>
