@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.73";
+const APP_VERSION="v1.19.74";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8518,19 +8518,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if((finalPanel.bom||[]).length>0&&_apiKey){
           try{runPricingOnPanel(finalPanel.bom,finalPanel);}catch(e){}
         }
-        // Auto-sync planning lines to BC after extraction
-        if((finalPanel.bom||[]).length>0&&bcProjectNumber&&_bcToken){
-          bcSyncPanelPlanningLines(bcProjectNumber,idx+1,finalPanel,projectName).then(result=>{
-            if(result.failed?.length>0)console.warn("Auto BC sync: "+result.failed.length+" items failed");
-            else console.log("Auto BC sync: planning lines synced");
-            // Also sync task descriptions
-            bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,finalPanel,projectName).catch(e=>console.warn("Auto task desc sync failed:",e));
-          }).catch(e=>console.warn("Auto BC planning lines sync failed:",e));
-        }
-        // Auto-upload drawings PDF to BC
-        if(bcProjectNumber&&_bcToken&&(finalPanel.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
-          try{buildAndAttachPdf();}catch(e){console.warn("Auto BC PDF upload failed:",e);}
-        }
+        // BC sync + PDF upload deferred until after pricing completes (see runPricingOnPanel)
       },
       stampFn:async(dataUrl,pgIdx,total)=>{
         const d=new Date();
@@ -9216,6 +9204,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     _pp({msg:`✓ ${totalPriced} of ${bom.length} priced${bcCount>0?` (${bcCount} BC, ${aiCount} AI est.)`:""}.`,pct:100});
     setAiPricing(false);
     pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
+    // Auto-sync to BC after pricing is complete (not during extraction)
+    if(bcProjectNumber&&_bcToken&&updatedBom.length>0){
+      bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated,projectName).then(result=>{
+        if(result.failed?.length>0)console.warn("Post-pricing BC sync: "+result.failed.length+" items failed");
+        else console.log("Post-pricing BC sync: planning lines synced");
+        bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,updated,projectName).catch(e=>console.warn("Post-pricing task desc sync failed:",e));
+      }).catch(e=>console.warn("Post-pricing BC sync failed:",e));
+      // Auto-upload drawings PDF to BC after pricing
+      if((updated.pages||panelBase.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
+        try{buildAndAttachPdf();}catch(e){console.warn("Post-pricing BC PDF upload failed:",e);}
+      }
+    }
   }
   async function validatePanel(){
     if(!_apiKey)return;
