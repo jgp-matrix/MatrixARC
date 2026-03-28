@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.65";
+const APP_VERSION="v1.19.66";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16416,39 +16416,20 @@ let _bcManufacturers = null; // [{Code, Name}]
 async function bcFetchManufacturers(){
   if(_bcManufacturers)return _bcManufacturers;
   if(!_bcToken)return[];
-  // Try OData Manufacturer page first
+  // Pull from BC Manufacturers table + merge with BC_MFR_MAP so all known codes appear
+  const bcCodes=new Map();
   try{
     const allPages=await bcDiscoverODataPages();
     const mPage=allPages.find(n=>n==='Manufacturer'||n==='Manufacturers');
     if(mPage){
-      const r=await fetch(`${BC_ODATA_BASE}/${mPage}?$select=Code,Name&$top=500`,
-        {headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(r.ok){
-        const list=(await r.json()).value||[];
-        if(list.length){_bcManufacturers=list;return _bcManufacturers;}
-      }
+      const r=await fetch(`${BC_ODATA_BASE}/${mPage}?$select=Code,Name&$top=500`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(r.ok)(await r.json()).value?.forEach(m=>bcCodes.set(m.Code,m.Name));
     }
   }catch(e){}
-  // Fallback: scan distinct Manufacturer_Code values from BC items + merge with BC_MFR_MAP
-  try{
-    const codes=new Set();
-    let sk=0;
-    while(true){
-      const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=Manufacturer_Code ne ''&$select=Manufacturer_Code&$top=200&$skip=${sk}`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(!r.ok)break;
-      const batch=(await r.json()).value||[];
-      if(!batch.length)break;
-      batch.forEach(i=>codes.add(i.Manufacturer_Code));
-      sk+=200;
-      if(batch.length<200)break;
-    }
-    // Build list from actual BC codes + BC_MFR_MAP names
-    const mfrNames=Object.fromEntries(BC_MFR_MAP.map(m=>[m.code,m.terms[0].split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ')]));
-    _bcManufacturers=Array.from(codes).sort().map(c=>({Code:c,Name:mfrNames[c]||c}));
-    if(_bcManufacturers.length)return _bcManufacturers;
-  }catch(e){}
-  // Last resort: use BC_MFR_MAP directly
-  _bcManufacturers=BC_MFR_MAP.map(m=>({Code:m.code,Name:m.terms[0].split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ')}));
+  // Merge: BC codes + any BC_MFR_MAP codes not yet in BC
+  const mfrNames=Object.fromEntries(BC_MFR_MAP.map(m=>[m.code,m.terms[0].split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ')]));
+  BC_MFR_MAP.forEach(m=>{if(!bcCodes.has(m.code))bcCodes.set(m.code,mfrNames[m.code]||m.code);});
+  _bcManufacturers=Array.from(bcCodes.entries()).map(([Code,Name])=>({Code,Name})).sort((a,b)=>a.Code.localeCompare(b.Code));
   return _bcManufacturers;
 }
 
@@ -16579,8 +16560,24 @@ function ItemsTab({uid}){
     setSavingMfr(no);
     try{
       const code=val.trim().slice(0,10).toUpperCase();
+      if(!code){await bcPatchItemOData(no,{Manufacturer_Code:''});setItems(prev=>prev.map(i=>i.No===no?{...i,Manufacturer_Code:''}:i));setSavingMfr(null);return;}
+      // Ensure manufacturer record exists in BC before patching item
+      const allPages=await bcDiscoverODataPages();
+      const mPage=allPages.find(n=>n==='Manufacturer'||n==='Manufacturers');
+      if(mPage){
+        const chk=await fetch(`${BC_ODATA_BASE}/${mPage}?$filter=Code eq '${code}'&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(chk.ok){
+          const existing=(await chk.json()).value||[];
+          if(!existing.length){
+            const mfrName=BC_MFR_MAP.find(m=>m.code===code)?.terms[0]||code;
+            const name=mfrName.split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ');
+            await fetch(`${BC_ODATA_BASE}/${mPage}`,{method:'POST',headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
+          }
+        }
+      }
       await bcPatchItemOData(no,{Manufacturer_Code:code});
       setItems(prev=>prev.map(i=>i.No===no?{...i,Manufacturer_Code:code}:i));
+      _bcManufacturers=null; // refresh dropdown on next load
       setEditingMfr(null);
     }catch(e){setError("Save failed: "+e.message);}
     setSavingMfr(null);
