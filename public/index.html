@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.43";
+const APP_VERSION="v1.19.44";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16492,89 +16492,6 @@ function VendorsPanel({uid}){
           )}
         </div>
       </div>}
-    </div>
-
-    {/* Find Duplicates */}
-    <div style={{marginBottom:14}}>
-      {!dupScan&&(
-        <button onClick={scanForDuplicates}
-          style={{background:"#1e293b",border:"1px solid #334155",borderRadius:5,padding:"5px 12px",
-            color:"#94a3b8",fontSize:11,fontWeight:600,cursor:"pointer"}}>
-          🔍 Find Duplicate Vendors
-        </button>
-      )}
-      {dupScan&&dupScan.loading&&(
-        <div style={{color:"#94a3b8",fontSize:12,padding:"6px 0"}}>Scanning BC for duplicates…</div>
-      )}
-      {dupScan&&!dupScan.loading&&dupScan.error&&(
-        <div style={{color:"#f87171",fontSize:12}}>⚠ {dupScan.error}
-          <button onClick={()=>setDupScan(null)} style={{marginLeft:8,background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:11}}>✕ Close</button>
-        </div>
-      )}
-      {dupScan&&!dupScan.loading&&!dupScan.error&&(
-        <div style={{border:"1px solid #334155",borderRadius:6,padding:"12px 14px",background:"#0f172a"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <span style={{fontSize:12,fontWeight:700,color:"#e2e8f0"}}>
-              {dupScan.groups.length===0
-                ? "✅ No duplicate vendors found"
-                : `Found ${dupScan.groups.length} duplicate group${dupScan.groups.length!==1?'s':''} — ${dupScan.groups.flatMap(g=>g.remove).length} vendor${dupScan.groups.flatMap(g=>g.remove).length!==1?'s':''} to remove`}
-            </span>
-            <button onClick={()=>{setDupScan(null);setDupConfirmed(false);setDupProgress('');}}
-              style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:14,padding:"0 4px"}}>✕</button>
-          </div>
-          {dupScan.groups.length>0&&(
-            <>
-              <div style={{maxHeight:180,overflowY:"auto",marginBottom:10}}>
-                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                  <thead>
-                    <tr style={{background:"#111d30"}}>
-                      <th style={{padding:"5px 8px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10}}>KEEP</th>
-                      <th style={{padding:"5px 8px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10}}>REMOVE</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {dupScan.groups.map((g,i)=>(
-                      <tr key={i} style={{borderBottom:"1px solid #1e293b"}}>
-                        <td style={{padding:"5px 8px",color:"#34d399",fontFamily:"monospace",fontSize:11}}>
-                          {g.keep.number||'—'} <span style={{color:"#94a3b8"}}>({g.keep.displayName})</span>
-                        </td>
-                        <td style={{padding:"5px 8px"}}>
-                          {g.remove.map((r,j)=>(
-                            <span key={j} style={{color:"#f87171",fontFamily:"monospace",fontSize:11,marginRight:8}}>
-                              {r.number||'—'} <span style={{color:"#94a3b8"}}>({r.displayName})</span>
-                            </span>
-                          ))}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {!dupConfirmed?(
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",fontSize:12,color:"#fbbf24"}}>
-                    <input type="checkbox" checked={dupConfirmed} onChange={e=>setDupConfirmed(e.target.checked)}
-                      style={{accentColor:"#ef4444"}}/>
-                    I confirm — permanently delete {dupScan.groups.flatMap(g=>g.remove).length} vendor{dupScan.groups.flatMap(g=>g.remove).length!==1?'s':''} from BC
-                  </label>
-                </div>
-              ):(
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <button onClick={executeRemoveDuplicates} disabled={dupRemoving}
-                    style={{background:dupRemoving?"#334155":"#dc2626",color:"#fff",border:"none",borderRadius:5,
-                      padding:"6px 14px",fontSize:12,fontWeight:600,cursor:dupRemoving?"not-allowed":"pointer"}}>
-                    {dupRemoving?"Removing…":"🗑 Remove Duplicates"}
-                  </button>
-                  <button onClick={()=>setDupConfirmed(false)} disabled={dupRemoving}
-                    style={{background:"none",border:"1px solid #334155",borderRadius:5,padding:"5px 12px",
-                      color:"#94a3b8",fontSize:11,cursor:"pointer"}}>Cancel</button>
-                  {dupProgress&&<span style={{fontSize:11,color:"#94a3b8"}}>{dupProgress}</span>}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
     </div>
 
     {/* Vendor list header + filter */}
