@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.51";
+const APP_VERSION="v1.19.52";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15939,7 +15939,7 @@ function VendorsPanel({uid}){
     return words[0].slice(0,6).toUpperCase();
   }
 
-  // Auto-generate codes for vendors that don't have one yet, then push new ones to BC
+  // Auto-generate codes for vendors that don't have one yet
   useEffect(()=>{
     if(!vendors.length)return;
     const generated={};
@@ -15950,25 +15950,6 @@ function VendorsPanel({uid}){
       const merged={...vendorCodes,...generated};
       setVendorCodes(merged);
       if(uid)fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:merged},{merge:true});
-      // Push only the newly generated codes to BC Search_Name
-      if(_bcToken){
-        (async()=>{
-          try{
-            const allPages=await bcDiscoverODataPages();
-            const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
-            for(const[vNo,code] of Object.entries(generated)){
-              if(!code)continue;
-              await fetch(`${BC_ODATA_BASE}/${vPage}('${vNo}')`,{
-                method:'PATCH',
-                headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
-                body:JSON.stringify({Search_Name:code.toUpperCase().slice(0,10)})
-              });
-              await new Promise(r=>setTimeout(r,80));
-            }
-            console.log(`Vendor codes: pushed ${Object.keys(generated).length} new codes to BC Search_Name`);
-          }catch(e){console.warn('Auto-generate BC sync failed:',e.message);}
-        })();
-      }
     }
   },[vendors,vendorCodes]);
 
@@ -16302,46 +16283,9 @@ function VendorsPanel({uid}){
     setAdding(false);
   }
 
-  const[syncingCodes,setSyncingCodes]=useState(false);
-  const[syncCodesResult,setSyncCodesResult]=useState(null);
-
-  async function syncCodesToBC(){
-    if(!_bcToken||!Object.keys(vendorCodes).length)return;
-    setSyncingCodes(true);setSyncCodesResult(null);
-    try{
-      const allPages=await bcDiscoverODataPages();
-      const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
-      let written=0,errors=0;
-      const entries=Object.entries(vendorCodes);
-      for(const[vNo,code] of entries){
-        if(!code)continue;
-        const r=await fetch(`${BC_ODATA_BASE}/${vPage}('${vNo}')`,{
-          method:'PATCH',
-          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
-          body:JSON.stringify({Search_Name:code.trim().toUpperCase().slice(0,10)})
-        });
-        if(r.ok||r.status===204)written++;else errors++;
-        await new Promise(res=>setTimeout(res,80));
-      }
-      setSyncCodesResult({written,errors,total:entries.length});
-    }catch(e){setSyncCodesResult({error:e.message});}
-    setSyncingCodes(false);
-  }
-
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,gap:8}}>
       <span style={{fontSize:12,color:"#94a3b8",lineHeight:1.6}}>Vendors from Business Central. Click a code to edit it.</span>
-      <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-        {syncCodesResult&&!syncCodesResult.error&&<span style={{fontSize:11,color:"#22c55e"}}>✓ {syncCodesResult.written} written</span>}
-        {syncCodesResult?.error&&<span style={{fontSize:11,color:"#f87171"}}>✗ {syncCodesResult.error}</span>}
-        <button onClick={syncCodesToBC} disabled={syncingCodes}
-          title="Write all ARC vendor codes to BC Search Name field"
-          style={{background:syncingCodes?"#1e293b":"#064e3b",border:`1px solid ${syncingCodes?"#334155":"#059669"}`,borderRadius:5,
-            padding:"5px 12px",color:syncingCodes?"#94a3b8":"#34d399",fontSize:11,fontWeight:700,
-            cursor:syncingCodes?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
-          {syncingCodes?"Syncing…":"↑ Sync Codes → BC"}
-        </button>
-      </div>
     </div>
 
     {/* Add Vendor form */}
