@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.44";
+const APP_VERSION="v1.19.45";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9977,7 +9977,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
                       if(!d)return{color:C.muted};
                       const age=Date.now()-d;
-                      if(age<=60*24*60*60*1000)return{color:"#4ade80",fontWeight:700};
+                      if(age<=30*24*60*60*1000)return{color:"#4ade80",fontWeight:700};
                       return{color:"#f87171",fontWeight:700};
                     })()}}
                     onMouseEnter={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
@@ -16615,7 +16615,36 @@ function ItemsTab({uid}){
   const [showVendorSync,setShowVendorSync]=useState(false);
   const [manufacturers,setManufacturers]=useState([]);
   const [vendorMap,setVendorMap]=useState({});
+  const [priceDateMap,setPriceDateMap]=useState({}); // {itemNo: mostRecentStartingDateMs}
   const PAGE=100;
+
+  async function fetchPurchasePriceDates(itemNos){
+    if(!_bcToken||!itemNos.length)return;
+    try{
+      const allPages=await bcDiscoverODataPages();
+      const ppPage=allPages.find(p=>/purchaseprice/i.test(p));
+      if(!ppPage){console.warn('ItemsTab: PurchasePrice OData page not found');return;}
+      // Batch into groups of 15 to stay within URL limits
+      const BATCH=15;
+      const map={};
+      const batches=[];
+      for(let i=0;i<itemNos.length;i+=BATCH)batches.push(itemNos.slice(i,i+BATCH));
+      await Promise.all(batches.map(async batch=>{
+        const f=batch.map(n=>`Item_No eq '${n.replace(/'/g,"''")}'`).join(' or ');
+        const r=await fetch(
+          `${BC_ODATA_BASE}/${ppPage}?$select=Item_No,Starting_Date&$filter=(${f})&$top=500`,
+          {headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(!r.ok)return;
+        const rows=(await r.json()).value||[];
+        for(const row of rows){
+          if(!row.Starting_Date)continue;
+          const ms=new Date(row.Starting_Date).getTime();
+          if(!map[row.Item_No]||ms>map[row.Item_No])map[row.Item_No]=ms;
+        }
+      }));
+      setPriceDateMap(prev=>({...prev,...map}));
+    }catch(e){console.warn('fetchPurchasePriceDates:',e);}
+  }
 
   // ── Column resize ──
   const COL_LS_KEY='arc_items_col_widths';
@@ -16659,7 +16688,7 @@ function ItemsTab({uid}){
 
   async function load(sk,q){
     setLoading(true);setError(null);
-    const base=`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code,Vendor_No,Last_Direct_Cost,Last_Date_Modified&$top=${PAGE}&$orderby=No asc`;
+    const base=`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code,Vendor_No,Last_Direct_Cost&$top=${PAGE}&$orderby=No asc`;
     const hdrs={"Authorization":`Bearer ${_bcToken}`};
     try{
       if(q&&q.trim()){
@@ -16675,6 +16704,7 @@ function ItemsTab({uid}){
         const merged=[...noItems,...descItems].filter(i=>{if(seen.has(i.No))return false;seen.add(i.No);return true;});
         setItems(merged);
         setHasMore(false);
+        fetchPurchasePriceDates(merged.map(i=>i.No));
       }else{
         const r=await fetch(`${base}&$skip=${sk}`,{headers:hdrs});
         if(!r.ok)throw new Error(`BC ${r.status}`);
@@ -16683,6 +16713,7 @@ function ItemsTab({uid}){
         else setItems(prev=>[...prev,...batch]);
         setHasMore(batch.length===PAGE);
         setSkip(sk);
+        fetchPurchasePriceDates(batch.map(i=>i.No));
       }
     }catch(e){setError(e.message);}
     setLoading(false);
@@ -16775,13 +16806,14 @@ function ItemsTab({uid}){
             </thead>
             <tbody>
               {items.map((item,idx)=>{
-                const daysSince=item.Last_Date_Modified
-                  ?Math.floor((Date.now()-new Date(item.Last_Date_Modified))/(1000*60*60*24))
+                const priceMs=priceDateMap[item.No]??null;
+                const daysSince=priceMs!=null
+                  ?Math.floor((Date.now()-priceMs)/(1000*60*60*24))
                   :null;
                 const priceColor=daysSince===null?C.muted:daysSince<=30?"#22c55e":"#ef4444";
                 const priceBold=daysSince!==null?700:400;
-                const pricedDate=item.Last_Date_Modified
-                  ?new Date(item.Last_Date_Modified).toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"})
+                const pricedDate=priceMs!=null
+                  ?new Date(priceMs).toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"})
                   :"—";
                 const vendorName=vendorMap[item.Vendor_No]||item.Vendor_No||"—";
                 return(
