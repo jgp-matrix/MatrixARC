@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.59";
+const APP_VERSION="v1.19.60";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15820,12 +15820,35 @@ function VendorsPanel({uid,onVendorAdded}){
     if(_bcToken)fetchVendors();
   },[uid]);
 
-  function autoGenerateCode(name){
-    const stripped=name.replace(/\b(electric|electronics|supply|inc|llc|ltd|corp|co|gmbh|ag)\b\.?/gi,'').trim();
+  function autoGenerateCode(name,existingCodes){
+    const stripped=name.replace(/\b(electric|electronics|electrical|supply|supplies|inc|llc|ltd|corp|corporation|company|co|gmbh|ag|usa|intl|international)\b\.?/gi,'').trim();
     const words=stripped.split(/[\s\-]+/).filter(Boolean);
-    if(words.length===1)return words[0].slice(0,8).toUpperCase();
-    if(words.length<=4)return words.map(w=>w[0]).join('').toUpperCase().slice(0,6);
-    return words[0].slice(0,6).toUpperCase();
+    let base;
+    if(words.length===1){
+      base=words[0].slice(0,8).toUpperCase();
+    }else if(words.length===2){
+      // Take 3+ chars from first word + first char of second: "CED Corporation" → "CEDC", "C3 Controls" → "C3C"
+      base=(words[0].slice(0,4)+words[1][0]).toUpperCase();
+    }else if(words.length<=4){
+      // First 2 chars of first word + initials of rest
+      base=(words[0].slice(0,3)+words.slice(1).map(w=>w[0]).join('')).toUpperCase().slice(0,6);
+    }else{
+      base=words[0].slice(0,6).toUpperCase();
+    }
+    // Ensure minimum 3 chars
+    if(base.length<3)base=(stripped.replace(/\s+/g,'').slice(0,6)||base).toUpperCase();
+    if(base.length<3)base=base+'X'.repeat(3-base.length);
+    // Deduplicate: if code exists, append digits
+    if(existingCodes){
+      const usedSet=new Set(Object.values(existingCodes).map(c=>(c||'').toUpperCase()));
+      if(usedSet.has(base)){
+        for(let i=2;i<=99;i++){
+          const candidate=(base+i).slice(0,10);
+          if(!usedSet.has(candidate)){base=candidate;break;}
+        }
+      }
+    }
+    return base.slice(0,10);
   }
 
   // Auto-generate codes for vendors that don't have one yet (runs once when vendors load)
@@ -15835,8 +15858,14 @@ function VendorsPanel({uid,onVendorAdded}){
     if(!vendors.length)return;
     const cur=vendorCodesRef.current;
     const generated={};
+    // Build running set of all codes (existing + newly generated) for dedup
+    const running={...cur};
     vendors.forEach(v=>{
-      if(!cur[v.No])generated[v.No]=autoGenerateCode(v.Name);
+      if(!cur[v.No]){
+        const code=autoGenerateCode(v.Name,running);
+        generated[v.No]=code;
+        running[v.No]=code;
+      }
     });
     if(Object.keys(generated).length){
       const merged={...cur,...generated};
