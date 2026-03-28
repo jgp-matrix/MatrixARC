@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.47";
+const APP_VERSION="v1.19.48";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14002,7 +14002,7 @@ function VendorPricingSyncPanel({uid}){
         list=(await r.json()).value||[];
       }
       setVendors(list);
-      setVendorLoadErr(partsFiltered?null:`ℹ PARTS posting group not set up yet — showing all ${list.length} vendors. Use "Tag Parts & Electrical Vendors" in the Vendors panel to migrate.`);
+      setVendorLoadErr(partsFiltered?null:`ℹ PARTS posting group not set up yet — showing all ${list.length} vendors.`);
       // Auto-detect DigiKey and Mouser by name
       const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
       const dk=list.find(v=>norm(v.Name).includes('digikey'));
@@ -15901,8 +15901,6 @@ function VendorsPanel({uid}){
   const[dupProgress,setDupProgress]=useState('');
   const[dupConfirmed,setDupConfirmed]=useState(false);
   const[showAll,setShowAll]=useState(false);
-  const[showMigrate,setShowMigrate]=useState(false);
-  const[migrateStatus,setMigrateStatus]=useState(null); // null | {running,done,total,patched,errors,needsSetup,log}
   const[vpgSaving,setVpgSaving]=useState({}); // {vendorNo: true} while PATCH in flight
   const[lastCreated,setLastCreated]=useState(null); // {no,name} — success banner
   // Posting group fields for new vendor form
@@ -16439,60 +16437,6 @@ function VendorsPanel({uid}){
       {addErr&&<div style={{marginTop:4,color:"#f87171",fontSize:11}}>⚠ {addErr}</div>}
     </div>
     );})()}
-
-    {/* PARTS Migration Panel */}
-    <div style={{marginBottom:12}}>
-      <button onClick={()=>setShowMigrate(v=>!v)}
-        style={{background:showMigrate?"#7c3aed":"#1e293b",border:`1px solid ${showMigrate?"#7c3aed":"#334155"}`,
-          borderRadius:5,padding:"5px 12px",color:showMigrate?"#fff":"#94a3b8",fontSize:11,fontWeight:600,cursor:"pointer"}}>
-        🔖 Tag Parts &amp; Electrical Vendors
-      </button>
-      {showMigrate&&<div style={{border:"1px solid #4c1d95",borderRadius:6,padding:"12px 14px",background:"#0d0a1f",marginTop:8}}>
-        <div style={{fontSize:12,fontWeight:700,color:"#c4b5fd",marginBottom:8}}>Migrate Vendors → PARTS Posting Group</div>
-        {/* Step 1 instructions */}
-        <div style={{background:"#1e1a3a",borderRadius:5,padding:"10px 12px",marginBottom:10,fontSize:11,color:"#a78bfa",lineHeight:1.7}}>
-          <div style={{fontWeight:700,color:"#e2e8f0",marginBottom:4}}>Step 1 — Create PARTS posting group in BC (one-time, ~2 min)</div>
-          <div>1. Log into <strong>Business Central</strong> → search <strong>"Vendor Posting Groups"</strong></div>
-          <div>2. Click <strong>New</strong> → set Code: <code style={{background:"#2d1a5e",padding:"1px 5px",borderRadius:3}}>PARTS</code>, Description: <em>Parts &amp; Electrical Suppliers</em></div>
-          <div>3. Set <strong>Payables Account</strong> to the same GL account as the <code style={{background:"#2d1a5e",padding:"1px 5px",borderRadius:3}}>TRADE</code> group</div>
-          <div>4. Save, then come back and click <strong>Run Migration</strong> below</div>
-        </div>
-        {/* Step 2 — run migration */}
-        <div style={{fontSize:11,color:"#94a3b8",marginBottom:8}}>
-          Step 2 — ARC will auto-classify and patch <strong style={{color:"#c4b5fd"}}>~65 electrical &amp; parts vendors</strong> from TRADE → PARTS.
-        </div>
-        {migrateStatus?.needsSetup&&<div style={{background:"#450a0a",border:"1px solid #ef4444",borderRadius:5,padding:"8px 12px",marginBottom:8,fontSize:11,color:"#fca5a5"}}>
-          ⚠ <strong>PARTS posting group not found in BC.</strong> Complete Step 1 above first, then retry.
-        </div>}
-        {migrateStatus?.done&&<div style={{background:"#052e16",border:"1px solid #22c55e",borderRadius:5,padding:"8px 12px",marginBottom:8,fontSize:11,color:"#86efac"}}>
-          ✓ Migration complete — {migrateStatus.patched}/{migrateStatus.total} vendors moved to PARTS.
-          {migrateStatus.errors.length>0&&<span style={{color:"#fca5a5"}}> {migrateStatus.errors.length} errors.</span>}
-        </div>}
-        {migrateStatus?.running&&<div style={{fontSize:11,color:"#a78bfa",marginBottom:8}}>
-          Patching… {migrateStatus.patched}/{migrateStatus.total} vendors
-          <div style={{height:4,background:"#2d1a5e",borderRadius:2,marginTop:4}}>
-            <div style={{height:"100%",background:"#7c3aed",borderRadius:2,
-              width:migrateStatus.total>0?`${Math.round(migrateStatus.patched/migrateStatus.total*100)}%`:"0%",transition:"width 0.3s"}}/>
-          </div>
-        </div>}
-        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <button onClick={runMigration} disabled={migrateStatus?.running}
-            style={{background:migrateStatus?.running?"#334155":"#7c3aed",color:"#fff",border:"none",
-              borderRadius:5,padding:"6px 14px",fontSize:12,fontWeight:600,
-              cursor:migrateStatus?.running?"not-allowed":"pointer"}}>
-            {migrateStatus?.running?"Running…":migrateStatus?.done?"↺ Re-run":"▶ Run Migration"}
-          </button>
-          {migrateStatus?.running===false&&migrateStatus?.log?.length>0&&(
-            <details style={{fontSize:10,color:"#94a3b8"}}>
-              <summary style={{cursor:"pointer"}}>View log ({migrateStatus.log.length})</summary>
-              <div style={{maxHeight:120,overflowY:"auto",fontFamily:"monospace",marginTop:4}}>
-                {migrateStatus.log.map((l,i)=><div key={i} style={{color:l.startsWith('✓')?"#86efac":"#fca5a5"}}>{l}</div>)}
-              </div>
-            </details>
-          )}
-        </div>
-      </div>}
-    </div>
 
     {/* Vendor list header + filter */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
