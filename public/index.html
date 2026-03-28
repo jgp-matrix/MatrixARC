@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.31";
+const APP_VERSION="v1.19.32";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15904,6 +15904,7 @@ function VendorsPanel({uid}){
   const[showMigrate,setShowMigrate]=useState(false);
   const[migrateStatus,setMigrateStatus]=useState(null); // null | {running,done,total,patched,errors,needsSetup,log}
   const[vpgSaving,setVpgSaving]=useState({}); // {vendorNo: true} while PATCH in flight
+  const[lastCreated,setLastCreated]=useState(null); // {no,name} — success banner
   // Posting group fields for new vendor form
   const[genBusGroups,setGenBusGroups]=useState([]);
   const[vendorPostingGroups,setVendorPostingGroups]=useState([]);
@@ -16138,16 +16139,54 @@ function VendorsPanel({uid}){
 
   // Real-time duplicate detection — runs on every render, no debounce needed (local data)
   function getDupMatch(){
-    const nameTrimmed=newName.trim().toLowerCase();
-    if(!nameTrimmed)return null;
-    const normName=s=>s.toLowerCase().replace(/\b(electric|electronics|supply|inc|llc|ltd|corp|co|gmbh|ag)\b\.?/g,'').replace(/[^a-z0-9]/g,'').trim();
-    for(const v of vendors){
-      if(nameTrimmed.length>=3){
-        const a=normName(nameTrimmed),b=normName(v.Name);
-        if(a&&b&&(a===b||a.includes(b)||b.includes(a)))
-          return{type:'warn',msg:`Similar vendor exists: ${v.No} — ${v.Name}`};
-      }
+    const input=newName.trim();
+    if(input.length<2)return null;
+
+    // Strip noise words, punctuation → bare alphanumeric string
+    const stopRx=/\b(electric|electrical|electronics|electro|supply|supplies|industrial|automation|controls|systems|solutions|technologies|services|group|company|co|inc|llc|ltd|corp|gmbh|ag|north america|usa|u\.s\.a)\b\.?/gi;
+    const norm=s=>s.toLowerCase().replace(stopRx,'').replace(/[^a-z0-9]/g,'').trim();
+
+    // Trigram similarity — catches abbreviations + typos
+    function trigramSim(a,b){
+      if(!a||!b)return 0;
+      if(a===b)return 1;
+      const tg=s=>{const t=new Set();for(let i=0;i<=s.length-3;i++)t.add(s.slice(i,i+3));return t;};
+      const ta=tg(a),tb=tg(b);
+      if(!ta.size||!tb.size)return 0;
+      let inter=0;for(const t of ta)if(tb.has(t))inter++;
+      return(2*inter)/(ta.size+tb.size);
     }
+
+    // Token overlap — catches "Crescent Elec" vs "Crescent Electric Supply"
+    function tokenOverlap(a,b){
+      const toks=s=>s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w.length>2);
+      const ta=new Set(toks(a)),tb=new Set(toks(b));
+      if(!ta.size||!tb.size)return 0;
+      let shared=0;for(const t of ta)if(tb.has(t))shared++;
+      return shared/Math.min(ta.size,tb.size);
+    }
+
+    const normInput=norm(input);
+    let best=null;
+    for(const v of vendors){
+      const vName=v.Name||'';
+      const normV=norm(vName);
+      // Exact normalized match → hard block
+      if(normInput&&normV&&normInput===normV)
+        return{type:'error',msg:`Exact match: ${v.No} — ${v.Name}`};
+      // Contains check
+      if(normInput.length>=4&&normV.length>=4&&(normInput.includes(normV)||normV.includes(normInput))){
+        if(!best||best.score<0.9)best={score:0.9,v};
+        continue;
+      }
+      // Trigram + token scoring
+      const tg=trigramSim(normInput,normV);
+      const tok=tokenOverlap(input,vName);
+      const score=Math.max(tg,tok);
+      if(score>=0.45&&(!best||score>best.score))best={score,v};
+    }
+    if(best)return{type:'warn',score:best.score,
+      msg:`Similar vendor exists: ${best.v.No} — ${best.v.Name}`};
     return null;
   }
   const dupMatch=getDupMatch();
@@ -16167,7 +16206,7 @@ function VendorsPanel({uid}){
       });
       if(r.status===409||r.status===400){
         const t=await r.text();
-        if(/already exists|duplicate/i.test(t))throw new Error(`Vendor "${newNo||newName}" already exists in BC`);
+        if(/already exists|duplicate/i.test(t))throw new Error(`Vendor "${newName}" already exists in BC`);
         throw new Error(t.slice(0,200));
       }
       if(!r.ok){const t=await r.text();throw new Error(t.slice(0,200));}
@@ -16190,6 +16229,7 @@ function VendorsPanel({uid}){
           if(!pr.ok){const pt=await pr.text();console.warn(`Posting group patch ${pr.status}:`,pt.slice(0,200));}
         }catch(pe){console.warn('Posting group patch failed:',pe.message);}
       }
+      setLastCreated({no:createdNo,name:newName.trim()});
       setNewName('');
       await fetchVendors();
     }catch(e){setAddErr(e.message);}
@@ -16208,7 +16248,7 @@ function VendorsPanel({uid}){
       <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
         <div style={{display:"flex",flexDirection:"column",gap:2,flex:1,minWidth:160}}>
           <label style={{fontSize:10,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5}}>Vendor Name <span style={{color:"#ef4444"}}>*</span></label>
-          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="Vendor Name"
+          <input value={newName} onChange={e=>{setNewName(e.target.value);setLastCreated(null);setAddErr(null);}} placeholder="Vendor Name"
             onKeyDown={e=>e.key==="Enter"&&addVendor()}
             style={{width:"100%",background:"#0f172a",
               border:`1px solid ${dupMatch?.type==='warn'?"#f59e0b":"#334155"}`,
@@ -16269,11 +16309,23 @@ function VendorsPanel({uid}){
           {adding?"Adding…":"+ Add Vendor"}
         </button>
       </div>
-      {/* Warnings */}
+      {/* Success banner */}
+      {lastCreated&&<div style={{marginTop:6,padding:"6px 10px",background:"#052e16",border:"1px solid #22c55e",
+        borderRadius:5,fontSize:11,color:"#86efac",display:"flex",alignItems:"center",gap:8}}>
+        ✓ Created: <strong>{lastCreated.name}</strong>
+        {lastCreated.no&&<span style={{fontFamily:"monospace",background:"#064e3b",padding:"1px 7px",borderRadius:3,color:"#6ee7b7"}}>
+          {lastCreated.no}
+        </span>}
+        <span style={{color:"#4ade80"}}>(BC auto-assigned)</span>
+      </div>}
+      {/* Duplicate warnings */}
       {dupMatch&&<div style={{marginTop:4,fontSize:11,display:"flex",alignItems:"center",gap:5,
         color:dupMatch.type==='error'?"#f87171":"#fbbf24"}}>
-        {dupMatch.type==='error'?"🚫":"⚠️"} {dupMatch.msg}
-        {dupMatch.type==='warn'&&<span style={{color:"#64748b"}}>(you can still add if intentional)</span>}
+        {dupMatch.type==='error'?"🚫 Duplicate — ":"⚠️ Similar name — "}{dupMatch.msg}
+        {dupMatch.type==='warn'&&<>
+          {dupMatch.score&&<span style={{color:"#64748b",fontFamily:"monospace"}}>({Math.round(dupMatch.score*100)}% match)</span>}
+          <span style={{color:"#64748b"}}>· add anyway if intentional</span>
+        </>}
       </div>}
       {(!newGenBus||!newVendorPosting)&&newName.trim()&&<div style={{marginTop:4,fontSize:11,color:"#fbbf24"}}>
         ⚠ Gen. Bus. Posting Group and Vendor Posting Group are required in BC — vendor may be unusable without them.
