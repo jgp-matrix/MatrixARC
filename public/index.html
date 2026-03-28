@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.41";
+const APP_VERSION="v1.19.42";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16700,6 +16700,33 @@ function ItemsTab({uid}){
   const [vendorMap,setVendorMap]=useState({});
   const PAGE=100;
 
+  // ── Column resize ──
+  const COL_LS_KEY='arc_items_col_widths';
+  const COL_DEFAULTS=[110,340,130,160,100,120]; // ITEM NO, DESC, MFR, VENDOR, LAST COST, PRICED DATE
+  const [colWidths,setColWidths]=useState(()=>{
+    try{const s=JSON.parse(localStorage.getItem(COL_LS_KEY));if(s&&s.length===6)return s;}catch{}
+    return COL_DEFAULTS;
+  });
+  const colResizing=useRef(null);
+  function onColResizeStart(e,colIdx){
+    e.preventDefault();
+    const startX=e.clientX,startW=colWidths[colIdx];
+    colResizing.current={colIdx,startX,startW};
+    function onMove(ev){
+      if(!colResizing.current)return;
+      const newW=Math.max(48,startW+(ev.clientX-startX));
+      setColWidths(prev=>{const n=[...prev];n[colIdx]=newW;return n;});
+    }
+    function onUp(){
+      setColWidths(prev=>{localStorage.setItem(COL_LS_KEY,JSON.stringify(prev));return prev;});
+      colResizing.current=null;
+      document.removeEventListener('mousemove',onMove);
+      document.removeEventListener('mouseup',onUp);
+    }
+    document.addEventListener('mousemove',onMove);
+    document.addEventListener('mouseup',onUp);
+  }
+
   useEffect(()=>{if(_bcToken){
     load(0,"");
     bcFetchManufacturers().then(setManufacturers);
@@ -16804,13 +16831,28 @@ function ItemsTab({uid}){
       {/* LEFT — Items table */}
       <div style={{flex:"0 0 75%",minWidth:0,maxHeight:"calc(100vh - 240px)",overflowY:"auto"}}>
         <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,tableLayout:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,tableLayout:"fixed"}}>
+            <colgroup>{colWidths.map((w,i)=><col key={i} style={{width:w}}/>)}</colgroup>
             <thead>
               <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
                 {["ITEM NO","DESCRIPTION","MFR CODE","VENDOR","LAST COST","PRICED DATE"].map((h,i)=>(
-                  <th key={h} style={{padding:"9px 12px",textAlign:i===4?"right":"left",
-                    color:C.sub,fontWeight:700,fontSize:11,letterSpacing:1,whiteSpace:"nowrap",
-                    width:i===1?undefined:1}}>{h}</th>
+                  <th key={h} style={{position:"relative",padding:"9px 12px",
+                    textAlign:i===4?"right":"left",
+                    color:C.sub,fontWeight:700,fontSize:11,letterSpacing:1,
+                    whiteSpace:"nowrap",userSelect:"none",overflow:"hidden"}}>
+                    {h}
+                    {/* Resize handle */}
+                    <div onMouseDown={e=>onColResizeStart(e,i)}
+                      onDoubleClick={()=>{setColWidths(prev=>{const n=[...prev];n[i]=COL_DEFAULTS[i];localStorage.setItem(COL_LS_KEY,JSON.stringify(n));return n;});}}
+                      style={{position:"absolute",right:0,top:0,height:"100%",width:6,
+                        cursor:"col-resize",zIndex:2,
+                        background:"transparent",
+                        borderRight:"2px solid transparent",
+                        transition:"border-color 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.borderRightColor="#3b82f6"}
+                      onMouseLeave={e=>e.currentTarget.style.borderRightColor="transparent"}
+                      title="Drag to resize · Double-click to reset"/>
+                  </th>
                 ))}
               </tr>
             </thead>
@@ -16828,8 +16870,8 @@ function ItemsTab({uid}){
                 return(
                 <tr key={item.No} style={{borderBottom:`1px solid ${C.border}`,
                   background:idx%2===0?"#1a2235":"#162040"}}>
-                  <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:13,whiteSpace:"nowrap"}}>{item.No}</td>
-                  <td style={{padding:"7px 12px",color:C.text,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:0}}
+                  <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{item.No}</td>
+                  <td style={{padding:"7px 12px",color:C.text,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
                     title={item.Description}>{item.Description}</td>
                   <td style={{padding:"4px 12px",whiteSpace:"nowrap"}}>
                     {manufacturers.length>0?(
@@ -16863,7 +16905,7 @@ function ItemsTab({uid}){
                       </span>
                     )}
                   </td>
-                  <td style={{padding:"7px 12px",fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:0}}
+                  <td style={{padding:"7px 12px",fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}
                     title={vendorName!==item.Vendor_No?`${item.Vendor_No} — ${vendorName}`:vendorName}>
                     <span style={{color:C.muted}}>{vendorName}</span>
                   </td>
