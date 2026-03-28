@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.48";
+const APP_VERSION="v1.19.49";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15932,7 +15932,7 @@ function VendorsPanel({uid}){
     return words[0].slice(0,6).toUpperCase();
   }
 
-  // Auto-generate codes for vendors that don't have one yet
+  // Auto-generate codes for vendors that don't have one yet, then push new ones to BC
   useEffect(()=>{
     if(!vendors.length)return;
     const generated={};
@@ -15943,6 +15943,25 @@ function VendorsPanel({uid}){
       const merged={...vendorCodes,...generated};
       setVendorCodes(merged);
       if(uid)fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:merged},{merge:true});
+      // Push only the newly generated codes to BC Search_Name
+      if(_bcToken){
+        (async()=>{
+          try{
+            const allPages=await bcDiscoverODataPages();
+            const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
+            for(const[vNo,code] of Object.entries(generated)){
+              if(!code)continue;
+              await fetch(`${BC_ODATA_BASE}/${vPage}('${vNo}')`,{
+                method:'PATCH',
+                headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
+                body:JSON.stringify({Search_Name:code.toUpperCase().slice(0,10)})
+              });
+              await new Promise(r=>setTimeout(r,80));
+            }
+            console.log(`Vendor codes: pushed ${Object.keys(generated).length} new codes to BC Search_Name`);
+          }catch(e){console.warn('Auto-generate BC sync failed:',e.message);}
+        })();
+      }
     }
   },[vendors,vendorCodes]);
 
@@ -16310,10 +16329,10 @@ function VendorsPanel({uid}){
         {syncCodesResult?.error&&<span style={{fontSize:11,color:"#f87171"}}>✗ {syncCodesResult.error}</span>}
         <button onClick={syncCodesToBC} disabled={syncingCodes}
           title="Write all ARC vendor codes to BC Search Name field"
-          style={{background:syncingCodes?"#1e293b":"#0f172a",border:"1px solid #334155",borderRadius:5,
-            padding:"4px 10px",color:syncingCodes?"#475569":"#34d399",fontSize:11,fontWeight:600,
+          style={{background:syncingCodes?"#1e293b":"#064e3b",border:`1px solid ${syncingCodes?"#334155":"#059669"}`,borderRadius:5,
+            padding:"5px 12px",color:syncingCodes?"#94a3b8":"#34d399",fontSize:11,fontWeight:700,
             cursor:syncingCodes?"not-allowed":"pointer",whiteSpace:"nowrap"}}>
-          {syncingCodes?"Syncing…":"↑ Push Codes → BC"}
+          {syncingCodes?"Syncing…":"↑ Sync Codes → BC"}
         </button>
       </div>
     </div>
