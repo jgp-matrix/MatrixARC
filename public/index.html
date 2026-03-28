@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.61";
+const APP_VERSION="v1.19.62";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16738,17 +16738,28 @@ function ItemsTab({uid}){
                     title={item.Description}>{item.Description}</td>
                   <td style={{padding:"4px 12px",whiteSpace:"nowrap"}}>
                     {manufacturers.length>0?(
-                      <select value={item.Manufacturer_Code||""}
-                        onChange={e=>saveMfr(item.No,e.target.value)}
-                        disabled={savingMfr===item.No}
-                        style={{background:"#1e293b",border:`1px solid ${item.Manufacturer_Code?"#3b82f6":"#334155"}`,
-                          borderRadius:4,padding:"3px 6px",
-                          color:item.Manufacturer_Code?C.text:C.muted,
-                          fontSize:11,fontFamily:"inherit",width:"100%",maxWidth:120,cursor:"pointer",
-                          opacity:savingMfr===item.No?0.5:1}}>
-                        <option value="">— none —</option>
-                        {manufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
-                      </select>
+                      editingMfr?.no===item.No?(
+                        <select value={editingMfr.val||""} autoFocus
+                          onChange={e=>{saveMfr(item.No,e.target.value);setEditingMfr(null);}}
+                          onBlur={()=>setEditingMfr(null)}
+                          style={{background:"#1e293b",border:"1px solid #3b82f6",
+                            borderRadius:4,padding:"3px 6px",
+                            color:C.text,
+                            fontSize:11,fontFamily:"inherit",width:"100%",maxWidth:120,cursor:"pointer"}}>
+                          <option value="">— none —</option>
+                          {manufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
+                        </select>
+                      ):(
+                        <span onClick={()=>setEditingMfr({no:item.No,val:item.Manufacturer_Code||""})}
+                          style={{cursor:"pointer",display:"inline-block",padding:"2px 7px",
+                            borderRadius:4,border:"1px solid transparent",fontSize:12,
+                            color:item.Manufacturer_Code?"#60a5fa":C.muted,
+                            background:item.Manufacturer_Code?"rgba(59,130,246,0.12)":"transparent",
+                            fontWeight:item.Manufacturer_Code?700:400}}
+                          title={item.Manufacturer_Code?manufacturers.find(m=>m.Code===item.Manufacturer_Code)?.Name||"Click to change":"Click to set"}>
+                          {savingMfr===item.No?"…":item.Manufacturer_Code||"—"}
+                        </span>
+                      )
                     ):(
                       <span onClick={()=>setEditingMfr({no:item.No,val:item.Manufacturer_Code||""})}
                         title="Click to edit"
