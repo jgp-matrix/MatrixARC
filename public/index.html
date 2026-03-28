@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.67";
+const APP_VERSION="v1.19.68";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16630,7 +16630,7 @@ function ItemsTab({uid}){
             const listR=await listFn({bcToken:_bcToken,bcODataBase:BC_ODATA_BASE});
             const allItems=listR.data.items||[];
             setMfrLookupProgress(`Found ${allItems.length} items. Looking up MFR (dry run)…`);
-            const BATCH=5;const allResults=[];const allUnknown=[];
+            const BATCH=3;const allResults=[];const allUnknown=[];
             const lookupFn=firebase.functions().httpsCallable('bulkMfrLookup');
             for(let i=0;i<allItems.length;i+=BATCH){
               const batch=allItems.slice(i,i+BATCH);
@@ -16651,7 +16651,7 @@ function ItemsTab({uid}){
           setMfrLookupRunning(true);
           try{
             const matchedItems=(mfrLookupResult.results||[]).filter(r=>r.code).map(r=>({no:r.itemNo,desc:r.desc}));
-            const BATCH=5;const allResults=[];let totalPatched=0;
+            const BATCH=3;const allResults=[];let totalPatched=0;
             const lookupFn=firebase.functions().httpsCallable('bulkMfrLookup');
             for(let i=0;i<matchedItems.length;i+=BATCH){
               const batch=matchedItems.slice(i,i+BATCH);
