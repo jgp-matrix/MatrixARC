@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.32";
+const APP_VERSION="v1.19.33";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16545,6 +16545,22 @@ function VendorsPanel({uid}){
   </div>);
 }
 
+let _bcVendorMap = null; // {No: Name}
+async function bcFetchVendorMap(){
+  if(_bcVendorMap)return _bcVendorMap;
+  if(!_bcToken)return{};
+  try{
+    const allPages=await bcDiscoverODataPages();
+    const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
+    const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name&$top=500`,
+      {headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok)return{};
+    const list=(await r.json()).value||[];
+    _bcVendorMap=Object.fromEntries(list.map(v=>[v.No,v.Name]));
+    return _bcVendorMap;
+  }catch(e){return{};}
+}
+
 let _bcManufacturers = null; // [{Code, Name}]
 async function bcFetchManufacturers(){
   if(_bcManufacturers)return _bcManufacturers;
@@ -16574,9 +16590,14 @@ function ItemsTab({uid}){
   const [showFill,setShowFill]=useState(false);
   const [showVendorSync,setShowVendorSync]=useState(false);
   const [manufacturers,setManufacturers]=useState([]);
+  const [vendorMap,setVendorMap]=useState({});
   const PAGE=100;
 
-  useEffect(()=>{if(_bcToken){load(0,"");bcFetchManufacturers().then(setManufacturers);}},[]);
+  useEffect(()=>{if(_bcToken){
+    load(0,"");
+    bcFetchManufacturers().then(setManufacturers);
+    bcFetchVendorMap().then(setVendorMap);
+  }},[]);
 
   // Live search — debounced 350ms
   useEffect(()=>{
@@ -16688,9 +16709,15 @@ function ItemsTab({uid}){
             </thead>
             <tbody>
               {items.map((item,idx)=>{
+                const daysSince=item.Last_Date_Modified
+                  ?Math.floor((Date.now()-new Date(item.Last_Date_Modified))/(1000*60*60*24))
+                  :null;
+                const priceColor=daysSince===null?C.muted:daysSince<=90?"#22c55e":"#ef4444";
+                const priceBold=daysSince!==null?700:400;
                 const pricedDate=item.Last_Date_Modified
                   ?new Date(item.Last_Date_Modified).toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"})
                   :"—";
+                const vendorName=vendorMap[item.Vendor_No]||item.Vendor_No||"—";
                 return(
                 <tr key={item.No} style={{borderBottom:`1px solid ${C.border}`,
                   background:idx%2===0?"#1a2235":"#162040"}}>
@@ -16729,11 +16756,18 @@ function ItemsTab({uid}){
                       </span>
                     )}
                   </td>
-                  <td style={{padding:"7px 12px",color:C.muted,fontSize:13,whiteSpace:"nowrap"}}>{item.Vendor_No||"—"}</td>
-                  <td style={{padding:"7px 12px",color:C.sub,textAlign:"right",fontFamily:"monospace",fontSize:13,whiteSpace:"nowrap"}}>
+                  <td style={{padding:"7px 12px",fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:0}}
+                    title={vendorName!==item.Vendor_No?`${item.Vendor_No} — ${vendorName}`:vendorName}>
+                    <span style={{color:C.muted}}>{vendorName}</span>
+                  </td>
+                  <td style={{padding:"7px 12px",textAlign:"right",fontFamily:"monospace",fontSize:13,whiteSpace:"nowrap",
+                    color:item.Last_Direct_Cost>0?priceColor:C.muted,fontWeight:item.Last_Direct_Cost>0?priceBold:400}}>
                     {item.Last_Direct_Cost>0?`$${Number(item.Last_Direct_Cost).toFixed(2)}`:"—"}
                   </td>
-                  <td style={{padding:"7px 12px",color:C.muted,fontSize:13,whiteSpace:"nowrap"}}>{pricedDate}</td>
+                  <td style={{padding:"7px 12px",fontSize:13,whiteSpace:"nowrap",
+                    color:priceColor,fontWeight:priceBold}}>
+                    {pricedDate}{daysSince!==null&&<span style={{fontSize:10,opacity:0.7,marginLeft:4}}>({daysSince}d)</span>}
+                  </td>
                 </tr>
                 );
               })}
