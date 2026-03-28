@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.50";
+const APP_VERSION="v1.19.51";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -604,7 +604,7 @@ async function saveBcConfig(companyId,config){
   _bcConfig={..._bcConfig,...config};
   await fbDb.doc(`companies/${companyId}/config/bcEnvironment`).set(_bcConfig);
   // Reset BC connection state when env changes
-  _bcToken=null;_bcCompanyId=null;_msalInstance=null;
+  _bcToken=null;_bcCompanyId=null;_msalInstance=null;_odataPageCache=null;
   console.log("BC CONFIG saved:",_bcConfig.env,_bcConfig.companyName);
 }
 let _bcToken=null;
@@ -2219,11 +2219,18 @@ async function bcFetchPurchasePrices(partNumbers){
   return results;
 }
 
+let _odataPageCache=null;
+let _odataPagePromise=null;
 async function bcDiscoverODataPages(){
+  if(_odataPageCache)return _odataPageCache;
+  if(_odataPagePromise)return _odataPagePromise;
+  _odataPagePromise=_bcDiscoverODataPagesImpl();
+  try{const r=await _odataPagePromise;if(r.length)_odataPageCache=r;return r;}
+  finally{_odataPagePromise=null;}
+}
+async function _bcDiscoverODataPagesImpl(){
   if(!_bcToken)return[];
   const headers={"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"};
-  // Try company-level URL first (published web services are company-specific)
-  // Fall back to root OData URL in case company URL returns empty
   const urls=[`${BC_ODATA_BASE}/`,`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${BC_ENV}/ODataV4/`];
   for(const url of urls){
     try{
@@ -17116,7 +17123,7 @@ INSTRUCTIONS:
           // Token expired — try silent refresh before alarming user
           const t=await acquireBcToken(false);
           if(t){setBcOnline(true);bcOnlinePrev.current=true;return;}
-          _bcToken=null;bcOnlinePrev.current=false;setBcOnline(false);setBcLostAlert(true);return;
+          _bcToken=null;_odataPageCache=null;bcOnlinePrev.current=false;setBcOnline(false);setBcLostAlert(true);return;
         }
         const ok=r.ok;
         if(ok&&!bcOnlinePrev.current){
