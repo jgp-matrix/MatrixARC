@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.62";
+const APP_VERSION="v1.19.63";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16740,8 +16740,8 @@ function ItemsTab({uid}){
                     {manufacturers.length>0?(
                       editingMfr?.no===item.No?(
                         <select value={editingMfr.val||""} autoFocus
-                          onChange={e=>{saveMfr(item.No,e.target.value);setEditingMfr(null);}}
-                          onBlur={()=>setEditingMfr(null)}
+                          onChange={e=>{const v=e.target.value;setEditingMfr(null);saveMfr(item.No,v);}}
+                          onBlur={()=>{setTimeout(()=>setEditingMfr(prev=>prev?.no===item.No?null:prev),150);}}
                           style={{background:"#1e293b",border:"1px solid #3b82f6",
                             borderRadius:4,padding:"3px 6px",
                             color:C.text,
