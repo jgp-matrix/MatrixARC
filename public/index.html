@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.29";
+const APP_VERSION="v1.19.30";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16444,13 +16444,13 @@ function VendorsPanel({uid}){
     {error&&<div style={{color:"#f87171",fontSize:12,marginBottom:8}}>{error}</div>}
     {loading?<div style={{color:"#475569",fontSize:12,padding:"8px 0"}}>Loading vendors…</div>:(
       <div style={{border:`1px solid ${C.border}`,borderRadius:6,overflow:"hidden"}}>
-        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,tableLayout:"auto"}}>
           <thead>
             <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
-              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>CODE</th>
-              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>NO</th>
+              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1,width:1,whiteSpace:"nowrap"}}>CODE</th>
+              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1,width:1,whiteSpace:"nowrap"}}>NO</th>
               <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>NAME</th>
-              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>POST. GROUP</th>
+              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1,width:1,whiteSpace:"nowrap"}}>POST. GROUP</th>
             </tr>
           </thead>
           <tbody>
@@ -16460,7 +16460,7 @@ function VendorsPanel({uid}){
             {vendors.filter(v=>!showPartsOnly||v.Vendor_Posting_Group==='PARTS').map((v,idx)=>(
               <tr key={v.No} style={{borderBottom:`1px solid ${C.border}`,
                 background:idx%2===0?"#1a2235":"#162040"}}>
-                <td style={{padding:"4px 10px"}}>
+                <td style={{padding:"4px 10px",whiteSpace:"nowrap"}}>
                   {editingCode===v.No?(
                     <input autoFocus value={editVal}
                       onChange={e=>setEditVal(e.target.value)}
@@ -16477,8 +16477,7 @@ function VendorsPanel({uid}){
                   )}
                 </td>
                 <td style={{padding:"6px 10px",color:"#93c5fd",fontFamily:"monospace",fontSize:11,whiteSpace:"nowrap"}}>{v.No}</td>
-                <td style={{padding:"6px 10px",color:"#e2e8f0",maxWidth:120,
-                  overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={v.Name}>
+                <td style={{padding:"6px 10px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:0}} title={v.Name}>
                   {v.Name}
                 </td>
                 <td style={{padding:"4px 8px",whiteSpace:"nowrap"}}>
@@ -16640,12 +16639,13 @@ function ItemsTab({uid}){
       {/* LEFT — Items table */}
       <div style={{flex:"0 0 75%",minWidth:0,maxHeight:"calc(100vh - 240px)",overflowY:"auto"}}>
         <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,tableLayout:"auto"}}>
             <thead>
               <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
                 {["ITEM NO","DESCRIPTION","MFR CODE","VENDOR","LAST COST","PRICED DATE"].map((h,i)=>(
                   <th key={h} style={{padding:"9px 12px",textAlign:i===4?"right":"left",
-                    color:C.sub,fontWeight:700,fontSize:11,letterSpacing:1,whiteSpace:"nowrap"}}>{h}</th>
+                    color:C.sub,fontWeight:700,fontSize:11,letterSpacing:1,whiteSpace:"nowrap",
+                    width:i===1?undefined:1}}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -16658,9 +16658,9 @@ function ItemsTab({uid}){
                 <tr key={item.No} style={{borderBottom:`1px solid ${C.border}`,
                   background:idx%2===0?"#1a2235":"#162040"}}>
                   <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:13,whiteSpace:"nowrap"}}>{item.No}</td>
-                  <td style={{padding:"7px 12px",color:C.text,fontSize:13,maxWidth:320,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
+                  <td style={{padding:"7px 12px",color:C.text,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:0}}
                     title={item.Description}>{item.Description}</td>
-                  <td style={{padding:"4px 12px"}}>
+                  <td style={{padding:"4px 12px",whiteSpace:"nowrap"}}>
                     {manufacturers.length>0?(
                       <select value={item.Manufacturer_Code||""}
                         onChange={e=>saveMfr(item.No,e.target.value)}
@@ -16692,8 +16692,8 @@ function ItemsTab({uid}){
                       </span>
                     )}
                   </td>
-                  <td style={{padding:"7px 12px",color:C.muted,fontSize:13}}>{item.Vendor_No||"—"}</td>
-                  <td style={{padding:"7px 12px",color:C.sub,textAlign:"right",fontFamily:"monospace",fontSize:13}}>
+                  <td style={{padding:"7px 12px",color:C.muted,fontSize:13,whiteSpace:"nowrap"}}>{item.Vendor_No||"—"}</td>
+                  <td style={{padding:"7px 12px",color:C.sub,textAlign:"right",fontFamily:"monospace",fontSize:13,whiteSpace:"nowrap"}}>
                     {item.Last_Direct_Cost>0?`$${Number(item.Last_Direct_Cost).toFixed(2)}`:"—"}
                   </td>
                   <td style={{padding:"7px 12px",color:C.muted,fontSize:13,whiteSpace:"nowrap"}}>{pricedDate}</td>
