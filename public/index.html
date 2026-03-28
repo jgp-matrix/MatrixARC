@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.57";
+const APP_VERSION="v1.19.58";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16463,7 +16463,7 @@ function ItemsTab({uid}){
 
   // ── Column resize ──
   const COL_LS_KEY='arc_items_col_widths';
-  const COL_DEFAULTS=[110,340,130,160,100,120]; // ITEM NO, DESC, MFR, VENDOR, LAST COST, PRICED DATE
+  const COL_DEFAULTS=[110,340,140,160,100,120]; // ITEM NO, DESC, MFR, VENDOR, LAST COST, PRICED DATE
   const [colWidths,setColWidths]=useState(()=>{
     try{const s=JSON.parse(localStorage.getItem(COL_LS_KEY));if(s&&s.length===6)return s;}catch{}
     return COL_DEFAULTS;
@@ -16723,7 +16723,7 @@ function ItemsTab({uid}){
                         style={{background:"#1e293b",border:`1px solid ${item.Manufacturer_Code?"#3b82f6":"#334155"}`,
                           borderRadius:4,padding:"3px 6px",
                           color:item.Manufacturer_Code?C.text:C.muted,
-                          fontSize:13,fontFamily:"inherit",minWidth:110,cursor:"pointer",
+                          fontSize:11,fontFamily:"inherit",width:"100%",maxWidth:120,cursor:"pointer",
                           opacity:savingMfr===item.No?0.5:1}}>
                         <option value="">— none —</option>
                         {manufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
