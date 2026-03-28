@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.58";
+const APP_VERSION="v1.19.59";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15781,7 +15781,7 @@ function classifyVendor(name){
 }
 
 // ── VENDORS PANEL ──
-function VendorsPanel({uid}){
+function VendorsPanel({uid,onVendorAdded}){
   const[vendors,setVendors]=useState([]);
   const[loading,setLoading]=useState(false);
   const[error,setError]=useState(null);
@@ -16171,6 +16171,7 @@ function VendorsPanel({uid}){
       setLastCreated({no:createdNo,name:newName.trim(),code:newCode.trim().toUpperCase()||null});
       setNewName('');setNewCode('');
       await fetchVendors();
+      onVendorAdded?.();
     }catch(e){setAddErr(e.message);}
     setAdding(false);
   }
@@ -16781,7 +16782,7 @@ function ItemsTab({uid}){
       <div style={{flex:"0 0 25%",maxHeight:"calc(100vh - 240px)",overflowY:"auto"}}>
         <div style={{...card(),padding:"14px 16px"}}>
           <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:12}}>🏢 Vendors</div>
-          <VendorsPanel uid={uid}/>
+          <VendorsPanel uid={uid} onVendorAdded={()=>{_bcVendorMap=null;bcFetchVendorMap().then(setVendorMap);}}/>
         </div>
       </div>
 
