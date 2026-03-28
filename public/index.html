@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.72";
+const APP_VERSION="v1.19.73";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1356,7 +1356,7 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
     for(let i=0;i<panels.length;i++){
       const n=i+1,base=20000+n*100,suffix=n*100;
       const beginNo=String(base),endNo=String(base+99),postingNo=String(base+10),engNo=String(base+20);
-      const panelDesc=panels[i].drawingDesc||panels[i].name||`Panel ${n}`;
+      const panelDesc=projectName||panels[i].drawingDesc||panels[i].name||`Panel ${n}`;
       const rev=panels[i].drawingRev||"-";
       const pfx=`${projectNumber}-${suffix}`;
       t.push(makeTask(prefix,projectNumber,beginNo,`${pfx} - ${panelDesc}`,"Begin-Total"));
@@ -1440,7 +1440,7 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   return taskNo;
 }
 
-async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel){
+async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, projectName){
   // PATCHes the description fields on the four task lines for a specific panel
   // (Begin-Total 20N00, Posting 20N10, Engineering 20N20, End-Total 20N99)
   // to match the current drawingDesc/drawingRev values.
@@ -1448,7 +1448,7 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel){
   const n=panelIndex;
   const suffix=n*100;
   const pfx=`${projectNumber}-${suffix}`;
-  const panelDesc=panel.drawingDesc||panel.name||`Panel ${n}`;
+  const panelDesc=projectName||panel.drawingDesc||panel.name||`Panel ${n}`;
   const rev=panel.drawingRev||"-";
   const base=20000+n*100;
   const taskDescs={
@@ -1475,7 +1475,7 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel){
   }
 }
 
-async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
+async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projectName){
   // Full sync of BC Job Planning Lines for task 20N10 (where N = panelIndex, 1-based).
   // Strategy: delete all existing lines for the task, then recreate from current ARC state.
   //
@@ -1532,7 +1532,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel){
   // 10000 — Progress Billing (Billable)
   const sellPrice=computePanelSellPrice(panel);
   const lineQty=panel.lineQty??1;
-  const panelDesc=panel.drawingDesc||panel.name||`Panel ${n}`;
+  const panelDesc=projectName||panel.drawingDesc||panel.name||`Panel ${n}`;
   const rev=panel.drawingRev||"-";
   lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:10000,Planning_Date:panel.requestedShipDate||today,
     Line_Type:"Billable",Type:"Item",No:"PROGRESS BILLING",
@@ -3414,7 +3414,7 @@ async function copyProject(uid,sourceProject,onProgress){
   pp({step:"sync",msg:"Syncing planning lines to BC…",pct:85});
   for(let i=0;i<newPanels.length;i++){
     pp({step:"sync",msg:`Syncing panel ${i+1}/${newPanels.length} to BC…`,pct:85+Math.round((i/newPanels.length)*12)});
-    try{await bcSyncPanelPlanningLines(bc.number,i+1,newPanels[i]);}catch(e){console.warn("Copy: planning line sync failed for panel",i+1,e.message);}
+    try{await bcSyncPanelPlanningLines(bc.number,i+1,newPanels[i],src.name);}catch(e){console.warn("Copy: planning line sync failed for panel",i+1,e.message);}
   }
 
   pp({step:"done",msg:"Project copied!",pct:100});
@@ -8520,11 +8520,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         }
         // Auto-sync planning lines to BC after extraction
         if((finalPanel.bom||[]).length>0&&bcProjectNumber&&_bcToken){
-          bcSyncPanelPlanningLines(bcProjectNumber,idx+1,finalPanel).then(result=>{
+          bcSyncPanelPlanningLines(bcProjectNumber,idx+1,finalPanel,projectName).then(result=>{
             if(result.failed?.length>0)console.warn("Auto BC sync: "+result.failed.length+" items failed");
             else console.log("Auto BC sync: planning lines synced");
             // Also sync task descriptions
-            bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,finalPanel).catch(e=>console.warn("Auto task desc sync failed:",e));
+            bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,finalPanel,projectName).catch(e=>console.warn("Auto task desc sync failed:",e));
           }).catch(e=>console.warn("Auto BC planning lines sync failed:",e));
         }
         // Auto-upload drawings PDF to BC
@@ -8647,9 +8647,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{
       if(!_bcToken){await acquireBcToken(true);}
       if(!_bcToken)throw new Error("Could not connect to Business Central");
-      const result=await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel);
+      const result=await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel,projectName);
       // Always sync task descriptions so existing projects get updated
-      bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,panel).catch(e=>console.warn("task desc sync failed:",e));
+      bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,panel,projectName).catch(e=>console.warn("task desc sync failed:",e));
       if(result.failed&&result.failed.length>0){
         setBcSyncStatus("error");
         setSyncFailedAlert(result.failed);
@@ -8676,7 +8676,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{onSaveImmediate(updated);}catch(e){}
     // Auto-resync planning lines to BC when panel qty changes
     if(bcProjectNumber&&_bcToken&&(updated.bom||[]).length>0){
-      bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated).then(result=>{
+      bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated,projectName).then(result=>{
         if(result.failed?.length>0)console.warn("LineQty BC sync: "+result.failed.length+" items failed");
         else console.log("LineQty BC sync: planning lines updated for qty="+q);
       }).catch(e=>console.warn("LineQty BC sync failed:",e));
@@ -12943,7 +12943,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       await bcCreatePanelTaskStructure(bc.number,project.name,panels).catch(e=>console.warn("Relink task structure error:",e));
       for(let i=0;i<panels.length;i++){
         setRelinkMsg(`Syncing planning lines (panel ${i+1}/${panels.length})…`);
-        await bcSyncPanelPlanningLines(bc.number,i,panels[i]).catch(e=>console.warn("Relink planning lines error panel",i,e));
+        await bcSyncPanelPlanningLines(bc.number,i,panels[i],project.name).catch(e=>console.warn("Relink planning lines error panel",i,e));
       }
       const updated={...projectRef.current,bcProjectNumber:bc.number,bcProjectId:bc.id,bcEnv:_bcConfig.env,bcPdfAttached:false,bcPdfFileName:null};
       // Reset per-panel bc attachment flags
