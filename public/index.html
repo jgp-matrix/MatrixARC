@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.76";
+const APP_VERSION="v1.19.77";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3330,7 +3330,9 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel){
   const snap=await ref.get();
   if(!snap.exists)return;
   const proj={id:ref.id,...snap.data()};
-  const panels=(proj.panels||[]).map(p=>p.id===panelId?updatedPanel:p);
+  let panels=(proj.panels||[]).map(p=>p.id===panelId?updatedPanel:p);
+  // If panel wasn't found in existing array, append it (prevents data loss when Firestore has empty panels)
+  if(!panels.some(p=>p.id===panelId))panels=[...panels,updatedPanel];
   const liveProject={...proj,panels,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
   const stripped=JSON.parse(JSON.stringify({...liveProject,panels:panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
   await ref.set(stripped);
