@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.87";
+const APP_VERSION="v1.19.88";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9189,6 +9189,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     });
     // Clear any BC sync error for this row — item has been fixed via Item Browser
     setBcSyncErrors(prev=>{const next={...prev};delete next[bomRowId];return next;});
+    // Auto-sync planning lines to BC after any item browser selection (don't wait for all rows to be priced)
+    if(bcProjectNumber&&_bcToken){
+      if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);
+      bcAutoSyncTimer.current=setTimeout(()=>{
+        const latestPanel=latestPanelRef.current;
+        bcSyncPanelPlanningLines(bcProjectNumber,idx+1,latestPanel,projectName).then(result=>{
+          if(result.failed?.length>0){setBcSyncStatus("error");setSyncFailedAlert(result.failed);const errs={};result.failed.forEach(f=>{if(f.rowId)errs[f.rowId]=f;});setBcSyncErrors(prev=>({...prev,...errs}));}
+          else{setBcSyncStatus("ok");setBcSyncErrors({});setTimeout(()=>setBcSyncStatus(null),4000);}
+          bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,latestPanel,projectName).catch(()=>{});
+        }).catch(e=>console.warn("Auto BC sync after item select failed:",e));
+      },2000);
+    }
   }
   function applyBcItem(bomRowId,bcItem){
     const row=(panel.bom||[]).find(r=>r.id===bomRowId);
