@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.84";
+const APP_VERSION="v1.19.85";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9750,7 +9750,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {(panel.bom||[]).length>0&&(
         <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-            <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,flex:1}}>
+            <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:6}}>
               BILL OF MATERIALS — {panel.bom.length} items
             </div>
             {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
