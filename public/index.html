@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.89";
+const APP_VERSION="v1.19.90";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13235,14 +13235,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const now=Date.now();
     const staleMs=60*24*60*60*1000;
     const allBom=(projectRef.current.panels||[]).flatMap(p=>p.bom||[]);
-    const warn=allBom.filter(r=>{
-      if(r.isLaborRow||r.customerSupplied)return false;
-      if(r.priceSource==="ai")return true;
-      if(r.priceSource==="manual")return false;
+    const warn=[];
+    allBom.forEach(r=>{
+      if(r.isLaborRow||r.customerSupplied)return;
+      const zeroCost=(r.unitPrice===0||r.unitPrice==null)&&r.priceSource!=="manual";
+      const aiPrice=r.priceSource==="ai";
       const isBC=r.priceSource==="bc"&&"bcPoDate"in r;
+      const noPo=isBC&&!r.bcPoDate;
       const dt=isBC?r.bcPoDate:r.priceDate;
-      if(isBC&&!dt)return true; // No PO date = "No POs" — needs pricing
-      return dt&&dt<now-staleMs;
+      const stale=dt&&dt<now-staleMs&&!zeroCost&&!aiPrice&&!noPo;
+      const reason=zeroCost?"ZERO":aiPrice?"AI":noPo?"NoPO":stale?"OLD":null;
+      if(reason)warn.push({...r,_warnReason:reason});
     });
     // Check for unanswered engineering questions
     const openEqs=(projectRef.current.panels||[]).flatMap(p=>(p.engineeringQuestions||[]).filter(q=>q.status==="open"));
@@ -13440,10 +13443,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               <div style={{background:"#0d0d1a",border:"1px solid #b45309",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
                   <span style={{fontSize:22}}>⚠️</span>
-                  <div style={{fontSize:15,fontWeight:800,color:"#fbbf24"}}>Pricing May Be Outdated</div>
+                  <div style={{fontSize:15,fontWeight:800,color:"#fbbf24"}}>Item Errors to Correct</div>
                 </div>
                 <div style={{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}}>
-                  {(()=>{const ai=quoteWarnRows.filter(r=>r.priceSource==="ai");const nopo=quoteWarnRows.filter(r=>r.priceSource!=="ai"&&(r.priceSource==="bc"&&"bcPoDate"in r)&&!r.bcPoDate);const old=quoteWarnRows.filter(r=>r.priceSource!=="ai"&&!(r.priceSource==="bc"&&"bcPoDate"in r&&!r.bcPoDate));return(<>
+                  {(()=>{const zero=quoteWarnRows.filter(r=>r._warnReason==="ZERO");const ai=quoteWarnRows.filter(r=>r._warnReason==="AI");const nopo=quoteWarnRows.filter(r=>r._warnReason==="NoPO");const old=quoteWarnRows.filter(r=>r._warnReason==="OLD");return(<>
+                    {zero.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{zero.length} item{zero.length!==1?"s":""}</strong> with <strong style={{color:"#ef4444"}}>$0 cost</strong> — no pricing assigned.</div>}
                     {ai.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{ai.length} item{ai.length!==1?"s":""}</strong> with <strong style={{color:"#c084fc"}}>AI-estimated pricing</strong> — not confirmed from a real source.</div>}
                     {nopo.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{nopo.length} item{nopo.length!==1?"s":""}</strong> with <strong style={{color:"#fbbf24"}}>No POs</strong> — no purchase order pricing on record.</div>}
                     {old.length>0&&<div>• <strong style={{color:"#f1f5f9"}}>{old.length} item{old.length!==1?"s":""}</strong> with pricing <strong style={{color:"#fb923c"}}>older than 60 days</strong>.</div>}
@@ -13452,14 +13456,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 <div style={{background:"#0a0a18",border:"1px solid #2a2a3e",borderRadius:6,maxHeight:180,overflowY:"auto",marginBottom:16}}>
                   {quoteWarnRows.map((r,i)=>(
                     <div key={r.id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:i<quoteWarnRows.length-1?"1px solid #1a1a2e":"none",fontSize:12}}>
-                      <span style={{color:r.priceSource==="ai"?"#c084fc":(r.priceSource==="bc"&&"bcPoDate"in r&&!r.bcPoDate)?"#fbbf24":"#fb923c",fontWeight:700,fontSize:10,minWidth:28}}>{r.priceSource==="ai"?"AI":(r.priceSource==="bc"&&"bcPoDate"in r&&!r.bcPoDate)?"NoPO":"OLD"}</span>
+                      <span style={{color:r._warnReason==="ZERO"?"#ef4444":r._warnReason==="AI"?"#c084fc":r._warnReason==="NoPO"?"#fbbf24":"#fb923c",fontWeight:700,fontSize:10,minWidth:34}}>{r._warnReason==="ZERO"?"$0":r._warnReason}</span>
                       <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:120}}>{r.partNumber||"—"}</span>
                       <span style={{color:"#94a3b8",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||""}</span>
                       <span style={{color:"#94a3b8",fontSize:10,whiteSpace:"nowrap"}}>{r.priceSource==="ai"?"ARC AI est.":r.bcPoDate||r.priceDate?new Date(r.bcPoDate||r.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"no date"}</span>
                     </div>
                   ))}
                 </div>
-                <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Run <strong style={{color:"#f1f5f9"}}>Refresh Pricing</strong> or send RFQs to get current pricing before quoting, or acknowledge and proceed.</div>
+                <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Fix $0 items in the BC Item Browser, run <strong style={{color:"#f1f5f9"}}>Refresh Pricing</strong> for stale prices, or acknowledge and proceed.</div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
                   <button onClick={()=>setQuoteWarnRows(null)} style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
                   <button onClick={()=>{setQuoteWarnRows(null);setAutoPrint(true);setView("quote");}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Acknowledge &amp; Proceed</button>
