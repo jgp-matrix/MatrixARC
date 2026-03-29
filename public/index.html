@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.86";
+const APP_VERSION="v1.19.87";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1929,20 +1929,24 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
     if(!r.ok){const txt=await r.text();throw new Error(txt||`BC returned status ${r.status}`);}
     const item=await r.json();
     // PATCH extra fields via OData ItemCard (v2.0 API doesn't expose these)
-    if(item.number&&(vendorNo||genProdPostingGroup||inventoryPostingGroup)){
+    if(item.number&&(vendorNo||genProdPostingGroup||inventoryPostingGroup||manufacturerCode)){
       const patch={};
       if(vendorNo)patch.Vendor_No=vendorNo;
       if(genProdPostingGroup)patch.Gen_Prod_Posting_Group=genProdPostingGroup;
       if(inventoryPostingGroup)patch.Inventory_Posting_Group=inventoryPostingGroup;
       if(manufacturerCode)patch.Manufacturer_Code=manufacturerCode.slice(0,10);
-      // Retry up to 3x — newly created items may not be indexed in OData immediately
-      for(let attempt=0;attempt<3;attempt++){
-        if(attempt>0)await new Promise(r=>setTimeout(r,1500));
-        try{await bcPatchItemOData(item.number,patch);break;}
-        catch(ve){console.warn(`OData PATCH attempt ${attempt+1}:`,ve.message);}
+      // Also set Vendor_Item_No to the item number so BC knows the vendor's catalog number
+      if(vendorNo)patch.Vendor_Item_No=item.number;
+      // Retry up to 5x with longer delays — newly created items may not be indexed in OData immediately
+      let patchOk=false;
+      for(let attempt=0;attempt<5;attempt++){
+        if(attempt>0)await new Promise(r=>setTimeout(r,2000));
+        try{await bcPatchItemOData(item.number,patch);patchOk=true;console.log("bcCreateItem: OData PATCH succeeded on attempt",attempt+1);break;}
+        catch(ve){console.warn(`bcCreateItem: OData PATCH attempt ${attempt+1}/${5}:`,ve.message);}
       }
+      if(!patchOk)console.error("bcCreateItem: OData PATCH failed after 5 attempts for",item.number);
     }
-    return{number:item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||""};
+    return{number:item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:vendorNo||""};
   }catch(e){
     if(e.message.includes("BC session expired")||e.message.includes("already exists"))throw e;
     console.warn("bcCreateItem error:",e);
@@ -9151,8 +9155,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
-      const hasCost=bcItem.unitCost!=null&&bcItem.unitCost>0;
-      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost,...(hasCost?{priceSource:"bc",priceDate:Date.now()}:{})};
+      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost??r.unitPrice??0,priceSource:"bc",priceDate:Date.now()};
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — don't block commit
