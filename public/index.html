@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.77";
+const APP_VERSION="v1.19.78";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3316,6 +3316,30 @@ async function saveProject(uid,project){
   const col=fbDb.collection(path);
   const ref=project.id?col.doc(project.id):col.doc();
   const data={...project,id:ref.id,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION,...(!project.id&&{createdBy:uid})};
+  // SAFETY: Never overwrite a project that has panels with one that has fewer panels
+  if(project.id){
+    try{
+      const existing=await ref.get();
+      if(existing.exists){
+        const existingPanels=existing.data().panels||[];
+        const newPanels=data.panels||[];
+        if(existingPanels.length>0&&newPanels.length<existingPanels.length){
+          console.error(`SAVE BLOCKED: would reduce panels from ${existingPanels.length} to ${newPanels.length} for project ${project.id}`);
+          return data;
+        }
+        // Never save a panel with 0 pages if Firestore has pages
+        for(let i=0;i<Math.min(existingPanels.length,newPanels.length);i++){
+          const ePg=(existingPanels[i].pages||[]).length;
+          const nPg=(newPanels[i].pages||[]).length;
+          if(ePg>0&&nPg===0){
+            console.error(`SAVE BLOCKED: would drop ${ePg} pages from panel ${i} for project ${project.id}`);
+            // Preserve existing pages
+            newPanels[i]={...newPanels[i],pages:existingPanels[i].pages};
+          }
+        }
+      }
+    }catch(e){console.warn("saveProject safety check failed:",e);}
+  }
   // Don't store page images in Firestore — strip dataUrls from panels
   const stripped={...data,panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
   // Firestore rejects undefined values — round-trip through JSON to remove them
@@ -3324,19 +3348,37 @@ async function saveProject(uid,project){
   return data; // return with dataUrls intact for in-memory use
 }
 // Save a single panel into its project in Firestore (used by background extraction tasks)
+// Uses a mutex to prevent concurrent saves from racing
+const _panelSaveLocks={};
 async function saveProjectPanel(uid,projectId,panelId,updatedPanel){
-  const path=_appCtx.projectsPath||`users/${uid}/projects`;
-  const ref=fbDb.collection(path).doc(projectId);
-  const snap=await ref.get();
-  if(!snap.exists)return;
-  const proj={id:ref.id,...snap.data()};
-  let panels=(proj.panels||[]).map(p=>p.id===panelId?updatedPanel:p);
-  // If panel wasn't found in existing array, append it (prevents data loss when Firestore has empty panels)
-  if(!panels.some(p=>p.id===panelId))panels=[...panels,updatedPanel];
-  const liveProject={...proj,panels,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
-  const stripped=JSON.parse(JSON.stringify({...liveProject,panels:panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
-  await ref.set(stripped);
-  notifyProjectListeners(projectId,liveProject);
+  // Serialize saves per project to prevent race conditions
+  const lockKey=projectId;
+  while(_panelSaveLocks[lockKey])await _panelSaveLocks[lockKey];
+  let resolve;
+  _panelSaveLocks[lockKey]=new Promise(r=>{resolve=r;});
+  try{
+    const path=_appCtx.projectsPath||`users/${uid}/projects`;
+    const ref=fbDb.collection(path).doc(projectId);
+    const snap=await ref.get();
+    if(!snap.exists){resolve();delete _panelSaveLocks[lockKey];return;}
+    const proj={id:ref.id,...snap.data()};
+    let panels=(proj.panels||[]).map(p=>p.id===panelId?updatedPanel:p);
+    // If panel wasn't found in existing array, append it
+    if(!panels.some(p=>p.id===panelId))panels=[...panels,updatedPanel];
+    // SAFETY: preserve pages from Firestore if updatedPanel has none but Firestore has some
+    panels=panels.map(p=>{
+      if(p.id===panelId)return p; // this is the panel we're updating — trust it
+      const existing=(proj.panels||[]).find(ep=>ep.id===p.id);
+      if(existing&&(existing.pages||[]).length>0&&(p.pages||[]).length===0){
+        return{...p,pages:existing.pages}; // preserve existing pages for other panels
+      }
+      return p;
+    });
+    const liveProject={...proj,panels,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
+    const stripped=JSON.parse(JSON.stringify({...liveProject,panels:panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
+    await ref.set(stripped);
+    notifyProjectListeners(projectId,liveProject);
+  }finally{resolve();delete _panelSaveLocks[lockKey];}
 }
 async function loadProjects(uid){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
