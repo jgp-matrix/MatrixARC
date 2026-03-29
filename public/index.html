@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.93";
+const APP_VERSION="v1.19.94";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13022,6 +13022,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [quoteWarnRows,setQuoteWarnRows]=useState(null); // null=hidden, array=showing
   const [eqWarnOpen,setEqWarnOpen]=useState(null); // null=hidden, array of open engineering questions
   const [eqWarnPriceRows,setEqWarnPriceRows]=useState(null); // stacked price warnings after eq warning
+  const [bcCountMismatch,setBcCountMismatch]=useState(null); // null=hidden, {arcCount,bcCount,missing:[]}
   const [showSqModal,setShowSqModal]=useState(false);
   const [sqPanelBom,setSqPanelBom]=useState(null);
   const [pendingRfqUploads,setPendingRfqUploads]=useState(0);
@@ -13251,7 +13252,37 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const openEqs=(projectRef.current.panels||[]).flatMap(p=>(p.engineeringQuestions||[]).filter(q=>q.status==="open"));
     if(openEqs.length>0){setEqWarnOpen(openEqs);if(warn.length>0)setEqWarnPriceRows(warn);return;}
     if(warn.length>0){setQuoteWarnRows(warn);}
-    else{setAutoPrint(true);setView("quote");}
+    else{await verifyBcLineCount();}
+  }
+
+  async function verifyBcLineCount(){
+    const proj=projectRef.current;
+    const bcNum=proj.bcProjectNumber;
+    if(!bcNum||!_bcToken){setAutoPrint(true);setView("quote");return;}
+    try{
+      const allPages=await bcDiscoverODataPages();
+      const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p));
+      if(!planPage){setAutoPrint(true);setView("quote");return;}
+      let FP_NO="Project_No";
+      const pr=await fetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];if(rec&&"Job_No"in rec&&!("Project_No"in rec))FP_NO="Job_No";}
+      const allBom=(proj.panels||[]).flatMap(p=>(p.bom||[]).filter(r=>!r.isLaborRow));
+      // Check all panel tasks
+      let totalBcBom=0;const allMissing=[];
+      for(let i=0;i<(proj.panels||[]).length;i++){
+        const n=i+1,taskNo=String(20000+n*100+10);
+        const bcR=await fetch(`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${bcNum}' and ${FP_NO==="Project_No"?"Project_Task_No":"Job_Task_No"} eq '${taskNo}'&$select=Line_No,No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(!bcR.ok)continue;
+        const bcLines=(await bcR.json()).value||[];
+        const bcBomLines=bcLines.filter(l=>l.Line_No>=60000);
+        totalBcBom+=bcBomLines.length;
+        const bcNos=new Set(bcBomLines.map(l=>(l.No||'').trim().toUpperCase()));
+        const panelBom=(proj.panels[i].bom||[]).filter(r=>!r.isLaborRow);
+        panelBom.forEach(r=>{if(!bcNos.has((r.partNumber||'').trim().toUpperCase()))allMissing.push({pn:r.partNumber,desc:r.description});});
+      }
+      if(allMissing.length>0){setBcCountMismatch({arcCount:allBom.length,bcCount:totalBcBom,missing:allMissing});return;}
+    }catch(e){console.warn("BC line count check failed:",e);}
+    setAutoPrint(true);setView("quote");
   }
 
   function onRfqPrint(groups){
@@ -13433,7 +13464,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 ),
                 React.createElement("div",{style:{display:"flex",gap:8,justifyContent:"flex-end"}},
                   React.createElement("button",{onClick:()=>{setEqWarnOpen(null);setEqWarnPriceRows(null);},style:{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}},"Go Back"),
-                  React.createElement("button",{onClick:()=>{setEqWarnOpen(null);if(eqWarnPriceRows){setQuoteWarnRows(eqWarnPriceRows);setEqWarnPriceRows(null);}else{setAutoPrint(true);setView("quote");}},style:{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}},"Acknowledge & Proceed")
+                  React.createElement("button",{onClick:()=>{setEqWarnOpen(null);if(eqWarnPriceRows){setQuoteWarnRows(eqWarnPriceRows);setEqWarnPriceRows(null);}else{verifyBcLineCount();}},style:{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}},"Acknowledge & Proceed")
                 )
               )
             ),document.body
@@ -13466,7 +13497,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Fix $0 items in the BC Item Browser, run <strong style={{color:"#f1f5f9"}}>Refresh Pricing</strong> for stale prices, or acknowledge and proceed.</div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
                   <button onClick={()=>setQuoteWarnRows(null)} style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
-                  <button onClick={()=>{setQuoteWarnRows(null);setAutoPrint(true);setView("quote");}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Acknowledge &amp; Proceed</button>
+                  <button onClick={()=>{setQuoteWarnRows(null);verifyBcLineCount();}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Acknowledge &amp; Proceed</button>
                 </div>
               </div>
             </div>
@@ -13474,6 +13505,33 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         </>
       )}
       <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} bcProjectNumber={project.bcProjectNumber||null} projectId={init.id} onClose={()=>setShowSqModal(false)}/>
+      {bcCountMismatch&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:"#0d0d1a",border:"1px solid #ef4444",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+              <span style={{fontSize:22}}>⚠️</span>
+              <div style={{fontSize:15,fontWeight:800,color:"#ef4444"}}>BC Planning Lines Mismatch</div>
+            </div>
+            <div style={{fontSize:13,color:"#94a3b8",marginBottom:10,lineHeight:1.6}}>
+              ARC has <strong style={{color:"#f1f5f9"}}>{bcCountMismatch.arcCount} BOM items</strong> but BC only has <strong style={{color:"#f1f5f9"}}>{bcCountMismatch.bcCount} planning lines</strong>. The following items are missing from BC:
+            </div>
+            <div style={{background:"#0a0a18",border:"1px solid #2a2a3e",borderRadius:6,maxHeight:180,overflowY:"auto",marginBottom:16}}>
+              {bcCountMismatch.missing.map((m,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:i<bcCountMismatch.missing.length-1?"1px solid #1a1a2e":"none",fontSize:12}}>
+                  <span style={{color:"#ef4444",fontWeight:700,fontSize:10,minWidth:34}}>MISSING</span>
+                  <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:120}}>{m.pn||"—"}</span>
+                  <span style={{color:"#94a3b8",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.desc||""}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Click <strong style={{color:"#f1f5f9"}}>Sync BC</strong> on the BOM toolbar to push missing items, or proceed anyway.</div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={()=>setBcCountMismatch(null)} style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Go Back</button>
+              <button onClick={()=>{setBcCountMismatch(null);setAutoPrint(true);setView("quote");}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Proceed Anyway</button>
+            </div>
+          </div>
+        </div>
+      ,document.body)}
     </>
   );
 }
