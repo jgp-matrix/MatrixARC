@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.75";
+const APP_VERSION="v1.19.76";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4720,8 +4720,12 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           let dataUrl=pg.dataUrl;
           if(stampFn){
             const pgIdx=latestPanel.pages.findIndex(p=>p.id===pg.id);
-            try{dataUrl=await stampFn(dataUrl,pgIdx,totalPages)||dataUrl;}catch(e){console.warn('Stamp failed:',e);}
-          }
+            try{
+              const stamped=await stampFn(dataUrl,pgIdx,totalPages);
+              if(stamped&&stamped!==dataUrl){dataUrl=stamped;console.log('STAMP OK page',pgIdx+1);}
+              else console.warn('STAMP returned same/null for page',pgIdx+1);
+            }catch(e){console.warn('Stamp failed:',e);}
+          }else{console.warn('STAMP: no stampFn provided');}
           urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,dataUrl);
           upDone++;phasePct("upload",upDone/pagesNeedingUpload.length);
         },4);
