@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.95";
+const APP_VERSION="v1.19.96";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1581,6 +1581,27 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
         Description:fallbackDesc,
         Quantity:(row.qty||1)*lineQty}});
     lineNo+=10000;
+  }
+
+  // Step 2b: Auto-fix items with missing Gen_Prod_Posting_Group (prevents sync failures)
+  const bomParts=lines.filter(l=>l.Type==="Item"&&l.Line_No>=60000).map(l=>l.No).filter(Boolean);
+  if(bomParts.length>0){
+    for(const pn of bomParts){
+      try{
+        const chk=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(pn)}'&$select=No,Gen_Prod_Posting_Group,Inventory_Posting_Group`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(chk.ok){
+          const rec=((await chk.json()).value||[])[0];
+          if(rec){
+            const patch={};
+            if(!rec.Gen_Prod_Posting_Group)patch.Gen_Prod_Posting_Group="INVENTORY";
+            if(!rec.Inventory_Posting_Group)patch.Inventory_Posting_Group="RAW MAT";
+            if(Object.keys(patch).length){
+              try{await bcPatchItemOData(pn,patch);console.log(`bcSyncPlanningLines: auto-fixed posting groups for ${pn}`);}catch(e){}
+            }
+          }
+        }
+      }catch(e){}
+    }
   }
 
   // Step 3: POST all lines — retry on 429, fallback to Text on item errors
@@ -7979,7 +8000,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             </div>
             <div style={{display:"flex",gap:8,marginBottom:10}}>
               <div style={{flex:1}}>
-                <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Gen. Prod. Posting Group</label>
+                <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Gen. Prod. Posting Group <span style={{color:C.red}}>*</span></label>
                 <select value={createGenProd} onChange={e=>setCreateGenProd(e.target.value)}
                   style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
@@ -7987,7 +8008,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 </select>
               </div>
               <div style={{flex:1}}>
-                <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Inventory Posting Group</label>
+                <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Inventory Posting Group <span style={{color:C.red}}>*</span></label>
                 <select value={createInvPosting} onChange={e=>setCreateInvPosting(e.target.value)}
                   style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
@@ -8004,7 +8025,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName});
                 }catch(e){setCreateErr(e.message||"Failed to create item");}
                 finally{setCreating(false);}
-              }} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!createNumber.trim()?0.5:1})}>
+              }} disabled={creating||!createNumber.trim()||!createGenProd||!createInvPosting} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!createNumber.trim()||!createGenProd||!createInvPosting?0.5:1})}>
                 {creating?"Creating…":"Create in BC"}
               </button>
               <button onClick={()=>{setShowCreate(false);setCreateErr("");}}
