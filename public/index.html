@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.78";
+const APP_VERSION="v1.19.79";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3332,9 +3332,22 @@ async function saveProject(uid,project){
           const ePg=(existingPanels[i].pages||[]).length;
           const nPg=(newPanels[i].pages||[]).length;
           if(ePg>0&&nPg===0){
-            console.error(`SAVE BLOCKED: would drop ${ePg} pages from panel ${i} for project ${project.id}`);
-            // Preserve existing pages
+            console.error(`SAVE GUARD: preserving ${ePg} pages for panel ${i} (project ${project.id})`);
             newPanels[i]={...newPanels[i],pages:existingPanels[i].pages};
+          }
+          // Never lose BOM data — preserve existing BOM if new save has fewer non-labor items
+          const eBom=(existingPanels[i].bom||[]).filter(r=>!r.isLaborRow);
+          const nBom=(newPanels[i].bom||[]).filter(r=>!r.isLaborRow);
+          if(eBom.length>0&&nBom.length===0){
+            console.error(`SAVE GUARD: preserving ${eBom.length} BOM items for panel ${i} (project ${project.id})`);
+            newPanels[i]={...newPanels[i],bom:existingPanels[i].bom};
+          }
+          // Preserve other critical fields if they'd be lost
+          const eFields=['drawingNo','drawingDesc','drawingRev','validation','laborData','complianceReview'];
+          for(const f of eFields){
+            if(existingPanels[i][f]&&!newPanels[i][f]){
+              newPanels[i]={...newPanels[i],[f]:existingPanels[i][f]};
+            }
           }
         }
       }
