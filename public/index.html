@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.82";
+const APP_VERSION="v1.19.83";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9526,7 +9526,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
           <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:2}}>DRAWINGS</div>
-          {!readOnly&&bomCount>0&&(
+          {!readOnly&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(
             <button data-tip="Re-run AI extraction on tagged BOM pages — uses region crops if defined" onClick={()=>{
               if(localStorage.getItem("_arc_skip_reextract_warn")){runExtraction();return;}
               setReExtractWarn(true);
@@ -9539,7 +9539,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             return eqTotal>0?React.createElement("button",{onClick:()=>setShowEqModal(true),
               style:{background:eqOpen>0?"#451a03":"none",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,color:eqOpen>0?"#f59e0b":C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
               eqOpen>0?`❓ ${eqOpen} Question${eqOpen!==1?"s":""}`:`✓ ${eqTotal} Answered`):null;})()}
-          {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(
+          {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(
             <button data-tip={panel.bcPdfAttached&&!bcPdfMissing?`Already uploaded: ${panel.bcPdfFileName||"PDF"}`:`Combine all pages into a PDF and upload to BC Job ${bcProjectNumber}`}
               onClick={buildAndAttachPdf} disabled={attachingPdf||(panel.bcPdfAttached&&!bcPdfMissing)}
               style={{background:panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",border:`1px solid ${panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,color:panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",cursor:panel.bcPdfAttached&&!bcPdfMissing?"default":"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1}}>
