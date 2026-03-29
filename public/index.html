@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.88";
+const APP_VERSION="v1.19.89";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9583,7 +9583,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       </div>
                       <div style={{fontSize:11,color:C.accent,marginBottom:2}}>{parseBcError(r.error)}</div>
                       {!/429|Too Many/i.test(r.error||"")&&r.rowId&&(
-                        <button onClick={()=>{setSyncFailedAlert(null);setBcBrowserTarget(r.rowId);setBcBrowserQuery(r.partNumber||"");setBcBrowserOpen(true);}}
+                        <button onClick={()=>{
+                          setSyncFailedAlert(prev=>{const remaining=(prev||[]).filter(x=>x.rowId!==r.rowId);return remaining.length?remaining:null;});
+                          setBcBrowserTarget(r.rowId);setBcBrowserQuery(r.partNumber||"");setBcBrowserOpen(true);
+                        }}
                           style={{alignSelf:"flex-start",background:C.accent,color:"#fff",border:"none",borderRadius:5,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
                           Fix in Item Browser
                         </button>
