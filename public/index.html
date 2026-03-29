@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.96";
+const APP_VERSION="v1.19.97";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2707,7 +2707,8 @@ async function buildRfqSupplierGroups(bom){
     if(!groupMap[vendorName])groupMap[vendorName]={vendorName,vendorNo,items:[]};
     groupMap[vendorName].items.push(item);
   }
-  const filtered=Object.values(groupMap).filter(g=>!/^matrix\s*systems/i.test(g.vendorName));
+  const RFQ_EXCLUDE_VENDORS=/^matrix\s*systems|crate|job\s*buyoff|job\s*buy.?off/i;
+  const filtered=Object.values(groupMap).filter(g=>!RFQ_EXCLUDE_VENDORS.test(g.vendorName));
   return{groups:filtered.sort((a,b)=>a.vendorName.localeCompare(b.vendorName)),noItems:!filtered.length};
 }
 
