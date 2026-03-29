@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.90";
+const APP_VERSION="v1.19.91";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2664,6 +2664,8 @@ async function buildRfqSupplierGroups(bom){
   const now=Date.now();
   const eligible=bom.filter(r=>{
     if(r.isLaborRow||r.priceSource==="manual")return false;
+    // Include zero-cost items regardless of date
+    if(!r.unitPrice||r.unitPrice===0)return true;
     // Use the same date shown in the Priced column
     const isBC=r.priceSource==="bc"&&"bcPoDate"in r;
     const displayDate=isBC?r.bcPoDate:r.priceDate;
