@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.97";
+const APP_VERSION="v1.19.98";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2683,8 +2683,11 @@ async function _bcQueueExecute(item){
 const RFQ_STALE_MS=60*24*60*60*1000; // 60 days
 async function buildRfqSupplierGroups(bom){
   const now=Date.now();
+  const RFQ_EXCLUDE_ITEMS=/job\s*buy.?off|crating|^crate$/i;
   const eligible=bom.filter(r=>{
     if(r.isLaborRow||r.priceSource==="manual")return false;
+    // Exclude items whose description matches non-RFQ categories
+    if(RFQ_EXCLUDE_ITEMS.test(r.description||"")||RFQ_EXCLUDE_ITEMS.test(r.partNumber||""))return false;
     // Include zero-cost items regardless of date
     if(!r.unitPrice||r.unitPrice===0)return true;
     // Use the same date shown in the Priced column
