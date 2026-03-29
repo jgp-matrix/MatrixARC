@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.79";
+const APP_VERSION="v1.19.80";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3311,47 +3311,46 @@ function computeBomHash(panels){
 }
 
 // ── FIRESTORE ──
+const _saveHighWater={}; // {projectId: {panelCount, panels:[{pages,bomItems,savedPages,savedBom,...}]}}
 async function saveProject(uid,project){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const col=fbDb.collection(path);
   const ref=project.id?col.doc(project.id):col.doc();
   const data={...project,id:ref.id,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION,...(!project.id&&{createdBy:uid})};
-  // SAFETY: Never overwrite a project that has panels with one that has fewer panels
+  // SAFETY: Use in-memory high-water marks to prevent data loss from stale saves
   if(project.id){
-    try{
-      const existing=await ref.get();
-      if(existing.exists){
-        const existingPanels=existing.data().panels||[];
-        const newPanels=data.panels||[];
-        if(existingPanels.length>0&&newPanels.length<existingPanels.length){
-          console.error(`SAVE BLOCKED: would reduce panels from ${existingPanels.length} to ${newPanels.length} for project ${project.id}`);
-          return data;
+    const newPanels=data.panels||[];
+    const hw=_saveHighWater[project.id];
+    if(hw){
+      if(hw.panelCount>0&&newPanels.length<hw.panelCount){
+        console.error(`SAVE BLOCKED: would reduce panels from ${hw.panelCount} to ${newPanels.length} for project ${project.id}`);
+        return data;
+      }
+      for(let i=0;i<Math.min(hw.panels.length,newPanels.length);i++){
+        const ehw=hw.panels[i];if(!ehw)continue;
+        const nPg=(newPanels[i].pages||[]).length;
+        const nBom=(newPanels[i].bom||[]).filter(r=>!r.isLaborRow).length;
+        if(ehw.pages>0&&nPg===0&&ehw.savedPages){
+          console.error(`SAVE GUARD: preserving ${ehw.pages} pages for panel ${i}`);
+          newPanels[i]={...newPanels[i],pages:ehw.savedPages};
         }
-        // Never save a panel with 0 pages if Firestore has pages
-        for(let i=0;i<Math.min(existingPanels.length,newPanels.length);i++){
-          const ePg=(existingPanels[i].pages||[]).length;
-          const nPg=(newPanels[i].pages||[]).length;
-          if(ePg>0&&nPg===0){
-            console.error(`SAVE GUARD: preserving ${ePg} pages for panel ${i} (project ${project.id})`);
-            newPanels[i]={...newPanels[i],pages:existingPanels[i].pages};
-          }
-          // Never lose BOM data — preserve existing BOM if new save has fewer non-labor items
-          const eBom=(existingPanels[i].bom||[]).filter(r=>!r.isLaborRow);
-          const nBom=(newPanels[i].bom||[]).filter(r=>!r.isLaborRow);
-          if(eBom.length>0&&nBom.length===0){
-            console.error(`SAVE GUARD: preserving ${eBom.length} BOM items for panel ${i} (project ${project.id})`);
-            newPanels[i]={...newPanels[i],bom:existingPanels[i].bom};
-          }
-          // Preserve other critical fields if they'd be lost
-          const eFields=['drawingNo','drawingDesc','drawingRev','validation','laborData','complianceReview'];
-          for(const f of eFields){
-            if(existingPanels[i][f]&&!newPanels[i][f]){
-              newPanels[i]={...newPanels[i],[f]:existingPanels[i][f]};
-            }
-          }
+        if(ehw.bomItems>0&&nBom===0&&ehw.savedBom){
+          console.error(`SAVE GUARD: preserving ${ehw.bomItems} BOM items for panel ${i}`);
+          newPanels[i]={...newPanels[i],bom:ehw.savedBom};
+        }
+        for(const f of ['drawingNo','drawingDesc','drawingRev','validation','laborData','complianceReview']){
+          if(ehw[f]&&!newPanels[i][f])newPanels[i]={...newPanels[i],[f]:ehw[f]};
         }
       }
-    }catch(e){console.warn("saveProject safety check failed:",e);}
+    }
+    // Update high-water marks from what we're about to save
+    _saveHighWater[project.id]={panelCount:newPanels.length,panels:newPanels.map(p=>({
+      pages:(p.pages||[]).length,bomItems:(p.bom||[]).filter(r=>!r.isLaborRow).length,
+      savedPages:(p.pages||[]).length>0?(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;}):null,
+      savedBom:(p.bom||[]).filter(r=>!r.isLaborRow).length>0?p.bom:null,
+      drawingNo:p.drawingNo||null,drawingDesc:p.drawingDesc||null,drawingRev:p.drawingRev||null,
+      validation:p.validation||null,laborData:p.laborData||null,complianceReview:p.complianceReview||null
+    }))};
   }
   // Don't store page images in Firestore — strip dataUrls from panels
   const stripped={...data,panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
