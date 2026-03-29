@@ -4,7 +4,15 @@ const sgMail = require('@sendgrid/mail');
 
 admin.initializeApp();
 
+const { runCodaleScrape } = require('./codaleScheduler');
+const { scrapeBatch: codaleScrapeBatch } = require('./codaleScraper');
+const { mouserSearchPart, mouserSearchBatch } = require('./mouserApi');
+const { digikeySearchPart, digikeySearchBatch } = require('./digikeyApi');
+
 const SENDGRID_KEY = process.env.SENDGRID_API_KEY || '';
+const MOUSER_API_KEY = process.env.MOUSER_API_KEY || '';
+const DIGIKEY_CLIENT_ID = process.env.DIGIKEY_CLIENT_ID || '';
+const DIGIKEY_CLIENT_SECRET = process.env.DIGIKEY_CLIENT_SECRET || '';
 const APP_URL = process.env.APP_URL || 'https://matrix-arc.web.app';
 const TEAMS_WEBHOOK_URL = process.env.TEAMS_WEBHOOK_URL || '';
 if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
@@ -552,4 +560,375 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
   functions.logger.info(`extractSupplierQuotePricing: requested=${lineItems.length}, matched=${matchedCount}, unmatched_supplier_items=${unmatchedCount}, total_extracted=${extracted.length}`);
 
   return { extracted, quoteHeader, summary: summary || { requestedCount: lineItems.length, matchedCount, unmatchedSupplierItems: unmatchedCount } };
+});
+
+// ── CODALE PRICE SCRAPER ──
+
+/**
+ * Manual trigger — callable from ARC UI "Run Codale Scrape" button
+ * Requires auth. Accepts optional { maxItems } to limit batch size.
+ */
+exports.codaleRunScrape = functions.runWith({ timeoutSeconds: 540, memory: '2GB' }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const uid = context.auth.uid;
+  const maxItems = data?.maxItems || 30;
+
+  try {
+    const result = await runCodaleScrape(uid, { maxItems });
+    return { success: true, ...result };
+  } catch (e) {
+    console.error('codaleRunScrape error:', e.message);
+    throw new functions.https.HttpsError('internal', e.message);
+  }
+});
+
+/**
+ * Scheduled trigger — runs via Cloud Scheduler / Pub/Sub
+ * Finds the first user with Codale items configured and runs the scrape.
+ * Schedule: every 6 hours (configure via Cloud Scheduler in GCP console)
+ */
+exports.codaleScheduledScrape = functions.runWith({ timeoutSeconds: 540, memory: '2GB' }).pubsub
+  .topic('codale-price-scrape')
+  .onPublish(async (message) => {
+    // Find users with codaleItems configured
+    const usersSnap = await admin.firestore().collectionGroup('codaleItems').limit(10).get();
+    // codaleItems is stored at users/{uid}/config/codaleItems — extract uid from path
+    const uids = new Set();
+    // Alternative: scan for users with config/codaleItems doc
+    const allUsers = await admin.firestore().collection('users').get();
+    for (const userDoc of allUsers.docs) {
+      const codaleDoc = await admin.firestore().doc(`users/${userDoc.id}/config/codaleItems`).get();
+      if (codaleDoc.exists && (codaleDoc.data().items || []).length > 0) {
+        uids.add(userDoc.id);
+      }
+    }
+
+    for (const uid of uids) {
+      try {
+        console.log(`Scheduled Codale scrape for user ${uid}`);
+        await runCodaleScrape(uid, { maxItems: 30 });
+      } catch (e) {
+        console.error(`Scheduled scrape failed for ${uid}:`, e.message);
+      }
+    }
+
+    return null;
+  });
+
+/**
+ * Test endpoint — scrape specific part numbers from Codale with login (customer pricing)
+ * Call with { partNumbers: ["25B-D4P0N114", "5069-OB16"] }
+ */
+exports.codaleTestScrape = functions.runWith({ timeoutSeconds: 300, memory: '2GB' }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const partNumbers = data?.partNumbers;
+  if (!Array.isArray(partNumbers) || !partNumbers.length) {
+    throw new functions.https.HttpsError('invalid-argument', 'Provide partNumbers array');
+  }
+  const username = process.env.CODALE_USERNAME;
+  const password = process.env.CODALE_PASSWORD;
+  if (!username || !password) {
+    throw new functions.https.HttpsError('failed-precondition', 'Codale credentials not configured');
+  }
+  try {
+    const results = await codaleScrapeBatch(partNumbers.slice(0, 10), username, password);
+    return { success: true, results };
+  } catch (e) {
+    throw new functions.https.HttpsError('internal', 'Scrape failed: ' + e.message);
+  }
+});
+
+// ── MOUSER API ──
+
+/**
+ * Search parts via Mouser API — returns real-time pricing and availability
+ * Call with { partNumbers: ["LM358", "STM32F407VET6"] }
+ */
+exports.mouserSearch = functions.runWith({ timeoutSeconds: 120, memory: '256MB' }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  if (!MOUSER_API_KEY) throw new functions.https.HttpsError('failed-precondition', 'Mouser API key not configured');
+  const partNumbers = data?.partNumbers;
+  if (!Array.isArray(partNumbers) || !partNumbers.length) {
+    throw new functions.https.HttpsError('invalid-argument', 'Provide partNumbers array');
+  }
+  try {
+    const results = await mouserSearchBatch(partNumbers.slice(0, 20), MOUSER_API_KEY);
+    return { success: true, results };
+  } catch (e) {
+    throw new functions.https.HttpsError('internal', 'Mouser search failed: ' + e.message);
+  }
+});
+
+/**
+ * Search parts via DigiKey API — returns real-time pricing and availability
+ * Call with { items: [{partNumber, manufacturer}] } or { partNumbers: ["..."] }
+ */
+exports.digikeySearch = functions.runWith({ timeoutSeconds: 120, memory: '256MB' }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  if (!DIGIKEY_CLIENT_ID || !DIGIKEY_CLIENT_SECRET) throw new functions.https.HttpsError('failed-precondition', 'DigiKey credentials not configured');
+  // Accept either items array [{partNumber, manufacturer}] or legacy partNumbers array
+  const items = data?.items || (data?.partNumbers || []).map(pn => ({ partNumber: pn }));
+  if (!Array.isArray(items) || !items.length) {
+    throw new functions.https.HttpsError('invalid-argument', 'Provide items array');
+  }
+  try {
+    const results = await digikeySearchBatch(items.slice(0, 20), DIGIKEY_CLIENT_ID, DIGIKEY_CLIENT_SECRET);
+    return { success: true, results };
+  } catch (e) {
+    throw new functions.https.HttpsError('internal', 'DigiKey search failed: ' + e.message);
+  }
+});
+
+/**
+ * Search both DigiKey AND Mouser for a batch of parts, with MFR validation.
+ * Returns per-item results for both vendors — frontend writes prices to BC under each vendor.
+ * Call with { items: [{partNumber, manufacturer}] } — max 10 items per call (Mouser rate limit).
+ */
+exports.searchVendorPricing = functions.runWith({ timeoutSeconds: 300, memory: '512MB' }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const items = (data?.items || []).slice(0, 10);
+  if (!items.length) return { success: true, results: [] };
+
+  const dkReady = !!(DIGIKEY_CLIENT_ID && DIGIKEY_CLIENT_SECRET);
+  const mouserReady = !!MOUSER_API_KEY;
+  const results = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const { partNumber, manufacturer } = items[i];
+    console.log(`VendorPricing ${i + 1}/${items.length}: ${partNumber}${manufacturer ? ` (${manufacturer})` : ''}`);
+
+    const [dkResult, mouserResult] = await Promise.all([
+      dkReady
+        ? digikeySearchPart(partNumber, DIGIKEY_CLIENT_ID, DIGIKEY_CLIENT_SECRET, manufacturer || null)
+            .catch(e => ({ partNumber, found: false, error: e.message }))
+        : Promise.resolve({ partNumber, found: false, error: 'DigiKey not configured' }),
+      mouserReady
+        ? mouserSearchPart(partNumber, MOUSER_API_KEY, manufacturer || null)
+            .catch(e => ({ partNumber, found: false, error: e.message }))
+        : Promise.resolve({ partNumber, found: false, error: 'Mouser not configured' }),
+    ]);
+
+    results.push({ partNumber, manufacturer: manufacturer || null, digikey: dkResult, mouser: mouserResult });
+
+    if (i < items.length - 1) {
+      // 2.5s delay between items to respect Mouser rate limit (30 req/min)
+      await new Promise(r => setTimeout(r, 2500));
+    }
+  }
+
+  return { success: true, results };
+});
+
+// ── BULK MFR CODE LOOKUP ──
+// Fetches BC items with empty Manufacturer_Code, looks up MFR via DigiKey/Mouser,
+// maps to BC code, and optionally patches back to BC.
+
+const BC_MFR_MAP = [
+  {code:'AB',terms:['allen-bradley','allen bradley','rockwell automation','rockwell']},
+  {code:'SE',terms:['schneider electric','schneider','square d','modicon','telemecanique']},
+  {code:'SIEMENS',terms:['siemens']},
+  {code:'ABB',terms:['abb']},
+  {code:'EATON',terms:['eaton','cutler-hammer','cutler hammer','moeller']},
+  {code:'HOFFMAN',terms:['hoffman','pentair']},
+  {code:'RITTAL',terms:['rittal']},
+  {code:'HAMMOND',terms:['hammond']},
+  {code:'SAGINAW',terms:['saginaw','saginaw control']},
+  {code:'PHX',terms:['phoenix contact','phoenix','phoenixcontact']},
+  {code:'WEIDMULLER',terms:['weidmuller','weidmüller']},
+  {code:'TURCK',terms:['turck','banner']},
+  {code:'OMRON',terms:['omron']},
+  {code:'PILZ',terms:['pilz']},
+  {code:'IDEC',terms:['idec']},
+  {code:'PANDUIT',terms:['panduit']},
+  {code:'BRADY',terms:['brady']},
+  {code:'HUBBELL',terms:['hubbell','kellems']},
+  {code:'LEVITON',terms:['leviton']},
+  {code:'BELDEN',terms:['belden']},
+  {code:'LAPP',terms:['lapp']},
+  {code:'PF',terms:['pepperl','pepperl+fuchs','pepperl fuchs']},
+  {code:'SICK',terms:['sick']},
+  {code:'KEYENCE',terms:['keyence']},
+  {code:'AUTOMDIR',terms:['automation direct','automationdirect']},
+  {code:'MURR',terms:['murr','murr elektronik']},
+  {code:'WAGO',terms:['wago']},
+  {code:'LEUZE',terms:['leuze']},
+  {code:'COGNEX',terms:['cognex']},
+  {code:'TE',terms:['te connectivity','tyco','amp','raychem']},
+  {code:'MOLEX',terms:['molex']},
+  {code:'3M',terms:['3m']},
+  {code:'LITTELF',terms:['littelfuse']},
+  {code:'VISHAY',terms:['vishay']},
+  {code:'TI',terms:['texas instruments']},
+  {code:'MEANWL',terms:['mean well','meanwell']},
+];
+
+function mapMfrToCode(rawMfr) {
+  if (!rawMfr || !rawMfr.trim()) return null;
+  const s = rawMfr.trim().toLowerCase();
+  for (const entry of BC_MFR_MAP) {
+    for (const term of entry.terms) {
+      if (s.includes(term) || term.includes(s)) return entry.code;
+    }
+  }
+  return null;
+}
+
+// ── Google search fallback for manufacturer lookup ──
+async function googleSearchMfr(partNumber) {
+  try {
+    const q = encodeURIComponent(`${partNumber} manufacturer datasheet`);
+    const r = await fetch(`https://www.google.com/search?q=${q}&num=5`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept': 'text/html' },
+    });
+    if (!r.ok) return null;
+    const html = await r.text();
+    const lower = html.toLowerCase();
+    for (const entry of BC_MFR_MAP) {
+      for (const term of entry.terms) {
+        if (term.length >= 4 && lower.includes(term)) return { manufacturer: entry.terms[0], code: entry.code, source: 'google' };
+      }
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+// ── OEMSecrets API fallback (limited to 10/day on free tier) ──
+const OEMSECRETS_API_KEY = process.env.OEMSECRETS_API_KEY || '';
+let _oemCallsToday = 0;
+async function oemsecretsSearchMfr(partNumber) {
+  if (!OEMSECRETS_API_KEY || _oemCallsToday >= 10) return null;
+  try {
+    _oemCallsToday++;
+    const url = `https://oemsecretsapi.com/partsearch?apiKey=${OEMSECRETS_API_KEY}&searchTerm=${encodeURIComponent(partNumber)}&currency=USD&countryCode=US`;
+    const r = await fetch(url);
+    if (r.status === 401) { _oemCallsToday = 10; return null; } // limit hit
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!d.stock || !d.stock.length) return null;
+    const allText = d.stock.map(s => `${s.distributor?.common_name||''} ${s.distributor?.name||''} ${s.part_number||''}`).join(' ').toLowerCase();
+    for (const entry of BC_MFR_MAP) {
+      for (const term of entry.terms) {
+        if (term.length >= 4 && allText.includes(term)) return { manufacturer: entry.terms[0], code: entry.code, source: 'oemsecrets' };
+      }
+    }
+    return null;
+  } catch (e) { return null; }
+}
+
+// Two functions: one to list items needing MFR, one to process a small batch
+
+exports.bulkMfrList = functions.runWith({
+  timeoutSeconds: 300,
+  memory: '256MB',
+}).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const { bcToken, bcODataBase } = data || {};
+  if (!bcToken || !bcODataBase) throw new functions.https.HttpsError('invalid-argument', 'bcToken and bcODataBase required');
+
+  const bcHeaders = { 'Authorization': `Bearer ${bcToken}`, 'Accept': 'application/json' };
+  const allItems = [];
+  let skip = 0;
+  while (true) {
+    const url = `${bcODataBase}/ItemCard?$filter=Manufacturer_Code eq ''&$select=No,Description&$top=200&$skip=${skip}`;
+    const r = await fetch(url, { headers: bcHeaders });
+    if (!r.ok) break;
+    const batch = (await r.json()).value || [];
+    if (!batch.length) break;
+    allItems.push(...batch.map(i => ({ no: i.No, desc: i.Description })));
+    skip += 200;
+    if (batch.length < 200) break;
+  }
+  return { success: true, items: allItems };
+});
+
+exports.bulkMfrLookup = functions.runWith({
+  timeoutSeconds: 540,
+  memory: '512MB',
+}).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+
+  const { bcToken, bcODataBase, dryRun = true, items: inputItems } = data || {};
+  if (!bcToken || !bcODataBase) throw new functions.https.HttpsError('invalid-argument', 'bcToken and bcODataBase required');
+  if (!Array.isArray(inputItems) || !inputItems.length) throw new functions.https.HttpsError('invalid-argument', 'items array required');
+
+  const dkReady = !!(DIGIKEY_CLIENT_ID && DIGIKEY_CLIENT_SECRET);
+  const mouserReady = !!MOUSER_API_KEY;
+
+  const bcHeaders = { 'Authorization': `Bearer ${bcToken}`, 'Accept': 'application/json', 'Content-Type': 'application/json' };
+  const results = [];
+  let patched = 0;
+  const unknownMfr = [];
+
+  // Process items passed by client (small batch, ~20-30 items)
+  for (let i = 0; i < inputItems.length; i++) {
+    const { no: pn, desc } = inputItems[i];
+    let manufacturer = null;
+    let source = null;
+
+    if (dkReady) {
+      try {
+        const dk = await digikeySearchPart(pn, DIGIKEY_CLIENT_ID, DIGIKEY_CLIENT_SECRET);
+        if (dk.found && dk.manufacturer) { manufacturer = dk.manufacturer; source = 'digikey'; }
+      } catch (e) { /* continue to mouser */ }
+    }
+
+    if (!manufacturer && mouserReady) {
+      try {
+        const ms = await mouserSearchPart(pn, MOUSER_API_KEY);
+        if (ms.found && ms.manufacturer) { manufacturer = ms.manufacturer; source = 'mouser'; }
+      } catch (e) { /* skip */ }
+    }
+
+    // Google search fallback
+    let fallbackResult = null;
+    if (!manufacturer) {
+      fallbackResult = await googleSearchMfr(pn);
+      if (fallbackResult) { manufacturer = fallbackResult.manufacturer; source = 'google'; }
+    }
+    // OEMSecrets last resort (10/day limit on free tier)
+    if (!manufacturer) {
+      fallbackResult = await oemsecretsSearchMfr(pn);
+      if (fallbackResult) { manufacturer = fallbackResult.manufacturer; source = 'oemsecrets'; }
+    }
+
+    if (!manufacturer) {
+      results.push({ itemNo: pn, desc, manufacturer: null, code: null, source: null, status: 'not_found' });
+    } else {
+      const code = fallbackResult?.code || mapMfrToCode(manufacturer);
+      if (!code) {
+        unknownMfr.push({ itemNo: pn, manufacturer });
+        results.push({ itemNo: pn, desc, manufacturer, code: null, source, status: 'unknown_mfr' });
+      } else {
+        if (!dryRun) {
+          try {
+            // Ensure manufacturer record exists in BC before patching item
+            const mfrChk = await fetch(`${bcODataBase}/Manufacturers?$filter=Code eq '${code}'&$top=1`, { headers: bcHeaders });
+            if (mfrChk.ok) {
+              const existing = (await mfrChk.json()).value || [];
+              if (!existing.length) {
+                const mfrEntry = BC_MFR_MAP.find(m => m.code === code);
+                const mfrName = mfrEntry ? mfrEntry.terms[0].split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join(' ') : code;
+                await fetch(`${bcODataBase}/Manufacturers`, {
+                  method: 'POST', headers: { ...bcHeaders, 'If-Match': '*' },
+                  body: JSON.stringify({ Code: code, Name: mfrName }),
+                });
+              }
+            }
+            const patchUrl = `${bcODataBase}/ItemCard('${encodeURIComponent(pn)}')`;
+            const pr = await fetch(patchUrl, {
+              method: 'PATCH',
+              headers: { ...bcHeaders, 'If-Match': '*' },
+              body: JSON.stringify({ Manufacturer_Code: code }),
+            });
+            if (pr.ok || pr.status === 204) patched++;
+          } catch (e) { /* continue */ }
+        }
+        results.push({ itemNo: pn, desc, manufacturer, code, source, status: dryRun ? 'dry_run' : 'patched' });
+      }
+    }
+
+    if (i < inputItems.length - 1) await new Promise(r => setTimeout(r, 2000));
+  }
+
+  return { success: true, found: results.filter(r => r.manufacturer).length, patched, unknownMfr, results };
 });
