@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.101";
+const APP_VERSION="v1.19.102";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17810,16 +17810,21 @@ INSTRUCTIONS:
       <div style={{position:"fixed",top:78,left:0,right:0,zIndex:440,background:"#253354",borderBottom:"2px solid #3b82f6",display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
         {[{id:"projects",label:"PROJECTS"},{id:"purchasing",label:"PURCHASING"},{id:"items",label:"ITEMS"}].map(t=>{
           const active=navTab===t.id;
-          const isBackBtn=t.id==="projects"&&view==="project"&&openProject;
+          const hasOpenProject=view==="project"&&openProject;
+          // Show "BACK TO PROJECTS" only when projects tab is active AND viewing a project
+          const isBackBtn=t.id==="projects"&&hasOpenProject&&active;
+          // Show project name on projects tab when on another tab with project open
+          const isReturnBtn=t.id==="projects"&&hasOpenProject&&!active;
           return(
           <button key={t.id} onClick={()=>{
             if(isBackBtn){checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);});return;}
+            // Switching to projects tab with open project — just switch tab, keep project open
             setNavTab(t.id);
           }}
             style={{cursor:"pointer",padding:"0 24px",
               height:active?46:38,
-              fontSize:12,fontWeight:700,letterSpacing:isBackBtn?1:2,textTransform:"uppercase",
-              color:isBackBtn?"#fbbf24":active?"#fff":"#93c5fd",
+              fontSize:12,fontWeight:700,letterSpacing:isBackBtn?1:isReturnBtn?1:2,textTransform:"uppercase",
+              color:isBackBtn?"#fbbf24":isReturnBtn?"#93c5fd":active?"#fff":"#93c5fd",
               background:isBackBtn?"#1a1500":active?"#1e293b":"#1a2d4a",
               borderTop:isBackBtn?"2px solid #b45309":active?"2px solid #3b82f6":"1px solid #3b5a8a",
               borderLeft:isBackBtn?"1px solid #b45309":active?"1px solid #3b82f6":"1px solid #3b5a8a",
@@ -17829,7 +17834,7 @@ INSTRUCTIONS:
               marginBottom:active?"-2px":0,
               position:"relative",zIndex:active?1:0,
               transition:"color 0.15s,height 0.15s"}}>
-            {isBackBtn?"← BACK TO PROJECTS":t.label}
+            {isBackBtn?"← BACK TO PROJECTS":isReturnBtn?`← ${(openProject.name||"PROJECT").slice(0,20).toUpperCase()}`:t.label}
           </button>);
         })}
       </div>
