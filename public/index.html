@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.94";
+const APP_VERSION="v1.19.95";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10228,30 +10228,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               </div>
             );
           })()}
-        </div>
-      )}
-
-      {/* AI Feedback & Correction */}
-      {(panel.bom||[]).length>0&&!readOnly&&_apiKey&&(
-        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-            <div style={{fontSize:12,color:C.accent,fontWeight:700,letterSpacing:0.7}}>🤖 AI CORRECTION</div>
-            {(panel.extractionFeedbackLog||[]).length>0&&(
-              <span style={{fontSize:11,color:C.muted}}>{(panel.extractionFeedbackLog).length} correction{(panel.extractionFeedbackLog).length!==1?"s":""} logged</span>
-            )}
-          </div>
-          <div style={{fontSize:12,color:C.sub,marginBottom:8,lineHeight:1.6}}>
-            Describe what's wrong or missing. The AI will re-extract the BOM using your instructions, and your feedback is saved to improve future extractions.
-          </div>
-          <textarea
-            ref={feedbackRef}
-            value={aiFeedback}
-            onChange={e=>setAiFeedback(e.target.value)}
-            placeholder={"BOM corrections:\ne.g. Row 23 is missing — 3 items: KXTBRHEBFP, OXP10X225 and OH865L10B, all ABB qty 1.\ne.g. Row 19 quantity should be 2 not 1.\ne.g. The part number for the transformer is PH500MQMJ.\n\nLabor corrections (applied immediately):\ne.g. The wire count is not correct, base labor off 50 wires, not 25.\ne.g. Use 12 labor hours.\ne.g. Labor rate is $55/hr."}
-            rows={4}
-            style={{...inp(),width:"100%",resize:"vertical",lineHeight:1.6,fontSize:13,marginBottom:10}}
-          />
-          {feedbackSaved&&<span style={{fontSize:12,color:C.green,fontWeight:600}}>✓ Feedback saved</span>}
         </div>
       )}
 
