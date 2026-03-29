@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.80";
+const APP_VERSION="v1.19.81";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4766,6 +4766,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     bgSetPct(panel.id,0,"Uploading drawings…");
     // Upload page images FIRST — ensures storageUrl exists before any save strips dataUrl
     const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
+    console.log('[UPLOAD DEBUG] pages:',latestPanel.pages.length,'needUpload:',pagesNeedingUpload.length,
+      'withDataUrl:',latestPanel.pages.filter(p=>p.dataUrl).length,
+      'withStorageUrl:',latestPanel.pages.filter(p=>p.storageUrl).length,
+      'stampFn:',!!stampFn,'projectId:',!!projectId);
     if(pagesNeedingUpload.length>0&&projectId){
       phasePct("upload",0);bgUpdate(panel.id,"Uploading drawings…");
       try{
@@ -4860,7 +4864,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       }catch(e){console.warn("Compliance review failed:",e);}
     }
     const itemCount=(latestPanel.bom||[]).length;
-    bgDone(panel.id,itemCount>0?`✓ ${itemCount} items`:"✓ Complete");
+    bgUpdate(panel.id,itemCount>0?`${itemCount} items extracted — pricing…`:"Extracted");bgSetPct(panel.id,95);
     // Save learning record to ARC Neural IQ
     saveExtractionLearning(uid,projectId,latestPanel,projectName||'',bcProjectNumber||'');
   }catch(ex){
@@ -8049,6 +8053,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const pageTypeChangesRef=useRef({});
   const learningExamplesRef=useRef([]);
   const latestPanelRef=useRef(panel);
+  const eqModalShownRef=useRef(false);
   const [reasonPickerFor,setReasonPickerFor]=useState(null);
   const [extracting,setExtracting]=useState(false);
   const ep=useSmoothProgress();
@@ -8515,6 +8520,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   async function confirmAndExtract(){
     setAwaitingConfirm(false);
+    eqModalShownRef.current=false;
     bgUpdate(panel.id,"Starting extraction…");bgSetPct(panel.id,0,"Starting extraction…");
     // Save learning DB corrections for any page where user changed AI-detected types
     const changes=pageTypeChangesRef.current;
@@ -8569,14 +8575,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       onDone:(finalPanel)=>{
         try{onUpdate(finalPanel);}catch(e){}
         try{setExtracting(false);setValidatingPanel(false);}catch(e){}
-        // Clear bg extraction bar so pricing progress can take over immediately
-        try{bgDismiss(panel.id);}catch(e){}
-        // Show AI questions if any
-        if((finalPanel.engineeringQuestions||[]).some(q=>q.status==="open")){try{setShowEqModal(true);}catch(e){}}
-        else if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
-        // Auto-run pricing after extraction
+        // Show AI questions if any (guarded to prevent double-trigger from notifyProjectListeners)
+        if(!eqModalShownRef.current){
+          eqModalShownRef.current=true;
+          if((finalPanel.engineeringQuestions||[]).some(q=>q.status==="open")){try{setShowEqModal(true);}catch(e){}}
+          else if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
+        }
+        // Auto-run pricing after extraction — keep bg bar alive through pricing
         if((finalPanel.bom||[]).length>0&&_apiKey){
-          try{runPricingOnPanel(finalPanel.bom,finalPanel);}catch(e){}
+          bgUpdate(panel.id,"Getting prices…");
+          runPricingOnPanel(finalPanel.bom,finalPanel,pct=>{
+            bgSetPct(panel.id,95+Math.round(pct*0.04));
+          }).then(()=>{
+            bgDone(panel.id,"✓ Complete");
+          }).catch(()=>{
+            bgDone(panel.id,"✓ Extraction done");
+          });
+        }else{
+          bgDone(panel.id,(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
         }
         // BC sync + PDF upload deferred until after pricing completes (see runPricingOnPanel)
       },
@@ -8797,9 +8813,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     const rgnCtx=buildRegionContext(pages);
     const rgnNotes=(panel.extractionNotes||"")+rgnCtx;
-    let all=[];let bomDone=0;
+    let all=[];let bomDone=0;let reQs=[];
     try{
-      let reQs=[];
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         bomDone++;
         ep.set(Math.round((bomDone/bomPages.length)*60),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
@@ -8841,8 +8856,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     setTagsChanged(false);
-    if((updated.engineeringQuestions||[]).some(q=>q.status==="open")){setShowEqModal(true);}
-    else if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
+    if(!eqModalShownRef.current){
+      eqModalShownRef.current=true;
+      if((updated.engineeringQuestions||[]).some(q=>q.status==="open")){setShowEqModal(true);}
+      else if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
+    }
     // Re-run validation (schematic/layout analysis) if applicable
     const valPages=(pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
     if(valPages.length>0&&_apiKey){
@@ -8904,6 +8922,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
 
   async function reExtractWithFeedback(){
+    eqModalShownRef.current=false;
     let bomPages=pages.filter(p=>getPageTypes(p).includes("bom")&&(p.dataUrl||p.storageUrl));
     if(!aiFeedback.trim())return;
 
