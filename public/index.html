@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.115";
+const APP_VERSION="v1.19.116";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8848,7 +8848,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes);
-      const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName,bcUploadCount:(panel.bcUploadCount||0)+1};
+      const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName,bcUploadCount:(panel.bcUploadCount||0)+1,bcUploadQuoteRev:quoteRev||0};
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
       setBcPdfMissing(false);
@@ -9261,17 +9261,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
     // Clear any BC sync error for this row — item has been fixed via Item Browser
     setBcSyncErrors(prev=>{const next={...prev};delete next[bomRowId];return next;});
-    // Auto-sync planning lines to BC after any item browser selection (don't wait for all rows to be priced)
+    // Prompt user to sync BC planning lines after item browser selection
     if(bcProjectNumber&&_bcToken){
-      if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);
-      bcAutoSyncTimer.current=setTimeout(()=>{
-        const latestPanel=latestPanelRef.current;
-        bcSyncPanelPlanningLines(bcProjectNumber,idx+1,latestPanel,projectName).then(result=>{
-          if(result.failed?.length>0){setBcSyncStatus("error");setSyncFailedAlert(result.failed);const errs={};result.failed.forEach(f=>{if(f.rowId)errs[f.rowId]=f;});setBcSyncErrors(prev=>({...prev,...errs}));}
-          else{setBcSyncStatus("ok");setBcSyncErrors({});setTimeout(()=>setBcSyncStatus(null),4000);}
-          bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,latestPanel,projectName).catch(()=>{});
-        }).catch(e=>console.warn("Auto BC sync after item select failed:",e));
-      },2000);
+      setBcSyncStatus("pending");
     }
   }
   function applyBcItem(bomRowId,bcItem){
@@ -9740,13 +9732,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             return eqTotal>0?React.createElement("button",{onClick:()=>setShowEqModal(true),
               style:{background:eqOpen>0?"#451a03":"none",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,color:eqOpen>0?"#f59e0b":C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
               eqOpen>0?`❓ ${eqOpen} Question${eqOpen!==1?"s":""}`:`✓ ${eqTotal} Answered`):null;})()}
-          {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(
-            <button data-tip={panel.bcPdfAttached&&!bcPdfMissing?`Already uploaded: ${panel.bcPdfFileName||"PDF"}`:`Combine all pages into a PDF and upload to BC Job ${bcProjectNumber}`}
-              onClick={buildAndAttachPdf} disabled={attachingPdf||(panel.bcPdfAttached&&!bcPdfMissing)}
-              style={{background:panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",border:`1px solid ${panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,color:panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",cursor:panel.bcPdfAttached&&!bcPdfMissing?"default":"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1}}>
-              {attachingPdf?"Working…":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
-            </button>
-          )}
+          {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(()=>{
+            const hasUnsent=panel.bcPdfAttached&&!bcPdfMissing&&(quoteRev||0)>(panel.bcUploadQuoteRev||0);
+            return(
+            <button data-tip={hasUnsent?"BOM changed since last upload — click Print Client Quote to upload new version":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:`Upload via Print Client Quote`}
+              onClick={()=>{}} disabled
+              style={{background:hasUnsent?"#3a1f00":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",border:`1px solid ${hasUnsent?"#f59e0b88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,color:hasUnsent?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",cursor:"default",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1}}>
+              {attachingPdf?"Working…":hasUnsent?"⚠ Unsent Revision":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
+            </button>);
+          })()}
           {bcPdfMissing&&<span style={{fontSize:11,color:C.yellow,fontWeight:600}}>File was deleted from BC — Re-Upload?</span>}
           {attachPdfMsg&&<span style={{fontSize:11,color:attachPdfMsg.startsWith("✓")?C.green:attachPdfMsg.startsWith("✗")?C.red:C.muted,fontWeight:600}}>{attachPdfMsg}</span>}
         </div>
@@ -9962,8 +9956,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             )}
             {bcProjectNumber&&!readOnly&&(
               <button data-tip="Push BOM and labor costs to Business Central job planning lines" onClick={syncPlanningLinesToBC} disabled={bcSyncing}
-                style={btn(bcSyncStatus==="ok"?C.greenDim:bcSyncStatus==="error"?"#2a0a0a":C.accentDim, bcSyncStatus==="ok"?C.green:bcSyncStatus==="error"?C.red:C.accent,{fontSize:12,padding:"4px 12px",opacity:bcSyncing?0.5:1})}>
-                {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":"⇅ Sync BC"}
+                style={btn(bcSyncStatus==="ok"?C.greenDim:bcSyncStatus==="error"?"#2a0a0a":bcSyncStatus==="pending"?"#3a1f00":C.accentDim, bcSyncStatus==="ok"?C.green:bcSyncStatus==="error"?C.red:bcSyncStatus==="pending"?"#f59e0b":C.accent,{fontSize:12,padding:"4px 12px",opacity:bcSyncing?0.5:1,animation:bcSyncStatus==="pending"?"pulseYellow 2s ease-in-out infinite":"none"})}>
+                {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":bcSyncStatus==="pending"?"⚠ Push Update to BC":"⇅ Sync BC"}
               </button>
             )}
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
@@ -13172,12 +13166,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   useEffect(()=>onProjectUpdated(project.id,p=>{setProject(p);projectRef.current=p;onChange(p);}),[project.id]);
 
   const bcReUploadPromptShown=useRef(false);
+  const revBumpTimer=useRef(null);
   function update(p){
-    // Auto-bump quote revision when BOM changes after a print
+    // Auto-bump quote revision when BOM changes after a print (debounced to avoid stacking)
     if(p.lastPrintedBomHash){
       const curHash=computeBomHash(p.panels);
       if(curHash!==p.lastPrintedBomHash&&(p.quoteRev||0)===(p.quoteRevAtPrint||0)){
         p={...p,quoteRev:(p.quoteRev||0)+1};
+        // Save the revision bump after a short delay (prevents stacking from rapid updates)
+        if(revBumpTimer.current)clearTimeout(revBumpTimer.current);
+        revBumpTimer.current=setTimeout(()=>{saveProject(uid,projectRef.current).catch(()=>{});},2000);
         // Prompt to re-upload to BC if drawings were previously uploaded
         const hasUpload=(p.panels||[]).some(pan=>pan.bcPdfAttached);
         if(hasUpload&&p.bcProjectNumber&&_bcToken&&!bcReUploadPromptShown.current){
@@ -13187,8 +13185,6 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }
     }
     setProject(p);projectRef.current=p;onChange(p);
-    // Don't debounce-save here — all panel saves go through saveImmediatePanel/saveProjectPanel
-    // The debounced save was causing race conditions with stale data overwriting immediate saves
   }
 
   const [relinking,setRelinking]=useState(false);
