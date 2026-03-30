@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.114";
+const APP_VERSION="v1.19.115";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9231,8 +9231,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost??r.unitPrice??0,priceSource:"bc",priceDate:Date.now()};
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
-      // Async vendor lookup — don't block commit
-      if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const bom2=(panel.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...panel,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}}}})().catch(()=>{});}
+      // Async vendor lookup — uses latestPanelRef to avoid stale overwrites
+      if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});}}})().catch(()=>{});}
       if(asCross){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
@@ -9254,8 +9254,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Clear fuzzy suggestion for this row before saving
     const cleanedFuzzy={...(livePanel.bcFuzzySuggestions||{})};delete cleanedFuzzy[bomRowId];
     const updated={...livePanel,bom,bcFuzzySuggestions:Object.keys(cleanedFuzzy).length?cleanedFuzzy:undefined};
+    // Update local state AND save directly to Firestore (bypass parent chain to avoid stale state)
+    latestPanelRef.current=updated;
     onUpdate(updated);
-    try{onSaveImmediate(updated);}catch(e){}
+    saveProjectPanel(uid,projectId,panel.id,updated,true).catch(e=>console.warn("commitBcItem save failed:",e));
     setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
     // Clear any BC sync error for this row — item has been fixed via Item Browser
     setBcSyncErrors(prev=>{const next={...prev};delete next[bomRowId];return next;});
