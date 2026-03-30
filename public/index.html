@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.121";
+const APP_VERSION="v1.19.122";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13607,7 +13607,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Click <strong style={{color:"#f1f5f9"}}>Sync BC</strong> on the BOM toolbar to push missing items, or proceed anyway.</div>
             <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
               <button onClick={()=>setBcCountMismatch(null)} style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Go Back</button>
-              <button onClick={()=>{setBcCountMismatch(null);setAutoPrint(true);setView("quote");}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Proceed Anyway</button>
+              <button onClick={()=>{setBcCountMismatch(null);setShowBcUploadPrompt(true);}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Proceed Anyway</button>
             </div>
           </div>
         </div>
