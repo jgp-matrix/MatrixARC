@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.127";
+const APP_VERSION="v1.19.128";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15816,13 +15816,13 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return [{label:null,items:sorted}];
     }
     if(groupBy==="status"){
-      const order=["draft","in_progress","evc","process_rfq","active","purchasing"];
-      const labels={draft:"Draft",in_progress:"In Progress",evc:"Ready",process_rfq:"Process RFQs",active:"Active (Ready for Purchasing)",purchasing:"Purchasing In Progress"};
+      const order=["draft","in_progress","process_rfq","evc","active","purchasing"];
+      const labels={draft:"Draft",in_progress:"In Progress",process_rfq:"Process RFQs",evc:"Ready",active:"Open Orders (Purchasing)",purchasing:"Open Orders (In Production)"};
       const map={};
       list.forEach(p=>{
-        if((rfqCounts?.[p.id]||0)>0){if(!map.process_rfq)map.process_rfq=[];map.process_rfq.push(p);return;}
         if(p.bcPoStatus==="purchasing"){if(!map.purchasing)map.purchasing=[];map.purchasing.push(p);return;}
         if(p.bcPoStatus==="Open"){if(!map.active)map.active=[];map.active.push(p);return;}
+        if((rfqCounts?.[p.id]||0)>0){if(!map.process_rfq)map.process_rfq=[];map.process_rfq.push(p);return;}
         let st=projectStatus(p);if(st==="extracted"||st==="validated"||st==="costed"||st==="quoted"||st==="pushed_to_bc")st="evc";if(!map[st])map[st]=[];map[st].push(p);
       });
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
@@ -15831,10 +15831,10 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return [{label:null,items:list.filter(p=>p.importedFromBC)}];
     }
     if(groupBy==="active"){
-      return [{label:"Active (Ready for Purchasing)",items:list.filter(p=>p.bcPoStatus==="Open")}];
+      return [{label:"Open Orders (Purchasing)",items:list.filter(p=>p.bcPoStatus==="Open")}];
     }
     if(groupBy==="purchasing"){
-      return [{label:"Purchasing In Progress",items:list.filter(p=>p.bcPoStatus==="purchasing")}];
+      return [{label:"Open Orders (In Production)",items:list.filter(p=>p.bcPoStatus==="purchasing")}];
     }
     return [{label:null,items:list}];
   }
@@ -15878,8 +15878,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         {filterBtn("By Customer","customer")}
         {filterBtn("By Date","date")}
         {filterBtn("By Project #","projectnum")}
-        {filterBtn("Active (Ready for Purchasing)","active")}
-        {filterBtn("Purchasing In Progress","purchasing")}
+        {filterBtn("Open Orders (Purchasing)","active")}
+        {filterBtn("Open Orders (In Production)","purchasing")}
         {filterBtn("Imported","imported")}
         {filterBtn("All","all")}
       </div>
@@ -15907,8 +15907,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"In Progress":C.yellow,Ready:C.green,"Process RFQs":C.red,"Active (Ready for Purchasing)":"#38bdf8","Purchasing In Progress":"#f59e0b"};
-                const statusColBg={Draft:C.border,"In Progress":C.yellowDim,Ready:C.greenDim,"Process RFQs":C.redDim,"Active (Ready for Purchasing)":"#0c2233","Purchasing In Progress":"#1c1200"};
+                const statusColColors={Draft:C.muted,"In Progress":C.yellow,"Process RFQs":C.red,Ready:C.green,"Open Orders (Purchasing)":"#38bdf8","Open Orders (In Production)":"#a78bfa"};
+                const statusColBg={Draft:C.border,"In Progress":C.yellowDim,"Process RFQs":C.redDim,Ready:C.greenDim,"Open Orders (Purchasing)":"#0c2233","Open Orders (In Production)":"#1a1033"};
                 const colColor=groupBy==="status"?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=groupBy==="status"?(statusColBg[g.label]||C.border):"#2a2a3e";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
