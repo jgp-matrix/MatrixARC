@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.106";
+const APP_VERSION="v1.19.107";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13162,12 +13162,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // Listen for live updates from background extraction tasks (survives navigation)
   useEffect(()=>onProjectUpdated(project.id,p=>{setProject(p);projectRef.current=p;onChange(p);}),[project.id]);
 
+  const bcReUploadPromptShown=useRef(false);
   function update(p){
     // Auto-bump quote revision when BOM changes after a print
     if(p.lastPrintedBomHash){
       const curHash=computeBomHash(p.panels);
       if(curHash!==p.lastPrintedBomHash&&(p.quoteRev||0)===(p.quoteRevAtPrint||0)){
         p={...p,quoteRev:(p.quoteRev||0)+1};
+        // Prompt to re-upload to BC if drawings were previously uploaded
+        const hasUpload=(p.panels||[]).some(pan=>pan.bcPdfAttached);
+        if(hasUpload&&p.bcProjectNumber&&_bcToken&&!bcReUploadPromptShown.current){
+          bcReUploadPromptShown.current=true;
+          setTimeout(()=>setShowBcUploadPrompt(true),500);
+        }
       }
     }
     setProject(p);projectRef.current=p;onChange(p);
