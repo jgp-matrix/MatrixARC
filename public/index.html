@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.131";
+const APP_VERSION="v1.19.132";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -18635,16 +18635,20 @@ function SupplierPortalPage({token}){
       const pricedItems=(info?.lineItems||[]).map((item,i)=>{
         const correctedPN=supplierCorrectedPNs[i];
         const hasCorrectedPN=correctedPN!==undefined&&correctedPN!==item.partNumber;
+        const spn=supplierPartNums[i]||null;
+        // Variance: supplier edited the Matrix PN, OR supplier PN differs and was manually confirmed
+        const hasSupplierCross=spn&&confirmedMatches[i]&&item.partNumber&&normPart(spn)!==normPart(item.partNumber);
+        const isVar=hasCorrectedPN||hasSupplierCross;
+        const varPN=hasCorrectedPN?correctedPN:(hasSupplierCross?spn:null);
         return{
           ...item,
           unitPrice:cannotSupply[i]===true?null:(unitPrices[i]!==undefined&&unitPrices[i]!==''?parseFloat(unitPrices[i])||null:null),
           leadTimeDays:cannotSupply[i]===true?null:(itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:orderLeadTime),
           cannotSupply:cannotSupply[i]===true,
-          supplierPartNumber:supplierPartNums[i]||null,
+          supplierPartNumber:spn,
           supplierLineNumber:supplierLineNums[i]||null,
           supplierNote:itemNotes[i]||null,
-          // Supplier corrections: if supplier changed the Matrix Part#, flag it as a variance
-          ...(hasCorrectedPN?{supplierCorrectedPN:correctedPN,originalPartNumber:item.partNumber,isVariance:true}:{}),
+          ...(isVar?{supplierCorrectedPN:varPN,originalPartNumber:item.partNumber,isVariance:true}:{}),
         };
       });
       // Build confirmed crossings for ARC to save — supplier PN → Matrix PN
