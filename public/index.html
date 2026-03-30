@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.119";
+const APP_VERSION="v1.19.120";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8808,7 +8808,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
 
   // Expose buildAndAttachPdf to parent via ref (supports opts for production mode)
-  useEffect(()=>{if(bcUploadRef&&isSelected)bcUploadRef.current=buildAndAttachPdf;},[isSelected]);
+  useEffect(()=>{if(bcUploadRef)bcUploadRef.current=buildAndAttachPdf;});
   async function buildAndAttachPdf(uploadOpts={}){
     if(!pages.length||!bcProjectNumber)return;
     setAttachingPdf(true);
@@ -13633,7 +13633,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                   </button>
                   <button disabled={bcUploading} onClick={async()=>{
                     setBcUploading(true);
-                    try{if(bcUploadRef.current)await bcUploadRef.current();}catch(e){console.warn("BC upload failed:",e);}
+                    try{
+                      if(bcUploadRef.current){await bcUploadRef.current();console.log("BC upload completed via ref");}
+                      else console.warn("BC upload skipped — bcUploadRef.current is null");
+                    }catch(e){console.warn("BC upload failed:",e);}
                     setBcUploading(false);
                     setShowBcUploadPrompt(false);
                     setAutoPrint(true);setView("quote");
