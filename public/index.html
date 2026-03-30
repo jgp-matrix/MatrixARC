@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.117";
+const APP_VERSION="v1.19.118";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8759,8 +8759,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const d=new Date();
         const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
         const scanned=`Scanned ${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
-        const upCount=_stampPanel.bcUploadCount||0;
-        const stampLabel=upCount===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(upCount).padStart(2,'0')} · ${scanned}`;
+        const rev=quoteRev||0;
+        const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
         return burnStampCanvas(dataUrl,{
           left:stampLabel,
           center:`${pgIdx+1} of ${total}`,
@@ -8837,8 +8837,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
       if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
-      const upCount=panel.bcUploadCount||0;
-      const revTag=upCount>0?` REV ${String(upCount).padStart(2,'0')}`:"";
+      const rev=quoteRev||0;
+      const revTag=rev>0?` REV ${String(rev).padStart(2,'0')}`:"";
       const dwg=panel.drawingNo||"NoDWG";
       const lineSuffix=String((idx+1)*100);
       const isProduction=uploadOpts.mode==="production";
@@ -13592,10 +13592,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
             {(()=>{
               const firstPanel=(project.panels||[])[0];
-              const upCount=firstPanel?.bcUploadCount||0;
-              const isReUpload=upCount>0;
+              const rev=project.quoteRev||0;
+              const isReUpload=rev>0&&firstPanel?.bcPdfAttached;
               const dwg=firstPanel?.drawingNo||"NoDWG";
-              const revTag=isReUpload?` REV ${String(upCount).padStart(2,'0')}`:"";
+              const revTag=rev>0?` REV ${String(rev).padStart(2,'0')}`:"";
               const fileName=`[AS-QUOTED${revTag}] ${dwg} - ${project.bcProjectNumber||"NoProject"}.pdf`;
               return(<>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
