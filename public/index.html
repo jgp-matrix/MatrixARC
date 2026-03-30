@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.140";
+const APP_VERSION="v1.19.141";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12609,7 +12609,7 @@ ${fullText.slice(0,8000)}`;
                   :!item.isPriced?<span style={{fontSize:10,color:C.muted}}>No price</span>
                   :<button onClick={()=>{
                     setNewItemIdx(i);
-                    setNewItemForm({itemNo:(item.rawPartNumber||item.partNumber||"").trim().toUpperCase(),description:(item.description||"").slice(0,100),cost:item.price||"",category:"PARTS",uom:"EA",vendor:autoVendor.vendorNo||"",genGroup:"INVENTORY",invGroup:"RAW MAT"});
+                    setNewItemForm({itemNo:stripMfrPrefix(item.rawPartNumber||item.partNumber||"").toUpperCase(),description:(item.description||"").slice(0,100),cost:item.price||"",category:"PARTS",uom:"EA",vendor:autoVendor.vendorNo||"",genGroup:"INVENTORY",invGroup:"RAW MAT"});
                     setCreateError("");
                     setShowImportReview(false);
                   }} style={{background:"#0d1a10",border:"1px solid #4ade8044",color:"#4ade80",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>
@@ -13767,8 +13767,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                             {si.cannotSupply?<span style={{fontSize:10,fontWeight:700,color:C.red}}>Cannot Supply</span>
                             :isApply?<span style={{fontSize:10,fontWeight:700,color:m.isVariance?C.yellow:C.green}}>{m.isVariance?"Cross & Apply":"Apply"}</span>
                             :!m.bomRowId&&si.unitPrice!=null?<button onClick={async()=>{
-                              // Close review, add placeholder to BOM, open BC Item Browser
-                              const pn=si.supplierPartNumber||si.partNumber||"";
+                              // Close review, add placeholder to BOM — strip MFR prefix
+                              const pn=stripMfrPrefix(si.supplierPartNumber||si.partNumber||"");
                               const newId=Date.now()+Math.random();
                               const newRow={id:newId,qty:si.qty||1,partNumber:pn.trim().toUpperCase(),description:si.description||"",manufacturer:"",notes:"",unitPrice:si.unitPrice||0};
                               const panel=(projectRef.current.panels||[])[0];
@@ -18682,6 +18682,19 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize}){
 // ── PART NUMBER FUZZY MATCHING ──
 // Normalize: remove spaces/dashes/dots, uppercase
 function normPart(s){return(s||'').replace(/[\s\-\.]/g,'').toUpperCase();}
+function stripMfrPrefix(pn){
+  if(!pn)return pn;
+  // Known MFR prefixes that suppliers prepend to part numbers
+  const prefixes=['PHXCT','HOFF','WAGO','ABB','SE ','EATON','IDEC','OMRON','PILZ','TURCK','SICK','MURR','RITTAL','PANDUIT','BRADY','BELDEN','MOLEX','WEIDM','HUBBL','FED ','FEDER','LEVITON'];
+  const upper=pn.trim().toUpperCase();
+  for(const pfx of prefixes){
+    if(upper.startsWith(pfx)&&upper.length>pfx.length){
+      const rest=pn.trim().slice(pfx.length).replace(/^[\s\-\.]+/,'');
+      if(rest.length>=3)return rest;
+    }
+  }
+  return pn.trim();
+}
 // Fuzzy match: exact after normalize, OR one contains the other (handles manufacturer prefix)
 function partMatch(a,b){
   const na=normPart(a),nb=normPart(b);
