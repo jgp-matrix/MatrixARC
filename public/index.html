@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.102";
+const APP_VERSION="v1.19.103";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8186,7 +8186,7 @@ function StampedDrawing({src,overlay,width,height,onClick}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -8746,7 +8746,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
         const scanned=`Scanned ${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
         const upCount=_stampPanel.bcUploadCount||0;
-        const stampLabel=upCount===0?`ORIGINAL UPLOAD · ${scanned}`:`QUOTE REV ${String(upCount).padStart(2,'0')} · ${scanned}`;
+        const stampLabel=upCount===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(upCount).padStart(2,'0')} · ${scanned}`;
         return burnStampCanvas(dataUrl,{
           left:stampLabel,
           center:`${pgIdx+1} of ${total}`,
@@ -8778,6 +8778,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{onSaveImmediate(updated);}catch(e){}
   }
 
+  // Expose buildAndAttachPdf to parent via ref
+  useEffect(()=>{if(bcUploadRef&&isSelected)bcUploadRef.current=buildAndAttachPdf;},[isSelected]);
   async function buildAndAttachPdf(){
     if(!pages.length||!bcProjectNumber)return;
     setAttachingPdf(true);
@@ -8809,10 +8811,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         doc.addImage(pg.dataUrl,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
       if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
-      const stageTag=["extracted","validated","costed","quoted"].includes(panel.status)?"[QUOTED]":"[DRAFT]";
-      const qNum=quoteData.number||"";
-      const dwg=panel.drawingNo||"NoCust#";
-      const fileName=stageTag+" "+[dwg,qNum].filter(Boolean).join("-")+".pdf";
+      const upCount=panel.bcUploadCount||0;
+      const revTag=upCount>0?` REV ${String(upCount).padStart(2,'0')}`:"";
+      const dwg=panel.drawingNo||"NoDWG";
+      const fileName=`[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"}.pdf`;
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes);
@@ -9028,10 +9030,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     ep.finish(`✓ ${bom.length} items extracted`);
     setExtracting(false);
-    // Auto upload/re-upload drawings PDF to BC
-    if(bcProjectNumber&&_bcToken&&(latestPanelRef.current.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
-      try{buildAndAttachPdf();}catch(e){console.warn("Auto BC PDF upload failed:",e);}
-    }
+    // BC drawing upload deferred until user prints quote (As-Quoted flow)
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
       const categorized=bom.filter(r=>!r.isLaborRow&&r.partNumber).map(r=>({...r,cpdCategory:categorizePart(r.partNumber,r.description)}));
@@ -9446,10 +9445,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         else console.log("Post-pricing BC sync: planning lines synced");
         bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,updated,projectName).catch(e=>console.warn("Post-pricing task desc sync failed:",e));
       }).catch(e=>console.warn("Post-pricing BC sync failed:",e));
-      // Auto-upload drawings PDF to BC after pricing
-      if((updated.pages||panelBase.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
-        try{buildAndAttachPdf();}catch(e){console.warn("Post-pricing BC PDF upload failed:",e);}
-      }
+      // BC drawing upload deferred until user prints quote (As-Quoted flow)
     }
   }
   async function validatePanel(){
@@ -12477,6 +12473,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
   const [fbLaborMoreInfo,setFbLaborMoreInfo]=useState(false);
   const [fbcConnecting,setFbcConnecting]=useState(false);
   const [fbcError,setFbcError]=useState("");
+  const bcUploadRef=useRef(null); // ref to selected PanelCard's buildAndAttachPdf
   useEffect(()=>{
     const ids=(project.panels||[]).map(p=>p.id);
     if(!selectedPanelId||!ids.includes(selectedPanelId))setSelectedPanelId(ids[0]||null);
@@ -12644,6 +12641,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   onSendRfqEmails={onSendRfqEmails}
                   rfqLoading={rfqLoading}
                   onOpenSupplierQuote={onOpenSupplierQuote}
+                  bcUploadRef={bcUploadRef}
                 />
               ))}
             </div>
@@ -13019,6 +13017,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [eqWarnOpen,setEqWarnOpen]=useState(null); // null=hidden, array of open engineering questions
   const [eqWarnPriceRows,setEqWarnPriceRows]=useState(null); // stacked price warnings after eq warning
   const [bcCountMismatch,setBcCountMismatch]=useState(null); // null=hidden, {arcCount,bcCount,missing:[]}
+  const [showBcUploadPrompt,setShowBcUploadPrompt]=useState(false);
+  const [bcUploading,setBcUploading]=useState(false);
   const [showSqModal,setShowSqModal]=useState(false);
   const [sqPanelBom,setSqPanelBom]=useState(null);
   const [pendingRfqUploads,setPendingRfqUploads]=useState(0);
@@ -13278,6 +13278,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }
       if(allMissing.length>0){setBcCountMismatch({arcCount:allBom.length,bcCount:totalBcBom,missing:allMissing});return;}
     }catch(e){console.warn("BC line count check failed:",e);}
+    // All checks passed — show BC upload prompt if BC is connected
+    if(bcNum&&_bcToken){setShowBcUploadPrompt(true);return;}
     setAutoPrint(true);setView("quote");
   }
 
@@ -13525,6 +13527,51 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               <button onClick={()=>setBcCountMismatch(null)} style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Go Back</button>
               <button onClick={()=>{setBcCountMismatch(null);setAutoPrint(true);setView("quote");}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Proceed Anyway</button>
             </div>
+          </div>
+        </div>
+      ,document.body)}
+      {showBcUploadPrompt&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+            {(()=>{
+              const firstPanel=(project.panels||[])[0];
+              const upCount=firstPanel?.bcUploadCount||0;
+              const isReUpload=upCount>0;
+              const dwg=firstPanel?.drawingNo||"NoDWG";
+              const revTag=isReUpload?` REV ${String(upCount).padStart(2,'0')}`:"";
+              const fileName=`[AS-QUOTED${revTag}] ${dwg} - ${project.bcProjectNumber||"NoProject"}.pdf`;
+              return(<>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                  <span style={{fontSize:22}}>{isReUpload?"⚠️":"✅"}</span>
+                  <div style={{fontSize:15,fontWeight:800,color:isReUpload?"#fbbf24":"#22c55e"}}>{isReUpload?"BOM Changed Since Last Upload":"All BOM Items Verified"}</div>
+                </div>
+                <div style={{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}}>
+                  {isReUpload
+                    ?"The BOM has changed since the last drawing package was uploaded to BC. Would you like to upload a new version?"
+                    :"Would you like to push the drawing package to Business Central as the quoted version?"}
+                </div>
+                <div style={{background:"#0a0a18",border:"1px solid #2a2a3e",borderRadius:6,padding:"10px 14px",marginBottom:16}}>
+                  <div style={{fontSize:11,color:"#64748b",fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>File</div>
+                  <div style={{fontSize:13,color:C.accent,fontWeight:700,fontFamily:"monospace"}}>{fileName}</div>
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                  <button onClick={()=>{setShowBcUploadPrompt(false);setAutoPrint(true);setView("quote");}}
+                    style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>
+                    Skip & Print
+                  </button>
+                  <button disabled={bcUploading} onClick={async()=>{
+                    setBcUploading(true);
+                    try{if(bcUploadRef.current)await bcUploadRef.current();}catch(e){console.warn("BC upload failed:",e);}
+                    setBcUploading(false);
+                    setShowBcUploadPrompt(false);
+                    setAutoPrint(true);setView("quote");
+                  }}
+                    style={{background:bcUploading?"#334155":"#166534",border:`1px solid ${bcUploading?"#475569":"#22c55e"}`,color:bcUploading?"#94a3b8":"#4ade80",padding:"7px 18px",borderRadius:6,cursor:bcUploading?"wait":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
+                    {bcUploading?"Uploading…":isReUpload?"Upload New Version & Print":"Upload & Print"}
+                  </button>
+                </div>
+              </>);
+            })()}
           </div>
         </div>
       ,document.body)}
