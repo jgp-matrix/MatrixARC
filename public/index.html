@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.120";
+const APP_VERSION="v1.19.121";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13317,7 +13317,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   async function verifyBcLineCount(){
     const proj=projectRef.current;
     const bcNum=proj.bcProjectNumber;
-    if(!bcNum||!_bcToken){setAutoPrint(true);setView("quote");return;}
+    if(!_bcToken)try{await acquireBcToken(false);}catch(e){}
+    if(!bcNum){setAutoPrint(true);setView("quote");return;}
+    if(!_bcToken){
+      // No BC token but project has BC number — still show upload prompt if previously uploaded
+      const hasUpload=(proj.panels||[]).some(p=>p.bcPdfAttached);
+      if(hasUpload||bcNum){setShowBcUploadPrompt(true);return;}
+      setAutoPrint(true);setView("quote");return;
+    }
     try{
       const allPages=await bcDiscoverODataPages();
       const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p));
@@ -13343,6 +13350,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     }catch(e){console.warn("BC line count check failed:",e);}
     // All checks passed — show BC upload prompt if BC is connected
     if(bcNum&&_bcToken){setShowBcUploadPrompt(true);return;}
+    // No BC connection — still show upload prompt if previously uploaded
+    const hasUpload=(proj.panels||[]).some(p=>p.bcPdfAttached);
+    if(hasUpload){setShowBcUploadPrompt(true);return;}
     setAutoPrint(true);setView("quote");
   }
 
