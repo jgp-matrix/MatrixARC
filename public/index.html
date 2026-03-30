@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.136";
+const APP_VERSION="v1.19.137";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13432,31 +13432,44 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     update({...projectRef.current,panels:updatedPanels});
   }
 
-  const [varianceReview,setVarianceReview]=useState(null); // null | {submission, variances:[]}
+  const [quoteReview,setQuoteReview]=useState(null); // null | {submission, matches:[{bomRow,supplierItem,action}]}
   const [varianceProcessing,setVarianceProcessing]=useState(false);
 
   async function applyPortalPrices(submission){
-    // Check for variances — explicit supplier corrections OR supplier PN differs from matrix PN
-    const items=submission.lineItems||[];
-    // Remove blank lines (no partNumber, no price, no description)
-    const cleaned=items.filter(item=>(item.partNumber||'').trim()||(item.unitPrice!=null)||(item.description||'').trim());
-    submission={...submission,lineItems:cleaned};
-    const variances=cleaned.filter(item=>{
-      if(item.isVariance)return true;
-      // Detect AI-matched items where supplier PN differs from matrix PN
-      if(item.supplierPartNumber&&item.partNumber&&normPart(item.supplierPartNumber)!==normPart(item.partNumber)){
-        item.supplierCorrectedPN=item.supplierPartNumber;
-        item.originalPartNumber=item.partNumber;
-        item.isVariance=true;
-        return true;
-      }
-      return false;
-    });
-    if(variances.length>0){
-      setVarianceReview({submission,variances});
-      return;
+    // Build a review screen: match supplier items to BOM rows
+    const items=(submission.lineItems||[]).filter(item=>(item.partNumber||'').trim()||(item.unitPrice!=null)||(item.description||'').trim());
+    submission={...submission,lineItems:items};
+    const bomRows=(projectRef.current.panels||[]).flatMap(p=>(p.bom||[]).filter(r=>!r.isLaborRow));
+
+    // Auto-match: for each supplier item with a price, find the BOM row it belongs to
+    const matches=[];
+    const usedBomIds=new Set();
+    for(const si of items){
+      if(si.cannotSupply)continue;
+      const siPN=normPart(si.partNumber);
+      const siSPN=normPart(si.supplierPartNumber);
+      // Try exact match on matrix PN
+      let bomRow=bomRows.find(r=>!usedBomIds.has(r.id)&&normPart(r.partNumber)===siPN);
+      // Try fuzzy match
+      if(!bomRow)bomRow=bomRows.find(r=>!usedBomIds.has(r.id)&&partMatch(normPart(r.partNumber),siPN));
+      // Try match on supplier PN against BOM
+      if(!bomRow&&siSPN)bomRow=bomRows.find(r=>!usedBomIds.has(r.id)&&partMatch(normPart(r.partNumber),siSPN));
+
+      const isVariance=bomRow&&si.supplierPartNumber&&normPart(si.supplierPartNumber)!==normPart(bomRow.partNumber);
+      if(bomRow)usedBomIds.add(bomRow.id);
+      matches.push({
+        supplierItem:si,
+        bomRowId:bomRow?.id||null,
+        bomPartNumber:bomRow?.partNumber||null,
+        bomDescription:bomRow?.description||null,
+        isVariance:isVariance||false,
+        action:bomRow&&si.unitPrice!=null?"apply":"skip", // default action
+      });
     }
-    await doApplyPortalPrices(submission);
+    // Add unmatched BOM rows (requested but supplier didn't price)
+    const unmatchedBom=bomRows.filter(r=>!usedBomIds.has(r.id));
+
+    setQuoteReview({submission,matches,unmatchedBom});
   }
 
   async function doApplyPortalPrices(submission){
@@ -13630,85 +13643,99 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           }}/>}
           {showPriceCheckModal&&priceCheckDiffs&&<PurchasePriceCheckModal diffs={priceCheckDiffs} onAccept={applyPriceCheckDiffs} onClose={()=>{setShowPriceCheckModal(false);setPriceCheckDiffs(null);}}/>}
           {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
-          {varianceReview&&ReactDOM.createPortal(
+          {quoteReview&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-              <div style={{background:"#0d0d1a",border:`1px solid ${C.yellow}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:640,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+              <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexShrink:0}}>
-                  <span style={{fontSize:22}}>⚠️</span>
+                  <span style={{fontSize:22}}>📥</span>
                   <div>
-                    <div style={{fontSize:15,fontWeight:800,color:C.yellow}}>Supplier Part Number Variances</div>
-                    <div style={{fontSize:12,color:C.muted}}>{varianceReview.variances.length} item{varianceReview.variances.length!==1?"s":""} from {varianceReview.submission.vendorName} need review</div>
+                    <div style={{fontSize:15,fontWeight:800,color:C.text}}>Review Supplier Quote — {quoteReview.submission.vendorName}</div>
+                    <div style={{fontSize:12,color:C.muted}}>{quoteReview.matches.length} supplier items · {quoteReview.matches.filter(m=>m.action==="apply").length} matched · {quoteReview.unmatchedBom.length} BOM items without pricing</div>
                   </div>
+                  <button onClick={()=>setQuoteReview(null)} style={{marginLeft:"auto",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
                 </div>
-                <div style={{fontSize:12,color:C.sub,marginBottom:12,lineHeight:1.6,flexShrink:0}}>
-                  The supplier corrected these part numbers. For each, choose how to handle it:
+                <div style={{fontSize:12,color:C.sub,marginBottom:10,lineHeight:1.6,flexShrink:0}}>
+                  Review each line. Toggle "Apply" to include/exclude. For mismatched items, select the correct BOM row from the dropdown.
                 </div>
-                <div style={{flex:1,overflowY:"auto",marginBottom:16}}>
-                  {varianceReview.variances.map((v,i)=>(
-                    <div key={i} style={{border:`1px solid ${C.border}`,borderRadius:6,padding:"10px 12px",marginBottom:8,background:"#0a0a18"}}>
-                      <div style={{display:"flex",gap:12,alignItems:"baseline",marginBottom:6}}>
-                        <div>
-                          <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Original</div>
-                          <div style={{fontSize:13,fontFamily:"monospace",color:C.red,fontWeight:600,textDecoration:"line-through"}}>{v.originalPartNumber||"—"}</div>
-                        </div>
-                        <span style={{color:C.muted}}>→</span>
-                        <div>
-                          <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Supplier's Correction</div>
-                          <div style={{fontSize:13,fontFamily:"monospace",color:C.accent,fontWeight:700}}>{v.supplierCorrectedPN||"—"}</div>
-                        </div>
-                      </div>
-                      <div style={{fontSize:11,color:C.muted,marginBottom:6}}>{v.description||""}{v.supplierNote?` — Note: ${v.supplierNote}`:""}</div>
-                      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                        <button onClick={()=>{
-                          // Accept correction — update the BOM row's partNumber to the supplier's version
-                          const corrected=v.supplierCorrectedPN;
-                          const updatedPanels=(projectRef.current.panels||[]).map(p=>({...p,bom:(p.bom||[]).map(r=>{
-                            if(normPart(r.partNumber)===normPart(v.originalPartNumber))return{...r,partNumber:corrected,crossedFrom:v.originalPartNumber,isCrossed:true};
-                            return r;
-                          })}));
-                          update({...projectRef.current,panels:updatedPanels});
-                          setVarianceReview(prev=>{const remaining=prev.variances.filter((_,j)=>j!==i);return remaining.length?{...prev,variances:remaining}:null;});
-                        }}
-                          style={{background:C.accentDim,color:C.accent,border:`1px solid ${C.accent}44`,borderRadius:4,padding:"3px 10px",fontSize:11,fontWeight:600,cursor:"pointer"}}>
-                          Accept as Cross
-                        </button>
-                        <button onClick={()=>{
-                          // Open BC Item Browser to find/create the corrected item
-                          setVarianceReview(prev=>{const remaining=prev.variances.filter((_,j)=>j!==i);return remaining.length?{...prev,variances:remaining}:null;});
-                          // Find the BOM row and open browser for it
-                          const panels=projectRef.current.panels||[];
-                          for(const p of panels){
-                            const row=(p.bom||[]).find(r=>normPart(r.partNumber)===normPart(v.originalPartNumber));
-                            if(row){
-                              // Navigate to the panel and open browser — this is a simplified trigger
-                              alert(`Open the BOM for this panel and use the 🔍 icon on item "${v.originalPartNumber}" to find "${v.supplierCorrectedPN}" in BC.`);
-                              break;
-                            }
-                          }
-                        }}
-                          style={{background:"#1a1a2a",color:C.sub,border:`1px solid ${C.border}`,borderRadius:4,padding:"3px 10px",fontSize:11,fontWeight:600,cursor:"pointer"}}>
-                          Find in BC
-                        </button>
-                        <button onClick={()=>{
-                          // Skip this variance — keep original part number
-                          setVarianceReview(prev=>{const remaining=prev.variances.filter((_,j)=>j!==i);return remaining.length?{...prev,variances:remaining}:null;});
-                        }}
-                          style={{background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:4,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>
-                          Skip
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                <div style={{flex:1,overflowY:"auto",marginBottom:12}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                    <thead style={{position:"sticky",top:0,zIndex:1}}><tr style={{background:"#111128"}}>
+                      <th style={{padding:"6px 8px",textAlign:"center",color:C.muted,fontWeight:700,width:50}}>Action</th>
+                      <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700}}>Supplier Item</th>
+                      <th style={{padding:"6px 8px",textAlign:"right",color:C.muted,fontWeight:700,width:70}}>Price</th>
+                      <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700}}>→ BOM Match</th>
+                      <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700,width:80}}>Status</th>
+                    </tr></thead>
+                    <tbody>
+                      {quoteReview.matches.map((m,i)=>{
+                        const si=m.supplierItem;
+                        const isApply=m.action==="apply";
+                        const bomRows=(projectRef.current.panels||[]).flatMap(p=>(p.bom||[]).filter(r=>!r.isLaborRow));
+                        return(
+                        <tr key={i} style={{borderTop:`1px solid ${C.border}33`,background:isApply?"rgba(34,197,94,0.04)":si.cannotSupply?"rgba(239,68,68,0.04)":"transparent",opacity:si.cannotSupply?0.5:1}}>
+                          <td style={{padding:"6px 8px",textAlign:"center"}}>
+                            {!si.cannotSupply&&si.unitPrice!=null&&<input type="checkbox" checked={isApply} onChange={e=>{
+                              setQuoteReview(prev=>({...prev,matches:prev.matches.map((mm,j)=>j===i?{...mm,action:e.target.checked?"apply":"skip"}:mm)}));
+                            }} style={{accentColor:C.green,cursor:"pointer"}}/>}
+                            {si.cannotSupply&&<span style={{color:C.red,fontSize:10,fontWeight:700}}>N/A</span>}
+                          </td>
+                          <td style={{padding:"6px 8px"}}>
+                            <div style={{fontFamily:"monospace",fontWeight:600,color:C.text,fontSize:12}}>{si.partNumber||"—"}</div>
+                            {si.supplierPartNumber&&si.supplierPartNumber!==si.partNumber&&<div style={{fontSize:10,color:"#a78bfa"}}>Supplier PN: {si.supplierPartNumber}</div>}
+                            <div style={{fontSize:10,color:C.muted,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{si.description||""}</div>
+                            {si.supplierNote&&<div style={{fontSize:10,color:C.yellow,fontStyle:"italic"}}>Note: {si.supplierNote}</div>}
+                          </td>
+                          <td style={{padding:"6px 8px",textAlign:"right",fontWeight:700,color:si.unitPrice!=null?C.green:C.muted,fontVariantNumeric:"tabular-nums"}}>
+                            {si.unitPrice!=null?"$"+Number(si.unitPrice).toFixed(2):si.cannotSupply?"N/A":"—"}
+                          </td>
+                          <td style={{padding:"6px 8px"}}>
+                            <select value={m.bomRowId||""} onChange={e=>{
+                              const newId=e.target.value||null;
+                              const newRow=newId?bomRows.find(r=>r.id==newId):null;
+                              setQuoteReview(prev=>({...prev,matches:prev.matches.map((mm,j)=>j===i?{...mm,bomRowId:newId,bomPartNumber:newRow?.partNumber||null,bomDescription:newRow?.description||null,action:newId&&si.unitPrice!=null?"apply":"skip",isVariance:newId&&normPart(si.partNumber||"")!==normPart(newRow?.partNumber||"")}:mm)}));
+                            }} style={{background:"#1e293b",border:`1px solid ${m.isVariance?C.yellow:m.bomRowId?C.green:C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 5px",width:"100%",maxWidth:200}}>
+                              <option value="">— No match —</option>
+                              {bomRows.map(r=><option key={r.id} value={r.id}>{r.partNumber} — {(r.description||"").slice(0,30)}</option>)}
+                            </select>
+                            {m.isVariance&&<div style={{fontSize:9,color:C.yellow,marginTop:2}}>⚠ Cross: {m.bomPartNumber} → {si.partNumber||si.supplierPartNumber}</div>}
+                          </td>
+                          <td style={{padding:"6px 8px"}}>
+                            <span style={{fontSize:10,fontWeight:700,color:isApply?C.green:m.isVariance?C.yellow:C.muted}}>
+                              {si.cannotSupply?"Cannot Supply":isApply?(m.isVariance?"Cross & Apply":"Apply"):"Skip"}
+                            </span>
+                          </td>
+                        </tr>);
+                      })}
+                    </tbody>
+                  </table>
+                  {quoteReview.unmatchedBom.length>0&&<div style={{marginTop:10,padding:"8px 10px",background:"#1a0a0a",border:`1px solid ${C.red}44`,borderRadius:6}}>
+                    <div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>{quoteReview.unmatchedBom.length} BOM items not quoted by supplier:</div>
+                    <div style={{fontSize:10,color:C.muted}}>{quoteReview.unmatchedBom.map(r=>r.partNumber||r.description).join(", ")}</div>
+                  </div>}
                 </div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexShrink:0}}>
-                  <button onClick={()=>setVarianceReview(null)} style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13}}>Cancel</button>
+                  <button onClick={()=>setQuoteReview(null)} style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13}}>Cancel</button>
                   <button disabled={varianceProcessing} onClick={async()=>{
                     setVarianceProcessing(true);
-                    await doApplyPortalPrices(varianceReview.submission);
+                    // Build updated submission with only the "apply" matches
+                    const toApply=quoteReview.matches.filter(m=>m.action==="apply"&&m.bomRowId);
+                    // For crosses, update BOM part numbers first
+                    const crosses=toApply.filter(m=>m.isVariance);
+                    if(crosses.length>0){
+                      const updatedPanels=(projectRef.current.panels||[]).map(p=>({...p,bom:(p.bom||[]).map(r=>{
+                        const cross=crosses.find(c=>c.bomRowId===r.id);
+                        if(cross)return{...r,partNumber:cross.supplierItem.partNumber||cross.supplierItem.supplierPartNumber,crossedFrom:cross.bomPartNumber,isCrossed:true};
+                        return r;
+                      })}));
+                      update({...projectRef.current,panels:updatedPanels});
+                    }
+                    // Remap submission lineItems: replace partNumber with the matched BOM partNumber for proper apply
+                    const remapped={...quoteReview.submission,lineItems:toApply.map(m=>({...m.supplierItem,partNumber:m.bomPartNumber||m.supplierItem.partNumber}))};
+                    await doApplyPortalPrices(remapped);
                     setVarianceProcessing(false);
-                    setVarianceReview(null);
-                  }} style={{background:C.accent,color:"#fff",border:"none",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontWeight:700}}>
-                    {varianceProcessing?"Applying…":"Apply Prices & Continue"}
+                    setQuoteReview(null);
+                  }} style={{background:varianceProcessing?"#334155":C.accent,color:"#fff",border:"none",padding:"7px 18px",borderRadius:6,cursor:varianceProcessing?"wait":"pointer",fontSize:13,fontWeight:700}}>
+                    {varianceProcessing?"Applying…":`Apply ${quoteReview.matches.filter(m=>m.action==="apply").length} Items to BOM`}
                   </button>
                 </div>
               </div>
