@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.116";
+const APP_VERSION="v1.19.117";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9735,10 +9735,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(()=>{
             const hasUnsent=panel.bcPdfAttached&&!bcPdfMissing&&(quoteRev||0)>(panel.bcUploadQuoteRev||0);
             return(
-            <button data-tip={hasUnsent?"BOM changed since last upload — click Print Client Quote to upload new version":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:`Upload via Print Client Quote`}
-              onClick={()=>{}} disabled
-              style={{background:hasUnsent?"#3a1f00":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",border:`1px solid ${hasUnsent?"#f59e0b88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,color:hasUnsent?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",cursor:"default",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1}}>
-              {attachingPdf?"Working…":hasUnsent?"⚠ Unsent Revision":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
+            <button data-tip={hasUnsent?"BOM changed — click to upload updated drawings to BC":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:`Upload via Print Client Quote`}
+              onClick={hasUnsent?()=>buildAndAttachPdf():undefined} disabled={attachingPdf||(!hasUnsent&&panel.bcPdfAttached&&!bcPdfMissing)}
+              style={{background:hasUnsent?"#3a1f00":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",border:`1px solid ${hasUnsent?"#f59e0b88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,color:hasUnsent?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",cursor:hasUnsent?"pointer":"default",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1,animation:hasUnsent?"pulseYellow 2s ease-in-out infinite":"none"}}>
+              {attachingPdf?"Uploading…":hasUnsent?"⚠ Unsent Revision — Click to Update":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
             </button>);
           })()}
           {bcPdfMissing&&<span style={{fontSize:11,color:C.yellow,fontWeight:600}}>File was deleted from BC — Re-Upload?</span>}
