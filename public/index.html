@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.137";
+const APP_VERSION="v1.19.138";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13700,9 +13700,36 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                             {m.isVariance&&<div style={{fontSize:9,color:C.yellow,marginTop:2}}>⚠ Cross: {m.bomPartNumber} → {si.partNumber||si.supplierPartNumber}</div>}
                           </td>
                           <td style={{padding:"6px 8px"}}>
-                            <span style={{fontSize:10,fontWeight:700,color:isApply?C.green:m.isVariance?C.yellow:C.muted}}>
-                              {si.cannotSupply?"Cannot Supply":isApply?(m.isVariance?"Cross & Apply":"Apply"):"Skip"}
-                            </span>
+                            {si.cannotSupply?<span style={{fontSize:10,fontWeight:700,color:C.red}}>Cannot Supply</span>
+                            :isApply?<span style={{fontSize:10,fontWeight:700,color:m.isVariance?C.yellow:C.green}}>{m.isVariance?"Cross & Apply":"Apply"}</span>
+                            :!m.bomRowId&&si.unitPrice!=null?<button onClick={async()=>{
+                              // Create item in BC via Item Browser
+                              const pn=si.supplierPartNumber||si.partNumber||"";
+                              const desc=si.description||"";
+                              try{
+                                const created=await bcCreateItem({number:pn.trim().toUpperCase(),displayName:desc.slice(0,100),unitCost:si.unitPrice||0,genProdPostingGroup:"INVENTORY",inventoryPostingGroup:"RAW MAT"});
+                                if(created.number){
+                                  // Add to BOM and auto-match
+                                  const newRow={id:Date.now()+Math.random(),qty:si.qty||1,partNumber:created.number,description:created.displayName||desc,manufacturer:"",notes:"",unitPrice:si.unitPrice||0,priceSource:"bc",priceDate:Date.now()};
+                                  const panel=(projectRef.current.panels||[])[0];
+                                  if(panel){
+                                    const bom=[...(panel.bom||[])];
+                                    const tailIdx=bom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())));
+                                    if(tailIdx>=0)bom.splice(tailIdx,0,newRow);else bom.push(newRow);
+                                    const updatedPanel={...panel,bom};
+                                    const updatedPanels=(projectRef.current.panels||[]).map(p=>p.id===panel.id?updatedPanel:p);
+                                    update({...projectRef.current,panels:updatedPanels});
+                                    saveProjectPanel(uid,projectRef.current.id,panel.id,updatedPanel,true).catch(()=>{});
+                                    // Update the match in review
+                                    setQuoteReview(prev=>({...prev,matches:prev.matches.map((mm,j)=>j===i?{...mm,bomRowId:newRow.id,bomPartNumber:created.number,action:"apply",isVariance:false}:mm)}));
+                                    alert(`Created "${created.number}" in BC and added to BOM.`);
+                                  }
+                                }
+                              }catch(e){alert("Failed to create item in BC: "+e.message);}
+                            }} style={{background:"#0d1a10",border:"1px solid #4ade8044",color:"#4ade80",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                              + Create in BC
+                            </button>
+                            :<span style={{fontSize:10,fontWeight:700,color:C.muted}}>Skip</span>}
                           </td>
                         </tr>);
                       })}
