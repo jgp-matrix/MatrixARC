@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.108";
+const APP_VERSION="v1.19.109";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12525,10 +12525,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
     onUpdate({...project,panels:(project.panels||[]).filter(p=>p.id!==id)});
   }
   async function saveImmediatePanel(panelId,updatedPanel){
-    const newPanels=(project.panels||[]).map(p=>p.id===panelId?updatedPanel:p);
-    const updatedProject={...project,panels:newPanels};
-    await saveProject(uid,updatedProject);
-    onUpdate(updatedProject);
+    // Use saveProjectPanel (reads from Firestore + appends) to avoid stale state overwriting fresh data
+    await saveProjectPanel(uid,project.id,panelId,updatedPanel);
   }
   function saveSelectedPricing(patch){
     const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);
