@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.118";
+const APP_VERSION="v1.19.119";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1221,16 +1221,31 @@ async function bcCheckAttachmentExists(jobNumber,fileName){
   }catch(e){return null;}
 }
 
+async function bcDeleteOldDrawingAttachments(jobNumber){
+  try{
+    const {compId,jobId}=await bcGetJobGuid(jobNumber);
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok)return;
+    const atts=(await r.json()).value||[];
+    // Delete any AS-QUOTED or APPROVED TO PRODUCE PDF attachments (old revisions)
+    for(const a of atts){
+      if(/\[AS-QUOTED|\[APPROVED TO PRODUCE|\[QUOTED|\[DRAFT/i.test(a.fileName||"")){
+        try{
+          const dr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{
+            method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":a["@odata.etag"]||"*"}
+          });
+          if(dr.ok||dr.status===204)console.log("Deleted old attachment:",a.fileName);
+          else console.warn("Failed to delete attachment:",a.fileName,dr.status);
+        }catch(e){console.warn("Delete attachment error:",a.fileName,e.message);}
+      }
+    }
+  }catch(e){console.warn("bcDeleteOldDrawingAttachments error:",e.message);}
+}
+
 async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer){
   const {compId,jobId}=await bcGetJobGuid(jobNumber);
-  // Check for existing attachment with same filename
-  const chk=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments?$filter=fileName eq '${encodeURIComponent(fileName)}'`,{
-    headers:{"Authorization":`Bearer ${_bcToken}`}
-  });
-  if(chk.ok){
-    const existing=(await chk.json()).value||[];
-    if(existing.length>0)throw new Error(`Duplicate: "${fileName}" already exists in BC. Remove it first or re-stamp to generate a new filename.`);
-  }
+  // Delete old drawing attachments first so only the latest exists
+  await bcDeleteOldDrawingAttachments(jobNumber);
   // Step 1: create attachment record
   const cr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
     method:"POST",
