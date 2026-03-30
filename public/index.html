@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.135";
+const APP_VERSION="v1.19.136";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6683,9 +6683,12 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
                   </tr>
                 </thead>
                 <tbody>
-                  {(sub.lineItems||[]).map((item,i)=>(
+                  {(sub.lineItems||[]).filter(item=>(item.partNumber||'').trim()||(item.unitPrice!=null)||(item.description||'').trim()).map((item,i)=>(
                     <tr key={i} style={{borderTop:"1px solid #1a1a2e",opacity:item.cannotSupply?0.5:1}}>
-                      <td style={{padding:"5px 8px",fontWeight:600,color:item.cannotSupply?"#64748b":"#f1f5f9",fontFamily:"monospace",fontSize:11,textDecoration:item.cannotSupply?"line-through":undefined}}>{item.partNumber||"—"}</td>
+                      <td style={{padding:"5px 8px",fontWeight:600,color:item.cannotSupply?"#64748b":item.isVariance?"#3b82f6":"#f1f5f9",fontFamily:"monospace",fontSize:11,textDecoration:item.cannotSupply?"line-through":undefined}}>
+                        {item.partNumber||"—"}
+                        {item.supplierPartNumber&&normPart(item.supplierPartNumber)!==normPart(item.partNumber||"")&&<span style={{color:"#a78bfa",fontSize:10,marginLeft:4}}>→ {item.supplierPartNumber}</span>}
+                      </td>
                       <td style={{padding:"5px 8px",color:"#94a3b8",textDecoration:item.cannotSupply?"line-through":undefined}}>{item.description||"—"}</td>
                       <td style={{padding:"5px 8px",textAlign:"center",color:"#94a3b8"}}>{item.qty||1}</td>
                       <td style={{padding:"5px 8px",textAlign:"right",color:item.cannotSupply?"#ef4444":item.unitPrice!=null?"#4ade80":"#475569",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{item.cannotSupply?"Cannot Supply":fmtPrice(item.unitPrice)}</td>
@@ -13433,11 +13436,25 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [varianceProcessing,setVarianceProcessing]=useState(false);
 
   async function applyPortalPrices(submission){
-    // Check for variances first — supplier corrections need user review
-    const variances=(submission.lineItems||[]).filter(item=>item.isVariance);
+    // Check for variances — explicit supplier corrections OR supplier PN differs from matrix PN
+    const items=submission.lineItems||[];
+    // Remove blank lines (no partNumber, no price, no description)
+    const cleaned=items.filter(item=>(item.partNumber||'').trim()||(item.unitPrice!=null)||(item.description||'').trim());
+    submission={...submission,lineItems:cleaned};
+    const variances=cleaned.filter(item=>{
+      if(item.isVariance)return true;
+      // Detect AI-matched items where supplier PN differs from matrix PN
+      if(item.supplierPartNumber&&item.partNumber&&normPart(item.supplierPartNumber)!==normPart(item.partNumber)){
+        item.supplierCorrectedPN=item.supplierPartNumber;
+        item.originalPartNumber=item.partNumber;
+        item.isVariance=true;
+        return true;
+      }
+      return false;
+    });
     if(variances.length>0){
       setVarianceReview({submission,variances});
-      return; // Don't auto-apply — show review modal
+      return;
     }
     await doApplyPortalPrices(submission);
   }
