@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.138";
+const APP_VERSION="v1.19.139";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11219,6 +11219,7 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,pro
   const [autoVendor,setAutoVendor]=useState({vendorNo:'',vendorName:''});
   const [showVendorPrompt,setShowVendorPrompt]=useState(null); // {vendorNo, vendorName, supplierName}
   const [precedingQuoteId,setPrecedingQuoteId]=useState(null); // docId being superseded by this upload
+  const [showImportReview,setShowImportReview]=useState(false);
   const [modalPos,setModalPos]=useState(null); // {left,top} when dragged, null=centered
   const [savedQuotes,setSavedQuotes]=useState([]); // recent quotes from Firestore
   const [loadingQuotes,setLoadingQuotes]=useState(false);
@@ -12495,10 +12496,14 @@ ${fullText.slice(0,8000)}`;
             <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
             {allPushed&&newlyLinkedCount===0
               ?<span style={{fontSize:12,color:C.green,fontWeight:700,padding:"5px 14px",background:C.greenDim,border:`1px solid ${C.green}55`,borderRadius:8}}>✓ All Prices Current in BC</span>
-              :<button onClick={handlePush} disabled={unpushedCount===0} style={btn(unpushedCount>0?"#0d2a1a":C.card,unpushedCount>0?C.green:C.muted,{fontSize:13,border:`1px solid ${unpushedCount>0?C.green:C.border}`,opacity:unpushedCount>0?1:0.5})}>
+              :<>
+              <button onClick={()=>setShowImportReview(true)} style={btn("#1a1500","#f59e0b",{fontSize:13,border:"1px solid #f59e0b44"})}>
+                Review & Match
+              </button>
+              <button onClick={handlePush} disabled={unpushedCount===0} style={btn(unpushedCount>0?"#0d2a1a":C.card,unpushedCount>0?C.green:C.muted,{fontSize:13,border:`1px solid ${unpushedCount>0?C.green:C.border}`,opacity:unpushedCount>0?1:0.5})}>
                 {bcConnecting?'Connecting…':allPushed?`Push ${newlyLinkedCount} New Link${newlyLinkedCount!==1?'s':''} to BC →`:`Push ${unpushedCount} Price${unpushedCount!==1?'s':''} to BC →`}
               </button>
-            }
+              </>}
           </div>
           {/* TEMP TEST BUTTON — remove when BC upload is verified */}
           {bcProjectNumber&&quoteHeader?.pdfUrl&&(
@@ -12562,6 +12567,68 @@ ${fullText.slice(0,8000)}`;
           </div>
         </>)}
     </div>
+  {showImportReview&&ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexShrink:0}}>
+          <span style={{fontSize:22}}>📋</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.text}}>Review & Match — {quoteHeader?.supplier||"Supplier"}</div>
+            <div style={{fontSize:12,color:C.muted}}>{lineItems.length} items from quote · Match to BOM rows before pushing to BC</div>
+          </div>
+          <button onClick={()=>setShowImportReview(false)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
+        </div>
+        <div style={{flex:1,overflowY:"auto",marginBottom:12}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+            <thead style={{position:"sticky",top:0,zIndex:1}}><tr style={{background:"#111128"}}>
+              <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700}}>Quote Item</th>
+              <th style={{padding:"6px 8px",textAlign:"right",color:C.muted,fontWeight:700,width:70}}>Price</th>
+              <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700}}>→ BOM Match</th>
+              <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700,width:80}}>Status</th>
+            </tr></thead>
+            <tbody>{lineItems.map((item,i)=>{
+              const matched=item.matchStatus==='auto_matched'||item.matchStatus==='manually_matched';
+              const hasCross=item.supplierPartNumber&&item.partNumber&&normPart(item.supplierPartNumber)!==normPart(item.partNumber);
+              return(
+              <tr key={i} style={{borderTop:`1px solid ${C.border}33`,background:matched&&item.isPriced?"rgba(34,197,94,0.04)":"transparent"}}>
+                <td style={{padding:"6px 8px"}}>
+                  <div style={{fontFamily:"monospace",fontWeight:600,color:C.text,fontSize:12}}>{item.rawPartNumber||item.partNumber||"—"}</div>
+                  {item.supplierPartNumber&&item.supplierPartNumber!==item.rawPartNumber&&<div style={{fontSize:10,color:"#a78bfa"}}>Matched: {item.partNumber}</div>}
+                  <div style={{fontSize:10,color:C.muted,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.description||""}</div>
+                </td>
+                <td style={{padding:"6px 8px",textAlign:"right",fontWeight:700,color:item.isPriced?C.green:C.muted,fontVariantNumeric:"tabular-nums"}}>
+                  {item.isPriced?"$"+Number(item.price).toFixed(2):"—"}
+                </td>
+                <td style={{padding:"6px 8px"}}>
+                  {matched?<span style={{fontSize:11,color:C.green,fontWeight:600}}>✓ {item.partNumber}</span>
+                  :item.isPriced?<span style={{fontSize:11,color:C.yellow}}>Unmatched — assign manually in table above</span>
+                  :<span style={{fontSize:11,color:C.muted}}>No price</span>}
+                </td>
+                <td style={{padding:"6px 8px"}}>
+                  {matched&&item.isPriced?<span style={{fontSize:10,fontWeight:700,color:C.green}}>Ready</span>
+                  :!item.isPriced?<span style={{fontSize:10,color:C.muted}}>No price</span>
+                  :<button onClick={async()=>{
+                    try{
+                      const created=await bcCreateItem({number:(item.rawPartNumber||item.partNumber||"").trim().toUpperCase(),displayName:(item.description||"").slice(0,100),unitCost:item.price||0,genProdPostingGroup:"INVENTORY",inventoryPostingGroup:"RAW MAT"});
+                      if(created.number){
+                        setLineItems(prev=>prev.map((li,j)=>j===i?{...li,partNumber:created.number,bcItemId:created.number,matchStatus:'manually_matched',approved:true}:li));
+                        alert(`Created "${created.number}" in BC.`);
+                      }
+                    }catch(e){alert("Failed: "+e.message);}
+                  }} style={{background:"#0d1a10",border:"1px solid #4ade8044",color:"#4ade80",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                    + Create in BC
+                  </button>}
+                </td>
+              </tr>);
+            })}</tbody>
+          </table>
+        </div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexShrink:0}}>
+          <button onClick={()=>setShowImportReview(false)} style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13}}>Close</button>
+        </div>
+      </div>
+    </div>
+  ,document.body)}
   </>,
     document.body
   );
