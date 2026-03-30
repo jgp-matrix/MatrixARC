@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.130";
+const APP_VERSION="v1.19.131";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6700,6 +6700,8 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
                 {sub.storageUrl&&<a href={sub.storageUrl} target="_blank" rel="noopener noreferrer" style={{background:"#0d1520",border:"1px solid #0284c7",color:"#38bdf8",padding:"5px 14px",borderRadius:6,fontSize:12,fontFamily:"inherit",fontWeight:600,textDecoration:"none"}}>📄 View PDF</a>}
                 {sub.fileName&&!sub.storageUrl&&<span style={{fontSize:11,color:"#94a3b8"}}>📄 {sub.fileName}</span>}
                 <button onClick={()=>{if(confirm("Dismiss this submission? It will no longer appear here."))fbDb.collection('rfqUploads').doc(sub.id).update({status:'dismissed'}).catch(e=>console.warn("dismiss failed:",e));}} style={{marginLeft:"auto",background:"none",border:`1px solid #475569`,color:"#94a3b8",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Dismiss</button>
+                <button onClick={()=>{if(confirm("Reset this submission so the supplier can re-upload? The supplier's link will work again."))fbDb.collection('rfqUploads').doc(sub.id).update({status:'pending',submittedAt:null,lineItems:sub.lineItems?.map(item=>({partNumber:item.partNumber,description:item.description,qty:item.qty,manufacturer:item.manufacturer}))}).catch(e=>console.warn("reset failed:",e));}} style={{background:"none",border:"1px solid #f59e0b44",color:"#f59e0b",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Reset for Re-upload</button>
+                <button onClick={()=>{if(confirm("DELETE this RFQ submission permanently? This cannot be undone."))fbDb.collection('rfqUploads').doc(sub.id).delete().catch(e=>console.warn("delete failed:",e));}} style={{background:"none",border:"1px solid #ef444444",color:"#ef4444",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Delete</button>
               </div>
             </div>
           ))}
