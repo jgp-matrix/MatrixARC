@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.133";
+const APP_VERSION="v1.19.134";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6372,7 +6372,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         await sendGraphEmail(graphToken,to,subject,html,pdfBase64,pdfName);
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent"}}));
         group.items.forEach(item=>sentItemIds.push(item.id));
-        historyEntries.push({rfqNum,vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false});
+        historyEntries.push({rfqNum,vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false,uploadToken:uploadToken||null});
       }catch(e){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:String(e.message||e)}}));
         historyEntries.push({rfqNum:makeRfqNum(group.vendorName),vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:false,error:String(e.message||e)});
@@ -6761,6 +6761,7 @@ function RfqHistoryModal({uid,onClose}){
                       <span style={{color:"#f1f5f9",fontWeight:600,minWidth:160}}>{e.vendorName}</span>
                       <span style={{color:"#94a3b8",flex:1}}>{e.vendorEmail||"no email"}</span>
                       <span style={{color:"#94a3b8",fontSize:11}}>{(e.items||[]).length} item{(e.items||[]).length!==1?"s":""}</span>
+                      {e.uploadToken&&<a href={`https://matrix-arc.web.app?rfqUpload=${e.uploadToken}`} target="_blank" rel="noopener noreferrer" style={{color:"#38bdf8",fontSize:10,fontWeight:600,textDecoration:"none"}}>Portal ↗</a>}
                       {e.error&&<span style={{color:"#f87171",fontSize:10}} title={e.error}>⚠ failed</span>}
                     </div>
                   ))}
@@ -6798,8 +6799,9 @@ function RfqHistoryModal({uid,onClose}){
                     </tr>
                   ))}</tbody>
                 </table>
-                <div style={{display:"flex",gap:6}}>
+                <div style={{display:"flex",gap:10}}>
                   {sub.storageUrl&&<a href={sub.storageUrl} target="_blank" rel="noopener noreferrer" style={{color:"#38bdf8",fontSize:11,fontWeight:600,textDecoration:"none"}}>📄 View PDF</a>}
+                  <a href={`https://matrix-arc.web.app?rfqUpload=${sub.id}`} target="_blank" rel="noopener noreferrer" style={{color:"#a78bfa",fontSize:11,fontWeight:600,textDecoration:"none"}}>🔗 Supplier Portal</a>
                 </div>
               </div>
             ))}
