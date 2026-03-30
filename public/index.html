@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.104";
+const APP_VERSION="v1.19.105";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2819,7 +2819,7 @@ function detectSheetMm(w,h){
   return landscape?{mmW:mmL,mmH:mmS}:{mmW:mmS,mmH:mmL};
 }
 
-async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
+async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,opts={}){
   // W/H passed in from caller to match drawing page size; fall back to 11x17 landscape
   if(!W||!H){W=431.8;H=279.4;}
   const sc=Math.min(W/431.8,H/279.4);
@@ -2834,6 +2834,10 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   const generated=new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
   const scannedDate=new Date().toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"numeric"});
   const lineSuffix=String((lineIdx+1)*100);
+  const isProduction=opts.mode==="production";
+  const poNumber=opts.poNumber||"";
+  const dueDate=opts.dueDate||"";
+  const poReceivedDate=opts.poReceivedDate||generated;
 
   // ── Header bar — black border box ──
   const hdrH=m(24);
@@ -2841,8 +2845,8 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   doc.rect(0,m(1),W,hdrH);
   doc.setFontSize(fs(17));doc.setFont("helvetica","bold");doc.setTextColor(...black);
   doc.text("Matrix Systems, Inc.",margin,m(16));
-  doc.setFontSize(fs(12));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-  doc.text("PANEL PRODUCTION TRAVELER",W-margin,m(16),{align:"right"});
+  doc.setFontSize(fs(12));doc.setFont("helvetica","bold");doc.setTextColor(...mid);
+  doc.text(isProduction?"APPROVED TO PRODUCE":"PANEL PRODUCTION TRAVELER",W-margin,m(16),{align:"right"});
 
   // ── Title block ──
   const projectNum=q.projectNumber||bcProjectNumber||"—";
@@ -2861,7 +2865,20 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   // ── Info grid: 4 columns — black borders ──
   const infoY=descEndY+m(6);
   const rowH=m(12);
-  const fields=[
+  const fields=isProduction?[
+    ["MATRIX PROJECT #",bcProjectNumber||"—"],
+    ["QUOTE LINE #","Line "+(lineIdx+1)+" ("+lineSuffix+")"],
+    ["DWG #",panel.drawingNo||"—"],
+    ["REV",panel.drawingRev||"—"],
+    ["PO #",poNumber||"—"],
+    ["PO RECEIVED",poReceivedDate],
+    ["DUE DATE",dueDate||panel.requestedShipDate||"—"],
+    ["SALESPERSON",q.salesperson||"—"],
+    ["GENERATED",generated],
+    ["SCANNED DATE",scannedDate],
+    ["STATUS","APPROVED"],
+    ["",""]]
+  :[
     ["MATRIX PROJECT #",bcProjectNumber||"—"],
     ["QUOTE LINE #","Line "+(lineIdx+1)+" ("+lineSuffix+")"],
     ["DWG #",panel.drawingNo||"—"],
@@ -8775,9 +8792,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{onSaveImmediate(updated);}catch(e){}
   }
 
-  // Expose buildAndAttachPdf to parent via ref
+  // Expose buildAndAttachPdf to parent via ref (supports opts for production mode)
   useEffect(()=>{if(bcUploadRef&&isSelected)bcUploadRef.current=buildAndAttachPdf;},[isSelected]);
-  async function buildAndAttachPdf(){
+  async function buildAndAttachPdf(uploadOpts={}){
     if(!pages.length||!bcProjectNumber)return;
     setAttachingPdf(true);
     setAttachPdfMsg("Building PDF…");
@@ -8795,23 +8812,39 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const coverOrient=coverMm.mmW>=coverMm.mmH?"landscape":"portrait";
       const doc=new JsPDF({unit:"mm",format:[coverMm.mmW,coverMm.mmH],orientation:coverOrient,compress:true});
       setAttachPdfMsg("Building cover page…");
-      await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH);
-      // Add drawing pages
+      await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH,uploadOpts);
+      // Add drawing pages — burn production stamp if in production mode
+      const totalPg=loaded.filter(p=>p.dataUrl).length;
       for(let i=0;i<loaded.length;i++){
         const pg=loaded[i];
         if(!pg.dataUrl)continue;
         const dims=allDims[i]||firstDims;
         const orient=dims.w>dims.h?"landscape":"portrait";
-        // Detect engineering sheet size (A/B/C/D/E) from pixel area
         const {mmW,mmH}=detectSheetMm(dims.w,dims.h);
         doc.addPage([mmW,mmH],orient);
-        doc.addImage(pg.dataUrl,"JPEG",0,0,mmW,mmH,undefined,"FAST");
+        let imgData=pg.dataUrl;
+        if(isProduction&&uploadOpts.poNumber){
+          const d=new Date();
+          const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+          const dateStr=`${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
+          const dueStr=uploadOpts.dueDate||panel.requestedShipDate||"";
+          imgData=await burnStampCanvas(pg.dataUrl,{
+            left:`APPROVED TO PRODUCE · PO: ${uploadOpts.poNumber} · ${dateStr}`,
+            center:`${i+1} of ${totalPg}`,
+            right:[bcProjectNumber?`${bcProjectNumber} - ${lineSuffix}`:null,panel.drawingNo,dueStr?`Due: ${dueStr}`:null].filter(Boolean).join(' · ')
+          });
+        }
+        doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
       if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
       const upCount=panel.bcUploadCount||0;
       const revTag=upCount>0?` REV ${String(upCount).padStart(2,'0')}`:"";
       const dwg=panel.drawingNo||"NoDWG";
-      const fileName=`[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"}.pdf`;
+      const lineSuffix=String((idx+1)*100);
+      const isProduction=uploadOpts.mode==="production";
+      const fileName=isProduction
+        ?`[APPROVED TO PRODUCE${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
+        :`[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"}.pdf`;
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes);
@@ -13016,6 +13049,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [bcCountMismatch,setBcCountMismatch]=useState(null); // null=hidden, {arcCount,bcCount,missing:[]}
   const [showBcUploadPrompt,setShowBcUploadPrompt]=useState(false);
   const [bcUploading,setBcUploading]=useState(false);
+  const [showProductionUpload,setShowProductionUpload]=useState(null); // null=hidden, {poNumber,dueDate}
   const [showSqModal,setShowSqModal]=useState(false);
   const [sqPanelBom,setSqPanelBom]=useState(null);
   const [pendingRfqUploads,setPendingRfqUploads]=useState(0);
@@ -13438,7 +13472,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} bcProjectNumber={project.bcProjectNumber||""} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} onClose={()=>setShowRfqHistory(false)}/>}
-          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={async(poNum)=>{setShowPoModal(false);const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,updatedAt:Date.now()};setProject(updated);projectRef.current=updated;onChange&&onChange(updated);try{await saveProject(uid,updated);}catch(e){console.warn("PO save failed:",e);}}}/>}
+          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={async(poNum)=>{
+            setShowPoModal(false);
+            const firstPanel=(projectRef.current.panels||[])[0];
+            const dueDate=firstPanel?.requestedShipDate||"";
+            const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,updatedAt:Date.now()};
+            setProject(updated);projectRef.current=updated;onChange&&onChange(updated);
+            try{await saveProject(uid,updated);}catch(e){console.warn("PO save failed:",e);}
+            // Prompt to upload production drawings
+            setShowProductionUpload({poNumber:poNum,dueDate});
+          }}/>}
           {showPriceCheckModal&&priceCheckDiffs&&<PurchasePriceCheckModal diffs={priceCheckDiffs} onAccept={applyPriceCheckDiffs} onClose={()=>{setShowPriceCheckModal(false);setPriceCheckDiffs(null);}}/>}
           {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
           {eqWarnOpen&&ReactDOM.createPortal(
@@ -13565,6 +13608,57 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                   }}
                     style={{background:bcUploading?"#334155":"#166534",border:`1px solid ${bcUploading?"#475569":"#22c55e"}`,color:bcUploading?"#94a3b8":"#4ade80",padding:"7px 18px",borderRadius:6,cursor:bcUploading?"wait":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
                     {bcUploading?"Uploading…":isReUpload?"Upload New Version & Print":"Upload & Print"}
+                  </button>
+                </div>
+              </>);
+            })()}
+          </div>
+        </div>
+      ,document.body)}
+      {showProductionUpload&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:"#0d0d1a",border:"1px solid #22c55e",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+            {(()=>{
+              const firstPanel=(project.panels||[])[0];
+              const dwg=firstPanel?.drawingNo||"NoDWG";
+              const lineSuffix=String(1*100);
+              const fileName=`[APPROVED TO PRODUCE] ${dwg} - ${project.bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+              return(<>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+                  <span style={{fontSize:22}}>✅</span>
+                  <div style={{fontSize:15,fontWeight:800,color:"#22c55e"}}>PO Recorded — Upload Production Drawings?</div>
+                </div>
+                <div style={{display:"flex",gap:16,marginBottom:14}}>
+                  <div><span style={{fontSize:11,color:"#64748b"}}>PO #</span><div style={{fontSize:14,fontWeight:700,color:"#f1f5f9"}}>{showProductionUpload.poNumber}</div></div>
+                  <div><span style={{fontSize:11,color:"#64748b"}}>Due Date</span><div style={{fontSize:14,fontWeight:700,color:"#f1f5f9"}}>{showProductionUpload.dueDate||"—"}</div></div>
+                </div>
+                <div style={{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}}>
+                  Upload stamped production drawings to Business Central with "APPROVED TO PRODUCE" designation?
+                </div>
+                <div style={{background:"#0a0a18",border:"1px solid #2a2a3e",borderRadius:6,padding:"10px 14px",marginBottom:16}}>
+                  <div style={{fontSize:11,color:"#64748b",fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>File</div>
+                  <div style={{fontSize:13,color:"#22c55e",fontWeight:700,fontFamily:"monospace"}}>{fileName}</div>
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                  <button onClick={()=>setShowProductionUpload(null)}
+                    style={{background:"#1a1a2a",border:"1px solid #2a2a3e",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>
+                    Skip
+                  </button>
+                  <button disabled={bcUploading} onClick={async()=>{
+                    setBcUploading(true);
+                    try{
+                      if(bcUploadRef.current)await bcUploadRef.current({
+                        mode:"production",
+                        poNumber:showProductionUpload.poNumber,
+                        dueDate:showProductionUpload.dueDate,
+                        poReceivedDate:new Date().toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"numeric"})
+                      });
+                    }catch(e){console.warn("Production upload failed:",e);}
+                    setBcUploading(false);
+                    setShowProductionUpload(null);
+                  }}
+                    style={{background:bcUploading?"#334155":"#166534",border:`1px solid ${bcUploading?"#475569":"#22c55e"}`,color:bcUploading?"#94a3b8":"#4ade80",padding:"7px 18px",borderRadius:6,cursor:bcUploading?"wait":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
+                    {bcUploading?"Uploading…":"Upload Production Drawings"}
                   </button>
                 </div>
               </>);
