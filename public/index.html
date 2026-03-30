@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.103";
+const APP_VERSION="v1.19.104";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2822,54 +2822,54 @@ function detectSheetMm(w,h){
 async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   // W/H passed in from caller to match drawing page size; fall back to 11x17 landscape
   if(!W||!H){W=431.8;H=279.4;}
-  // Scale factor relative to 11x17 landscape baseline (431.8 x 279.4 mm)
   const sc=Math.min(W/431.8,H/279.4);
-  const m=v=>v*sc; // scale a measurement
-  const fs=v=>Math.max(4,Math.round(v*sc*10)/10); // scale a font size
+  const m=v=>v*sc;
+  const fs=v=>Math.max(4,Math.round(v*sc*10)/10);
   const margin=m(12);
 
   const q=quoteData||{};
-  const accent=[30,64,175];
-  const dark=[15,23,42];
-  const mid=[71,85,105];
-  const light=[241,245,249];
-  const orange=[234,88,12];
+  const black=[0,0,0];
+  const dark=[30,30,30];
+  const mid=[80,80,80];
   const generated=new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  const scannedDate=new Date().toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"numeric"});
+  const lineSuffix=String((lineIdx+1)*100);
 
-  // ── Header bar ──
+  // ── Header bar — black border box ──
   const hdrH=m(24);
-  doc.setFillColor(...accent);
-  doc.rect(0,0,W,hdrH,"F");
-  doc.setFontSize(fs(17));doc.setFont("helvetica","bold");doc.setTextColor(255,255,255);
+  doc.setDrawColor(...black);doc.setLineWidth(m(0.8));
+  doc.rect(0,m(1),W,hdrH);
+  doc.setFontSize(fs(17));doc.setFont("helvetica","bold");doc.setTextColor(...black);
   doc.text("Matrix Systems, Inc.",margin,m(16));
-  doc.setFontSize(fs(12));doc.setFont("helvetica","normal");
+  doc.setFontSize(fs(12));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
   doc.text("PANEL PRODUCTION TRAVELER",W-margin,m(16),{align:"right"});
 
-  // ── Title block: Project # (primary) then DWG# ──
+  // ── Title block ──
   const projectNum=q.projectNumber||bcProjectNumber||"—";
-  doc.setFontSize(fs(30));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
-  doc.text(projectNum,margin,m(32));
+  doc.setFontSize(fs(30));doc.setFont("helvetica","bold");doc.setTextColor(...black);
+  doc.text(projectNum,margin,m(34));
   const dwgTitle=[panel.drawingNo,panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join("  ·  ");
   doc.setFontSize(fs(18));doc.setFont("helvetica","bold");doc.setTextColor(...mid);
-  doc.text(dwgTitle,margin,m(40));
-  let descEndY=m(40);
+  doc.text(dwgTitle,margin,m(42));
+  let descEndY=m(42);
   if(panel.drawingDesc){
     doc.setFontSize(fs(11));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
-    doc.text(panel.drawingDesc,margin,m(47),{maxWidth:W-margin*2});
-    descEndY=m(47);
+    doc.text(panel.drawingDesc,margin,m(49),{maxWidth:W-margin*2});
+    descEndY=m(49);
   }
 
-  // ── Info grid: 4 columns ──
+  // ── Info grid: 4 columns — black borders ──
   const infoY=descEndY+m(6);
   const rowH=m(12);
   const fields=[
-    ["BC JOB #",bcProjectNumber||"—"],
-    ["LINE #","Line "+(lineIdx+1)],
+    ["MATRIX PROJECT #",bcProjectNumber||"—"],
+    ["QUOTE LINE #","Line "+(lineIdx+1)+" ("+lineSuffix+")"],
     ["DWG #",panel.drawingNo||"—"],
     ["REV",panel.drawingRev||"—"],
-    ["SHIP DATE",panel.requestedShipDate||q.requestedShipDate||"—"],
+    ["REQUESTED SHIP DATE",panel.requestedShipDate||q.requestedShipDate||"—"],
     ["SALESPERSON",q.salesperson||"—"],
     ["GENERATED",generated],
+    ["SCANNED DATE",scannedDate],
     ["STATUS",(panel.status||"draft").toUpperCase()],
   ];
   const cols=4;
@@ -2879,68 +2879,64 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
     const row=Math.floor(i/cols);
     const x=margin+col*cellW;
     const y=infoY+row*rowH;
-    if(row%2===0){doc.setFillColor(...light);doc.rect(x,y-m(4),cellW-m(1),rowH-m(1),"F");}
-    doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.setDrawColor(...black);doc.setLineWidth(m(0.3));
+    doc.rect(x,y-m(4),cellW-m(1),rowH-m(1));
+    doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
     doc.text(lbl,x+m(2),y);
-    doc.setFontSize(fs(11));doc.setFont("helvetica","bold");doc.setTextColor(...dark);
+    doc.setFontSize(fs(11));doc.setFont("helvetica","bold");doc.setTextColor(...black);
     doc.text(String(val).slice(0,28),x+m(2),y+m(6));
   });
 
   // Divider
   const gridRows=Math.ceil(fields.length/cols);
   const divY=infoY+gridRows*rowH+m(2);
-  doc.setDrawColor(...accent);doc.setLineWidth(m(0.5));doc.line(margin,divY,W-margin,divY);
+  doc.setDrawColor(...black);doc.setLineWidth(m(0.5));doc.line(margin,divY,W-margin,divY);
 
-  // ── Labor summary ──
+  // ── Labor summary — B&W ──
   const laborEst=computeLaborEstimate(panel);
   const LABOR_GROUPS=[
-    {label:"CUT",  color:[249,115,22], cats:new Set(["Panel Holes","Side-Mounted Components","HVAC/Fans","Side Devices"])},
-    {label:"LAYOUT",color:[167,139,250],cats:new Set(["Device Mounting","Duct & DIN Rail","Labels"])},
-    {label:"WIRE", color:[56,189,248],  cats:new Set(["Wire Time","Door Wiring"])},
+    {label:"CUT",   cats:new Set(["Panel Holes","Side-Mounted Components","HVAC/Fans","Side Devices"])},
+    {label:"LAYOUT", cats:new Set(["Device Mounting","Duct & DIN Rail","Labels"])},
+    {label:"WIRE",  cats:new Set(["Wire Time","Door Wiring"])},
   ];
   const groupHrs=LABOR_GROUPS.map(g=>({
-    label:g.label,color:g.color,
+    label:g.label,
     hrs:laborEst.lines.filter(l=>g.cats.has(l.category)).reduce((s,l)=>s+l.hours,0),
   }));
   const otherHrs=laborEst.lines.filter(l=>!LABOR_GROUPS.some(g=>g.cats.has(l.category))).reduce((s,l)=>s+l.hours,0);
-  const laborY=divY+m(8);
+  const laborY=divY+m(6);
 
-  // Section header — same weight as info grid labels
-  doc.setFontSize(fs(9));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
+  // Section header
+  doc.setFontSize(fs(9));doc.setFont("helvetica","bold");doc.setTextColor(...black);
   doc.text("LABOR ESTIMATE",margin,laborY);
-  doc.setDrawColor(...accent);doc.setLineWidth(m(0.3));doc.line(margin,laborY+m(2),margin+m(55),laborY+m(2));
 
-  // Compact rows — colored left bar, uniform font size, tight spacing
   const laborRows=[
     ...groupHrs,
-    {label:"OTHER",color:mid,hrs:otherHrs},
-    {label:"TOTAL",color:accent,hrs:laborEst.totalHours},
+    {label:"OTHER",hrs:otherHrs},
+    {label:"TOTAL",hrs:laborEst.totalHours},
   ];
-  const lrH=m(9);
-  const lrY=laborY+m(5);
-  const barW=m(2.5);
+  const lrH=m(8);
+  const lrY=laborY+m(6);
   const hrsColX=margin+m(52);
   const rowW=hrsColX-margin+m(10);
 
   laborRows.forEach((g,i)=>{
     const y=lrY+i*lrH;
     const isTotal=g.label==="TOTAL";
-    if(isTotal){doc.setFillColor(30,64,175);doc.rect(margin,y-m(6),rowW,lrH,"F");}
-    else if(i%2===0){doc.setFillColor(...light);doc.rect(margin,y-m(6),rowW,lrH,"F");}
-    if(!isTotal){doc.setFillColor(...g.color);doc.rect(margin,y-m(6),barW,lrH,"F");}
-    doc.setFontSize(fs(isTotal?11:10));doc.setFont("helvetica",isTotal?"bold":"normal");
-    if(isTotal){doc.setTextColor(255,255,255);}else{doc.setTextColor(...g.color);}
-    doc.text(g.label,margin+barW+m(2),y);
+    doc.setDrawColor(...black);doc.setLineWidth(m(0.2));
+    doc.rect(margin,y-m(5),rowW,lrH);
+    if(isTotal){doc.setFillColor(220,220,220);doc.rect(margin,y-m(5),rowW,lrH,"F");doc.rect(margin,y-m(5),rowW,lrH);}
+    doc.setFontSize(fs(isTotal?11:10));doc.setFont("helvetica",isTotal?"bold":"normal");doc.setTextColor(...black);
+    doc.text(g.label,margin+m(2),y);
     doc.setFont("helvetica","bold");
-    if(isTotal){doc.setTextColor(255,255,255);}else{doc.setTextColor(...dark);}
     doc.text(`${Math.ceil(g.hrs)} hrs`,hrsColX,y,{align:"right"});
   });
 
-  const laborDivY=lrY+laborRows.length*lrH+m(5);
-  doc.setDrawColor(...accent);doc.setLineWidth(m(0.3));doc.line(margin,laborDivY,W-margin,laborDivY);
+  const laborDivY=lrY+laborRows.length*lrH+m(4);
+  doc.setDrawColor(...black);doc.setLineWidth(m(0.3));doc.line(margin,laborDivY,W-margin,laborDivY);
 
   // ── BOM section label ──
-  doc.setFontSize(fs(9));doc.setFont("helvetica","bold");doc.setTextColor(...accent);
+  doc.setFontSize(fs(9));doc.setFont("helvetica","bold");doc.setTextColor(...black);
   doc.text("BILL OF MATERIALS",margin,laborDivY+m(7));
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow).slice().sort((a,b)=>{
     if(!a.itemNo&&!b.itemNo)return 0;
@@ -2953,6 +2949,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
   const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom);
   doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
   doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,laborDivY+m(7),{align:"right"});
+  const accent=[0,0,0]; // B&W mode — used by autoTable
 
   // ── BOM table — starts on cover page, continues to page 2+ as needed ──
   const tableStart=laborDivY+m(10);
@@ -2990,9 +2987,9 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
     startY:tableStart,
     margin:{left:margin,right:margin,bottom:m(12)},
     tableWidth:"wrap",
-    headStyles:{fillColor:accent,textColor:255,fontStyle:"bold",fontSize:fontSize+m(0.5),cellPadding:cellPad},
-    bodyStyles:{fontSize,cellPadding:cellPad},
-    alternateRowStyles:{fillColor:light},
+    headStyles:{fillColor:[220,220,220],textColor:[0,0,0],fontStyle:"bold",fontSize:fontSize+m(0.5),cellPadding:cellPad,lineWidth:m(0.2),lineColor:[0,0,0]},
+    bodyStyles:{fontSize,cellPadding:cellPad,lineWidth:m(0.1),lineColor:[180,180,180],textColor:[0,0,0]},
+    alternateRowStyles:{fillColor:[245,245,245]},
     styles:{overflow:"ellipsize"},
     columnStyles:colStyles,
     head,
@@ -3001,14 +2998,14 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H){
       if(hasCrosses&&data.section==="body"){
         const row=bom[data.row.index];
         if(row&&row.isCrossed){
-          if(data.column.index===2){data.cell.styles.textColor=accent;}
-          if(data.column.index===3){data.cell.styles.textColor=orange;data.cell.styles.fontStyle="italic";}
+          data.cell.styles.fontStyle="bold";
+          if(data.column.index===3){data.cell.styles.fontStyle="bolditalic";}
         }
       }
     },
     didDrawPage:(data)=>{
       coverPageCount++;
-      doc.setFontSize(fs(7.5));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+      doc.setFontSize(fs(7.5));doc.setFont("helvetica","normal");doc.setTextColor(100,100,100);
       const ph=doc.internal.pageSize.getHeight();
       doc.text(`${panel.drawingNo||bcProjectNumber}  ·  ${bom.length} items  ·  ${generated}`,margin,ph-m(5));
       doc.text(`Cover ${data.pageNumber}`,W-margin,ph-m(5),{align:"right"});
@@ -8750,7 +8747,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         return burnStampCanvas(dataUrl,{
           left:stampLabel,
           center:`${pgIdx+1} of ${total}`,
-          right:[_stampBcProjNo,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ')
+          right:[_stampBcProjNo?`${_stampBcProjNo} - ${String((idx+1)*100)}`:null,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ')
         });
       }
     });
