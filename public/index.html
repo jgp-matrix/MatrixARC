@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.128";
+const APP_VERSION="v1.19.129";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -18420,6 +18420,7 @@ function SupplierPortalPage({token}){
   const [supplierPartNums,setSupplierPartNums]=useState({});
   const [supplierLineNums,setSupplierLineNums]=useState({}); // idx→supplier quote line #
   const [itemNotes,setItemNotes]=useState({}); // idx→supplier note text
+  const [supplierCorrectedPNs,setSupplierCorrectedPNs]=useState({}); // idx→corrected matrix PN (supplier override)
   const [extractionSummary,setExtractionSummary]=useState(null); // {requestedCount, matchedCount, unmatchedSupplierItems}
   const [quoteHeaderInfo,setQuoteHeaderInfo]=useState(null);
   const [allExtractedItems,setAllExtractedItems]=useState([]); // all AI-extracted items from quote scan
@@ -18532,16 +18533,21 @@ function SupplierPortalPage({token}){
         fileName=file.name;
       }
       const orderLeadTime=parseInt(leadTime)||null;
-      const pricedItems=(info?.lineItems||[]).map((item,i)=>({
-        ...item,
-        unitPrice:cannotSupply[i]===true?null:(unitPrices[i]!==undefined&&unitPrices[i]!==''?parseFloat(unitPrices[i])||null:null),
-        // Row-level lead time overrides the order lead time; fall back to order lead time
-        leadTimeDays:cannotSupply[i]===true?null:(itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:orderLeadTime),
-        cannotSupply:cannotSupply[i]===true,
-        supplierPartNumber:supplierPartNums[i]||null,
-        supplierLineNumber:supplierLineNums[i]||null,
-        supplierNote:itemNotes[i]||null,
-      }));
+      const pricedItems=(info?.lineItems||[]).map((item,i)=>{
+        const correctedPN=supplierCorrectedPNs[i];
+        const hasCorrectedPN=correctedPN!==undefined&&correctedPN!==item.partNumber;
+        return{
+          ...item,
+          unitPrice:cannotSupply[i]===true?null:(unitPrices[i]!==undefined&&unitPrices[i]!==''?parseFloat(unitPrices[i])||null:null),
+          leadTimeDays:cannotSupply[i]===true?null:(itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:orderLeadTime),
+          cannotSupply:cannotSupply[i]===true,
+          supplierPartNumber:supplierPartNums[i]||null,
+          supplierLineNumber:supplierLineNums[i]||null,
+          supplierNote:itemNotes[i]||null,
+          // Supplier corrections: if supplier changed the Matrix Part#, flag it as a variance
+          ...(hasCorrectedPN?{supplierCorrectedPN:correctedPN,originalPartNumber:item.partNumber,isVariance:true}:{}),
+        };
+      });
       // Build confirmed crossings for ARC to save — supplier PN → Matrix PN
       const confirmedCrossings=[];
       (info?.lineItems||[]).forEach((item,i)=>{
@@ -18690,7 +18696,11 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                   return(
                     <tr key={i} style={{borderTop:`1px solid ${border}`,background:cant?"#fef2f2":isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff",opacity:cant?0.6:1}}>
                       <td style={{padding:"10px 12px",textAlign:"center",color:muted,fontFamily:"monospace"}}>{supplierLineNums[i]||"—"}</td>
-                      <td style={{padding:"10px 12px",fontWeight:600,color:dark,fontFamily:"monospace",textDecoration:cant?"line-through":undefined}}>{item.partNumber||"—"}</td>
+                      <td style={{padding:"8px 12px",fontFamily:"monospace"}}>
+                        <input value={supplierCorrectedPNs[i]!==undefined?supplierCorrectedPNs[i]:(item.partNumber||"")}
+                          onChange={e=>setSupplierCorrectedPNs(prev=>({...prev,[i]:e.target.value}))}
+                          style={{...inp,padding:"4px 6px",fontSize:13,fontWeight:600,fontFamily:"monospace",width:140,color:supplierCorrectedPNs[i]!==undefined&&supplierCorrectedPNs[i]!==item.partNumber?"#2563eb":dark,textDecoration:cant?"line-through":"none"}}/>
+                      </td>
                       <td style={{padding:"10px 12px",fontFamily:"monospace",fontSize:12}}>{(()=>{
                         const opts=allExtractedItems.filter(ex=>ex.supplierPartNumber).map(ex=>ex.supplierPartNumber);
                         const unique=[...new Set(opts)];
@@ -18729,10 +18739,12 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                           }
                         }
                         return<div>
-                          <button onClick={e=>{if(isOpen){setOpenSpnDrop(null);setSpnDropRect(null);}else{setSpnDropRect(e.currentTarget.getBoundingClientRect());setOpenSpnDrop(i);}}} style={{...inp,padding:"4px 6px",fontSize:14,fontFamily:"monospace",width:190,textAlign:"left",cursor:"pointer",color:cur?dark:muted,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cur||"— Select —"}</span>
-                            <span style={{fontSize:12,marginLeft:4}}>{isOpen?"▲":"▼"}</span>
-                          </button>
+                          <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                            <input value={cur} onChange={e=>{setSupplierPartNums(prev=>({...prev,[i]:e.target.value}));if(e.target.value)setConfirmedMatches(prev=>({...prev,[i]:true}));}} placeholder="Type or select…" style={{...inp,padding:"4px 6px",fontSize:13,fontFamily:"monospace",width:140,color:dark}}/>
+                            <button onClick={e=>{if(isOpen){setOpenSpnDrop(null);setSpnDropRect(null);}else{setSpnDropRect(e.currentTarget.getBoundingClientRect());setOpenSpnDrop(i);}}} style={{background:"#f1f5f9",border:`1px solid ${border}`,borderRadius:4,padding:"4px 6px",cursor:"pointer",fontSize:10,color:muted,whiteSpace:"nowrap"}}>
+                              {isOpen?"▲":"▼"}
+                            </button>
+                          </div>
                           {isOpen&&<>
                             <div style={{position:"fixed",inset:0,zIndex:699}} onClick={()=>{setOpenSpnDrop(null);setSpnDropRect(null);}}/>
                             <div className="spn-drop" style={dropStyle}>
