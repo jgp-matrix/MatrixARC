@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.124";
+const APP_VERSION="v1.19.125";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1221,31 +1221,29 @@ async function bcCheckAttachmentExists(jobNumber,fileName){
   }catch(e){return null;}
 }
 
-async function bcDeleteOldDrawingAttachments(jobNumber){
+async function bcDeleteAttachmentByName(jobNumber,targetFileName){
+  if(!targetFileName)return;
   try{
     const {compId,jobId}=await bcGetJobGuid(jobNumber);
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments?$filter=fileName eq '${encodeURIComponent(targetFileName)}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok)return;
     const atts=(await r.json()).value||[];
-    // Delete any AS-QUOTED or APPROVED TO PRODUCE PDF attachments (old revisions)
     for(const a of atts){
-      if(/\[AS-QUOTED|\[APPROVED TO PRODUCE|\[QUOTED|\[DRAFT/i.test(a.fileName||"")){
-        try{
-          const dr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{
-            method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}
-          });
-          if(dr.ok||dr.status===204)console.log("Deleted old attachment:",a.fileName);
-          else console.warn("Failed to delete attachment:",a.fileName,dr.status);
-        }catch(e){console.warn("Delete attachment error:",a.fileName,e.message);}
-      }
+      try{
+        const dr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{
+          method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}
+        });
+        if(dr.ok||dr.status===204)console.log("Deleted BC attachment:",a.fileName);
+        else console.warn("Failed to delete BC attachment:",a.fileName,dr.status);
+      }catch(e){console.warn("Delete attachment error:",a.fileName,e.message);}
     }
-  }catch(e){console.warn("bcDeleteOldDrawingAttachments error:",e.message);}
+  }catch(e){console.warn("bcDeleteAttachmentByName error:",e.message);}
 }
 
-async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer){
+async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer,previousFileName){
   const {compId,jobId}=await bcGetJobGuid(jobNumber);
-  // Delete old drawing attachments first so only the latest exists
-  await bcDeleteOldDrawingAttachments(jobNumber);
+  // Delete the previous drawing attachment by exact filename
+  if(previousFileName)await bcDeleteAttachmentByName(jobNumber,previousFileName);
   // Step 1: create attachment record
   const cr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
     method:"POST",
@@ -1267,7 +1265,7 @@ async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer){
   return att;
 }
 
-async function bcAttachPdfQueued(jobNumber,fileName,pdfArrayBuffer){
+async function bcAttachPdfQueued(jobNumber,fileName,pdfArrayBuffer,previousFileName){
   if(!_bcToken||!jobNumber){
     if(jobNumber&&fileName&&pdfArrayBuffer){
       try{
@@ -1278,7 +1276,7 @@ async function bcAttachPdfQueued(jobNumber,fileName,pdfArrayBuffer){
     return;
   }
   try{
-    await bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer);
+    await bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer,previousFileName);
   }catch(e){
     if(!_bcToken&&jobNumber&&fileName&&pdfArrayBuffer){
       try{
@@ -8862,7 +8860,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         :`[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"}.pdf`;
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
-      await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes);
+      const previousFile=panel.bcPdfFileName||null;
+      await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes,previousFile);
       const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName,bcUploadCount:(panel.bcUploadCount||0)+1,bcUploadQuoteRev:quoteRev||0};
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
