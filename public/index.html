@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.167";
+const APP_VERSION="v1.19.168";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6980,13 +6980,10 @@ function QuoteTab({project,onUpdate}){
         <div className="qd-page">
 
           {/* Header */}
-          <div className="qd-header">
-            <div className="qd-brand">
-              {(_appCtx.company?.logoDarkUrl||_appCtx.company?.logoUrl)?<img src={_appCtx.company.logoDarkUrl||_appCtx.company.logoUrl} alt="Logo" style={{maxHeight:52,maxWidth:180,objectFit:"contain"}}/>:<div style={{fontSize:43,lineHeight:1}}>⚙</div>}
-              <div>
-                <h1>Matrix Systems</h1>
-                <div className="qd-addr">5591 Leo Park Road<br/>West Jordan, UT 84081 US</div>
-              </div>
+          <div className="qd-header" style={{borderBottom:"2px solid #fff"}}>
+            <div className="qd-brand" style={{flexDirection:"column",alignItems:"flex-start",gap:4}}>
+              {(_appCtx.company?.logoDarkUrl||_appCtx.company?.logoUrl)?<img src={_appCtx.company.logoDarkUrl||_appCtx.company.logoUrl} alt="Logo" style={{maxHeight:60,maxWidth:220,objectFit:"contain"}}/>:<h1>Matrix Systems</h1>}
+              <div className="qd-addr">{_appCtx.company?.address||"5591 Leo Park Road, West Jordan, UT 84081 US"}</div>
             </div>
             <div className="qd-hdr-right">
               <div className="qd-qlabel">{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
