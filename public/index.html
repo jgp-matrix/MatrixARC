@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.175";
+const APP_VERSION="v1.19.176";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6542,9 +6542,13 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         group.items.forEach(item=>sentItemIds.push(item.id));
         const failCount=finalResults.filter(r=>!r.found).length;
         const altCount=altSources.filter(a=>a.chosenSource).length;
-        let msg=`${priced.length} priced`;
-        if(altCount>0)msg+=`, ${altCount} from alternate source`;
-        if(failCount>0)msg+=`, ${failCount} not found`;
+        const checkedNames=searchPlan.map(s=>s.name).join(" and ");
+        let msg=`Checked ${checkedNames} — `;
+        if(priced.length>0)msg+=`${priced.length} priced`;
+        if(altCount>0)msg+=`${priced.length>0?", ":""}${altCount} from alternate source`;
+        if(failCount>0&&priced.length>0)msg+=`, ${failCount} not found at either`;
+        else if(failCount>0&&priced.length===0)msg+=`${failCount} item${failCount!==1?"s":""} not found at either supplier`;
+        if(priced.length===0&&failCount===0)msg+="no items to check";
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent",msg}}));
         historyEntries.push({vendorName:group.vendorName,vendorEmail:"API",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false,apiVendor:apiInfo.type,apiResults:{priced:priced.length,notFound:failCount,alternates:altCount}});
       }catch(e){
