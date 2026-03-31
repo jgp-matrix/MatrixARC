@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.181";
+const APP_VERSION="v1.19.182";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6383,12 +6383,13 @@ async function bcFetchVendorContacts(vendorNo,vendorName){
       const vd=(await vr.json()).value||[];
       if(vd[0]?.email)contacts.push({name:vd[0].displayName||"Main",email:vd[0].email,type:"vendor"});
     }
-    // Try to fetch contacts linked to vendor via contacts API
+    // Fetch contacts linked to vendor — try by companyName (BC links contacts this way)
+    const vendorDisplayName=contacts[0]?.name||vendorName||"";
     try{
-      const cr=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=companyNumber eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName,email,companyName&$top=20`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const cr=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=companyName eq '${(vendorDisplayName).replace(/'/g,"''")}'&$select=number,displayName,email,companyName&$top=20`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(cr.ok){
         const cd=(await cr.json()).value||[];
-        cd.forEach(c=>{if(c.email&&!contacts.some(x=>x.email.toLowerCase()===c.email.toLowerCase()))contacts.push({name:c.displayName||c.companyName||"Contact",email:c.email,type:"contact"});});
+        cd.forEach(c=>{if(c.email&&!contacts.some(x=>x.email.toLowerCase()===c.email.toLowerCase()))contacts.push({name:c.displayName||"Contact",email:c.email,type:"contact"});});
       }
     }catch(e){console.log("[BC] Contacts API not available, using vendor email only");}
     return contacts;
@@ -6648,7 +6649,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       </div>
     )}
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",minWidth:480,maxWidth:600,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",minWidth:560,maxWidth:720,width:"95%",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:8}}>Send RFQ Emails</div>
         <div style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,padding:"7px 10px",marginBottom:14,fontSize:12,display:"flex",alignItems:"center",gap:8}}>
           <span style={{color:"#94a3b8"}}>From:</span>
@@ -6694,8 +6695,8 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                           setEmails(prev=>({...prev,[g.vendorName]:newEmail}));
                         }
                         e.target.value="";
-                      }} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"4px 4px",color:"#93c5fd",fontSize:11,cursor:"pointer",maxWidth:32,fontFamily:"inherit"}} title="Select from BC contacts">
-                        <option value="">📇</option>
+                      }} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#93c5fd",fontSize:11,cursor:"pointer",minWidth:120,fontFamily:"inherit"}}>
+                        <option value="">📇 Contacts ({contacts.length})</option>
                         {contacts.map((c,ci)=><option key={ci} value={c.email}>{c.name} — {c.email}</option>)}
                       </select>}
                     </div>
