@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.177";
+const APP_VERSION="v1.19.178";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10489,6 +10489,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,whiteSpace:"nowrap",cursor:(!row.isLaborRow&&row.unitPrice!=null)?"help":"default",...(()=>{
                       if(row.isLaborRow)return{color:C.muted};
+                      if(/matrix\s*systems/i.test(row.bcVendorName||""))return{color:"#4ade80",fontWeight:700};
                       const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
                       if(!d)return{color:C.muted};
                       const age=Date.now()-d;
@@ -10504,7 +10505,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       setPriceTooltip(prev=>prev?{...prev,x:e.clientX,y:e.clientY}:prev);
                     }:undefined}
                     onMouseLeave={(!row.isLaborRow&&row.unitPrice!=null)?()=>setPriceTooltip(null):undefined}>
-                      {row.isLaborRow?"—":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
+                      {row.isLaborRow?"—":/matrix\s*systems/i.test(row.bcVendorName||"")?"Matrix":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
                     </td>
                     <td style={{padding:"3px 10px 3px 6px",textAlign:"center",width:44}}>
                       {!readOnly&&!row.isLaborRow&&<button onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
