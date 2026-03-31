@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.172";
+const APP_VERSION="v1.19.173";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6615,8 +6615,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
           {done&&groups.filter(g=>included[g.vendorName]).every(g=>statuses[g.vendorName]?.state==="sent")&&<span style={{fontSize:12,color:"#4ade80",marginRight:"auto"}}>✓ All RFQs sent!</span>}
           <button onClick={onClose} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{done?"Close":"Cancel"}</button>
           {!sending&&!done&&<button onClick={()=>{if(onPrint)onPrint(groups);onClose();}} style={{background:"#1a1a2a",border:"1px solid #4f46e5",color:"#a5b4fc",padding:"6px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600}}>📋 Print</button>}
-          {!sending&&!done&&<button onClick={()=>sendAll(false)} disabled={groups.length===0} style={{background:"#0d1520",border:"1px solid #0284c7",color:"#38bdf8",padding:"6px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600}}>✉ Email</button>}
-          {!sending&&!done&&<button onClick={()=>sendAll(true)} disabled={groups.length===0} style={{background:"#1e1b4b",border:"none",color:"#818cf8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>✉ Send</button>}
+          {!sending&&!done&&<button onClick={()=>sendAll(false)} disabled={groups.length===0} style={{background:"#1e1b4b",border:"none",color:"#818cf8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>✉ Send</button>}
           {sending&&<span style={{fontSize:12,color:"#818cf8"}}>Sending…</span>}
         </div>
       </div>
