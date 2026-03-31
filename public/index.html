@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.193";
+const APP_VERSION="v1.19.194";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11594,7 +11594,7 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
 }
 
 // ── SUPPLIER QUOTE IMPORT MODAL ──
-function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,projectId}){
+function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,projectId,onBomUpdate}){
   const [phase,setPhase]=useState('upload'); // upload|parsing|review|pushing|done
   const [file,setFile]=useState(null);
   const [pdfPreview,setPdfPreview]=useState(null);
@@ -12332,6 +12332,25 @@ ${fullText.slice(0,8000)}`;
         }catch(e){
           console.warn('BC PDF attach failed:',e);
         }
+      }
+      // Add items to ARC BOM if BOM was empty
+      if(onBomUpdate&&(!panelBom||panelBom.length===0)){
+        const now=Date.now();
+        const vendorName=quoteHeader?.supplier||"";
+        const newBomRows=toUpdate.filter(i=>i.partNumber).map((i,idx)=>({
+          id:now+idx+Math.random(),
+          qty:i.qty||1,
+          partNumber:(i.partNumber||"").trim(),
+          description:(i.description||i.rawPartNumber||"").trim(),
+          manufacturer:i.mfr||i.manufacturer||"",
+          notes:"",
+          unitPrice:i.price||0,
+          priceSource:"bc",
+          priceDate:now,
+          bcPoDate:now,
+          bcVendorName:vendorName
+        }));
+        if(newBomRows.length>0)onBomUpdate(newBomRows);
       }
       // Auto-close modal after successful push
       setTimeout(()=>onClose(),800);
@@ -14391,7 +14410,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           ,document.body)}
         </>
       )}
-      <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} bcProjectNumber={project.bcProjectNumber||null} projectId={init.id} onClose={()=>setShowSqModal(false)}/>
+      <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} bcProjectNumber={project.bcProjectNumber||null} projectId={init.id} onClose={()=>setShowSqModal(false)} onBomUpdate={(newRows)=>{
+        const targetPanel=(projectRef.current.panels||[]).find(p=>p.id===selectedPanelId)||(projectRef.current.panels||[])[0];
+        if(!targetPanel)return;
+        const updatedPanels=(projectRef.current.panels||[]).map(p=>{
+          if(p.id!==targetPanel.id)return p;
+          return{...p,bom:[...(p.bom||[]),...newRows],status:p.status==="draft"?"extracted":p.status};
+        });
+        update({...projectRef.current,panels:updatedPanels});
+      }}/>
       {bcCountMismatch&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <div style={{background:"#0d0d1a",border:"1px solid #ef4444",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
