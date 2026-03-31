@@ -9810,14 +9810,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               eqOpen>0?`❓ ${eqOpen} Question${eqOpen!==1?"s":""}`:`✓ ${eqTotal} Answered`):null;})()}
           {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(()=>{
             const hasUnsent=panel.bcPdfAttached&&!bcPdfMissing&&(quoteRev||0)>(panel.bcUploadQuoteRev||0);
+            const needsUpload=hasUnsent||bcPdfMissing||(!panel.bcPdfAttached);
             return(
-            <button data-tip={hasUnsent?"BOM changed — click to upload updated drawings to BC":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:`Upload via Print Client Quote`}
-              onClick={hasUnsent?()=>buildAndAttachPdf():undefined} disabled={attachingPdf||(!hasUnsent&&panel.bcPdfAttached&&!bcPdfMissing)}
-              style={{background:hasUnsent?"#3a1f00":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",border:`1px solid ${hasUnsent?"#f59e0b88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,color:hasUnsent?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",cursor:hasUnsent?"pointer":"default",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1,animation:hasUnsent?"pulseYellow 2s ease-in-out infinite":"none"}}>
-              {attachingPdf?"Uploading…":hasUnsent?"⚠ Unsent Revision — Click to Update":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
+            <button data-tip={bcPdfMissing?"File deleted from BC — click to re-upload":hasUnsent?"BOM changed — click to upload updated drawings to BC":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:"Upload drawings to BC"}
+              onClick={needsUpload?()=>buildAndAttachPdf():undefined} disabled={attachingPdf||!needsUpload}
+              style={{background:bcPdfMissing?"#3a0a0a":hasUnsent?"#3a1f00":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",
+                border:`1px solid ${bcPdfMissing?"#ef444488":hasUnsent?"#f59e0b88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,
+                color:bcPdfMissing?C.red:hasUnsent?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",
+                cursor:needsUpload?"pointer":"default",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
+                opacity:attachingPdf?0.5:1,animation:needsUpload&&!attachingPdf?"pulseYellow 2s ease-in-out infinite":"none"}}>
+              {attachingPdf?"Uploading…":bcPdfMissing?"⚠ Deleted — Click to Re-Upload":hasUnsent?"⚠ Unsent Revision — Click to Update":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
             </button>);
           })()}
-          {bcPdfMissing&&<span style={{fontSize:11,color:C.yellow,fontWeight:600}}>File was deleted from BC — Re-Upload?</span>}
           {attachPdfMsg&&<span style={{fontSize:11,color:attachPdfMsg.startsWith("✓")?C.green:attachPdfMsg.startsWith("✗")?C.red:C.muted,fontWeight:600}}>{attachPdfMsg}</span>}
         </div>
 
