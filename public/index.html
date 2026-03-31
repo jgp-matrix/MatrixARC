@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.182";
+const APP_VERSION="v1.19.183";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6679,12 +6679,14 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                   const api=isApiVendor(g.vendorName);
                   if(api)return <div style={{fontSize:11,color:"#4ade80",fontWeight:600,padding:"4px 0"}}>⚡ Pricing will be obtained automatically via {api.label}</div>;
                   const contacts=vendorContacts[g.vendorName]||[];
+                  const emailList=(emails[g.vendorName]||"").split(/[,;]\s*/).filter(e=>e.trim());
+                  const rows=Math.max(1,emailList.length);
                   return <div>
-                    <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                      <input value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
+                    <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
+                      <textarea value={(emails[g.vendorName]||"").replace(/;\s*/g,";\n")} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value.replace(/\n/g,"; ")}))}
                         placeholder={contactsLoading?"Loading contacts…":"supplier@email.com"} disabled={sending||done}
-                        onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                        style={{flex:1,boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none"}}/>
+                        rows={rows}
+                        style={{flex:1,boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none",resize:"vertical",lineHeight:1.6}}/>
                       {contacts.length>0&&<select disabled={sending||done} value="" onChange={e=>{
                         if(!e.target.value)return;
                         const cur=(emails[g.vendorName]||"").trim();
@@ -6695,8 +6697,8 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                           setEmails(prev=>({...prev,[g.vendorName]:newEmail}));
                         }
                         e.target.value="";
-                      }} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#93c5fd",fontSize:11,cursor:"pointer",minWidth:120,fontFamily:"inherit"}}>
-                        <option value="">📇 Contacts ({contacts.length})</option>
+                      }} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 4px",color:"#93c5fd",fontSize:10,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                        <option value="">📇 Contacts</option>
                         {contacts.map((c,ci)=><option key={ci} value={c.email}>{c.name} — {c.email}</option>)}
                       </select>}
                     </div>
