@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.176";
+const APP_VERSION="v1.19.177";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9468,7 +9468,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
-      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost??r.unitPrice??0,priceSource:"bc",priceDate:Date.now()};
+      const now=Date.now();
+      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost??r.unitPrice??0,priceSource:"bc",priceDate:now,bcPoDate:now};
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — uses latestPanelRef to avoid stale overwrites
