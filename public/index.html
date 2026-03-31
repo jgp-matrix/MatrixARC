@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.184";
+const APP_VERSION="v1.19.185";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6625,6 +6625,22 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:String(e.message||e)}}));
         historyEntries.push({vendorName:group.vendorName,vendorEmail:"API",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:false,error:String(e.message||e),apiVendor:apiInfo.type});
       }
+    }
+    // Send confirmation email to ARC user
+    const sentVendors=historyEntries.filter(e=>e.sent&&e.vendorEmail!=="API");
+    const apiVendorResults=historyEntries.filter(e=>e.sent&&e.vendorEmail==="API");
+    if(!graphToken)try{graphToken=await acquireGraphToken();}catch(e){}
+    if((sentVendors.length>0||apiVendorResults.length>0)&&graphToken&&fromEmail){
+      try{
+        const now=new Date().toLocaleString("en-US",{month:"long",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"});
+        let rows=sentVendors.map(v=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600">${v.vendorName}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${v.vendorEmail}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;color:#16a34a">✓ Sent</td></tr>`).join("");
+        rows+=apiVendorResults.map(v=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600">${v.vendorName}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">API Auto-Pricing</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;color:#2563eb">✓ ${v.apiResults?v.apiResults.priced+" priced":"Complete"}</td></tr>`).join("");
+        const failedVendors=historyEntries.filter(e=>!e.sent&&!e.skipped);
+        if(failedVendors.length>0)rows+=failedVendors.map(v=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600">${v.vendorName}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${v.vendorEmail||"—"}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;color:#dc2626">✗ Failed: ${v.error||"Unknown"}</td></tr>`).join("");
+        const confirmHtml=`<div style="font-family:-apple-system,'Inter',sans-serif;max-width:600px;margin:0 auto;color:#1e293b"><div style="background:#f1f5f9;padding:24px 32px;border-bottom:2px solid #2563eb"><h2 style="margin:0;color:#2563eb;font-size:20px">RFQ Send Confirmation</h2></div><div style="padding:24px 32px"><p style="margin:0 0 8px;font-size:14px"><strong>Project:</strong> ${projectName||"—"}</p><p style="margin:0 0 8px;font-size:14px"><strong>BC Project:</strong> ${bcProjectNumber||"—"}</p><p style="margin:0 0 16px;font-size:14px"><strong>Sent:</strong> ${now}</p><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#f8fafc"><th style="padding:8px 12px;text-align:left;border-bottom:2px solid #2563eb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Supplier</th><th style="padding:8px 12px;text-align:left;border-bottom:2px solid #2563eb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Sent To</th><th style="padding:8px 12px;text-align:left;border-bottom:2px solid #2563eb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Status</th></tr></thead><tbody>${rows}</tbody></table><p style="margin:16px 0 0;font-size:12px;color:#94a3b8">This is an automated confirmation from ARC.</p></div></div>`;
+        await sendGraphEmail(graphToken,fromEmail,`RFQ Confirmation — ${projectName||bcProjectNumber||"Project"}`,confirmHtml);
+        console.log("[RFQ] Confirmation email sent to",fromEmail);
+      }catch(e){console.warn("[RFQ] Confirmation email failed:",e.message);}
     }
     setSending(false);setDone(true);
     if(sentItemIds.length>0&&onSent)onSent(sentItemIds);
