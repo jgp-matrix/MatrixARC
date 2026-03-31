@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.179";
+const APP_VERSION="v1.19.180";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6394,9 +6394,27 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
   const [included,setIncluded]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;});
   const [vendorContacts,setVendorContacts]=useState({}); // {vendorName: [{name,email,type}]}
   const [contactsLoading,setContactsLoading]=useState(true);
-  // Fetch BC vendor contacts on mount
+  const [remember,setRemember]=useState({});
+  // Load saved vendor emails + fetch BC contacts on mount
   useEffect(()=>{
     (async()=>{
+      // Load saved default emails from Firestore
+      const currentUid=uid||fbAuth.currentUser?.uid;
+      if(currentUid){
+        try{
+          const doc=await fbDb.doc(`users/${currentUid}/config/vendorEmails`).get();
+          const saved=doc.exists?doc.data():{};
+          const rem={};
+          groups.forEach(g=>{
+            if(saved[g.vendorName]){
+              setEmails(prev=>prev[g.vendorName]?prev:{...prev,[g.vendorName]:saved[g.vendorName]});
+              rem[g.vendorName]=true;
+            }
+          });
+          setRemember(rem);
+        }catch(e){}
+      }
+      // Fetch BC contacts
       const results={};
       for(const g of groups){
         if(isApiVendor(g.vendorName))continue;
@@ -6404,10 +6422,8 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
           const contacts=await bcFetchVendorContacts(g.vendorNo);
           if(contacts.length>0){
             results[g.vendorName]=contacts;
-            // Auto-fill email if empty
-            if(!emails[g.vendorName]&&contacts[0]?.email){
-              setEmails(prev=>({...prev,[g.vendorName]:contacts[0].email}));
-            }
+            // Auto-fill email only if still empty (saved emails take priority)
+            setEmails(prev=>{if(prev[g.vendorName])return prev;return{...prev,[g.vendorName]:contacts[0].email};});
           }
         }
       }
@@ -6656,26 +6672,43 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                   const api=isApiVendor(g.vendorName);
                   if(api)return <div style={{fontSize:11,color:"#4ade80",fontWeight:600,padding:"4px 0"}}>⚡ Pricing will be obtained automatically via {api.label}</div>;
                   const contacts=vendorContacts[g.vendorName]||[];
-                  return <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                    <input value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
-                      placeholder={contactsLoading?"Loading contacts…":"supplier@email.com"} disabled={sending||done}
-                      onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                      style={{flex:1,boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none"}}/>
-                    {contacts.length>0&&<select disabled={sending||done} value="" onChange={e=>{
-                      if(!e.target.value)return;
-                      const cur=(emails[g.vendorName]||"").trim();
-                      const newEmail=e.target.value;
-                      // Append if not already present
-                      if(cur&&!cur.split(/[,;]\s*/).some(x=>x.toLowerCase()===newEmail.toLowerCase())){
-                        setEmails(prev=>({...prev,[g.vendorName]:cur+"; "+newEmail}));
-                      }else if(!cur){
-                        setEmails(prev=>({...prev,[g.vendorName]:newEmail}));
-                      }
-                      e.target.value="";
-                    }} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"4px 4px",color:"#93c5fd",fontSize:11,cursor:"pointer",maxWidth:32,fontFamily:"inherit"}} title="Select from BC contacts">
-                      <option value="">📇</option>
-                      {contacts.map((c,ci)=><option key={ci} value={c.email}>{c.name} — {c.email}</option>)}
-                    </select>}
+                  return <div>
+                    <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                      <input value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
+                        placeholder={contactsLoading?"Loading contacts…":"supplier@email.com"} disabled={sending||done}
+                        onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
+                        style={{flex:1,boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none"}}/>
+                      {contacts.length>0&&<select disabled={sending||done} value="" onChange={e=>{
+                        if(!e.target.value)return;
+                        const cur=(emails[g.vendorName]||"").trim();
+                        const newEmail=e.target.value;
+                        if(cur&&!cur.split(/[,;]\s*/).some(x=>x.toLowerCase()===newEmail.toLowerCase())){
+                          setEmails(prev=>({...prev,[g.vendorName]:cur+"; "+newEmail}));
+                        }else if(!cur){
+                          setEmails(prev=>({...prev,[g.vendorName]:newEmail}));
+                        }
+                        e.target.value="";
+                      }} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"4px 4px",color:"#93c5fd",fontSize:11,cursor:"pointer",maxWidth:32,fontFamily:"inherit"}} title="Select from BC contacts">
+                        <option value="">📇</option>
+                        {contacts.map((c,ci)=><option key={ci} value={c.email}>{c.name} — {c.email}</option>)}
+                      </select>}
+                    </div>
+                    <label style={{display:"flex",alignItems:"center",gap:4,marginTop:3,cursor:"pointer",fontSize:10,color:remember[g.vendorName]?"#4ade80":"#64748b"}}>
+                      <input type="checkbox" checked={!!remember[g.vendorName]} onChange={e=>{
+                        const checked=e.target.checked;
+                        setRemember(prev=>({...prev,[g.vendorName]:checked}));
+                        const currentUid=uid||fbAuth.currentUser?.uid;
+                        if(currentUid){
+                          const emailVal=(emails[g.vendorName]||"").trim();
+                          if(checked&&emailVal){
+                            fbDb.doc(`users/${currentUid}/config/vendorEmails`).set({[g.vendorName]:emailVal},{merge:true}).catch(()=>{});
+                          }else if(!checked){
+                            fbDb.doc(`users/${currentUid}/config/vendorEmails`).set({[g.vendorName]:firebase.firestore.FieldValue.delete()},{merge:true}).catch(()=>{});
+                          }
+                        }
+                      }} style={{accentColor:"#4ade80",width:12,height:12,cursor:"pointer"}}/>
+                      {remember[g.vendorName]?"Default for future RFQs":"Remember for future RFQs"}
+                    </label>
                   </div>;
                 })()}
               </div>
