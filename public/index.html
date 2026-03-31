@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.191";
+const APP_VERSION="v1.19.192";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8569,6 +8569,36 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
+  const [docDragging,setDocDragging]=useState(false);
+  const [docUploading,setDocUploading]=useState(false);
+  const docFileRef=useRef(null);
+  async function uploadOtherDoc(files){
+    if(!files||!files.length||!bcProjectNumber||!_bcToken)return;
+    setDocUploading(true);
+    const newDocs=[...(panel.otherDocs||[])];
+    for(const file of files){
+      try{
+        const arrayBuf=await file.arrayBuffer();
+        const fileName=`[REF] ${file.name}`;
+        await bcAttachPdfToJob(bcProjectNumber,fileName,arrayBuf,null);
+        newDocs.push({name:file.name,bcFileName:fileName,uploadedAt:Date.now(),size:file.size});
+      }catch(e){console.warn("Other doc upload failed:",file.name,e.message);}
+    }
+    const updated={...panel,otherDocs:newDocs};
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+    setDocUploading(false);
+  }
+  function removeOtherDoc(idx){
+    const doc=(panel.otherDocs||[])[idx];
+    if(!doc)return;
+    if(!confirm(`Remove "${doc.name}" from the list?`))return;
+    // Delete from BC if possible
+    if(doc.bcFileName&&bcProjectNumber)bcDeleteAttachmentByName(bcProjectNumber,doc.bcFileName).catch(()=>{});
+    const updated={...panel,otherDocs:(panel.otherDocs||[]).filter((_,i)=>i!==idx)};
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+  }
   const [detecting,setDetecting]=useState(false);
   const [detectProgress,setDetectProgress]=useState("");
   const [awaitingConfirm,setAwaitingConfirm]=useState(false);
@@ -10244,6 +10274,35 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               <div style={{fontSize:12,color:C.muted,lineHeight:1.6,whiteSpace:"pre-line"}}>{processing?processingMsg:"Drop or click\nPDF · JPG · PNG"}</div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Other Documents */}
+      <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+          <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7}}>OTHER DOCUMENTS{(panel.otherDocs||[]).length>0?` — ${(panel.otherDocs||[]).length}`:""}</div>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
+          {(panel.otherDocs||[]).map((doc,di)=>(
+            <div key={di} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,display:"flex",alignItems:"center",gap:6,maxWidth:240}}>
+              <span style={{color:"#94a3b8"}}>📄</span>
+              <span style={{color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}} title={doc.name}>{doc.name}</span>
+              {!readOnly&&<button onClick={()=>removeOtherDoc(di)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
+            </div>
+          ))}
+          {!readOnly&&bcProjectNumber&&_bcToken&&(
+            <div
+              onDragOver={e=>{e.preventDefault();setDocDragging(true);}}
+              onDragLeave={()=>setDocDragging(false)}
+              onDrop={e=>{e.preventDefault();setDocDragging(false);uploadOtherDoc(e.dataTransfer.files);}}
+              onClick={()=>!docUploading&&docFileRef.current?.click()}
+              style={{width:140,height:60,border:`2px dashed ${docDragging?C.accent:C.border}`,borderRadius:6,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:docUploading?"default":"pointer",transition:"all 0.15s",background:docDragging?C.accentDim+"33":"transparent",textAlign:"center",padding:6}}>
+              <input ref={docFileRef} type="file" multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" onChange={e=>{uploadOtherDoc(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+              <div style={{fontSize:18,opacity:docUploading?1:0.35}}>{docUploading?"⏳":"+"}</div>
+              <div style={{fontSize:10,color:C.muted}}>{docUploading?"Uploading…":"Specs · PDFs · Docs"}</div>
+            </div>
+          )}
+          {!bcProjectNumber&&<div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Connect to BC project to upload reference documents</div>}
         </div>
       </div>
 
