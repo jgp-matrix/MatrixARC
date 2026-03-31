@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.178";
+const APP_VERSION="v1.19.179";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6365,9 +6365,56 @@ const API_VENDOR_PATTERNS=[
 ];
 function isApiVendor(vendorName){return API_VENDOR_PATTERNS.find(v=>v.pattern.test(vendorName||""));}
 
+async function bcFetchVendorContacts(vendorNo){
+  // Fetch the vendor's main email + contacts from BC
+  if(!_bcToken||!vendorNo)return[];
+  try{
+    const compId=await bcGetCompanyId();
+    // Get vendor main email
+    const vr=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName,email,phoneNumber`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const contacts=[];
+    if(vr.ok){
+      const vd=(await vr.json()).value||[];
+      if(vd[0]?.email)contacts.push({name:vd[0].displayName||"Main",email:vd[0].email,type:"vendor"});
+    }
+    // Try to fetch contacts linked to vendor via contacts API
+    try{
+      const cr=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=companyNumber eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName,email,companyName&$top=20`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(cr.ok){
+        const cd=(await cr.json()).value||[];
+        cd.forEach(c=>{if(c.email&&!contacts.some(x=>x.email.toLowerCase()===c.email.toLowerCase()))contacts.push({name:c.displayName||c.companyName||"Contact",email:c.email,type:"contact"});});
+      }
+    }catch(e){console.log("[BC] Contacts API not available, using vendor email only");}
+    return contacts;
+  }catch(e){console.warn("[BC] fetchVendorContacts error:",e.message);return[];}
+}
+
 function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEmail,onClose,onSent,onPrint,onApiPriced,onApiAlternates}){
   const [emails,setEmails]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=g.vendorEmail||"";});return m;});
   const [included,setIncluded]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;});
+  const [vendorContacts,setVendorContacts]=useState({}); // {vendorName: [{name,email,type}]}
+  const [contactsLoading,setContactsLoading]=useState(true);
+  // Fetch BC vendor contacts on mount
+  useEffect(()=>{
+    (async()=>{
+      const results={};
+      for(const g of groups){
+        if(isApiVendor(g.vendorName))continue;
+        if(g.vendorNo){
+          const contacts=await bcFetchVendorContacts(g.vendorNo);
+          if(contacts.length>0){
+            results[g.vendorName]=contacts;
+            // Auto-fill email if empty
+            if(!emails[g.vendorName]&&contacts[0]?.email){
+              setEmails(prev=>({...prev,[g.vendorName]:contacts[0].email}));
+            }
+          }
+        }
+      }
+      setVendorContacts(results);
+      setContactsLoading(false);
+    })();
+  },[]);
   const [statuses,setStatuses]=useState({});
   const [sending,setSending]=useState(false);
   const [done,setDone]=useState(false);
@@ -6608,10 +6655,28 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                 {isOn&&(()=>{
                   const api=isApiVendor(g.vendorName);
                   if(api)return <div style={{fontSize:11,color:"#4ade80",fontWeight:600,padding:"4px 0"}}>⚡ Pricing will be obtained automatically via {api.label}</div>;
-                  return <input value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
-                    placeholder="supplier@email.com" disabled={sending||done}
-                    onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                    style={{width:"100%",boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none"}}/>;
+                  const contacts=vendorContacts[g.vendorName]||[];
+                  return <div style={{display:"flex",gap:4,alignItems:"center"}}>
+                    <input value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
+                      placeholder={contactsLoading?"Loading contacts…":"supplier@email.com"} disabled={sending||done}
+                      onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
+                      style={{flex:1,boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none"}}/>
+                    {contacts.length>0&&<select disabled={sending||done} value="" onChange={e=>{
+                      if(!e.target.value)return;
+                      const cur=(emails[g.vendorName]||"").trim();
+                      const newEmail=e.target.value;
+                      // Append if not already present
+                      if(cur&&!cur.split(/[,;]\s*/).some(x=>x.toLowerCase()===newEmail.toLowerCase())){
+                        setEmails(prev=>({...prev,[g.vendorName]:cur+"; "+newEmail}));
+                      }else if(!cur){
+                        setEmails(prev=>({...prev,[g.vendorName]:newEmail}));
+                      }
+                      e.target.value="";
+                    }} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"4px 4px",color:"#93c5fd",fontSize:11,cursor:"pointer",maxWidth:32,fontFamily:"inherit"}} title="Select from BC contacts">
+                      <option value="">📇</option>
+                      {contacts.map((c,ci)=><option key={ci} value={c.email}>{c.name} — {c.email}</option>)}
+                    </select>}
+                  </div>;
                 })()}
               </div>
             );
