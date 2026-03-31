@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.145";
+const APP_VERSION="v1.19.146";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13244,8 +13244,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           const bcDateMs=bc.startingDate||null;
           const bomDateMs=r.bcPoDate||r.priceDate||null;
           const priceDiff=Math.abs(bomPrice-bcPrice)>0.005;
-          const dateNewer=bcDateMs&&(!bomDateMs||bcDateMs>bomDateMs);
-          if(priceDiff||dateNewer){
+          if(priceDiff){
             diffs.push({panelIdx:pi,panelName:p.name||'Panel '+(pi+1),rowId:r.id,partNumber:pn,
               description:r.description||'',bomPrice,bomDate:bomDateMs,
               bcPrice,bcDate:bcDateMs,bcVendor:bc.vendorNo||''});
