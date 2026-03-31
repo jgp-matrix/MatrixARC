@@ -48,7 +48,7 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 .qd-proj-label{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:#94a3b8;margin-bottom:4px}
 .qd-proj-value{font-size:17px;font-weight:600;color:#0f172a}
 .qd-terms{padding:18px 44px;background:#eff6ff;border-bottom:1px solid #e2e8f0;font-size:14px;color:#334155;line-height:1.7}
-.qd-terms strong{color:#0f172a;font-weight:600}.qd-terms .qd-tnote{font-size:13px;color:#64748b;margin-top:4px}
+.qd-terms strong{color:#0f172a;font-weight:600}.qd-terms .qd-tnote{font-size:14px;color:#334155;margin-top:4px}
 .qd-items{padding:28px 44px}.qd-items-heading{font-size:17px;font-weight:600;color:#0f172a;margin-bottom:20px;display:flex;align-items:center;gap:8px}
 .qd-items-heading::before{content:'';width:3px;height:16px;background:#2563eb;border-radius:2px}
 .qd-li{border:1px solid #e2e8f0;border-radius:8px;margin-bottom:12px;overflow:hidden}
@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.208";
+const APP_VERSION="v1.19.209";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7275,7 +7275,7 @@ function QuoteTab({project,onUpdate}){
           {/* Terms Banner */}
           <div className="qd-terms">
             <textarea value={q.termsText!=null?q.termsText:defaultTerms} onChange={e=>setQ({termsText:e.target.value})} rows={3} style={{...qInp({display:"block",width:"100%",resize:"vertical",fontSize:"14px",lineHeight:"1.7",color:"#94a3b8",borderBottom:"none"})}}/>
-            <div className="qd-tnote"><strong>All quotes expire 30 days from date of issue unless otherwise noted. Prices subject to change without notice.</strong></div>
+            <div className="qd-tnote">All quotes expire 30 days from date of issue unless otherwise noted. Prices subject to change without notice.</div>
           </div>
 
           {/* Line Items */}
