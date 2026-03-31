@@ -104,7 +104,8 @@ body.no-tips [data-tip]::after{opacity:0!important;}
     border:none!important;border-radius:0!important;box-shadow:none!important;
     background:#fff!important;
   }
-  #quote-doc,#quote-doc *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #quote-doc,#quote-doc *{-webkit-print-color-adjust:exact;print-color-adjust:exact;color:#0f172a!important}
+  #quote-doc .qd-brand h1,#quote-doc .qd-li-num,#quote-doc .qd-info-label,#quote-doc .qd-tc-item h4,#quote-doc .qd-header-cont .qd-hc-name,#quote-doc .qd-pval.qd-total-val,#quote-doc .qd-totals-row.qd-grand .qd-amt{color:#2563eb!important}
   .qd-page{box-shadow:none!important;border-radius:0!important;margin:0!important;width:100%!important;min-height:auto!important;page-break-after:always}
   .qd-page:last-child{page-break-after:auto}
   .qd-print-footer{display:flex!important;position:fixed!important;bottom:0!important;left:0!important;width:100%!important;background:#f1f5f9!important;padding:10px 32px!important;justify-content:space-between!important;font-size:10px!important;color:#64748b!important;border-top:2px solid #2563eb!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
@@ -200,7 +201,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.157";
+const APP_VERSION="v1.19.158";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
