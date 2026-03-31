@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.144";
+const APP_VERSION="v1.19.145";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1225,7 +1225,7 @@ async function bcDeleteAttachmentByName(jobNumber,targetFileName){
   if(!targetFileName)return;
   try{
     const {compId,jobId}=await bcGetJobGuid(jobNumber);
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments?$filter=fileName eq '${encodeURIComponent(targetFileName)}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments?$filter=fileName eq '${targetFileName.replace(/'/g,"''")}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok)return;
     const atts=(await r.json()).value||[];
     for(const a of atts){
