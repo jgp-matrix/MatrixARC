@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.174";
+const APP_VERSION="v1.19.175";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8266,6 +8266,15 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 try{
                   const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost||undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined,genProdPostingGroup:createGenProd||undefined,inventoryPostingGroup:createInvPosting||undefined});
                   const vendorName=createVendor?((bcVendors.find(v=>v.number===createVendor)||{}).displayName||""):"";
+                  // If price entered + vendor selected, prompt to push to BC Purchase Prices
+                  if(createCost&&parseFloat(createCost)>0&&createVendor){
+                    const pushPrice=confirm(`The price $${parseFloat(createCost).toFixed(2)} was entered for this item.\n\nIs this price from ${vendorName||createVendor}?\n\nClick OK to save this as a Purchase Price in BC.`);
+                    if(pushPrice){
+                      bcPushPurchasePrice(created.number,createVendor,parseFloat(createCost),Date.now(),"EA")
+                        .then(()=>console.log(`[BC] Purchase Price written: ${created.number} @ $${createCost} from ${vendorName}`))
+                        .catch(e=>console.warn("[BC] Purchase Price write failed:",e.message));
+                    }
+                  }
                   onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName});
                 }catch(e){setCreateErr(e.message||"Failed to create item");}
                 finally{setCreating(false);}
@@ -12172,6 +12181,17 @@ ${fullText.slice(0,8000)}`;
       const bcId=bcItem?.id||null;
       const desc=created.displayName||newItemForm.description||item.description;
       const cost=created.unitCost??null;
+      // If price entered + vendor selected, prompt to push to BC Purchase Prices
+      const enteredCost=newItemForm.cost!==''?parseFloat(newItemForm.cost):(item.price?parseFloat(item.price):0);
+      if(enteredCost>0&&newItemForm.vendor){
+        const vName=(bcCfg.vendors||[]).find(v=>v.number===newItemForm.vendor)?.displayName||newItemForm.vendor;
+        const pushPrice=confirm(`The price $${enteredCost.toFixed(2)} was entered for this item.\n\nIs this price from ${vName}?\n\nClick OK to save this as a Purchase Price in BC.`);
+        if(pushPrice){
+          bcPushPurchasePrice(created.number,newItemForm.vendor,enteredCost,Date.now(),"EA")
+            .then(()=>console.log(`[BC] Purchase Price written: ${created.number} @ $${enteredCost} from ${vName}`))
+            .catch(e=>console.warn("[BC] Purchase Price write failed:",e.message));
+        }
+      }
       const updatedItems=lineItems.map((it,i)=>i===newItemIdx
         ?{...it,bcItemId:bcId,bcItemDescription:desc,bcCurrentCost:cost,matchStatus:'auto_matched',approved:true}:it);
       setLineItems(updatedItems);
