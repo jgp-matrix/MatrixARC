@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.188";
+const APP_VERSION="v1.19.189";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1248,8 +1248,25 @@ async function bcDeleteAttachmentByName(jobNumber,targetFileName){
 
 async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer,previousFileName){
   const {compId,jobId}=await bcGetJobGuid(jobNumber);
-  // Delete the previous drawing attachment by exact filename
-  if(previousFileName)await bcDeleteAttachmentByName(jobNumber,previousFileName);
+  // Delete ALL old drawing revisions for this project (not just the exact previous filename)
+  try{
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.ok){
+      const atts=(await r.json()).value||[];
+      // Match any [AS-QUOTED...] or [APPROVED TO PRODUCE...] PDFs except the one we're about to upload
+      const newNameLower=(fileName||"").toLowerCase().replace(/\.pdf$/,"");
+      for(const a of atts){
+        const fn=(a.fileName||"").toLowerCase();
+        if(fn===newNameLower||fn===newNameLower+".pdf")continue; // skip the one we're uploading
+        if(/^\[as-quoted|^\[approved to produce/i.test(a.fileName||"")){
+          try{
+            await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
+            console.log("Deleted old BC revision:",a.fileName);
+          }catch(e){console.warn("Failed to delete old revision:",a.fileName,e.message);}
+        }
+      }
+    }
+  }catch(e){console.warn("bcAttachPdfToJob cleanup error:",e.message);}
   // Step 1: create attachment record
   const cr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
     method:"POST",
