@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.200";
+const APP_VERSION="v1.19.201";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7135,7 +7135,7 @@ function QuoteTab({project,onUpdate}){
 
   const today=new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
   const defaultValidUntil=new Date(Date.now()+30*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
 
   const defaultTerms="Standard Payment Terms for Panel Builds (Order Total over $30,000): 30% ARO; 40% @ Procurement, 30% @ Readiness To Ship\nStandard Payment Terms for Engineering / Programming: 50% ARO / 50% due @ Completion of Work";
   const qInp=(x={})=>({background:"transparent",border:"none",borderBottom:"1px dashed #cbd5e1",outline:"none",color:"#e2e8f0",fontSize:"inherit",fontFamily:"inherit",padding:"1px 2px",width:"100%",...x});
@@ -13300,7 +13300,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             const matCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
             const grandTotal=matCost+laborEst.totalCost+cBOM+cCons;
             const sellPrice=grandTotal*(1+markup/100);
-            const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+            const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
             const pendingBcCount=bom.filter(r=>(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual").length;
             const laborAccepted=sp.laborData?.accepted||{};
             const acceptedCount=laborEst.lines.filter(l=>laborAccepted[l.category]).length;
@@ -13465,7 +13465,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
                   const pgt=pmat+ple.totalCost+pcb+pcc;
                   const psp=pgt*(1+pmk/100);
-                  const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+                  const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   const pqty=p.lineQty??p.qty??1;
                   return(
                     <div key={p.id} onClick={()=>setSelectedPanelId(p.id)}
@@ -13490,7 +13490,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
                     return sum+((pmat+ple.totalCost+pcb+pcc)*(1+(ppr.markup??30)/100))*(p.qty||1);
                   },0);
-                  const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+                  const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   return(
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",marginTop:4,borderTop:"1px solid #fff"}}>
                       <span style={{fontSize:12,fontWeight:700,color:C.muted,letterSpacing:0.5}}>PROJECT TOTAL</span>
@@ -16723,6 +16723,9 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       });
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
+    if(groupBy==="budgetary"){
+      return [{label:"Budgetary Quotes",items:list.filter(p=>(p.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary))}];
+    }
     if(groupBy==="imported"){
       return [{label:null,items:list.filter(p=>p.importedFromBC)}];
     }
@@ -16776,6 +16779,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         {filterBtn("By Project #","projectnum")}
         {filterBtn("Open Orders (Purchasing)","active")}
         {filterBtn("Open Orders (In Production)","purchasing")}
+        {filterBtn("Budgetary","budgetary")}
         {filterBtn("Imported","imported")}
         {filterBtn("All","all")}
       </div>
@@ -16788,7 +16792,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       )}
 
       {(()=>{
-        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||!p.importedFromBC));
+        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="budgetary"||!p.importedFromBC));
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         return(<>
