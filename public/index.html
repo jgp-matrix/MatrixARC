@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.162";
+const APP_VERSION="v1.19.163";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7204,31 +7204,18 @@ function QuoteTab({project,onUpdate}){
             <div className="qd-tc-title">Standard Terms and Conditions of Sale</div>
             <div className="qd-tc-sub">Matrix Systems, LLC</div>
             <div className="qd-tc-body">
-              <div className="qd-tc-item"><h4>1. Definitions</h4><p>(a) "Matrix" shall mean Matrix Systems LLC. (b) "Buyer" shall mean the purchaser, its representatives and/or agents. (c) "Product" shall mean any equipment, Software and/or Firmware, machinery, parts, materials, products or services provided for in this proposal. (d) "Software and/or Firmware" shall mean the programming for the computer component of the Product. (e) "Proprietary Data" shall mean engineering, drawings, specifications and/or instructions created by Matrix.</p></div>
-              <div className="qd-tc-item"><h4>2. Prevailing Documentation</h4><p>(a) Matrix's proposal, including these terms and conditions, shall constitute the contract. No course of dealing or usage of trade may add or amend the terms. (b) These terms embody the entire understanding between Matrix and Buyer. The Contract may only be amended by a written Change Order. (c) Unless otherwise stated, the proposal is valid for thirty (30) days. (d) Matrix's obligation shall not commence until any required down payment and Letter of Credit have been received.</p></div>
-              <div className="qd-tc-item"><h4>3. Engineering and Drawings</h4><p>(a) Buyer shall furnish Matrix with all information and drawings on which performance is dependent. (b) Matrix will submit drawings for Buyer's approval if required. (c) Unless Buyer advises otherwise within fourteen (14) days, drawings are deemed approved. (d) Matrix will furnish electronic copies in PDF format only. (e) Changes may result in price and delivery adjustments. (f) All Proprietary Data remains the sole property of Matrix.</p></div>
-              <div className="qd-tc-item"><h4>4. Confidential Information</h4><p>All drawings, specifications, and information provided by Matrix shall remain Matrix's exclusive property and shall not be disclosed by Buyer to any third party. Matrix grants Buyer a non-exclusive license to utilize Proprietary Data for design, installation, and maintenance of the Product.</p></div>
-              <div className="qd-tc-item"><h4>5. Title and Risk of Loss</h4><p>Matrix shall retain title to the Product until full purchase price has been paid. Risk of loss passes to Buyer at the delivery point stated in the proposal.</p></div>
-              <div className="qd-tc-item"><h4>6. Change Orders</h4><p>Either party may request changes via written Change Order, provided changes are within scope, do not impair Matrix's obligations, and do not adversely affect design integrity. Matrix shall submit proposed adjustments within a reasonable time.</p></div>
-              <div className="qd-tc-item"><h4>7. Safety Devices</h4><p>Matrix shall not be required to furnish safety devices except those stated in the proposal. Buyer shall install and operate Product in accordance with all applicable safety laws and regulations.</p></div>
-              <div className="qd-tc-item"><h4>8. Weights, Packing and Freight</h4><p>Weights are estimated and subject to fluctuation. Product will be packed per Matrix's standard commercial practice. Freight will be invoiced to and paid by Buyer.</p></div>
-              <div className="qd-tc-item"><h4>9. Permits, Laws and Regulations</h4><p>Buyer will secure all construction, operating, environmental and similar permits and will pay for all governmental charges and fees necessary for installation or operation of the Product.</p></div>
-              <div className="qd-tc-item"><h4>10. Inspection</h4><p>Buyer may inspect Product at mutually agreed times. Failure to inspect timely may delay progress and increase costs.</p></div>
-              <div className="qd-tc-item"><h4>11. Delivery / Delay / Extension of Time</h4><p>Delivery dates represent Matrix's best estimate and are not guaranteed. If delivery is prevented or postponed by Buyer or Force Majeure, Product may be stored at Buyer's expense. Force Majeure includes fires, Acts of God, war, strikes, and unavailability of parts.</p></div>
-              <div className="qd-tc-item"><h4>12. Short Shipments</h4><p>Claims for short shipments are excluded unless made in writing within a reasonable time after delivery.</p></div>
-              <div className="qd-tc-item"><h4>13. Returned Product</h4><p>Product may not be returned except by prior written approval of Matrix.</p></div>
-              <div className="qd-tc-item"><h4>14. Services</h4><p>Product shall be installed, erected and commissioned by Buyer at Buyer's expense unless otherwise specified.</p></div>
-              <div className="qd-tc-item"><h4>15. Taxes</h4><p>Buyer shall reimburse Matrix for all taxes, duties, and charges in connection with production, sale, transportation, and use of Product.</p></div>
-              <div className="qd-tc-item"><h4>16. Terms of Payment</h4><p>Invoices are payable per proposal terms. If payment is not current, interest will be charged at 5% above the prime rate of Citibank, N.A., or the maximum legal rate, whichever is lower.</p></div>
-              <div className="qd-tc-item"><h4>17. Limited Warranty</h4><p>Matrix warrants Product free from defects in labor and workmanship for one (1) year from date of shipment. Warranty excludes ordinary wear and tear, improper loading of software, corrosion, erosion, unauthorized modifications, or application outside design limitations. EXCEPT FOR THE EXPRESS WARRANTY STATED HEREIN, MATRIX DISCLAIMS ALL OTHER WARRANTIES, WHETHER EXPRESS, IMPLIED, OR STATUTORY.</p></div>
-              <div className="qd-tc-item"><h4>18. Patent Indemnification</h4><p>Matrix shall defend and hold harmless Buyer against claims for infringement of valid US patents with respect to the Product. Buyer must notify Matrix within ten (10) days of any such claim.</p></div>
-              <div className="qd-tc-item"><h4>19. Indemnification</h4><p>Each party shall indemnify the other from third-person claims for damages directly resulting from personal injury or death and damage to tangible property caused by the indemnifying party's negligence or willful misconduct.</p></div>
-              <div className="qd-tc-item"><h4>20. Insurance</h4><p>Matrix shall maintain Workers' Compensation, Commercial General Liability ($1M per occurrence / $2M aggregate), and Automobile Liability Insurance ($1M per occurrence).</p></div>
-              <div className="qd-tc-item"><h4>21. Termination and Suspension</h4><p>Buyer may terminate if Matrix becomes bankrupt or materially breaches the Contract. Matrix may suspend for Buyer's non-payment. Cancellation charges: 25% before engineering submittals; 100% after authorization to proceed with manufacturing.</p></div>
-              <div className="qd-tc-item"><h4>22. Limitation of Liability</h4><p>Neither party shall be liable for loss of profits, anticipated revenue, or consequential damages. Matrix's maximum aggregate liability shall be limited to ten percent (10%) of the Contract price and shall terminate upon expiration of the warranty period.</p></div>
-              <div className="qd-tc-item"><h4>23. Governing Law and Dispute Resolution</h4><p>The Contract shall be governed by Utah law. Disputes shall be resolved through binding arbitration by the AAA in Salt Lake City, Utah. The prevailing party shall be awarded attorneys' fees.</p></div>
-              <div className="qd-tc-item"><h4>24–30. Additional Provisions</h4><p><b>24. Notice:</b> Service via mail, courier, fax, or email. <b>25. Assignment:</b> Neither party may assign without consent. <b>26. Waiver of Breach:</b> No waiver constitutes waiver of other breaches. <b>27. Independent Contractor:</b> Matrix is an independent contractor. <b>28. Severability:</b> Invalid provisions shall be adjusted equitably. <b>29. Survival:</b> Articles 4, 15, 18, 19, 22, 23, and 26 survive termination. <b>30. License Agreements:</b> Buyer agrees to execute Matrix's software license agreements prior to delivery.</p></div>
-              <div className="qd-tc-item"><h4>Supply Chain Statement</h4><p>Matrix cannot confirm or commit to any delivery dates or be liable for any liquidated damages as a result. Please refer to Matrix Supply Chain Statement for further details.</p></div>
+              {(()=>{
+                const raw=_appCtx.termsAndConditions||"";
+                if(!raw.trim())return <div className="qd-tc-item"><p style={{fontStyle:"italic",color:"#94a3b8"}}>No Terms & Conditions configured. Go to Settings to add your T&C.</p></div>;
+                // Parse lines: "1. Title: Body" or "Title: Body" or just plain paragraphs
+                return raw.split("\n").filter(l=>l.trim()).map((line,i)=>{
+                  const m=line.match(/^(\d+[\.\)]\s*.+?):\s*(.+)$/);
+                  if(m)return <div key={i} className="qd-tc-item"><h4>{m[1]}</h4><p>{m[2]}</p></div>;
+                  const m2=line.match(/^([^:]{3,60}):\s*(.+)$/);
+                  if(m2)return <div key={i} className="qd-tc-item"><h4>{m2[1]}</h4><p>{m2[2]}</p></div>;
+                  return <div key={i} className="qd-tc-item"><p>{line}</p></div>;
+                });
+              })()}
             </div>
           </div>
 
@@ -14903,6 +14890,9 @@ function SettingsModal({uid,onClose,onNameChange}){
   const [resetSent,setResetSent]=useState(false);
   const [graphStatus,setGraphStatus]=useState("checking"); // checking|authorized|unauthorized|loading
   const [showPricingReports,setShowPricingReports]=useState(false);
+  const [tcText,setTcText]=useState("");
+  const [tcLoading,setTcLoading]=useState(true);
+  const [tcSaved,setTcSaved]=useState(false);
   const settingsBackdropRef=useRef(null);
   useEffect(()=>{if(settingsBackdropRef.current)settingsBackdropRef.current.scrollTop=0;},[]);
 
@@ -14940,6 +14930,12 @@ function SettingsModal({uid,onClose,onNameChange}){
     }).finally(()=>setLoading(false));
     // Check if Mail.Send is already consented
     tryGraphTokenSilent().then(tok=>setGraphStatus(tok?"authorized":"unauthorized")).catch(()=>setGraphStatus("unauthorized"));
+    // Load T&C from company config
+    if(_appCtx.companyId){
+      fbDb.doc(`companies/${_appCtx.companyId}`).get().then(d=>{
+        if(d.exists&&d.data().termsAndConditions)setTcText(d.data().termsAndConditions);
+      }).finally(()=>setTcLoading(false));
+    }else setTcLoading(false);
   },[uid]);
 
   async function authorizeOutlook(){
@@ -15169,6 +15165,29 @@ function SettingsModal({uid,onClose,onNameChange}){
           </button>
         </div>
         {showPricingReports&&<PricingReportsModal uid={uid} onClose={()=>setShowPricingReports(false)}/>}
+
+        {/* Terms & Conditions */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Quote Terms & Conditions</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:8,lineHeight:1.6}}>
+            Paste your full Terms & Conditions below. These will appear on page 2 of the printed Client Quote. Use the format:<br/>
+            <code style={{fontSize:10,color:"#38bdf8"}}>1. Section Title: Section body text here.</code>
+          </div>
+          {tcLoading?<div style={{fontSize:12,color:C.muted}}>Loading…</div>:(
+            <>
+              <textarea value={tcText} onChange={e=>setTcText(e.target.value)} rows={12} placeholder={"1. Definitions: (a) \"Matrix\" shall mean Matrix Systems LLC...\n2. Prevailing Documentation: (a) Matrix's proposal...\n3. Engineering and Drawings: ..."} style={{width:"100%",background:"rgba(255,255,255,0.04)",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:11,lineHeight:1.5,resize:"vertical",outline:"none",fontFamily:"inherit"}}/>
+              <div style={{display:"flex",gap:8,marginTop:8,alignItems:"center"}}>
+                <button onClick={async()=>{
+                  if(!_appCtx.companyId)return;
+                  await fbDb.doc(`companies/${_appCtx.companyId}`).update({termsAndConditions:tcText});
+                  _appCtx.termsAndConditions=tcText;
+                  setTcSaved(true);setTimeout(()=>setTcSaved(false),2000);
+                }} style={btn(C.accent,"#fff",{fontSize:12,padding:"6px 18px"})}>Save T&C</button>
+                {tcSaved&&<span style={{fontSize:12,color:C.green}}>✓ Saved</span>}
+              </div>
+            </>
+          )}
+        </div>
 
         <div style={{borderTop:`1px solid ${C.border}`,paddingTop:20}}>
           <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:12,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Change Password</label>
@@ -18017,6 +18036,7 @@ INSTRUCTIONS:
             setCompanyAddress(cdat.address||null);
             setCompanyPhone(cdat.phone||null);
             _appCtx.company={name:cdat.name||null,logoUrl:cdat.logoUrl||null,address:cdat.address||null,phone:cdat.phone||null};
+            _appCtx.termsAndConditions=cdat.termsAndConditions||"";
             // Load BC environment config from Firestore
             await loadBcConfig(profile.companyId);
             // Also try to pull fresh company data from BC
