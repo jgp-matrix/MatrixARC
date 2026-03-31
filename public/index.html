@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.173";
+const APP_VERSION="v1.19.174";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6464,6 +6464,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       }
     }
     // Process API vendor groups — auto-fetch pricing with cross-vendor check
+    console.log("[RFQ-API] API groups to process:",apiGroups.length,apiGroups.map(a=>a.group.vendorName));
     async function searchVendorBatch(fnName,items){
       const fn=firebase.functions().httpsCallable(fnName,{timeout:120000});
       const BATCH=10;const results=[];
@@ -6476,6 +6477,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     }
     for(const{group,apiInfo}of apiGroups){
       try{
+        console.log("[RFQ-API] Processing vendor:",group.vendorName,"type:",apiInfo.type,"items:",group.items.length);
         const items=group.items.map(i=>({partNumber:(i.partNumber||"").trim(),manufacturer:i.manufacturer||""}));
         // Determine which APIs to call: primary first, then cross-check the other
         const searchPlan=[];
@@ -6555,7 +6557,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     if(shouldPrint&&onPrint)onPrint(groups);
   }
   const stColors={sent:"#4ade80",error:"#f87171",skipped:"#64748b",sending:"#818cf8"};
-  const stLabel=st=>st?.state==="sending"?"⏳ Sending…":st?.state==="sent"?"✓ Sent":st?.state==="error"?`✗ ${st.msg||"Failed"}`:st?.state==="skipped"?"— Skipped":null;
+  const stLabel=st=>st?.state==="sending"?(st.msg?`⏳ ${st.msg}`:"⏳ Sending…"):st?.state==="sent"?(st.msg?`✓ ${st.msg}`:"✓ Sent"):st?.state==="error"?`✗ ${st.msg||"Failed"}`:st?.state==="skipped"?"— Skipped":null;
   return ReactDOM.createPortal(
     <>
     {previewGroup&&(
