@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.192";
+const APP_VERSION="v1.19.193";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13932,6 +13932,49 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const items=(submission.lineItems||[]).filter(item=>(item.partNumber||'').trim()||(item.unitPrice!=null)||(item.description||'').trim());
     submission={...submission,lineItems:items};
     const bomRows=(projectRef.current.panels||[]).flatMap(p=>(p.bom||[]).filter(r=>!r.isLaborRow));
+    const bomIsEmpty=bomRows.length===0;
+
+    // If BOM is empty, create BOM rows from supplier quote items first, then proceed to review
+    if(bomIsEmpty&&items.length>0){
+      const now=Date.now();
+      const targetPanel=(projectRef.current.panels||[]).find(p=>p.id===selectedPanelId)||(projectRef.current.panels||[])[0];
+      if(targetPanel){
+        const newBomRows=items.filter(si=>!si.cannotSupply&&(si.partNumber||"").trim()).map((si,i)=>{
+          const pn=stripMfrPrefix((si.partNumber||"").trim());
+          return{
+            id:now+i+Math.random(),
+            qty:si.qty||1,
+            partNumber:pn,
+            description:(si.description||"").trim(),
+            manufacturer:si.manufacturer||"",
+            notes:si.notes||"",
+            unitPrice:si.unitPrice||0,
+            priceSource:"bc",
+            priceDate:now,
+            bcPoDate:now,
+            bcVendorName:submission.vendorName||""
+          };
+        });
+        const updatedPanels=(projectRef.current.panels||[]).map(p=>{
+          if(p.id!==targetPanel.id)return p;
+          return{...p,bom:[...(p.bom||[]),...newBomRows],status:"extracted"};
+        });
+        const updatedProject={...projectRef.current,panels:updatedPanels};
+        update(updatedProject);
+        // Now try to match each new row to BC items and flag unmatched for creation
+        const unmatchedForBc=[];
+        for(const row of newBomRows){
+          const bcItem=await bcLookupItemForQuote((row.partNumber||"").trim()).catch(()=>null);
+          if(!bcItem){unmatchedForBc.push(row);}
+        }
+        if(unmatchedForBc.length>0){
+          alert(`${newBomRows.length} item${newBomRows.length!==1?"s":""} added to BOM from ${submission.vendorName||"supplier"} quote.\n\n${unmatchedForBc.length} item${unmatchedForBc.length!==1?"s":""} not found in BC — use the BC Item Browser (🔍) on each row to create them.`);
+        }else{
+          alert(`${newBomRows.length} item${newBomRows.length!==1?"s":""} added to BOM from ${submission.vendorName||"supplier"} quote. All items matched in BC.`);
+        }
+      }
+      return;
+    }
 
     // Auto-match: for each supplier item with a price, find the BOM row it belongs to
     const matches=[];
