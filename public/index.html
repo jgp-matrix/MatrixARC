@@ -92,7 +92,7 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 .qd-missing th{padding:1px 6px;text-align:left;color:#94a3b8;font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.3px}
 .qd-missing td{padding:0 6px;font-size:10px;line-height:1.4}
 @media print{
-  @page{size:8.5in 11in;margin:0}
+  @page{size:letter;margin:0.25in}
   .no-print{display:none!important}
   body{background:#fff!important;margin:0!important;padding:0!important}
   body *{visibility:hidden!important}
@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.156";
+const APP_VERSION="v1.19.157";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
