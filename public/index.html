@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.187";
+const APP_VERSION="v1.19.188";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13778,6 +13778,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const warn=[];
     allBom.forEach(r=>{
       if(r.isLaborRow||r.customerSupplied)return;
+      if(/matrix\s*systems/i.test(r.bcVendorName||""))return;
       const zeroCost=(r.unitPrice===0||r.unitPrice==null)&&r.priceSource!=="manual";
       const aiPrice=r.priceSource==="ai";
       const isBC=r.priceSource==="bc"&&"bcPoDate"in r;
