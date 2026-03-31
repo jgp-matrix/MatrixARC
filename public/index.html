@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.170";
+const APP_VERSION="v1.19.171";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6359,12 +6359,13 @@ function RfqDocument({groups,projectName}){
 
 // ── RFQ EMAIL MODAL ──
 const API_VENDOR_PATTERNS=[
-  {pattern:/digi[\s-]?key/i,type:"digikey",label:"DigiKey API"},
-  {pattern:/mouser/i,type:"mouser",label:"Mouser API"}
+  {pattern:/digi[\s-]?key/i,type:"digikey",label:"DigiKey API",hasApi:true},
+  {pattern:/mouser/i,type:"mouser",label:"Mouser API",hasApi:true},
+  {pattern:/rs[\s-]?online|rs[\s-]?components/i,type:"rsonline",label:"RS-Online (via DigiKey/Mouser)",hasApi:false}
 ];
 function isApiVendor(vendorName){return API_VENDOR_PATTERNS.find(v=>v.pattern.test(vendorName||""));}
 
-function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEmail,onClose,onSent,onPrint,onApiPriced}){
+function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEmail,onClose,onSent,onPrint,onApiPriced,onApiAlternates}){
   const [emails,setEmails]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=g.vendorEmail||"";});return m;});
   const [included,setIncluded]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;});
   const [statuses,setStatuses]=useState({});
@@ -6462,32 +6463,88 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         fbDb.doc(`users/${uid}/config/supplierCrossRef`).set({records:firebase.firestore.FieldValue.arrayUnion(...allCrossings)},{merge:true}).catch(e=>console.warn("CrossRef save failed:",e));
       }
     }
-    // Process API vendor groups — auto-fetch pricing
+    // Process API vendor groups — auto-fetch pricing with cross-vendor check
+    async function searchVendorBatch(fnName,items){
+      const fn=firebase.functions().httpsCallable(fnName,{timeout:120000});
+      const BATCH=10;const results=[];
+      for(let i=0;i<items.length;i+=BATCH){
+        const batch=items.slice(i,i+BATCH);
+        try{const r=await fn({items:batch});results.push(...(r.data.results||r.data||[]));}
+        catch(e){batch.forEach(b=>results.push({partNumber:b.partNumber,found:false,error:e.message}));}
+      }
+      return results;
+    }
     for(const{group,apiInfo}of apiGroups){
       try{
-        setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending",msg:`Fetching ${apiInfo.label} prices…`}}));
-        const fn=firebase.functions().httpsCallable(apiInfo.type==="digikey"?"digikeySearch":"mouserSearch",{timeout:120000});
         const items=group.items.map(i=>({partNumber:(i.partNumber||"").trim(),manufacturer:i.manufacturer||""}));
-        const BATCH=10;
-        const results=[];
-        for(let i=0;i<items.length;i+=BATCH){
-          const batch=items.slice(i,i+BATCH);
-          try{
-            const r=await fn({items:batch});
-            results.push(...(r.data.results||r.data||[]));
-          }catch(e){
-            batch.forEach(b=>results.push({partNumber:b.partNumber,found:false,error:e.message}));
+        // Determine which APIs to call: primary first, then cross-check the other
+        const searchPlan=[];
+        if(apiInfo.type==="digikey"){searchPlan.push({fn:"digikeySearch",label:"DigiKey",name:"DigiKey"});searchPlan.push({fn:"mouserSearch",label:"Mouser",name:"Mouser"});}
+        else if(apiInfo.type==="mouser"){searchPlan.push({fn:"mouserSearch",label:"Mouser",name:"Mouser"});searchPlan.push({fn:"digikeySearch",label:"DigiKey",name:"DigiKey"});}
+        else{/* RS-Online: no API, search both DK and Mouser */searchPlan.push({fn:"digikeySearch",label:"DigiKey",name:"DigiKey"});searchPlan.push({fn:"mouserSearch",label:"Mouser",name:"Mouser"});}
+
+        // Search primary vendor
+        setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending",msg:`Searching ${searchPlan[0].label}…`}}));
+        const primaryResults=await searchVendorBatch(searchPlan[0].fn,items);
+
+        // Identify items NOT found or priced by primary
+        const notFoundPNs=new Set();
+        const primaryMap={};
+        primaryResults.forEach(r=>{
+          primaryMap[(r.partNumber||"").trim().toUpperCase()]={...r,source:searchPlan[0].name};
+          if(!r.found||!r.price||r.price<=0)notFoundPNs.add((r.partNumber||"").trim().toUpperCase());
+        });
+        items.forEach(i=>{if(!primaryMap[i.partNumber.toUpperCase()])notFoundPNs.add(i.partNumber.toUpperCase());});
+
+        // Cross-check: search ALL items on secondary to find better prices + fill gaps
+        setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending",msg:`Cross-checking ${searchPlan[1].label}…`}}));
+        const secondaryResults=await searchVendorBatch(searchPlan[1].fn,items);
+        const secondaryMap={};
+        secondaryResults.forEach(r=>{secondaryMap[(r.partNumber||"").trim().toUpperCase()]={...r,source:searchPlan[1].name};});
+
+        // Merge: use best price, prefer primary if equal, fill gaps from secondary
+        const finalResults=[];
+        const altSources=[]; // items where secondary was cheaper
+        items.forEach(i=>{
+          const pn=i.partNumber.toUpperCase();
+          const pri=primaryMap[pn];const sec=secondaryMap[pn];
+          const priOk=pri&&pri.found&&pri.price>0;
+          const secOk=sec&&sec.found&&sec.price>0;
+          if(priOk&&secOk){
+            if(sec.price<pri.price){
+              // Secondary is cheaper — use it, record alternate
+              finalResults.push({...sec,partNumber:i.partNumber,source:sec.source});
+              altSources.push({partNumber:i.partNumber,primarySource:pri.source,primaryPrice:pri.price,chosenSource:sec.source,chosenPrice:sec.price,savings:pri.price-sec.price});
+            }else{
+              finalResults.push({...pri,partNumber:i.partNumber,source:pri.source});
+              if(sec.price>0)altSources.push({partNumber:i.partNumber,primarySource:pri.source,primaryPrice:pri.price,altSource:sec.source,altPrice:sec.price,note:"primary cheaper"});
+            }
+          }else if(priOk){
+            finalResults.push({...pri,partNumber:i.partNumber,source:pri.source});
+          }else if(secOk){
+            finalResults.push({...sec,partNumber:i.partNumber,source:sec.source});
+            altSources.push({partNumber:i.partNumber,primarySource:searchPlan[0].name,primaryPrice:0,chosenSource:sec.source,chosenPrice:sec.price,note:"not found at primary"});
+          }else{
+            finalResults.push({partNumber:i.partNumber,found:false,price:0,source:"none"});
           }
-        }
-        // Apply found prices to BOM via onSent callback with pricing data
-        const priced=results.filter(r=>r.found&&r.price>0);
+        });
+
+        const priced=finalResults.filter(r=>r.found&&r.price>0);
         if(priced.length>0&&onApiPriced){
           onApiPriced(group.vendorName,group.vendorNo||"",priced);
         }
+        // Push alternate vendor prices to BC Purchase Prices
+        if(altSources.length>0&&onApiAlternates){
+          onApiAlternates(altSources);
+        }
         group.items.forEach(item=>sentItemIds.push(item.id));
-        const failCount=results.filter(r=>!r.found).length;
-        setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent",msg:`${priced.length} priced${failCount>0?`, ${failCount} not found`:""}`}}));
-        historyEntries.push({vendorName:group.vendorName,vendorEmail:"API",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false,apiVendor:apiInfo.type,apiResults:{priced:priced.length,notFound:failCount}});
+        const failCount=finalResults.filter(r=>!r.found).length;
+        const altCount=altSources.filter(a=>a.chosenSource).length;
+        let msg=`${priced.length} priced`;
+        if(altCount>0)msg+=`, ${altCount} from alternate source`;
+        if(failCount>0)msg+=`, ${failCount} not found`;
+        setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent",msg}}));
+        historyEntries.push({vendorName:group.vendorName,vendorEmail:"API",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false,apiVendor:apiInfo.type,apiResults:{priced:priced.length,notFound:failCount,alternates:altCount}});
       }catch(e){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:String(e.message||e)}}));
         historyEntries.push({vendorName:group.vendorName,vendorEmail:"API",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:false,error:String(e.message||e),apiVendor:apiInfo.type});
@@ -13823,7 +13880,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} bcProjectNumber={project.bcProjectNumber||""} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint} onApiPriced={(vendorName,vendorNo,results)=>{
-            // Apply API-fetched prices to BOM rows
+            // Apply API-fetched prices to BOM rows — use source from cross-vendor check
             const panels=[...(projectRef.current.panels||[])];
             let applied=0;
             panels.forEach((p,pi)=>{
@@ -13833,13 +13890,32 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 const match=results.find(res=>(res.partNumber||"").trim().toUpperCase()===pn);
                 if(match&&match.price>0){
                   applied++;
-                  return{...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:vendorName,bcVendorNo:vendorNo};
+                  return{...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:match.source||vendorName,bcVendorNo:vendorNo};
                 }
                 return r;
               });
               panels[pi]={...p,bom};
             });
             if(applied>0)update({...projectRef.current,panels});
+          }} onApiAlternates={async(altSources)=>{
+            // Write alternate vendor prices to BC Purchase Prices
+            if(!_bcToken)return;
+            try{
+              // Fetch all vendors from BC to resolve names → numbers
+              const compId=await bcGetCompanyId();
+              const vr=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$select=number,displayName&$top=500`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+              const vendors=vr.ok?(await vr.json()).value||[]:[];
+              for(const alt of altSources){
+                if(!alt.chosenPrice||alt.chosenPrice<=0)continue;
+                try{
+                  const altVendor=vendors.find(v=>(v.displayName||"").toLowerCase().includes((alt.chosenSource||"").toLowerCase()));
+                  if(altVendor){
+                    await bcPushPurchasePrice(alt.partNumber,altVendor.number,alt.chosenPrice,Date.now(),"EA");
+                    console.log(`[API] Wrote alternate price for ${alt.partNumber}: ${alt.chosenSource} $${alt.chosenPrice} (vendor ${altVendor.number})`);
+                  }else{console.warn(`[API] Vendor not found in BC for "${alt.chosenSource}"`);}
+                }catch(e){console.warn(`[API] Failed to write alternate price for ${alt.partNumber}:`,e.message);}
+              }
+            }catch(e){console.warn("[API] Failed to fetch vendors for alternate pricing:",e.message);}
           }}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} onClose={()=>setShowRfqHistory(false)}/>}
           {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={async(poNum)=>{
