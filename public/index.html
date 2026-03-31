@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.190";
+const APP_VERSION="v1.19.191";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10359,11 +10359,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       })()}
 
       {/* BOM Table */}
-      {(panel.bom||[]).length>0&&(
+      {true&&(
         <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
             <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:6}}>
-              BILL OF MATERIALS — {panel.bom.length} items
+              BILL OF MATERIALS — {(panel.bom||[]).length} items
             </div>
             {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
               <button data-tip="Re-run AI pricing on all BOM rows to fetch current prices from Business Central" onClick={()=>runPricingOnPanel()} disabled={aiPricing}
@@ -10377,10 +10377,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":bcSyncStatus==="pending"?"⚠ Push Update to BC":"⇅ Sync BC"}
               </button>
             )}
-            <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
-            <button onClick={exportCADLinkBOM} style={btn("#0d1a2a","#38bdf8",{fontSize:12,padding:"4px 12px",border:"1px solid #38bdf844"})}>⬇ CADLink BOM</button>
+            {(panel.bom||[]).length>0&&<button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>}
+            {(panel.bom||[]).length>0&&<button onClick={exportCADLinkBOM} style={btn("#0d1a2a","#38bdf8",{fontSize:12,padding:"4px 12px",border:"1px solid #38bdf844"})}>⬇ CADLink BOM</button>}
           </div>
-          <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
+          {(panel.bom||[]).length>0&&<div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
                 <col style={{width:42}}/><col style={{width:42}}/><col style={{width:34}}/>
@@ -10654,7 +10654,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 })()}
               </tbody>
             </table>
-          </div>
+          </div>}
           {!readOnly&&<div style={{display:"flex",gap:8,marginTop:8}}>
             <button onClick={addBomRow} style={btn("transparent",C.accent,{fontSize:12,padding:"8px 12px",border:`1px dashed ${C.accent}66`,flex:1})}>+ Add Row</button>
           </div>}
