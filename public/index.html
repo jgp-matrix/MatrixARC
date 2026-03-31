@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.147";
+const APP_VERSION="v1.19.148";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9622,7 +9622,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,100),"",r.qty||1,"EA"]);
     });
 
-    const csv=rows.map(r=>r.map(c=>`"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const csv=rows.map(r=>r.map(c=>`"${String(c!=null?c:"").replace(/"/g,'""')}"`).join(",")).join("\n");
     const a=document.createElement("a");
     a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
     a.download=`CADLink_${taskPN.replace(/[^a-z0-9\-]/gi,"_")}.csv`;
