@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.203";
+const APP_VERSION="v1.19.204";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16677,6 +16677,7 @@ function ReportsModal({uid,onClose}){
 
 function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts}){
   const [groupBy,setGroupBy]=useState("status");
+  const [projectSearch,setProjectSearch]=useState("");
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
   const bgTasks=useBgTasks();
@@ -16781,6 +16782,11 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         <button data-tip="Start a new panel extraction project" data-tour="new-project-btn" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
           <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
         </button>
+        <div style={{position:"relative",flex:1,maxWidth:400}}>
+          <input value={projectSearch} onChange={e=>setProjectSearch(e.target.value)} placeholder="🔍 Search projects…"
+            style={{...inp({fontSize:13,padding:"9px 12px 9px 12px",borderRadius:8,width:"100%",boxSizing:"border-box"})}}/>
+          {projectSearch&&<button onClick={()=>setProjectSearch("")} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>✕</button>}
+        </div>
       </div>
 
       {/* AI Search results are now shown in the floating chat panel above */}
@@ -16805,7 +16811,17 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       )}
 
       {(()=>{
-        const myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="budgetary"||!p.importedFromBC));
+        let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="budgetary"||!p.importedFromBC));
+        // Apply search filter
+        if(projectSearch.trim()){
+          const q=projectSearch.trim().toLowerCase();
+          myProjects=myProjects.filter(p=>{
+            const fields=[p.name,p.bcProjectNumber,p.customerName,p.drawingNo,
+              ...(p.panels||[]).flatMap(pan=>[pan.name,pan.drawingNo,pan.drawingDesc,
+                ...(pan.bom||[]).map(r=>r.partNumber),...(pan.bom||[]).map(r=>r.description),...(pan.bom||[]).map(r=>r.bcVendorName)])];
+            return fields.some(f=>(f||"").toLowerCase().includes(q));
+          });
+        }
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         return(<>
