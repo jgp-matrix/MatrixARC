@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.165";
+const APP_VERSION="v1.19.166";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5438,7 +5438,7 @@ function EngineeringQuestionsModal({panel,uid,onUpdate,onSave,onClose,memberMap}
   }
   return ReactDOM.createPortal(
     React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",padding:16},onMouseDown:e=>{if(e.target===e.currentTarget)onClose();}},
-      React.createElement("div",{style:{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,padding:"20px 24px",maxWidth:620,width:"95%",maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 12px 48px rgba(0,0,0,0.6)"}},
+      React.createElement("div",{style:{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,padding:"20px 24px",maxWidth:620,width:"95%",maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 12px 48px rgba(0,0,0,0.6)"}},
         React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:12,flexShrink:0}},
           React.createElement("span",{style:{fontSize:16,fontWeight:800,color:C.text,flex:1}},"Engineering Questions"),
           React.createElement("span",{style:{fontSize:10,fontWeight:700,color:"#f59e0b",background:"#f59e0b22",borderRadius:10,padding:"2px 8px"}},openCount+" open"),
@@ -6466,7 +6466,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       </div>
     )}
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",minWidth:480,maxWidth:600,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",minWidth:480,maxWidth:600,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:8}}>Send RFQ Emails</div>
         <div style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,padding:"7px 10px",marginBottom:14,fontSize:12,display:"flex",alignItems:"center",gap:8}}>
           <span style={{color:"#94a3b8"}}>From:</span>
@@ -6575,7 +6575,7 @@ function PoReceivedModal({project,bcProjectNumber,onClose,onDone}){
   const inp=(extra={})=>({width:"100%",boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"6px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none",...extra});
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:480,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:480,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:4}}>📬 PO Received</div>
         <div style={{fontSize:12,color:"#94a3b8",marginBottom:18}}>Writes PO# to BC External Document No, sets project status to Open, and updates panel ship dates.</div>
         {done?(
@@ -6706,7 +6706,7 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
   const fmtPrice=p=>p!=null?"$"+Number(p).toFixed(2):"—";
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:680,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:680,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{display:"flex",alignItems:"center",marginBottom:16}}>
           <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",flex:1}}>📥 Supplier Quote Submissions</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px"}}>✕</button>
@@ -6784,7 +6784,7 @@ function RfqHistoryModal({uid,onClose}){
   const tabBtn=(id,label,count)=>React.createElement("button",{key:id,onClick:()=>setTab(id),style:{background:tab===id?"#1e293b":"transparent",color:tab===id?"#fff":"#94a3b8",border:tab===id?"1px solid #3b82f6":"1px solid transparent",borderRadius:6,padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}},label+(count>0?` (${count})`:""));
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}} onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:700,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:700,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{display:"flex",alignItems:"center",marginBottom:12}}>
           <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",flex:1}}>RFQ History</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px"}}>✕</button>
@@ -10472,7 +10472,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
       {showAiQuestions&&(panel.aiQuestions||[]).length>0&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.85)"}}>
-          <div style={{background:"#12121f",border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",maxWidth:560,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 12px 48px rgba(0,0,0,0.6)"}}>
+          <div style={{background:"#12121f",border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",maxWidth:560,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 12px 48px rgba(0,0,0,0.6)"}}>
             <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:4}}>AI has questions about this BOM</div>
             <div style={{fontSize:12,color:C.muted,marginBottom:16,lineHeight:1.5}}>The extraction AI wasn't sure about a few items. Your answers will improve accuracy.</div>
             {(panel.aiQuestions||[]).map((q,qi)=>(
@@ -10595,7 +10595,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {deleteConfirmId&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
           onMouseDown={e=>{if(e.target===e.currentTarget)setDeleteConfirmId(null);}}>
-          <div style={{background:"#0d0d1a",border:"1px solid #ef444466",borderRadius:10,padding:"24px 28px",width:340,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{background:"#0d0d1a",border:"1px solid #ef444466",borderRadius:10,padding:"24px 28px",width:340,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
             <div style={{fontSize:15,fontWeight:800,color:"#f87171",marginBottom:8}}>Delete BOM Row?</div>
             <div style={{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.5}}>
               {(()=>{const r=(panel.bom||[]).find(x=>x.id===deleteConfirmId);return r?<><strong style={{color:"#f1f5f9",fontFamily:"monospace"}}>{r.partNumber||"(no part #)"}</strong>{r.description?<span style={{color:"#94a3b8"}}> — {r.description}</span>:null}</>:"This row";})()}
@@ -10610,7 +10610,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       )}
       {reExtractWarn&&ReactDOM.createPortal(
         React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onMouseDown:e=>{if(e.target===e.currentTarget)setReExtractWarn(false);}},
-          React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b66",borderRadius:10,padding:"24px 28px",width:380,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}},
+          React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b66",borderRadius:10,padding:"24px 28px",width:380,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}},
             React.createElement("div",{style:{fontSize:15,fontWeight:800,color:"#f59e0b",marginBottom:8}},"Re-Extract Drawings?"),
             React.createElement("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.6}},"This will overwrite the current BOM, pricing, and validation data with a fresh extraction. Any manual edits will be lost."),
             React.createElement("div",{style:{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}},
@@ -10633,7 +10633,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         return ReactDOM.createPortal(
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
             onMouseDown={e=>{if(e.target===e.currentTarget)dismiss();}}>
-            <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:520,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:520,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
               <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>ARC — Part Number Change Detected</div>
               <div style={{fontSize:13,color:C.muted,marginBottom:12}}>
                 <span style={{color:C.red,fontWeight:700}}>{crossOrCorrectPending.origPN}</span>
@@ -12645,7 +12645,7 @@ ${fullText.slice(0,8000)}`;
     </div>
   {showImportReview&&ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexShrink:0}}>
           <span style={{fontSize:22}}>📋</span>
           <div style={{flex:1}}>
@@ -13148,7 +13148,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
     {showDeleteAdminWarn&&(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
         onClick={()=>setShowDeleteAdminWarn(false)}>
-        <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",maxWidth:380,width:"100%",boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",maxWidth:380,width:"100%",boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}} onClick={e=>e.stopPropagation()}>
           <div style={{fontSize:18,fontWeight:800,color:C.red,marginBottom:10}}>Admin Required</div>
           <div style={{fontSize:13,color:C.sub,lineHeight:1.6,marginBottom:20}}>
             Only an <strong style={{color:C.accent}}>Admin</strong> can delete a project. Please contact your administrator to have this project removed.
@@ -13787,7 +13787,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
           {quoteReview&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-              <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+              <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexShrink:0}}>
                   <span style={{fontSize:22}}>📥</span>
                   <div>
@@ -13905,7 +13905,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           ,document.body)}
           {eqWarnOpen&&ReactDOM.createPortal(
             React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}},
-              React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}},
+              React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}},
                 React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:8}},
                   React.createElement("span",{style:{fontSize:22}},"❓"),
                   React.createElement("div",{style:{fontSize:15,fontWeight:800,color:"#fbbf24"}},"Unanswered Engineering Questions")
@@ -13928,7 +13928,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           )}
           {quoteWarnRows&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-              <div style={{background:"#0d0d1a",border:"1px solid #b45309",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+              <div style={{background:"#0d0d1a",border:"1px solid #b45309",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
                   <span style={{fontSize:22}}>⚠️</span>
                   <div style={{fontSize:15,fontWeight:800,color:"#fbbf24"}}>Item Errors to Correct</div>
@@ -13964,7 +13964,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} bcProjectNumber={project.bcProjectNumber||null} projectId={init.id} onClose={()=>setShowSqModal(false)}/>
       {bcCountMismatch&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:"#0d0d1a",border:"1px solid #ef4444",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{background:"#0d0d1a",border:"1px solid #ef4444",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
               <span style={{fontSize:22}}>⚠️</span>
               <div style={{fontSize:15,fontWeight:800,color:"#ef4444"}}>BC Planning Lines Mismatch</div>
@@ -13991,7 +13991,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       ,document.body)}
       {showBcUploadPrompt&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
             {(()=>{
               const firstPanel=(project.panels||[])[0];
               const rev=project.quoteRev||0;
@@ -14039,7 +14039,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       ,document.body)}
       {showProductionUpload&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:"#0d0d1a",border:"1px solid #22c55e",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{background:"#0d0d1a",border:"1px solid #22c55e",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
             {(()=>{
               const firstPanel=(project.panels||[])[0];
               const dwg=firstPanel?.drawingNo||"NoDWG";
@@ -15679,7 +15679,7 @@ function SupplierPricingUploadModal({uid,onClose}){
   }
 
   const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:700,display:"flex",alignItems:"center",justifyContent:"center"};
-  const modal={background:C.card,borderRadius:14,width:900,maxWidth:"96vw",maxHeight:"85vh",display:"flex",flexDirection:"column",border:`1px solid ${C.border}`,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.6)"};
+  const modal={background:C.card,borderRadius:14,width:900,maxWidth:"96vw",maxHeight:"85vh",display:"flex",flexDirection:"column",border:`1px solid ${C.border}`,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.6)"};
   const hdr={padding:"18px 24px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"};
   const body={flex:1,overflowY:"auto",padding:"20px 24px"};
 
@@ -16114,7 +16114,7 @@ function ReportsModal({uid,onClose}){
   const vendorNames=Object.keys(byVendor).sort();
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:12,width:"100%",maxWidth:960,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:12,width:"100%",maxWidth:960,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{padding:"18px 24px",borderBottom:"1px solid #3d6090",display:"flex",alignItems:"center",gap:12}}>
           <div style={{fontSize:16,fontWeight:800,color:"#f1f5f9",flex:1}}>📊 Reports</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px"}}>✕</button>
@@ -16423,7 +16423,7 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
       onMouseDown={e=>{if(!copying&&e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#0d0d1a",border:"1px solid "+C.accent+"66",borderRadius:10,padding:"24px 28px",width:420,boxShadow:"0 0 20px 2px rgba(56,189,248,0.12),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:"#0d0d1a",border:"1px solid "+C.accent+"66",borderRadius:10,padding:"24px 28px",width:420,boxShadow:"0 0 30px 6px rgba(56,189,248,0.35),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{fontSize:15,fontWeight:800,color:C.accent,marginBottom:12}}>Copy Project</div>
         <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.5}}>
           Creates a new BC project with all panels, BOM data, drawings, tasks, and planning lines copied from <strong style={{color:C.text}}>{project.bcProjectNumber}</strong>.
@@ -18337,7 +18337,7 @@ INSTRUCTIONS:
           <div style={{position:"relative",flexShrink:0}}>
             <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:notifications.length>0?"#fbbf24":C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔔</button>
             {notifications.length>0&&<div style={{position:"absolute",top:5,right:5,background:"#dc2626",color:"#fff",borderRadius:"50%",fontSize:10,fontWeight:800,minWidth:17,height:17,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,pointerEvents:"none"}}>{notifications.length>9?"9+":notifications.length}</div>}
-            {showBellMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:320,maxWidth:380,boxShadow:"0 0 16px 2px rgba(56,189,248,0.1),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+            {showBellMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:320,maxWidth:380,boxShadow:"0 0 24px 4px rgba(56,189,248,0.3),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
               <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,flex:1}}>Notifications {notifications.length>0&&`(${notifications.length})`}</span>
                 {notifications.length>0&&<button onClick={markAllNotifsRead} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>Mark all read</button>}
@@ -18374,7 +18374,7 @@ INSTRUCTIONS:
           {/* ⚙ Gear menu */}
           <div style={{position:"relative",flexShrink:0}}>
             <button data-tour="config-btn" data-tour-training="training-btn" title="Settings & Tools" onClick={()=>{setShowGearMenu(v=>!v);setShowUserMenu(false);}} style={{background:showGearMenu?C.accentDim:"none",border:showGearMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showGearMenu?C.accent:C.muted,cursor:"pointer",fontSize:23,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙</button>
-            {showGearMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 0 16px 2px rgba(56,189,248,0.1),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+            {showGearMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 0 24px 4px rgba(56,189,248,0.3),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
               <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,marginBottom:4}}>
                 <div style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3}}>ARC Software</div>
                 <div style={{fontSize:11,color:C.accent,fontWeight:600,marginTop:2,fontFamily:"'Orbitron',monospace",letterSpacing:1}}>{APP_VERSION}</div>
@@ -18395,7 +18395,7 @@ INSTRUCTIONS:
             <div data-tour="team-btn" title={user.email} onClick={()=>{setShowUserMenu(v=>!v);setShowGearMenu(false);}} style={{width:44,height:44,borderRadius:"50%",background:showUserMenu?"#1e3a5f":C.border,border:showUserMenu?`2px solid ${C.accent}`:`2px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:18,fontWeight:800,color:showUserMenu?C.accent:"#94a3b8",flexShrink:0,userSelect:"none",letterSpacing:0}}>
               {user.email?user.email[0].toUpperCase():"?"}
             </div>
-            {showUserMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 0 16px 2px rgba(56,189,248,0.1),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+            {showUserMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 0 24px 4px rgba(56,189,248,0.3),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
               <div style={{padding:"12px 16px 10px",borderBottom:`1px solid ${C.border}`}}>
                 <div style={{fontSize:13,color:C.text,fontWeight:600,marginBottom:6,wordBreak:"break-all"}}>{user.email}</div>
                 {userRole&&<span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:8,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
