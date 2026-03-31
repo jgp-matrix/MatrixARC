@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.143";
+const APP_VERSION="v1.19.144";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13477,11 +13477,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }
       if(allMissing.length>0){setBcCountMismatch({arcCount:allBom.length,bcCount:totalBcBom,missing:allMissing});return;}
     }catch(e){console.warn("BC line count check failed:",e);}
-    // All checks passed — show BC upload prompt if BC is connected
-    if(bcNum&&_bcToken){setShowBcUploadPrompt(true);return;}
-    // No BC connection — still show upload prompt if previously uploaded
-    const hasUpload=(proj.panels||[]).some(p=>p.bcPdfAttached);
-    if(hasUpload){setShowBcUploadPrompt(true);return;}
+    // All checks passed — show BC upload prompt only if current revision hasn't been uploaded yet
+    const currentRev=proj.quoteRev||0;
+    const alreadyUploaded=(proj.panels||[]).every(p=>(p.bcUploadQuoteRev||0)>=currentRev);
+    if(bcNum&&_bcToken&&!alreadyUploaded){setShowBcUploadPrompt(true);return;}
+    if(!alreadyUploaded){const hasUpload=(proj.panels||[]).some(p=>p.bcPdfAttached);if(hasUpload){setShowBcUploadPrompt(true);return;}}
     setAutoPrint(true);setView("quote");
   }
 
