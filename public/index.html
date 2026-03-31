@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.168";
+const APP_VERSION="v1.19.169";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6358,7 +6358,13 @@ function RfqDocument({groups,projectName}){
 }
 
 // ── RFQ EMAIL MODAL ──
-function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEmail,onClose,onSent,onPrint}){
+const API_VENDOR_PATTERNS=[
+  {pattern:/digi[\s-]?key/i,type:"digikey",label:"DigiKey API"},
+  {pattern:/mouser/i,type:"mouser",label:"Mouser API"}
+];
+function isApiVendor(vendorName){return API_VENDOR_PATTERNS.find(v=>v.pattern.test(vendorName||""));}
+
+function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEmail,onClose,onSent,onPrint,onApiPriced}){
   const [emails,setEmails]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=g.vendorEmail||"";});return m;});
   const [included,setIncluded]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;});
   const [statuses,setStatuses]=useState({});
@@ -6373,8 +6379,13 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
   const _responseBy=new Date(_today.getTime()+14*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
   async function sendAll(shouldPrint=false){
     setSending(true);
-    const graphToken=await acquireGraphToken();
-    if(!graphToken){setSending(false);alert("Could not get Microsoft 365 token. Make sure you are signed in to your Microsoft account.");return;}
+    // Check if we have any non-API vendors that need email
+    const hasEmailVendors=groups.some(g=>included[g.vendorName]&&!isApiVendor(g.vendorName)&&(emails[g.vendorName]||"").trim());
+    let graphToken=null;
+    if(hasEmailVendors){
+      graphToken=await acquireGraphToken();
+      if(!graphToken){setSending(false);alert("Could not get Microsoft 365 token. Make sure you are signed in to your Microsoft account.");return;}
+    }
     const today=_today;
     const rfqBase=_rfqBase;
     const makeRfqNum=_makeRfqNum;
@@ -6394,10 +6405,18 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     }
     const sentItemIds=[];
     const historyEntries=[];
+    const apiGroups=[]; // collect API vendor groups for post-send processing
     for(const group of groups){
       if(!included[group.vendorName]){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"skipped"}}));
         historyEntries.push({vendorName:group.vendorName,vendorEmail:emails[group.vendorName]||"",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:true});
+        continue;
+      }
+      // API vendors — skip email, queue for auto-fetch
+      const apiInfo=isApiVendor(group.vendorName);
+      if(apiInfo){
+        apiGroups.push({group,apiInfo});
+        setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending"}}));
         continue;
       }
       const to=(emails[group.vendorName]||"").trim();
@@ -6441,6 +6460,37 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       });
       if(allCrossings.length>0){
         fbDb.doc(`users/${uid}/config/supplierCrossRef`).set({records:firebase.firestore.FieldValue.arrayUnion(...allCrossings)},{merge:true}).catch(e=>console.warn("CrossRef save failed:",e));
+      }
+    }
+    // Process API vendor groups — auto-fetch pricing
+    for(const{group,apiInfo}of apiGroups){
+      try{
+        setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending",msg:`Fetching ${apiInfo.label} prices…`}}));
+        const fn=firebase.functions().httpsCallable(apiInfo.type==="digikey"?"digikeySearch":"mouserSearch",{timeout:120000});
+        const items=group.items.map(i=>({partNumber:(i.partNumber||"").trim(),manufacturer:i.manufacturer||""}));
+        const BATCH=10;
+        const results=[];
+        for(let i=0;i<items.length;i+=BATCH){
+          const batch=items.slice(i,i+BATCH);
+          try{
+            const r=await fn({items:batch});
+            results.push(...(r.data.results||r.data||[]));
+          }catch(e){
+            batch.forEach(b=>results.push({partNumber:b.partNumber,found:false,error:e.message}));
+          }
+        }
+        // Apply found prices to BOM via onSent callback with pricing data
+        const priced=results.filter(r=>r.found&&r.price>0);
+        if(priced.length>0&&onApiPriced){
+          onApiPriced(group.vendorName,group.vendorNo||"",priced);
+        }
+        group.items.forEach(item=>sentItemIds.push(item.id));
+        const failCount=results.filter(r=>!r.found).length;
+        setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent",msg:`${priced.length} priced${failCount>0?`, ${failCount} not found`:""}`}}));
+        historyEntries.push({vendorName:group.vendorName,vendorEmail:"API",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false,apiVendor:apiInfo.type,apiResults:{priced:priced.length,notFound:failCount}});
+      }catch(e){
+        setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:String(e.message||e)}}));
+        historyEntries.push({vendorName:group.vendorName,vendorEmail:"API",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:false,error:String(e.message||e),apiVendor:apiInfo.type});
       }
     }
     setSending(false);setDone(true);
@@ -6492,10 +6542,14 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                   <button onClick={()=>setPreviewGroup(g)} title="Preview email" style={{background:"#0d1520",border:"1px solid #0284c7",borderRadius:4,color:"#38bdf8",cursor:"pointer",fontSize:11,padding:"1px 6px",fontFamily:"inherit"}}>👁 Preview</button>
                   <span style={{fontSize:11,color:lbl?stColors[st.state]:"#64748b"}}>{lbl||`${g.items.length} item${g.items.length!==1?"s":""}`}</span>
                 </div>
-                {isOn&&<input value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
-                  placeholder="supplier@email.com" disabled={sending||done}
-                  onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                  style={{width:"100%",boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none"}}/>}
+                {isOn&&(()=>{
+                  const api=isApiVendor(g.vendorName);
+                  if(api)return <div style={{fontSize:11,color:"#4ade80",fontWeight:600,padding:"4px 0"}}>⚡ Pricing will be obtained automatically via {api.label}</div>;
+                  return <input value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
+                    placeholder="supplier@email.com" disabled={sending||done}
+                    onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
+                    style={{width:"100%",boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none"}}/>;
+                })()}
               </div>
             );
           })}
@@ -9674,7 +9728,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const ws=XL.utils.aoa_to_sheet(rows);
     const wb=XL.utils.book_new();
     XL.utils.book_append_sheet(wb,ws,"BOM");
-    XL.writeFile(wb,`CADLink_${taskPN.replace(/[^a-z0-9\-]/gi,"_")}.xls`);
+    XL.writeFile(wb,`CADLink_${taskPN.replace(/[^a-z0-9\-]/gi,"_")}.xlsx`);
   }
 
   return(
@@ -13768,7 +13822,25 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             bcUploadRef={bcUploadRef}
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
-          {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} bcProjectNumber={project.bcProjectNumber||""} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint}/>}
+          {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} bcProjectNumber={project.bcProjectNumber||""} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint} onApiPriced={(vendorName,vendorNo,results)=>{
+            // Apply API-fetched prices to BOM rows
+            const panels=[...(projectRef.current.panels||[])];
+            let applied=0;
+            panels.forEach((p,pi)=>{
+              const bom=(p.bom||[]).map(r=>{
+                if(r.isLaborRow)return r;
+                const pn=(r.partNumber||"").trim().toUpperCase();
+                const match=results.find(res=>(res.partNumber||"").trim().toUpperCase()===pn);
+                if(match&&match.price>0){
+                  applied++;
+                  return{...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:vendorName,bcVendorNo:vendorNo};
+                }
+                return r;
+              });
+              panels[pi]={...p,bom};
+            });
+            if(applied>0)update({...projectRef.current,panels});
+          }}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} onClose={()=>setShowRfqHistory(false)}/>}
           {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={async(poNum)=>{
             setShowPoModal(false);
