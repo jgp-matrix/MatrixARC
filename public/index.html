@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.185";
+const APP_VERSION="v1.19.186";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2716,10 +2716,13 @@ const RFQ_STALE_MS=60*24*60*60*1000; // 60 days
 async function buildRfqSupplierGroups(bom){
   const now=Date.now();
   const RFQ_EXCLUDE_ITEMS=/job\s*buy.?off|crating|^crate$/i;
+  const RFQ_SENT_COOLDOWN=30*24*60*60*1000; // 30 days — don't re-send within this window
   const eligible=bom.filter(r=>{
     if(r.isLaborRow||r.priceSource==="manual")return false;
     // Exclude items whose description matches non-RFQ categories
     if(RFQ_EXCLUDE_ITEMS.test(r.description||"")||RFQ_EXCLUDE_ITEMS.test(r.partNumber||""))return false;
+    // Exclude items with a recent RFQ sent (within cooldown period)
+    if(r.rfqSentDate&&(now-r.rfqSentDate)<RFQ_SENT_COOLDOWN)return false;
     // Include zero-cost items regardless of date
     if(!r.unitPrice||r.unitPrice===0)return true;
     // Use the same date shown in the Priced column
