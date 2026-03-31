@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.163";
+const APP_VERSION="v1.19.164";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5568,14 +5568,18 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   // Logo upload (admin + company only)
   const canUploadLogo=!!(_appCtx.companyId&&_appCtx.role==="admin");
   const [logoUrl,setLogoUrl]=useState(null);
+  const [logoDarkUrl,setLogoDarkUrl]=useState(null);
   const [logoUploading,setLogoUploading]=useState(false);
+  const [logoDarkUploading,setLogoDarkUploading]=useState(false);
   const [logoErr,setLogoErr]=useState("");
   const logoInputRef=useRef(null);
+  const logoDarkInputRef=useRef(null);
   useEffect(()=>{
     if(!_appCtx.companyId)return;
     fbDb.doc(`companies/${_appCtx.companyId}`).get().then(d=>{
       if(d.exists){
         setLogoUrl(d.data().logoUrl||null);
+        setLogoDarkUrl(d.data().logoDarkUrl||null);
       }
     }).catch(()=>{});
   },[]);
@@ -5598,6 +5602,27 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
       await fbDb.doc(`companies/${_appCtx.companyId}`).update({logoUrl:firebase.firestore.FieldValue.delete()});
       setLogoUrl(null);
       if(onLogoChange)onLogoChange(null);
+    }catch(e){setLogoErr("Remove failed: "+(e.message||e));}
+  }
+  async function uploadLogoDark(file){
+    if(!file)return;
+    setLogoErr("");setLogoDarkUploading(true);
+    try{
+      const ref=fbStorage.ref(`companies/${_appCtx.companyId}/logo-dark`);
+      await ref.put(file,{contentType:file.type});
+      const url=await ref.getDownloadURL();
+      await fbDb.doc(`companies/${_appCtx.companyId}`).update({logoDarkUrl:url});
+      setLogoDarkUrl(url);
+      _appCtx.company={...(_appCtx.company||{}),logoDarkUrl:url};
+    }catch(e){setLogoErr("Upload failed: "+(e.message||e));}
+    setLogoDarkUploading(false);
+  }
+  async function removeLogoDark(){
+    setLogoErr("");
+    try{
+      await fbDb.doc(`companies/${_appCtx.companyId}`).update({logoDarkUrl:firebase.firestore.FieldValue.delete()});
+      setLogoDarkUrl(null);
+      _appCtx.company={...(_appCtx.company||{}),logoDarkUrl:null};
     }catch(e){setLogoErr("Remove failed: "+(e.message||e));}
   }
   function fmtDate(iso){
@@ -5768,7 +5793,24 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
               </div>
             </div>
             {logoErr&&<div style={{fontSize:12,color:C.red,marginTop:6}}>{logoErr}</div>}
-            <div style={{fontSize:11,color:C.muted,marginTop:6}}>PNG, JPG, or SVG recommended. Displayed in the header top-left.</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:6}}>PNG, JPG, or SVG recommended. Used in RFQ emails and dark-background areas.</div>
+
+            <div style={{fontSize:13,fontWeight:700,color:C.sub,marginTop:16,marginBottom:10}}>Quote Logo <span style={{fontSize:10,fontWeight:500,color:C.muted}}>(for white background)</span></div>
+            <div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              {logoDarkUrl?(
+                <img src={logoDarkUrl} alt="Quote logo" style={{maxHeight:56,maxWidth:160,objectFit:"contain",borderRadius:6,border:`1px solid ${C.border}`,background:"#fff",padding:4}}/>
+              ):(
+                <div style={{width:100,height:56,borderRadius:6,border:`1px dashed ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:11,background:"#fff"}}>No logo</div>
+              )}
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                <input ref={logoDarkInputRef} type="file" accept="image/*" style={{display:"none"}} onChange={e=>uploadLogoDark(e.target.files[0])}/>
+                <button onClick={()=>logoDarkInputRef.current.click()} disabled={logoDarkUploading} style={btn(C.accent,"#fff",{fontSize:12,padding:"6px 14px",opacity:logoDarkUploading?0.6:1})}>
+                  {logoDarkUploading?"Uploading…":"Upload Quote Logo"}
+                </button>
+                {logoDarkUrl&&<button onClick={removeLogoDark} style={btn(C.border,C.red,{fontSize:12,padding:"6px 14px"})}>Remove</button>}
+              </div>
+            </div>
+            <div style={{fontSize:11,color:C.muted,marginTop:6}}>Dark/colored logo for printed quotes (white paper background). If not set, the main logo is used.</div>
           </div>
         )}
 
@@ -6940,7 +6982,7 @@ function QuoteTab({project,onUpdate}){
           {/* Header */}
           <div className="qd-header">
             <div className="qd-brand">
-              {_appCtx.company?.logoUrl?<img src={_appCtx.company.logoUrl} alt="Logo" style={{maxHeight:52,maxWidth:180,objectFit:"contain"}}/>:<div style={{fontSize:43,lineHeight:1}}>⚙</div>}
+              {(_appCtx.company?.logoDarkUrl||_appCtx.company?.logoUrl)?<img src={_appCtx.company.logoDarkUrl||_appCtx.company.logoUrl} alt="Logo" style={{maxHeight:52,maxWidth:180,objectFit:"contain"}}/>:<div style={{fontSize:43,lineHeight:1}}>⚙</div>}
               <div>
                 <h1>Matrix Systems</h1>
                 <div className="qd-addr">5591 Leo Park Road<br/>West Jordan, UT 84081 US</div>
@@ -18035,7 +18077,7 @@ INSTRUCTIONS:
             setCompanyLogo(cdat.logoUrl||null);
             setCompanyAddress(cdat.address||null);
             setCompanyPhone(cdat.phone||null);
-            _appCtx.company={name:cdat.name||null,logoUrl:cdat.logoUrl||null,address:cdat.address||null,phone:cdat.phone||null};
+            _appCtx.company={name:cdat.name||null,logoUrl:cdat.logoUrl||null,logoDarkUrl:cdat.logoDarkUrl||null,address:cdat.address||null,phone:cdat.phone||null};
             _appCtx.termsAndConditions=cdat.termsAndConditions||"";
             // Load BC environment config from Firestore
             await loadBcConfig(profile.companyId);
