@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.155";
+const APP_VERSION="v1.19.156";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9616,7 +9616,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     a.click();
   }
 
-  function exportCADLinkBOM(){
+  async function exportCADLinkBOM(){
     const n=idx+1;
     const lineSuffix=String(n*100);
     const taskPN=`${bcProjectNumber||"PRJ"}-${lineSuffix}`;
@@ -9633,18 +9633,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,"EA"]);
     });
 
-    // Build XLS (BIFF2 via simple XML Spreadsheet)
-    const xmlRows=rows.map(r=>'<Row>'+r.map(c=>{
-      const v=String(c!=null?c:"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-      return typeof c==="number"?`<Cell><Data ss:Type="Number">${c}</Data></Cell>`:`<Cell><Data ss:Type="String">${v}</Data></Cell>`;
-    }).join("")+'</Row>').join("\n");
-    const xls=`<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="BOM"><Table>${xmlRows}</Table></Worksheet></Workbook>`;
-    const blob=new Blob([xls],{type:"application/vnd.ms-excel"});
-    const a=document.createElement("a");
-    a.href=URL.createObjectURL(blob);
-    a.download=`CADLink_${taskPN.replace(/[^a-z0-9\-]/gi,"_")}.xls`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    // Build proper XLSX using SheetJS (loaded on demand)
+    if(!window.XLSX){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://unpkg.com/xlsx/dist/xlsx.full.min.js';
+        s.onload=res;s.onerror=()=>rej(new Error('Failed to load XLSX library'));
+        document.head.appendChild(s);
+      });
+    }
+    const XL=window.XLSX;
+    const ws=XL.utils.aoa_to_sheet(rows);
+    const wb=XL.utils.book_new();
+    XL.utils.book_append_sheet(wb,ws,"BOM");
+    XL.writeFile(wb,`CADLink_${taskPN.replace(/[^a-z0-9\-]/gi,"_")}.xls`);
   }
 
   return(
