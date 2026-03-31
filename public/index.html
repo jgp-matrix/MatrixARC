@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.201";
+const APP_VERSION="v1.19.202";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8581,7 +8581,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const arrayBuf=await file.arrayBuffer();
         const fileName=`[REF] ${file.name}`;
         await bcAttachPdfToJob(bcProjectNumber,fileName,arrayBuf,null);
-        newDocs.push({name:file.name,bcFileName:fileName,uploadedAt:Date.now(),size:file.size});
+        // Also upload to Firebase Storage for preview
+        let storageUrl=null;
+        try{
+          const storagePath=`pageImages/${uid}/${projectId}/docs/${Date.now()}_${file.name}`;
+          const ref=fbStorage.ref(storagePath);
+          await ref.put(file,{contentType:file.type});
+          storageUrl=await ref.getDownloadURL();
+        }catch(e){console.warn("Storage upload for doc preview failed:",e.message);}
+        newDocs.push({name:file.name,bcFileName:fileName,uploadedAt:Date.now(),size:file.size,storageUrl});
       }catch(e){console.warn("Other doc upload failed:",file.name,e.message);}
     }
     const updated={...panel,otherDocs:newDocs};
@@ -10284,10 +10292,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
           {(panel.otherDocs||[]).map((doc,di)=>(
-            <div key={di} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,display:"flex",alignItems:"center",gap:6,maxWidth:240}}>
+            <div key={di} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,display:"flex",alignItems:"center",gap:6,maxWidth:240,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)window.open(doc.storageUrl,"_blank");}}>
               <span style={{color:"#94a3b8"}}>📄</span>
-              <span style={{color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}} title={doc.name}>{doc.name}</span>
-              {!readOnly&&<button onClick={()=>removeOtherDoc(di)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
+              <span style={{color:doc.storageUrl?"#38bdf8":C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textDecoration:doc.storageUrl?"underline":"none"}} title={doc.name}>{doc.name}</span>
+              {!readOnly&&<button onClick={e=>{e.stopPropagation();removeOtherDoc(di);}} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
             </div>
           ))}
           {!readOnly&&bcProjectNumber&&_bcToken&&(
@@ -13337,7 +13345,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                 ].map(([label,val,color,numVal,key])=>(
                   <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:13}}>
                     <span style={{color:label==="Total"?"#fff":C.muted}}>{label}</span>
-                    <div style={{display:"flex",alignItems:"center"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",minWidth:110}}>
                       <span style={{color:"#fff",fontSize:12,marginRight:2,alignSelf:"center"}}>$</span>
                       {key?(
                         <ContingencyInput value={numVal} readOnly={readOnly} color={color} onSave={v=>saveSelectedPricing({[key]:v})}/>
@@ -13953,6 +13961,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(allMissing.length>0){setBcCountMismatch({arcCount:allBom.length,bcCount:totalBcBom,missing:allMissing});return;}
     }catch(e){console.warn("BC line count check failed:",e);}
     // All checks passed — show BC upload prompt only if current revision hasn't been uploaded yet
+    // Skip if no panels have drawing pages (nothing to upload)
+    const hasDrawings=(proj.panels||[]).some(p=>(p.pages||[]).length>0);
+    if(!hasDrawings){setAutoPrint(true);setView("quote");return;}
     const currentRev=proj.quoteRev||0;
     const alreadyUploaded=(proj.panels||[]).every(p=>(p.bcUploadQuoteRev||0)>=currentRev);
     if(bcNum&&_bcToken&&!alreadyUploaded){setShowBcUploadPrompt(true);return;}
