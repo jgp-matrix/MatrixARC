@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.207";
+const APP_VERSION="v1.19.208";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7488,14 +7488,43 @@ function QuoteTab({project,onUpdate}){
               {(()=>{
                 const raw=_appCtx.termsAndConditions||"";
                 if(!raw.trim())return <div className="qd-tc-item"><p style={{fontStyle:"italic",color:"#94a3b8"}}>No Terms & Conditions configured. Go to Settings to add your T&C.</p></div>;
-                // Parse lines: "1. Title: Body" or "Title: Body" or just plain paragraphs
-                return raw.split("\n").filter(l=>l.trim()).map((line,i)=>{
-                  const m=line.match(/^(\d+[\.\)]\s*.+?):\s*(.+)$/);
-                  if(m)return <div key={i} className="qd-tc-item"><h4>{m[1]}</h4><p>{m[2]}</p></div>;
-                  const m2=line.match(/^([^:]{3,60}):\s*(.+)$/);
-                  if(m2)return <div key={i} className="qd-tc-item"><h4>{m2[1]}</h4><p>{m2[2]}</p></div>;
-                  return <div key={i} className="qd-tc-item"><p>{line}</p></div>;
-                });
+                // Parse into sections: detect numbered sections (1., 2., 1), 2), etc.) and group continuation lines
+                const lines=raw.split("\n");
+                const sections=[];
+                let current=null;
+                for(const line of lines){
+                  const trimmed=line.trim();
+                  if(!trimmed)continue;
+                  // Detect section start: "1. Title" or "1) Title" or "1. Title: body" or "Section Title: body"
+                  const numMatch=trimmed.match(/^(\d+)[.\)]\s*(.+)/);
+                  if(numMatch){
+                    if(current)sections.push(current);
+                    const rest=numMatch[2];
+                    const colonIdx=rest.indexOf(":");
+                    if(colonIdx>0&&colonIdx<60){
+                      current={num:parseInt(numMatch[1]),title:`${numMatch[1]}. ${rest.slice(0,colonIdx).trim()}`,body:rest.slice(colonIdx+1).trim()};
+                    }else{
+                      current={num:parseInt(numMatch[1]),title:`${numMatch[1]}. ${rest.trim()}`,body:""};
+                    }
+                  }else if(!current){
+                    // Non-numbered line before any section — treat as standalone
+                    const colonMatch=trimmed.match(/^([^:]{3,60}):\s*(.+)$/);
+                    if(colonMatch)sections.push({num:9999+sections.length,title:colonMatch[1],body:colonMatch[2]});
+                    else sections.push({num:9999+sections.length,title:"",body:trimmed});
+                  }else{
+                    // Continuation line — append to current section body
+                    current.body+=(current.body?" ":"")+trimmed;
+                  }
+                }
+                if(current)sections.push(current);
+                // Sort by section number
+                sections.sort((a,b)=>a.num-b.num);
+                return sections.map((s,i)=>(
+                  <div key={i} className="qd-tc-item">
+                    {s.title&&<h4>{s.title}</h4>}
+                    {s.body&&<p>{s.body}</p>}
+                  </div>
+                ));
               })()}
             </div>
           </div>
