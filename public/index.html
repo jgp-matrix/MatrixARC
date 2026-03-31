@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.146";
+const APP_VERSION="v1.19.147";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9605,6 +9605,30 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     a.click();
   }
 
+  function exportCADLinkBOM(){
+    const n=idx+1;
+    const lineSuffix=String(n*100);
+    const taskPN=`${bcProjectNumber||"PRJ"}-${lineSuffix}`;
+    const desc=(panel.drawingNo?`${panel.drawingNo} Rev ${panel.drawingRev||"-"} - `:"")+(projectName||panel.drawingDesc||panel.name||`Panel ${n}`);
+    const panelQty=1; // Always 1 per panel for CADLink (not multiplied)
+    const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow);
+
+    const header=["Level","Part number","Part Revision","Short Description","Long Description","QtyPer","UOM"];
+    const rows=[header];
+    // Level 0 — parent assembly (Line 10000 from PPL)
+    rows.push([0,taskPN,1,desc.slice(0,100),"",panelQty,"EA"]);
+    // Level 1 — BOM items
+    bomRows.forEach(r=>{
+      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,100),"",r.qty||1,"EA"]);
+    });
+
+    const csv=rows.map(r=>r.map(c=>`"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a=document.createElement("a");
+    a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+    a.download=`CADLink_${taskPN.replace(/[^a-z0-9\-]/gi,"_")}.csv`;
+    a.click();
+  }
+
   return(
     <div className="fade-in" onClick={()=>{if(onSelect)onSelect();}} style={{...card(),border:`2px solid ${isSelected?C.accent:C.border}`,cursor:"pointer"}}>
       {/* Combined header + title block */}
@@ -10041,6 +10065,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               </button>
             )}
             <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
+            <button onClick={exportCADLinkBOM} style={btn("#0d1a2a","#38bdf8",{fontSize:12,padding:"4px 12px",border:"1px solid #38bdf844"})}>⬇ CADLink BOM</button>
           </div>
           <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
