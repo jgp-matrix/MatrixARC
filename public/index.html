@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.186";
+const APP_VERSION="v1.19.187";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13386,7 +13386,23 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
 
               {/* Action buttons */}
               <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:4,paddingTop:8,borderTop:`1px solid ${C.border}33`}}>
-                <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
+                {(()=>{
+                  const now=Date.now();
+                  const RFQ_EXPIRED_MS=5*24*60*60*1000; // 5 days
+                  const RFQ_COOLDOWN_MS=30*24*60*60*1000;
+                  const allBom=(project.panels||[]).flatMap(p=>p.bom||[]).filter(r=>!r.isLaborRow&&r.rfqSentDate);
+                  const pending=allBom.filter(r=>r.rfqSentDate&&(now-r.rfqSentDate)<RFQ_COOLDOWN_MS&&!r.bcPoDate&&(!r.unitPrice||r.unitPrice===0));
+                  const expired=pending.filter(r=>(now-r.rfqSentDate)>RFQ_EXPIRED_MS);
+                  const awaitingCount=pending.length-expired.length;
+                  // Group by vendor for count
+                  const pendingVendors=new Set(pending.map(r=>r.bcVendorName||"Unknown"));
+                  const expiredVendors=new Set(expired.map(r=>r.bcVendorName||"Unknown"));
+                  const badge=expired.length>0?`⚠ ${expiredVendors.size} Expired RFQ${expiredVendors.size!==1?"s":""}`:awaitingCount>0?`${pendingVendors.size} RFQ${pendingVendors.size!==1?"s":""} Awaiting Response`:null;
+                  return <div>
+                    <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
+                    {badge&&<div style={{fontSize:10,fontWeight:700,textAlign:"center",marginTop:3,color:expired.length>0?"#f59e0b":"#38bdf8"}}>{badge}</div>}
+                  </div>;
+                })()}
                 <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
                   <button onClick={()=>onOpenSupplierQuote(sp.bom||[])} style={btn("#0d1f0d","#4ade80",{fontSize:14,padding:"8px 12px",flex:3,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Supplier Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
                   <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
