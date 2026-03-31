@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.180";
+const APP_VERSION="v1.19.181";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6365,11 +6365,17 @@ const API_VENDOR_PATTERNS=[
 ];
 function isApiVendor(vendorName){return API_VENDOR_PATTERNS.find(v=>v.pattern.test(vendorName||""));}
 
-async function bcFetchVendorContacts(vendorNo){
+async function bcFetchVendorContacts(vendorNo,vendorName){
   // Fetch the vendor's main email + contacts from BC
-  if(!_bcToken||!vendorNo)return[];
+  if(!_bcToken)return[];
   try{
     const compId=await bcGetCompanyId();
+    // Resolve vendorNo from name if not provided
+    if(!vendorNo&&vendorName){
+      const nr=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=displayName eq '${(vendorName||"").replace(/'/g,"''")}'&$select=number,displayName,email,phoneNumber&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(nr.ok){const nd=(await nr.json()).value||[];if(nd[0])vendorNo=nd[0].number;}
+    }
+    if(!vendorNo)return[];
     // Get vendor main email
     const vr=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName,email,phoneNumber`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     const contacts=[];
@@ -6418,8 +6424,8 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       const results={};
       for(const g of groups){
         if(isApiVendor(g.vendorName))continue;
-        if(g.vendorNo){
-          const contacts=await bcFetchVendorContacts(g.vendorNo);
+        {
+          const contacts=await bcFetchVendorContacts(g.vendorNo,g.vendorName);
           if(contacts.length>0){
             results[g.vendorName]=contacts;
             // Auto-fill email only if still empty (saved emails take priority)
