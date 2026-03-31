@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.153";
+const APP_VERSION="v1.19.154";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -18154,7 +18154,13 @@ INSTRUCTIONS:
   async function confirmDelete(deleteFromBC){
     if(!deleteConfirm)return;
     if(deleteFromBC&&deleteConfirm.bcProjectId){
-      await bcDeleteProject(deleteConfirm.bcProjectId);
+      try{
+        await bcDeleteProject(deleteConfirm.bcProjectId);
+      }catch(e){
+        const msg=e.message||"Unknown error";
+        const skip=confirm(`⚠ Could not delete from Business Central:\n\n${msg}\n\nDelete from ARC anyway?`);
+        if(!skip){setDeleteConfirm(null);return;}
+      }
     }
     await deleteProject(user.uid,deleteConfirm.id);
     setProjects(ps=>ps.filter(x=>x.id!==deleteConfirm.id));
