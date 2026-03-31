@@ -200,7 +200,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.150";
+const APP_VERSION="v1.19.151";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17721,7 +17721,7 @@ function App({user}){
   const [rfqCounts,setRfqCounts]=useState({});
   useEffect(()=>{
     if(!user.uid)return;
-    const unsub=fbDb.collection('rfqUploads').where('uid','==',user.uid).where('status','==','submitted').onSnapshot(snap=>{
+    const unsub=fbDb.collection('rfqUploads').where('uid','==',user.uid).where('status','in',['pending','submitted']).onSnapshot(snap=>{
       const counts={};
       snap.docs.forEach(d=>{const pid=d.data().projectId;if(pid)counts[pid]=(counts[pid]||0)+1;});
       setRfqCounts(counts);
