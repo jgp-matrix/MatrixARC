@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.217";
+const APP_VERSION="v1.19.218";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16770,7 +16770,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="status"){
-      const order=["draft","budgetary","in_progress","process_rfq","evc"];
+      const order=["draft","in_progress","process_rfq","evc","budgetary"];
       const labels={draft:"Draft",budgetary:"Budgetary",in_progress:"In Progress",process_rfq:"Process RFQs",evc:"Ready"};
       const map={};
       list.forEach(p=>{
