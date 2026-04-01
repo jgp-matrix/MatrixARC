@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.259";
+const APP_VERSION="v1.19.260";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2994,37 +2994,28 @@ function arcDocInfoGrid(ctx,leftLines,rightLines){
   const colW=ctx.contentWidth/2-6;
   const startY=ctx.y;
   const lh=3.5; // line height for body text
-  // Render left column
-  let ly=startY+2; // offset for baseline
-  for(const{label,value,bold}of leftLines){
-    if(label){
-      doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
-      doc.text((label).toUpperCase(),m.left,ly);ly+=4;
+  function renderCol(lines,x,startY){
+    let cy=startY+2;
+    for(const{label,value,bold}of lines){
+      if(label){
+        doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+        doc.text((label).toUpperCase(),x,cy);cy+=3;
+      }
+      if(value){
+        const fs=bold?12:ARC_DOC.fonts.body;
+        const vlh=bold?5:lh;
+        doc.setFontSize(fs);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
+        const vLines=doc.splitTextToSize(String(value||""),colW);
+        if(bold)cy+=1; // extra space before bold name
+        vLines.forEach((vl,vi)=>{doc.text(vl,x,cy+vi*vlh);});
+        cy+=vLines.length*vlh+1.5;
+      }
     }
-    if(value){
-      const fs=bold?12:ARC_DOC.fonts.body;
-      doc.setFontSize(fs);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
-      const vLines=doc.splitTextToSize(String(value||""),colW);
-      vLines.forEach((vl,vi)=>{doc.text(vl,m.left,ly+vi*lh);});
-      ly+=vLines.length*lh+2;
-    }
+    return cy;
   }
-  // Render right column
-  let ry=startY+2;const rx=ARC_DOC.W/2+4;
-  for(const{label,value,bold}of rightLines){
-    if(label){
-      doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
-      doc.text((label).toUpperCase(),rx,ry);ry+=4;
-    }
-    if(value){
-      const fs=bold?12:ARC_DOC.fonts.body;
-      doc.setFontSize(fs);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
-      const vLines=doc.splitTextToSize(String(value||""),colW);
-      vLines.forEach((vl,vi)=>{doc.text(vl,rx,ry+vi*lh);});
-      ry+=vLines.length*lh+2;
-    }
-  }
-  ctx.y=Math.max(ly,ry)+4;
+  const ly=renderCol(leftLines,m.left,startY);
+  const ry=renderCol(rightLines,ARC_DOC.W/2+4,startY);
+  ctx.y=Math.max(ly,ry)+3;
 }
 
 function arcDocKeyValueRow(ctx,items){
