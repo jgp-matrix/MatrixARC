@@ -108,6 +108,8 @@ body.no-tips [data-tip]::after{opacity:0!important;}
   #quote-doc .qd-brand h1,#quote-doc .qd-li-num,#quote-doc .qd-info-label,#quote-doc .qd-tc-item h4,#quote-doc .qd-header-cont .qd-hc-name,#quote-doc .qd-pval.qd-total-val,#quote-doc .qd-totals-row.qd-grand .qd-amt{color:#2563eb!important}
   .qd-page{box-shadow:none!important;border-radius:0!important;margin:0!important;width:100%!important;min-height:auto!important;page-break-after:always}
   .qd-page:last-child{page-break-after:auto}
+  .qd-continued{display:block!important}
+  .qd-page:last-child .qd-continued{display:none!important}
   .qd-print-footer{display:flex!important;position:fixed!important;bottom:0!important;left:0!important;width:100%!important;background:#fff!important;padding:10px 32px!important;justify-content:space-between!important;align-items:center!important;font-size:10px!important;color:#64748b!important;border-top:2px solid #2563eb!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;box-sizing:border-box!important}
   #quote-doc input,#quote-doc textarea{
     border:none!important;border-bottom:none!important;
@@ -208,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.251";
+const APP_VERSION="v1.19.252";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7253,9 +7255,6 @@ function QuoteTab({project,onUpdate}){
         {/* Print-only fixed footer — position:fixed renders at bottom of every printed page */}
         <div className="qd-print-footer">
           <div className="qd-foot-left"><strong>Matrix Systems</strong><br/>5591 Leo Park Rd · West Jordan, UT 84081</div>
-          <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
-            <div style={{fontStyle:"italic",fontSize:9,color:"#94a3b8"}}>continued on next page...</div>
-          </div>
           <div className="qd-foot-right">(801) 930-9492<br/>sales@matrixpci.com</div>
         </div>
         <div className="qd-page">
@@ -7442,6 +7441,7 @@ function QuoteTab({project,onUpdate}){
             <div className="qd-foot-left"><strong>Matrix Systems</strong><br/>5591 Leo Park Rd · West Jordan, UT 84081</div>
             <div className="qd-foot-right">(801) 930-9492<br/>sales@matrixpci.com</div>
           </div>
+          <div className="qd-continued" style={{textAlign:"center",fontStyle:"italic",fontSize:10,color:"#94a3b8",padding:"8px 0",display:"none"}}>continued on next page...</div>
         </div>
 
         {/* ═══ QUESTIONS FOR CUSTOMER (if any on_quote) ═══ */}
@@ -7471,7 +7471,8 @@ function QuoteTab({project,onUpdate}){
             React.createElement("div",{className:"qd-footer"},
               React.createElement("div",{className:"qd-foot-left"},"Matrix Systems, LLC"),
               React.createElement("div",{className:"qd-foot-right"},"(801) 930-9492",React.createElement("br"),"sales@matrixpci.com")
-            )
+            ),
+            React.createElement("div",{className:"qd-continued",style:{textAlign:"center",fontStyle:"italic",fontSize:10,color:"#94a3b8",padding:"8px 0",display:"none"}},"continued on next page...")
           ):null;
         })()}
 
