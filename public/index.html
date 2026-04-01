@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.254";
+const APP_VERSION="v1.19.255";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13568,24 +13568,16 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
                 </div>
                 <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Client Quote{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?` (Rev ${project.quoteRev} ⚠ unsent)`:project.quoteRev>0?` (Rev ${project.quoteRev})`:""}</button>
-                {!readOnly&&<button onClick={async()=>{
+                {!readOnly&&<button onClick={()=>{
                   const q=project.quote||{};
-                  const toEmail=q.email||"";
-                  const recipient=prompt("Send quote to:",toEmail);
-                  if(!recipient)return;
-                  const graphToken=await acquireGraphToken();
-                  if(!graphToken){alert("Could not get Microsoft 365 token.");return;}
-                  const quoteNum=q.number||"Quote";
                   const rev=project.quoteRev||0;
                   const isBudg=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
-                  const subject=`${isBudg?"Budgetary ":""}Quote ${quoteNum}${rev>0?" Rev "+String(rev).padStart(2,"0"):""} — ${project.name||"Project"}`;
-                  const body=`<p>Please find the attached ${isBudg?"budgetary ":""}quote for your review.</p><p>If you have any questions, please don't hesitate to reach out.</p><p>Best regards,<br/>${q.salesperson||"Matrix Systems"}<br/>${q.salesPhone||""}<br/>${q.salesEmail||""}</p>`;
-                  try{
-                    await sendGraphEmail(graphToken,recipient,subject,body);
-                    const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:recipient};
-                    onUpdate(upd);
-                    alert("Quote sent to "+recipient);
-                  }catch(e){alert("Send failed: "+e.message);}
+                  setQuoteSendModal({
+                    to:q.email||"",
+                    subject:`${isBudg?"Budgetary ":""}Quote ${q.number||"Quote"}${rev>0?" Rev "+String(rev).padStart(2,"0"):""} — ${project.name||"Project"}`,
+                    message:`Please find the attached ${isBudg?"budgetary ":""}quote for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
+                    signature:`${q.salesperson||"Matrix Systems"}\n${q.salesPhone||""}\n${q.salesEmail||""}`
+                  });
                 }} style={btn("#0c2233","#38bdf8",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #38bdf844"})}>✉ Send Quote{project.quoteSentAt?" (Resend)":""}</button>}
                 {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>}
                 {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📬 PO Received</button>}
@@ -13730,6 +13722,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [rfqGroups,setRfqGroups]=useState(null);
   const [autoPrintRfq,setAutoPrintRfq]=useState(false);
   const [rfqEmailModal,setRfqEmailModal]=useState(null);
+  const [quoteSendModal,setQuoteSendModal]=useState(null); // {to, subject, message, signature}
   const [showRfqHistory,setShowRfqHistory]=useState(false);
   const [quoteWarnRows,setQuoteWarnRows]=useState(null); // null=hidden, array=showing
   const [eqWarnOpen,setEqWarnOpen]=useState(null); // null=hidden, array of open engineering questions
@@ -14380,6 +14373,49 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             bcUploadRef={bcUploadRef}
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
+          {quoteSendModal&&ReactDOM.createPortal(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+              <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:560,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+                <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:12}}>✉ Send Quote</div>
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  <div>
+                    <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>To</label>
+                    <input value={quoteSendModal.to} onChange={e=>setQuoteSendModal(prev=>({...prev,to:e.target.value}))} style={{...inp({fontSize:13})}}/>
+                  </div>
+                  <div>
+                    <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Subject</label>
+                    <input value={quoteSendModal.subject} onChange={e=>setQuoteSendModal(prev=>({...prev,subject:e.target.value}))} style={{...inp({fontSize:13})}}/>
+                  </div>
+                  <div>
+                    <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Message</label>
+                    <textarea value={quoteSendModal.message} onChange={e=>setQuoteSendModal(prev=>({...prev,message:e.target.value}))} rows={5} style={{...inp({fontSize:13,resize:"vertical",lineHeight:1.6})}}/>
+                  </div>
+                  <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line"}}>
+                    {quoteSendModal.signature}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+                  <button onClick={()=>setQuoteSendModal(null)} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
+                  <button onClick={async()=>{
+                    const m=quoteSendModal;
+                    if(!m.to.trim()){alert("Enter a recipient email.");return;}
+                    const graphToken=await acquireGraphToken();
+                    if(!graphToken){alert("Could not get Microsoft 365 token.");return;}
+                    const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
+                    const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
+                    try{
+                      await sendGraphEmail(graphToken,m.to,m.subject,html);
+                      const rev=project.quoteRev||0;
+                      const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to};
+                      onUpdate(upd);
+                      setQuoteSendModal(null);
+                      alert("Quote sent to "+m.to);
+                    }catch(e){alert("Send failed: "+e.message);}
+                  }} style={btn("#0c2233","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8"})}>✉ Send</button>
+                </div>
+              </div>
+            </div>
+          ,document.body)}
           {rfqEmailModal&&<RfqEmailModal groups={rfqEmailModal.groups} projectName={rfqEmailModal.projectName} projectId={project.id} bcProjectNumber={project.bcProjectNumber||""} uid={uid} userEmail={fbAuth.currentUser?.email||""} onClose={()=>setRfqEmailModal(null)} onSent={onRfqSent} onPrint={onRfqPrint} onApiPriced={(vendorName,vendorNo,results)=>{
             // Apply API-fetched prices to BOM rows — use source from cross-vendor check
             const panels=[...(projectRef.current.panels||[])];
