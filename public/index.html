@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.232";
+const APP_VERSION="v1.19.233";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7281,8 +7281,12 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-info-name"><input value={q.salesperson||""} onChange={e=>setQ({salesperson:e.target.value})} placeholder="Salesperson name" style={qInp({fontWeight:700,fontSize:18})}/></div>
               <div className="qd-info-detail">
                 Salesperson<br/>
-                <input value={q.salesEmail||""} onChange={e=>setQ({salesEmail:e.target.value})} placeholder="email@matrixpci.com" onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}} style={qInp({marginBottom:2})}/>
-                <input value={q.salesPhone||""} onChange={e=>setQ({salesPhone:e.target.value})} placeholder="(___) ___-____" style={qInp({})}/>
+                <input value={q.salesEmail||""} onChange={e=>setQ({salesEmail:e.target.value})} placeholder="email@matrixpci.com" onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}} onBlur={()=>{
+                  const spCode=project.bcSalespersonCode;if(spCode&&q.salesEmail){const path=`${_appCtx.configPath||"users/"+(_appCtx.uid||"")+"/config"}/salespersonInfo`;fbDb.doc(path).set({people:{[spCode]:{email:q.salesEmail||"",phone:q.salesPhone||""}}},{merge:true}).catch(()=>{});}
+                }} style={qInp({marginBottom:2})}/>
+                <input value={q.salesPhone||""} onChange={e=>setQ({salesPhone:e.target.value})} placeholder="(___) ___-____" onBlur={()=>{
+                  const spCode=project.bcSalespersonCode;if(spCode&&q.salesPhone){const path=`${_appCtx.configPath||"users/"+(_appCtx.uid||"")+"/config"}/salespersonInfo`;fbDb.doc(path).set({people:{[spCode]:{email:q.salesEmail||"",phone:q.salesPhone||""}}},{merge:true}).catch(()=>{});}
+                }} style={qInp({})}/>
               </div>
             </div>
           </div>
@@ -13925,8 +13929,32 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               if(!q.address&&addr)autoFields.address=addr;
               if(!q.phone&&bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
               if(!q.email&&bc.SellToEmail)autoFields.email=bc.SellToEmail;
-              const sp=bc.Person_Responsible||bc.CCS_Salesperson_Code||"";
-              if(!q.salesperson&&sp)autoFields.salesperson=sp;
+              const spCode=bc.Person_Responsible||bc.CCS_Salesperson_Code||"";
+              if(spCode&&!proj.bcSalespersonCode){
+                proj={...proj,bcSalespersonCode:spCode};
+              }
+              if(spCode&&(!q.salesperson||q.salesperson===spCode)){
+                // Resolve salesperson name from SalesOrdersBySalesPerson OData
+                try{
+                  const spR=await fetch(`${BC_ODATA_BASE}/SalesOrdersBySalesPerson?$filter=SalesPersonCode eq '${spCode}'&$select=SalesPersonCode,SalesPersonName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                  if(spR.ok){
+                    const spName=((await spR.json()).value||[])[0]?.SalesPersonName||"";
+                    if(spName)autoFields.salesperson=spName;
+                    else if(!q.salesperson)autoFields.salesperson=spCode;
+                  }else if(!q.salesperson)autoFields.salesperson=spCode;
+                }catch(e){if(!q.salesperson)autoFields.salesperson=spCode;}
+                // Load cached salesperson info from Firestore
+                try{
+                  const spDoc=await fbDb.doc(`${_appCtx.configPath||"users/"+uid+"/config"}/salespersonInfo`).get();
+                  if(spDoc.exists){
+                    const spInfo=(spDoc.data().people||{})[spCode];
+                    if(spInfo){
+                      if(!q.salesPhone&&spInfo.phone)autoFields.salesPhone=spInfo.phone;
+                      if(!q.salesEmail&&spInfo.email)autoFields.salesEmail=spInfo.email;
+                    }
+                  }
+                }catch(e){}
+              }
             }
           }
         }
