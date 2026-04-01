@@ -112,8 +112,10 @@ body.no-tips [data-tip]::after{opacity:0!important;}
   #quote-doc input,#quote-doc textarea{
     border:none!important;border-bottom:none!important;
     background:transparent!important;outline:none!important;
-    padding:0!important;
+    padding:0!important;resize:none!important;overflow:hidden!important;
   }
+  #quote-doc input::-webkit-contacts-auto-fill-button,#quote-doc input::-webkit-credentials-auto-fill-button{display:none!important;visibility:hidden!important;}
+  #quote-doc textarea::-webkit-resizer{display:none!important;}
   /* ── Print sizes — matched to traditional Matrix Systems quote layout ── */
   .qd-header{padding:16px 40px!important;border-bottom:3px solid #2563eb!important}
   .qd-brand h1{font-size:20px!important}
@@ -203,7 +205,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.240";
+const APP_VERSION="v1.19.241";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
