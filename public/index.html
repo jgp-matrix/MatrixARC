@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.222";
+const APP_VERSION="v1.19.223";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5398,7 +5398,7 @@ function Badge({status,project}){
   let effectiveStatus=status;
   if(project){
     const isBudgetary=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
-    const quoteSent=(project.quoteRevAtPrint||0)>0;
+    const quoteSent=!!project.quoteSentAt;
     const allPanels=project.panels||[];
     const hasBom=allPanels.some(pan=>(pan.bom||[]).length>0);
     const hasUnpriced=hasBom&&allPanels.some(pan=>(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.customerSupplied).some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate));
@@ -13581,6 +13581,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
                 </div>
                 <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Client Quote{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?` (Rev ${project.quoteRev} ⚠ unsent)`:project.quoteRev>0?` (Rev ${project.quoteRev})`:""}</button>
+                {!readOnly&&!project.quoteSentAt&&(project.quoteRevAtPrint||0)>0&&<button onClick={()=>{if(confirm("Mark this quote as sent to the client?")){const upd={...project,quoteSentAt:Date.now()};onUpdate(upd);}}} style={btn("#0c2233","#38bdf8",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #38bdf844"})}>✉ Mark Quote as Sent</button>}
+                {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</div>}
                 {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📬 PO Received</button>}
                 {!readOnly&&sp.bcItemNumber&&(
                   <button onClick={()=>{}} disabled={pendingBcCount>0}
@@ -16789,8 +16791,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       const map={};
       list.forEach(p=>{
         if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")return; // skip — shown in PURCHASING/PRODUCTION tabs
-        // Quotes Sent = quote has been printed/sent at least once
-        if((p.quoteRevAtPrint||0)>0){if(!map.quotes_sent)map.quotes_sent=[];map.quotes_sent.push(p);return;}
+        // Quotes Sent = user explicitly marked quote as sent to client
+        if(p.quoteSentAt){if(!map.quotes_sent)map.quotes_sent=[];map.quotes_sent.push(p);return;}
         // Process RFQs = has BOM items that are unpriced (unitPrice 0/null or no priceDate)
         const allPanels=p.panels||[];
         const hasBom=allPanels.some(pan=>(pan.bom||[]).length>0);
