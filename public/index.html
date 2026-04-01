@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.225";
+const APP_VERSION="v1.19.226";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -776,9 +776,8 @@ function computePanelSellPrice(panel){
   const laborEst=computeLaborEstimate(panel);
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isCrossed);
   const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-  const contingencyBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
-  const contingencyConsumables=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
-  const grandTotal=materialCost+laborEst.totalCost+contingencyBOM+contingencyConsumables;
+  // Contingency costs are now BOM line items (BOM CONTINGENCY, WIRE & CONSUMABLES) — included in materialCost
+  const grandTotal=materialCost+laborEst.totalCost;
   const markup=pr.markup??30;
   return Math.round(grandTotal*(1+markup/100)*100)/100;
 }
@@ -2719,6 +2718,8 @@ async function buildRfqSupplierGroups(bom){
   const RFQ_SENT_COOLDOWN=30*24*60*60*1000; // 30 days — don't re-send within this window
   const eligible=bom.filter(r=>{
     if(r.isLaborRow||r.priceSource==="manual")return false;
+    // Exclude contingency items
+    if(r.isContingency||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase()))return false;
     // Exclude items whose description matches non-RFQ categories
     if(RFQ_EXCLUDE_ITEMS.test(r.description||"")||RFQ_EXCLUDE_ITEMS.test(r.partNumber||""))return false;
     // Exclude items with a recent RFQ sent (within cooldown period)
@@ -3679,21 +3680,36 @@ function applyPartCorrections(corrections,bom){
 }
 
 // ── DEFAULT BOM ITEMS (appended after extraction if not already present) ──
+const CONTINGENCY_ITEMS=[
+  {partNumber:"BOM CONTINGENCY",description:"BOM CONTINGENCY",getPrice:()=>_pricingConfig.contingencyBOM||1500},
+  {partNumber:"WIRE & CONSUMABLES",description:"WIRE & CONSUMABLES",getPrice:()=>_pricingConfig.contingencyConsumables||400}
+];
+const CONTINGENCY_PNS=new Set(CONTINGENCY_ITEMS.map(c=>c.partNumber.toUpperCase()));
+
 function appendDefaultBomItems(bom){
   console.log("APPEND DEFAULTS: _defaultBomItems=",_defaultBomItems.length,"items:",_defaultBomItems.map(d=>d.description));
-  if(!_defaultBomItems.length){console.log("APPEND DEFAULTS: skipped — no defaults configured");return bom;}
   const lower=new Set(bom.map(r=>(r.description||"").trim().toLowerCase()));
+  const pnSet=new Set(bom.map(r=>(r.partNumber||"").trim().toUpperCase()));
   console.log("APPEND DEFAULTS: existing BOM descriptions:",[...lower]);
   const _laborPns=new Set(LABOR_BOM_GROUPS.map(g=>g.partNumber));
   const items=[];
-  for(const tpl of _defaultBomItems){
-    if(_laborPns.has((tpl.partNumber||"").trim()))continue;
-    const desc=(tpl.description||"").trim().toLowerCase();
-    if(desc&&lower.has(desc)){console.log("APPEND DEFAULTS: skipped (duplicate):",tpl.description);continue;}
-    items.push({id:Date.now()+Math.random(),qty:tpl.qty||1,partNumber:tpl.partNumber||"",description:tpl.description||"",manufacturer:tpl.manufacturer||"",notes:"",unitPrice:tpl.unitPrice||0,priceSource:tpl.priceSource||null,priceDate:Date.now(),autoLoaded:true});
-    console.log("APPEND DEFAULTS: adding:",tpl.description,"$"+tpl.unitPrice);
+  if(_defaultBomItems.length){
+    for(const tpl of _defaultBomItems){
+      if(_laborPns.has((tpl.partNumber||"").trim()))continue;
+      const desc=(tpl.description||"").trim().toLowerCase();
+      if(desc&&lower.has(desc)){console.log("APPEND DEFAULTS: skipped (duplicate):",tpl.description);continue;}
+      items.push({id:Date.now()+Math.random(),qty:tpl.qty||1,partNumber:tpl.partNumber||"",description:tpl.description||"",manufacturer:tpl.manufacturer||"",notes:"",unitPrice:tpl.unitPrice||0,priceSource:tpl.priceSource||null,priceDate:Date.now(),autoLoaded:true});
+      console.log("APPEND DEFAULTS: adding:",tpl.description,"$"+tpl.unitPrice);
+    }
   }
-  console.log("APPEND DEFAULTS: appended",items.length,"of",_defaultBomItems.length,"defaults. BOM total:",bom.length+items.length);
+  // Always append contingency items if not already present
+  for(const ci of CONTINGENCY_ITEMS){
+    if(pnSet.has(ci.partNumber.toUpperCase()))continue;
+    if(lower.has(ci.description.toLowerCase()))continue;
+    items.push({id:Date.now()+Math.random(),qty:1,partNumber:ci.partNumber,description:ci.description,manufacturer:"Matrix Systems",notes:"",unitPrice:ci.getPrice(),priceSource:"bc",priceDate:Date.now(),bcPoDate:Date.now(),bcVendorName:"Matrix Systems",autoLoaded:true,isContingency:true});
+    console.log("APPEND DEFAULTS: adding contingency:",ci.partNumber,"$"+ci.getPrice());
+  }
+  console.log("APPEND DEFAULTS: appended",items.length,"defaults. BOM total:",bom.length+items.length);
   return items.length?[...bom,...items]:bom;
 }
 
@@ -7134,11 +7150,9 @@ function QuoteTab({project,onUpdate}){
   const laborHours=laborEst.totalHours;
   const laborRate=pr.laborRate??45;
   const markup=pr.markup??30;
-  const contingencyBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
-  const contingencyConsumables=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
   const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
   const laborCost=laborEst.totalCost;
-  const grandTotal=materialCost+laborCost+contingencyBOM+contingencyConsumables;
+  const grandTotal=materialCost+laborCost;
   const sellPrice=grandTotal*(1+markup/100);
   const hasSellPrice=sellPrice>0;
 
@@ -9648,7 +9662,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const newRow={id:newId,qty:1,partNumber:"",description:"",manufacturer:"",notes:""};
     const bom=[...(panel.bom||[])];
     // Insert before JOB BUYOFF / Crate rows (always keep them at the end)
-    const tailIdx=bom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())));
+    const tailIdx=bom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())));
     if(tailIdx>=0)bom.splice(tailIdx,0,newRow);else bom.push(newRow);
     const updated={...panel,bom};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
@@ -13344,13 +13358,11 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             const pr=sp.pricing||{};
             const markup=pr.markup??30;
             const laborRate=pr.laborRate??45;
-            const cBOM=pr.contingencyBOM??_pricingConfig.contingencyBOM;
-            const cCons=pr.contingencyConsumables??_pricingConfig.contingencyConsumables;
             const laborEst=computeLaborEstimate(sp);
             const bom=sp.bom||[];
             const pricedCount=bom.filter(r=>r.unitPrice!=null).length;
             const matCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-            const grandTotal=matCost+laborEst.totalCost+cBOM+cCons;
+            const grandTotal=matCost+laborEst.totalCost;
             const sellPrice=grandTotal*(1+markup/100);
             const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
             const pendingBcCount=bom.filter(r=>(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual").length;
@@ -13382,8 +13394,6 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                 <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
                 {[
                   ["Materials",fmt(matCost),"#fff",null,null],
-                  ["BOM Contingency",null,"#fff",cBOM,"contingencyBOM"],
-                  ["Consumables",null,"#fff",cCons,"contingencyConsumables"],
                   ["Labor",fmt(laborEst.totalCost),"#fff",null,null],
                   ["Total",fmt(grandTotal),"#fff",null,null],
                 ].map(([label,val,color,numVal,key])=>(
@@ -13511,11 +13521,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                 {(project.panels||[]).map((p,pi)=>{
                   const ppr=p.pricing||{};
                   const pmk=ppr.markup??30;
-                  const pcb=ppr.contingencyBOM??_pricingConfig.contingencyBOM;
-                  const pcc=ppr.contingencyConsumables??_pricingConfig.contingencyConsumables;
                   const ple=computeLaborEstimate(p);
                   const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-                  const pgt=pmat+ple.totalCost+pcb+pcc;
+                  const pgt=pmat+ple.totalCost;
                   const psp=pgt*(1+pmk/100);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   const pqty=p.lineQty??p.qty??1;
@@ -13536,11 +13544,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   const total=(project.panels||[]).reduce((sum,p)=>{
                     const ppr=p.pricing||{};
                     const pmk=ppr.markup??30;
-                    const pcb=ppr.contingencyBOM??_pricingConfig.contingencyBOM;
-                    const pcc=ppr.contingencyConsumables??_pricingConfig.contingencyConsumables;
                     const ple=computeLaborEstimate(p);
                     const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-                    return sum+((pmat+ple.totalCost+pcb+pcc)*(1+(ppr.markup??30)/100))*(p.qty||1);
+                    return sum+((pmat+ple.totalCost)*(1+(ppr.markup??30)/100))*(p.qty||1);
                   },0);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   return(
@@ -14390,7 +14396,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                               const panel=(projectRef.current.panels||[])[0];
                               if(panel){
                                 const bom=[...(panel.bom||[])];
-                                const tailIdx=bom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())));
+                                const tailIdx=bom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())));
                                 if(tailIdx>=0)bom.splice(tailIdx,0,newRow);else bom.push(newRow);
                                 const updatedPanel={...panel,bom};
                                 const updatedPanels=(projectRef.current.panels||[]).map(p=>p.id===panel.id?updatedPanel:p);
