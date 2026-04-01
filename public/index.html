@@ -203,7 +203,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.239";
+const APP_VERSION="v1.19.240";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7310,7 +7310,6 @@ function QuoteTab({project,onUpdate}){
           {/* Terms Banner */}
           <div className="qd-terms">
             <textarea value={q.termsText!=null?q.termsText:defaultTerms} onChange={e=>setQ({termsText:e.target.value})} rows={3} style={{...qInp({display:"block",width:"100%",resize:"vertical",fontSize:"14px",lineHeight:"1.7",color:"#94a3b8",borderBottom:"none"})}}/>
-            <div className="qd-tnote">All quotes expire 30 days from date of issue unless otherwise noted. Prices subject to change without notice.</div>
           </div>
 
           {/* Line Items */}
@@ -7396,6 +7395,11 @@ function QuoteTab({project,onUpdate}){
               </div>
             </div>);
             })}
+          </div>
+
+          {/* Validity Notice */}
+          <div style={{padding:"8px 44px",fontSize:11,color:"#475569",lineHeight:1.6,fontStyle:"italic"}}>
+            This quote is valid for 30 days from the date of issue unless otherwise specified. All prices are subject to change without notice. Orders are subject to acceptance and confirmation by Matrix Systems.
           </div>
 
           {/* Totals */}
