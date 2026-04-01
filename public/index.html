@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.226";
+const APP_VERSION="v1.19.227";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -777,7 +777,8 @@ function computePanelSellPrice(panel){
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isCrossed);
   const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
   // Contingency costs are now BOM line items (BOM CONTINGENCY, WIRE & CONSUMABLES) — included in materialCost
-  const grandTotal=materialCost+laborEst.totalCost;
+  const laborCost=laborEst.totalHours>0?laborEst.totalCost:(pr.manualLaborCost||0);
+  const grandTotal=materialCost+laborCost;
   const markup=pr.markup??30;
   return Math.round(grandTotal*(1+markup/100)*100)/100;
 }
@@ -7151,7 +7152,7 @@ function QuoteTab({project,onUpdate}){
   const laborRate=pr.laborRate??45;
   const markup=pr.markup??30;
   const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-  const laborCost=laborEst.totalCost;
+  const laborCost=laborHours>0?laborEst.totalCost:(pr.manualLaborCost||0);
   const grandTotal=materialCost+laborCost;
   const sellPrice=grandTotal*(1+markup/100);
   const hasSellPrice=sellPrice>0;
@@ -13359,10 +13360,12 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             const markup=pr.markup??30;
             const laborRate=pr.laborRate??45;
             const laborEst=computeLaborEstimate(sp);
+            const hasAutoLabor=laborEst.totalHours>0;
+            const laborCost=hasAutoLabor?laborEst.totalCost:(pr.manualLaborCost||0);
             const bom=sp.bom||[];
             const pricedCount=bom.filter(r=>r.unitPrice!=null).length;
             const matCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-            const grandTotal=matCost+laborEst.totalCost;
+            const grandTotal=matCost+laborCost;
             const sellPrice=grandTotal*(1+markup/100);
             const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
             const pendingBcCount=bom.filter(r=>(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual").length;
@@ -13394,7 +13397,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                 <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
                 {[
                   ["Materials",fmt(matCost),"#fff",null,null],
-                  ["Labor",fmt(laborEst.totalCost),"#fff",null,null],
+                  hasAutoLabor?["Labor",fmt(laborCost),"#fff",null,null]:["Labor",null,"#fff",laborCost,"manualLaborCost"],
                   ["Total",fmt(grandTotal),"#fff",null,null],
                 ].map(([label,val,color,numVal,key])=>(
                   <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:13}}>
@@ -13522,8 +13525,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   const ppr=p.pricing||{};
                   const pmk=ppr.markup??30;
                   const ple=computeLaborEstimate(p);
+                  const plc=ple.totalHours>0?ple.totalCost:(ppr.manualLaborCost||0);
                   const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-                  const pgt=pmat+ple.totalCost;
+                  const pgt=pmat+plc;
                   const psp=pgt*(1+pmk/100);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   const pqty=p.lineQty??p.qty??1;
@@ -13545,8 +13549,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     const ppr=p.pricing||{};
                     const pmk=ppr.markup??30;
                     const ple=computeLaborEstimate(p);
+                    const plc=ple.totalHours>0?ple.totalCost:(ppr.manualLaborCost||0);
                     const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-                    return sum+((pmat+ple.totalCost)*(1+(ppr.markup??30)/100))*(p.qty||1);
+                    return sum+((pmat+plc)*(1+(ppr.markup??30)/100))*(p.qty||1);
                   },0);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   return(
