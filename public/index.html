@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.270";
+const APP_VERSION="v1.19.271";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10489,14 +10489,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const taskPN=`${bcProjectNumber||"PRJ"}-${lineSuffix}`;
     const desc=(panel.drawingNo?`${panel.drawingNo} Rev ${panel.drawingRev||"-"} - `:"")+(projectName||panel.drawingDesc||panel.name||`Panel ${n}`);
     const panelQty=1; // Always 1 per panel for CADLink (not multiplied)
-    const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow);
+    const allBomRows=(panel.bom||[]).filter(r=>!r.isLaborRow);
+    const isTailRow=r=>CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())||/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim());
+    const isContingencyRow=r=>CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase());
+    const isBottomRow=r=>/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim());
+    const contingencyRows=allBomRows.filter(isContingencyRow);
+    const regularRows=allBomRows.filter(r=>!isTailRow(r));
+    const bottomRows=allBomRows.filter(isBottomRow);
 
     const header=["Level","Part number","Part Revision","Short Description","Long Description","QtyPer","Part Type","UOM"];
     const rows=[header];
-    // Level 0 — parent assembly (Line 10000 from PPL)
+    // Level 0 — parent assembly
     rows.push([0,taskPN,1,desc.slice(0,50),"",panelQty,2,"EA"]);
-    // Level 1 — BOM items
-    bomRows.forEach(r=>{
+    // Level 1 — Contingency items first
+    contingencyRows.forEach(r=>{
+      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]);
+    });
+    // Level 1 — Regular BOM items
+    regularRows.forEach(r=>{
+      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]);
+    });
+    // Level 1 — Job Buyoff and Crate at bottom
+    bottomRows.forEach(r=>{
       rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]);
     });
 
