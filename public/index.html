@@ -203,7 +203,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.238";
+const APP_VERSION="v1.19.239";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7220,8 +7220,8 @@ function QuoteTab({project,onUpdate}){
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
                 {fld("Plant Name","plantName","",180)}
-                {fld("Supply Voltage","supplyVoltage","480VAC",120)}
-                {fld("Control Voltage","controlVoltage","120VAC",120)}
+                {fld("Supply Voltage","supplyVoltage","",120)}
+                {fld("Control Voltage","controlVoltage","",120)}
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
                 {fld("Quantity","qty","1.00",80)}
@@ -7339,8 +7339,8 @@ function QuoteTab({project,onUpdate}){
                       ["Drawing Rev",pan.drawingRev||"—"],
                       ["Panel ID",pan.drawingNo||pan.name||"—"],
                       ["Plant Name",qp.plantName||q.plantName||""],
-                      ["Supply Voltage",qp.supplyVoltage||q.supplyVoltage||"480VAC"],
-                      ["Control Voltage",qp.controlVoltage||q.controlVoltage||"120VAC"],
+                      ["Supply Voltage",qp.supplyVoltage||q.supplyVoltage||pan.supplyVoltage||""],
+                      ["Control Voltage",qp.controlVoltage||q.controlVoltage||pan.controlVoltage||""],
                     ].map(([label,val])=>(
                       <div key={label} className="qd-spec">
                         <b>{label}:</b> {val||"—"}
@@ -9132,7 +9132,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         extractTitleBlock(firstWithData.dataUrl).then(tb=>{
           if(!tb)return;
           const fresh=latestPanelRef.current;
-          const patched={...fresh,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+          const v=tb.voltages||{};
+          const patched={...fresh,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||"",...(v.lineVoltage&&v.lineVoltage!=="unknown"?{supplyVoltage:v.lineVoltage}:{}),...(v.controlVoltage&&v.controlVoltage!=="unknown"?{controlVoltage:v.controlVoltage}:{})};
           onUpdate(patched);
           setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
           onSaveImmediate(patched).catch(()=>{});
