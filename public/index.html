@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.227";
+const APP_VERSION="v1.19.228";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7311,35 +7311,40 @@ function QuoteTab({project,onUpdate}){
           {/* Line Items */}
           <div className="qd-items">
             <div className="qd-items-heading">Line Items</div>
-            <div className="qd-li">
+            {(project.panels||[project]).map((pan,pi)=>{
+              const panPr=pan.pricing||{};
+              const panSell=computePanelSellPrice(pan);
+              const panHasSell=panSell>0;
+              const panQty=pan.lineQty??1;
+              const panBom=pan.bom||[];
+              const qp=(q.panelOverrides||{})[pan.id]||{};
+              const setQP=(updates)=>{const po={...(q.panelOverrides||{}),[pan.id]:{...qp,...updates}};setQ({panelOverrides:po});};
+              return(
+              <div key={pan.id||pi} className="qd-li">
               <div className="qd-li-hdr">
-                <span className="qd-li-num">Line 1</span>
-                <span className="qd-li-part">Part #: <input value={q.panelId||""} onChange={e=>setQ({panelId:e.target.value})} placeholder={project.name} style={{...qInp({display:"inline",width:200,fontWeight:700,fontSize:14})}}/></span>
+                <span className="qd-li-num">Line {pi+1}</span>
+                <span className="qd-li-part">Part #: {pan.drawingNo||qp.panelId||pan.name||`Panel ${pi+1}`}</span>
               </div>
               <div className="qd-li-body">
                 <div>
-                  <div className="qd-li-title"><input value={q.description||""} onChange={e=>setQ({description:e.target.value})} placeholder={project.name} style={qInp({fontWeight:600,fontSize:16})}/></div>
+                  <div className="qd-li-title">{qp.description||pan.drawingDesc||pan.name||`Panel ${pi+1}`}</div>
                   <div className="qd-specs">
                     {[
-                      ["Project",q.projectNumber,v=>setQ({projectNumber:v}),project.name],
-                      ["Drawing Rev",q.drawingRev,v=>setQ({drawingRev:v}),"A"],
-                      ["Panel ID",q.panelId,v=>setQ({panelId:v}),project.name],
-                      ["Plant Name",q.plantName,v=>setQ({plantName:v}),""],
-                      ["Supply Voltage",q.supplyVoltage,v=>setQ({supplyVoltage:v}),"480VAC"],
-                      ["Control Voltage",q.controlVoltage,v=>setQ({controlVoltage:v}),"120VAC"],
-                    ].map(([label,val,setter,ph])=>(
+                      ["Project",q.projectNumber||project.bcProjectNumber||project.name],
+                      ["Drawing Rev",pan.drawingRev||"—"],
+                      ["Panel ID",pan.drawingNo||pan.name||"—"],
+                      ["Plant Name",qp.plantName||q.plantName||""],
+                      ["Supply Voltage",qp.supplyVoltage||q.supplyVoltage||"480VAC"],
+                      ["Control Voltage",qp.controlVoltage||q.controlVoltage||"120VAC"],
+                    ].map(([label,val])=>(
                       <div key={label} className="qd-spec">
-                        <b>{label}:</b>{" "}
-                        <input value={val||""} onChange={e=>setter(e.target.value)} placeholder={ph} style={{...qInp({display:"inline",width:"55%",fontSize:13})}}/>
+                        <b>{label}:</b> {val||"—"}
                       </div>
                     ))}
                   </div>
-                  <div className="qd-li-notes">
-                    <span>NOTES: </span>
-                    <textarea value={q.lineNotes||""} onChange={e=>setQ({lineNotes:e.target.value})} placeholder="e.g. Grey duct quoted instead of white." rows={1} style={{...qInp({display:"inline-block",width:"85%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
-                  </div>
+                  {qp.lineNotes||q.lineNotes?<div className="qd-li-notes"><span>NOTES: </span>{qp.lineNotes||q.lineNotes}</div>:null}
                   {(()=>{
-                    const crossedItems=(bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
+                    const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom);
                     if(!crossedItems.length)return null;
                     return(
                       <div className="qd-crossed">
@@ -7352,85 +7357,22 @@ function QuoteTab({project,onUpdate}){
                       </div>
                     );
                   })()}
-                  {(()=>{
-                    const formatCorrs=(bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
-                    if(!formatCorrs.length)return null;
-                    return(
-                      <div className="qd-crossed">
-                        <div className="qd-crossed-title">Part Number Format Corrections</div>
-                        {formatCorrs.map((item,i)=>(
-                          <div key={item.id||i} className="qd-crossed-row">
-                            {i+1}. <span className="qd-muted">{item.correctionType==='formatting'?'Formatting error:':'Extracted as:'}</span> <strong>{item.correctionFrom}</strong> <span className="qd-muted">→ Corrected to:</span> <strong>{item.partNumber}</strong>{item.description?<span className="qd-muted"> ({item.description})</span>:null}
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
                 </div>
               </div>
-
-              {/* Missing Data */}
-              {(()=>{
-                const v=project.validation;
-                if(!v)return null;
-                const lb=project.bom||[];
-                const missing=(v.missingFromSchematic||[]).filter(i=>lb.find(r=>r.id===i.id)?.validationAction!=="ignored");
-                const noId=(v.notTraceable||[]).filter(i=>lb.find(r=>r.id===i.id)?.validationAction!=="ignored");
-                if(!missing.length&&!noId.length)return null;
-                return(
-                  <div className="qd-missing">
-                    <div className="qd-missing-title">Missing Data</div>
-                    {missing.length>0&&(
-                      <div style={{marginBottom:2}}>
-                        <div className="qd-missing-sub">In BOM — not found in schematic</div>
-                        <table>
-                          <thead><tr>{["Part Number","Description","Ref Tags"].map(h=><th key={h}>{h}</th>)}</tr></thead>
-                          <tbody>
-                            {missing.map((item,i)=>(
-                              <tr key={item.id||i}>
-                                <td style={{color:"#94a3b8"}}>{item.partNumber||"—"}</td>
-                                <td style={{color:"#94a3b8"}}>{item.description||"—"}</td>
-                                <td style={{color:"#94a3b8"}}>{item.notes||"—"}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                    {noId.length>0&&(
-                      <div>
-                        <div className="qd-missing-sub">No device ID (AS SHOWN — field verification required)</div>
-                        <table>
-                          <thead><tr>{["Part Number","Description","Qty"].map(h=><th key={h}>{h}</th>)}</tr></thead>
-                          <tbody>
-                            {noId.map((item,i)=>(
-                              <tr key={item.id||i}>
-                                <td style={{color:"#94a3b8"}}>{item.partNumber||"—"}</td>
-                                <td style={{color:"#94a3b8"}}>{item.description||"—"}</td>
-                                <td style={{color:"#94a3b8"}}>{item.qty||1}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
 
               {/* Pricing Row */}
               <div className="qd-li-pricing">
                 <div>
                   <div className="qd-plabel">Quantity</div>
-                  <div className="qd-pval"><input value={q.qty||(((project.panels||[])[0]||{}).lineQty??1)} onChange={e=>setQ({qty:e.target.value})} onFocus={e=>e.target.select()} style={{...qInp({width:50,textAlign:"center",fontSize:14,fontWeight:600})}}/> EA</div>
+                  <div className="qd-pval">{panQty} EA</div>
                 </div>
                 <div>
                   <div className="qd-plabel">Unit Price</div>
-                  <div className="qd-pval">{hasSellPrice?fmtMoney(sellPrice):"—"}</div>
+                  <div className="qd-pval">{panHasSell?fmtMoney(panSell):"—"}</div>
                 </div>
                 <div>
                   <div className="qd-plabel">Lead Time</div>
-                  <div className="qd-pval"><input value={q.leadTime||""} onChange={e=>setQ({leadTime:e.target.value})} placeholder="—" style={{...qInp({width:50,textAlign:"center",fontSize:14,fontWeight:600})}}/> days</div>
+                  <div className="qd-pval">{qp.leadTime||q.leadTime||"—"} days</div>
                 </div>
                 <div>
                   <div className="qd-plabel">Discount</div>
@@ -7438,21 +7380,26 @@ function QuoteTab({project,onUpdate}){
                 </div>
                 <div>
                   <div className="qd-plabel">Total Price</div>
-                  <div className={"qd-pval qd-total-val"}>{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):"—"} {hasSellPrice&&<span style={{fontWeight:400,color:"#94a3b8"}}>*</span>}</div>
+                  <div className={"qd-pval qd-total-val"}>{panHasSell?fmtMoney(panSell*panQty):"—"}</div>
                 </div>
               </div>
-            </div>
-            <div style={{fontSize:13,color:"#94a3b8",marginTop:-4,marginBottom:16}}>* Indicates which quantity price is included in the Total</div>
+            </div>);
+            })}
           </div>
 
           {/* Totals */}
+          {(()=>{
+            const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
+            const hasTotalPrice=totalPrice>0;
+            return(
           <div className="qd-totals-bar">
             <div className="qd-totals-box">
-              <div className="qd-totals-row"><span>Subtotal</span><span>{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):"—"}</span></div>
-              <div className="qd-totals-row"><span>Tax</span><span>$0.00</span></div>
-              <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasSellPrice?fmtMoney(sellPrice*(parseFloat(q.qty)||1)):"—"}</span></div>
+              <div className="qd-totals-row"><span>Subtotal</span><span>{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
+              <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
+              <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
             </div>
-          </div>
+          </div>);
+          })()}
 
           {/* Footer Info */}
           <div className="qd-footer-info">
