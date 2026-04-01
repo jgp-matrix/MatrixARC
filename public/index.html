@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.258";
+const APP_VERSION="v1.19.259";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3120,10 +3120,12 @@ async function buildQuotePdfDoc(doc,project){
 
     // Check if line item block fits (~40mm minimum)
     arcDocCheckBreak(ctx,40);
+    const lineItemStartY=ctx.y;
+    const lineItemStartPage=ctx.pageNum;
 
     // Line header bar
     doc.setFillColor(248,250,252);doc.setDrawColor(226,232,240);
-    doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,7,1,1,"FD");
+    doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,7,0,0,"FD");
     doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
     doc.text("Line "+(pi+1),ARC_DOC.margin.left+3,ctx.y+4.5);
     doc.setTextColor(...ARC_DOC.colors.black);
@@ -3210,6 +3212,12 @@ async function buildQuotePdfDoc(doc,project){
       doc.text(col.v,cx,py+9,{align:"center"});
     });
     ctx.y=py+15;
+    // Draw border around entire line item block (only if still on same page)
+    if(ctx.pageNum===lineItemStartPage){
+      doc.setDrawColor(...ARC_DOC.colors.lightGrey);doc.setLineWidth(0.3);
+      doc.rect(ARC_DOC.margin.left,lineItemStartY,ctx.contentWidth,ctx.y-lineItemStartY);
+    }
+    ctx.y+=3;
   }
 
   // ── VALIDITY DISCLAIMER ──
@@ -3252,11 +3260,11 @@ async function buildQuotePdfDoc(doc,project){
   const tcRaw=_appCtx.termsAndConditions||"";
   if(tcRaw.trim()){
     arcDocNewPage(ctx);
-    // T&C header
-    doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
-    doc.text("STANDARD TERMS AND CONDITIONS OF SALE",ARC_DOC.W/2,ctx.y,{align:"center"});ctx.y+=4;
-    doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
-    doc.text(_appCtx.company?.name||"Matrix Systems, LLC",ARC_DOC.W/2,ctx.y,{align:"center"});ctx.y+=5;
+    // T&C header — compact to fit on one page
+    doc.setFontSize(8);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
+    doc.text("STANDARD TERMS AND CONDITIONS OF SALE",ARC_DOC.W/2,ctx.y,{align:"center"});ctx.y+=3;
+    doc.setFontSize(6);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
+    doc.text(_appCtx.company?.name||"Matrix Systems, LLC",ARC_DOC.W/2,ctx.y,{align:"center"});ctx.y+=4;
     // Parse sections
     const preprocessed=tcRaw.replace(/([.;)\s])\s*(\d{1,2})[.\)]\s*([A-Z])/g,function(mt,pre,num,letter){return pre+"\n"+num+". "+letter;});
     const tcLines=preprocessed.split("\n");
@@ -3283,10 +3291,11 @@ async function buildQuotePdfDoc(doc,project){
     for(const sec of sections){
       doc.setPage(ctx.pageNum); // ensure on correct page
       // Estimate height
-      const titleH=sec.title?3:0;
+      const titleH=sec.title?2.5:0;
+      doc.setFontSize(4.5);
       const bodyLines=sec.body?doc.splitTextToSize(sec.body,colW):[];
-      const bodyH=bodyLines.length*2.5;
-      const secH=titleH+bodyH+3;
+      const bodyH=bodyLines.length*2;
+      const secH=titleH+bodyH+1.5;
       // Check column overflow
       if(colY[col]+secH>ctx.contentBottom){
         if(col===0){col=1;} // move to right column
@@ -3294,14 +3303,15 @@ async function buildQuotePdfDoc(doc,project){
       }
       const sy=colY[col];const sx=colX[col];
       if(sec.title){
-        doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
-        doc.text(sec.title,sx,sy);colY[col]+=3;
+        doc.setFontSize(5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+        doc.text(sec.title,sx,sy);colY[col]+=2.5;
       }
       if(bodyLines.length){
-        doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-        doc.text(bodyLines,sx,colY[col]);colY[col]+=bodyLines.length*2.5;
+        doc.setFontSize(4.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+        bodyLines.forEach((bl,bi)=>{doc.text(bl,sx,colY[col]+bi*2);});
+        colY[col]+=bodyLines.length*2;
       }
-      colY[col]+=1.5;
+      colY[col]+=1;
     }
     ctx.y=Math.max(colY[0],colY[1]);
   }
@@ -13626,6 +13636,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
   const [validating,setValidating]=useState(false);
   const [validateMsg,setValidateMsg]=useState("");
   const [showDeleteAdminWarn,setShowDeleteAdminWarn]=useState(false);
+  const [quoteSendModalPLV,setQuoteSendModalPLV]=useState(null);
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
   const [selectedPanelId,setSelectedPanelId]=useState(()=>(project.panels||[])[0]?.id||null);
@@ -14052,7 +14063,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   const q=project.quote||{};
                   const rev=project.quoteRev||0;
                   const isBudg=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
-                  setQuoteSendModal({
+                  setQuoteSendModalPLV({
                     to:q.email||"",
                     subject:`${isBudg?"Budgetary ":""}Quote ${q.number||"Quote"}${rev>0?" Rev "+String(rev).padStart(2,"0"):""} — ${project.name||"Project"}`,
                     message:`Please find the attached ${isBudg?"budgetary ":""}quote for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
@@ -14093,6 +14104,32 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
       onUpdate:updated=>onUpdate({...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)}),
       onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
+    {quoteSendModalPLV&&ReactDOM.createPortal(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:560,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:12}}>✉ Send Quote</div>
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <div><label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>To</label>
+            <input value={quoteSendModalPLV.to} onChange={e=>setQuoteSendModalPLV(prev=>({...prev,to:e.target.value}))} style={{...inp({fontSize:13})}}/></div>
+            <div><label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Subject</label>
+            <input value={quoteSendModalPLV.subject} onChange={e=>setQuoteSendModalPLV(prev=>({...prev,subject:e.target.value}))} style={{...inp({fontSize:13})}}/></div>
+            <div><label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Message</label>
+            <textarea value={quoteSendModalPLV.message} onChange={e=>setQuoteSendModalPLV(prev=>({...prev,message:e.target.value}))} rows={5} style={{...inp({fontSize:13,resize:"vertical",lineHeight:1.6})}}/></div>
+            <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line"}}>{quoteSendModalPLV.signature}</div>
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+            <button onClick={()=>setQuoteSendModalPLV(null)} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
+            <button onClick={async()=>{
+              const m=quoteSendModalPLV;if(!m.to.trim()){alert("Enter a recipient email.");return;}
+              const graphToken=await acquireGraphToken();if(!graphToken){alert("Could not get Microsoft 365 token.");return;}
+              const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
+              const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
+              try{await sendGraphEmail(graphToken,m.to,m.subject,html);const rev=project.quoteRev||0;onUpdate({...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to});setQuoteSendModalPLV(null);alert("Quote sent to "+m.to);}catch(e){alert("Send failed: "+e.message);}
+            }} style={btn("#0c2233","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8"})}>✉ Send</button>
+          </div>
+        </div>
+      </div>
+    ,document.body)}
   </>);
 }
 
