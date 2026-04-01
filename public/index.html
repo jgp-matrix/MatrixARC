@@ -124,8 +124,9 @@ body.no-tips [data-tip]::after{opacity:0!important;}
   .qd-info-label{font-size:10px!important;margin-bottom:2px!important}
   .qd-info-name{font-size:13px!important;font-weight:700!important;margin-bottom:1px!important}.qd-info-detail{font-size:11px!important;line-height:1.5!important}
   .qd-proj{padding:10px 40px!important;gap:10px!important}
-  .qd-proj-label{font-size:9px!important;margin-bottom:1px!important}
-  .qd-proj-value{font-size:12px!important}
+  .qd-proj-label{font-size:7px!important;margin-bottom:1px!important;color:#0f172a!important}
+  .qd-proj-value{font-size:9px!important;color:#0f172a!important}
+  .qd-proj-value input{color:#0f172a!important;font-size:9px!important}
   .qd-terms{padding:8px 40px!important;font-size:9px!important;line-height:1.5!important}.qd-terms textarea{font-size:9px!important;line-height:1.5!important}.qd-terms .qd-tnote{font-size:9px!important;margin-top:2px!important;font-weight:400!important}
   .qd-items{padding:12px 40px!important}
   .qd-items-heading{font-size:12px!important;margin-bottom:8px!important}
@@ -202,7 +203,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.237";
+const APP_VERSION="v1.19.238";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7258,7 +7259,7 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-addr">{_appCtx.company?.address||"5591 Leo Park Road, West Jordan, UT 84081 US"}</div>
             </div>
             <div className="qd-hdr-right">
-              <div className="qd-qlabel">{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
+              <div className="qd-qlabel" style={isProjectBudgetary?{fontSize:22,fontWeight:800,color:"#dc2626",letterSpacing:2}:{}}>{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
               <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="MTX-Q2#####" style={{...qInp({width:220,fontSize:28,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
               <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":"#64748b",letterSpacing:0.3}}>Rev {String(project.quoteRev||0).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>
               <div className="qd-qmeta">{q.date||today}<br/>Page 1 of 2</div>
@@ -7284,7 +7285,7 @@ function QuoteTab({project,onUpdate}){
                 <input value={q.salesEmail||""} onChange={e=>setQ({salesEmail:e.target.value})} placeholder="email@matrixpci.com" onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}} onBlur={()=>{
                   const spCode=project.bcSalespersonCode;if(spCode&&q.salesEmail){const path=`${_appCtx.configPath||"users/"+(_appCtx.uid||"")+"/config"}/salespersonInfo`;fbDb.doc(path).set({people:{[spCode]:{email:q.salesEmail||"",phone:q.salesPhone||""}}},{merge:true}).catch(()=>{});}
                 }} style={qInp({marginBottom:2})}/>
-                <input value={q.salesPhone||""} onChange={e=>setQ({salesPhone:e.target.value})} placeholder="(___) ___-____" onBlur={()=>{
+                <input value={(()=>{const p=q.salesPhone||"";const d=p.replace(/\D/g,"");return d.length===10?`${d.slice(0,3)}-${d.slice(3,6)}-${d.slice(6)}`:p;})()} onChange={e=>setQ({salesPhone:e.target.value})} placeholder="(___) ___-____" onBlur={()=>{
                   const spCode=project.bcSalespersonCode;if(spCode&&q.salesPhone){const path=`${_appCtx.configPath||"users/"+(_appCtx.uid||"")+"/config"}/salespersonInfo`;fbDb.doc(path).set({people:{[spCode]:{email:q.salesEmail||"",phone:q.salesPhone||""}}},{merge:true}).catch(()=>{});}
                 }} style={qInp({})}/>
               </div>
