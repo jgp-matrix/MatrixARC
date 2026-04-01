@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.213";
+const APP_VERSION="v1.19.214";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17131,8 +17131,8 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
 // ── LEFT NAV SIDEBAR ──
 const NAV_TABS=[
   {id:"projects",  label:"SALES",       icon:"◫"},
-  {id:"production",label:"PRODUCTION",icon:"⚙"},
   {id:"purchasing",label:"PURCHASING",  icon:"⬡"},
+  {id:"production",label:"PRODUCTION",  icon:"⚙"},
   {id:"items",     label:"ITEMS",       icon:"⬢"},
 ];
 function LeftNav({tab,onTabChange,pinned,onPinChange}){
