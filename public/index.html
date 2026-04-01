@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.256";
+const APP_VERSION="v1.19.257";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2853,10 +2853,10 @@ async function ensureJsPDF(){
 // ══════════════════════════════════════════════════════════════════
 
 const ARC_DOC={
-  W:215.9,H:279.4, // Letter size mm
-  margin:{top:18,bottom:22,left:18,right:18},
+  W:215.9,H:279.4,
+  margin:{top:15,bottom:20,left:15,right:15},
   colors:{brand:[37,99,246],black:[15,23,42],grey:[100,116,139],lightGrey:[148,163,184],red:[220,38,38],white:[255,255,255]},
-  fonts:{heading:16,subheading:12,body:10,small:8,tiny:6.5}
+  fonts:{heading:16,subheading:11,body:9,small:7.5,tiny:6}
 };
 
 function arcDocCreate(doc){
@@ -2878,35 +2878,42 @@ async function arcDocLoadLogo(){
   const url=_appCtx.company?.logoDarkUrl||_appCtx.company?.logoUrl;
   if(!url)return null;
   try{
-    return await new Promise((res,rej)=>{const img=new Image();img.crossOrigin="anonymous";img.onload=()=>{const c=document.createElement("canvas");c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext("2d").drawImage(img,0,0);res(c.toDataURL("image/png"));};img.onerror=()=>res(null);img.src=url;});
+    return await new Promise((res,rej)=>{const img=new Image();img.crossOrigin="anonymous";img.onload=()=>{const c=document.createElement("canvas");c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext("2d").drawImage(img,0,0);res({data:c.toDataURL("image/png"),w:img.naturalWidth,h:img.naturalHeight});};img.onerror=()=>res(null);img.src=url;});
   }catch(e){return null;}
 }
 
 function arcDocHeader(ctx,opts){
   const{doc}=ctx;const m=ARC_DOC.margin;const W=ARC_DOC.W;
-  ctx.headerOpts=opts; // save for compact headers on continuation pages
+  ctx.headerOpts=opts;
   let y=m.top;
-  // Logo
-  if(opts.logo){
-    try{doc.addImage(opts.logo,"PNG",m.left,y,40,15);}catch(e){}
+  // Logo — preserve aspect ratio, max 45mm wide, 14mm tall
+  const logoMaxW=45,logoMaxH=14;
+  if(opts.logo&&opts.logo.data){
+    try{
+      const ar=opts.logo.w/opts.logo.h;
+      let lw=logoMaxW,lh=lw/ar;
+      if(lh>logoMaxH){lh=logoMaxH;lw=lh*ar;}
+      doc.addImage(opts.logo.data,"PNG",m.left,y,lw,lh);
+    }catch(e){}
   }
   // Company address under logo
-  doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
-  doc.text(_appCtx.company?.address||"5591 Leo Park Road, West Jordan, UT 84081 US",m.left,y+18);
+  doc.setFontSize(7);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
+  doc.text(_appCtx.company?.address||"5591 Leo Park Road, West Jordan, UT 84081 US",m.left,y+17);
   // Right side — doc type + number + date
-  doc.setFontSize(opts.budgetary?16:12);doc.setFont("helvetica","bold");
+  const rx=W-m.right;
+  doc.setFontSize(opts.budgetary?18:13);doc.setFont("helvetica","bold");
   doc.setTextColor(...(opts.budgetary?ARC_DOC.colors.red:ARC_DOC.colors.grey));
-  doc.text(opts.docType||"Quote",W-m.right,y,{align:"right"});
-  doc.setFontSize(20);doc.setTextColor(...ARC_DOC.colors.black);
-  doc.text(opts.docNumber||"",W-m.right,y+7,{align:"right"});
-  doc.setFontSize(9);doc.setTextColor(...ARC_DOC.colors.grey);
-  if(opts.rev!=null)doc.text("Rev "+String(opts.rev).padStart(2,"0"),W-m.right,y+12,{align:"right"});
-  doc.text(opts.date||"",W-m.right,y+16,{align:"right"});
+  doc.text(opts.docType||"Quote",rx,y+3,{align:"right"});
+  doc.setFontSize(22);doc.setTextColor(...ARC_DOC.colors.black);
+  doc.text(opts.docNumber||"",rx,y+10,{align:"right"});
+  doc.setFontSize(8);doc.setTextColor(...ARC_DOC.colors.grey);
+  if(opts.rev!=null)doc.text("Rev "+String(opts.rev).padStart(2,"0"),rx,y+14,{align:"right"});
+  doc.text(opts.date||"",rx,y+18,{align:"right"});
   // Blue line under header
   y+=22;
-  doc.setDrawColor(...ARC_DOC.colors.brand);doc.setLineWidth(0.6);
+  doc.setDrawColor(...ARC_DOC.colors.brand);doc.setLineWidth(0.5);
   doc.line(m.left,y,W-m.right,y);
-  ctx.y=y+4;
+  ctx.y=y+5;
 }
 
 function arcDocHeaderCompact(ctx,opts){
@@ -2958,12 +2965,12 @@ function arcDocText(ctx,text,opts={}){
   doc.setFont("helvetica",opts.bold?"bold":opts.italic?"italic":"normal");
   doc.setTextColor(...(opts.color||ARC_DOC.colors.black));
   const lines=doc.splitTextToSize(String(text),maxW);
-  const lineH=fs*0.4;
+  const lineH=fs*0.5;
   const blockH=lines.length*lineH;
-  arcDocCheckBreak(ctx,blockH);
+  arcDocCheckBreak(ctx,blockH+2);
   const x=opts.align==="right"?ARC_DOC.W-m.right:opts.align==="center"?ARC_DOC.W/2:m.left+(opts.indent||0);
-  doc.text(lines,x,ctx.y,{align:opts.align||"left"});
-  ctx.y+=blockH+(opts.gap!=null?opts.gap:2);
+  lines.forEach((line,i)=>{doc.text(line,x,ctx.y+i*lineH,{align:opts.align||"left"});});
+  ctx.y+=blockH+(opts.gap!=null?opts.gap:3);
 }
 
 function arcDocLabel(ctx,label,opts={}){
@@ -2983,41 +2990,54 @@ function arcDocHLine(ctx,opts={}){
 
 function arcDocInfoGrid(ctx,leftLines,rightLines){
   const{doc}=ctx;const m=ARC_DOC.margin;
-  const colW=ctx.contentWidth/2-4;
+  const colW=ctx.contentWidth/2-6;
   const startY=ctx.y;
+  const lh=3.5; // line height for body text
   // Render left column
   let ly=startY;
   for(const{label,value,bold}of leftLines){
-    doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
-    doc.text((label||"").toUpperCase(),m.left,ly);ly+=3;
-    doc.setFontSize(bold?11:ARC_DOC.fonts.body);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
-    const vLines=doc.splitTextToSize(String(value||"—"),colW);
-    doc.text(vLines,m.left,ly);ly+=vLines.length*4+2;
+    if(label){
+      doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+      doc.text((label).toUpperCase(),m.left,ly);ly+=3.5;
+    }
+    if(value){
+      const fs=bold?11:ARC_DOC.fonts.body;
+      doc.setFontSize(fs);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
+      const vLines=doc.splitTextToSize(String(value||""),colW);
+      vLines.forEach((vl,vi)=>{doc.text(vl,m.left,ly+vi*lh);});
+      ly+=vLines.length*lh+1;
+    }
   }
   // Render right column
-  let ry=startY;const rx=m.left+colW+8;
+  let ry=startY;const rx=ARC_DOC.W/2+4;
   for(const{label,value,bold}of rightLines){
-    doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
-    doc.text((label||"").toUpperCase(),rx,ry);ry+=3;
-    doc.setFontSize(bold?11:ARC_DOC.fonts.body);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
-    const vLines=doc.splitTextToSize(String(value||"—"),colW);
-    doc.text(vLines,rx,ry);ry+=vLines.length*4+2;
+    if(label){
+      doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+      doc.text((label).toUpperCase(),rx,ry);ry+=3.5;
+    }
+    if(value){
+      const fs=bold?11:ARC_DOC.fonts.body;
+      doc.setFontSize(fs);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
+      const vLines=doc.splitTextToSize(String(value||""),colW);
+      vLines.forEach((vl,vi)=>{doc.text(vl,rx,ry+vi*lh);});
+      ry+=vLines.length*lh+1;
+    }
   }
-  ctx.y=Math.max(ly,ry)+2;
+  ctx.y=Math.max(ly,ry)+3;
 }
 
 function arcDocKeyValueRow(ctx,items){
   const{doc}=ctx;const m=ARC_DOC.margin;
   const itemW=ctx.contentWidth/items.length;
-  arcDocCheckBreak(ctx,10);
+  arcDocCheckBreak(ctx,12);
   items.forEach((it,i)=>{
     const x=m.left+i*itemW;
     doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
     doc.text((it.label||"").toUpperCase(),x,ctx.y);
     doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-    doc.text(String(it.value||"—"),x,ctx.y+3.5);
+    doc.text(String(it.value||"—"),x,ctx.y+4);
   });
-  ctx.y+=9;
+  ctx.y+=10;
 }
 
 function arcDocOpen(doc){
@@ -3074,13 +3094,15 @@ async function buildQuotePdfDoc(doc,project){
   const termsText=q.termsText!=null?q.termsText:defaultTerms;
   if(termsText){
     // Light background box
-    const tLines=doc.splitTextToSize(termsText,ctx.contentWidth-4);
-    const tH=tLines.length*3.5+6;
+    doc.setFontSize(7.5);doc.setFont("helvetica","normal");
+    const tLines=doc.splitTextToSize(termsText,ctx.contentWidth-6);
+    const tlh=3.2;
+    const tH=tLines.length*tlh+6;
     arcDocCheckBreak(ctx,tH);
     doc.setFillColor(239,246,255);doc.setDrawColor(226,232,240);
     doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,tH,1,1,"FD");
-    doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-    doc.text(tLines,ARC_DOC.margin.left+2,ctx.y+4);
+    doc.setTextColor(...ARC_DOC.colors.black);
+    tLines.forEach((tl,ti)=>{doc.text(tl,ARC_DOC.margin.left+3,ctx.y+4+ti*tlh);});
     ctx.y+=tH+3;
   }
 
@@ -3120,20 +3142,21 @@ async function buildQuotePdfDoc(doc,project){
       ["Control Voltage",qp.controlVoltage||q.controlVoltage||pan.controlVoltage||""]
     ];
     const specColW=ctx.contentWidth/2;
-    arcDocCheckBreak(ctx,specs.length/2*6);
+    const specLabelW=26;
+    arcDocCheckBreak(ctx,Math.ceil(specs.length/2)*4.5);
     for(let si=0;si<specs.length;si+=2){
-      const x1=ARC_DOC.margin.left+2;const x2=ARC_DOC.margin.left+specColW;
-      doc.setFontSize(8);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      const x1=ARC_DOC.margin.left+2;const x2=ARC_DOC.margin.left+specColW+2;
+      doc.setFontSize(7.5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
       doc.text(specs[si][0]+":",x1,ctx.y);
       doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-      doc.text(String(specs[si][1]||"—"),x1+28,ctx.y);
+      doc.text(String(specs[si][1]||"—"),x1+specLabelW,ctx.y);
       if(si+1<specs.length){
         doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
         doc.text(specs[si+1][0]+":",x2,ctx.y);
         doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-        doc.text(String(specs[si+1][1]||"—"),x2+28,ctx.y);
+        doc.text(String(specs[si+1][1]||"—"),x2+specLabelW,ctx.y);
       }
-      ctx.y+=4;
+      ctx.y+=4.5;
     }
     ctx.y+=1;
 
