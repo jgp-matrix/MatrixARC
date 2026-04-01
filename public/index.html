@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.266";
+const APP_VERSION="v1.19.267";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3207,7 +3207,7 @@ async function buildQuotePdfDoc(doc,project){
       doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...(ci===4?ARC_DOC.colors.brand:ARC_DOC.colors.black));
       doc.text(col.v,cx,py+9,{align:"center"});
     });
-    ctx.y=py+15;
+    ctx.y=py+13;
     // Draw border around entire line item block (only if still on same page)
     if(ctx.pageNum===lineItemStartPage){
       doc.setDrawColor(...ARC_DOC.colors.lightGrey);doc.setLineWidth(0.3);
