@@ -109,9 +109,6 @@ body.no-tips [data-tip]::after{opacity:0!important;}
   .qd-page{box-shadow:none!important;border-radius:0!important;margin:0!important;width:100%!important;min-height:auto!important;page-break-after:always}
   .qd-page:last-child{page-break-after:auto}
   .qd-print-footer{display:flex!important;position:fixed!important;bottom:0!important;left:0!important;width:100%!important;background:#fff!important;padding:10px 32px!important;justify-content:space-between!important;align-items:center!important;font-size:10px!important;color:#64748b!important;border-top:2px solid #2563eb!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;box-sizing:border-box!important}
-  #quote-doc{counter-reset:quotePageNum}
-  .qd-page{counter-increment:quotePageNum}
-  .qd-page-num::after{content:"Page " counter(quotePageNum)}
   #quote-doc input,#quote-doc textarea{
     border:none!important;border-bottom:none!important;
     background:transparent!important;outline:none!important;
@@ -208,7 +205,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.245";
+const APP_VERSION="v1.19.246";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7255,7 +7252,6 @@ function QuoteTab({project,onUpdate}){
           <div className="qd-foot-left"><strong>Matrix Systems</strong><br/>5591 Leo Park Rd · West Jordan, UT 84081</div>
           <div style={{textAlign:"center",display:"flex",flexDirection:"column",alignItems:"center",gap:1}}>
             <div style={{fontStyle:"italic",fontSize:9,color:"#94a3b8"}}>continued on next page...</div>
-            <div className="qd-page-num" style={{fontSize:9,color:"#64748b"}}></div>
           </div>
           <div className="qd-foot-right">(801) 930-9492<br/>info@matrixpci.com</div>
         </div>
@@ -7271,7 +7267,7 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-qlabel" style={isProjectBudgetary?{fontSize:22,fontWeight:800,color:"#dc2626",letterSpacing:2}:{}}>{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
               <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="MTX-Q2#####" style={{...qInp({width:220,fontSize:28,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
               <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":"#64748b",letterSpacing:0.3}}>Rev {String(project.quoteRev||0).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>
-              <div className="qd-qmeta">{q.date||today}</div>
+              {(()=>{const hasEq=(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-qmeta">{q.date||today}<br/>Page 1 of {totalPages}</div>;})()}
             </div>
           </div>
 
@@ -7449,7 +7445,7 @@ function QuoteTab({project,onUpdate}){
           return onQ.length>0?React.createElement("div",{className:"qd-page"},
             React.createElement("div",{className:"qd-header-cont"},
               React.createElement("div",{className:"qd-hc-name"},"Matrix Systems"),
-              React.createElement("div",{className:"qd-hc-right"},(q.date||today))
+              React.createElement("div",{className:"qd-hc-right"},(q.date||today)+"\nPage 2 of "+((project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"))?3:2))
             ),
             React.createElement("div",{style:{padding:"24px 44px"}},
               React.createElement("div",{style:{fontSize:16,fontWeight:700,color:"#f1f5f9",marginBottom:4,textTransform:"uppercase",letterSpacing:1,textAlign:"center"}},"Questions for Customer"),
@@ -7479,7 +7475,7 @@ function QuoteTab({project,onUpdate}){
         <div className="qd-page">
           <div className="qd-header-cont">
             <div className="qd-hc-name">Matrix Systems</div>
-            <div className="qd-hc-right">{q.date||today}<br/>Page 2 of 2</div>
+            {(()=>{const hasEq=(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-hc-right">{q.date||today}<br/>Page {totalPages} of {totalPages}</div>;})()}
           </div>
 
           <div className="qd-tc">
