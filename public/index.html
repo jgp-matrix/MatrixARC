@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.236";
+const APP_VERSION="v1.19.237";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13924,7 +13924,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             const bc=((await pr.json()).value||[])[0];
             if(bc){
               if(!q.company&&bc.Sell_to_Customer_Name)autoFields.company=bc.Sell_to_Customer_Name;
-              const addr=[bc.Sell_to_Address,bc.Sell_to_Address_2,bc.Sell_to_City&&bc.Sell_to_County?`${bc.Sell_to_City}, ${bc.Sell_to_County} ${bc.Sell_to_Post_Code||""}`.trim():bc.Sell_to_City].filter(Boolean).join("\n");
+              let addr=[bc.Sell_to_Address,bc.Sell_to_Address_2,bc.Sell_to_City&&bc.Sell_to_County?`${bc.Sell_to_City}, ${bc.Sell_to_County} ${bc.Sell_to_Post_Code||""}`.trim():bc.Sell_to_City].filter(Boolean).join("\n");
+              // Fallback: if project card address is empty, fetch from Customer card
+              if(!addr&&bc.Sell_to_Customer_No){
+                try{
+                  const compId2=await bcGetCompanyId();
+                  const custR=await fetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${bc.Sell_to_Customer_No}'&$select=addressLine1,addressLine2,city,state,postalCode,phoneNumber,email`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                  if(custR.ok){
+                    const cust=((await custR.json()).value||[])[0];
+                    if(cust){
+                      addr=[cust.addressLine1,cust.addressLine2,cust.city&&cust.state?`${cust.city}, ${cust.state} ${cust.postalCode||""}`.trim():cust.city].filter(Boolean).join("\n");
+                      if(!q.phone&&cust.phoneNumber)autoFields.phone=cust.phoneNumber;
+                      if(!q.email&&cust.email)autoFields.email=cust.email;
+                    }
+                  }
+                }catch(e){console.warn("Customer card fetch failed:",e);}
+              }
               if(!q.address&&addr)autoFields.address=addr;
               // Get contact details from BC Contact Card — find person with email/phone under the company
               const compId=await bcGetCompanyId();
