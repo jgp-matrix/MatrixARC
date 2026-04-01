@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.214";
+const APP_VERSION="v1.19.215";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16705,7 +16705,7 @@ function ReportsModal({uid,onClose}){
 }
 
 function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,forceView}){
-  const [groupBy,setGroupBy]=useState(forceView==="production"?"production":"status");
+  const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":"status");
   const [projectSearch,setProjectSearch]=useState("");
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
@@ -16748,13 +16748,23 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       });
       return [{label:null,items:sorted}];
     }
-    if(groupBy==="production"){
-      const order=["active","purchasing"];
-      const labels={active:"Open Orders (Purchasing)",purchasing:"Open Orders (In Production)"};
+    if(groupBy==="purchasing"){
+      const order=["tobepurchased","inprocess","completed"];
+      const labels={tobepurchased:"To Be Purchased",inprocess:"Purchasing In Process",completed:"Purchasing Completed"};
       const map={};
       list.forEach(p=>{
-        if(p.bcPoStatus==="purchasing"){if(!map.purchasing)map.purchasing=[];map.purchasing.push(p);}
-        else if(p.bcPoStatus==="Open"){if(!map.active)map.active=[];map.active.push(p);}
+        if(p.bcPoStatus==="purchasing"){if(!map.inprocess)map.inprocess=[];map.inprocess.push(p);}
+        else if(p.bcPoStatus==="Open"){if(!map.tobepurchased)map.tobepurchased=[];map.tobepurchased.push(p);}
+        else if(p.bcPoStatus==="purchased"||p.bcPoStatus==="Completed"){if(!map.completed)map.completed=[];map.completed.push(p);}
+      });
+      return order.map(k=>({label:labels[k],items:map[k]||[]}));
+    }
+    if(groupBy==="production"){
+      const order=["inproduction"];
+      const labels={inproduction:"In Production"};
+      const map={};
+      list.forEach(p=>{
+        if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open"){if(!map.inproduction)map.inproduction=[];map.inproduction.push(p);}
       });
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
@@ -16816,7 +16826,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
   return(
     <div style={{maxWidth:2100,margin:"0 auto",padding:32,minWidth:0,width:"100%",boxSizing:"border-box"}}>
 
-      {forceView!=="production"&&<div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+      {!forceView&&<div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
         <button data-tip="Start a new panel extraction project" data-tour="new-project-btn" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
           <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
         </button>
@@ -16827,7 +16837,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         </div>
       </div>}
 
-      {forceView!=="production"&&<div style={{display:"flex",gap:8,marginBottom:groupBy!=="imported"?8:24}}>
+      {!forceView&&<div style={{display:"flex",gap:8,marginBottom:groupBy!=="imported"?8:24}}>
         {filterBtn("By Status","status")}
         {filterBtn("By Customer","customer")}
         {filterBtn("By Date","date")}
@@ -16845,7 +16855,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       )}
 
       {(()=>{
-        let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="budgetary"||groupBy==="production"||!p.importedFromBC));
+        let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="budgetary"||groupBy==="production"||forceView==="purchasing"||!p.importedFromBC));
         // Apply search filter
         if(projectSearch.trim()){
           const q=projectSearch.trim().toLowerCase();
@@ -16867,13 +16877,13 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
               <button onClick={onNew} style={btn(C.accent,"#fff")}>Create First Project</button>
             </div>
           )}
-          {(groupBy==="customer"||groupBy==="status"||groupBy==="production")?(
+          {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,Budgetary:"#f59e0b","In Progress":C.yellow,"Process RFQs":C.red,Ready:C.green,"Open Orders (Purchasing)":"#38bdf8","Open Orders (In Production)":"#a78bfa"};
-                const statusColBg={Draft:C.border,Budgetary:"#3a1f00","In Progress":C.yellowDim,"Process RFQs":C.redDim,Ready:C.greenDim,"Open Orders (Purchasing)":"#0c2233","Open Orders (In Production)":"#1a1033"};
-                const colColor=(groupBy==="status"||groupBy==="production")?(statusColColors[g.label]||C.muted):C.sub;
-                const colBg=(groupBy==="status"||groupBy==="production")?(statusColBg[g.label]||C.border):"#3d6090";
+                const statusColColors={Draft:C.muted,Budgetary:"#f59e0b","In Progress":C.yellow,"Process RFQs":C.red,Ready:C.green,"To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","In Production":"#a78bfa"};
+                const statusColBg={Draft:C.border,Budgetary:"#3a1f00","In Progress":C.yellowDim,"Process RFQs":C.redDim,Ready:C.greenDim,"To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"In Production":"#1a1033"};
+                const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColColors[g.label]||C.muted):C.sub;
+                const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColBg[g.label]||C.border):"#3d6090";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
                 const isDropTarget=groupBy==="customer"&&!isNoCustomer&&!!g.customerNumber&&!!dragProjectId;
                 const isOver=dropTarget===gi;
@@ -19003,7 +19013,7 @@ INSTRUCTIONS:
       <div style={{flex:1,minWidth:0,overflowY:"auto"}}>
       <VendorSyncFloater onSwitchToItems={()=>{setNavTab("items");}}/>
       {navTab==="production"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
-      {navTab==="purchasing"&&<PurchasingTab/>}
+      {navTab==="purchasing"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="purchasing"/>}
       {navTab==="items"&&<ItemsTab uid={user.uid}/>}
       {navTab==="projects"&&<>
       {/* BC Connection Lost popup */}
