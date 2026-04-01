@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.231";
+const APP_VERSION="v1.19.232";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7342,9 +7342,12 @@ function QuoteTab({project,onUpdate}){
                       </div>
                     ))}
                   </div>
-                  <div className="qd-li-notes">
-                    <span>NOTES: </span>
-                    <textarea value={qp.lineNotes!=null?qp.lineNotes:(pan.bomNotes||"")} onChange={e=>setQP({lineNotes:e.target.value})} placeholder="e.g. Grey duct quoted instead of white." rows={1} style={{...qInp({display:"inline-block",width:"85%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
+                  {pan.bomNotes&&<div className="qd-li-notes">
+                    <span>NOTES: </span>{pan.bomNotes}
+                  </div>}
+                  <div className="qd-li-notes" style={{borderLeftColor:"#3b82f6"}}>
+                    <span>QUOTE NOTES: </span>
+                    <textarea value={qp.lineNotes||""} onChange={e=>setQP({lineNotes:e.target.value})} placeholder="Additional quote-specific notes…" rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
                   </div>
                   {(()=>{
                     const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom);
