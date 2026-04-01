@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.255";
+const APP_VERSION="v1.19.256";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2846,6 +2846,462 @@ async function ensureJsPDF(){
   _jsPdfReady=true;
   return window.jspdf.jsPDF;
 }
+
+// ══════════════════════════════════════════════════════════════════
+// ARC DOCUMENT FRAMEWORK — Reusable jsPDF document generation
+// Shared across Quotes, RFQs, Order Acks, Purchase Orders
+// ══════════════════════════════════════════════════════════════════
+
+const ARC_DOC={
+  W:215.9,H:279.4, // Letter size mm
+  margin:{top:18,bottom:22,left:18,right:18},
+  colors:{brand:[37,99,246],black:[15,23,42],grey:[100,116,139],lightGrey:[148,163,184],red:[220,38,38],white:[255,255,255]},
+  fonts:{heading:16,subheading:12,body:10,small:8,tiny:6.5}
+};
+
+function arcDocCreate(doc){
+  const cw=ARC_DOC.W-ARC_DOC.margin.left-ARC_DOC.margin.right;
+  return{doc,y:ARC_DOC.margin.top,pageNum:1,contentBottom:ARC_DOC.H-ARC_DOC.margin.bottom,contentWidth:cw,headerOpts:null};
+}
+
+function arcDocNewPage(ctx){
+  ctx.doc.addPage();ctx.pageNum++;ctx.y=ARC_DOC.margin.top;
+  if(ctx.headerOpts)arcDocHeaderCompact(ctx,ctx.headerOpts);
+}
+
+function arcDocCheckBreak(ctx,height){
+  if(ctx.y+height>ctx.contentBottom){arcDocNewPage(ctx);return true;}
+  return false;
+}
+
+async function arcDocLoadLogo(){
+  const url=_appCtx.company?.logoDarkUrl||_appCtx.company?.logoUrl;
+  if(!url)return null;
+  try{
+    return await new Promise((res,rej)=>{const img=new Image();img.crossOrigin="anonymous";img.onload=()=>{const c=document.createElement("canvas");c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext("2d").drawImage(img,0,0);res(c.toDataURL("image/png"));};img.onerror=()=>res(null);img.src=url;});
+  }catch(e){return null;}
+}
+
+function arcDocHeader(ctx,opts){
+  const{doc}=ctx;const m=ARC_DOC.margin;const W=ARC_DOC.W;
+  ctx.headerOpts=opts; // save for compact headers on continuation pages
+  let y=m.top;
+  // Logo
+  if(opts.logo){
+    try{doc.addImage(opts.logo,"PNG",m.left,y,40,15);}catch(e){}
+  }
+  // Company address under logo
+  doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
+  doc.text(_appCtx.company?.address||"5591 Leo Park Road, West Jordan, UT 84081 US",m.left,y+18);
+  // Right side — doc type + number + date
+  doc.setFontSize(opts.budgetary?16:12);doc.setFont("helvetica","bold");
+  doc.setTextColor(...(opts.budgetary?ARC_DOC.colors.red:ARC_DOC.colors.grey));
+  doc.text(opts.docType||"Quote",W-m.right,y,{align:"right"});
+  doc.setFontSize(20);doc.setTextColor(...ARC_DOC.colors.black);
+  doc.text(opts.docNumber||"",W-m.right,y+7,{align:"right"});
+  doc.setFontSize(9);doc.setTextColor(...ARC_DOC.colors.grey);
+  if(opts.rev!=null)doc.text("Rev "+String(opts.rev).padStart(2,"0"),W-m.right,y+12,{align:"right"});
+  doc.text(opts.date||"",W-m.right,y+16,{align:"right"});
+  // Blue line under header
+  y+=22;
+  doc.setDrawColor(...ARC_DOC.colors.brand);doc.setLineWidth(0.6);
+  doc.line(m.left,y,W-m.right,y);
+  ctx.y=y+4;
+}
+
+function arcDocHeaderCompact(ctx,opts){
+  const{doc}=ctx;const m=ARC_DOC.margin;const W=ARC_DOC.W;
+  let y=m.top;
+  doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+  doc.text(_appCtx.company?.name||"Matrix Systems",m.left,y);
+  doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
+  doc.text(`${opts.docType||"Quote"} ${opts.docNumber||""} · ${opts.date||""}`,W-m.right,y,{align:"right"});
+  y+=3;
+  doc.setDrawColor(...ARC_DOC.colors.brand);doc.setLineWidth(0.4);
+  doc.line(m.left,y,W-m.right,y);
+  ctx.y=y+4;
+}
+
+function arcDocStampFooters(ctx,opts){
+  const{doc}=ctx;const totalPages=ctx.pageNum;const m=ARC_DOC.margin;const W=ARC_DOC.W;
+  for(let p=1;p<=totalPages;p++){
+    doc.setPage(p);
+    const fy=ARC_DOC.H-10;
+    // Blue line
+    doc.setDrawColor(...ARC_DOC.colors.brand);doc.setLineWidth(0.4);
+    doc.line(m.left,fy-4,W-m.right,fy-4);
+    // Left: company
+    doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+    doc.text(opts.companyName||"Matrix Systems",m.left,fy);
+    doc.setFont("helvetica","normal");doc.setFontSize(6);
+    doc.text(opts.address||"5591 Leo Park Rd · West Jordan, UT 84081",m.left,fy+3);
+    // Center: page number + continued
+    doc.setFontSize(7);doc.setFont("helvetica","normal");
+    doc.text(`Page ${p} of ${totalPages}`,W/2,fy,{align:"center"});
+    if(p<totalPages){
+      doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.lightGrey);
+      doc.text("continued on next page...",W/2,fy+3,{align:"center"});
+    }
+    // Right: phone/email
+    doc.setFontSize(6);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
+    doc.text(opts.phone||"(801) 930-9492",W-m.right,fy,{align:"right"});
+    doc.text(opts.email||"sales@matrixpci.com",W-m.right,fy+3,{align:"right"});
+  }
+}
+
+function arcDocText(ctx,text,opts={}){
+  if(!text)return;
+  const{doc}=ctx;const m=ARC_DOC.margin;
+  const fs=opts.fontSize||ARC_DOC.fonts.body;
+  const maxW=opts.maxWidth||ctx.contentWidth;
+  doc.setFontSize(fs);
+  doc.setFont("helvetica",opts.bold?"bold":opts.italic?"italic":"normal");
+  doc.setTextColor(...(opts.color||ARC_DOC.colors.black));
+  const lines=doc.splitTextToSize(String(text),maxW);
+  const lineH=fs*0.4;
+  const blockH=lines.length*lineH;
+  arcDocCheckBreak(ctx,blockH);
+  const x=opts.align==="right"?ARC_DOC.W-m.right:opts.align==="center"?ARC_DOC.W/2:m.left+(opts.indent||0);
+  doc.text(lines,x,ctx.y,{align:opts.align||"left"});
+  ctx.y+=blockH+(opts.gap!=null?opts.gap:2);
+}
+
+function arcDocLabel(ctx,label,opts={}){
+  arcDocText(ctx,(label||"").toUpperCase(),{fontSize:ARC_DOC.fonts.tiny,bold:true,color:ARC_DOC.colors.grey,gap:1,...opts});
+}
+
+function arcDocValue(ctx,value,opts={}){
+  arcDocText(ctx,value||"—",{fontSize:ARC_DOC.fonts.body,...opts});
+}
+
+function arcDocHLine(ctx,opts={}){
+  const{doc}=ctx;const m=ARC_DOC.margin;
+  doc.setDrawColor(...(opts.color||ARC_DOC.colors.black));doc.setLineWidth(opts.width||0.4);
+  doc.line(m.left,ctx.y,ARC_DOC.W-m.right,ctx.y);
+  ctx.y+=2;
+}
+
+function arcDocInfoGrid(ctx,leftLines,rightLines){
+  const{doc}=ctx;const m=ARC_DOC.margin;
+  const colW=ctx.contentWidth/2-4;
+  const startY=ctx.y;
+  // Render left column
+  let ly=startY;
+  for(const{label,value,bold}of leftLines){
+    doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+    doc.text((label||"").toUpperCase(),m.left,ly);ly+=3;
+    doc.setFontSize(bold?11:ARC_DOC.fonts.body);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
+    const vLines=doc.splitTextToSize(String(value||"—"),colW);
+    doc.text(vLines,m.left,ly);ly+=vLines.length*4+2;
+  }
+  // Render right column
+  let ry=startY;const rx=m.left+colW+8;
+  for(const{label,value,bold}of rightLines){
+    doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+    doc.text((label||"").toUpperCase(),rx,ry);ry+=3;
+    doc.setFontSize(bold?11:ARC_DOC.fonts.body);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
+    const vLines=doc.splitTextToSize(String(value||"—"),colW);
+    doc.text(vLines,rx,ry);ry+=vLines.length*4+2;
+  }
+  ctx.y=Math.max(ly,ry)+2;
+}
+
+function arcDocKeyValueRow(ctx,items){
+  const{doc}=ctx;const m=ARC_DOC.margin;
+  const itemW=ctx.contentWidth/items.length;
+  arcDocCheckBreak(ctx,10);
+  items.forEach((it,i)=>{
+    const x=m.left+i*itemW;
+    doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+    doc.text((it.label||"").toUpperCase(),x,ctx.y);
+    doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+    doc.text(String(it.value||"—"),x,ctx.y+3.5);
+  });
+  ctx.y+=9;
+}
+
+function arcDocOpen(doc){
+  const blob=doc.output("blob");
+  const url=URL.createObjectURL(blob);
+  window.open(url,"_blank");
+}
+
+function arcDocBase64(doc){
+  return doc.output("datauristring").split(",")[1];
+}
+
+// ── QUOTE PDF BUILDER ──
+function arcFmtMoney(n){return"$"+Math.round(n).toLocaleString("en-US");}
+function arcFmtPhone(p){const d=(p||"").replace(/\D/g,"");return d.length===10?d.slice(0,3)+"-"+d.slice(3,6)+"-"+d.slice(6):p||"";}
+
+async function buildQuotePdfDoc(doc,project){
+  const ctx=arcDocCreate(doc);
+  const q=project.quote||{};
+  const panels=project.panels||[];
+  const isBudg=panels.some(pan=>(pan.pricing||{}).isBudgetary);
+  const logo=await arcDocLoadLogo();
+  const today=new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+
+  // ── PAGE 1: HEADER ──
+  arcDocHeader(ctx,{
+    logo,
+    docType:isBudg?"BUDGETARY QUOTE":"Quote",
+    docNumber:q.number||"",
+    date:q.date||today,
+    rev:project.quoteRev||0,
+    budgetary:isBudg
+  });
+
+  // ── INFO GRID: Attention / Prepared By ──
+  const addrLines=[q.company,q.address,q.phone?"Phone: "+q.phone:"",q.email].filter(Boolean).join("\n");
+  const salesLines=["Salesperson",q.salesEmail?arcFmtPhone(q.salesPhone):"",q.salesEmail||""].filter(Boolean).join("\n");
+  arcDocInfoGrid(ctx,
+    [{label:"Attention",value:q.contact||"—",bold:true},{label:"",value:addrLines}],
+    [{label:"Prepared By",value:q.salesperson||"—",bold:true},{label:"",value:salesLines}]
+  );
+
+  // ── PROJECT DETAILS ROW ──
+  arcDocHLine(ctx,{color:ARC_DOC.colors.lightGrey,width:0.2});
+  arcDocKeyValueRow(ctx,[
+    {label:"Project #",value:q.projectNumber||project.bcProjectNumber||""},
+    {label:"Req. Ship Date",value:q.requestedShipDate||(panels.find(p=>p.requestedShipDate)||{}).requestedShipDate||"—"},
+    {label:"Pmt. Terms",value:q.paymentTerms||"Net 30 Days"},
+    {label:"Shipping Method",value:q.shippingMethod||"Customer Handles Shipping"}
+  ]);
+
+  // ── PAYMENT TERMS TEXT ──
+  const defaultTerms="Standard Payment Terms for Panel Builds (Order Total over $30,000): 30% ARO; 40% @ Procurement, 30% @ Readiness To Ship\nStandard Payment Terms for Engineering / Programming: 50% ARO / 50% due @ Completion of Work";
+  const termsText=q.termsText!=null?q.termsText:defaultTerms;
+  if(termsText){
+    // Light background box
+    const tLines=doc.splitTextToSize(termsText,ctx.contentWidth-4);
+    const tH=tLines.length*3.5+6;
+    arcDocCheckBreak(ctx,tH);
+    doc.setFillColor(239,246,255);doc.setDrawColor(226,232,240);
+    doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,tH,1,1,"FD");
+    doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+    doc.text(tLines,ARC_DOC.margin.left+2,ctx.y+4);
+    ctx.y+=tH+3;
+  }
+
+  // ── LINE ITEMS ──
+  arcDocText(ctx,"Line Items",{fontSize:ARC_DOC.fonts.subheading,bold:true,gap:3});
+
+  for(let pi=0;pi<panels.length;pi++){
+    const pan=panels[pi];
+    const panPr=pan.pricing||{};
+    const panSell=computePanelSellPrice(pan);
+    const panQty=pan.lineQty??1;
+    const qp=(q.panelOverrides||{})[pan.id]||{};
+    const panBom=pan.bom||[];
+
+    // Check if line item block fits (~40mm minimum)
+    arcDocCheckBreak(ctx,40);
+
+    // Line header bar
+    doc.setFillColor(248,250,252);doc.setDrawColor(226,232,240);
+    doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,7,1,1,"FD");
+    doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+    doc.text("Line "+(pi+1),ARC_DOC.margin.left+3,ctx.y+4.5);
+    doc.setTextColor(...ARC_DOC.colors.black);
+    doc.text("Part #: "+(pan.drawingNo||qp.panelId||pan.name||"Panel "+(pi+1)),ARC_DOC.margin.left+22,ctx.y+4.5);
+    ctx.y+=9;
+
+    // Title
+    arcDocText(ctx,qp.description||pan.drawingDesc||pan.name||"Panel "+(pi+1),{fontSize:11,bold:true,gap:2});
+
+    // Specs grid (2 columns)
+    const specs=[
+      ["Project",q.projectNumber||project.bcProjectNumber||project.name||""],
+      ["Drawing Rev",pan.drawingRev||"—"],
+      ["Panel ID",pan.drawingNo||pan.name||"—"],
+      ["Plant Name",qp.plantName||q.plantName||""],
+      ["Supply Voltage",qp.supplyVoltage||q.supplyVoltage||pan.supplyVoltage||""],
+      ["Control Voltage",qp.controlVoltage||q.controlVoltage||pan.controlVoltage||""]
+    ];
+    const specColW=ctx.contentWidth/2;
+    arcDocCheckBreak(ctx,specs.length/2*6);
+    for(let si=0;si<specs.length;si+=2){
+      const x1=ARC_DOC.margin.left+2;const x2=ARC_DOC.margin.left+specColW;
+      doc.setFontSize(8);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text(specs[si][0]+":",x1,ctx.y);
+      doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+      doc.text(String(specs[si][1]||"—"),x1+28,ctx.y);
+      if(si+1<specs.length){
+        doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+        doc.text(specs[si+1][0]+":",x2,ctx.y);
+        doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+        doc.text(String(specs[si+1][1]||"—"),x2+28,ctx.y);
+      }
+      ctx.y+=4;
+    }
+    ctx.y+=1;
+
+    // BOM Notes
+    if(pan.bomNotes){
+      arcDocCheckBreak(ctx,8);
+      doc.setFillColor(255,251,235);doc.setDrawColor(245,158,11);doc.setLineWidth(0.3);
+      const nLines=doc.splitTextToSize("NOTES: "+pan.bomNotes,ctx.contentWidth-8);
+      const nH=nLines.length*3.5+4;
+      doc.rect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,nH);
+      doc.line(ARC_DOC.margin.left,ctx.y,ARC_DOC.margin.left,ctx.y+nH); // left accent
+      doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+      doc.text(nLines,ARC_DOC.margin.left+3,ctx.y+3.5);
+      ctx.y+=nH+2;
+    }
+
+    // Quote Notes
+    if(qp.lineNotes){
+      arcDocCheckBreak(ctx,8);
+      doc.setFontSize(8);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.brand);
+      const qnLines=doc.splitTextToSize("QUOTE NOTES: "+qp.lineNotes,ctx.contentWidth-4);
+      doc.text(qnLines,ARC_DOC.margin.left+2,ctx.y);
+      ctx.y+=qnLines.length*3.5+2;
+    }
+
+    // Crossed items
+    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom);
+    if(crossed.length>0){
+      arcDocCheckBreak(ctx,6+crossed.length*3.5);
+      doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text("CROSSED / SUPERSEDED — ALTERNATE PRODUCTS USED",ARC_DOC.margin.left+2,ctx.y);ctx.y+=3.5;
+      doc.setFont("helvetica","normal");doc.setFontSize(7);doc.setTextColor(...ARC_DOC.colors.black);
+      crossed.forEach((item,i)=>{
+        doc.text(`${i+1}. ${item.crossedFrom} → ${item.partNumber}${item.description?" ("+item.description+")":""}`,ARC_DOC.margin.left+2,ctx.y);
+        ctx.y+=3;
+      });
+      ctx.y+=2;
+    }
+
+    // Pricing row
+    arcDocCheckBreak(ctx,14);
+    doc.setFillColor(248,250,252);doc.setDrawColor(226,232,240);
+    doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,12,1,1,"FD");
+    const pw=ctx.contentWidth/5;const py=ctx.y;
+    [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—"},{l:"Lead Time",v:(qp.leadTime||q.leadTime||"—")+" days"},{l:"Discount",v:"—"},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—"}].forEach((col,ci)=>{
+      const cx=ARC_DOC.margin.left+ci*pw+pw/2;
+      doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text(col.l,cx,py+4,{align:"center"});
+      doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...(ci===4?ARC_DOC.colors.brand:ARC_DOC.colors.black));
+      doc.text(col.v,cx,py+9,{align:"center"});
+    });
+    ctx.y=py+15;
+  }
+
+  // ── VALIDITY DISCLAIMER ──
+  arcDocCheckBreak(ctx,30);
+  arcDocHLine(ctx,{color:ARC_DOC.colors.black,width:0.5});
+  arcDocText(ctx,"Budgetary quotes are provided for planning purposes only and do not represent a firm or binding price. Firm quoted prices are valid for 30 days from the date of issue unless otherwise noted. All prices are subject to change without notice and do not constitute a binding contract until a purchase order is accepted and confirmed by Matrix Systems. Lead times and material availability are estimated and subject to supplier confirmation at time of order.",{fontSize:7.5,italic:true,color:ARC_DOC.colors.grey,gap:4});
+
+  // ── TOTALS BOX ──
+  const totalPrice=panels.reduce((s,pan)=>computePanelSellPrice(pan)*(pan.lineQty??1)+s,0);
+  arcDocCheckBreak(ctx,25);
+  const bx=ARC_DOC.W-ARC_DOC.margin.right-60;const bw=60;
+  [{l:"Subtotal",v:arcFmtMoney(totalPrice),bold:false},{l:"Tax",v:"$0",bold:false},{l:"Total",v:arcFmtMoney(totalPrice),bold:true}].forEach((row,ri)=>{
+    const ry=ctx.y+ri*7;
+    if(row.bold){doc.setDrawColor(...ARC_DOC.colors.black);doc.setLineWidth(0.5);doc.line(bx,ry,bx+bw,ry);}
+    doc.setFontSize(row.bold?12:9);doc.setFont("helvetica",row.bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
+    doc.text(row.l,bx+2,ry+5);
+    doc.setTextColor(...(row.bold?ARC_DOC.colors.brand:ARC_DOC.colors.black));
+    doc.text(row.v,bx+bw-2,ry+5,{align:"right"});
+  });
+  ctx.y+=24;
+  if(isBudg){
+    doc.setFontSize(11);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.red);
+    doc.text("BUDGETARY",bx+bw/2,ctx.y,{align:"center"});ctx.y+=6;
+  }
+
+  // ── FOOTER INFO ──
+  arcDocCheckBreak(ctx,12);
+  arcDocHLine(ctx,{color:ARC_DOC.colors.lightGrey,width:0.2});
+  doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+  doc.text("SALESPERSON",ARC_DOC.margin.left,ctx.y);
+  doc.text("PRICES VALID UNTIL",ARC_DOC.W-ARC_DOC.margin.right,ctx.y,{align:"right"});
+  ctx.y+=3.5;
+  doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+  doc.text(q.salesperson||"—",ARC_DOC.margin.left,ctx.y);
+  doc.setTextColor(...ARC_DOC.colors.red);
+  doc.text(q.validUntil||new Date(Date.now()+30*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}),ARC_DOC.W-ARC_DOC.margin.right,ctx.y,{align:"right"});
+  ctx.y+=6;
+
+  // ── T&C PAGE ──
+  const tcRaw=_appCtx.termsAndConditions||"";
+  if(tcRaw.trim()){
+    arcDocNewPage(ctx);
+    // T&C header
+    doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
+    doc.text("STANDARD TERMS AND CONDITIONS OF SALE",ARC_DOC.W/2,ctx.y,{align:"center"});ctx.y+=4;
+    doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
+    doc.text(_appCtx.company?.name||"Matrix Systems, LLC",ARC_DOC.W/2,ctx.y,{align:"center"});ctx.y+=5;
+    // Parse sections
+    const preprocessed=tcRaw.replace(/([.;)\s])\s*(\d{1,2})[.\)]\s*([A-Z])/g,function(mt,pre,num,letter){return pre+"\n"+num+". "+letter;});
+    const tcLines=preprocessed.split("\n");
+    const sections=[];let cur=null;
+    for(const line of tcLines){
+      const trimmed=line.trim();if(!trimmed)continue;
+      const numMatch=trimmed.match(/^(\d+)[.\)]\s*(.+)/);
+      if(numMatch){
+        if(cur)sections.push(cur);
+        const rest=numMatch[2];const ci=rest.indexOf(":");
+        if(ci>0&&ci<60)cur={num:parseInt(numMatch[1]),title:numMatch[1]+". "+rest.slice(0,ci).trim(),body:rest.slice(ci+1).trim()};
+        else cur={num:parseInt(numMatch[1]),title:numMatch[1]+". "+rest.trim(),body:""};
+      }else if(!cur){
+        const cm=trimmed.match(/^([^:]{3,60}):\s*(.+)$/);
+        if(cm)sections.push({num:9999+sections.length,title:cm[1],body:cm[2]});
+        else sections.push({num:9999+sections.length,title:"",body:trimmed});
+      }else{cur.body+=(cur.body?" ":"")+trimmed;}
+    }
+    if(cur)sections.push(cur);
+    sections.sort((a,b)=>a.num-b.num);
+    // Render in two columns
+    const colW=(ctx.contentWidth-6)/2;const colX=[ARC_DOC.margin.left,ARC_DOC.margin.left+colW+6];
+    let col=0;let colY=[ctx.y,ctx.y];
+    for(const sec of sections){
+      doc.setPage(ctx.pageNum); // ensure on correct page
+      // Estimate height
+      const titleH=sec.title?3:0;
+      const bodyLines=sec.body?doc.splitTextToSize(sec.body,colW):[];
+      const bodyH=bodyLines.length*2.5;
+      const secH=titleH+bodyH+3;
+      // Check column overflow
+      if(colY[col]+secH>ctx.contentBottom){
+        if(col===0){col=1;} // move to right column
+        else{arcDocNewPage(ctx);col=0;colY=[ctx.y,ctx.y];} // new page
+      }
+      const sy=colY[col];const sx=colX[col];
+      if(sec.title){
+        doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+        doc.text(sec.title,sx,sy);colY[col]+=3;
+      }
+      if(bodyLines.length){
+        doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+        doc.text(bodyLines,sx,colY[col]);colY[col]+=bodyLines.length*2.5;
+      }
+      colY[col]+=1.5;
+    }
+    ctx.y=Math.max(colY[0],colY[1]);
+  }
+
+  // ── STAMP ALL FOOTERS ──
+  arcDocStampFooters(ctx,{
+    companyName:_appCtx.company?.name||"Matrix Systems",
+    address:_appCtx.company?.address||"5591 Leo Park Rd · West Jordan, UT 84081",
+    phone:"(801) 930-9492",
+    email:"sales@matrixpci.com"
+  });
+}
+
+async function generateQuotePdf(project){
+  const jsPDF=await ensureJsPDF();
+  const doc=new jsPDF({unit:"mm",format:"letter"});
+  await buildQuotePdfDoc(doc,project);
+  arcDocOpen(doc);
+  return{printed:true,hash:computeBomHash(project.panels)};
+}
+
+// ══════════════════════════════════════════════════════════════════
+// END ARC DOCUMENT FRAMEWORK
+// ══════════════════════════════════════════════════════════════════
 
 function detectSheetMm(w,h){
   // Identify ANSI engineering sheet size from pixel dimensions.
@@ -7191,7 +7647,7 @@ function QuoteTab({project,onUpdate}){
               {hasSellPrice?`Sell price: ${fmtMoney(sellPrice)}`:"Complete pricing first to populate sell price."}
             </div>
           </div>
-          <button onClick={()=>{window.print();const hash=computeBomHash(project.panels);onUpdate({...project,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:project.quoteRev||0});}} style={btn(C.accent,"#fff",{fontSize:14,padding:"10px 24px"})}>🖨 Print / Save PDF</button>
+          <button onClick={async()=>{await generateQuotePdf(project);const hash=computeBomHash(project.panels);onUpdate({...project,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:project.quoteRev||0});}} style={btn(C.accent,"#fff",{fontSize:14,padding:"10px 24px"})}>🖨 Generate PDF</button>
         </div>
         {(()=>{
           const fld=(label,key,ph,w)=>(
@@ -13888,7 +14344,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // Auto-print: wait for quote DOM to render, trigger print, then go back
   useEffect(()=>{
     if(autoPrint&&view==="quote"){
-      const t=setTimeout(()=>{window.print();const hash=computeBomHash(projectRef.current.panels);const upd={...projectRef.current,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:projectRef.current.quoteRev||0};setProject(upd);projectRef.current=upd;onChange(upd);saveProject(uid,upd);setAutoPrint(false);setView("panels");},400);
+      const t=setTimeout(async()=>{await generateQuotePdf(projectRef.current);const hash=computeBomHash(projectRef.current.panels);const upd={...projectRef.current,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:projectRef.current.quoteRev||0};setProject(upd);projectRef.current=upd;onChange(upd);saveProject(uid,upd);setAutoPrint(false);setView("panels");},400);
       return()=>clearTimeout(t);
     }
   },[autoPrint,view]);
