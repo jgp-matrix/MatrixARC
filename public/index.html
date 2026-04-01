@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.264";
+const APP_VERSION="v1.19.265";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13768,9 +13768,29 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                       {project.importedFromBC&&<Badge status="imported"/>}
                     </div>
                     <span style={{fontSize:13,color:C.muted}}>Created: {project.createdAt?new Date(project.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):project.updatedAt?new Date(project.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</span>
+                    <span style={{fontSize:11,color:C.muted}}>{(project.panels||[]).length} panel{(project.panels||[]).length!==1?"s":""}</span>
                   </div>
                 </div>
               )}
+              <div style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",marginTop:4}}>
+                {["Sales","PM","Designer"].map(function(label,li){
+                  var keys=[["bcSalesperson","bcSalespersonCode","CCS_Salesperson_Code"],["bcProjectManager","bcProjectManagerCode","Person_Responsible"],["bcDesigner","bcDesignerCode",null]][li];
+                  var nm=project[keys[0]]||"";
+                  var codeKey=keys[1];var bcField=keys[2];
+                  if(readOnly)return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),React.createElement("span",{style:{color:C.sub}},nm||"—"));
+                  var opts=[React.createElement("option",{key:"_",value:""},"—")];
+                  (window._arcSalespersonCache||[]).forEach(function(s){opts.push(React.createElement("option",{key:s.Code,value:s.Code},s.Name));});
+                  return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},
+                    React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),
+                    React.createElement("select",{value:project[codeKey]||"",onChange:function(e){
+                      var code=e.target.value;var cache=window._arcSalespersonCache||[];
+                      var cached=cache.find(function(s){return s.Code===code;});
+                      var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;onUpdate(upd);
+                      if(bcField&&project.bcProjectNumber&&_bcToken){var patch={};patch[bcField]=code;bcPatchJobOData(project.bcProjectNumber,patch).catch(function(){});}
+                    },style:{background:"transparent",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"1px 4px",cursor:"pointer",maxWidth:140}},opts)
+                  );
+                })}
+              </div>
               {bcSyncMsg&&<div style={{fontSize:12,color:bcSyncMsg.ok===null?C.muted:bcSyncMsg.ok?C.green:C.yellow,marginBottom:2}}>{bcSyncMsg.text}</div>}
               {relinkMsg&&<div style={{fontSize:12,color:relinkMsg.startsWith("✓")?C.green:relinkMsg.startsWith("Failed")?C.red:C.muted,marginBottom:2}}>{relinkMsg}</div>}
               <div style={{fontSize:13,color:C.muted}}>{panels.length} panel{panels.length!==1?"s":""}</div>
@@ -19302,7 +19322,8 @@ INSTRUCTIONS:
         const ok=r.ok;
         if(ok&&!bcOnlinePrev.current){
           setBcOnline(true);
-          // BC just came back online — refresh company info and process queue
+          // BC just came back online — refresh company info, salesperson cache, and process queue
+          fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
           bcFetchCompanyInfo().then(info=>{
             if(info&&_appCtx.companyId){
               const merged={...(_appCtx.company||{}),name:info.name||_appCtx.company?.name,address:info.address||_appCtx.company?.address,phone:info.phone||_appCtx.company?.phone};
