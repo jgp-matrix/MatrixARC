@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.221";
+const APP_VERSION="v1.19.222";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16785,7 +16785,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
     }
     if(groupBy==="status"){
       const order=["draft","in_progress","process_rfq","evc","quotes_sent"];
-      const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQ's Send/Receive",evc:"Ready To Send",quotes_sent:"Quotes Sent"};
+      const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQ's Send/Receive",evc:"Ready To Review/Send",quotes_sent:"Quotes Sent"};
       const map={};
       list.forEach(p=>{
         if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")return; // skip — shown in PURCHASING/PRODUCTION tabs
@@ -16895,8 +16895,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQ's Send/Receive":C.red,"Ready To Send":C.green,"Quotes Sent":"#38bdf8","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa"};
-                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQ's Send/Receive":C.redDim,"Ready To Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033"};
+                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQ's Send/Receive":C.red,"Ready To Review/Send":C.green,"Quotes Sent":"#38bdf8","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa"};
+                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQ's Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033"};
                 const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColBg[g.label]||C.border):"#3d6090";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
