@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.223";
+const APP_VERSION="v1.19.224";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16798,6 +16798,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         const hasBom=allPanels.some(pan=>(pan.bom||[]).length>0);
         const hasUnpriced=hasBom&&allPanels.some(pan=>(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.customerSupplied).some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate));
         if(hasUnpriced){if(!map.process_rfq)map.process_rfq=[];map.process_rfq.push(p);return;}
+        // If has BOM and all items are priced → Ready To Review/Send
+        if(hasBom&&!hasUnpriced){if(!map.evc)map.evc=[];map.evc.push(p);return;}
         let st=projectStatus(p);if(st==="extracted"||st==="validated"||st==="costed"||st==="quoted"||st==="pushed_to_bc")st="evc";if(!map[st])map[st]=[];map[st].push(p);
       });
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
