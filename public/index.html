@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.215";
+const APP_VERSION="v1.19.216";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16760,10 +16760,11 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="production"){
-      const order=["inproduction"];
-      const labels={inproduction:"In Production"};
+      const order=["partsopen","inproduction"];
+      const labels={partsopen:"Parts Orders Open",inproduction:"In Production"};
       const map={};
       list.forEach(p=>{
+        if(p.bcPoStatus==="purchasing"){if(!map.partsopen)map.partsopen=[];map.partsopen.push(p);}
         if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open"){if(!map.inproduction)map.inproduction=[];map.inproduction.push(p);}
       });
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
@@ -16880,8 +16881,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,Budgetary:"#f59e0b","In Progress":C.yellow,"Process RFQs":C.red,Ready:C.green,"To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","In Production":"#a78bfa"};
-                const statusColBg={Draft:C.border,Budgetary:"#3a1f00","In Progress":C.yellowDim,"Process RFQs":C.redDim,Ready:C.greenDim,"To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"In Production":"#1a1033"};
+                const statusColColors={Draft:C.muted,Budgetary:"#f59e0b","In Progress":C.yellow,"Process RFQs":C.red,Ready:C.green,"To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa"};
+                const statusColBg={Draft:C.border,Budgetary:"#3a1f00","In Progress":C.yellowDim,"Process RFQs":C.redDim,Ready:C.greenDim,"To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033"};
                 const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColBg[g.label]||C.border):"#3d6090";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
