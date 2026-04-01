@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.260";
+const APP_VERSION="v1.19.261";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2896,9 +2896,10 @@ function arcDocHeader(ctx,opts){
       doc.addImage(opts.logo.data,"PNG",m.left,y,lw,lh);
     }catch(e){}
   }
-  // Company address under logo
+  // Company address + phone under logo
   doc.setFontSize(7);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
   doc.text(_appCtx.company?.address||"5591 Leo Park Road, West Jordan, UT 84081 US",m.left,y+17);
+  doc.text(_appCtx.company?.phone||"(801) 930-9492",m.left,y+20);
   // Right side — doc type + number + date
   const rx=W-m.right;
   doc.setFontSize(opts.budgetary?18:13);doc.setFont("helvetica","bold");
@@ -2999,14 +3000,14 @@ function arcDocInfoGrid(ctx,leftLines,rightLines){
     for(const{label,value,bold}of lines){
       if(label){
         doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
-        doc.text((label).toUpperCase(),x,cy);cy+=3;
+        doc.text((label).toUpperCase(),x,cy);cy+=4;
       }
       if(value){
         const fs=bold?12:ARC_DOC.fonts.body;
         const vlh=bold?5:lh;
         doc.setFontSize(fs);doc.setFont("helvetica",bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
         const vLines=doc.splitTextToSize(String(value||""),colW);
-        if(bold)cy+=1; // extra space before bold name
+        if(bold)cy+=2; // extra space before bold name
         vLines.forEach((vl,vi)=>{doc.text(vl,x,cy+vi*vlh);});
         cy+=vLines.length*vlh+1.5;
       }
@@ -3072,14 +3073,18 @@ async function buildQuotePdfDoc(doc,project){
     [{label:"Prepared By",value:q.salesperson||"—",bold:true},{label:"",value:salesLines}]
   );
 
-  // ── PROJECT DETAILS ROW ──
-  arcDocHLine(ctx,{color:ARC_DOC.colors.lightGrey,width:0.2});
+  // ── PROJECT DETAILS ROW (boxed) ──
+  {const projY=ctx.y;
+  ctx.y+=2;
   arcDocKeyValueRow(ctx,[
     {label:"Project #",value:q.projectNumber||project.bcProjectNumber||""},
     {label:"Req. Ship Date",value:q.requestedShipDate||(panels.find(p=>p.requestedShipDate)||{}).requestedShipDate||"—"},
     {label:"Pmt. Terms",value:q.paymentTerms||"Net 30 Days"},
     {label:"Shipping Method",value:q.shippingMethod||"Customer Handles Shipping"}
   ]);
+  doc.setDrawColor(...ARC_DOC.colors.lightGrey);doc.setLineWidth(0.3);
+  doc.rect(ARC_DOC.margin.left,projY,ctx.contentWidth,ctx.y-projY);
+  ctx.y+=1;}
 
   // ── PAYMENT TERMS TEXT ──
   const defaultTerms="Standard Payment Terms for Panel Builds (Order Total over $30,000): 30% ARO; 40% @ Procurement, 30% @ Readiness To Ship\nStandard Payment Terms for Engineering / Programming: 50% ARO / 50% due @ Completion of Work";
@@ -3123,8 +3128,8 @@ async function buildQuotePdfDoc(doc,project){
     doc.text("Part #: "+(pan.drawingNo||qp.panelId||pan.name||"Panel "+(pi+1)),ARC_DOC.margin.left+22,ctx.y+4.5);
     ctx.y+=9;
 
-    // Title
-    arcDocText(ctx,qp.description||pan.drawingDesc||pan.name||"Panel "+(pi+1),{fontSize:11,bold:true,gap:2});
+    // Title (indented inside border)
+    arcDocText(ctx,qp.description||pan.drawingDesc||pan.name||"Panel "+(pi+1),{fontSize:11,bold:true,gap:2,indent:2,maxWidth:ctx.contentWidth-4});
 
     // Specs grid (2 columns)
     const specs=[
@@ -3212,6 +3217,10 @@ async function buildQuotePdfDoc(doc,project){
   }
 
   // ── VALIDITY DISCLAIMER ──
+  // If disclaimer+totals won't fit, add "totals on next page" before breaking
+  if(ctx.y+50>ctx.contentBottom){
+    arcDocText(ctx,"Order total continued on next page...",{fontSize:8,italic:true,color:ARC_DOC.colors.lightGrey,align:"center",gap:2});
+  }
   arcDocCheckBreak(ctx,30);
   arcDocHLine(ctx,{color:ARC_DOC.colors.black,width:0.5});
   arcDocText(ctx,"Budgetary quotes are provided for planning purposes only and do not represent a firm or binding price. Firm quoted prices are valid for 30 days from the date of issue unless otherwise noted. All prices are subject to change without notice and do not constitute a binding contract until a purchase order is accepted and confirmed by Matrix Systems. Lead times and material availability are estimated and subject to supplier confirmation at time of order.",{fontSize:7.5,italic:true,color:ARC_DOC.colors.grey,gap:4});
@@ -3234,16 +3243,12 @@ async function buildQuotePdfDoc(doc,project){
     doc.text("BUDGETARY",bx+bw/2,ctx.y,{align:"center"});ctx.y+=6;
   }
 
-  // ── FOOTER INFO ──
-  arcDocCheckBreak(ctx,12);
-  arcDocHLine(ctx,{color:ARC_DOC.colors.lightGrey,width:0.2});
+  // ── PRICES VALID UNTIL ──
+  arcDocCheckBreak(ctx,8);
   doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
-  doc.text("SALESPERSON",ARC_DOC.margin.left,ctx.y);
   doc.text("PRICES VALID UNTIL",ARC_DOC.W-ARC_DOC.margin.right,ctx.y,{align:"right"});
   ctx.y+=3.5;
-  doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-  doc.text(q.salesperson||"—",ARC_DOC.margin.left,ctx.y);
-  doc.setTextColor(...ARC_DOC.colors.red);
+  doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.red);
   doc.text(q.validUntil||new Date(Date.now()+30*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}),ARC_DOC.W-ARC_DOC.margin.right,ctx.y,{align:"right"});
   ctx.y+=6;
 
@@ -3257,7 +3262,7 @@ async function buildQuotePdfDoc(doc,project){
     doc.setFontSize(6);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
     doc.text(_appCtx.company?.name||"Matrix Systems, LLC",ARC_DOC.W/2,ctx.y,{align:"center"});ctx.y+=4;
     // Parse sections
-    const preprocessed=tcRaw.replace(/([.;)\s])\s*(\d{1,2})[.\)]\s*([A-Z])/g,function(mt,pre,num,letter){return pre+"\n"+num+". "+letter;});
+    const preprocessed=tcRaw.replace(/(\D)(\d{1,2})[.\)]\s*([A-Z])/g,function(mt,pre,num,letter){return pre+"\n"+num+". "+letter;});
     const tcLines=preprocessed.split("\n");
     const sections=[];let cur=null;
     for(const line of tcLines){
@@ -7973,7 +7978,7 @@ function QuoteTab({project,onUpdate}){
                 if(!raw.trim())return <div className="qd-tc-item"><p style={{fontStyle:"italic",color:"#94a3b8"}}>No Terms & Conditions configured. Go to Settings to add your T&C.</p></div>;
                 // Pre-process: split sections that are crammed onto the same line
                 // Insert newline before patterns like "2." or "12." that appear mid-text (preceded by space or sentence-ending punctuation)
-                const preprocessed=raw.replace(/([.;)\s])\s*(\d{1,2})[.\)]\s*([A-Z])/g,function(m,pre,num,letter){return pre+"\n"+num+". "+letter;});
+                const preprocessed=raw.replace(/(\D)(\d{1,2})[.\)]\s*([A-Z])/g,function(m,pre,num,letter){return pre+"\n"+num+". "+letter;});
                 const lines=preprocessed.split("\n");
                 const sections=[];
                 let current=null;
