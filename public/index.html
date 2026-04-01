@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.210";
+const APP_VERSION="v1.19.211";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16704,8 +16704,8 @@ function ReportsModal({uid,onClose}){
   );
 }
 
-function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts}){
-  const [groupBy,setGroupBy]=useState("status");
+function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,forceView}){
+  const [groupBy,setGroupBy]=useState(forceView==="production"?"production":"status");
   const [projectSearch,setProjectSearch]=useState("");
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
@@ -16748,13 +16748,22 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       });
       return [{label:null,items:sorted}];
     }
-    if(groupBy==="status"){
-      const order=["draft","budgetary","in_progress","process_rfq","evc","active","purchasing"];
-      const labels={draft:"Draft",budgetary:"Budgetary",in_progress:"In Progress",process_rfq:"Process RFQs",evc:"Ready",active:"Open Orders (Purchasing)",purchasing:"Open Orders (In Production)"};
+    if(groupBy==="production"){
+      const order=["active","purchasing"];
+      const labels={active:"Open Orders (Purchasing)",purchasing:"Open Orders (In Production)"};
       const map={};
       list.forEach(p=>{
-        if(p.bcPoStatus==="purchasing"){if(!map.purchasing)map.purchasing=[];map.purchasing.push(p);return;}
-        if(p.bcPoStatus==="Open"){if(!map.active)map.active=[];map.active.push(p);return;}
+        if(p.bcPoStatus==="purchasing"){if(!map.purchasing)map.purchasing=[];map.purchasing.push(p);}
+        else if(p.bcPoStatus==="Open"){if(!map.active)map.active=[];map.active.push(p);}
+      });
+      return order.map(k=>({label:labels[k],items:map[k]||[]}));
+    }
+    if(groupBy==="status"){
+      const order=["draft","budgetary","in_progress","process_rfq","evc"];
+      const labels={draft:"Draft",budgetary:"Budgetary",in_progress:"In Progress",process_rfq:"Process RFQs",evc:"Ready"};
+      const map={};
+      list.forEach(p=>{
+        if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")return; // skip — shown in IN PRODUCTION tab
         // Budgetary = any panel marked as budgetary quote
         if((p.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary)){if(!map.budgetary)map.budgetary=[];map.budgetary.push(p);return;}
         // Process RFQs = has BOM items that are unpriced (unitPrice 0/null or no priceDate)
@@ -16807,7 +16816,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
   return(
     <div style={{maxWidth:2100,margin:"0 auto",padding:32,minWidth:0,width:"100%",boxSizing:"border-box"}}>
 
-      <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+      {forceView!=="production"&&<div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
         <button data-tip="Start a new panel extraction project" data-tour="new-project-btn" onClick={onNew} style={btn(C.accent,"#fff",{display:"flex",alignItems:"center",gap:8,fontSize:14})}>
           <span style={{fontSize:18,lineHeight:1}}>+</span> New Project
         </button>
@@ -16816,21 +16825,17 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
             style={{...inp({fontSize:13,padding:"9px 12px 9px 12px",borderRadius:8,width:"100%",boxSizing:"border-box"})}}/>
           {projectSearch&&<button onClick={()=>setProjectSearch("")} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>✕</button>}
         </div>
-      </div>
+      </div>}
 
-      {/* AI Search results are now shown in the floating chat panel above */}
-
-      <div style={{display:"flex",gap:8,marginBottom:groupBy!=="imported"?8:24}}>
+      {forceView!=="production"&&<div style={{display:"flex",gap:8,marginBottom:groupBy!=="imported"?8:24}}>
         {filterBtn("By Status","status")}
         {filterBtn("By Customer","customer")}
         {filterBtn("By Date","date")}
         {filterBtn("By Project #","projectnum")}
-        {filterBtn("Open Orders (Purchasing)","active")}
-        {filterBtn("Open Orders (In Production)","purchasing")}
         {filterBtn("Budgetary","budgetary")}
         {filterBtn("Imported","imported")}
         {filterBtn("All","all")}
-      </div>
+      </div>}
 
       {loading&&(
         <div style={{textAlign:"center",padding:80,color:C.muted}}>
@@ -16840,7 +16845,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       )}
 
       {(()=>{
-        let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="budgetary"||!p.importedFromBC));
+        let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="budgetary"||groupBy==="production"||!p.importedFromBC));
         // Apply search filter
         if(projectSearch.trim()){
           const q=projectSearch.trim().toLowerCase();
@@ -16866,9 +16871,9 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
                 const statusColColors={Draft:C.muted,Budgetary:"#f59e0b","In Progress":C.yellow,"Process RFQs":C.red,Ready:C.green,"Open Orders (Purchasing)":"#38bdf8","Open Orders (In Production)":"#a78bfa"};
-                const statusColBg={Draft:C.border,"In Progress":C.yellowDim,"Process RFQs":C.redDim,Ready:C.greenDim,"Open Orders (Purchasing)":"#0c2233","Open Orders (In Production)":"#1a1033"};
-                const colColor=groupBy==="status"?(statusColColors[g.label]||C.muted):C.sub;
-                const colBg=groupBy==="status"?(statusColBg[g.label]||C.border):"#3d6090";
+                const statusColBg={Draft:C.border,Budgetary:"#3a1f00","In Progress":C.yellowDim,"Process RFQs":C.redDim,Ready:C.greenDim,"Open Orders (Purchasing)":"#0c2233","Open Orders (In Production)":"#1a1033"};
+                const colColor=(groupBy==="status"||groupBy==="production")?(statusColColors[g.label]||C.muted):C.sub;
+                const colBg=(groupBy==="status"||groupBy==="production")?(statusColBg[g.label]||C.border):"#3d6090";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
                 const isDropTarget=groupBy==="customer"&&!isNoCustomer&&!!g.customerNumber&&!!dragProjectId;
                 const isOver=dropTarget===gi;
@@ -17125,9 +17130,10 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
 
 // ── LEFT NAV SIDEBAR ──
 const NAV_TABS=[
-  {id:"projects",  label:"PROJECTS",   icon:"◫"},
-  {id:"purchasing",label:"PURCHASING", icon:"⬡"},
-  {id:"items",     label:"ITEMS",      icon:"⬢"},
+  {id:"projects",  label:"SALES",       icon:"◫"},
+  {id:"production",label:"IN PRODUCTION",icon:"⚙"},
+  {id:"purchasing",label:"PURCHASING",  icon:"⬡"},
+  {id:"items",     label:"ITEMS",       icon:"⬢"},
 ];
 function LeftNav({tab,onTabChange,pinned,onPinChange}){
   const [hovered,setHovered]=useState(false);
@@ -18962,12 +18968,12 @@ INSTRUCTIONS:
       </div>
       {/* Horizontal tab bar — fixed below header */}
       <div style={{position:"fixed",top:78,left:0,right:0,zIndex:440,background:"#253354",borderBottom:"2px solid #3b82f6",display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
-        {[{id:"projects",label:"PROJECTS"},{id:"purchasing",label:"PURCHASING"},{id:"items",label:"ITEMS"}].map(t=>{
+        {NAV_TABS.map(t=>{
           const active=navTab===t.id;
           const hasOpenProject=view==="project"&&openProject;
-          // Show "BACK TO PROJECTS" only when projects tab is active AND viewing a project
+          // Show "BACK TO SALES" only when sales tab is active AND viewing a project
           const isBackBtn=t.id==="projects"&&hasOpenProject&&active;
-          // Show project name on projects tab when on another tab with project open
+          // Show project name on sales tab when on another tab with project open
           const isReturnBtn=t.id==="projects"&&hasOpenProject&&!active;
           return(
           <button key={t.id} onClick={()=>{
@@ -18988,7 +18994,7 @@ INSTRUCTIONS:
               marginBottom:active?"-2px":0,
               position:"relative",zIndex:active?1:0,
               transition:"color 0.15s,height 0.15s"}}>
-            {isBackBtn?"← BACK TO PROJECTS":isReturnBtn?`← ${(openProject.name||"PROJECT").slice(0,20).toUpperCase()}`:t.label}
+            {isBackBtn?"← BACK TO SALES":isReturnBtn?`← ${(openProject.name||"PROJECT").slice(0,20).toUpperCase()}`:t.label}
           </button>);
         })}
       </div>
@@ -18996,6 +19002,7 @@ INSTRUCTIONS:
       <div style={{flex:1,paddingTop:122,display:"flex",height:"100vh",overflow:"hidden"}}>
       <div style={{flex:1,minWidth:0,overflowY:"auto"}}>
       <VendorSyncFloater onSwitchToItems={()=>{setNavTab("items");}}/>
+      {navTab==="production"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
       {navTab==="purchasing"&&<PurchasingTab/>}
       {navTab==="items"&&<ItemsTab uid={user.uid}/>}
       {navTab==="projects"&&<>
