@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.267";
+const APP_VERSION="v1.19.268";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3197,8 +3197,8 @@ async function buildQuotePdfDoc(doc,project){
 
     // Pricing row
     arcDocCheckBreak(ctx,14);
-    doc.setFillColor(248,250,252);doc.setDrawColor(226,232,240);
-    doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,12,1,1,"FD");
+    doc.setFillColor(248,250,252);doc.setDrawColor(248,250,252);
+    doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,12,"FD");
     const pw=ctx.contentWidth/5;const py=ctx.y;
     [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—"},{l:"Lead Time",v:(qp.leadTime||q.leadTime||"—")+" days"},{l:"Discount",v:"—"},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—"}].forEach((col,ci)=>{
       const cx=ARC_DOC.margin.left+ci*pw+pw/2;
@@ -14095,11 +14095,13 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   const q=project.quote||{};
                   const rev=project.quoteRev||0;
                   const isBudg=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
+                  const custFirst=(q.contact||"").split(" ")[0]||"";
+                  const userEmail=fbAuth.currentUser?.email||q.salesEmail||"";
                   setQuoteSendModalPLV({
                     to:q.email||"",
                     subject:`${isBudg?"Budgetary ":""}Quote ${q.number||"Quote"}${rev>0?" Rev "+String(rev).padStart(2,"0"):""} — ${project.name||"Project"}`,
-                    message:`Please find the attached ${isBudg?"budgetary ":""}quote for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
-                    signature:`${q.salesperson||"Matrix Systems"}\n${q.salesPhone||""}\n${q.salesEmail||""}`
+                    message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
+                    signature:`${q.salesperson||"Matrix Systems"}\n${userEmail}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
                 }} style={btn("#0c2233","#38bdf8",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #38bdf844"})}>✉ Send Quote{project.quoteSentAt?" (Resend)":""}</button>}
                 {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
