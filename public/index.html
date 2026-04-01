@@ -208,7 +208,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.249";
+const APP_VERSION="v1.19.250";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7489,8 +7489,10 @@ function QuoteTab({project,onUpdate}){
               {(()=>{
                 const raw=_appCtx.termsAndConditions||"";
                 if(!raw.trim())return <div className="qd-tc-item"><p style={{fontStyle:"italic",color:"#94a3b8"}}>No Terms & Conditions configured. Go to Settings to add your T&C.</p></div>;
-                // Parse into sections: detect numbered sections (1., 2., 1), 2), etc.) and group continuation lines
-                const lines=raw.split("\n");
+                // Pre-process: split sections that are crammed onto the same line
+                // Insert newline before patterns like "2." or "12." that appear mid-text (preceded by space or sentence-ending punctuation)
+                const preprocessed=raw.replace(/([.;)\s])\s*(\d{1,2})[.\)]\s*([A-Z])/g,function(m,pre,num,letter){return pre+"\n"+num+". "+letter;});
+                const lines=preprocessed.split("\n");
                 const sections=[];
                 let current=null;
                 for(const line of lines){
