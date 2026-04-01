@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.261";
+const APP_VERSION="v1.19.262";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3326,6 +3326,21 @@ async function generateQuotePdf(project){
   const doc=new jsPDF({unit:"mm",format:"letter"});
   await buildQuotePdfDoc(doc,project);
   arcDocOpen(doc);
+  // Auto-upload to BC (non-blocking — don't wait)
+  const bcNum=project.bcProjectNumber;
+  const q=project.quote||{};
+  const rev=project.quoteRev||0;
+  if(bcNum&&_bcToken){
+    const quoteNum=q.number||"Quote";
+    const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+    const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+    const fileName=`[${quoteNum} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
+    const pdfBytes=doc.output("arraybuffer");
+    // Do NOT delete old copies — each rev stays as a record
+    bcAttachPdfToJob(bcNum,fileName,pdfBytes,null).then(()=>{
+      console.log("[QUOTE] PDF uploaded to BC:",fileName);
+    }).catch(e=>{console.warn("[QUOTE] BC upload failed:",e.message);});
+  }
   return{printed:true,hash:computeBomHash(project.panels)};
 }
 
@@ -14120,7 +14135,25 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               const graphToken=await acquireGraphToken();if(!graphToken){alert("Could not get Microsoft 365 token.");return;}
               const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
               const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
-              try{await sendGraphEmail(graphToken,m.to,m.subject,html);const rev=project.quoteRev||0;onUpdate({...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to});setQuoteSendModalPLV(null);alert("Quote sent to "+m.to);}catch(e){alert("Send failed: "+e.message);}
+              try{
+                // Generate PDF and attach to email
+                const jsPDF=await ensureJsPDF();
+                const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
+                await buildQuotePdfDoc(pdfDoc,project);
+                const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
+                const q=project.quote||{};
+                const rev=project.quoteRev||0;
+                const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+                const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+                const pdfName=`[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
+                await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName);
+                onUpdate({...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to});
+                // Also upload to BC
+                if(project.bcProjectNumber&&_bcToken){
+                  bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
+                }
+                setQuoteSendModalPLV(null);alert("Quote sent to "+m.to);
+              }catch(e){alert("Send failed: "+e.message);}
             }} style={btn("#0c2233","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8"})}>✉ Send</button>
           </div>
         </div>
@@ -14917,10 +14950,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
                     const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
                     try{
-                      await sendGraphEmail(graphToken,m.to,m.subject,html);
+                      const jsPDF=await ensureJsPDF();
+                      const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
+                      await buildQuotePdfDoc(pdfDoc,project);
+                      const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
+                      const qq=project.quote||{};
                       const rev=project.quoteRev||0;
+                      const co=(qq.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+                      const pn=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+                      const pdfName=`[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
+                      await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName);
                       const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to};
                       onUpdate(upd);
+                      if(project.bcProjectNumber&&_bcToken){
+                        bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
+                      }
                       setQuoteSendModal(null);
                       alert("Quote sent to "+m.to);
                     }catch(e){alert("Send failed: "+e.message);}
