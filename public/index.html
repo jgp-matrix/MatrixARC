@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.272";
+const APP_VERSION="v1.19.273";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3161,46 +3161,50 @@ async function buildQuotePdfDoc(doc,project){
 
     // BOM Notes
     if(pan.bomNotes){
-      arcDocCheckBreak(ctx,8);
+      doc.setFontSize(6.5);doc.setFont("helvetica","normal");
+      const nLines=doc.splitTextToSize("Notes: "+pan.bomNotes,ctx.contentWidth-8);
+      const nlh=2.5;
+      const nH=nLines.length*nlh+3;
+      arcDocCheckBreak(ctx,nH+2);
       doc.setFillColor(255,251,235);doc.setDrawColor(245,158,11);doc.setLineWidth(0.3);
-      const nLines=doc.splitTextToSize("NOTES: "+pan.bomNotes,ctx.contentWidth-8);
-      const nH=nLines.length*3.5+4;
-      doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,nH,2,2);
-      doc.line(ARC_DOC.margin.left,ctx.y,ARC_DOC.margin.left,ctx.y+nH); // left accent
-      doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-      doc.text(nLines,ARC_DOC.margin.left+3,ctx.y+3.5);
-      ctx.y+=nH+2;
+      doc.roundedRect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,nH,1,1);
+      doc.line(ARC_DOC.margin.left+0.3,ctx.y,ARC_DOC.margin.left+0.3,ctx.y+nH);
+      doc.setTextColor(...ARC_DOC.colors.black);
+      nLines.forEach(function(nl,ni){doc.text(nl,ARC_DOC.margin.left+3,ctx.y+2.5+ni*nlh);});
+      ctx.y+=nH+1;
     }
 
     // Quote Notes
     if(qp.lineNotes){
-      arcDocCheckBreak(ctx,8);
-      doc.setFontSize(8);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.brand);
-      const qnLines=doc.splitTextToSize("QUOTE NOTES: "+qp.lineNotes,ctx.contentWidth-4);
-      doc.text(qnLines,ARC_DOC.margin.left+2,ctx.y);
+      doc.setFontSize(6.5);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.brand);
+      const qnLines=doc.splitTextToSize("Quote Notes: "+qp.lineNotes,ctx.contentWidth-6);
+      const qnlh=2.5;
+      arcDocCheckBreak(ctx,qnLines.length*qnlh+2);
+      qnLines.forEach(function(ql,qi){doc.text(ql,ARC_DOC.margin.left+2,ctx.y+qi*qnlh);});
       ctx.y+=qnLines.length*3.5+2;
     }
 
     // Crossed items
     const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom);
     if(crossed.length>0){
-      const maxCrossedW=ctx.contentWidth-6;
-      doc.setFontSize(6);doc.setFont("helvetica","normal");
+      const maxCrossedW=ctx.contentWidth-8;
+      doc.setFontSize(5.5);doc.setFont("helvetica","normal");
+      var clh=2.2;
       // Pre-calculate height
-      let crossH=4;
+      let crossH=3.5;
       crossed.forEach(function(item,i){
-        var txt=(i+1)+". "+item.crossedFrom+" → "+item.partNumber+(item.description?" ("+item.description+")":"");
-        crossH+=doc.splitTextToSize(txt,maxCrossedW).length*2.5;
+        var txt=(i+1)+". "+item.crossedFrom+" > "+item.partNumber+(item.description?" ("+item.description+")":"");
+        crossH+=doc.splitTextToSize(txt,maxCrossedW).length*clh;
       });
       arcDocCheckBreak(ctx,crossH);
-      doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
-      doc.text("CROSSED / SUPERSEDED — ALTERNATE PRODUCTS USED",ARC_DOC.margin.left+2,ctx.y);ctx.y+=3.5;
-      doc.setFont("helvetica","normal");doc.setFontSize(6);doc.setTextColor(...ARC_DOC.colors.black);
+      doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text("Crossed / Superseded - Alternate Products Used",ARC_DOC.margin.left+2,ctx.y);ctx.y+=3;
+      doc.setFont("helvetica","normal");doc.setFontSize(5.5);doc.setTextColor(...ARC_DOC.colors.black);
       crossed.forEach(function(item,i){
-        var txt=(i+1)+". "+item.crossedFrom+" → "+item.partNumber+(item.description?" ("+item.description+")":"");
+        var txt=(i+1)+". "+item.crossedFrom+" > "+item.partNumber+(item.description?" ("+item.description+")":"");
         var lines=doc.splitTextToSize(txt,maxCrossedW);
-        lines.forEach(function(ln,li){doc.text(ln,ARC_DOC.margin.left+2,ctx.y+li*2.5);});
-        ctx.y+=lines.length*2.5;
+        lines.forEach(function(ln,li){doc.text(ln,ARC_DOC.margin.left+3,ctx.y+li*clh);});
+        ctx.y+=lines.length*clh;
       });
       ctx.y+=2;
     }
