@@ -205,7 +205,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.241";
+const APP_VERSION="v1.19.242";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7399,22 +7399,22 @@ function QuoteTab({project,onUpdate}){
             })}
           </div>
 
-          {/* Validity Notice */}
-          <div style={{padding:"8px 44px",fontSize:11,color:"#475569",lineHeight:1.6,fontStyle:"italic"}}>
-            This quote is valid for 30 days from the date of issue unless otherwise specified. All prices are subject to change without notice. Orders are subject to acceptance and confirmation by Matrix Systems.
-          </div>
-
-          {/* Totals */}
+          {/* Validity Notice + Totals — kept together on same page */}
           {(()=>{
             const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
             const hasTotalPrice=totalPrice>0;
             return(
+          <div style={{breakInside:"avoid",pageBreakInside:"avoid"}}>
+          <div style={{padding:"8px 44px",fontSize:11,color:"#475569",lineHeight:1.6,fontStyle:"italic",borderTop:"2px solid #0f172a",marginTop:8}}>
+            This quote is valid for 30 days from the date of issue unless otherwise specified. All prices are subject to change without notice. Orders are subject to acceptance and confirmation by Matrix Systems.
+          </div>
           <div className="qd-totals-bar">
             <div className="qd-totals-box">
               <div className="qd-totals-row"><span>Subtotal</span><span>{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
             </div>
+          </div>
           </div>);
           })()}
 
