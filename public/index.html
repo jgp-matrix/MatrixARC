@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.234";
+const APP_VERSION="v1.19.235";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13959,16 +13959,32 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               if(spCode&&!proj.bcSalespersonCode){
                 proj={...proj,bcSalespersonCode:spCode};
               }
-              if(spCode&&(!q.salesperson||q.salesperson===spCode)){
-                // Resolve salesperson name from SalesOrdersBySalesPerson OData
-                try{
-                  const spR=await fetch(`${BC_ODATA_BASE}/SalesOrdersBySalesPerson?$filter=SalesPersonCode eq '${spCode}'&$select=SalesPersonCode,SalesPersonName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                  if(spR.ok){
-                    const spName=((await spR.json()).value||[])[0]?.SalesPersonName||"";
-                    if(spName)autoFields.salesperson=spName;
-                    else if(!q.salesperson)autoFields.salesperson=spCode;
-                  }else if(!q.salesperson)autoFields.salesperson=spCode;
-                }catch(e){if(!q.salesperson)autoFields.salesperson=spCode;}
+              if(spCode&&(!q.salesperson||q.salesperson===spCode||/^S-/i.test(q.salesperson||""))){
+                // Resolve salesperson name — try published Salesperson OData page first, then SalesOrders fallback
+                let spResolved=false;
+                const spPageNames=["Salesperson_Purchaser","SalespersonPurchaser","Salesperson","Salesperson_Card","SalespersonCard"];
+                for(const spn of spPageNames){
+                  try{
+                    const spR=await fetch(`${BC_ODATA_BASE}/${spn}?$filter=Code eq '${spCode}'&$select=Code,Name,E_Mail,Phone_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                    if(spR.ok){
+                      const spRec=((await spR.json()).value||[])[0];
+                      if(spRec){
+                        if(spRec.Name)autoFields.salesperson=spRec.Name;
+                        if(!q.salesEmail&&spRec.E_Mail)autoFields.salesEmail=spRec.E_Mail;
+                        if(!q.salesPhone&&spRec.Phone_No)autoFields.salesPhone=spRec.Phone_No;
+                        spResolved=true;break;
+                      }
+                    }
+                  }catch(e){}
+                }
+                if(!spResolved){
+                  // Fallback: SalesOrdersBySalesPerson (only has name, no phone/email)
+                  try{
+                    const spR=await fetch(`${BC_ODATA_BASE}/SalesOrdersBySalesPerson?$filter=SalesPersonCode eq '${spCode}'&$select=SalesPersonCode,SalesPersonName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                    if(spR.ok){const spName=((await spR.json()).value||[])[0]?.SalesPersonName||"";if(spName)autoFields.salesperson=spName;}
+                  }catch(e){}
+                }
+                if(!autoFields.salesperson&&!q.salesperson)autoFields.salesperson=spCode;
                 // Load cached salesperson info from Firestore
                 try{
                   const spDoc=await fbDb.doc(`${_appCtx.configPath||"users/"+uid+"/config"}/salespersonInfo`).get();
