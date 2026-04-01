@@ -208,7 +208,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.248";
+const APP_VERSION="v1.19.249";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7419,6 +7419,7 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-totals-row"><span>Subtotal</span><span>{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
+              {isProjectBudgetary&&<div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>BUDGETARY</div>}
             </div>
           </div>
           </div>);
