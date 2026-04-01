@@ -202,7 +202,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.219";
+const APP_VERSION="v1.19.220";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5393,18 +5393,32 @@ function projectStatus(project){
   const maxRank=Math.max(...statuses.map(s=>rank[s]||1));
   return rankToStatus[maxRank-1]||"extracted";
 }
-function Badge({status}){
+function Badge({status,project}){
+  // Dynamic status based on project state
+  let effectiveStatus=status;
+  if(project){
+    const isBudgetary=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
+    const quoteSent=(project.quoteRevAtPrint||0)>0;
+    const allPanels=project.panels||[];
+    const hasBom=allPanels.some(pan=>(pan.bom||[]).length>0);
+    const hasUnpriced=hasBom&&allPanels.some(pan=>(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.customerSupplied).some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate));
+    if(quoteSent)effectiveStatus=isBudgetary?"budgetary_sent":"firm_sent";
+    else if(hasUnpriced&&hasBom)effectiveStatus="rfqs";
+  }
   const map={
     draft:["#3d1a00","#f97316","Draft"],
-    in_progress:[C.yellowDim,C.yellow,"In Progress"],
+    in_progress:[C.yellowDim,C.yellow,"In Process"],
+    rfqs:[C.redDim,C.red,"RFQ's"],
     extracted:[C.greenDim,C.green,"Ready"],
     validated:[C.greenDim,C.green,"Ready"],
     costed:[C.greenDim,C.green,"Ready"],
     quoted:[C.greenDim,C.green,"Ready"],
+    budgetary_sent:["#0c2233","#38bdf8","Budgetary"],
+    firm_sent:["#0c2233","#38bdf8","Firm"],
     pushed_to_bc:["#0d1f3c","#38bdf8","Pushed to BC"],
     imported:["#1a1040","#a78bfa","Imported"]
   };
-  const [bg,col,label]=map[status]||map.draft;
+  const [bg,col,label]=map[effectiveStatus]||map[status]||map.draft;
   return<span style={{background:bg,color:col,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap"}}>{label.toUpperCase()}</span>;
 }
 
@@ -16770,13 +16784,13 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="status"){
-      const order=["draft","in_progress","process_rfq","evc","budgetary"];
-      const labels={draft:"Draft",budgetary:"Budgetary",in_progress:"In Process",process_rfq:"RFQ's To Receive",evc:"Ready To Send"};
+      const order=["draft","in_progress","process_rfq","evc","quotes_sent"];
+      const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQ's To Receive",evc:"Ready To Send",quotes_sent:"Quotes Sent"};
       const map={};
       list.forEach(p=>{
-        if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")return; // skip — shown in IN PRODUCTION tab
-        // Budgetary = any panel marked as budgetary quote
-        if((p.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary)){if(!map.budgetary)map.budgetary=[];map.budgetary.push(p);return;}
+        if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")return; // skip — shown in PURCHASING/PRODUCTION tabs
+        // Quotes Sent = quote has been printed/sent at least once
+        if((p.quoteRevAtPrint||0)>0){if(!map.quotes_sent)map.quotes_sent=[];map.quotes_sent.push(p);return;}
         // Process RFQs = has BOM items that are unpriced (unitPrice 0/null or no priceDate)
         const allPanels=p.panels||[];
         const hasBom=allPanels.some(pan=>(pan.bom||[]).length>0);
@@ -16881,8 +16895,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,Budgetary:"#f59e0b","In Process":C.yellow,"RFQ's To Receive":C.red,"Ready To Send":C.green,"To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa"};
-                const statusColBg={Draft:C.border,Budgetary:"#3a1f00","In Process":C.yellowDim,"RFQ's To Receive":C.redDim,"Ready To Send":C.greenDim,"To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033"};
+                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQ's To Receive":C.red,"Ready To Send":C.green,"Quotes Sent":"#38bdf8","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa"};
+                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQ's To Receive":C.redDim,"Ready To Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033"};
                 const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColBg[g.label]||C.border):"#3d6090";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
@@ -16951,7 +16965,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                         ):null}
                       </div>
                     )}
-                    <div style={{marginTop:5,marginBottom:6}}><Badge status={st}/></div>
+                    <div style={{marginTop:5,marginBottom:6}}><Badge status={st} project={p}/></div>
                     <button onClick={e=>{e.stopPropagation();onAccept(p.id);}}
                       style={btn(C.accentDim,C.accent,{width:"100%",fontSize:12,padding:"6px 0",fontWeight:700,border:`1px solid ${C.accent}88`})}>
                       Accept into My Projects
@@ -17123,7 +17137,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
       <div style={{fontSize:17,fontWeight:700,color:C.green,lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{p.name}</div>
       {rfqCount>0&&<span style={{background:C.redDim,color:C.red,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",flexShrink:0}}>{rfqCount} RFQ{rfqCount>1?"S":""}</span>}
-      <div style={{flexShrink:0,fontSize:"0.75em"}}><Badge status={p.importedFromBC?"imported":st}/></div>
+      <div style={{flexShrink:0,fontSize:"0.75em"}}><Badge status={p.importedFromBC?"imported":st} project={p}/></div>
     </div>
     {activeTask&&(
       <div style={{marginTop:4}}>
