@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.294";
+const APP_VERSION="v1.19.295";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1814,7 +1814,7 @@ async function bcCreateCustomer(displayName,phone,email){
   return{number:d.number||"",displayName:d.displayName||displayName};
 }
 
-async function bcCreateVendor(displayName,phone,email){
+async function bcCreateVendor(displayName,phone,email,opts={}){
   if(!_bcToken)throw new Error("Not connected to Business Central");
   const compId=await bcGetCompanyId();
   if(!compId)throw new Error("Could not resolve Business Central company");
@@ -1828,7 +1828,23 @@ async function bcCreateVendor(displayName,phone,email){
   });
   if(!r.ok){const txt=await r.text();throw new Error(`BC vendor creation failed (${r.status}): ${txt}`);}
   const d=await r.json();
-  return{number:d.number||"",displayName:d.displayName||displayName};
+  const vendorNo=d.number||"";
+  // Patch posting groups via OData if provided
+  if(vendorNo&&(opts.genBusPostGroup||opts.vendorPostGroup||opts.taxAreaCode)){
+    try{
+      const patch={};
+      if(opts.genBusPostGroup)patch.Gen_Bus_Posting_Group=opts.genBusPostGroup;
+      if(opts.vendorPostGroup)patch.Vendor_Posting_Group=opts.vendorPostGroup;
+      if(opts.taxAreaCode)patch.Tax_Area_Code=opts.taxAreaCode;
+      const gr=await fetch(`${BC_ODATA_BASE}/Vendor_Card_Excel?$filter=No eq '${vendorNo}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(gr.ok){const gd=await gr.json();const rec=(gd.value||[])[0];
+        if(rec){const etag=rec["@odata.etag"]||"*";
+          await fetch(`${BC_ODATA_BASE}/Vendor_Card_Excel('${vendorNo}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify(patch)});
+        }
+      }
+    }catch(e){console.warn("Vendor posting group patch failed:",e.message);}
+  }
+  return{number:vendorNo,displayName:d.displayName||displayName};
 }
 
 async function bcDeleteProject(bcProjectId){
@@ -8616,6 +8632,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [newVendorName,setNewVendorName]=useState("");
   const [newVendorPhone,setNewVendorPhone]=useState("");
   const [newVendorEmail,setNewVendorEmail]=useState("");
+  const [newVendorGenBus,setNewVendorGenBus]=useState("TRADE");
+  const [newVendorPostGroup,setNewVendorPostGroup]=useState("PARTS");
+  const [newVendorTaxArea,setNewVendorTaxArea]=useState("NONTAXABLE");
   const [creatingVendor,setCreatingVendor]=useState(false);
   const [newVendorErr,setNewVendorErr]=useState("");
   const [croppedDataUrl,setCroppedDataUrl]=useState(null);
@@ -8964,13 +8983,38 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                     <input value={newVendorName} onChange={e=>setNewVendorName(e.target.value)} placeholder="Vendor Name *" style={{...inp({marginBottom:6,fontSize:12})}}/>
                     <input value={newVendorPhone} onChange={e=>setNewVendorPhone(e.target.value)} placeholder="Phone (optional)" style={{...inp({marginBottom:6,fontSize:12})}}/>
                     <input value={newVendorEmail} onChange={e=>setNewVendorEmail(e.target.value)} placeholder="Email (optional)" style={{...inp({marginBottom:6,fontSize:12})}}/>
+                    <div style={{display:"flex",gap:4,marginBottom:6}}>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:9,color:C.muted,marginBottom:2}}>Gen. Bus. Post. Group</div>
+                        <select value={newVendorGenBus} onChange={e=>setNewVendorGenBus(e.target.value)} style={{...inp({fontSize:11,padding:"5px 6px",width:"100%",boxSizing:"border-box"})}}>
+                          <option value="TRADE">TRADE</option>
+                          <option value="DOMESTIC">DOMESTIC</option>
+                          <option value="FOREIGN">FOREIGN</option>
+                        </select>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:9,color:C.muted,marginBottom:2}}>Vendor Post. Group</div>
+                        <select value={newVendorPostGroup} onChange={e=>setNewVendorPostGroup(e.target.value)} style={{...inp({fontSize:11,padding:"5px 6px",width:"100%",boxSizing:"border-box"})}}>
+                          <option value="PARTS">PARTS</option>
+                          <option value="TRADE">TRADE</option>
+                          <option value="SERVICES">SERVICES</option>
+                        </select>
+                      </div>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:9,color:C.muted,marginBottom:2}}>Tax Area Code</div>
+                        <select value={newVendorTaxArea} onChange={e=>setNewVendorTaxArea(e.target.value)} style={{...inp({fontSize:11,padding:"5px 6px",width:"100%",boxSizing:"border-box"})}}>
+                          <option value="NONTAXABLE">NONTAXABLE</option>
+                          <option value="">— None —</option>
+                        </select>
+                      </div>
+                    </div>
                     {newVendorErr&&<div style={{fontSize:11,color:C.red,marginBottom:6}}>{newVendorErr}</div>}
                     <div style={{display:"flex",gap:6}}>
                       <button type="button" onClick={()=>{setShowNewVendor(false);setNewVendorName("");setNewVendorPhone("");setNewVendorEmail("");setNewVendorErr("");}} style={btn(C.border,C.sub,{flex:1,fontSize:11,padding:"5px 8px"})}>Cancel</button>
                       <button type="button" disabled={!newVendorName.trim()||creatingVendor} onClick={async()=>{
                         setCreatingVendor(true);setNewVendorErr("");
                         try{
-                          const v=await bcCreateVendor(newVendorName.trim(),newVendorPhone.trim(),newVendorEmail.trim());
+                          const v=await bcCreateVendor(newVendorName.trim(),newVendorPhone.trim(),newVendorEmail.trim(),{genBusPostGroup:newVendorGenBus,vendorPostGroup:newVendorPostGroup,taxAreaCode:newVendorTaxArea});
                           setBcVendors(prev=>[...prev,v].sort((a,b)=>(a.displayName||"").localeCompare(b.displayName||"")));
                           setCreateVendor(v.number);
                           setShowNewVendor(false);setNewVendorName("");setNewVendorPhone("");setNewVendorEmail("");
@@ -19879,7 +19923,7 @@ INSTRUCTIONS:
         {(showGearMenu||showUserMenu||showBellMenu)&&<div style={{position:"fixed",inset:0,zIndex:590}} onClick={()=>{setShowGearMenu(false);setShowUserMenu(false);setShowBellMenu(false);}}/>}
       </div>
       {/* Horizontal tab bar — fixed below header */}
-      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:440,background:"#253354",borderBottom:"2px solid #3b82f6",display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
+      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:490,background:"#253354",borderBottom:"2px solid #3b82f6",display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
         {NAV_TABS.map(t=>{
           const active=navTab===t.id;
           const hasOpenProject=view==="project"&&openProject;
@@ -19890,7 +19934,7 @@ INSTRUCTIONS:
           return(
           <button key={t.id} onClick={()=>{
             if(isBackBtn){checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);});return;}
-            // Switching to projects tab with open project — just switch tab, keep project open
+            // Switching tabs
             setNavTab(t.id);
           }}
             style={{cursor:"pointer",padding:"0 24px",
