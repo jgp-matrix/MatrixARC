@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.305";
+const APP_VERSION="v1.19.306";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8784,7 +8784,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       return;
     }
     setLoading(true);
+    console.log("BC_BROWSER doSearch:",q,"field:",field,"skip:",s,"append:",append);
     const r=await bcSearchItems(q,{field,top:PAGE,skip:s});
+    console.log("BC_BROWSER results:",r.items.length,"hasMore:",r.hasMore);
     if(append){setResults(prev=>[...prev,...r.items]);}
     else{setResults(r.items);setSkip(0);}
     setHasMore(r.hasMore);
