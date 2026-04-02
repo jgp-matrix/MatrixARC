@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.292";
+const APP_VERSION="v1.19.293";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13746,6 +13746,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
   const [quoteSendModalPLV,setQuoteSendModalPLV]=useState(null);
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
+  const bgTasks=useBgTasks();
+  const activeBgTasks=Object.values(bgTasks).filter(t=>t.projectId===project.id&&t.status==="running");
   const [selectedPanelId,setSelectedPanelId]=useState(()=>(project.panels||[])[0]?.id||null);
   const [eqModalPanelId,setEqModalPanelId]=useState(null);
   const [fbLaborMoreInfo,setFbLaborMoreInfo]=useState(false);
@@ -13903,6 +13905,22 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               )}
             </div>
           </div>
+          {/* Active background tasks banner */}
+          {activeBgTasks.length>0&&(
+            <div style={{background:C.accentDim,border:"1px solid "+C.accent+"66",borderRadius:8,padding:"10px 14px",marginBottom:12,animation:"pulseYellow 2s ease-in-out infinite"}}>
+              {activeBgTasks.map(t=>(
+                <div key={t.taskId} style={{display:"flex",alignItems:"center",gap:10,marginBottom:activeBgTasks.length>1?6:0}}>
+                  <div className="spin" style={{fontSize:14,color:C.accent}}>◌</div>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,fontWeight:700,color:C.accent}}>{t.panelName||"Panel"}: {t.msg||"Processing…"}</div>
+                    <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden",marginTop:4}}>
+                      <div style={{height:"100%",width:(t.pct||0)+"%",background:"linear-gradient(90deg,"+C.accent+",#818cf8)",borderRadius:4,transition:"width 0.4s"}}/>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           {panels.length===0?(
             <div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
               <div style={{fontSize:52,marginBottom:16,opacity:0.3}}>🗂️</div>
