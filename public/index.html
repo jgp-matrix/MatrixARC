@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.295";
+const APP_VERSION="v1.19.296";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4021,6 +4021,8 @@ async function saveProject(uid,project){
 // Uses a mutex to prevent concurrent saves from racing
 const _panelSaveLocks={};
 async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=false){
+  // Skip if panel was deleted
+  if(window._deletedPanelIds&&window._deletedPanelIds.has(panelId)){console.log("saveProjectPanel: skipped — panel",panelId,"was deleted");return;}
   // Serialize saves per project to prevent race conditions
   const lockKey=projectId;
   while(_panelSaveLocks[lockKey])await _panelSaveLocks[lockKey];
@@ -13809,6 +13811,11 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
   }
   function deletePanel(id){
     if(!window.confirm("Delete this panel and all its data?"))return;
+    // Cancel any background task for this panel
+    if(_bgTasks[id]){bgDone(id,"Cancelled — panel deleted");delete _bgTasks[id];_bgNotify();}
+    // Mark panel as deleted so saveProjectPanel won't re-add it
+    if(!window._deletedPanelIds)window._deletedPanelIds=new Set();
+    window._deletedPanelIds.add(id);
     onUpdate({...project,panels:(project.panels||[]).filter(p=>p.id!==id)});
   }
   async function saveImmediatePanel(panelId,updatedPanel){
@@ -19796,9 +19803,9 @@ INSTRUCTIONS:
         </div>
       )}
       {/* ── TOP MENU BAR ── */}
-      <div style={{position:"fixed",top:0,left:0,right:0,zIndex:500}}>
+      <div style={{position:"fixed",top:0,left:0,right:0,zIndex:500,pointerEvents:"none"}}>
         {/* Main toolbar row */}
-        <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",height:78,gap:6,position:"relative"}}>
+        <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",height:78,gap:6,position:"relative",pointerEvents:"auto"}}>
           {/* RedPill logo — left side */}
           <img src="/parallax_logo.svg" alt="Parallax Software" style={{width:220,objectFit:"contain",cursor:"pointer",flexShrink:0}} onClick={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);})}/>
           {/* ARC branding — centered */}
