@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.311";
+const APP_VERSION="v1.19.312";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9963,6 +9963,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             left:`APPROVED TO PRODUCE · PO: ${uploadOpts.poNumber} · ${dateStr}`,
             center:`${i+1} of ${totalPg}`,
             right:[bcProjectNumber?`${bcProjectNumber} - ${lineSuffix}`:null,panel.drawingNo,dueStr?`Due: ${dueStr}`:null].filter(Boolean).join(' · ')
+          });
+        }else{
+          // As-Quoted mode — burn AS-QUOTED stamp
+          const d=new Date();
+          const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+          const scanned=`Scanned ${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
+          const rev=quoteRev||0;
+          const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
+          imgData=await burnStampCanvas(pg.dataUrl,{
+            left:stampLabel,
+            center:`${i+1} of ${totalPg}`,
+            right:[bcProjectNumber?`${bcProjectNumber} - ${lineSuffix}`:null,panel.drawingNo,panel.requestedShipDate].filter(Boolean).join(' · ')
           });
         }
         doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
