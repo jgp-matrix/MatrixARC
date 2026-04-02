@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.313";
+const APP_VERSION="v1.19.314";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10391,7 +10391,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — uses latestPanelRef to avoid stale overwrites
       if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});}}})().catch(()=>{});}
-      if(asCross){
+      if(asCross&&normPart(newPN)!==normPart(origPN)){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
       }else{
@@ -15067,7 +15067,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       // Try match on supplier PN against BOM
       if(!bomRow&&siSPN)bomRow=bomRows.find(r=>!usedBomIds.has(r.id)&&partMatch(normPart(r.partNumber),siSPN));
 
-      const isVariance=bomRow&&si.supplierPartNumber&&normPart(si.supplierPartNumber)!==normPart(bomRow.partNumber);
+      const isVariance=bomRow&&si.supplierPartNumber&&normPart(stripMfrPrefix(si.supplierPartNumber))!==normPart(bomRow.partNumber)&&normPart(si.supplierPartNumber)!==normPart(bomRow.partNumber);
       if(bomRow)usedBomIds.add(bomRow.id);
       matches.push({
         supplierItem:si,
@@ -15395,7 +15395,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                             <select value={m.bomRowId||""} onChange={e=>{
                               const newId=e.target.value||null;
                               const newRow=newId?bomRows.find(r=>r.id==newId):null;
-                              setQuoteReview(prev=>({...prev,matches:prev.matches.map((mm,j)=>j===i?{...mm,bomRowId:newId,bomPartNumber:newRow?.partNumber||null,bomDescription:newRow?.description||null,action:newId&&si.unitPrice!=null?"apply":"skip",isVariance:newId&&normPart(si.partNumber||"")!==normPart(newRow?.partNumber||"")}:mm)}));
+                              setQuoteReview(prev=>({...prev,matches:prev.matches.map((mm,j)=>j===i?{...mm,bomRowId:newId,bomPartNumber:newRow?.partNumber||null,bomDescription:newRow?.description||null,action:newId&&si.unitPrice!=null?"apply":"skip",isVariance:newId&&normPart(stripMfrPrefix(si.partNumber||""))!==normPart(newRow?.partNumber||"")&&normPart(si.partNumber||"")!==normPart(newRow?.partNumber||"")}:mm)}));
                             }} style={{background:"#1e293b",border:`1px solid ${m.isVariance?C.yellow:m.bomRowId?C.green:C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 5px",width:"100%",maxWidth:200}}>
                               <option value="">— No match —</option>
                               {bomRows.map(r=><option key={r.id} value={r.id}>{r.partNumber} — {(r.description||"").slice(0,30)}</option>)}
