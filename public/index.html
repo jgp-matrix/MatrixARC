@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.314";
+const APP_VERSION="v1.19.315";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10369,7 +10369,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const bom=(panel.bom||[]).map(r=>r.id===id?{...r,suggestedPartNumber:null}:r);
     onUpdate({...panel,bom});
   }
-  function commitBcItem(bomRowId,bcItem,asCross,correctionType=null){
+  function commitBcItem(bomRowId,bcItem,asCross,correctionType=null,skipLearning=false){
     const livePanel=latestPanelRef.current;
     let liveBom=livePanel.bom||[];
     // If row not found (stale ref from addBomRow race), find it in any panel version
@@ -10391,7 +10391,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — uses latestPanelRef to avoid stale overwrites
       if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});}}})().catch(()=>{});}
-      if(asCross&&normPart(newPN)!==normPart(origPN)){
+      if(skipLearning){
+        // "Just Apply" — no cross or correction flags, no learning
+        delete updates.isCrossed;delete updates.crossedFrom;
+        delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
+      }else if(asCross&&normPart(newPN)!==normPart(origPN)){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
       }else{
@@ -10411,12 +10415,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});
           }}}
       }catch(e){}})();}
-      if(asCross){
-        // autoReplace:true — ARC selection immediately trains the learning database
-        saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost},true)
-          .then(alts=>setAlternates([...alts])).catch(()=>{});
-      }else if(correctionType){
-        saveCorrectionEntry(uid,origPN,newPN,correctionType).then(()=>{}).catch(()=>{});
+      if(!skipLearning){
+        if(asCross){
+          // autoReplace:true — ARC selection immediately trains the learning database
+          saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost},true)
+            .then(alts=>setAlternates([...alts])).catch(()=>{});
+        }else if(correctionType){
+          saveCorrectionEntry(uid,origPN,newPN,correctionType).then(()=>{}).catch(()=>{});
+        }
       }
       return updates;
     });
@@ -11791,6 +11797,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   style={{padding:"11px 14px",background:"#0a1a12",border:"1px solid #4ade80",borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
                   <div style={{fontWeight:700,fontSize:13,color:"#4ade80",marginBottom:3}}>Formatting Error</div>
                   <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Part number is correct but formatted differently (dashes, spacing). Auto-corrected on future extractions. Noted on quote.</div>
+                </button>
+                <button onClick={()=>{commitBcItem(crossOrCorrectPending.bomRowId,crossOrCorrectPending.bcItem,false,null,true);dismiss();}}
+                  style={{padding:"11px 14px",background:"#111118",border:`1px solid ${C.border}`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                  <div style={{fontWeight:700,fontSize:13,color:C.muted,marginBottom:3}}>Just Apply — No Learning</div>
+                  <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Apply the BC item without recording a cross or correction. Nothing saved to learning databases.</div>
                 </button>
               </div>
               <button onClick={dismiss}
