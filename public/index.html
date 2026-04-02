@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.301";
+const APP_VERSION="v1.19.302";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8630,6 +8630,8 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [createGenProd,setCreateGenProd]=useState("INVENTORY");
   const [createInvPosting,setCreateInvPosting]=useState("RAW MAT");
   const [dropdownsLoaded,setDropdownsLoaded]=useState(false);
+  const [bcManufacturers,setBcManufacturers]=useState([]);
+  const [createMfr,setCreateMfr]=useState(()=>bcNormalizeMfrCode(targetRow?.manufacturer||"")||"");
   const [showNewVendor,setShowNewVendor]=useState(false);
   const [newVendorName,setNewVendorName]=useState("");
   const [newVendorPhone,setNewVendorPhone]=useState("");
@@ -8914,6 +8916,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 bcListVendors().then(v=>{if(v.length)setBcVendors(v);else setDropdownsLoaded(false);}),
                 bcListGenProdPostingGroups().then(v=>{if(v.length)setBcGenProdGroups(v);else setDropdownsLoaded(false);}),
                 bcListInventoryPostingGroups().then(v=>{if(v.length)setBcInvPostingGroups(v);else setDropdownsLoaded(false);}),
+                bcFetchManufacturers().then(v=>{if(v.length)setBcManufacturers(v);}),
               ]);
             }}}
             style={btn("#1a2a1a","#4ade80",{padding:"9px 16px",border:"1px solid #4ade8044",fontSize:13,fontWeight:600})}>
@@ -8973,6 +8976,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcUoms.map(u=><option key={u.code} value={u.code}>{u.code}{u.displayName&&u.displayName!==u.code?` — ${u.displayName}`:""}</option>)}
+                </select>
+              </div>
+              <div style={{flex:1,minWidth:180}}>
+                <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Manufacturer</label>
+                <select value={createMfr} onChange={e=>setCreateMfr(e.target.value)}
+                  style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  <option value="">— None —</option>
+                  {bcManufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
                 </select>
               </div>
               <div style={{flex:1,minWidth:180}}>
@@ -9056,7 +9067,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               <button disabled={creating||!createNumber.trim()} onClick={async()=>{
                 setCreating(true);setCreateErr("");
                 try{
-                  const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost||undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined,genProdPostingGroup:createGenProd||undefined,inventoryPostingGroup:createInvPosting||undefined});
+                  const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost||undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined,genProdPostingGroup:createGenProd||undefined,inventoryPostingGroup:createInvPosting||undefined,manufacturerCode:createMfr||undefined});
                   const vendorName=createVendor?((bcVendors.find(v=>v.number===createVendor)||{}).displayName||""):"";
                   // If price entered + vendor selected, prompt to push to BC Purchase Prices
                   if(createCost&&parseFloat(createCost)>0&&createVendor){
