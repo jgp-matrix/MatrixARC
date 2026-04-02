@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.280";
+const APP_VERSION="v1.19.281";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3024,7 +3024,7 @@ function arcDocKeyValueRow(ctx,items){
   const itemW=ctx.contentWidth/items.length;
   arcDocCheckBreak(ctx,12);
   items.forEach((it,i)=>{
-    const x=m.left+i*itemW;
+    const x=m.left+3+i*itemW;
     doc.setFontSize(ARC_DOC.fonts.tiny);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
     doc.text((it.label||"").toUpperCase(),x,ctx.y);
     doc.setFontSize(8);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
