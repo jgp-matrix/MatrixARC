@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.298";
+const APP_VERSION="v1.19.299";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10520,6 +10520,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         console.warn("BC pricing phase failed:",ex);
         _pp({msg:`BC failed: ${ex.message||ex} — falling back to AI…`,pct:10});
       }
+    }
+
+    // Phase 1b: Codale auto-pricing for items with Codale vendor and $0 or no price
+    const codaleItems=updatedBom.filter(r=>!r.isLaborRow&&/codale/i.test(r.bcVendorName||"")&&(!r.unitPrice||r.unitPrice===0));
+    if(codaleItems.length>0){
+      _pp({msg:`Codale: Fetching live prices for ${codaleItems.length} items…`,pct:45});
+      try{
+        const pns=codaleItems.map(r=>(r.partNumber||"").trim()).filter(Boolean);
+        const fn=firebase.functions().httpsCallable("codaleTestScrape",{timeout:300000});
+        const cr=await fn({partNumbers:pns});
+        const codaleResults=(cr.data.results||[]);
+        const codaleMap={};
+        codaleResults.forEach(function(r){if(r.price>0)codaleMap[(r.partNumber||"").toUpperCase()]={price:r.price};});
+        let codaleCount=0;
+        updatedBom=updatedBom.map(r=>{
+          const pn=(r.partNumber||"").trim().toUpperCase();
+          if(codaleMap[pn]){codaleCount++;return{...r,unitPrice:codaleMap[pn].price,priceSource:"bc",priceDate:Date.now(),bcPoDate:Date.now()};}
+          return r;
+        });
+        if(codaleCount>0){bcCount+=codaleCount;_pp({msg:`Codale: ${codaleCount} prices obtained`,pct:48});}
+        else{_pp({msg:"Codale: no prices found",pct:48});}
+      }catch(e){console.warn("Codale pricing failed:",e);_pp({msg:"Codale: failed — "+e.message,pct:48});}
     }
 
     // Phase 2: AI fallback for items not priced by BC
