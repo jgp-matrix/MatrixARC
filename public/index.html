@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.282";
+const APP_VERSION="v1.19.283";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3162,14 +3162,17 @@ async function buildQuotePdfDoc(doc,project){
     // BOM Notes
     if(pan.bomNotes){
       doc.setFontSize(6.5);doc.setFont("helvetica","normal");
-      const nLines=doc.splitTextToSize("Notes: "+pan.bomNotes,ctx.contentWidth-8);
+      const nLines=doc.splitTextToSize(pan.bomNotes,ctx.contentWidth-8);
       const nlh=2.5;
-      const nH=nLines.length*nlh+3;
+      const titleH=3.5;
+      const nH=titleH+nLines.length*nlh+3;
       arcDocCheckBreak(ctx,nH+2);
       doc.setFillColor(255,251,235);doc.setDrawColor(...ARC_DOC.colors.black);doc.setLineWidth(0.2);
       doc.roundedRect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,nH,1,1,"FD");
-      doc.setTextColor(...ARC_DOC.colors.black);
-      nLines.forEach(function(nl,ni){doc.text(nl,ARC_DOC.margin.left+3,ctx.y+2.5+ni*nlh);});
+      doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text("NOTES:",ARC_DOC.margin.left+3,ctx.y+3);
+      doc.setFontSize(6.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+      nLines.forEach(function(nl,ni){doc.text(nl,ARC_DOC.margin.left+3,ctx.y+titleH+2.5+ni*nlh);});
       ctx.y+=nH+3;
     }
 
@@ -3212,8 +3215,8 @@ async function buildQuotePdfDoc(doc,project){
     arcDocCheckBreak(ctx,14);
     doc.setFillColor(248,250,252);doc.setDrawColor(248,250,252);
     doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,12,"FD");
-    const pw=ctx.contentWidth/5;const py=ctx.y;
-    [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—"},{l:"Lead Time",v:(qp.leadTime||q.leadTime||"—")+" days"},{l:"Discount",v:"—"},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—"}].forEach((col,ci)=>{
+    const pw=ctx.contentWidth/4;const py=ctx.y;
+    [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—"},{l:"Lead Time",v:(qp.leadTime||q.leadTime||"—")+" days"},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—"}].forEach((col,ci)=>{
       const cx=ARC_DOC.margin.left+ci*pw+pw/2;
       doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
       doc.text(col.l,cx,py+4,{align:"center"});
