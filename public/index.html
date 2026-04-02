@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.302";
+const APP_VERSION="v1.19.303";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8652,6 +8652,10 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [savingVendor,setSavingVendor]=useState(false);
   const [vendorSaveErr,setVendorSaveErr]=useState("");
   const [vendorListLoaded,setVendorListLoaded]=useState(false);
+  const [mfrCodes,setMfrCodes]=useState({}); // {itemNumber: mfrCode}
+  const [editMfrItem,setEditMfrItem]=useState(null);
+  const [editMfrCode,setEditMfrCode]=useState("");
+  const [savingMfr,setSavingMfr]=useState(false);
   const bomPages=((pages||[]).filter(p=>getPageTypes(p).includes('bom')&&(p.dataUrl||p.storageUrl)));
 
   async function locateInDrawing(pgIdx){
@@ -8786,14 +8790,22 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     const toFetch=items.filter(it=>it.number&&vendorNames[it.number]===undefined);
     if(!toFetch.length)return;
     const vBatch={};const pBatch={};
+    const mBatch={};
     for(const it of toFetch){
       const vNo=await bcGetItemVendorNo(it.number);
       vBatch[it.number]=vNo?await bcGetVendorName(vNo):"";
       const lp=await bcGetLastPurchase(it.number);
       pBatch[it.number]=lp||null;
+      // Fetch manufacturer code from OData
+      try{
+        const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
+        if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${it.number}'&$select=No,Manufacturer_Code&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          if(mr.ok){const md=((await mr.json()).value||[])[0];if(md)mBatch[it.number]=md.Manufacturer_Code||"";}}
+      }catch(e){}
     }
     setVendorNames(prev=>({...prev,...vBatch}));
     setPurchaseData(prev=>({...prev,...pBatch}));
+    setMfrCodes(prev=>({...prev,...mBatch}));
   }
 
   function onQueryChange(val){
@@ -9094,7 +9106,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead style={{position:"sticky",top:0,zIndex:1}}>
               <tr style={{background:"#0a0a12"}}>
-                {["Part #","Description","Vendor","Unit Cost","Last Purchased",""].map(h=>(
+                {["Part #","Description","MFR","Vendor","Unit Cost","Last Purchased",""].map(h=>(
                   <th key={h} style={{padding:"9px 10px",textAlign:h==="Unit Cost"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                 ))}
               </tr>
@@ -9108,6 +9120,35 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)"}>
                   <td style={{padding:"7px 10px",fontWeight:600,whiteSpace:"nowrap"}}>{item.number}</td>
                   <td style={{padding:"7px 10px",color:C.sub}}>{item.displayName}</td>
+                  <td style={{padding:"4px 6px",fontSize:11,whiteSpace:"nowrap",minWidth:80}} onClick={e=>e.stopPropagation()}>
+                    {editMfrItem===item.number?(
+                      React.createElement("select",{value:editMfrCode,autoFocus:true,disabled:savingMfr,
+                        onChange:async function(e){
+                          var code=e.target.value;setEditMfrCode(code);setSavingMfr(true);
+                          try{var allPages=await bcDiscoverODataPages();var iPage=allPages.find(function(n){return /^ItemCard$/i.test(n);});
+                            if(iPage){var gr=await fetch(BC_ODATA_BASE+"/"+iPage+"?$filter=No eq '"+item.number+"'",{headers:{"Authorization":"Bearer "+_bcToken}});
+                              if(gr.ok){var gd=await gr.json();var rec=(gd.value||[])[0];if(rec){var etag=rec["@odata.etag"]||"*";
+                                await fetch(BC_ODATA_BASE+"/"+iPage+"('"+item.number+"')",{method:"PATCH",headers:{"Authorization":"Bearer "+_bcToken,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});
+                              }}}
+                            setMfrCodes(function(prev){var n=Object.assign({},prev);n[item.number]=code;return n;});
+                          }catch(ex){console.warn("MFR save failed:",ex);}
+                          setSavingMfr(false);setEditMfrItem(null);
+                        },
+                        onBlur:function(){if(!savingMfr)setEditMfrItem(null);},
+                        style:{background:"#0a0a12",border:"1px solid "+C.accent,borderRadius:6,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",opacity:savingMfr?0.6:1}},
+                        React.createElement("option",{value:""},"—"),
+                        ...(bcManufacturers.map(function(m){return React.createElement("option",{key:m.Code,value:m.Code},m.Code);}))
+                      )
+                    ):(
+                      <div style={{display:"flex",alignItems:"center",gap:4,cursor:"default"}}>
+                        <span style={{color:mfrCodes[item.number]?C.sub:C.muted,fontSize:11}}>{mfrCodes[item.number]||"—"}</span>
+                        <button title="Edit manufacturer" onClick={function(){setEditMfrItem(item.number);setEditMfrCode(mfrCodes[item.number]||"");if(!bcManufacturers.length)bcFetchManufacturers().then(function(v){setBcManufacturers(v);});}}
+                          style={{background:"none",border:"1px solid "+C.border,borderRadius:4,padding:"1px 4px",fontSize:9,color:C.muted,cursor:"pointer",opacity:0.7}}
+                          onMouseEnter={function(e){e.target.style.borderColor=C.accent;e.target.style.color=C.accent;e.target.style.opacity=1;}}
+                          onMouseLeave={function(e){e.target.style.borderColor=C.border;e.target.style.color=C.muted;e.target.style.opacity=0.7;}}>✎</button>
+                      </div>
+                    )}
+                  </td>
                   <td style={{padding:"4px 6px",fontSize:12,whiteSpace:"nowrap",minWidth:160}} onClick={e=>e.stopPropagation()}>
                     {editVendorItem===item.number?(
                       <div style={{display:"flex",flexDirection:"column",gap:4}}>
