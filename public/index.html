@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.291";
+const APP_VERSION="v1.19.292";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1810,6 +1810,23 @@ async function bcCreateCustomer(displayName,phone,email){
     body:JSON.stringify(body)
   });
   if(!r.ok){const txt=await r.text();throw new Error(`BC customer creation failed (${r.status}): ${txt}`);}
+  const d=await r.json();
+  return{number:d.number||"",displayName:d.displayName||displayName};
+}
+
+async function bcCreateVendor(displayName,phone,email){
+  if(!_bcToken)throw new Error("Not connected to Business Central");
+  const compId=await bcGetCompanyId();
+  if(!compId)throw new Error("Could not resolve Business Central company");
+  const body={displayName};
+  if(phone)body.phoneNumber=phone;
+  if(email)body.email=email;
+  const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors`,{
+    method:"POST",
+    headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+    body:JSON.stringify(body)
+  });
+  if(!r.ok){const txt=await r.text();throw new Error(`BC vendor creation failed (${r.status}): ${txt}`);}
   const d=await r.json();
   return{number:d.number||"",displayName:d.displayName||displayName};
 }
@@ -8595,6 +8612,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [createGenProd,setCreateGenProd]=useState("INVENTORY");
   const [createInvPosting,setCreateInvPosting]=useState("RAW MAT");
   const [dropdownsLoaded,setDropdownsLoaded]=useState(false);
+  const [showNewVendor,setShowNewVendor]=useState(false);
+  const [newVendorName,setNewVendorName]=useState("");
+  const [newVendorPhone,setNewVendorPhone]=useState("");
+  const [newVendorEmail,setNewVendorEmail]=useState("");
+  const [creatingVendor,setCreatingVendor]=useState(false);
+  const [newVendorErr,setNewVendorErr]=useState("");
   const [croppedDataUrl,setCroppedDataUrl]=useState(null);
   const [locating,setLocating]=useState(false);
   const [drawingPageIdx,setDrawingPageIdx]=useState(0);
@@ -8932,12 +8955,37 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 </select>
               </div>
               <div style={{flex:1,minWidth:180}}>
-                <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Vendor</label>
-                <select value={createVendor} onChange={e=>setCreateVendor(e.target.value)}
-                  style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
-                  <option value="">— None —</option>
-                  {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
-                </select>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                  <label style={{fontSize:11,color:C.muted}}>Vendor</label>
+                  {!showNewVendor&&<button type="button" onClick={()=>setShowNewVendor(true)} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,padding:0,fontWeight:600}}>+ New Vendor</button>}
+                </div>
+                {showNewVendor?(
+                  <div style={{background:C.accentDim,border:"1px solid "+C.accent,borderRadius:8,padding:10}}>
+                    <input value={newVendorName} onChange={e=>setNewVendorName(e.target.value)} placeholder="Vendor Name *" style={{...inp({marginBottom:6,fontSize:12})}}/>
+                    <input value={newVendorPhone} onChange={e=>setNewVendorPhone(e.target.value)} placeholder="Phone (optional)" style={{...inp({marginBottom:6,fontSize:12})}}/>
+                    <input value={newVendorEmail} onChange={e=>setNewVendorEmail(e.target.value)} placeholder="Email (optional)" style={{...inp({marginBottom:6,fontSize:12})}}/>
+                    {newVendorErr&&<div style={{fontSize:11,color:C.red,marginBottom:6}}>{newVendorErr}</div>}
+                    <div style={{display:"flex",gap:6}}>
+                      <button type="button" onClick={()=>{setShowNewVendor(false);setNewVendorName("");setNewVendorPhone("");setNewVendorEmail("");setNewVendorErr("");}} style={btn(C.border,C.sub,{flex:1,fontSize:11,padding:"5px 8px"})}>Cancel</button>
+                      <button type="button" disabled={!newVendorName.trim()||creatingVendor} onClick={async()=>{
+                        setCreatingVendor(true);setNewVendorErr("");
+                        try{
+                          const v=await bcCreateVendor(newVendorName.trim(),newVendorPhone.trim(),newVendorEmail.trim());
+                          setBcVendors(prev=>[...prev,v].sort((a,b)=>(a.displayName||"").localeCompare(b.displayName||"")));
+                          setCreateVendor(v.number);
+                          setShowNewVendor(false);setNewVendorName("");setNewVendorPhone("");setNewVendorEmail("");
+                        }catch(e){setNewVendorErr(e.message||"Failed");}
+                        setCreatingVendor(false);
+                      }} style={btn(C.accent,"#fff",{flex:2,fontSize:11,padding:"5px 8px",opacity:!newVendorName.trim()||creatingVendor?0.5:1})}>{creatingVendor?"Creating…":"Create in BC"}</button>
+                    </div>
+                  </div>
+                ):(
+                  <select value={createVendor} onChange={e=>setCreateVendor(e.target.value)}
+                    style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                    <option value="">— None —</option>
+                    {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
+                  </select>
+                )}
               </div>
             </div>
             <div style={{display:"flex",gap:8,marginBottom:10}}>
