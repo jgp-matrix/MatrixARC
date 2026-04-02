@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.287";
+const APP_VERSION="v1.19.288";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14608,8 +14608,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               if(!q.contact&&!autoFields.contact&&bc.Sell_to_Contact)autoFields.contact=bc.Sell_to_Contact;
               if(!q.phone&&!autoFields.phone&&bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
               if(!q.email&&!autoFields.email&&bc.SellToEmail)autoFields.email=bc.SellToEmail;
-              if(!q.paymentTerms&&bc.Payment_Terms_Code)autoFields.paymentTerms=bc.Payment_Terms_Code;
-              if(!q.shippingMethod&&bc.CCS_Shipment_Method_Code)autoFields.shippingMethod=bc.CCS_Shipment_Method_Code;
+              if(bc.Payment_Terms_Code)autoFields.paymentTerms=bc.Payment_Terms_Code;
+              if(bc.CCS_Shipment_Method_Code)autoFields.shippingMethod=bc.CCS_Shipment_Method_Code;
               const spCode=bc.Person_Responsible||bc.CCS_Salesperson_Code||"";
               if(spCode&&!proj.bcSalespersonCode){
                 proj={...proj,bcSalespersonCode:spCode};
