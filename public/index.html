@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.286";
+const APP_VERSION="v1.19.287";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14556,7 +14556,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         const allPages=await bcDiscoverODataPages();
         const projectPage=allPages.find(n=>/^project(card)?$/i.test(n));
         if(projectPage){
-          const pr=await fetch(`${BC_ODATA_BASE}/${projectPage}?$filter=No eq '${proj.bcProjectNumber}'&$select=Sell_to_Contact,Sell_to_Contact_No,Sell_to_Customer_No,Sell_to_Customer_Name,Sell_to_Address,Sell_to_Address_2,Sell_to_City,Sell_to_County,Sell_to_Post_Code,SellToPhoneNo,SellToEmail,Person_Responsible,CCS_Salesperson_Code,Payment_Terms_Code,Shipment_Method_Code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          const pr=await fetch(`${BC_ODATA_BASE}/${projectPage}?$filter=No eq '${proj.bcProjectNumber}'&$select=Sell_to_Contact,Sell_to_Contact_No,Sell_to_Customer_No,Sell_to_Customer_Name,Sell_to_Address,Sell_to_Address_2,Sell_to_City,Sell_to_County,Sell_to_Post_Code,SellToPhoneNo,SellToEmail,Person_Responsible,CCS_Salesperson_Code,Payment_Terms_Code,CCS_Shipment_Method_Code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
           if(pr.ok){
             const bc=((await pr.json()).value||[])[0];
             if(bc){
@@ -14609,7 +14609,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               if(!q.phone&&!autoFields.phone&&bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
               if(!q.email&&!autoFields.email&&bc.SellToEmail)autoFields.email=bc.SellToEmail;
               if(!q.paymentTerms&&bc.Payment_Terms_Code)autoFields.paymentTerms=bc.Payment_Terms_Code;
-              if(!q.shippingMethod&&bc.Shipment_Method_Code)autoFields.shippingMethod=bc.Shipment_Method_Code;
+              if(!q.shippingMethod&&bc.CCS_Shipment_Method_Code)autoFields.shippingMethod=bc.CCS_Shipment_Method_Code;
               const spCode=bc.Person_Responsible||bc.CCS_Salesperson_Code||"";
               if(spCode&&!proj.bcSalespersonCode){
                 proj={...proj,bcSalespersonCode:spCode};
