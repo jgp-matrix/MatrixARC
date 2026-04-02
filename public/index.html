@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.303";
+const APP_VERSION="v1.19.304";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10373,8 +10373,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         updates.isCorrection=true;updates.correctionType=correctionType;updates.correctionFrom=origPN;
         delete updates.isCrossed;delete updates.crossedFrom;
       }
-      if(bcItem.displayName&&!r.description)updates.description=bcItem.displayName;
-      if(bcItem._vendorName&&!r.manufacturer)updates.manufacturer=bcItem._vendorName;
+      if(bcItem.displayName)updates.description=bcItem.displayName;
+      if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
+      // Update manufacturer from BC item — async lookup
+      if(newPN){(async()=>{try{
+        const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
+        if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${newPN}'&$select=No,Manufacturer_Code&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          if(mr.ok){const md=((await mr.json()).value||[])[0];if(md&&md.Manufacturer_Code){
+            const mfrs=await bcFetchManufacturers();const mfr=mfrs.find(m=>m.Code===md.Manufacturer_Code);
+            const mfrName=mfr?mfr.Name:md.Manufacturer_Code;
+            const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,manufacturer:mfrName}:r2);
+            const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});
+          }}}
+      }catch(e){}})();}
       if(asCross){
         // autoReplace:true — ARC selection immediately trains the learning database
         saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost},true)
