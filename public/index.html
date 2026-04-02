@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.284";
+const APP_VERSION="v1.19.285";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2869,9 +2869,10 @@ function arcDocNewPage(ctx){
   if(ctx.headerOpts)arcDocHeaderCompact(ctx,ctx.headerOpts);
   // If mid-line-item, add continuation note
   if(ctx._currentLineNum){
-    ctx.doc.setFontSize(7);ctx.doc.setFont("helvetica","italic");ctx.doc.setTextColor(...ARC_DOC.colors.grey);
+    ctx.y+=3;
+    ctx.doc.setFontSize(7);ctx.doc.setFont("helvetica","bold");ctx.doc.setTextColor(...ARC_DOC.colors.black);
     ctx.doc.text("Line "+ctx._currentLineNum+" continued from previous page...",ARC_DOC.margin.left,ctx.y);
-    ctx.y+=4;
+    ctx.y+=5;
   }
 }
 
