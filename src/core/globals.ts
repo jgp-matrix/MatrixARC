@@ -157,18 +157,27 @@ export async function loadBcConfig(companyId: string) {
     const d = await fbDb.doc(`companies/${companyId}/config/bcEnvironment`).get();
     if (d.exists) {
       _bcConfig = d.data();
+      console.log('BC CONFIG loaded:', _bcConfig?.env, _bcConfig?.companyName);
       // Propagate config to service modules
       const { setClientConfig } = await import('@/services/businessCentral/client');
       const { setBcConfig } = await import('@/services/businessCentral/auth');
       setClientConfig(_bcConfig);
       setBcConfig(_bcConfig);
+    } else {
+      console.warn('BC CONFIG not found at companies/' + companyId + '/config/bcEnvironment');
     }
   } catch (e) { console.error('loadBcConfig error:', e); }
 }
 
 // ─── BC Token ────────────────────────────────────────────────────────────────
 export async function acquireBcToken(interactive = true): Promise<string | null> {
-  // Delegates to the service layer — importing here to avoid circular deps
+  // Ensure service modules have the latest config before acquiring token
+  if (_bcConfig) {
+    const { setBcConfig } = await import('@/services/businessCentral/auth');
+    const { setClientConfig } = await import('@/services/businessCentral/client');
+    setBcConfig(_bcConfig);
+    setClientConfig(_bcConfig);
+  }
   const { acquireToken } = await import('@/services/businessCentral/auth');
   const token = await acquireToken(interactive);
   _bcToken = token;

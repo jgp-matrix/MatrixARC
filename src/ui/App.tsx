@@ -15,6 +15,8 @@ import {
 } from '@/core/globals';
 import Dashboard from './Dashboard';
 import ProjectView from './ProjectView';
+import ItemsTab from './tabs/ItemsTab';
+import PurchasingTab from './tabs/PurchasingTab';
 import {
   NewProjectModal, DeleteConfirmModal, TransferProjectModal,
   CopyProjectModal, SettingsModal, ReportsModal, PricingConfigModal,

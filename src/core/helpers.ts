@@ -334,6 +334,103 @@ export async function ensureJsPDF(): Promise<any> {
   return w.jspdf.jsPDF;
 }
 
+// ─── Vendor Classification ─────────────────────────────────────────────────
+
+/**
+ * Classify a vendor name as 'PARTS' or 'TRADE' based on pattern matching.
+ * Used by vendor migration tool and sync panel to auto-set Vendor Posting Group.
+ */
+export function classifyVendor(name: string): 'PARTS' | 'TRADE' {
+  const n = (name || '').toLowerCase().trim();
+  if (!n) return 'TRADE';
+  // Person-name check (2-3 words, each capitalized, no company suffixes)
+  const words = name.trim().split(/\s+/);
+  if (words.length >= 2 && words.length <= 3
+    && !/\b(inc|llc|ltd|corp|co\.|supply|electric|systems|controls|solutions|services|technologies|industrial|automation)\b/i.test(name)
+    && words.every(w => /^[A-Z][a-z]{1,}$/.test(w))) return 'TRADE';
+  // Hard exclusions
+  if (/steakhouse|chick.fil|chilis|cafe rio|cafe zupas|costa vida|cooler runnings|black angus|restaurant|food vendor|airline|american airlines|delta air|cache valley bank|american express|chase ihg|insurance|janitorial|cleaning|restoration|shred|construction company|builders|concept kitchen|custom audio|alphagraphics|diamond rental|dell computer|dhl express|comcast|dominion energy|gas station|appliance exchange|cal ranch|best buy|costco|amazon|palo alto software/.test(n)) return 'TRADE';
+  // Known parts brands & distributors
+  if (/digikey|digi.key|mouser|beckhoff|siemens|rockwell|allen.bradley|schneider|phoenix contact|wago|cognex|keyence|ifm efector|pepperl|turck|balluff|smcusa|ametek|bender|c3 controls|codale|ced corp|crescent electric|crum electric|cache valley electric|db roberts|jepco|thermal.edge|dbk usa|rittal|navepoint|datapro|cable ties|ctc connection|precision digital|stored energy|anti vibration|bolt & nut|mcnichols|anr fabrication|avatar metal|arduino store|batteries \+|cate industrial|clarion safety|crane.controls|control equipment|ddl traffic|royal direct|css america|newark|platt electric|plc central|rust automation|northeast electrical|orange electric|products for automation|lesman|jmc instrument|inmotion controls|industrial networking|instrumentors|industrial power|intermountain fuse|ifm efector|gordon electric|hope industrial|industrial automation|electric motion|electro.sensor|standard supply|trc electronics|true cable|wiautomation|waterford systems|marshall.s industrial|onlinecomponents|lgg industrial/.test(n)) return 'PARTS';
+  // General keywords
+  if (/\belectric\b|\belectrical\b|\belectronics\b|controls|automation|industrial|instruments?|sensors?|\bwire\b|\bwiring\b|\bcable\b|connectors?|drives|vfd|inverter|relays?|breakers?|fuses?|contactor|transformer|switchgear|enclosure|pneumatic|hydraulic|\bplc\b|\bhmi\b|\bscada\b|fabrication|metal works|fastener|power supply|power systems|certification lab|components?|safety systems|anti.vibration|transmitter|transducer/.test(n)) return 'PARTS';
+  return 'TRADE';
+}
+
+// ─── BC Manufacturer Helpers ───────────────────────────────────────────────
+
+// BC_MFR_MAP is declared in the monolith; access via window global
+declare const BC_MFR_MAP: { code: string; terms: string[] }[];
+
+/**
+ * Guess a BC manufacturer code from a part description.
+ * Scans BC_MFR_MAP terms for matches >= 4 chars.
+ */
+export function bcGuessMfrFromDesc(desc: string): string | null {
+  if (!desc || !desc.trim()) return null;
+  const s = desc.trim().toLowerCase();
+  try {
+    const map = typeof BC_MFR_MAP !== 'undefined' ? BC_MFR_MAP : [];
+    for (const entry of map) {
+      for (const term of entry.terms) {
+        if (term.length >= 4 && s.includes(term)) return entry.code;
+      }
+    }
+  } catch { /* BC_MFR_MAP not available */ }
+  return null;
+}
+
+/**
+ * Normalize a raw manufacturer string from BOM extraction to a BC Manufacturer Code.
+ * Returns the Code[10] string, or null if no match found.
+ * Unknown manufacturers are logged to Firestore for review.
+ */
+export function bcNormalizeMfrCode(rawMfr: string, uid?: string): string | null {
+  if (!rawMfr || !rawMfr.trim()) return null;
+  const s = rawMfr.trim().toLowerCase();
+  try {
+    const map = typeof BC_MFR_MAP !== 'undefined' ? BC_MFR_MAP : [];
+    for (const entry of map) {
+      for (const term of entry.terms) {
+        if (s.includes(term) || term.includes(s)) return entry.code;
+      }
+    }
+  } catch { /* BC_MFR_MAP not available */ }
+  // No match — log to Firestore review queue if uid available
+  if (uid) {
+    import('@/core/globals').then(({ fbDb, _appCtx }) => {
+      if (_appCtx?.uid) {
+        const path = `users/${_appCtx.uid}/config/unknownManufacturers`;
+        const firebase = (window as any).firebase;
+        fbDb.doc(path).set({
+          records: firebase.firestore.FieldValue.arrayUnion({
+            raw: rawMfr.trim(), firstSeen: Date.now()
+          })
+        }, { merge: true }).catch(() => { });
+      }
+    }).catch(() => { });
+  }
+  console.warn(`bcNormalizeMfrCode: no BC code for "${rawMfr}" — logged for review`);
+  return null;
+}
+
+// ─── API Vendor Detection ──────────────────────────────────────────────────
+
+/** Pattern definitions for vendors with API pricing integrations */
+export const API_VENDOR_PATTERNS = [
+  { pattern: /digi[\s-]?key/i, type: 'digikey', label: 'DigiKey API', hasApi: true },
+  { pattern: /mouser/i, type: 'mouser', label: 'Mouser API', hasApi: true },
+  { pattern: /rs[\s-]?online|rs[\s-]?components/i, type: 'rsonline', label: 'RS-Online (via DigiKey/Mouser)', hasApi: false },
+];
+
+/**
+ * Check if a vendor name matches a known API pricing vendor.
+ * Returns the matched pattern entry or undefined.
+ */
+export function isApiVendor(vendorName: string): typeof API_VENDOR_PATTERNS[0] | undefined {
+  return API_VENDOR_PATTERNS.find(v => v.pattern.test(vendorName || ''));
+}
+
 // ─── Categorize Part ────────────────────────────────────────────────────────
 
 /**
