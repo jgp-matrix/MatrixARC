@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.308";
+const APP_VERSION="v1.19.309";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13943,6 +13943,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
     if(!sp)return;
     const ld=sp.laborData||{};
     const updated={...sp,laborData:{...ld,overrides:{...(ld.overrides||{}),[field]:value}}};
+    const updatedPanels=(project.panels||[]).map(p=>p.id===sp.id?updated:p);
+    onUpdate({...project,panels:updatedPanels});
     saveImmediatePanel(sp.id,updated);
   }
   function saveSelectedLaborAccepted(category,accepted){
@@ -13950,6 +13952,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
     if(!sp)return;
     const ld=sp.laborData||{};
     const updated={...sp,laborData:{...ld,accepted:{...(ld.accepted||{}),[category]:accepted}}};
+    const updatedPanels=(project.panels||[]).map(p=>p.id===sp.id?updated:p);
+    onUpdate({...project,panels:updatedPanels});
     saveImmediatePanel(sp.id,updated);
   }
   function selectedOnUpdate(updatedPanel){
