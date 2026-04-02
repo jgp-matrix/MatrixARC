@@ -1,0 +1,92 @@
+[
+  {
+    "page": 1,
+    "text": "I can see this appears to be a blank or nearly blank page from a document. The image shows a white/light gray background with no visible text, headings, tables, footnotes, or other content that I can extract.\n\nIf this is meant to be a page from the HazLoc_Training standard, it's possible that:\n1. The page is intentionally blank\n2. The image quality or contrast makes the text unreadable\n3. The wrong page was uploaded\n\nCould you please verify that the correct image was provided, or let me know if this page is indeed blank?",
+    "file": "page_001.png"
+  },
+  {
+    "page": 2,
+    "text": "I'm unable to extract text from this image as it appears to be completely blank or white. No text, headings, tables, footnotes, or section numbers are visible in the provided image.\n\nIf you intended to share a document with content, please verify that:\n1. The correct image file was uploaded\n2. The image is not corrupted\n3. The document page contains visible text\n\nPlease resubmit the image and I'll be happy to extract all the text for you.",
+    "file": "page_002.png"
+  },
+  {
+    "page": 3,
+    "text": "I'm unable to extract text from this image because it appears to be blank or completely white. The image doesn't contain any visible text, section numbers, headings, tables, or content from the HazLoc_Training standard.\n\nCould you please:\n1. Verify that the correct image was uploaded\n2. Check if the image quality is sufficient\n3. Resubmit a clearer version of the document page\n\nI'd be happy to extract the text once I can see the content clearly.",
+    "file": "page_003.png"
+  },
+  {
+    "page": 4,
+    "text": "I don't see any visible text or content in the image you've provided. The image appears to be blank or completely white. \n\nCould you please:\n1. Verify that the image uploaded correctly\n2. Check that the image file is legible and not corrupted\n3. Re-upload the document page\n\nOnce you provide a readable image, I'll be happy to extract all the text while preserving section numbers, headings, table structures, and footnotes.",
+    "file": "page_004.png"
+  },
+  {
+    "page": 5,
+    "text": "I appreciate your request, but the image you've provided appears to be blank or completely white. There is no visible text, section numbers, headings, tables, or other content that I can extract from it.\n\nCould you please:\n1. Re-upload the image to ensure it came through correctly\n2. Check that the image file contains the HazLoc_Training standard content you intended to share\n\nOnce you provide a clear image with visible text, I'll be happy to extract all the content while preserving formatting, section numbers, headings, tables, and footnotes as requested.",
+    "file": "page_005.png"
+  },
+  {
+    "page": 6,
+    "text": "I can see that you've uploaded an image, but it appears to be blank or extremely faint. I'm unable to extract any text from this page of the HazLoc_Training standard because no visible content is discernible in the image provided.\n\nPlease try:\n1. Re-uploading the image with better clarity or contrast\n2. Ensuring the page is properly scanned or photographed\n3. Checking that the correct file was uploaded\n\nOnce you provide a clearer image, I'll be happy to extract all the text while preserving section numbers, headings, table structures, and footnotes.",
+    "file": "page_006.png"
+  },
+  {
+    "page": 7,
+    "text": "I apologize, but I'm unable to extract text from the image you've provided. The image appears to be blank or extremely light/faded, making it impossible for me to read or discern any text content from the HazLoc_Training standard.\n\nCould you please:\n1. Re-upload the image with better clarity or contrast\n2. Ensure the document is properly scanned or photographed\n3. Check that the correct page was uploaded\n\nOnce you provide a clearer version, I'll be happy to extract all the text while preserving the formatting, section numbers, headings, tables, and footnotes as requested.",
+    "file": "page_007.png"
+  },
+  {
+    "page": 8,
+    "text": "# Industrial Control Panels Relating To Hazardous Locations\n\ncULus Category NRBX/NRBX7",
+    "file": "page_008.png"
+  },
+  {
+    "page": 9,
+    "text": "General\n\nFor electrical devices used in a hazardous location, it is necessary to prevent ignition of the hazardous material by a spark or high temperature. One method to prevent ignition, called intrinsic safety, is to strictly limit the available energy.\n\nThis energy limitation is accomplished, in part, by the use of a device called an intrinsic safety barrier. This \"barrier\" will, by the use of specific electrical components, prevent excessive voltage, current, and power downstream.\n\nIt is also necessary to consider the devices and wiring connected to the barrier as these can affect the energy available in the hazardous location. A proper intrinsic safety evaluation considers the combination of the intrinsic safety barrier, wiring and intrinsically safe device.\n\nSlide 2",
+    "file": "page_009.png"
+  },
+  {
+    "page": 10,
+    "text": "General, continued\n\n■ An industrial control panel which contains an intrinsic safety barrier (limiting the energy in the circuit) is a NRBX/NRBX7 panel.\n\n■ The NRBX panel does not need to be in a hazardous location (NITW).\n\n■ Or, the NRBX panel may be in the hazardous location which must have protection against ignition of the hazardous material by another means (NNNY).\n\n■ The intrinsically safe wiring may extend to as long as several miles/kilometers or as short as the cover of the panel, such as for a panel mounted switch (field wiring of zero length).",
+    "file": "page_010.png"
+  },
+  {
+    "page": 11,
+    "text": "GOING Global ... with Knowledge Solutions\n\nUL Underwriters\nLaboratories Inc.\n\nNITW\n\nNITW\nand\nNRBX\n\n•Safe area installation\n\nNITW\nand\nNNNY\n\nNITW,\nNRBX\nand\nNNNY\n\n•Hazardous area installation\n\n•Non-I.S.\n\n•I.S. connections\n\n■ Panel program NNNY for Hazardous\nLocations requires NITW as prerequisite.\n\n■ Panel Program NRBX for Intrinsically Safe\ncircuit extensions also requires NITW as\nprerequisite.",
+    "file": "page_011.png"
+  },
+  {
+    "page": 12,
+    "text": "General Use\n\n■ Equipment that is intended to be connected to a barrier in the panel, can be simple apparatus. Simple apparatus includes LED's, resistors, RTD's, switches, and thermocouples that do not generate more than 1.2 V, 0.1 A, 25 mW, and do not dissipate more than 1.3 Watts. They do not require any listing or labelling.\n\n■ Equipment that is intended to be connected to a barrier in the panel may be more than simple apparatus (for example a transmitter providing 4-20 mA current loop) provided the device is listed as intrinsically safe and is installed in accordance with all applicable instructions. These instructions are commonly call control drawings.\n\nSlide 5",
+    "file": "page_012.png"
+  },
+  {
+    "page": 13,
+    "text": "Making the connections safely\n\n■ Panel manufacturer are required to use barrier(s) providing outputs suitable for the specified environment and to include barrier manufacturer's Control Drawing with Installation Instructions furnished by panel manufacturer.\n\n■ When device connected is not a simple apparatus, it is necessary for the entity parameters between the barrier and the device match the following:\n\nI.S. Apparatus\nEntity Parameters | Required Relationship Between Entity Parameters | UL Listed I.S. Barrier Entity Parameters\n---|---|---\nV max (or Ui) | ≥ | Voc or Vt (or Uo)\nI max (or Ii) | ≥ | Isc or It (or Io)\nP max, Pi | ≥ | Po\nCi + Ccable | ≤ | Ca (or Co)\nLi + Lcable | ≤ | La (or Lo)\n\n■ Unless known otherwise, cable contains 60 pF/ft and 20 uH/ft.\n\nSlide 6",
+    "file": "page_013.png"
+  },
+  {
+    "page": 14,
+    "text": "Intrinsically Safe/Non-Intrinsically Safe Separations\n\nSeparations between intrinsically safe and non-intrinsically safe wiring and circuits may be maintained by:\n\n• Distance (50 mm between intrinsically safe and non-intrinsically safe, including slack for field wiring)\n\n• The slack for field wiring is an installation, not a construction concern but typically (see the NEC and local codes) is considered to be six inches. This results in the \"2-5-8 inches\" rule of thumb commonly used in the industry. Do not build a panel that cannot be properly installed!\n\n• Partitions (0.45 mm metal or 0.9 mm plastic) where distance is not adequately maintained.\n\nSlide 7",
+    "file": "page_014.png"
+  },
+  {
+    "page": 15,
+    "text": "# Separation accomplished by distance\n\nSlide 8",
+    "file": "page_015.png"
+  },
+  {
+    "page": 16,
+    "text": "# Separation accomplished by partition\n\nDoes the partition need to extend all the way to the cover (within 1.5 mm)?\n\nSlide 9",
+    "file": "page_016.png"
+  },
+  {
+    "page": 17,
+    "text": "Wiring must be identified (marked) both inside and outside the panel\n\nINTRINSIC SAFE WIRING\n\nNON-INTRINSIC SAFE WIRING\n\nSlide 10",
+    "file": "page_017.png"
+  },
+  {
+    "page": 18,
+    "text": "Common mistakes in NRBX constructions\n\n1) Any barrier which is not UL listed is not acceptable.\n\n2) Partitions which do not sufficiently protect the wiring\n\n3) Wires that are not protected by partitions or distances\n\n4) Intrinsically Safe connections are not marked inside panel\n\n5) Intrinsically Safe connections are not marked outside panel\n\n6) No control drawing (wiring instructions)\n\n7) Label does not includes a reference to the control drawing\n\nSlide 12",
+    "file": "page_018.png"
+  }
+]
