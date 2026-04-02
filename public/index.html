@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.290";
+const APP_VERSION="v1.19.291";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1947,13 +1947,21 @@ async function bcFuzzyLookup(partNumber){
   if(stripped.length>=3){
     const r2=await bcSearchItems(stripped,{field:"number",top:10});
     if(r2.items.length===1)return{match:r2.items[0],type:"fuzzy",suggestions:[]};
-    if(r2.items.length>1)return{match:null,type:"fuzzy",suggestions:r2.items.slice(0,8)};
+    if(r2.items.length>1){
+      const exactInResults=r2.items.find(it=>it.number.toUpperCase()===pn.toUpperCase());
+      if(exactInResults)return{match:exactInResults,type:"exact",suggestions:[]};
+      return{match:null,type:"fuzzy",suggestions:r2.items.slice(0,8)};
+    }
   }
   // 3. Original as contains search
   if(pn.length>=3){
     const r3=await bcSearchItems(pn,{field:"number",top:10});
     if(r3.items.length===1)return{match:r3.items[0],type:"fuzzy",suggestions:[]};
-    if(r3.items.length>1)return{match:null,type:"fuzzy",suggestions:r3.items.slice(0,8)};
+    if(r3.items.length>1){
+      const exactInResults=r3.items.find(it=>it.number.toUpperCase()===pn.toUpperCase());
+      if(exactInResults)return{match:exactInResults,type:"exact",suggestions:[]};
+      return{match:null,type:"fuzzy",suggestions:r3.items.slice(0,8)};
+    }
   }
   // 4. Core substring — strip common prefixes/suffixes
   const core=pn.replace(/^(mtx|mat|mx|ms)[-\s]*/i,"").replace(/[-\s]*(rev[a-z0-9]*|v\d+)$/i,"").trim();
