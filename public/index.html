@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.289";
+const APP_VERSION="v1.19.290";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14551,7 +14551,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!q.drawingRev&&firstPanel.drawingRev)autoFields.drawingRev=firstPanel.drawingRev;
     if(!q.projectNumber&&proj.bcProjectNumber)autoFields.projectNumber=proj.bcProjectNumber;
     // Fetch contact and salesperson from BC project card
-    if(proj.bcProjectNumber&&_bcToken&&(!q.contact||!q.company||!q.address||!q.phone||!q.email||!q.salesperson||!q.salesEmail||!q.salesPhone||!q.paymentTerms||!q.shippingMethod||/^S-/i.test(q.salesperson||""))){
+    if(proj.bcProjectNumber&&_bcToken){
       try{
         const allPages=await bcDiscoverODataPages();
         const projectPage=allPages.find(n=>/^project(card)?$/i.test(n));
