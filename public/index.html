@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.300";
+const APP_VERSION="v1.19.301";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10507,7 +10507,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           bcCount=Object.keys(bcMap).length;
           updatedBom=updatedBom.map(r=>{
             const key=String(r.id);
-            if(key in bcMap){return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",priceDate:Date.now(),bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",bcPoDate:bcMap[key].bcPoDate};}
+            if(key in bcMap){
+              const hasActiveRfq=r.rfqSentDate&&(!r.unitPrice||r.unitPrice===0);
+              return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",
+                ...(hasActiveRfq?{}:{priceDate:Date.now(),bcPoDate:bcMap[key].bcPoDate}),
+                bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||""};
+            }
             return r;
           });
           if(Object.keys(fuzzySugg).length>0){
@@ -10536,7 +10541,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         let codaleCount=0;
         updatedBom=updatedBom.map(r=>{
           const pn=(r.partNumber||"").trim().toUpperCase();
-          if(codaleMap[pn]){codaleCount++;return{...r,unitPrice:codaleMap[pn].price,priceSource:"bc",priceDate:Date.now(),bcPoDate:Date.now()};}
+          if(codaleMap[pn]){codaleCount++;const hasActiveRfq=r.rfqSentDate&&(!r.unitPrice||r.unitPrice===0);return{...r,unitPrice:codaleMap[pn].price,priceSource:"bc",...(hasActiveRfq?{}:{priceDate:Date.now(),bcPoDate:Date.now()})};}
           return r;
         });
         if(codaleCount>0){bcCount+=codaleCount;_pp({msg:`Codale: ${codaleCount} prices obtained`,pct:48});}
