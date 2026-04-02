@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.299";
+const APP_VERSION="v1.19.300";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10522,8 +10522,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }
 
-    // Phase 1b: Codale auto-pricing for items with Codale vendor and $0 or no price
-    const codaleItems=updatedBom.filter(r=>!r.isLaborRow&&/codale/i.test(r.bcVendorName||"")&&(!r.unitPrice||r.unitPrice===0));
+    // Phase 1b: Codale auto-pricing for ALL items with Codale vendor (refresh all prices)
+    const codaleItems=updatedBom.filter(r=>!r.isLaborRow&&/codale/i.test(r.bcVendorName||""));
     if(codaleItems.length>0){
       _pp({msg:`Codale: Fetching live prices for ${codaleItems.length} items…`,pct:45});
       try{
