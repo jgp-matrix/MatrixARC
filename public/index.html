@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.389";
+const APP_VERSION="v1.19.390";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11117,6 +11117,39 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         else{_pp({msg:"Codale: no prices found",pct:48});}
       }catch(e){console.warn("Codale pricing failed:",e);_pp({msg:"Codale: failed — "+e.message,pct:48});}
     }
+
+    // Phase 1c: Custom scraper auto-pricing (Royal, etc.) — scrape portal for vendor-matched items
+    // DECISION(v1.19.390): Loads custom scraper configs from Firestore, finds BOM items matching
+    // each scraper's vendor name, and runs the scraper for each part number sequentially.
+    try{
+      const scraperPath=_appCtx.configPath||`users/${uid}/config`;
+      const scraperDoc=await fbDb.doc(`${scraperPath}/customScrapers`).get();
+      const customScrapers=(scraperDoc.exists?(scraperDoc.data().scrapers||[]):[]).filter(s=>s.category==="scraper"&&s.enabled&&(s.steps||[]).length>0);
+      for(const scraper of customScrapers){
+        const vendorPattern=new RegExp(scraper.name.split(/\s+/).slice(0,2).join(".*"),"i"); // "Royal A&C" → /Royal.*A&C/i
+        const scraperItems=updatedBom.filter(r=>!r.isLaborRow&&vendorPattern.test(r.bcVendorName||"")&&r.priceSource!=="manual");
+        if(!scraperItems.length)continue;
+        _pp({msg:`${scraper.name}: Fetching prices for ${scraperItems.length} items…`,pct:49});
+        const fn=firebase.functions().httpsCallable("customScraperBatch",{timeout:300000});
+        try{
+          const pns=scraperItems.map(r=>(r.partNumber||"").trim()).filter(Boolean);
+          const cr=await fn({scraperId:scraper.id,partNumbers:pns,config:{username:scraper.username,password:scraper.password},steps:scraper.steps});
+          const results=cr.data.results||{};
+          let scraperCount=0;
+          updatedBom=updatedBom.map(r=>{
+            const pn=(r.partNumber||"").trim().toUpperCase();
+            const pr=results[pn]||results[(r.partNumber||"").trim()];
+            if(pr&&pr.price){
+              const numPrice=parseFloat(pr.price.replace(/[$,]/g,""));
+              if(!isNaN(numPrice)&&numPrice>0){scraperCount++;return{...r,unitPrice:numPrice,priceSource:"bc",priceDate:Date.now(),bcPoDate:Date.now()};}
+            }
+            return r;
+          });
+          if(scraperCount>0){bcCount+=scraperCount;_pp({msg:`${scraper.name}: ${scraperCount} prices obtained`,pct:52});}
+          else _pp({msg:`${scraper.name}: no prices found`,pct:52});
+        }catch(e){console.warn(scraper.name+" pricing failed:",e);_pp({msg:`${scraper.name}: failed — ${e.message}`,pct:52});}
+      }
+    }catch(e){console.warn("Custom scraper pricing phase failed:",e);}
 
     // Phase 2: AI fallback for items not priced by BC
     const unpricedBom=updatedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual");
