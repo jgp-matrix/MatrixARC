@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.390";
+const APP_VERSION="v1.19.391";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11126,8 +11126,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const scraperDoc=await fbDb.doc(`${scraperPath}/customScrapers`).get();
       const customScrapers=(scraperDoc.exists?(scraperDoc.data().scrapers||[]):[]).filter(s=>s.category==="scraper"&&s.enabled&&(s.steps||[]).length>0);
       for(const scraper of customScrapers){
-        const vendorPattern=new RegExp(scraper.name.split(/\s+/).slice(0,2).join(".*"),"i"); // "Royal A&C" → /Royal.*A&C/i
-        const scraperItems=updatedBom.filter(r=>!r.isLaborRow&&vendorPattern.test(r.bcVendorName||"")&&r.priceSource!=="manual");
+        // DECISION(v1.19.391): Use vendorMatch field for flexible matching. Comma-separated patterns.
+        // e.g. "Royal,Royal Wholesale,Royal A&C" matches any BOM vendor containing those strings.
+        // Falls back to scraper name if vendorMatch not set.
+        const matchTerms=(scraper.vendorMatch||scraper.name||"").split(",").map(s=>s.trim()).filter(Boolean);
+        const scraperItems=updatedBom.filter(r=>{
+          if(r.isLaborRow||r.priceSource==="manual")return false;
+          const vn=(r.bcVendorName||"").toLowerCase();
+          return matchTerms.some(t=>vn.includes(t.toLowerCase()));
+        });
         if(!scraperItems.length)continue;
         _pp({msg:`${scraper.name}: Fetching prices for ${scraperItems.length} items…`,pct:49});
         const fn=firebase.functions().httpsCallable("customScraperBatch",{timeout:300000});
@@ -17970,7 +17977,9 @@ function APISetupModal({uid,onClose}){
             {/* Basic info */}
             <div style={{display:"grid",gap:8,marginBottom:12}}>
               <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Supplier Name *</label>
-              <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Royal Electric, Graybar" style={inp()}/></div>
+              <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Royal Wholesale, Graybar" style={inp()}/></div>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Vendor Match (comma-separated names to match in BOM)</label>
+              <input value={editScraper.vendorMatch||""} onChange={e=>setEditScraper(p=>({...p,vendorMatch:e.target.value}))} placeholder="e.g. Royal,Royal Wholesale,Royal A&C" style={inp()}/></div>
               <div style={{display:"flex",gap:8}}>
                 <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Username</label>
                 <input value={editScraper.username||""} onChange={e=>setEditScraper(p=>({...p,username:e.target.value}))} placeholder="Portal username" style={inp()}/></div>
