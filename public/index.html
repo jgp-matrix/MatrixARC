@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.340";
+const APP_VERSION="v1.19.341";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14230,6 +14230,8 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
   const [threadSearching,setThreadSearching]=useState(false);
   const [selectedThread,setSelectedThread]=useState(null);
   const [sending,setSending]=useState(false);
+  const [previewEmail,setPreviewEmail]=useState(null); // {subject,from,date,bodyHtml} or null
+  const [previewLoading,setPreviewLoading]=useState(false);
 
   async function searchThreads(q){
     if(!q||q.length<2)return;
@@ -14237,6 +14239,25 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
     const token=await acquireGraphToken();
     if(token){const results=await graphSearchEmails(token,q,20);setThreadResults(results);}
     setThreadSearching(false);
+  }
+
+  async function loadEmailPreview(msg){
+    setPreviewLoading(true);setPreviewEmail({subject:msg.subject,from:msg.from,date:msg.date,bodyHtml:null});
+    try{
+      const token=await acquireGraphToken();
+      if(!token){setPreviewLoading(false);return;}
+      const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${msg.id}?$select=subject,body,from,receivedDateTime,toRecipients,ccRecipients`,{
+        headers:{"Authorization":`Bearer ${token}`}
+      });
+      if(r.ok){
+        const d=await r.json();
+        setPreviewEmail({subject:d.subject||msg.subject,from:msg.from,fromEmail:msg.fromEmail,
+          to:(d.toRecipients||[]).map(t=>t.emailAddress?.name||t.emailAddress?.address).join(", "),
+          cc:(d.ccRecipients||[]).map(t=>t.emailAddress?.name||t.emailAddress?.address).join(", "),
+          date:d.receivedDateTime||msg.date,bodyHtml:d.body?.content||""});
+      }
+    }catch(e){console.warn("Email preview fetch failed:",e);}
+    setPreviewLoading(false);
   }
 
   useEffect(()=>{if(sendMode==="reply"&&!threadResults.length&&threadSearch)searchThreads(threadSearch);},[sendMode]);
@@ -14331,7 +14352,13 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
                       <div style={{fontSize:12,fontWeight:selectedThread?.id===t.id?700:600,color:selectedThread?.id===t.id?"#4ade80":C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject}</div>
                       <div style={{fontSize:11,color:C.muted,marginTop:2}}>{t.from}</div>
                     </div>
-                    <div style={{fontSize:10,color:C.muted,whiteSpace:"nowrap",flexShrink:0}}>{fmtDate(t.date)}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                      <button title="Preview full email" onClick={e=>{e.stopPropagation();loadEmailPreview(t);}}
+                        style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 6px",fontSize:10,color:C.muted,cursor:"pointer"}}
+                        onMouseEnter={e=>{e.target.style.borderColor=C.accent;e.target.style.color=C.accent;}}
+                        onMouseLeave={e=>{e.target.style.borderColor=C.border;e.target.style.color=C.muted;}}>👁</button>
+                      <div style={{fontSize:10,color:C.muted,whiteSpace:"nowrap"}}>{fmtDate(t.date)}</div>
+                    </div>
                   </div>
                   <div style={{fontSize:10,color:C.muted,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",opacity:0.7}}>{t.preview}</div>
                   {selectedThread?.id===t.id&&<div style={{fontSize:10,color:"#4ade80",fontWeight:700,marginTop:4}}>✓ Selected — will reply to this thread</div>}
@@ -14362,6 +14389,46 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
         </div>
       </div>
     </div>
+    {/* Email Preview Overlay */}
+    {previewEmail&&(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}
+        onClick={()=>setPreviewEmail(null)}>
+        <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,width:"95%",maxWidth:800,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 60px 15px rgba(56,189,248,0.5)"}}
+          onClick={e=>e.stopPropagation()}>
+          {/* Preview Header */}
+          <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:6}}>{previewEmail.subject}</div>
+                <div style={{fontSize:12,color:C.sub}}>From: <span style={{fontWeight:600}}>{previewEmail.from}</span>{previewEmail.fromEmail?` <${previewEmail.fromEmail}>`:""}</div>
+                {previewEmail.to&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>To: {previewEmail.to}</div>}
+                {previewEmail.cc&&<div style={{fontSize:11,color:C.muted}}>Cc: {previewEmail.cc}</div>}
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>{fmtDate(previewEmail.date)}</div>
+              </div>
+              <div style={{display:"flex",gap:6,flexShrink:0}}>
+                <button onClick={()=>{const t=threadResults.find(r=>r.subject===previewEmail.subject);if(t)setSelectedThread(t);setPreviewEmail(null);}}
+                  style={btn("#0d2a1a","#4ade80",{fontSize:11,fontWeight:700,border:"1px solid #4ade8066",padding:"5px 12px"})}>
+                  ↩ Select & Reply
+                </button>
+                <button onClick={()=>setPreviewEmail(null)}
+                  style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 10px",color:C.muted,fontSize:14,cursor:"pointer"}}>✕</button>
+              </div>
+            </div>
+          </div>
+          {/* Preview Body */}
+          <div style={{flex:1,overflow:"auto",padding:"16px 20px"}}>
+            {previewLoading?(
+              <div style={{textAlign:"center",color:C.accent,padding:40,fontSize:13}}>Loading email…</div>
+            ):previewEmail.bodyHtml?(
+              <div style={{background:"#fff",borderRadius:6,padding:16,fontSize:13,lineHeight:1.6,color:"#1e293b",maxWidth:"100%",overflow:"auto"}}
+                dangerouslySetInnerHTML={{__html:previewEmail.bodyHtml}}/>
+            ):(
+              <div style={{textAlign:"center",color:C.muted,padding:40,fontSize:12}}>Could not load email body</div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
   ,document.body);
 }
 
