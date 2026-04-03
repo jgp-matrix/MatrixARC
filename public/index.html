@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.331";
+const APP_VERSION="v1.19.332";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3220,20 +3220,23 @@ async function buildQuotePdfDoc(doc,project){
     }
     ctx.y+=1;
 
-    // BOM Notes (compact — inside bordered box)
-    if(pan.bomNotes){
+    // BOM Notes (always shown — inside bordered box)
+    {
+      const noteText=pan.bomNotes||"";
       doc.setFontSize(5.5);doc.setFont("helvetica","normal");
-      const nLines=doc.splitTextToSize(pan.bomNotes,ctx.contentWidth-8);
+      const nLines=noteText?doc.splitTextToSize(noteText,ctx.contentWidth-18):[];
       const nlh=2;
       const titleH=3;
-      const nH=titleH+nLines.length*nlh+2;
+      const nH=titleH+Math.max(nLines.length,0)*nlh+2;
       arcDocCheckBreak(ctx,nH+1);
       doc.setFillColor(255,251,235);doc.setDrawColor(...ARC_DOC.colors.black);doc.setLineWidth(0.2);
       doc.roundedRect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,nH,1,1,"FD");
       doc.setFontSize(5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
       doc.text("NOTES:",ARC_DOC.margin.left+3,ctx.y+2.5);
-      doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-      nLines.forEach(function(nl,ni){doc.text(nl,ARC_DOC.margin.left+3,ctx.y+titleH+2+ni*nlh);});
+      if(nLines.length){
+        doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+        nLines.forEach(function(nl,ni){doc.text(nl,ARC_DOC.margin.left+14,ctx.y+titleH+2+ni*nlh);});
+      }
       ctx.y+=nH+1.5;
     }
 
