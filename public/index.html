@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.379";
+const APP_VERSION="v1.19.380";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17556,6 +17556,40 @@ function APISetupModal({uid,onClose}){
   const [apiTestMsg,setApiTestMsg]=useState(null);
   const [apiTesting,setApiTesting]=useState(false);
   const [showPricingReports,setShowPricingReports]=useState(false);
+  // Custom scraper configs — stored at company level in Firestore
+  const [customScrapers,setCustomScrapers]=useState([]);
+  const [scrapersLoading,setScrapersLoading]=useState(true);
+  const [editScraper,setEditScraper]=useState(null); // null=list, {}=new, {id:...}=editing
+  const [scraperSaving,setScraperSaving]=useState(false);
+
+  useEffect(()=>{
+    const path=_appCtx.configPath||`users/${uid}/config`;
+    fbDb.doc(`${path}/customScrapers`).get().then(d=>{
+      if(d.exists)setCustomScrapers(d.data().scrapers||[]);
+      setScrapersLoading(false);
+    }).catch(()=>setScrapersLoading(false));
+  },[]);
+
+  async function saveScraperConfig(scraper){
+    setScraperSaving(true);
+    try{
+      const path=_appCtx.configPath||`users/${uid}/config`;
+      const updated=scraper.id
+        ?customScrapers.map(s=>s.id===scraper.id?{...scraper,updatedAt:Date.now()}:s)
+        :[...customScrapers,{...scraper,id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),createdAt:Date.now()}];
+      await fbDb.doc(`${path}/customScrapers`).set({scrapers:updated});
+      setCustomScrapers(updated);setEditScraper(null);
+    }catch(e){alert("Save failed: "+e.message);}
+    setScraperSaving(false);
+  }
+  async function deleteScraperConfig(id){
+    if(!confirm("Delete this scraper configuration?"))return;
+    const path=_appCtx.configPath||`users/${uid}/config`;
+    const updated=customScrapers.filter(s=>s.id!==id);
+    await fbDb.doc(`${path}/customScrapers`).set({scrapers:updated});
+    setCustomScrapers(updated);
+  }
+
   // BC Environment config
   const [bcEnvName,setBcEnvName]=useState(_bcConfig.env);
   const [bcCompName,setBcCompName]=useState(_bcConfig.companyName);
@@ -17673,7 +17707,94 @@ function APISetupModal({uid,onClose}){
         </div>
         {showPricingReports&&<PricingReportsModal uid={uid} onClose={()=>setShowPricingReports(false)}/>}
 
-        {/* Future: Royal Portal Scraper will go here */}
+        {/* Custom Scraper Configurations */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Custom Price Scrapers</div>
+            {!editScraper&&<button onClick={()=>setEditScraper({name:"",type:"api_key",baseUrl:"",apiKey:"",username:"",password:"",oauthUrl:"",clientId:"",clientSecret:"",cookieUrl:"",headers:"",notes:"",enabled:true})}
+              style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add Scraper</button>}
+          </div>
+
+          {editScraper?(
+            <div style={{border:`1px solid ${C.accent}`,borderRadius:8,padding:14,background:C.accentDim}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:12}}>{editScraper.id?"Edit Scraper":"New Scraper Configuration"}</div>
+              <div style={{display:"grid",gap:8,marginBottom:12}}>
+                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Scraper Name *</label>
+                <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Royal Electric, Graybar, Rexel" style={inp()}/></div>
+
+                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Authentication Type</label>
+                <select value={editScraper.type} onChange={e=>setEditScraper(p=>({...p,type:e.target.value}))}
+                  style={{...inp(),cursor:"pointer"}}>
+                  <option value="api_key">API Key</option>
+                  <option value="login">Username / Password Login</option>
+                  <option value="oauth">OAuth 2.0</option>
+                  <option value="cookie">Cookie / Session Based</option>
+                </select></div>
+
+                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Base URL / Endpoint *</label>
+                <input value={editScraper.baseUrl} onChange={e=>setEditScraper(p=>({...p,baseUrl:e.target.value}))} placeholder="https://api.supplier.com/v1/pricing" style={inp()}/></div>
+
+                {editScraper.type==="api_key"&&(
+                  <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>API Key</label>
+                  <input value={editScraper.apiKey} onChange={e=>setEditScraper(p=>({...p,apiKey:e.target.value}))} placeholder="Enter API key" type="password" style={inp()}/></div>
+                )}
+
+                {(editScraper.type==="login"||editScraper.type==="cookie")&&(<>
+                  <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Username</label>
+                  <input value={editScraper.username} onChange={e=>setEditScraper(p=>({...p,username:e.target.value}))} placeholder="Username or email" style={inp()}/></div>
+                  <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Password</label>
+                  <input value={editScraper.password} onChange={e=>setEditScraper(p=>({...p,password:e.target.value}))} placeholder="Password" type="password" style={inp()}/></div>
+                </>)}
+
+                {editScraper.type==="cookie"&&(
+                  <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Login / Session URL</label>
+                  <input value={editScraper.cookieUrl} onChange={e=>setEditScraper(p=>({...p,cookieUrl:e.target.value}))} placeholder="https://portal.supplier.com/login" style={inp()}/></div>
+                )}
+
+                {editScraper.type==="oauth"&&(<>
+                  <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>OAuth Token URL</label>
+                  <input value={editScraper.oauthUrl} onChange={e=>setEditScraper(p=>({...p,oauthUrl:e.target.value}))} placeholder="https://auth.supplier.com/oauth/token" style={inp()}/></div>
+                  <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Client ID</label>
+                  <input value={editScraper.clientId} onChange={e=>setEditScraper(p=>({...p,clientId:e.target.value}))} placeholder="OAuth Client ID" style={inp()}/></div>
+                  <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Client Secret</label>
+                  <input value={editScraper.clientSecret} onChange={e=>setEditScraper(p=>({...p,clientSecret:e.target.value}))} placeholder="OAuth Client Secret" type="password" style={inp()}/></div>
+                </>)}
+
+                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Custom Headers (JSON, optional)</label>
+                <input value={editScraper.headers} onChange={e=>setEditScraper(p=>({...p,headers:e.target.value}))} placeholder='{"X-Custom-Header": "value"}' style={inp()}/></div>
+
+                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Notes</label>
+                <textarea value={editScraper.notes} onChange={e=>setEditScraper(p=>({...p,notes:e.target.value}))} placeholder="Any notes about this scraper configuration…" rows={2} style={{...inp(),resize:"vertical"}}/></div>
+              </div>
+
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>setEditScraper(null)} style={btn(C.border,C.muted,{fontSize:12})}>Cancel</button>
+                <button onClick={()=>saveScraperConfig(editScraper)} disabled={scraperSaving||!editScraper.name?.trim()||!editScraper.baseUrl?.trim()}
+                  style={btn(C.accent,"#fff",{fontSize:12,fontWeight:700,opacity:scraperSaving||!editScraper.name?.trim()||!editScraper.baseUrl?.trim()?0.5:1})}>
+                  {scraperSaving?"Saving…":editScraper.id?"Save Changes":"Add Scraper"}
+                </button>
+              </div>
+            </div>
+          ):(
+            <div>
+              {scrapersLoading?<div style={{fontSize:12,color:C.muted,padding:10}}>Loading…</div>
+              :customScrapers.length===0?<div style={{fontSize:12,color:C.muted,padding:10,lineHeight:1.6}}>No custom scrapers configured. Click "+ Add Scraper" to set up a new pricing connection.</div>
+              :customScrapers.map(s=>(
+                <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderBottom:`1px solid ${C.border}22`}}>
+                  <span style={{width:8,height:8,borderRadius:"50%",background:s.enabled?C.green:C.muted,flexShrink:0}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.text}}>{s.name}</div>
+                    <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      {s.type==="api_key"?"API Key":s.type==="login"?"Login":s.type==="oauth"?"OAuth":s.type==="cookie"?"Cookie/Session":"—"} · {s.baseUrl||"No URL"}
+                    </div>
+                  </div>
+                  <button onClick={()=>setEditScraper({...s})} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>Edit</button>
+                  <button onClick={()=>deleteScraperConfig(s.id)} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div style={{marginTop:24,textAlign:"center"}}>
           <button onClick={onClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
