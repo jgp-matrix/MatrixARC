@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.335";
+const APP_VERSION="v1.19.336";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11185,15 +11185,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const hasUnsent=panel.bcPdfAttached&&!bcPdfMissing&&(quoteRev||0)>(panel.bcUploadQuoteRev||0);
             const needsUpload=hasUnsent||bcPdfMissing||(!panel.bcPdfAttached);
             return(
-            <button data-tip={bcPdfMissing?"File deleted from BC — click to re-upload":hasUnsent?"BOM changed — click to upload updated drawings to BC":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"} — click to re-upload`:"Upload drawings to BC"}
-              onClick={()=>buildAndAttachPdf()} disabled={attachingPdf}
+            <span style={{display:"inline-flex",alignItems:"center",gap:0}}>
+            <button data-tip={bcPdfMissing?"File deleted from BC — click to re-upload":hasUnsent?"BOM changed — click to upload updated drawings to BC":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:"Upload drawings to BC"}
+              onClick={needsUpload?()=>buildAndAttachPdf():undefined} disabled={attachingPdf||!needsUpload}
               style={{background:bcPdfMissing?"#3a0a0a":hasUnsent?"#3a1f00":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",
                 border:`1px solid ${bcPdfMissing?"#ef444488":hasUnsent?"#f59e0b88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,
                 color:bcPdfMissing?C.red:hasUnsent?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",
-                cursor:attachingPdf?"wait":"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
+                cursor:needsUpload?"pointer":"default",borderRadius:needsUpload?20:"20px 0 0 20px",padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
                 opacity:attachingPdf?0.5:1,animation:needsUpload&&!attachingPdf?"pulseYellow 2s ease-in-out infinite":"none"}}>
               {attachingPdf?"Uploading…":bcPdfMissing?"⚠ Deleted — Click to Re-Upload":hasUnsent?"⚠ Unsent Revision — Click to Update":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
-            </button>);
+            </button>
+            {panel.bcPdfAttached&&!bcPdfMissing&&!needsUpload&&!attachingPdf&&(
+              <button data-tip="Force re-upload drawings & clean duplicates in BC" onClick={()=>buildAndAttachPdf()}
+                style={{background:C.greenDim,border:`1px solid ${C.green}88`,borderLeft:"none",color:C.green,cursor:"pointer",borderRadius:"0 20px 20px 0",padding:"2px 6px",fontSize:11,fontWeight:700}}>↻</button>
+            )}
+            </span>);
           })()}
           {attachPdfMsg&&<span style={{fontSize:11,color:attachPdfMsg.startsWith("✓")?C.green:attachPdfMsg.startsWith("✗")?C.red:C.muted,fontWeight:600}}>{attachPdfMsg}</span>}
         </div>
