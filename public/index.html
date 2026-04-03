@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.391";
+const APP_VERSION="v1.19.392";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11140,7 +11140,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const fn=firebase.functions().httpsCallable("customScraperBatch",{timeout:300000});
         try{
           const pns=scraperItems.map(r=>(r.partNumber||"").trim()).filter(Boolean);
-          const cr=await fn({scraperId:scraper.id,partNumbers:pns,config:{username:scraper.username,password:scraper.password},steps:scraper.steps});
+          const cr=await fn({scraperId:scraper.id,partNumbers:pns,config:{username:scraper.username,password:scraper.password,accountId:scraper.accountId||""},steps:scraper.steps});
           const results=cr.data.results||{};
           let scraperCount=0;
           updatedBom=updatedBom.map(r=>{
@@ -17629,7 +17629,7 @@ function APISetupModal({uid,onClose}){
         // Scraper — call Cloud Function if available, otherwise show placeholder
         try{
           const fn=firebase.functions().httpsCallable("customScraperLookup",{timeout:120000});
-          const r=await fn({scraperId:s.id,partNumber:pn,config:{username:s.username,password:s.password},steps:s.steps||[]});
+          const r=await fn({scraperId:s.id,partNumber:pn,config:{username:s.username,password:s.password,accountId:s.accountId||""},steps:s.steps||[]});
           setLookupResult(prev=>({...prev,[s.id]:{loading:false,results:r.data,error:null}}));
         }catch(e){
           setLookupResult(prev=>({...prev,[s.id]:{loading:false,results:null,error:"Scraper function not deployed yet. Configure the Cloud Function 'customScraperLookup' to enable live lookups."}}));
@@ -17964,13 +17964,13 @@ function APISetupModal({uid,onClose}){
           const steps=editScraper.steps||[];
           const setSteps=newSteps=>setEditScraper(p=>({...p,steps:newSteps}));
           const addStep=type=>{
-            const defaults={navigate:{type:"navigate",url:""},fill:{type:"fill",selector:"",value:""},click:{type:"click",selector:""},wait:{type:"wait",seconds:3,selector:""},extract:{type:"extract",selector:"",field:""},extractPageText:{type:"extractPageText",field:"price"}};
+            const defaults={navigate:{type:"navigate",url:""},fill:{type:"fill",selector:"",value:""},click:{type:"click",selector:""},wait:{type:"wait",seconds:3,selector:""},extract:{type:"extract",selector:"",field:""},extractPageText:{type:"extractPageText",field:"price"},verifyAccount:{type:"verifyAccount"}};
             setSteps([...steps,{...defaults[type],_id:Date.now()}]);
           };
           const updateStep=(idx,updates)=>setSteps(steps.map((s,i)=>i===idx?{...s,...updates}:s));
           const removeStep=idx=>setSteps(steps.filter((_,i)=>i!==idx));
           const moveStep=(idx,dir)=>{const ns=[...steps];const t=ns[idx];ns[idx]=ns[idx+dir];ns[idx+dir]=t;setSteps(ns);};
-          const stepColors={navigate:"#38bdf8",fill:"#a78bfa",click:"#4ade80",wait:"#f59e0b",extract:"#f472b6",extractPageText:"#ec4899"};
+          const stepColors={navigate:"#38bdf8",fill:"#a78bfa",click:"#4ade80",wait:"#f59e0b",extract:"#f472b6",extractPageText:"#ec4899",verifyAccount:"#06b6d4"};
           return(
           <div style={{marginBottom:12,border:"1px solid #f59e0b",borderRadius:8,padding:14,background:"rgba(245,158,11,0.05)"}}>
             <div style={{fontSize:13,fontWeight:700,color:"#f59e0b",marginBottom:12}}>{editScraper.id?"Edit Price Scraper":"New Price Scraper"}</div>
@@ -17986,6 +17986,8 @@ function APISetupModal({uid,onClose}){
                 <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Password</label>
                 <input value={editScraper.password||""} onChange={e=>setEditScraper(p=>({...p,password:e.target.value}))} placeholder="Portal password" type="password" style={inp()}/></div>
               </div>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Customer Account ID (verified after login)</label>
+              <input value={editScraper.accountId||""} onChange={e=>setEditScraper(p=>({...p,accountId:e.target.value}))} placeholder="e.g. 62103 or 71119" style={inp()}/></div>
             </div>
             {/* Steps builder */}
             <div style={{marginBottom:12}}>
@@ -18035,6 +18037,9 @@ function APISetupModal({uid,onClose}){
                         <option value="pageText">Full Page Text</option>
                       </select>
                     )}
+                    {step.type==="verifyAccount"&&(
+                      <div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>Checks page for Customer Account ID and switches if needed</div>
+                    )}
                   </div>
                   <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
                     {si>0&&<button onClick={()=>moveStep(si,-1)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:10,padding:0}}>▲</button>}
@@ -18045,7 +18050,7 @@ function APISetupModal({uid,onClose}){
               ))}
               {/* Add step buttons */}
               <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
-                {[["navigate","Navigate"],["fill","Fill Field"],["click","Click"],["wait","Wait"],["extract","Extract"],["extractPageText","Extract from Page"]].map(([type,label])=>(
+                {[["navigate","Navigate"],["fill","Fill Field"],["click","Click"],["wait","Wait"],["verifyAccount","Verify Account"],["extract","Extract"],["extractPageText","Extract from Page"]].map(([type,label])=>(
                   <button key={type} onClick={()=>addStep(type)}
                     style={{background:(stepColors[type]||C.muted)+"15",border:`1px solid ${(stepColors[type]||C.muted)}44`,borderRadius:4,padding:"3px 8px",fontSize:10,color:stepColors[type]||C.muted,cursor:"pointer",fontWeight:600}}>
                     + {label}
