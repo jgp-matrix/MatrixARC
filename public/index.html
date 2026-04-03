@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.330";
+const APP_VERSION="v1.19.331";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3169,9 +3169,14 @@ async function buildQuotePdfDoc(doc,project){
     const qp=(q.panelOverrides||{})[pan.id]||{};
     const panBom=pan.bom||[];
 
-    // Check if line item block fits (~40mm minimum)
+    // Pre-estimate line item height to keep the whole box on one page
     ctx._currentLineNum=pi+1;
-    arcDocCheckBreak(ctx,40);
+    const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
+    const estCrossH=crossedPre.length>0?(4+crossedPre.length*1.8):0;
+    const estSpecH=Math.ceil(6/2)*4.5; // 6 spec items in 2 cols
+    const estNotesH=(pan.bomNotes?8:0)+(qp.lineNotes?5:0);
+    const estH=7+8+estSpecH+estNotesH+estCrossH+14+4; // header+title+specs+notes+crosses+pricing+padding
+    arcDocCheckBreak(ctx,estH);
     const lineItemStartY=ctx.y;
     const lineItemStartPage=ctx.pageNum;
 
