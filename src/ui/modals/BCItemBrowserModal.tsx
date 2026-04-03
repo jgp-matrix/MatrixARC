@@ -6,6 +6,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
+import Badge from '@/ui/shared/Badge';
+import DrawingLightbox from '@/ui/shared/DrawingLightbox';
+import CPDSearchModal from '@/ui/modals/CPDSearchModal';
+import UpdateBomInBCModal from '@/ui/modals/UpdateBomInBCModal';
 
 function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError}){
   const [query,setQuery]=useState(initialQuery||"");

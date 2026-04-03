@@ -6,6 +6,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, setApiKey } from '@/core/globals';
+import CodaleTestPanel from '@/ui/vendors/CodaleTestPanel';
+import MouserTestPanel from '@/ui/vendors/MouserTestPanel';
+import DigikeyTestPanel from '@/ui/vendors/DigikeyTestPanel';
+import DigikeyUpdatePanel from '@/ui/vendors/DigikeyUpdatePanel';
+import PricingReportsModal from '@/ui/modals/PricingReportsModal';
 
 function SettingsModal({uid,onClose,onNameChange}){
   const [key,setKey]=useState("");
