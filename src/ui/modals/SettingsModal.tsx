@@ -5,7 +5,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
-import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, setApiKey } from '@/core/globals';
+import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, setApiKey, loadBcConfig } from '@/core/globals';
+import { saveBcConfig } from '@/services/firebase/firestore';
+import { getCompanyId as bcGetCompanyId } from '@/services/businessCentral/client';
+// Graph token stubs — TODO: extract real MS Graph auth module
+async function tryGraphTokenSilent(): Promise<any> { return null; }
+async function acquireGraphToken(): Promise<any> { return null; }
 import CodaleTestPanel from '@/ui/vendors/CodaleTestPanel';
 import MouserTestPanel from '@/ui/vendors/MouserTestPanel';
 import DigikeyTestPanel from '@/ui/vendors/DigikeyTestPanel';
