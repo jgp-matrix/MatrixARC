@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.318";
+const APP_VERSION="v1.19.319";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -967,6 +967,8 @@ async function loadAlternates(uid){
   return _altCache;
 }
 async function saveAlternateEntry(uid,originalPN,replacement,autoReplace=false){
+  // Never save a cross where original and replacement are the same part
+  if(normPart(originalPN)===normPart(replacement?.partNumber||""))return await loadAlternates(uid);
   const alts=await loadAlternates(uid);
   const idx=alts.findIndex(a=>a.originalPN===originalPN);
   if(idx>=0){alts[idx]={...alts[idx],replacement,autoReplace:autoReplace||alts[idx].autoReplace,updatedAt:Date.now()};}
@@ -3236,7 +3238,7 @@ async function buildQuotePdfDoc(doc,project){
     }
 
     // Crossed items
-    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom);
+    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
     if(crossed.length>0){
       const maxCrossedW=ctx.contentWidth-8;
       doc.setFontSize(5.5);doc.setFont("helvetica","normal");
@@ -3576,7 +3578,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
     if(!isNaN(an)&&!isNaN(bn))return an-bn;
     return(a.itemNo||"").localeCompare(b.itemNo||"");
   });
-  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom);
+  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
   doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
   doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,laborDivY+m(7),{align:"right"});
   const accent=[0,0,0]; // B&W mode — used by autoTable
@@ -7942,7 +7944,7 @@ function QuoteTab({project,onUpdate}){
                     <textarea value={qp.lineNotes||""} onChange={e=>setQP({lineNotes:e.target.value})} placeholder="Additional quote-specific notes…" rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
                   </div>
                   {(()=>{
-                    const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom);
+                    const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
                     if(!crossedItems.length)return null;
                     return(
                       <div className="qd-crossed">
@@ -11485,7 +11487,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           {f==="partNumber"&&row.autoLoaded&&(
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>Auto-Loaded</span>
                           )}
-                          {f==="partNumber"&&row.isCrossed&&(
+                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&(
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>{row.autoReplaced?"ARC crossed":"crossed item"}</span>
                           )}
                           {f==="partNumber"&&row.isCorrection&&(
@@ -11494,7 +11496,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             </span>
                           )}
                           </div>
-                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&!readOnly&&(()=>{
+                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&!readOnly&&(()=>{
                             const alt=alternates.find(a=>a.originalPN===row.crossedFrom);
                             return(
                               <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,paddingLeft:2}}>
@@ -11646,7 +11648,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>}
           {/* BOM Notes */}
           {(()=>{
-            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
+            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
             const formatCorrections=(panel.bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
             return(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
@@ -14055,6 +14057,27 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
     const ids=(project.panels||[]).map(p=>p.id);
     if(!selectedPanelId||!ids.includes(selectedPanelId))setSelectedPanelId(ids[0]||null);
   },[project.panels]);
+
+  // One-time scrub: clear isCrossed/crossedFrom where crossedFrom matches partNumber (false crosses)
+  useEffect(()=>{
+    let dirty=false;
+    const cleaned=(project.panels||[]).map(panel=>{
+      const bom=(panel.bom||[]).map(r=>{
+        if(r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)===normPart(r.partNumber)){
+          dirty=true;
+          const u={...r};delete u.isCrossed;delete u.crossedFrom;delete u.autoReplaced;return u;
+        }
+        return r;
+      });
+      return bom!==panel.bom?{...panel,bom}:panel;
+    });
+    if(dirty){
+      console.log("SCRUB: clearing dupe crosses from",project.name);
+      const updated={...project,panels:cleaned};
+      onUpdate(updated);
+      saveProject(uid,updated).catch(()=>{});
+    }
+  },[project.id]);
 
   function addPanel(){
     const n=(project.panels||[]).length+1;
