@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.316";
+const APP_VERSION="v1.19.317";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8672,6 +8672,16 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [newMfrName,setNewMfrName]=useState("");
   const [creatingMfr,setCreatingMfr]=useState(false);
   const [newMfrErr,setNewMfrErr]=useState("");
+  // Inline create forms for search results edit mode
+  const [inlineMfrCreate,setInlineMfrCreate]=useState(null); // item.number currently showing inline MFR create
+  const [inlineMfrCode,setInlineMfrCode]=useState("");
+  const [inlineMfrName,setInlineMfrName]=useState("");
+  const [inlineMfrCreating,setInlineMfrCreating]=useState(false);
+  const [inlineMfrErr,setInlineMfrErr]=useState("");
+  const [inlineVendorCreate,setInlineVendorCreate]=useState(null); // item.number currently showing inline vendor create
+  const [inlineVendorName,setInlineVendorName]=useState("");
+  const [inlineVendorCreating,setInlineVendorCreating]=useState(false);
+  const [inlineVendorErr,setInlineVendorErr]=useState("");
   const bomPages=((pages||[]).filter(p=>getPageTypes(p).includes('bom')&&(p.dataUrl||p.storageUrl)));
 
   async function locateInDrawing(pgIdx){
@@ -9170,24 +9180,62 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   <td style={{padding:"7px 10px",fontWeight:600,whiteSpace:"nowrap"}}>{item.number}</td>
                   <td style={{padding:"7px 10px",color:C.sub}}>{item.displayName}</td>
                   <td style={{padding:"4px 6px",fontSize:11,whiteSpace:"nowrap",minWidth:80}} onClick={e=>e.stopPropagation()}>
-                    {editMfrItem===item.number?(
-                      React.createElement("select",{value:editMfrCode,autoFocus:true,disabled:savingMfr,
-                        onChange:async function(e){
-                          var code=e.target.value;setEditMfrCode(code);setSavingMfr(true);
-                          try{var allPages=await bcDiscoverODataPages();var iPage=allPages.find(function(n){return /^ItemCard$/i.test(n);});
-                            if(iPage){var gr=await fetch(BC_ODATA_BASE+"/"+iPage+"?$filter=No eq '"+item.number+"'",{headers:{"Authorization":"Bearer "+_bcToken}});
-                              if(gr.ok){var gd=await gr.json();var rec=(gd.value||[])[0];if(rec){var etag=rec["@odata.etag"]||"*";
-                                await fetch(BC_ODATA_BASE+"/"+iPage+"('"+item.number+"')",{method:"PATCH",headers:{"Authorization":"Bearer "+_bcToken,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});
-                              }}}
-                            setMfrCodes(function(prev){var n=Object.assign({},prev);n[item.number]=code;return n;});
-                          }catch(ex){console.warn("MFR save failed:",ex);}
-                          setSavingMfr(false);setEditMfrItem(null);
-                        },
-                        onBlur:function(){if(!savingMfr)setEditMfrItem(null);},
-                        style:{background:"#0a0a12",border:"1px solid "+C.accent,borderRadius:6,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",opacity:savingMfr?0.6:1}},
-                        React.createElement("option",{value:""},"—"),
-                        ...(bcManufacturers.map(function(m){return React.createElement("option",{key:m.Code,value:m.Code},m.Code);}))
-                      )
+                    {inlineMfrCreate===item.number?(
+                      <div style={{background:C.accentDim,border:"1px solid "+C.accent,borderRadius:6,padding:6,minWidth:140}}>
+                        <input value={inlineMfrCode} onChange={e=>setInlineMfrCode(e.target.value.toUpperCase())} placeholder="Code *" maxLength={10} autoFocus
+                          style={{background:"#0a0a12",border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
+                        <input value={inlineMfrName} onChange={e=>setInlineMfrName(e.target.value)} placeholder="Name *"
+                          style={{background:"#0a0a12",border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
+                        {inlineMfrErr&&<div style={{color:C.red,fontSize:10,marginBottom:3}}>{inlineMfrErr}</div>}
+                        <div style={{display:"flex",gap:4}}>
+                          <button disabled={inlineMfrCreating||!inlineMfrCode.trim()||!inlineMfrName.trim()} onClick={async()=>{
+                            setInlineMfrCreating(true);setInlineMfrErr("");
+                            try{
+                              const code=inlineMfrCode.trim().slice(0,10);const name=inlineMfrName.trim();
+                              const allPages=await bcDiscoverODataPages();
+                              const mPage=allPages.find(n=>n==='Manufacturer'||n==='Manufacturers');
+                              if(!mPage)throw new Error("Manufacturer page not found");
+                              const r=await fetch(`${BC_ODATA_BASE}/${mPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
+                              if(!r.ok){const txt=await r.text();throw new Error(txt.slice(0,120));}
+                              _bcManufacturers=null;const fresh=await bcFetchManufacturers();setBcManufacturers(fresh);
+                              // Now assign it to the item
+                              const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
+                              if(iPage){const gr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${item.number}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                                if(gr.ok){const rec=((await gr.json()).value||[])[0];if(rec){const etag=rec["@odata.etag"]||"*";
+                                  await fetch(`${BC_ODATA_BASE}/${iPage}('${item.number}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});}}}
+                              setMfrCodes(prev=>({...prev,[item.number]:code}));
+                              setInlineMfrCreate(null);
+                            }catch(e){setInlineMfrErr(e.message||"Failed");}
+                            setInlineMfrCreating(false);
+                          }} style={{background:C.accent,color:"#fff",border:"none",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",opacity:inlineMfrCreating||!inlineMfrCode.trim()||!inlineMfrName.trim()?0.5:1}}>
+                            {inlineMfrCreating?"…":"Create & Assign"}
+                          </button>
+                          <button onClick={()=>setInlineMfrCreate(null)} style={{background:"none",border:"1px solid "+C.border,borderRadius:4,padding:"2px 6px",fontSize:10,color:C.muted,cursor:"pointer"}}>✕</button>
+                        </div>
+                      </div>
+                    ):editMfrItem===item.number?(
+                      <div>
+                        {React.createElement("select",{value:editMfrCode,autoFocus:true,disabled:savingMfr,
+                          onChange:async function(e){
+                            var code=e.target.value;
+                            if(code==="__NEW__"){setEditMfrItem(null);setInlineMfrCreate(item.number);setInlineMfrCode("");setInlineMfrName("");setInlineMfrErr("");return;}
+                            setEditMfrCode(code);setSavingMfr(true);
+                            try{var allPages=await bcDiscoverODataPages();var iPage=allPages.find(function(n){return /^ItemCard$/i.test(n);});
+                              if(iPage){var gr=await fetch(BC_ODATA_BASE+"/"+iPage+"?$filter=No eq '"+item.number+"'",{headers:{"Authorization":"Bearer "+_bcToken}});
+                                if(gr.ok){var gd=await gr.json();var rec=(gd.value||[])[0];if(rec){var etag=rec["@odata.etag"]||"*";
+                                  await fetch(BC_ODATA_BASE+"/"+iPage+"('"+item.number+"')",{method:"PATCH",headers:{"Authorization":"Bearer "+_bcToken,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});
+                                }}}
+                              setMfrCodes(function(prev){var n=Object.assign({},prev);n[item.number]=code;return n;});
+                            }catch(ex){console.warn("MFR save failed:",ex);}
+                            setSavingMfr(false);setEditMfrItem(null);
+                          },
+                          onBlur:function(){if(!savingMfr)setEditMfrItem(null);},
+                          style:{background:"#0a0a12",border:"1px solid "+C.accent,borderRadius:6,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",opacity:savingMfr?0.6:1}},
+                          React.createElement("option",{value:""},"—"),
+                          React.createElement("option",{value:"__NEW__",style:{color:"#38bdf8",fontWeight:700}},"+ New MFR…"),
+                          ...(bcManufacturers.map(function(m){return React.createElement("option",{key:m.Code,value:m.Code},m.Code);}))
+                        )}
+                      </div>
                     ):(
                       <div style={{display:"flex",alignItems:"center",gap:4,cursor:"default"}}>
                         <span style={{color:mfrCodes[item.number]?C.sub:C.muted,fontSize:11}}>{mfrCodes[item.number]||"—"}</span>
@@ -9199,14 +9247,41 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                     )}
                   </td>
                   <td style={{padding:"4px 6px",fontSize:12,whiteSpace:"nowrap",minWidth:160}} onClick={e=>e.stopPropagation()}>
-                    {editVendorItem===item.number?(
+                    {inlineVendorCreate===item.number?(
+                      <div style={{background:C.accentDim,border:"1px solid "+C.accent,borderRadius:6,padding:6,minWidth:160}}>
+                        <input value={inlineVendorName} onChange={e=>setInlineVendorName(e.target.value)} placeholder="Vendor Name *" autoFocus
+                          style={{background:"#0a0a12",border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
+                        {inlineVendorErr&&<div style={{color:C.red,fontSize:10,marginBottom:3}}>{inlineVendorErr}</div>}
+                        <div style={{display:"flex",gap:4}}>
+                          <button disabled={inlineVendorCreating||!inlineVendorName.trim()} onClick={async()=>{
+                            setInlineVendorCreating(true);setInlineVendorErr("");
+                            try{
+                              const v=await bcCreateVendor(inlineVendorName.trim(),"","",{genBusPostGroup:"TRADE",vendorPostGroup:"PARTS",taxAreaCode:"NONTAXABLE"});
+                              // Refresh vendor list
+                              const fresh=await bcListVendors();if(fresh.length)setBcVendors(fresh);
+                              // Assign to item
+                              await saveVendorEdit(item.number,v.number);
+                              setVendorNames(prev=>({...prev,[item.number]:v.displayName||inlineVendorName.trim()}));
+                              setInlineVendorCreate(null);
+                            }catch(e){setInlineVendorErr(e.message||"Failed");}
+                            setInlineVendorCreating(false);
+                          }} style={{background:C.accent,color:"#fff",border:"none",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",opacity:inlineVendorCreating||!inlineVendorName.trim()?0.5:1}}>
+                            {inlineVendorCreating?"…":"Create & Assign"}
+                          </button>
+                          <button onClick={()=>setInlineVendorCreate(null)} style={{background:"none",border:"1px solid "+C.border,borderRadius:4,padding:"2px 6px",fontSize:10,color:C.muted,cursor:"pointer"}}>✕</button>
+                        </div>
+                      </div>
+                    ):editVendorItem===item.number?(
                       <div style={{display:"flex",flexDirection:"column",gap:4}}>
                         <select value={editVendorNo} autoFocus
-                          onChange={async e=>{const no=e.target.value;setEditVendorNo(no);await saveVendorEdit(item.number,no);}}
+                          onChange={async e=>{const no=e.target.value;
+                            if(no==="__NEW__"){setEditVendorItem(null);setInlineVendorCreate(item.number);setInlineVendorName("");setInlineVendorErr("");return;}
+                            setEditVendorNo(no);await saveVendorEdit(item.number,no);}}
                           onBlur={()=>{if(!savingVendor){setEditVendorItem(null);setVendorSaveErr("");}}}
                           disabled={savingVendor}
                           style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:6,padding:"4px 8px",color:C.text,fontSize:12,width:"100%",opacity:savingVendor?0.6:1}}>
                           <option value="">— None —</option>
+                          <option value="__NEW__" style={{color:"#38bdf8",fontWeight:700}}>+ New Vendor…</option>
                           {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
                         </select>
                         {savingVendor&&<span style={{fontSize:10,color:C.muted}}>Saving…</span>}
