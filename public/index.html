@@ -138,6 +138,7 @@ body.no-tips [data-tip]::after{opacity:0!important;}
   .qd-items{padding:12px 40px!important}
   .qd-items-heading{font-size:12px!important;margin-bottom:8px!important}
   .qd-items{break-inside:auto!important;page-break-inside:auto!important}
+  .qd-li-pagebreak{page-break-before:always!important;break-before:page!important}
   .qd-li{margin-bottom:6px!important;border:1px solid #cbd5e1!important;border-radius:0!important;overflow:hidden!important;break-inside:avoid!important;page-break-inside:avoid!important}
   .qd-li-hdr{padding:4px 10px!important}
   .qd-li-num{font-size:11px!important;font-style:italic!important}
@@ -211,7 +212,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.325";
+const APP_VERSION="v1.19.326";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7921,7 +7922,7 @@ function QuoteTab({project,onUpdate}){
               const setQP=(updates)=>{const po={...(q.panelOverrides||{}),[pan.id]:{...qp,...updates}};setQ({panelOverrides:po});};
               const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
               return(
-              <div key={pan.id||pi} style={{marginBottom:12}}>
+              <div key={pan.id||pi} style={{marginBottom:12}} className={pi>0?"qd-li-pagebreak":""}>
               {/* Main line item box — kept together on one page */}
               <div className="qd-li">
               <div className="qd-li-hdr">
