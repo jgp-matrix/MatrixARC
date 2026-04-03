@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.397";
+const APP_VERSION="v1.19.398";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10276,8 +10276,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // Show AI questions if any (guarded to prevent double-trigger from notifyProjectListeners)
         if(!eqModalShownRef.current){
           eqModalShownRef.current=true;
-          if((finalPanel.engineeringQuestions||[]).some(q=>q.status==="open")){try{setShowEqModal(true);}catch(e){}}
-          else if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
+          // DECISION(v1.19.398): Don't auto-open questions modal during extraction — let user review when ready.
+          // Questions badge on the panel card shows the count. User can click it to open.
+          // if((finalPanel.engineeringQuestions||[]).some(q=>q.status==="open")){try{setShowEqModal(true);}catch(e){}}
+          // else if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
         }
         // Auto-run pricing after extraction — keep bg bar alive through pricing
         if((finalPanel.bom||[]).length>0&&_apiKey){
@@ -10637,8 +10639,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setTagsChanged(false);
     if(!eqModalShownRef.current){
       eqModalShownRef.current=true;
-      if((updated.engineeringQuestions||[]).some(q=>q.status==="open")){setShowEqModal(true);}
-      else if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
+      // DECISION(v1.19.398): Don't auto-open questions modal during re-extraction either.
+      // if((updated.engineeringQuestions||[]).some(q=>q.status==="open")){setShowEqModal(true);}
+      // else if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
     }
     // Re-run validation (schematic/layout analysis) if applicable
     const valPages=(pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
