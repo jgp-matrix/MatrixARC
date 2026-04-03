@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.378";
+const APP_VERSION="v1.19.379";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17546,6 +17546,143 @@ function VendorSyncFloater({onSwitchToItems}){
 }
 
 // ── SETTINGS MODAL ──
+// DECISION(v1.19.379): API Setup modal — admin-only. Centralizes all API keys, BC environment config,
+// and price scrapers (Codale, Mouser, DigiKey) in one organized location. Moved out of SettingsModal
+// to reduce clutter and prepare for adding Royal portal scraper.
+function APISetupModal({uid,onClose}){
+  const [key,setKey]=useState("");
+  const [loading,setLoading]=useState(true);
+  const [saved,setSaved]=useState(false);
+  const [apiTestMsg,setApiTestMsg]=useState(null);
+  const [apiTesting,setApiTesting]=useState(false);
+  const [showPricingReports,setShowPricingReports]=useState(false);
+  // BC Environment config
+  const [bcEnvName,setBcEnvName]=useState(_bcConfig.env);
+  const [bcCompName,setBcCompName]=useState(_bcConfig.companyName);
+  const [bcClientIdVal,setBcClientIdVal]=useState(_bcConfig.clientId);
+  const [bcSaving,setBcSaving]=useState(false);
+  const [bcSaved,setBcSaved]=useState(false);
+  const [bcErr,setBcErr]=useState("");
+  const [bcConfirm,setBcConfirm]=useState(false);
+  const [bcConnStatus,setBcConnStatus]=useState(()=>_bcToken?"connected":"unknown");
+  const [bcConnDetail,setBcConnDetail]=useState("");
+
+  useEffect(()=>{fbDb.doc(`users/${uid}/config/api`).get().then(d=>{if(d.exists)setKey(d.data().key||"");setLoading(false);}).catch(()=>setLoading(false));},[]);
+
+  async function save(){await fbDb.doc(`users/${uid}/config/api`).set({key});_apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);}
+  async function testApiKey(){
+    const k=key.trim()||_apiKey;if(!k){setApiTestMsg({ok:false,text:"No API key entered"});return;}
+    setApiTesting(true);setApiTestMsg(null);
+    try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:20,messages:[{role:"user",content:"Say OK"}]})});
+      const d=await r.json();if(r.ok)setApiTestMsg({ok:true,text:"API key is working — "+d.model});else setApiTestMsg({ok:false,text:(d.error?.message||"Error "+r.status)});
+    }catch(e){setApiTestMsg({ok:false,text:e.message});}setApiTesting(false);
+  }
+  async function testBcConnection(){
+    setBcConnStatus("testing");setBcConnDetail("");
+    try{const token=await acquireBcToken(true);if(!token){setBcConnStatus("failed");setBcConnDetail("Could not acquire token");return;}
+      _bcCompanyId=null;const compId=await bcGetCompanyId();
+      if(compId){setBcConnStatus("connected");setBcConnDetail(_bcConfig.companyName);}
+      else{setBcConnStatus("failed");setBcConnDetail("Company '"+_bcConfig.companyName+"' not found");}
+    }catch(e){setBcConnStatus("failed");setBcConnDetail(e.message||"Connection error");}
+  }
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"16px"}} onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{...card(),width:"100%",maxWidth:900,margin:"16px 0"}} onMouseDown={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
+          <div style={{fontSize:36,fontWeight:900,flex:1}}>🔌 API Setup</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:20}}>API keys, connections, and price scrapers — Admin only</div>
+
+        {/* Anthropic API Key */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Anthropic API Key</div>
+          {loading?<div style={{color:C.muted,fontSize:13,padding:"9px 0"}}>Loading…</div>
+            :<input value={key} onChange={e=>setKey(e.target.value)} type="text" placeholder="sk-ant-…" style={inp()}/>}
+          <div style={{fontSize:11,color:C.muted,marginTop:6}}>Stored in Firebase. Shared across all team members.</div>
+          <div style={{display:"flex",gap:10,marginTop:8}}>
+            <button onClick={testApiKey} disabled={apiTesting||loading} style={btn("#1e3a5f","#93c5fd",{flex:1,opacity:apiTesting||loading?0.5:1,fontSize:12})}>{apiTesting?"Testing…":"Test Key"}</button>
+            <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:1,opacity:loading||!key.trim()?0.5:1,fontSize:12})}>{saved?"✓ Saved":"Save Key"}</button>
+          </div>
+          {apiTestMsg&&<div style={{fontSize:12,color:apiTestMsg.ok?C.green:C.red,marginTop:6,padding:"6px 10px",background:apiTestMsg.ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",border:`1px solid ${apiTestMsg.ok?"rgba(34,197,94,0.25)":"rgba(239,68,68,0.25)"}`,borderRadius:6}}>{apiTestMsg.text}</div>}
+        </div>
+
+        {/* BC Environment */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Business Central Environment</div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"6px 10px",background:C.surface,borderRadius:6,flexWrap:"wrap"}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:bcConnStatus==="connected"?C.green:bcConnStatus==="failed"?C.red:bcConnStatus==="testing"?C.yellow:C.muted,flexShrink:0}}/>
+            <span style={{fontSize:12,color:C.text,flex:1}}>Current: <strong>{_bcConfig.env}</strong></span>
+            <span style={{fontSize:11,fontWeight:700,borderRadius:20,padding:"2px 10px",
+              background:bcConnStatus==="connected"?C.greenDim:bcConnStatus==="failed"?"rgba(239,68,68,0.1)":"rgba(100,116,139,0.1)",
+              color:bcConnStatus==="connected"?C.green:bcConnStatus==="failed"?C.red:C.muted}}>
+              {bcConnStatus==="connected"?"Connected":bcConnStatus==="failed"?"Failed":bcConnStatus==="testing"?"Testing…":"Not Tested"}
+            </span>
+            {bcConnStatus!=="testing"&&<button onClick={testBcConnection} style={{fontSize:11,color:C.accent,background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>Test</button>}
+          </div>
+          {bcConnDetail&&bcConnStatus==="failed"&&<div style={{fontSize:11,color:C.red,marginBottom:8}}>{bcConnDetail}</div>}
+          <div style={{display:"grid",gap:8,marginBottom:12}}>
+            <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Environment Name</label><input value={bcEnvName} onChange={e=>setBcEnvName(e.target.value)} style={inp()} placeholder="e.g. Production"/></div>
+            <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Company Name</label><input value={bcCompName} onChange={e=>setBcCompName(e.target.value)} style={inp()} placeholder="e.g. Matrix Systems LLC"/></div>
+            <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Client ID (Azure App)</label><input value={bcClientIdVal} onChange={e=>setBcClientIdVal(e.target.value)} style={inp()} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"/></div>
+          </div>
+          {bcErr&&<div style={{color:C.red,fontSize:12,marginBottom:8}}>{bcErr}</div>}
+          {bcSaved&&<div style={{color:C.green,fontSize:12,marginBottom:8}}>✓ BC environment updated.</div>}
+          {!bcConfirm?(
+            <button onClick={()=>{setBcErr("");setBcSaved(false);if(!bcEnvName.trim()||!bcCompName.trim()||!bcClientIdVal.trim()){setBcErr("All fields required.");return;}if(bcEnvName===_bcConfig.env&&bcCompName===_bcConfig.companyName&&bcClientIdVal===_bcConfig.clientId){setBcErr("No changes.");return;}setBcConfirm(true);}} disabled={bcSaving} style={btn("#334155","#fff",{fontSize:12})}>Save Environment</button>
+          ):(
+            <div style={{background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:8,padding:12}}>
+              <div style={{fontSize:13,color:C.red,fontWeight:600,marginBottom:6}}>⚠ Confirm Environment Change</div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:10}}>Switch from <strong style={{color:C.text}}>{_bcConfig.env}</strong> to <strong style={{color:C.text}}>{bcEnvName}</strong>? All existing projects will be disconnected.</div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={async()=>{setBcSaving(true);setBcErr("");try{await saveBcConfig(_appCtx.companyId,{env:bcEnvName.trim(),companyName:bcCompName.trim(),clientId:bcClientIdVal.trim()});setBcSaved(true);setBcConfirm(false);testBcConnection();}catch(ex){setBcErr("Failed: "+ex.message);}setBcSaving(false);}} disabled={bcSaving} style={btn(C.red,"#fff",{fontSize:12,opacity:bcSaving?0.6:1})}>{bcSaving?"Saving…":"Yes, Switch"}</button>
+                <button onClick={()=>setBcConfirm(false)} style={btn(C.surface,C.text,{fontSize:12})}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Codale Price Scraper */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Codale Price Scraper</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Test price lookup from Codale Electric Supply. Enter part numbers (comma-separated) to fetch live pricing.</div>
+          <CodaleTestPanel uid={uid}/>
+        </div>
+
+        {/* Mouser API */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Mouser Electronics API</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Real-time pricing and availability via Mouser's official API.</div>
+          <MouserTestPanel uid={uid}/>
+        </div>
+
+        {/* DigiKey API */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>DigiKey API</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Real-time pricing and availability via DigiKey's Product Information V4 API.</div>
+          <DigikeyTestPanel uid={uid}/>
+          <DigikeyUpdatePanel uid={uid}/>
+        </div>
+
+        {/* Pricing Reports */}
+        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Pricing Sync Reports</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>View history of all pricing sync runs with detailed results and CSV export.</div>
+          <button onClick={()=>setShowPricingReports(true)} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>View Pricing Reports</button>
+        </div>
+        {showPricingReports&&<PricingReportsModal uid={uid} onClose={()=>setShowPricingReports(false)}/>}
+
+        {/* Future: Royal Portal Scraper will go here */}
+
+        <div style={{marginTop:24,textAlign:"center"}}>
+          <button onClick={onClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsModal({uid,onClose,onNameChange}){
   const [key,setKey]=useState("");
   const [loading,setLoading]=useState(true);
@@ -17703,26 +17840,6 @@ function SettingsModal({uid,onClose,onNameChange}){
           </div>
         </div>
 
-        {isAdmin()&&<><div style={{marginBottom:20}}>
-          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Anthropic API Key <span style={{fontSize:9,color:C.red,fontWeight:700,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>ADMIN ONLY</span></label>
-          {loading
-            ?<div style={{color:C.muted,fontSize:13,padding:"9px 0"}}>Loading…</div>
-            :<input value={key} onChange={e=>setKey(e.target.value)} type="text" placeholder="sk-ant-…" style={inp()}/>
-          }
-          <div style={{fontSize:11,color:C.muted,marginTop:6}}>Stored in your Firebase project. Shared across all team members.</div>
-        </div>
-        <div style={{display:"flex",gap:10,marginBottom:6}}>
-          <button onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Close</button>
-          <button onClick={testApiKey} disabled={apiTesting||loading} style={btn("#1e3a5f","#93c5fd",{flex:1,opacity:apiTesting||loading?0.5:1})}>
-            {apiTesting?"Testing…":"Test Key"}
-          </button>
-          <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:1,opacity:loading||!key.trim()?0.5:1})}>
-            {saved?"✓ Saved":"Save Key"}
-          </button>
-        </div>
-        {apiTestMsg&&<div style={{fontSize:12,color:apiTestMsg.ok?C.green:C.red,marginBottom:16,padding:"6px 10px",background:apiTestMsg.ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",border:`1px solid ${apiTestMsg.ok?"rgba(34,197,94,0.25)":"rgba(239,68,68,0.25)"}`,borderRadius:6,wordBreak:"break-word"}}>{apiTestMsg.text}</div>}
-        </>}
-
         {/* Outlook Email Integration */}
         <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Outlook Email — RFQ Sending</div>
@@ -17736,109 +17853,7 @@ function SettingsModal({uid,onClose,onNameChange}){
           )}
         </div>
 
-        {/* BC Environment Configuration — Admin only */}
-        {isAdmin()&&<div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Business Central Environment <span style={{fontSize:9,color:C.red,fontWeight:700,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>ADMIN ONLY</span></div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Configure the BC environment connection. <strong style={{color:C.yellow}}>Warning:</strong> Changing the environment will disconnect all existing projects from BC.</div>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"6px 10px",background:C.surface,borderRadius:6,flexWrap:"wrap"}}>
-            <span style={{width:8,height:8,borderRadius:"50%",background:bcConnStatus==="connected"?C.green:bcConnStatus==="failed"?C.red:bcConnStatus==="testing"?C.yellow:C.muted,flexShrink:0,boxShadow:bcConnStatus==="testing"?"0 0 6px "+C.yellow:"none"}}/>
-            <span style={{fontSize:12,color:C.text,flex:1}}>Current: <strong>{_bcConfig.env}</strong></span>
-            <span style={{fontSize:11,fontWeight:700,borderRadius:20,padding:"2px 10px",
-              background:bcConnStatus==="connected"?C.greenDim:bcConnStatus==="failed"?"rgba(239,68,68,0.1)":bcConnStatus==="testing"?"rgba(234,179,8,0.1)":"rgba(100,116,139,0.1)",
-              color:bcConnStatus==="connected"?C.green:bcConnStatus==="failed"?C.red:bcConnStatus==="testing"?C.yellow:C.muted,
-              border:`1px solid ${bcConnStatus==="connected"?C.green+"44":bcConnStatus==="failed"?C.red+"44":bcConnStatus==="testing"?C.yellow+"44":C.muted+"44"}`}}>
-              {bcConnStatus==="connected"?"BC Connected":bcConnStatus==="failed"?"Connection Failed":bcConnStatus==="testing"?"Testing…":"Not Tested"}
-            </span>
-            {bcConnStatus!=="testing"&&<button onClick={testBcConnection} style={{fontSize:11,color:C.accent,background:"none",border:"none",cursor:"pointer",fontWeight:600,padding:0}}>Test</button>}
-          </div>
-          {bcConnDetail&&bcConnStatus==="failed"&&<div style={{fontSize:11,color:C.red,marginBottom:8,marginTop:-8}}>{bcConnDetail}</div>}
-          <div style={{display:"grid",gap:8,marginBottom:12}}>
-            <div>
-              <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Environment Name</label>
-              <input value={bcEnvName} onChange={e=>setBcEnvName(e.target.value)} style={inp()} placeholder="e.g. Production"/>
-            </div>
-            <div>
-              <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Company Name</label>
-              <input value={bcCompName} onChange={e=>setBcCompName(e.target.value)} style={inp()} placeholder="e.g. Matrix Systems LLC"/>
-            </div>
-            <div>
-              <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Client ID (Azure App Registration)</label>
-              <input value={bcClientIdVal} onChange={e=>setBcClientIdVal(e.target.value)} style={inp()} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"/>
-            </div>
-          </div>
-          {bcErr&&<div style={{color:C.red,fontSize:12,marginBottom:8}}>{bcErr}</div>}
-          {bcSaved&&<div style={{color:C.green,fontSize:12,marginBottom:8}}>✓ BC environment updated successfully.</div>}
-          {!bcConfirm?(
-            <button onClick={()=>{
-              setBcErr("");setBcSaved(false);
-              if(!bcEnvName.trim()||!bcCompName.trim()||!bcClientIdVal.trim()){setBcErr("All fields are required.");return;}
-              if(bcEnvName===_bcConfig.env&&bcCompName===_bcConfig.companyName&&bcClientIdVal===_bcConfig.clientId){setBcErr("No changes detected.");return;}
-              setBcConfirm(true);
-            }} disabled={bcSaving} style={btn("#334155","#fff",{fontSize:12})}>
-              Save Environment
-            </button>
-          ):(
-            <div style={{background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:8,padding:12}}>
-              <div style={{fontSize:13,color:C.red,fontWeight:600,marginBottom:6}}>⚠ Confirm Environment Change</div>
-              <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>This will switch from <strong style={{color:C.text}}>{_bcConfig.env}</strong> to <strong style={{color:C.text}}>{bcEnvName}</strong>. All existing projects will be disconnected from BC and will need to be re-linked.</div>
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={async()=>{
-                  setBcSaving(true);setBcErr("");
-                  try{
-                    await saveBcConfig(_appCtx.companyId,{env:bcEnvName.trim(),companyName:bcCompName.trim(),clientId:bcClientIdVal.trim()});
-                    setBcSaved(true);setBcConfirm(false);
-                    testBcConnection();
-                  }catch(ex){setBcErr("Failed to save: "+ex.message);}
-                  setBcSaving(false);
-                }} disabled={bcSaving} style={btn(C.red,"#fff",{fontSize:12,opacity:bcSaving?0.6:1})}>
-                  {bcSaving?"Saving…":"Yes, Switch Environment"}
-                </button>
-                <button onClick={()=>setBcConfirm(false)} disabled={bcSaving} style={btn(C.surface,C.text,{fontSize:12})}>Cancel</button>
-              </div>
-            </div>
-          )}
-        </div>}
-
-        {/* Codale Price Scraper */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Codale Price Scraper</div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
-            Test price lookup from Codale Electric Supply. Enter part numbers (comma-separated) to fetch live pricing.
-          </div>
-          <CodaleTestPanel uid={uid}/>
-        </div>
-
-        {/* Mouser API */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Mouser Electronics API</div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
-            Real-time pricing and availability via Mouser's official API. No login needed — uses API key.
-          </div>
-          <MouserTestPanel uid={uid}/>
-        </div>
-
-        {/* BC Manufacturer Codes */}
-        {/* DigiKey API */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>DigiKey API</div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
-            Real-time pricing and availability via DigiKey's Product Information V4 API.
-          </div>
-          <DigikeyTestPanel uid={uid}/>
-          <DigikeyUpdatePanel uid={uid}/>
-        </div>
-
-        {/* Pricing Reports */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Pricing Sync Reports</div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
-            View history of all pricing sync runs (Codale, Mouser) with detailed results and CSV export.
-          </div>
-          <button onClick={()=>setShowPricingReports(true)} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-            View Pricing Reports
-          </button>
-        </div>
-        {showPricingReports&&<PricingReportsModal uid={uid} onClose={()=>setShowPricingReports(false)}/>}
+        {/* BC Environment, Codale, Mouser, DigiKey, Pricing Reports — moved to API Setup modal (v1.19.379) */}
 
         {/* Terms & Conditions */}
         <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
@@ -20490,6 +20505,7 @@ function App({user}){
   const [revSnoozed,setRevSnoozed]=useState({}); // {[projectId]: true} per session
   const [showNew,setShowNew]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
+  const [showApiSetup,setShowApiSetup]=useState(false);
   const [showAbout,setShowAbout]=useState(false);
   const [showConfig,setShowConfig]=useState(false);
   const [companyId,setCompanyId]=useState(null);
@@ -21152,6 +21168,7 @@ INSTRUCTIONS:
                 <div style={{fontSize:11,color:C.accent,fontWeight:600,marginTop:2,fontFamily:"'Orbitron',monospace",letterSpacing:1}}>{APP_VERSION}</div>
               </div>
               <button onClick={()=>{setShowSettings(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>⚙ Settings</button>
+              {userRole==="admin"&&<button onClick={()=>{setShowApiSetup(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>🔌 API Setup</button>}
               <button data-tour="config-btn" onClick={()=>{setShowConfig(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>🔧 Configuration</button>
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
               <button data-tour="training-btn" onClick={()=>{startTour();setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null?"#172554":"none",border:"none",color:tourStep!==null?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null?700:500}} onMouseEnter={e=>{if(tourStep===null)e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(tourStep===null)e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Training'}</button>
@@ -21264,6 +21281,7 @@ INSTRUCTIONS:
       {transferProject&&<TransferProjectModal project={transferProject} companyId={companyId} uid={user.uid} userEmail={user.email} onTransferred={handleTransferDone} onClose={()=>setTransferProject(null)}/>}
       {copyProject_&&<CopyProjectModal project={copyProject_} uid={user.uid} onCopied={p=>{setCopyProject(null);setProjects(ps=>[p,...ps]);handleOpen(p);}} onClose={()=>setCopyProject(null)}/>}
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)}/>}
+      {showApiSetup&&<APISetupModal uid={user.uid} onClose={()=>setShowApiSetup(false)}/>}
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={url=>{setCompanyLogo(url||null);_appCtx.company={...(_appCtx.company||{}),logoUrl:url||null};}}/>}
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
