@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.376";
+const APP_VERSION="v1.19.377";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2211,14 +2211,16 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
       if(manufacturerCode)patch.Manufacturer_Code=manufacturerCode.slice(0,10);
       // Also set Vendor_Item_No to the item number so BC knows the vendor's catalog number
       if(vendorNo)patch.Vendor_Item_No=item.number;
-      // Retry up to 5x with longer delays — newly created items may not be indexed in OData immediately
+      // DECISION(v1.19.377): Wait 3s before first OData PATCH (newly created items need time to index).
+      // Retry up to 3x with 4s delays. Previous 5x/2s pattern triggered BC rate limiter ("Too many error requests").
       let patchOk=false;
-      for(let attempt=0;attempt<5;attempt++){
-        if(attempt>0)await new Promise(r=>setTimeout(r,2000));
+      await new Promise(r=>setTimeout(r,3000));
+      for(let attempt=0;attempt<3;attempt++){
+        if(attempt>0)await new Promise(r=>setTimeout(r,4000));
         try{await bcPatchItemOData(item.number,patch);patchOk=true;console.log("bcCreateItem: OData PATCH succeeded on attempt",attempt+1);break;}
-        catch(ve){console.warn(`bcCreateItem: OData PATCH attempt ${attempt+1}/${5}:`,ve.message);}
+        catch(ve){console.warn(`bcCreateItem: OData PATCH attempt ${attempt+1}/3:`,ve.message);}
       }
-      if(!patchOk)console.error("bcCreateItem: OData PATCH failed after 5 attempts for",item.number);
+      if(!patchOk)console.error("bcCreateItem: OData PATCH failed after 3 attempts for",item.number);
     }
     return{number:item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:vendorNo||""};
   }catch(e){
