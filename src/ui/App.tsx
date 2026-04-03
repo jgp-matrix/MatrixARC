@@ -874,17 +874,9 @@ INSTRUCTIONS:
       {view==="aidb"&&userRole==="admin"&&(
         <AIDatabasePage uid={user.uid} onBack={()=>setView("dashboard")}/>
       )}
-      {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
       {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} project={deleteConfirm.project} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
       {transferProject&&<TransferProjectModal project={transferProject} companyId={companyId} uid={user.uid} userEmail={user.email} onTransferred={handleTransferDone} onClose={()=>setTransferProject(null)}/>}
       {copyProject_&&<CopyProjectModal project={copyProject_} uid={user.uid} onCopied={(p: any)=>{setCopyProject(null);setProjects((ps: any)=>[p,...ps]);handleOpen(p);}} onClose={()=>setCopyProject(null)}/>}
-      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={(n: any)=>setUserFirstName(n)}/>}
-      {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
-      {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={(url: any)=>{setCompanyLogo(url||null);_appCtx.company={...(_appCtx.company||{}),logoUrl:url||null};}}/>}
-      {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
-      {showAbout&&<AboutModal onClose={()=>setShowAbout(false)}/>}
-      {showSupplierPricing&&<SupplierPricingUploadModal uid={user.uid} onClose={()=>setShowSupplierPricing(false)}/>}
-      {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid: any,role: any,name: any)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
       {revWarnModal&&(()=>{const rm=revWarnModal;const rev=rm.project.quoteRev||0;return React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onClick:(e: any)=>{if(e.target===e.currentTarget){rm.pendingAction();setRevWarnModal(null);}}},
         React.createElement("div",{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:"32px 36px",maxWidth:440,width:"90%",textAlign:"center"}},
           React.createElement("div",{style:{fontSize:28,marginBottom:12}},"\u26A0\uFE0F"),
@@ -898,6 +890,15 @@ INSTRUCTIONS:
         )
       );})()}
       </>}{/* end projects tab */}
+      {/* Global modals -- rendered outside tab conditionals so they work from any tab */}
+      {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
+      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={(n: any)=>setUserFirstName(n)}/>}
+      {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
+      {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={(url: any)=>{setCompanyLogo(url||null);_appCtx.company={...(_appCtx.company||{}),logoUrl:url||null};}}/>}
+      {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}
+      {showAbout&&<AboutModal onClose={()=>setShowAbout(false)}/>}
+      {showSupplierPricing&&<SupplierPricingUploadModal uid={user.uid} onClose={()=>setShowSupplierPricing(false)}/>}
+      {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid: any,role: any,name: any)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
       </div>{/* end main content column */}
       {/* ARC AI Assistant -- right slide-out panel */}
       <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
