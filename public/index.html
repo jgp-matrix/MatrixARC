@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.398";
+const APP_VERSION="v1.19.399";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -789,8 +789,12 @@ function computePanelSellPrice(panel){
   // Contingency costs are now BOM line items (BOM CONTINGENCY, WIRE & CONSUMABLES) — included in materialCost
   const laborCost=laborEst.totalHours>0?laborEst.totalCost:(pr.manualLaborCost||0);
   const grandTotal=materialCost+laborCost;
-  const markup=pr.markup??30;
-  return Math.round(grandTotal*(1+markup/100)*100)/100;
+  // DECISION(v1.19.399): Use MARGIN formula, not markup.
+  // Margin: sellPrice = cost / (1 - margin%). At 30% margin, $100 cost → $142.86 sell.
+  // Markup would be: sellPrice = cost × (1 + markup%). At 30% markup, $100 cost → $130 sell.
+  const marginPct=pr.markup??30;
+  if(marginPct>=100)return grandTotal; // Prevent division by zero
+  return Math.round(grandTotal/(1-marginPct/100)*100)/100;
 }
 
 // ── LABOR BOM ROWS (auto-managed, always first 3 rows) ──
@@ -8031,7 +8035,7 @@ function QuoteTab({project,onUpdate}){
   const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
   const laborCost=laborHours>0?laborEst.totalCost:(pr.manualLaborCost||0);
   const grandTotal=materialCost+laborCost;
-  const sellPrice=grandTotal*(1+markup/100);
+  const sellPrice=markup>=100?grandTotal:grandTotal/(1-markup/100);
   const hasSellPrice=sellPrice>0;
 
   // BUDGETARY: true if any panel has at least one BOM item not yet confirmed in BC
@@ -15306,7 +15310,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             const pricedCount=bom.filter(r=>r.unitPrice!=null).length;
             const matCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
             const grandTotal=matCost+laborCost;
-            const sellPrice=grandTotal*(1+markup/100);
+            const sellPrice=markup>=100?grandTotal:grandTotal/(1-markup/100);
             const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
             const pendingBcCount=bom.filter(r=>(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual").length;
             const laborAccepted=sp.laborData?.accepted||{};
@@ -15468,7 +15472,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   const plc=ple.totalHours>0?ple.totalCost:(ppr.manualLaborCost||0);
                   const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
                   const pgt=pmat+plc;
-                  const psp=pgt*(1+pmk/100);
+                  const psp=pmk>=100?pgt:pgt/(1-pmk/100);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   const pqty=p.lineQty??p.qty??1;
                   return(
@@ -15498,7 +15502,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     const ple=computeLaborEstimate(p);
                     const plc=ple.totalHours>0?ple.totalCost:(ppr.manualLaborCost||0);
                     const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-                    return sum+((pmat+plc)*(1+(ppr.markup??30)/100))*(p.lineQty??p.qty??1);
+                    const mg=ppr.markup??30;
+                    return sum+(mg>=100?(pmat+plc):(pmat+plc)/(1-mg/100))*(p.lineQty??p.qty??1);
                   },0);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   return(
