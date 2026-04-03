@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.328";
+const APP_VERSION="v1.19.329";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3215,31 +3215,31 @@ async function buildQuotePdfDoc(doc,project){
     }
     ctx.y+=1;
 
-    // BOM Notes
+    // BOM Notes (compact — inside bordered box)
     if(pan.bomNotes){
-      doc.setFontSize(6.5);doc.setFont("helvetica","normal");
+      doc.setFontSize(5.5);doc.setFont("helvetica","normal");
       const nLines=doc.splitTextToSize(pan.bomNotes,ctx.contentWidth-8);
-      const nlh=2.5;
-      const titleH=3.5;
-      const nH=titleH+nLines.length*nlh+3;
-      arcDocCheckBreak(ctx,nH+2);
+      const nlh=2;
+      const titleH=3;
+      const nH=titleH+nLines.length*nlh+2;
+      arcDocCheckBreak(ctx,nH+1);
       doc.setFillColor(255,251,235);doc.setDrawColor(...ARC_DOC.colors.black);doc.setLineWidth(0.2);
       doc.roundedRect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,nH,1,1,"FD");
-      doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
-      doc.text("NOTES:",ARC_DOC.margin.left+3,ctx.y+3);
-      doc.setFontSize(6.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-      nLines.forEach(function(nl,ni){doc.text(nl,ARC_DOC.margin.left+3,ctx.y+titleH+2.5+ni*nlh);});
-      ctx.y+=nH+3;
+      doc.setFontSize(5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text("NOTES:",ARC_DOC.margin.left+3,ctx.y+2.5);
+      doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+      nLines.forEach(function(nl,ni){doc.text(nl,ARC_DOC.margin.left+3,ctx.y+titleH+2+ni*nlh);});
+      ctx.y+=nH+1.5;
     }
 
-    // Quote Notes
+    // Quote Notes (compact — inside bordered box)
     if(qp.lineNotes){
-      doc.setFontSize(6.5);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.brand);
+      doc.setFontSize(5.5);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.brand);
       const qnLines=doc.splitTextToSize("Quote Notes: "+qp.lineNotes,ctx.contentWidth-6);
-      const qnlh=2.5;
+      const qnlh=2;
       arcDocCheckBreak(ctx,qnLines.length*qnlh+2);
       qnLines.forEach(function(ql,qi){doc.text(ql,ARC_DOC.margin.left+2,ctx.y+qi*qnlh);});
-      ctx.y+=qnLines.length*3.5+2;
+      ctx.y+=qnLines.length*2.5+1.5;
     }
 
     // Pricing row — INSIDE the bordered box
