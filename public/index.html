@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.358";
+const APP_VERSION="v1.19.359";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15155,16 +15155,23 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   const q=project.quote||{};
                   const rev=project.quoteRev||0;
                   const isBudg=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
-                  const custFirst=(q.contact||"").split(" ")[0]||"";
-                  // DECISION(v1.19.358): Use the salesperson's email for the signature, not the logged-in user's.
-                  // The quote is "from" the salesperson, so the signature should show their contact info.
-                  const spEmail=q.salesEmail||fbAuth.currentUser?.email||"";
-                  const spPhone=q.salesPhone||"";
+                  // DECISION(v1.19.359): Pull contact/salesperson from project-level fields first,
+                  // then fall back to quote fields. The Sales/Contact dropdowns update project fields
+                  // (bcSalesperson, bcContactName, etc.) but may not sync to quote fields immediately.
+                  const contactName=project.bcContactName||q.contact||"";
+                  const custFirst=(contactName).split(" ")[0]||"";
+                  const toEmail=project.bcContactEmail||q.email||"";
+                  // Resolve salesperson info — check cached salesperson list for current bcSalespersonCode
+                  const spCode=project.bcSalespersonCode||"";
+                  const spCached=spCode&&window._arcSalespersonCache?window._arcSalespersonCache.find(s=>s.Code===spCode):null;
+                  const spName=spCached?.Name||project.bcSalesperson||q.salesperson||"Matrix Systems";
+                  const spEmail=spCached?.E_Mail||q.salesEmail||fbAuth.currentUser?.email||"";
+                  const spPhone=spCached?.Phone_No||q.salesPhone||"";
                   setQuoteSendModalPLV({
-                    to:q.email||"",
+                    to:toEmail,
                     subject:`${isBudg?"Budgetary ":""}Quote ${q.number||"Quote"}${rev>0?" Rev "+String(rev).padStart(2,"0"):""} — ${project.name||"Project"}`,
                     message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
-                    signature:`${q.salesperson||"Matrix Systems"}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
+                    signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
                 }} style={btn("#0c2233","#38bdf8",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #38bdf844"})}>✉ Send Quote{project.quoteSentAt?" (Resend)":""}</button>}
                 {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
