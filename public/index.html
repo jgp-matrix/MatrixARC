@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.339";
+const APP_VERSION="v1.19.340";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3806,11 +3806,13 @@ async function sendGraphEmail(graphToken,to,subject,htmlBody,pdfBase64,pdfFilena
 async function graphSearchEmails(graphToken,query,top=15){
   if(!graphToken||!query)return[];
   try{
-    const q=encodeURIComponent(query);
-    const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages?$search="${q}"&$top=${top}&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,conversationId,isRead`,{
-      headers:{"Authorization":`Bearer ${graphToken}`}
+    // NOTE: Graph API $search cannot be combined with $orderby — results come back in relevance order.
+    // The $search value must be quoted. ConsistencyLevel:eventual header is required for $search.
+    const q=encodeURIComponent('"'+query.replace(/"/g,'')+'"');
+    const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages?$search=${q}&$top=${top}&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,conversationId,isRead`,{
+      headers:{"Authorization":`Bearer ${graphToken}`,"ConsistencyLevel":"eventual"}
     });
-    if(!r.ok){console.warn("Graph email search failed:",r.status);return[];}
+    if(!r.ok){const errTxt=await r.text().catch(()=>"");console.warn("Graph email search failed:",r.status,errTxt.slice(0,200));return[];}
     const d=await r.json();
     return(d.value||[]).map(m=>({
       id:m.id,
