@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.393";
+const APP_VERSION="v1.19.394";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15449,9 +15449,16 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                       style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:p.id===selectedPanelId?"#1a1a2e":"transparent",border:`1px solid ${p.id===selectedPanelId?C.accent:C.border}`,cursor:"pointer"}}>
                       <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:20,textAlign:"center"}}>{pqty}</span>
                       <span style={{fontSize:12,color:p.id===selectedPanelId?C.accent:C.sub,fontWeight:p.id===selectedPanelId?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{p.drawingNo||p.name||`Panel ${pi+1}`}</span>
-                      {(()=>{const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;return openEqs>0?
-                        React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:"1px solid #fde04766",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:"#fde047",animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?"):
-                        React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer"}},React.createElement(Badge,{status:p.status||"draft"}));})()}
+                      {/* DECISION(v1.19.394): Compute panel status from actual BOM state, not just the
+                          pipeline-set status field. If all non-labor items have prices, show "costed" or "ready"
+                          even if the pricing didn't go through runPricingOnPanel. */}
+                      {(()=>{const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;
+                        if(openEqs>0)return React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:"1px solid #fde04766",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:"#fde047",animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?");
+                        const bomRows=(p.bom||[]).filter(r=>!r.isLaborRow);
+                        const hasBom=bomRows.length>0;
+                        const allPriced=hasBom&&bomRows.every(r=>r.unitPrice>0||r.customerSupplied||/^job.?buyoff$/i.test(r.partNumber||"")||/crat(e|ing)/i.test(r.description||""));
+                        const computedStatus=allPriced?"costed":hasBom?(p.status==="draft"?"extracted":p.status||"extracted"):(p.status||"draft");
+                        return React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer"}},React.createElement(Badge,{status:computedStatus}));})()}
                       {ppr.isBudgetary&&<span style={{fontSize:9,fontWeight:700,color:"#f59e0b",background:"#3a1f00",borderRadius:4,padding:"1px 5px",flexShrink:0}}>BUDGETARY</span>}
                       <span style={{fontSize:13,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{pfmt(psp*pqty)}</span>
                     </div>
