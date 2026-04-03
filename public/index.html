@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.367";
+const APP_VERSION="v1.19.368";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14354,7 +14354,7 @@ function ContingencyInput({value,readOnly,color,onSave}){
 // ── PANEL LIST VIEW ──
 // DECISION(v1.19.338): Extracted as a proper component (not IIFE) because React hooks require
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
-function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
+function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
   const [sendMode,setSendMode]=useState("new");
   const [threadSearch,setThreadSearch]=useState(project.quote?.company||project.bcCustomerName||project.name||"");
   const [threadResults,setThreadResults]=useState([]);
@@ -14431,8 +14431,13 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
       }else{
         await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName);
       }
-      const sentTo=sendMode==="reply"?selectedThread.fromEmail||selectedThread.from:m.to;
-      onUpdate({...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo});
+      // DECISION(v1.19.368): For reply mode, show who the reply went to (the original thread participants),
+      // not just the original sender. For new email, show the To field. Always save to Firestore.
+      const sentTo=sendMode==="reply"
+        ?(selectedThread.to?selectedThread.from+", "+selectedThread.to:selectedThread.fromEmail||selectedThread.from)
+        :m.to;
+      const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo};
+      onUpdate(upd);saveProject(uid,upd).catch(()=>{});
       if(project.bcProjectNumber&&_bcToken){
         bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
       }
@@ -15250,7 +15255,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
       onUpdate:updated=>onUpdate({...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)}),
       onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
-    {quoteSendModalPLV&&<QuoteSendModal project={project} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)}/>}
+    {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)}/>}
   </>);
 }
 
