@@ -67,7 +67,7 @@ export const ANTHROPIC_VERSION = '2023-06-01';
 
 // ─── App Version ────────────────────────────────────────────────────────────
 
-export const APP_VERSION = 'v1.19.273';
+export const APP_VERSION = 'v1.19.376';
 export const APP_SCHEMA_VERSION = 2;
 
 // ─── Device Categories ──────────────────────────────────────────────────────

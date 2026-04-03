@@ -260,12 +260,13 @@ export async function bcCreatePanelTaskStructure(
 export async function bcSyncPanelTaskDescriptions(
   projectNumber: string,
   panelIndex: number,
-  panel: { drawingDesc?: string; name?: string; drawingNo?: string; drawingRev?: string }
+  panel: { drawingDesc?: string; name?: string; drawingNo?: string; drawingRev?: string },
+  projectName?: string
 ): Promise<void> {
   const n = panelIndex;
   const suffix = n * 100;
   const pfx = `${projectNumber}-${suffix}`;
-  const panelDesc = panel.drawingDesc || panel.name || `Panel ${n}`;
+  const panelDesc = projectName || panel.drawingDesc || panel.name || `Panel ${n}`;
   const rev = panel.drawingRev || '-';
   const base = 20000 + n * 100;
   const taskDescs: Record<string, string> = {
@@ -417,6 +418,48 @@ export async function bcAttachPdfQueued(jobNumber: string, fileName: string, pdf
   }
 }
 
+// ─── ECO Task ──────────────────────────────────────────────────────────────
+
+/**
+ * Add a single ECO (Engineering Change Order) task line to BC for a specific panel.
+ * Called on-demand when an ECO is created in ARC — NOT at project init.
+ *
+ * panelIndex : 1-based panel number (1 = Panel 1, 2 = Panel 2, ...)
+ * ecoNumber  : 1-based ECO number (1-10 supported; maps to slots 20N30-20N39)
+ *
+ * Task No. formula:  20{panelIndex}3{ecoNumber-1}
+ *   Panel 1 ECO 1  -> 20130,  ECO 2 -> 20131, ... ECO 10 -> 20139
+ */
+export async function bcAddEcoTask(
+  projectNumber: string,
+  panelIndex: number,
+  ecoNumber: number,
+  panelName: string
+): Promise<string> {
+  if (ecoNumber < 1 || ecoNumber > 10) throw new Error(`ECO number must be 1-10 (got ${ecoNumber})`);
+  const n = panelIndex;
+  const base = 20000 + n * 100;
+  const taskNo = String(base + 30 + (ecoNumber - 1));
+
+  const allPages = await discoverODataPages();
+  const taskPage = allPages.find(p => /^project.?task/i.test(p)) || allPages.find(p => /job.?task/i.test(p)) || null;
+  if (!taskPage) throw new Error('bcAddEcoTask: No project task OData page found');
+  const useProj = /^project/i.test(taskPage);
+
+  const body: Record<string, any> = {
+    [useProj ? 'Project_No' : 'Job_No']: projectNumber,
+    [useProj ? 'Project_Task_No' : 'Job_Task_No']: taskNo,
+    Description: `ECO ${ecoNumber} - Change Order for ${panelName}`,
+    [useProj ? 'Project_Task_Type' : 'Job_Task_Type']: 'Posting',
+    Indentation: 2,
+  };
+
+  const odataBase = getOdataBase();
+  await bcPost(`${odataBase}/${taskPage}`, body);
+  console.log(`bcAddEcoTask: ECO ${ecoNumber} task ${taskNo} created for panel ${panelIndex}`);
+  return taskNo;
+}
+
 // ─── Progress Billing ───────────────────────────────────────────────────────
 
 /**
@@ -543,6 +586,113 @@ export async function bcFetchCompanyInfo(): Promise<{
     };
   } catch (e) {
     console.warn('bcFetchCompanyInfo failed:', e);
+    return null;
+  }
+}
+
+// ─── Purchase Quotes ───────────────────────────────────────────────────────
+
+/**
+ * Create a BC Purchase Quote (header + optional line items) via OData or v2.0 API fallback.
+ * Returns the document number on success, null on failure.
+ * If BC is offline, the request is queued via bcEnqueue.
+ */
+export async function bcCreatePurchaseQuote(
+  vendorNo: string,
+  vendorName: string,
+  items: { partNumber?: string; description?: string; qty?: number }[]
+): Promise<string | null> {
+  const { hasToken } = await import('./auth');
+  if (!hasToken()) {
+    const { bcEnqueue } = await import('@/core/globals');
+    bcEnqueue('createPurchaseQuote', { vendorNo, vendorName, items }, `Create BC purchase quote for ${vendorName}`);
+    return null;
+  }
+  try {
+    const allPages = await discoverODataPages();
+    console.log('BC PQ: available OData pages:', allPages.join(', '));
+    const headerPage = allPages.find(n => /purchase.?quote.?header|purch.?quote.?header/i.test(n))
+      || allPages.find(n => /purchase.?quote/i.test(n) && !/line/i.test(n)) || null;
+    const linePage = allPages.find(n => /purchase.?quote.?line|purch.?quote.?line/i.test(n)) || null;
+
+    if (!headerPage) {
+      console.warn('BC PQ: No Purchase Quote OData page found. Available pages:', allPages.join(', '));
+      // Fall back to v2.0 API
+      const base = await companyApiUrl();
+      const quoteBody: any = { buyFromVendorName: vendorName };
+      if (vendorNo) quoteBody.vendorNumber = vendorNo;
+      console.log('BC PQ: Trying v2.0 API fallback');
+      const quote = await bcPost(`${base}/purchaseQuotes`, quoteBody);
+      console.log('BC PQ: v2.0 created, number:', quote.number);
+      return quote.number;
+    }
+
+    console.log('BC PQ: Using OData pages -- header:', headerPage, 'lines:', linePage || '(none)');
+    const odataBase = getOdataBase();
+
+    // Probe header fields
+    let headerFields: string[] = [];
+    try {
+      const pd = await bcGet(`${odataBase}/${headerPage}?$top=1`);
+      const rec = (pd.value || [])[0];
+      if (rec) headerFields = Object.keys(rec);
+    } catch { /* probe failed */ }
+
+    // Build header body
+    const hBody: Record<string, any> = {};
+    const vnField = headerFields.find(f => /^Buy_from_Vendor_No$/i.test(f)) || headerFields.find(f => /vendor.*no/i.test(f)) || 'Buy_from_Vendor_No';
+    if (vendorNo) hBody[vnField] = vendorNo;
+    else if (vendorName) {
+      const vnameField = headerFields.find(f => /^Buy_from_Vendor_Name$/i.test(f)) || headerFields.find(f => /vendor.*name/i.test(f));
+      if (vnameField) hBody[vnameField] = vendorName;
+    }
+
+    const header = await bcPost(`${odataBase}/${headerPage}`, hBody);
+    const docNo = header.No || header.Document_No || header.no || header.number || null;
+    console.log('BC PQ: Created header, Doc No:', docNo);
+    if (!docNo) { console.warn('BC PQ: header created but no document number found'); return null; }
+
+    // Add line items
+    if (items && items.length > 0 && linePage) {
+      let lineFields: string[] = [];
+      try {
+        const ld = await bcGet(`${odataBase}/${linePage}?$top=1`);
+        const rec = (ld.value || [])[0];
+        if (rec) lineFields = Object.keys(rec);
+      } catch { /* probe failed */ }
+
+      const docNoField = lineFields.find(f => /^Document_No$/i.test(f));
+      const docTypeField = lineFields.find(f => /^Document_Type$/i.test(f));
+      const typeField = lineFields.find(f => /^Type$/i.test(f)) || 'Type';
+      const noField = lineFields.find(f => /^No$/i.test(f) && !/line|doc/i.test(f)) || 'No';
+      const qtyField = lineFields.find(f => /^Quantity$/i.test(f)) || 'Quantity';
+      const descField = lineFields.find(f => /^Description$/i.test(f)) || 'Description';
+
+      for (const item of items) {
+        const lBody: Record<string, any> = {
+          [typeField]: 'Item',
+          [descField]: item.description || item.partNumber || '',
+          [qtyField]: Number(item.qty) || 1,
+        };
+        if (docNoField) lBody[docNoField] = docNo;
+        if (docTypeField) lBody[docTypeField] = 'Quote';
+        if (item.partNumber) lBody[noField] = item.partNumber;
+        try {
+          await bcPost(`${odataBase}/${linePage}`, lBody);
+          console.log('BC PQ line added:', item.partNumber);
+        } catch (e) {
+          console.warn('BC PQ line failed:', e);
+        }
+      }
+    }
+    return docNo;
+  } catch (e) {
+    console.warn('bcCreatePurchaseQuote error:', e);
+    const { hasToken: stillHasToken } = await import('./auth');
+    if (!stillHasToken()) {
+      const { bcEnqueue } = await import('@/core/globals');
+      bcEnqueue('createPurchaseQuote', { vendorNo, vendorName, items }, `Create BC purchase quote for ${vendorName}`);
+    }
     return null;
   }
 }
