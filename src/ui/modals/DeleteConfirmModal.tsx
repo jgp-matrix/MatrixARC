@@ -1,14 +1,20 @@
-import { useState } from 'react';
-import { C, btn, inp, card } from '@/core/constants';
+// @ts-nocheck
+// Extracted verbatim from monolith public/index.html
+// TODO: Add proper TypeScript types and replace global references with imports
 
-export default function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,project,onConfirm,onCancel}: any){
+import React, { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
+import { C, btn, inp, card } from '@/core/constants';
+import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
+
+function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,project,onConfirm,onCancel}){
   const [deleteBC,setDeleteBC]=useState(false);
   const [deleting,setDeleting]=useState(false);
   const [confirmText,setConfirmText]=useState("");
 
   // Forbidden if any panel has status quoted or pushed_to_bc
   const sentStatuses=new Set(["quoted","pushed_to_bc"]);
-  const quoteSent=(project?.panels||[]).some((p: any)=>sentStatuses.has(p.status||""));
+  const quoteSent=(project?.panels||[]).some(p=>sentStatuses.has(p.status||""));
 
   async function handleConfirm(){
     if(quoteSent||confirmText!=="DELETE")return;
@@ -19,7 +25,7 @@ export default function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onCancel}>
-      <div style={{...card(),width:"100%",maxWidth:440,border:`1px solid ${quoteSent?C.red+"66":C.red+"44"}`}} onClick={(e: any)=>e.stopPropagation()}>
+      <div style={{...card(),width:"100%",maxWidth:440,border:`1px solid ${quoteSent?C.red+"66":C.red+"44"}`}} onClick={e=>e.stopPropagation()}>
 
         {quoteSent?(
           <>
@@ -50,7 +56,7 @@ export default function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,
             </div>
 
             {isAdmin&&bcProjectNumber&&(
-              <div onClick={()=>setDeleteBC((v: any)=>!v)} style={{display:"flex",alignItems:"center",gap:10,background:deleteBC?C.redDim:"transparent",border:`1px solid ${deleteBC?C.red+"66":C.border}`,borderRadius:8,padding:"10px 14px",marginBottom:12,cursor:"pointer"}}>
+              <div onClick={()=>setDeleteBC(v=>!v)} style={{display:"flex",alignItems:"center",gap:10,background:deleteBC?C.redDim:"transparent",border:`1px solid ${deleteBC?C.red+"66":C.border}`,borderRadius:8,padding:"10px 14px",marginBottom:12,cursor:"pointer"}}>
                 <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${deleteBC?C.red:C.muted}`,background:deleteBC?C.red:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                   {deleteBC&&<span style={{color:"#fff",fontSize:11,fontWeight:700,lineHeight:1}}>✓</span>}
                 </div>
@@ -65,10 +71,10 @@ export default function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,
               <div style={{fontSize:12,color:C.muted,marginBottom:6}}>Type <strong style={{color:C.red,fontFamily:"monospace",letterSpacing:1}}>DELETE</strong> to confirm:</div>
               <input
                 value={confirmText}
-                onChange={(e: any)=>setConfirmText(e.target.value.toUpperCase())}
+                onChange={e=>setConfirmText(e.target.value.toUpperCase())}
                 placeholder="DELETE"
                 autoFocus
-                style={{width:"100%",boxSizing:"border-box" as const,background:"#0d0d1a",border:`1px solid ${confirmText==="DELETE"?C.red:C.border}`,borderRadius:8,padding:"9px 12px",color:confirmText==="DELETE"?C.red:C.text,fontSize:14,fontWeight:700,fontFamily:"monospace",letterSpacing:2,outline:"none"}}
+                style={{width:"100%",boxSizing:"border-box",background:"#0d0d1a",border:`1px solid ${confirmText==="DELETE"?C.red:C.border}`,borderRadius:8,padding:"9px 12px",color:confirmText==="DELETE"?C.red:C.text,fontSize:14,fontWeight:700,fontFamily:"monospace",letterSpacing:2,outline:"none"}}
               />
             </div>
 
@@ -85,3 +91,5 @@ export default function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,
     </div>
   );
 }
+
+export default DeleteConfirmModal;

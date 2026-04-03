@@ -32,6 +32,36 @@ export { default as CopyProjectModal } from './modals/CopyProjectModal';
 export { default as ReportsModal } from './modals/ReportsModal';
 export { default as SupplierPricingUploadModal } from './modals/SupplierPricingUploadModal';
 export { default as EngineeringQuestionsModal } from './modals/EngineeringQuestionsModal';
+export { default as RemoveMemberModal } from './modals/RemoveMemberModal';
+export { default as RfqEmailModal } from './modals/RfqEmailModal';
+export { default as RfqDocument } from './modals/RfqDocument';
+export { default as RfqHistoryModal } from './modals/RfqHistoryModal';
+export { default as PoReceivedModal } from './modals/PoReceivedModal';
+export { default as PurchasePriceCheckModal } from './modals/PurchasePriceCheckModal';
+export { default as PortalSubmissionsModal } from './modals/PortalSubmissionsModal';
+export { default as SupplierQuoteImportModal } from './modals/SupplierQuoteImportModal';
+export { default as BCItemBrowserModal } from './modals/BCItemBrowserModal';
+export { default as UpdateBomInBCModal } from './modals/UpdateBomInBCModal';
+export { default as CPDSearchModal } from './modals/CPDSearchModal';
+export { default as CADLinkSendModal } from './modals/CADLinkSendModal';
+export { default as PricingReportsModal } from './modals/PricingReportsModal';
+export { default as QuoteSendModal } from './modals/QuoteSendModal';
+
+// ─── Tab Re-exports ────────────────────────────────────────────────────────
+
+export { default as QuoteTab } from './tabs/QuoteTab';
+export { default as ItemsTab } from './tabs/ItemsTab';
+export { default as PurchasingTab } from './tabs/PurchasingTab';
+
+// ─── Shared Component Re-exports ───────────────────────────────────────────
+
+export { default as Badge } from './shared/Badge';
+export { default as ConfidenceBar } from './shared/ConfidenceBar';
+export { default as DrawingLightbox } from './shared/DrawingLightbox';
+export { default as ContingencyInput } from './shared/ContingencyInput';
+export { default as PageTags } from './shared/PageTags';
+export { default as TooltipToggle } from './shared/TooltipToggle';
+export { default as LeftNav } from './shared/LeftNav';
 
 // ─── View Re-exports ────────────────────────────────────────────────────────
 
@@ -39,19 +69,9 @@ export { default as SupplierPortalPage } from './SupplierPortalPage';
 export { default as AIDatabasePage } from './AIDatabasePage';
 export { default as TourOverlay } from './shared/TourOverlay';
 
-// ─── View Stubs ──────────────────────────────────────────────────────────────
+// ─── View Re-exports (migrated) ──────────────────────────────────────────────
 
-export function ProjectView({ project, uid, onBack, onChange }: any) {
-  return (
-    <div style={{ padding: 32 }}>
-      <button onClick={onBack} style={btn(C.border, C.muted, { marginBottom: 16 })}>← Back</button>
-      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24 }}>
-        <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{project?.name || 'Project'}</div>
-        <div style={{ fontSize: 13, color: C.muted }}>ProjectView not yet migrated. {project?.panels?.length || 0} panels.</div>
-      </div>
-    </div>
-  );
-}
+export { default as ProjectView } from './ProjectView';
 
 // ─── Error Boundary ──────────────────────────────────────────────────────────
 

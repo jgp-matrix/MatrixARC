@@ -1,199 +1,97 @@
 /* eslint-disable */
 // @ts-nocheck
-// PanelCard.tsx - Verbatim migration from monolith index.html lines 7847-10131.
-// Largest component (~2300 lines). Uses any types everywhere.
+// PanelCard.tsx — Verbatim extraction from monolith index.html v1.19.376 lines 9686-12336.
+// DO NOT EDIT — re-extract from monolith if changes are needed.
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import {
-  fbDb, fbAuth, fbStorage, _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig,
-  _defaultBomItems, _tooltipsEnabled,
-  saveProject, acquireBcToken, apiCall, useBgTasks,
-  projectStatus, loadNIQ, searchNIQ,
+  fbAuth, fbStorage, _apiKey, _bcToken, _appCtx, _bcConfig,
+  saveProjectPanel, useBgTasks, apiCall,
   bgStart, bgSetPct, bgUpdate, bgDone, bgError, bgDismiss,
-  setBcToken, setApiKey,
-  loadPricingConfig, loadDefaultBomItems,
+  notifyProjectListeners,
 } from '@/core/globals';
-
-// ─── Service imports ─────────────────────────────────────────────────────
-
-// BC Item / Catalog operations
-import {
-  lookupItem as bcLookupItem,
-  searchItems as bcSearchItems,
-  bcFuzzyLookup,
-  createItem as bcCreateItem,
-  patchItemOData as bcPatchItemOData,
-  bcListItemCategories,
-  bcListUnitsOfMeasure,
-  bcListGenProdPostingGroups,
-  bcListInventoryPostingGroups,
-  normalizeUom as bcNormalizeUom,
-  normalizePart,
-  bcUpdateItemCost,
-  bcLookupItemForQuote,
-} from '@/services/businessCentral/items';
-
-// BC Vendor operations
-import {
-  getItemVendorNo as bcGetItemVendorNo,
-  getVendorName as bcGetVendorName,
-  getAllVendors as bcListVendors,
-  getLastPurchase as bcGetLastPurchase,
-  bcGetVendorMap,
-} from '@/services/businessCentral/vendors';
-
-// BC Pricing
-import {
-  fetchPurchasePrices as bcFetchPurchasePrices,
-  pushPurchasePrice as bcPushPurchasePrice,
-} from '@/services/businessCentral/prices';
-
-// BC Client
-import { getCompanyId as bcGetCompanyId } from '@/services/businessCentral/client';
-
-// BC Projects
-import {
-  bcSyncPanelPlanningLines,
-  bcCheckAttachmentExists,
-  bcSyncPanelTaskDescriptions,
-  bcAttachPdfQueued,
-  bcPatchProgressBillingLine,
-} from '@/services/businessCentral/projects';
-
-// BC Sync / BOM sync
-import {
-  checkItemInUse as bcCheckItemInUse,
-  checkItemOnProjects as bcCheckItemOnProjects,
-  replaceAssemblyBomLines as bcReplaceAssemblyBOMLines,
-} from '@/bcSync/bomSync';
-
-// BOM extraction
-import { extractBomPage, verifyPartNumbers, getExtractionUnits, buildRegionContext } from '@/bom/extractor';
-
-// BOM pricing
-import { estimatePrices } from '@/bom/pricer';
-
-// BOM validation
-import { runPanelValidation } from '@/bom/validator';
-
-// Part library / corrections / alternates
-import {
-  findPartSuggestion,
-  applyPartCorrections,
-  loadAlternates,
-  saveAlternateEntry,
-  setAltAutoReplace,
-  loadCorrectionDB as loadPartCorrections,
-  guessCorrection,
-} from '@/bom/partLibrary';
-
-// Labor estimation
-import { computeFallbackLaborHours, buildLaborBomRows, computeLaborEstimate } from '@/bom/laborEstimator';
-
-// Quote builder
+import { getPageTypes, appendDefaultBomItems, isPanelBudgetary, categorizePart } from '@/core/helpers';
+import { normPart } from '@/bom/deduplicator';
+import { computeFallbackLaborHours, computeLaborEstimate, buildLaborBomRows, syncLaborBomRows } from '@/bom/laborEstimator';
 import { computePanelSellPrice } from '@/bom/quoteBuilder';
-
-// BOM deduplication
-import { normPart, partMatch } from '@/bom/deduplicator';
-
-// Scanning / PDF
-import { resizeImage, ensureDataUrl, resizeForAnalysis, detectSheetMm } from '@/scanning/pdfExtractor';
-import { classifyPage, detectZoomedPages, extractPanelMetadata } from '@/scanning/pageClassifier';
-import { readTitleBlock } from '@/scanning/titleBlockReader';
+import { loadAlternates, loadCorrectionDB, saveAlternateEntry, setAltAutoReplace, saveCorrectionEntry, guessCorrection, findPartSuggestion, applyPartCorrections, loadPageTypeLearning, savePageTypeLearningEntry, loadLayoutLearning, saveLayoutLearningEntry } from '@/bom/partLibrary';
+import { runPanelValidation, calcConfidence } from '@/bom/validator';
+import { extractBomPage, verifyPartNumbers, cropRegionFromImage, buildRegionContext, getExtractionUnits } from '@/bom/extractor';
+import { runExtractionTask } from '@/bom/extractionPipeline';
+import { estimatePrices } from '@/bom/pricer';
+import { extractPdfPages, extractImagePage, resizeImage, ensureDataUrl, detectSheetMm, resizeForAnalysis } from '@/scanning/pdfExtractor';
+import { classifyPages, detectZoomedPages, extractPanelMetadata } from '@/scanning/pageClassifier';
 import { burnStampCanvas } from '@/scanning/imageUtils';
-import { buildCoverPage } from '@/services/rfq';
+import { buildPageRegionNotes, buildAllRegionSummary, buildLayoutLearningHint, buildLearningHint, buildDeviceClassificationHint, mergeLayoutResults } from '@/scanning/drawingAnalyzer';
+import { lookupItem as bcLookupItem, searchItems as bcSearchItems, bcFuzzyLookup, patchItemOData as bcPatchItemOData } from '@/services/businessCentral/items';
+import { bcCheckAttachmentExists, bcSyncPanelPlanningLines, bcCreatePanelTaskStructure } from '@/services/businessCentral/projects';
+import { bcGetVendorMap, bcResolveVendorName } from '@/services/businessCentral/vendors';
+import { fetchPurchasePrices as bcFetchPurchasePrices } from '@/services/businessCentral/prices';
 
-// Core helpers
-import {
-  getPageTypes,
-  appendDefaultBomItems,
-  mergeEngineeringQuestions,
-  parallelMap,
-  getNextJoke,
-  categorizePart,
-  computeBomHash,
-} from '@/core/helpers';
-
-// Firebase / Firestore
-import {
-  loadPartLibrary,
-  savePartLibraryEntry,
-  savePartCorrection,
-} from '@/services/firebase/firestore';
-
-// Supplier quote service
-import {
-  sqValidateLineItems,
-  saveSupplierQuoteToFirestore,
-  sqGetAiPrior,
-  sqRecordAiTime,
-  sqGetCrossings,
-  sqSaveCrossing,
-  sqGetVendorMap,
-  sqSaveVendorMapping,
-  sqSavePushAudit,
-  sqFuzzyMatchVendor,
-} from '@/services/supplierQuote';
-
-// Child components
-import ConfidenceBar from '@/ui/shared/ConfidenceBar';
+import Badge from '@/ui/shared/Badge';
 import DrawingLightbox from '@/ui/shared/DrawingLightbox';
 import BCItemBrowserModal from '@/ui/modals/BCItemBrowserModal';
-import EngineeringQuestionsModal from '@/ui/modals/EngineeringQuestionsModal';
-import UpdateBomInBCModal from '@/ui/modals/UpdateBomInBCModal';
 import CPDSearchModal from '@/ui/modals/CPDSearchModal';
-import Badge from '@/ui/shared/Badge';
+import UpdateBomInBCModal from '@/ui/modals/UpdateBomInBCModal';
+import EngineeringQuestionsModal from '@/ui/modals/EngineeringQuestionsModal';
 
-// ─── Adapted wrappers ────────────────────────────────────────────────────
+// ─── Monolith functions not yet extracted into services ──────────────────────
+// TODO: wire to real implementation
+declare function loadPartLibrary(uid: string): Promise<any[]>;
+declare function loadPartCorrections(uid: string): Promise<any[]>;
+declare function bcAttachPdfToJob(jobNumber: string, fileName: string, pdfBytes: ArrayBuffer, prev: string | null): Promise<void>;
+declare function bcDeleteAttachmentByName(jobNumber: string, fileName: string): Promise<void>;
+declare function useSmoothProgress(estSeconds?: number): any;
 
-// classifyPage takes (imageBase64) but the stub expected (dataUrl, learningEx)
-async function detectPageTypes(dataUrl: string, _learningEx?: any[]): Promise<any> {
-  return classifyPage(dataUrl);
-}
+// ─── Monolith inline helpers referenced but defined at module scope ──────────
+declare function isReadOnly(): boolean;
+declare function isAdmin(): boolean;
 
-// readTitleBlock takes (imageBase64) but the stub expected (dataUrl)
-async function extractTitleBlock(dataUrl: string): Promise<any> {
-  return readTitleBlock(dataUrl);
-}
-
-// ─── Wired implementations ──────────────────────────────────────────────
-
-import { ensureJsPDF, isPanelBudgetary } from '@/core/helpers';
-
-import {
-  loadPageTypeLearning,
-  savePageTypeLearningEntry,
-  saveLayoutLearningEntry,
-  saveCorrectionEntry,
-} from '@/bom/partLibrary';
-
-import { loadCPD, saveCPD, logPanelToCPD, enrichProductDetails } from '@/services/cpd';
-
-import useCustomerLogo from '@/ui/hooks/useCustomerLogo';
-
-import { runExtractionTask } from '@/bom/extractionPipeline';
-
-// useSmoothProgress — self-contained inline hook (no external dependency)
-function useSmoothProgress(): any {
-  const [progress, setProgress] = useState<any>(null);
-  return {
-    progress,
-    start: (msg: string, est: number) => setProgress({ msg, pct: 0 }),
-    set: (pct: number, msg: string | null) => setProgress((p: any) => ({ ...(p || {}), pct, ...(msg != null ? { msg } : {}) })),
-    update: (msg: string) => setProgress((p: any) => ({ ...(p || {}), msg })),
-    stop: () => setProgress(null),
-    finish: (msg: string) => { setProgress({ msg, pct: 100 }); setTimeout(() => setProgress(null), 4000); },
-  };
-}
-
-// ─── Begin monolith verbatim copy ───────────────────────────────────────
-
-export default function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
+  const [docDragging,setDocDragging]=useState(false);
+  const [docUploading,setDocUploading]=useState(false);
+  const docFileRef=useRef(null);
+  async function uploadOtherDoc(files){
+    if(!files||!files.length||!bcProjectNumber||!_bcToken)return;
+    setDocUploading(true);
+    const newDocs=[...(panel.otherDocs||[])];
+    for(const file of files){
+      try{
+        const arrayBuf=await file.arrayBuffer();
+        // DECISION(v1.19.375): REF- prefix for reference/other documents.
+        const fileName=`REF-${file.name}`;
+        await bcAttachPdfToJob(bcProjectNumber,fileName,arrayBuf,null);
+        // Also upload to Firebase Storage for preview
+        let storageUrl=null;
+        try{
+          const storagePath=`pageImages/${uid}/${projectId}/docs/${Date.now()}_${file.name}`;
+          const ref=fbStorage.ref(storagePath);
+          await ref.put(file,{contentType:file.type});
+          storageUrl=await ref.getDownloadURL();
+        }catch(e){console.warn("Storage upload for doc preview failed:",e.message);}
+        newDocs.push({name:file.name,bcFileName:fileName,uploadedAt:Date.now(),size:file.size,storageUrl});
+      }catch(e){console.warn("Other doc upload failed:",file.name,e.message);}
+    }
+    const updated={...panel,otherDocs:newDocs};
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+    setDocUploading(false);
+  }
+  function removeOtherDoc(idx){
+    const doc=(panel.otherDocs||[])[idx];
+    if(!doc)return;
+    if(!confirm(`Remove "${doc.name}" from the list?`))return;
+    // Delete from BC if possible
+    if(doc.bcFileName&&bcProjectNumber)bcDeleteAttachmentByName(bcProjectNumber,doc.bcFileName).catch(()=>{});
+    const updated={...panel,otherDocs:(panel.otherDocs||[]).filter((_,i)=>i!==idx)};
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+  }
   const [detecting,setDetecting]=useState(false);
   const [detectProgress,setDetectProgress]=useState("");
   const [awaitingConfirm,setAwaitingConfirm]=useState(false);
@@ -202,6 +100,7 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
   const pageTypeChangesRef=useRef({});
   const learningExamplesRef=useRef([]);
   const latestPanelRef=useRef(panel);
+  const eqModalShownRef=useRef(false);
   const [reasonPickerFor,setReasonPickerFor]=useState(null);
   const [extracting,setExtracting]=useState(false);
   const ep=useSmoothProgress();
@@ -282,6 +181,10 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
   const [pendingPages,setPendingPages]=useState([]);
   const [alternates,setAlternates]=useState([]);
   const [crossOrCorrectPending,setCrossOrCorrectPending]=useState(null);
+  // DECISION(v1.19.376): Price confirmation popup — when user manually enters a price,
+  // ask if it's confirmed (push to BC Purchase Price + Item Card) or budgetary (BOM only, no BC update, no priceDate).
+  const [priceConfirmPending,setPriceConfirmPending]=useState(null); // {id, partNumber, price, row}
+  const [priceConfirmVendor,setPriceConfirmVendor]=useState("");
   const [cpdQuery,setCpdQuery]=useState("");
   const [showCpdSearch,setShowCpdSearch]=useState(false);
   const [bomVendorList,setBomVendorList]=useState([]);
@@ -668,6 +571,7 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
 
   async function confirmAndExtract(){
     setAwaitingConfirm(false);
+    eqModalShownRef.current=false;
     bgUpdate(panel.id,"Starting extraction…");bgSetPct(panel.id,0,"Starting extraction…");
     // Save learning DB corrections for any page where user changed AI-detected types
     const changes=pageTypeChangesRef.current;
@@ -700,7 +604,8 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
         extractTitleBlock(firstWithData.dataUrl).then(tb=>{
           if(!tb)return;
           const fresh=latestPanelRef.current;
-          const patched={...fresh,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+          const v=tb.voltages||{};
+          const patched={...fresh,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||"",...(v.lineVoltage&&v.lineVoltage!=="unknown"?{supplyVoltage:v.lineVoltage}:{}),...(v.controlVoltage&&v.controlVoltage!=="unknown"?{controlVoltage:v.controlVoltage}:{})};
           onUpdate(patched);
           setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
           onSaveImmediate(patched).catch(()=>{});
@@ -722,39 +627,37 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
       onDone:(finalPanel)=>{
         try{onUpdate(finalPanel);}catch(e){}
         try{setExtracting(false);setValidatingPanel(false);}catch(e){}
-        // Clear bg extraction bar so pricing progress can take over immediately
-        try{bgDismiss(panel.id);}catch(e){}
-        // Show AI questions if any
-        if((finalPanel.engineeringQuestions||[]).some(q=>q.status==="open")){try{setShowEqModal(true);}catch(e){}}
-        else if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
-        // Auto-run pricing after extraction
+        // Show AI questions if any (guarded to prevent double-trigger from notifyProjectListeners)
+        if(!eqModalShownRef.current){
+          eqModalShownRef.current=true;
+          if((finalPanel.engineeringQuestions||[]).some(q=>q.status==="open")){try{setShowEqModal(true);}catch(e){}}
+          else if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
+        }
+        // Auto-run pricing after extraction — keep bg bar alive through pricing
         if((finalPanel.bom||[]).length>0&&_apiKey){
-          try{runPricingOnPanel(finalPanel.bom,finalPanel);}catch(e){}
+          bgUpdate(panel.id,"Getting prices…");
+          runPricingOnPanel(finalPanel.bom,finalPanel,pct=>{
+            bgSetPct(panel.id,95+Math.round(pct*0.04));
+          }).then(()=>{
+            bgDone(panel.id,"✓ Complete");
+          }).catch(()=>{
+            bgDone(panel.id,"✓ Extraction done");
+          });
+        }else{
+          bgDone(panel.id,(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
         }
-        // Auto-sync planning lines to BC after extraction
-        if((finalPanel.bom||[]).length>0&&bcProjectNumber&&_bcToken){
-          bcSyncPanelPlanningLines(bcProjectNumber,idx+1,finalPanel).then(result=>{
-            if(result.failed?.length>0)console.warn("Auto BC sync: "+result.failed.length+" items failed");
-            else console.log("Auto BC sync: planning lines synced");
-            // Also sync task descriptions
-            bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,finalPanel).catch(e=>console.warn("Auto task desc sync failed:",e));
-          }).catch(e=>console.warn("Auto BC planning lines sync failed:",e));
-        }
-        // Auto-upload drawings PDF to BC
-        if(bcProjectNumber&&_bcToken&&(finalPanel.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
-          try{buildAndAttachPdf();}catch(e){console.warn("Auto BC PDF upload failed:",e);}
-        }
+        // BC sync + PDF upload deferred until after pricing completes (see runPricingOnPanel)
       },
       stampFn:async(dataUrl,pgIdx,total)=>{
         const d=new Date();
         const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
         const scanned=`Scanned ${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
-        const upCount=_stampPanel.bcUploadCount||0;
-        const stampLabel=upCount===0?`ORIGINAL UPLOAD · ${scanned}`:`QUOTE REV ${String(upCount).padStart(2,'0')} · ${scanned}`;
+        const rev=quoteRev||0;
+        const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
         return burnStampCanvas(dataUrl,{
           left:stampLabel,
           center:`${pgIdx+1} of ${total}`,
-          right:[_stampBcProjNo,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ')
+          right:[_stampBcProjNo?`${_stampBcProjNo} - ${String((idx+1)*100)}`:null,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ')
         });
       }
     });
@@ -782,7 +685,9 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
     try{onSaveImmediate(updated);}catch(e){}
   }
 
-  async function buildAndAttachPdf(){
+  // Expose buildAndAttachPdf to parent via ref (supports opts for production mode)
+  useEffect(()=>{if(bcUploadRef)bcUploadRef.current=buildAndAttachPdf;});
+  async function buildAndAttachPdf(uploadOpts={}){
     if(!pages.length||!bcProjectNumber)return;
     setAttachingPdf(true);
     setAttachPdfMsg("Building PDF…");
@@ -800,32 +705,111 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
       const coverOrient=coverMm.mmW>=coverMm.mmH?"landscape":"portrait";
       const doc=new JsPDF({unit:"mm",format:[coverMm.mmW,coverMm.mmH],orientation:coverOrient,compress:true});
       setAttachPdfMsg("Building cover page…");
-      await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH);
-      // Add drawing pages
+      await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH,uploadOpts);
+      // DECISION(v1.19.320): These vars MUST be declared BEFORE the stamp loop below.
+      // Previously they were declared AFTER the loop — Babel hoisted const→var as undefined,
+      // so stamps burned with wrong values and filenames were malformed (e.g. "500 - PRJ402065").
+      // DECISION(v1.19.333): dwg must sanitize /\:*?"<>| chars to dashes — BC API rejects slashes
+      // in filenames (e.g. LCP-100/200/500 → LCP-100-200-500). Without this, uploads silently fail
+      // and the "Deleted — Re-Upload" warning triggers endlessly.
+      const rev=quoteRev||0;
+      const revTag=rev>0?` REV ${String(rev).padStart(2,'0')}`:"";
+      const dwg=(panel.drawingNo||"NoDWG").replace(/[\/\\:*?"<>|]/g,"-");
+      const lineSuffix=String((idx+1)*100);
+      const isProduction=uploadOpts.mode==="production";
+      // Add drawing pages — burn stamp FIRST, then add to PDF
+      const totalPg=loaded.filter(p=>p.dataUrl).length;
+      setAttachPdfMsg("Stamping drawings…");
       for(let i=0;i<loaded.length;i++){
         const pg=loaded[i];
         if(!pg.dataUrl)continue;
         const dims=allDims[i]||firstDims;
         const orient=dims.w>dims.h?"landscape":"portrait";
-        // Detect engineering sheet size (A/B/C/D/E) from pixel area
         const {mmW,mmH}=detectSheetMm(dims.w,dims.h);
         doc.addPage([mmW,mmH],orient);
-        doc.addImage(pg.dataUrl,"JPEG",0,0,mmW,mmH,undefined,"FAST");
+        let imgData=pg.dataUrl;
+        if(isProduction&&uploadOpts.poNumber){
+          const d=new Date();
+          const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+          const dateStr=`${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
+          const dueStr=uploadOpts.dueDate||panel.requestedShipDate||"";
+          imgData=await burnStampCanvas(pg.dataUrl,{
+            left:`APPROVED TO PRODUCE · PO: ${uploadOpts.poNumber} · ${dateStr}`,
+            center:`${i+1} of ${totalPg}`,
+            right:[bcProjectNumber?`${bcProjectNumber} - ${lineSuffix}`:null,panel.drawingNo,dueStr?`Due: ${dueStr}`:null].filter(Boolean).join(' · ')
+          });
+        }else{
+          // As-Quoted mode — burn AS-QUOTED stamp
+          const d=new Date();
+          const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+          const scanned=`Scanned ${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
+          const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
+          imgData=await burnStampCanvas(pg.dataUrl,{
+            left:stampLabel,
+            center:`${i+1} of ${totalPg}`,
+            right:[bcProjectNumber?`${bcProjectNumber} - ${lineSuffix}`:null,panel.drawingNo,panel.requestedShipDate].filter(Boolean).join(' · ')
+          });
+        }
+        doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
       if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
-      const stageTag=["extracted","validated","costed","quoted"].includes(panel.status)?"[QUOTED]":"[DRAFT]";
-      const qNum=quoteData.number||"";
-      const dwg=panel.drawingNo||"NoCust#";
-      const fileName=stageTag+" "+[dwg,qNum].filter(Boolean).join("-")+".pdf";
+      // DECISION(v1.19.375): BC file naming convention — DWG- prefix for all drawings.
+      // Sorts drawings together in BC Attached Documents list.
+      const fileName=isProduction
+        ?`DWG-[APPROVED TO PRODUCE${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
+        :`DWG-[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
-      await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes);
-      const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName,bcUploadCount:(panel.bcUploadCount||0)+1};
+      // Clean up old bad-formatted files from previous code bugs
+      // Old patterns: "500 - PRJ402065", "[AS-QUOTED] NoDWG - PRJ402065", "[AS-QUOTED REV 01] NoDWG - PRJ402065"
+      const rawDwg=panel.drawingNo||"NoDWG"; // may contain slashes
+      const oldBadNames=[
+        `${lineSuffix} - ${bcProjectNumber}`,                               // bare "500 - PRJ402065"
+        `[AS-QUOTED] NoDWG - ${bcProjectNumber||"NoProject"}`,               // missing drawingNo, no lineSuffix
+        `[AS-QUOTED] NoDWG - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`,// missing drawingNo
+      ];
+      // If drawingNo had slashes, old uploads used unsanitized name — clean those up too
+      if(rawDwg!==dwg){
+        oldBadNames.push(`[AS-QUOTED${revTag}] ${rawDwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`);
+        oldBadNames.push(`[AS-QUOTED${revTag}] ${rawDwg} - ${bcProjectNumber||"NoProject"}`);
+      }
+      if(panel.bcPdfFileName){const old=panel.bcPdfFileName.replace(/\.pdf$/i,"");if(!oldBadNames.includes(old))oldBadNames.push(old);}
+      for(const badName of oldBadNames){try{await bcDeleteAttachmentByName(bcProjectNumber,badName);}catch(e){}}
+      // Build previous rev filename to delete — check both DWG- prefixed and old non-prefixed formats
+      const prevRev=rev-1;
+      let previousFile=null;
+      if(prevRev>0){
+        const prevRevTag=` REV ${String(prevRev).padStart(2,'0')}`;
+        previousFile=isProduction
+          ?`DWG-[APPROVED TO PRODUCE${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
+          :`DWG-[AS-QUOTED${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+        // Also clean old non-prefixed version
+        const oldPrev=isProduction?`[APPROVED TO PRODUCE${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`:`[AS-QUOTED${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`;
+        try{await bcDeleteAttachmentByName(bcProjectNumber,oldPrev);}catch(e){}
+      }else if(prevRev===0){
+        previousFile=isProduction
+          ?`DWG-[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
+          :`DWG-[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+        const oldPrev=isProduction?`[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`:`[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`;
+        try{await bcDeleteAttachmentByName(bcProjectNumber,oldPrev);}catch(e){}
+      }
+      // Also delete old format without DWG- prefix and without lineSuffix
+      const oldNoSuffix=isProduction
+        ?`[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"}`
+        :`[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"}`;
+      try{await bcDeleteAttachmentByName(bcProjectNumber,oldNoSuffix);}catch(e){}
+      await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes,previousFile);
+      const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName,bcUploadCount:(panel.bcUploadCount||0)+1,bcUploadQuoteRev:quoteRev||0};
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
       setBcPdfMissing(false);
-      setAttachPdfMsg("✓ Uploaded: "+fileName);
-      setTimeout(()=>setAttachPdfMsg(""),5000);
+      setAttachPdfMsg("✓ Uploaded — cleaning duplicates…");
+      // Run bulk duplicate cleanup in background (non-blocking)
+      bcCleanupDuplicateAttachments(bcProjectNumber,[fileName.replace(/\.pdf$/i,"")]).then(r=>{
+        if(r.deleted>0)setAttachPdfMsg(`✓ Uploaded + cleaned ${r.deleted} old file${r.deleted>1?"s":""}`);
+        else setAttachPdfMsg("✓ Uploaded: "+fileName);
+        setTimeout(()=>setAttachPdfMsg(""),5000);
+      }).catch(()=>{setAttachPdfMsg("✓ Uploaded: "+fileName);setTimeout(()=>setAttachPdfMsg(""),5000);});
     }catch(e){
       console.error("Attach PDF failed:",e);
       setAttachPdfMsg("✗ "+e.message);
@@ -860,9 +844,9 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
     try{
       if(!_bcToken){await acquireBcToken(true);}
       if(!_bcToken)throw new Error("Could not connect to Business Central");
-      const result=await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel);
+      const result=await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel,projectName);
       // Always sync task descriptions so existing projects get updated
-      bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,panel).catch(e=>console.warn("task desc sync failed:",e));
+      bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,panel,projectName).catch(e=>console.warn("task desc sync failed:",e));
       if(result.failed&&result.failed.length>0){
         setBcSyncStatus("error");
         setSyncFailedAlert(result.failed);
@@ -887,6 +871,13 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
     const updated={...panel,lineQty:q};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
+    // Auto-resync planning lines to BC when panel qty changes
+    if(bcProjectNumber&&_bcToken&&(updated.bom||[]).length>0){
+      bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated,projectName).then(result=>{
+        if(result.failed?.length>0)console.warn("LineQty BC sync: "+result.failed.length+" items failed");
+        else console.log("LineQty BC sync: planning lines updated for qty="+q);
+      }).catch(e=>console.warn("LineQty BC sync failed:",e));
+    }
   }
   function savePanelName(){
     if(!draftName.trim())return;
@@ -955,9 +946,8 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     const rgnCtx=buildRegionContext(pages);
     const rgnNotes=(panel.extractionNotes||"")+rgnCtx;
-    let all=[];let bomDone=0;
+    let all=[];let bomDone=0;let reQs=[];
     try{
-      let reQs=[];
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         bomDone++;
         ep.set(Math.round((bomDone/bomPages.length)*60),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
@@ -999,8 +989,11 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     setTagsChanged(false);
-    if((updated.engineeringQuestions||[]).some(q=>q.status==="open")){setShowEqModal(true);}
-    else if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
+    if(!eqModalShownRef.current){
+      eqModalShownRef.current=true;
+      if((updated.engineeringQuestions||[]).some(q=>q.status==="open")){setShowEqModal(true);}
+      else if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
+    }
     // Re-run validation (schematic/layout analysis) if applicable
     const valPages=(pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
     if(valPages.length>0&&_apiKey){
@@ -1023,10 +1016,7 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
     }
     ep.finish(`✓ ${bom.length} items extracted`);
     setExtracting(false);
-    // Auto upload/re-upload drawings PDF to BC
-    if(bcProjectNumber&&_bcToken&&(latestPanelRef.current.pages||[]).some(p=>p.dataUrl||p.storageUrl)){
-      try{buildAndAttachPdf();}catch(e){console.warn("Auto BC PDF upload failed:",e);}
-    }
+    // BC drawing upload deferred until user prints quote (As-Quoted flow)
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
       const categorized=bom.filter(r=>!r.isLaborRow&&r.partNumber).map(r=>({...r,cpdCategory:categorizePart(r.partNumber,r.description)}));
@@ -1062,6 +1052,7 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
   }
 
   async function reExtractWithFeedback(){
+    eqModalShownRef.current=false;
     let bomPages=pages.filter(p=>getPageTypes(p).includes("bom")&&(p.dataUrl||p.storageUrl));
     if(!aiFeedback.trim())return;
 
@@ -1149,9 +1140,15 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
   }
   function addBomRow(){
     const newId=Date.now()+Math.random();
-    const updated={...panel,bom:[...(panel.bom||[]),{id:newId,qty:1,partNumber:"",description:"",manufacturer:"",notes:""}]};
+    const newRow={id:newId,qty:1,partNumber:"",description:"",manufacturer:"",notes:""};
+    const bom=[...(panel.bom||[])];
+    // Insert before JOB BUYOFF / Crate rows (always keep them at the end)
+    const tailIdx=bom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())));
+    if(tailIdx>=0)bom.splice(tailIdx,0,newRow);else bom.push(newRow);
+    const updated={...panel,bom};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
-    if(_bcToken){setBcBrowserTarget(newId);setBcBrowserQuery("");setBcBrowserOpen(true);}
+    // Open BC browser after a short delay to let React re-render with the new row first
+    if(_bcToken){setTimeout(()=>{setBcBrowserTarget(newId);setBcBrowserQuery("");setBcBrowserOpen(true);},300);}
   }
   function deleteBomRow(id){
     const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
@@ -1171,48 +1168,84 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
     const bom=(panel.bom||[]).map(r=>r.id===id?{...r,suggestedPartNumber:null}:r);
     onUpdate({...panel,bom});
   }
-  function commitBcItem(bomRowId,bcItem,asCross,correctionType=null){
-    const bom=(panel.bom||[]).map(r=>{
+  // DECISION(v1.19.315): commitBcItem has 5 params. skipLearning=true is the "Just Apply — No Learning" option
+  // from the cross/correction dialog. It applies the BC item without saving to alternates or corrections DB,
+  // and without setting isCrossed/isCorrection flags. This gives users an escape hatch when BC returns a
+  // different part number but it's not truly a cross or correction (e.g. cosmetic differences).
+  function commitBcItem(bomRowId,bcItem,asCross,correctionType=null,skipLearning=false){
+    const livePanel=latestPanelRef.current;
+    let liveBom=livePanel.bom||[];
+    // If row not found (stale ref from addBomRow race), find it in any panel version
+    if(!liveBom.some(r=>r.id===bomRowId)){
+      // Row was added by addBomRow but latestPanelRef hasn't caught up — insert it
+      const tailIdx=liveBom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())));
+      const newRow={id:bomRowId,qty:1,partNumber:"",description:"",manufacturer:"",notes:""};
+      liveBom=[...liveBom];
+      if(tailIdx>=0)liveBom.splice(tailIdx,0,newRow);else liveBom.push(newRow);
+      console.log("commitBcItem: row not in latestPanelRef, inserted manually");
+    }
+    const bom=liveBom.map(r=>{
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
-      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost,priceSource:"bc",priceDate:Date.now()};
+      const now=Date.now();
+      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost??r.unitPrice??0,priceSource:"bc",priceDate:now,bcPoDate:now};
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
-      // Async vendor lookup — don't block commit
-      if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const bom2=(panel.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...panel,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}}}})().catch(()=>{});}
-      if(asCross){
+      // Async vendor lookup — uses latestPanelRef to avoid stale overwrites
+      if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});}}})().catch(()=>{});}
+      if(skipLearning){
+        // "Just Apply" — no cross or correction flags, no learning
+        delete updates.isCrossed;delete updates.crossedFrom;
+        delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
+      }else if(asCross&&normPart(newPN)!==normPart(origPN)){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
       }else{
         updates.isCorrection=true;updates.correctionType=correctionType;updates.correctionFrom=origPN;
         delete updates.isCrossed;delete updates.crossedFrom;
       }
-      if(bcItem.displayName&&!r.description)updates.description=bcItem.displayName;
-      if(bcItem._vendorName&&!r.manufacturer)updates.manufacturer=bcItem._vendorName;
-      if(asCross){
-        // autoReplace:true — ARC selection immediately trains the learning database
-        saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost},true)
-          .then(alts=>setAlternates([...alts])).catch(()=>{});
-      }else if(correctionType){
-        saveCorrectionEntry(uid,origPN,newPN,correctionType).then(()=>{}).catch(()=>{});
+      if(bcItem.displayName)updates.description=bcItem.displayName;
+      if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
+      // Update manufacturer from BC item — async lookup
+      if(newPN){(async()=>{try{
+        const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
+        if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${newPN}'&$select=No,Manufacturer_Code&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          if(mr.ok){const md=((await mr.json()).value||[])[0];if(md&&md.Manufacturer_Code){
+            const mfrs=await bcFetchManufacturers();const mfr=mfrs.find(m=>m.Code===md.Manufacturer_Code);
+            const mfrName=mfr?mfr.Name:md.Manufacturer_Code;
+            const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,manufacturer:mfrName}:r2);
+            const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});
+          }}}
+      }catch(e){}})();}
+      if(!skipLearning){
+        if(asCross){
+          // autoReplace:true — ARC selection immediately trains the learning database
+          saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost},true)
+            .then(alts=>setAlternates([...alts])).catch(()=>{});
+        }else if(correctionType){
+          saveCorrectionEntry(uid,origPN,newPN,correctionType).then(()=>{}).catch(()=>{});
+        }
       }
       return updates;
     });
-    const updated={...panel,bom};
+    // Clear fuzzy suggestion for this row before saving
+    const cleanedFuzzy={...(livePanel.bcFuzzySuggestions||{})};delete cleanedFuzzy[bomRowId];
+    const updated={...livePanel,bom,bcFuzzySuggestions:Object.keys(cleanedFuzzy).length?cleanedFuzzy:undefined};
+    // Update local state AND save directly to Firestore (bypass parent chain to avoid stale state)
+    latestPanelRef.current=updated;
     onUpdate(updated);
-    try{onSaveImmediate(updated);}catch(e){}
-    setBcFuzzySuggestions(prev=>{
-      const next={...prev};delete next[bomRowId];
-      const patched={...panel,bom,bcFuzzySuggestions:Object.keys(next).length?next:undefined};
-      onUpdate(patched);try{onSaveImmediate(patched);}catch(e){}
-      return next;
-    });
+    saveProjectPanel(uid,projectId,panel.id,updated,true).catch(e=>console.warn("commitBcItem save failed:",e));
+    setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
     // Clear any BC sync error for this row — item has been fixed via Item Browser
     setBcSyncErrors(prev=>{const next={...prev};delete next[bomRowId];return next;});
+    // Prompt user to sync BC planning lines after item browser selection
+    if(bcProjectNumber&&_bcToken){
+      setBcSyncStatus("pending");
+    }
   }
   function applyBcItem(bomRowId,bcItem){
-    const row=(panel.bom||[]).find(r=>r.id===bomRowId);
+    const row=(latestPanelRef.current.bom||[]).find(r=>r.id===bomRowId);
     if(!row)return;
     if(bcItem._customerSupplied&&!bcItem.number){commitBcItem(bomRowId,bcItem,false);return;}
     const origPN=(row.crossedFrom||row.partNumber||"").trim();
@@ -1224,31 +1257,67 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
       commitBcItem(bomRowId,bcItem,false);
     }
   }
+  // DECISION(v1.19.376): Manual price entry shows a confirmation popup asking if the cost is
+  // Confirmed (push to BC Item Card + Purchase Price) or Budgetary (BOM only, no BC, no priceDate).
   function updatePrice(id,val){
     const parsed=val===""?null:parseFloat(val);
     const row=(panel.bom||[]).find(r=>r.id===id);
-    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:isNaN(parsed)?null:parsed,priceSource:isNaN(parsed)||parsed===null?null:"manual",priceDate:Date.now()}:r);
-    const updated={...panel,bom:updatedBom};
-    onUpdate(updated);
-    if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
-    // Push updated cost to BC, then re-fetch to confirm and flip priceSource back to "bc"
+    if(parsed==null||isNaN(parsed)){
+      // Clearing price — no popup needed
+      const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:null,priceSource:null,priceDate:null}:r);
+      const updated={...panel,bom:updatedBom};onUpdate(updated);
+      if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},500);
+      return;
+    }
     const pn=(row?.partNumber||"").trim();
-    if(pn&&_bcToken&&parsed!=null&&!isNaN(parsed)){
-      bcPatchItemOData(pn,{Unit_Cost:parsed})
-        .then(()=>bcLookupItem(pn))
-        .then(bcItem=>{
-          if(!bcItem)return;
-          console.log("BC UNIT COST CONFIRMED:",pn,"→",bcItem.unitCost);
-          const confirmedCost=bcItem.unitCost??parsed;
-          if(autoSaveTimer.current){clearTimeout(autoSaveTimer.current);autoSaveTimer.current=null;}
+    // Show confirmation popup
+    setPriceConfirmPending({id,partNumber:pn,price:parsed,row});
+    setPriceConfirmVendor(row?.bcVendorName||"");
+  }
+  function applyBudgetaryPrice(){
+    if(!priceConfirmPending)return;
+    const{id,price}=priceConfirmPending;
+    // Budgetary: update BOM only, no BC push, no priceDate (show as dashed/unpriced)
+    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:price,priceSource:"manual",priceDate:null}:r);
+    const updated={...panel,bom:updatedBom};onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+    setPriceConfirmPending(null);
+  }
+  async function applyConfirmedPrice(){
+    if(!priceConfirmPending)return;
+    const{id,partNumber,price}=priceConfirmPending;
+    const vendorName=priceConfirmVendor.trim();
+    // Confirmed: update BOM with priceDate, push to BC Item Card + Purchase Price
+    const now=Date.now();
+    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:price,priceSource:"manual",priceDate:now,bcVendorName:vendorName||r.bcVendorName}:r);
+    const updated={...panel,bom:updatedBom};onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+    setPriceConfirmPending(null);
+    // Push to BC Item Card
+    if(partNumber&&_bcToken){
+      try{
+        await bcPatchItemOData(partNumber,{Unit_Cost:price});
+        const bcItem=await bcLookupItem(partNumber);
+        if(bcItem){
+          const confirmedCost=bcItem.unitCost??price;
           const cur=panelRef.current;
-          const bom2=(cur.bom||[]).map(r=>r.id===id?{...r,unitPrice:confirmedCost,priceSource:"bc",priceDate:Date.now()}:r);
-          const u2={...cur,bom:bom2};
-          onUpdate(u2);
-          try{onSaveImmediate(u2);}catch(e){}
-        })
-        .catch(e=>console.warn("BC unit cost update/verify failed:",pn,e));
+          const bom2=(cur.bom||[]).map(r=>r.id===id?{...r,unitPrice:confirmedCost,priceSource:"bc",priceDate:now,bcVendorName:vendorName||r.bcVendorName}:r);
+          const u2={...cur,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}
+        }
+      }catch(e){console.warn("BC unit cost update failed:",partNumber,e);}
+      // Push to Purchase Price card if vendor provided
+      if(vendorName){
+        try{
+          // Resolve vendor number from name
+          const vendors=await bcListVendors();
+          const v=vendors.find(v=>v.displayName===vendorName);
+          if(v?.number){
+            await bcPushPurchasePrice(partNumber,v.number,price,new Date().toISOString().split('T')[0],"EA");
+            console.log("BC PURCHASE PRICE pushed:",partNumber,v.number,price);
+          }
+        }catch(e){console.warn("BC purchase price push failed:",partNumber,e);}
+      }
     }
   }
   function updateVendor(id,vendorName){
@@ -1371,7 +1440,12 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
           bcCount=Object.keys(bcMap).length;
           updatedBom=updatedBom.map(r=>{
             const key=String(r.id);
-            if(key in bcMap){return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",priceDate:Date.now(),bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",bcPoDate:bcMap[key].bcPoDate};}
+            if(key in bcMap){
+              const hasActiveRfq=r.rfqSentDate&&(!r.unitPrice||r.unitPrice===0);
+              return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",
+                ...(hasActiveRfq?{}:{priceDate:Date.now(),bcPoDate:bcMap[key].bcPoDate}),
+                bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||""};
+            }
             return r;
           });
           if(Object.keys(fuzzySugg).length>0){
@@ -1384,6 +1458,28 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
         console.warn("BC pricing phase failed:",ex);
         _pp({msg:`BC failed: ${ex.message||ex} — falling back to AI…`,pct:10});
       }
+    }
+
+    // Phase 1b: Codale auto-pricing for ALL items with Codale vendor (refresh all prices)
+    const codaleItems=updatedBom.filter(r=>!r.isLaborRow&&/codale/i.test(r.bcVendorName||""));
+    if(codaleItems.length>0){
+      _pp({msg:`Codale: Fetching live prices for ${codaleItems.length} items…`,pct:45});
+      try{
+        const pns=codaleItems.map(r=>(r.partNumber||"").trim()).filter(Boolean);
+        const fn=firebase.functions().httpsCallable("codaleTestScrape",{timeout:300000});
+        const cr=await fn({partNumbers:pns});
+        const codaleResults=(cr.data.results||[]);
+        const codaleMap={};
+        codaleResults.forEach(function(r){if(r.price>0)codaleMap[(r.partNumber||"").toUpperCase()]={price:r.price};});
+        let codaleCount=0;
+        updatedBom=updatedBom.map(r=>{
+          const pn=(r.partNumber||"").trim().toUpperCase();
+          if(codaleMap[pn]){codaleCount++;const hasActiveRfq=r.rfqSentDate&&(!r.unitPrice||r.unitPrice===0);return{...r,unitPrice:codaleMap[pn].price,priceSource:"bc",...(hasActiveRfq?{}:{priceDate:Date.now(),bcPoDate:Date.now()})};}
+          return r;
+        });
+        if(codaleCount>0){bcCount+=codaleCount;_pp({msg:`Codale: ${codaleCount} prices obtained`,pct:48});}
+        else{_pp({msg:"Codale: no prices found",pct:48});}
+      }catch(e){console.warn("Codale pricing failed:",e);_pp({msg:"Codale: failed — "+e.message,pct:48});}
     }
 
     // Phase 2: AI fallback for items not priced by BC
@@ -1421,6 +1517,15 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
     _pp({msg:`✓ ${totalPriced} of ${bom.length} priced${bcCount>0?` (${bcCount} BC, ${aiCount} AI est.)`:""}.`,pct:100});
     setAiPricing(false);
     pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
+    // Auto-sync to BC after pricing is complete (not during extraction)
+    if(bcProjectNumber&&_bcToken&&updatedBom.length>0){
+      bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated,projectName).then(result=>{
+        if(result.failed?.length>0)console.warn("Post-pricing BC sync: "+result.failed.length+" items failed");
+        else console.log("Post-pricing BC sync: planning lines synced");
+        bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,updated,projectName).catch(e=>console.warn("Post-pricing task desc sync failed:",e));
+      }).catch(e=>console.warn("Post-pricing BC sync failed:",e));
+      // BC drawing upload deferred until user prints quote (As-Quoted flow)
+    }
   }
   async function validatePanel(){
     if(!_apiKey)return;
@@ -1465,6 +1570,53 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
     a.click();
   }
 
+  async function exportCADLinkBOM(){
+    const n=idx+1;
+    const lineSuffix=String(n*100);
+    const taskPN=`${bcProjectNumber||"PRJ"}-${lineSuffix}`;
+    const desc=(panel.drawingNo?`${panel.drawingNo} Rev ${panel.drawingRev||"-"} - `:"")+(projectName||panel.drawingDesc||panel.name||`Panel ${n}`);
+    const panelQty=1; // Always 1 per panel for CADLink (not multiplied)
+    const allBomRows=(panel.bom||[]).filter(r=>!r.isLaborRow);
+    const isTailRow=r=>CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())||/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim());
+    const isContingencyRow=r=>CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase());
+    const isBottomRow=r=>/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim());
+    const contingencyRows=allBomRows.filter(isContingencyRow);
+    const regularRows=allBomRows.filter(r=>!isTailRow(r));
+    const bottomRows=allBomRows.filter(isBottomRow);
+
+    const header=["Level","Part number","Part Revision","Short Description","Long Description","QtyPer","Part Type","UOM","Unit Cost"];
+    const rows=[header];
+    // Level 0 — parent assembly
+    rows.push([0,taskPN,1,desc.slice(0,50),"",panelQty,2,"EA",""]);
+    // Level 1 — Contingency items first
+    contingencyRows.forEach(r=>{
+      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA",r.unitPrice!=null?Number(r.unitPrice).toFixed(2):""]);
+    });
+    // Level 1 — Regular BOM items
+    regularRows.forEach(r=>{
+      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA",r.unitPrice!=null?Number(r.unitPrice).toFixed(2):""]);
+    });
+    // Level 1 — Job Buyoff and Crate at bottom
+    bottomRows.forEach(r=>{
+      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA",r.unitPrice!=null?Number(r.unitPrice).toFixed(2):""]);
+    });
+
+    // Build proper XLSX using SheetJS (loaded on demand)
+    if(!window.XLSX){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');
+        s.src='https://unpkg.com/xlsx/dist/xlsx.full.min.js';
+        s.onload=res;s.onerror=()=>rej(new Error('Failed to load XLSX library'));
+        document.head.appendChild(s);
+      });
+    }
+    const XL=window.XLSX;
+    const ws=XL.utils.aoa_to_sheet(rows);
+    const wb=XL.utils.book_new();
+    XL.utils.book_append_sheet(wb,ws,"BOM");
+    XL.writeFile(wb,`CADLink_${taskPN.replace(/[^a-z0-9\-]/gi,"_")}.xls`,{bookType:"biff8"});
+  }
+
   return(
     <div className="fade-in" onClick={()=>{if(onSelect)onSelect();}} style={{...card(),border:`2px solid ${isSelected?C.accent:C.border}`,cursor:"pointer"}}>
       {/* Combined header + title block */}
@@ -1472,12 +1624,12 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
         <div style={{background:C.accentDim,color:C.accent,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:800,letterSpacing:1,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",justifyContent:"center"}}>LINE {idx+1}</div>
         <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
           <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Qty</div>
-          <input type="number" value={draftLineQty} min={1} max={20} readOnly={readOnly}
-            onChange={e=>setDraftLineQty(e.target.value)}
-            onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
+          <input type="text" inputMode="numeric" value={draftLineQty} readOnly={readOnly}
+            onChange={e=>{const v=e.target.value.replace(/[^0-9]/g,'');setDraftLineQty(v);}}
+            onFocus={e=>{e.target.select();e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
             onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";saveLineQty();}}
             onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftLineQty(panel.lineQty??1);e.target.blur();}}}
-            style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:"4ch",fontFamily:"inherit",MozAppearance:"textfield"}}/>
+            style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:"4ch",fontFamily:"inherit",textAlign:"center"}}/>
         </div>
         {/* Panel name + title block identity */}
         <div style={{flex:1,display:"flex",alignItems:"flex-start",gap:20,minWidth:0,flexWrap:"wrap"}}>
@@ -1580,7 +1732,10 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
                       </div>
                       <div style={{fontSize:11,color:C.accent,marginBottom:2}}>{parseBcError(r.error)}</div>
                       {!/429|Too Many/i.test(r.error||"")&&r.rowId&&(
-                        <button onClick={()=>{setSyncFailedAlert(null);setBcBrowserTarget(r.rowId);setBcBrowserQuery(r.partNumber||"");setBcBrowserOpen(true);}}
+                        <button onClick={()=>{
+                          setSyncFailedAlert(prev=>{const remaining=(prev||[]).filter(x=>x.rowId!==r.rowId);return remaining.length?remaining:null;});
+                          setBcBrowserTarget(r.rowId);setBcBrowserQuery(r.partNumber||"");setBcBrowserOpen(true);
+                        }}
                           style={{alignSelf:"flex-start",background:C.accent,color:"#fff",border:"none",borderRadius:5,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
                           Fix in Item Browser
                         </button>
@@ -1652,7 +1807,7 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
       <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
           <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:2}}>DRAWINGS</div>
-          {!readOnly&&bomCount>0&&(
+          {!readOnly&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(
             <button data-tip="Re-run AI extraction on tagged BOM pages — uses region crops if defined" onClick={()=>{
               if(localStorage.getItem("_arc_skip_reextract_warn")){runExtraction();return;}
               setReExtractWarn(true);
@@ -1665,14 +1820,30 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
             return eqTotal>0?React.createElement("button",{onClick:()=>setShowEqModal(true),
               style:{background:eqOpen>0?"#451a03":"none",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,color:eqOpen>0?"#f59e0b":C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
               eqOpen>0?`❓ ${eqOpen} Question${eqOpen!==1?"s":""}`:`✓ ${eqTotal} Answered`):null;})()}
-          {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&(
-            <button data-tip={panel.bcPdfAttached&&!bcPdfMissing?`Already uploaded: ${panel.bcPdfFileName||"PDF"}`:`Combine all pages into a PDF and upload to BC Job ${bcProjectNumber}`}
-              onClick={buildAndAttachPdf} disabled={attachingPdf||(panel.bcPdfAttached&&!bcPdfMissing)}
-              style={{background:panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",border:`1px solid ${panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,color:panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",cursor:panel.bcPdfAttached&&!bcPdfMissing?"default":"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:attachingPdf?0.5:1}}>
-              {attachingPdf?"Working…":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
+          {/* DECISION(v1.19.336): Main upload button is disabled when green (current upload exists) to prevent
+              accidental re-uploads that create duplicates in BC. A small ↻ button appears next to it for intentional
+              re-uploads + duplicate cleanup. This was briefly made always-clickable in v1.19.335 but reverted because
+              every click re-uploads the same file, defeating the purpose of the duplicate prevention. */}
+          {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&!extracting&&!aiPricing&&!validatingPanel&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(()=>{
+            const hasUnsent=panel.bcPdfAttached&&!bcPdfMissing&&(quoteRev||0)>(panel.bcUploadQuoteRev||0);
+            const needsUpload=hasUnsent||bcPdfMissing||(!panel.bcPdfAttached);
+            return(
+            <span style={{display:"inline-flex",alignItems:"center",gap:0}}>
+            <button data-tip={bcPdfMissing?"File deleted from BC — click to re-upload":hasUnsent?"BOM changed — click to upload updated drawings to BC":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:"Upload drawings to BC"}
+              onClick={needsUpload?()=>buildAndAttachPdf():undefined} disabled={attachingPdf||!needsUpload}
+              style={{background:bcPdfMissing?"#3a0a0a":hasUnsent?"#3a1f00":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",
+                border:`1px solid ${bcPdfMissing?"#ef444488":hasUnsent?"#f59e0b88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,
+                color:bcPdfMissing?C.red:hasUnsent?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",
+                cursor:needsUpload?"pointer":"default",borderRadius:needsUpload?20:"20px 0 0 20px",padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
+                opacity:attachingPdf?0.5:1,animation:needsUpload&&!attachingPdf?"pulseYellow 2s ease-in-out infinite":"none"}}>
+              {attachingPdf?"Uploading…":bcPdfMissing?"⚠ Deleted — Click to Re-Upload":hasUnsent?"⚠ Unsent Revision — Click to Update":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
             </button>
-          )}
-          {bcPdfMissing&&<span style={{fontSize:11,color:C.yellow,fontWeight:600}}>File was deleted from BC — Re-Upload?</span>}
+            {panel.bcPdfAttached&&!bcPdfMissing&&!needsUpload&&!attachingPdf&&(
+              <button data-tip="Force re-upload drawings & clean duplicates in BC" onClick={()=>buildAndAttachPdf()}
+                style={{background:C.greenDim,border:`1px solid ${C.green}88`,borderLeft:"none",color:C.green,cursor:"pointer",borderRadius:"0 20px 20px 0",padding:"2px 6px",fontSize:11,fontWeight:700}}>↻</button>
+            )}
+            </span>);
+          })()}
           {attachPdfMsg&&<span style={{fontSize:11,color:attachPdfMsg.startsWith("✓")?C.green:attachPdfMsg.startsWith("✗")?C.red:C.muted,fontWeight:600}}>{attachPdfMsg}</span>}
         </div>
 
@@ -1758,6 +1929,35 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
               <div style={{fontSize:12,color:C.muted,lineHeight:1.6,whiteSpace:"pre-line"}}>{processing?processingMsg:"Drop or click\nPDF · JPG · PNG"}</div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* Other Documents */}
+      <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10}}>
+          <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7}}>OTHER DOCUMENTS{(panel.otherDocs||[]).length>0?` — ${(panel.otherDocs||[]).length}`:""}</div>
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
+          {(panel.otherDocs||[]).map((doc,di)=>(
+            <div key={di} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,display:"flex",alignItems:"center",gap:6,maxWidth:240,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)window.open(doc.storageUrl,"_blank");}}>
+              <span style={{color:"#94a3b8"}}>📄</span>
+              <span style={{color:doc.storageUrl?"#38bdf8":C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textDecoration:doc.storageUrl?"underline":"none"}} title={doc.name}>{doc.name}</span>
+              {!readOnly&&<button onClick={e=>{e.stopPropagation();removeOtherDoc(di);}} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
+            </div>
+          ))}
+          {!readOnly&&bcProjectNumber&&_bcToken&&(
+            <div
+              onDragOver={e=>{e.preventDefault();setDocDragging(true);}}
+              onDragLeave={()=>setDocDragging(false)}
+              onDrop={e=>{e.preventDefault();setDocDragging(false);uploadOtherDoc(e.dataTransfer.files);}}
+              onClick={()=>!docUploading&&docFileRef.current?.click()}
+              style={{width:140,height:60,border:`2px dashed ${docDragging?C.accent:C.border}`,borderRadius:6,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:docUploading?"default":"pointer",transition:"all 0.15s",background:docDragging?C.accentDim+"33":"transparent",textAlign:"center",padding:6}}>
+              <input ref={docFileRef} type="file" multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" onChange={e=>{uploadOtherDoc(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+              <div style={{fontSize:18,opacity:docUploading?1:0.35}}>{docUploading?"⏳":"+"}</div>
+              <div style={{fontSize:10,color:C.muted}}>{docUploading?"Uploading…":"Specs · PDFs · Docs"}</div>
+            </div>
+          )}
+          {!bcProjectNumber&&<div style={{fontSize:11,color:C.muted,fontStyle:"italic"}}>Connect to BC project to upload reference documents</div>}
         </div>
       </div>
 
@@ -1873,11 +2073,19 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
       })()}
 
       {/* BOM Table */}
-      {(panel.bom||[]).length>0&&(
-        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
+      {true&&(
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14,position:"relative"}}>
+          {(extracting||aiPricing||validatingPanel)&&(panel.bom||[]).length>0&&(
+            <div style={{position:"absolute",inset:0,background:"rgba(13,13,20,0.7)",zIndex:5,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,background:C.card,border:`1px solid ${C.accent}`,borderRadius:8,padding:"12px 20px",boxShadow:"0 0 20px rgba(56,189,248,0.3)"}}>
+                <div className="spin" style={{fontSize:18,color:C.accent}}>◌</div>
+                <span style={{fontSize:13,fontWeight:700,color:C.accent}}>{extracting?"Extracting BOM…":aiPricing?"Getting prices…":"Validating…"}</span>
+              </div>
+            </div>
+          )}
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-            <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,flex:1}}>
-              BILL OF MATERIALS — {panel.bom.length} items
+            <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:6}}>
+              BILL OF MATERIALS — {(panel.bom||[]).length} items
             </div>
             {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
               <button data-tip="Re-run AI pricing on all BOM rows to fetch current prices from Business Central" onClick={()=>runPricingOnPanel()} disabled={aiPricing}
@@ -1887,13 +2095,14 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
             )}
             {bcProjectNumber&&!readOnly&&(
               <button data-tip="Push BOM and labor costs to Business Central job planning lines" onClick={syncPlanningLinesToBC} disabled={bcSyncing}
-                style={btn(bcSyncStatus==="ok"?C.greenDim:bcSyncStatus==="error"?"#2a0a0a":C.accentDim, bcSyncStatus==="ok"?C.green:bcSyncStatus==="error"?C.red:C.accent,{fontSize:12,padding:"4px 12px",opacity:bcSyncing?0.5:1})}>
-                {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":"⇅ Sync BC"}
+                style={btn(bcSyncStatus==="ok"?C.greenDim:bcSyncStatus==="error"?"#2a0a0a":bcSyncStatus==="pending"?"#3a1f00":C.accentDim, bcSyncStatus==="ok"?C.green:bcSyncStatus==="error"?C.red:bcSyncStatus==="pending"?"#f59e0b":C.accent,{fontSize:12,padding:"4px 12px",opacity:bcSyncing?0.5:1,animation:bcSyncStatus==="pending"?"pulseYellow 2s ease-in-out infinite":"none"})}>
+                {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":bcSyncStatus==="pending"?"⚠ Push Update to BC":"⇅ Sync BC"}
               </button>
             )}
-            <button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>
+            {(panel.bom||[]).length>0&&<button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>}
+            {(panel.bom||[]).length>0&&<button onClick={exportCADLinkBOM} style={btn("#0d1a2a","#38bdf8",{fontSize:12,padding:"4px 12px",border:"1px solid #38bdf844"})}>⬇ CADLink BOM</button>}
           </div>
-          <div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
+          {(panel.bom||[]).length>0&&<div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
                 <col style={{width:42}}/><col style={{width:42}}/><col style={{width:34}}/>
@@ -2012,7 +2221,7 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
                           {f==="partNumber"&&row.autoLoaded&&(
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>Auto-Loaded</span>
                           )}
-                          {f==="partNumber"&&row.isCrossed&&(
+                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&(
                             <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>{row.autoReplaced?"ARC crossed":"crossed item"}</span>
                           )}
                           {f==="partNumber"&&row.isCorrection&&(
@@ -2021,7 +2230,7 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
                             </span>
                           )}
                           </div>
-                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&!readOnly&&(()=>{
+                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&!readOnly&&(()=>{
                             const alt=alternates.find(a=>a.originalPN===row.crossedFrom);
                             return(
                               <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,paddingLeft:2}}>
@@ -2141,10 +2350,11 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,whiteSpace:"nowrap",cursor:(!row.isLaborRow&&row.unitPrice!=null)?"help":"default",...(()=>{
                       if(row.isLaborRow)return{color:C.muted};
+                      if(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)return{color:"#4ade80",fontWeight:700};
                       const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
                       if(!d)return{color:C.muted};
                       const age=Date.now()-d;
-                      if(age<=60*24*60*60*1000)return{color:"#4ade80",fontWeight:700};
+                      if(age<=30*24*60*60*1000)return{color:"#4ade80",fontWeight:700};
                       return{color:"#f87171",fontWeight:700};
                     })()}}
                     onMouseEnter={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
@@ -2156,7 +2366,7 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
                       setPriceTooltip(prev=>prev?{...prev,x:e.clientX,y:e.clientY}:prev);
                     }:undefined}
                     onMouseLeave={(!row.isLaborRow&&row.unitPrice!=null)?()=>setPriceTooltip(null):undefined}>
-                      {row.isLaborRow?"—":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
+                      {row.isLaborRow?"—":(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)?"Matrix":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
                     </td>
                     <td style={{padding:"3px 10px 3px 6px",textAlign:"center",width:44}}>
                       {!readOnly&&!row.isLaborRow&&<button onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
@@ -2166,13 +2376,13 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
                 })()}
               </tbody>
             </table>
-          </div>
+          </div>}
           {!readOnly&&<div style={{display:"flex",gap:8,marginTop:8}}>
             <button onClick={addBomRow} style={btn("transparent",C.accent,{fontSize:12,padding:"8px 12px",border:`1px dashed ${C.accent}66`,flex:1})}>+ Add Row</button>
           </div>}
           {/* BOM Notes */}
           {(()=>{
-            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom);
+            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
             const formatCorrections=(panel.bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
             return(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
@@ -2223,30 +2433,6 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
         </div>
       )}
 
-      {/* AI Feedback & Correction */}
-      {(panel.bom||[]).length>0&&!readOnly&&_apiKey&&(
-        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-            <div style={{fontSize:12,color:C.accent,fontWeight:700,letterSpacing:0.7}}>🤖 AI CORRECTION</div>
-            {(panel.extractionFeedbackLog||[]).length>0&&(
-              <span style={{fontSize:11,color:C.muted}}>{(panel.extractionFeedbackLog).length} correction{(panel.extractionFeedbackLog).length!==1?"s":""} logged</span>
-            )}
-          </div>
-          <div style={{fontSize:12,color:C.sub,marginBottom:8,lineHeight:1.6}}>
-            Describe what's wrong or missing. The AI will re-extract the BOM using your instructions, and your feedback is saved to improve future extractions.
-          </div>
-          <textarea
-            ref={feedbackRef}
-            value={aiFeedback}
-            onChange={e=>setAiFeedback(e.target.value)}
-            placeholder={"BOM corrections:\ne.g. Row 23 is missing — 3 items: KXTBRHEBFP, OXP10X225 and OH865L10B, all ABB qty 1.\ne.g. Row 19 quantity should be 2 not 1.\ne.g. The part number for the transformer is PH500MQMJ.\n\nLabor corrections (applied immediately):\ne.g. The wire count is not correct, base labor off 50 wires, not 25.\ne.g. Use 12 labor hours.\ne.g. Labor rate is $55/hr."}
-            rows={4}
-            style={{...inp(),width:"100%",resize:"vertical",lineHeight:1.6,fontSize:13,marginBottom:10}}
-          />
-          {feedbackSaved&&<span style={{fontSize:12,color:C.green,fontWeight:600}}>✓ Feedback saved</span>}
-        </div>
-      )}
-
       {/* Action row */}
       <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",borderTop:`1px solid ${C.border}`,paddingTop:12}}>
         <div style={{flex:1}}/>
@@ -2271,7 +2457,7 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
       {showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
       {showAiQuestions&&(panel.aiQuestions||[]).length>0&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.85)"}}>
-          <div style={{background:"#12121f",border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",maxWidth:560,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}}>
+          <div style={{background:"#12121f",border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",maxWidth:560,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 12px 48px rgba(0,0,0,0.6)"}}>
             <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:4}}>AI has questions about this BOM</div>
             <div style={{fontSize:12,color:C.muted,marginBottom:16,lineHeight:1.5}}>The extraction AI wasn't sure about a few items. Your answers will improve accuracy.</div>
             {(panel.aiQuestions||[]).map((q,qi)=>(
@@ -2355,16 +2541,16 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
           </div>
           {priceTooltip.date&&(
             <div style={{color:"#94a3b8",marginBottom:2}}>
-              <span style={{color:"#64748b",fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginRight:6}}>Quoted</span>
+              <span style={{color:"#94a3b8",fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginRight:6}}>Quoted</span>
               {new Date(priceTooltip.date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
             </div>
           )}
           <div style={{color:"#4ade80",fontWeight:700,fontSize:15,marginTop:2}}>
             ${(priceTooltip.price||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
-            <span style={{color:"#64748b",fontWeight:400,fontSize:11,marginLeft:4}}>/ ea</span>
+            <span style={{color:"#94a3b8",fontWeight:400,fontSize:11,marginLeft:4}}>/ ea</span>
           </div>
           {priceTooltip.source&&(
-            <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #1e293b",fontSize:10,color:"#475569",textTransform:"uppercase",letterSpacing:0.5}}>
+            <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #1e293b",fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>
               Source: {priceTooltip.source==="bc"?"BC (Approved)":priceTooltip.source==="manual"?"Manual Entry":priceTooltip.source==="ai"?"ARC AI Estimated":priceTooltip.source}
             </div>
           )}
@@ -2386,22 +2572,22 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
                 onMouseOut={e=>e.target.style.textDecoration="none"}>
                 {s.type==="search"?"Search on "+s.name:s.name}
               </a>
-              <span style={{color:"#475569",fontSize:10,marginLeft:6}}>{s.type==="direct"?"Product page":"Search results"}</span>
+              <span style={{color:"#94a3b8",fontSize:10,marginLeft:6}}>{s.type==="direct"?"Product page":"Search results"}</span>
             </div>
-          )):<div style={{color:"#64748b",fontSize:11,lineHeight:1.5}}>No source links available.<br/>Re-run AI pricing to generate sources.</div>}
+          )):<div style={{color:"#94a3b8",fontSize:11,lineHeight:1.5}}>No source links available.<br/>Re-run AI pricing to generate sources.</div>}
         </div>,document.body
       )}
       {deleteConfirmId&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
           onMouseDown={e=>{if(e.target===e.currentTarget)setDeleteConfirmId(null);}}>
-          <div style={{background:"#0d0d1a",border:"1px solid #ef444466",borderRadius:10,padding:"24px 28px",width:340,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{background:"#0d0d1a",border:"1px solid #ef444466",borderRadius:10,padding:"24px 28px",width:340,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
             <div style={{fontSize:15,fontWeight:800,color:"#f87171",marginBottom:8}}>Delete BOM Row?</div>
             <div style={{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.5}}>
-              {(()=>{const r=(panel.bom||[]).find(x=>x.id===deleteConfirmId);return r?<><strong style={{color:"#f1f5f9",fontFamily:"monospace"}}>{r.partNumber||"(no part #)"}</strong>{r.description?<span style={{color:"#64748b"}}> — {r.description}</span>:null}</>:"This row";})()}
-              <span style={{display:"block",marginTop:6,color:"#64748b",fontSize:12}}>This cannot be undone.</span>
+              {(()=>{const r=(panel.bom||[]).find(x=>x.id===deleteConfirmId);return r?<><strong style={{color:"#f1f5f9",fontFamily:"monospace"}}>{r.partNumber||"(no part #)"}</strong>{r.description?<span style={{color:"#94a3b8"}}> — {r.description}</span>:null}</>:"This row";})()}
+              <span style={{display:"block",marginTop:6,color:"#94a3b8",fontSize:12}}>This cannot be undone.</span>
             </div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <button onClick={()=>setDeleteConfirmId(null)} style={{background:"#1e1e2e",border:"1px solid #2a2a3e",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}}>Cancel</button>
+              <button onClick={()=>setDeleteConfirmId(null)} style={{background:"#1e1e2e",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}}>Cancel</button>
               <button onClick={()=>{deleteBomRow(deleteConfirmId);setDeleteConfirmId(null);}} style={{background:"#450a0a",border:"1px solid #ef444466",color:"#f87171",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:700}}>Delete</button>
             </div>
           </div>
@@ -2409,15 +2595,15 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
       )}
       {reExtractWarn&&ReactDOM.createPortal(
         React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onMouseDown:e=>{if(e.target===e.currentTarget)setReExtractWarn(false);}},
-          React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b66",borderRadius:10,padding:"24px 28px",width:380,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}},
+          React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b66",borderRadius:10,padding:"24px 28px",width:380,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}},
             React.createElement("div",{style:{fontSize:15,fontWeight:800,color:"#f59e0b",marginBottom:8}},"Re-Extract Drawings?"),
             React.createElement("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.6}},"This will overwrite the current BOM, pricing, and validation data with a fresh extraction. Any manual edits will be lost."),
             React.createElement("div",{style:{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}},
-              React.createElement("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#64748b",cursor:"pointer",marginRight:"auto"}},
+              React.createElement("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#94a3b8",cursor:"pointer",marginRight:"auto"}},
                 React.createElement("input",{type:"checkbox",id:"_reextract_dismiss",style:{accentColor:C.accent}}),
                 "Don't show this again"
               ),
-              React.createElement("button",{onClick:()=>setReExtractWarn(false),style:{background:"#1e1e2e",border:"1px solid #2a2a3e",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}},"Cancel"),
+              React.createElement("button",{onClick:()=>setReExtractWarn(false),style:{background:"#1e1e2e",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}},"Cancel"),
               React.createElement("button",{onClick:()=>{
                 if(document.getElementById("_reextract_dismiss")?.checked)localStorage.setItem("_arc_skip_reextract_warn","1");
                 setReExtractWarn(false);runExtraction();
@@ -2426,13 +2612,47 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
           )
         ),document.body
       )}
+      {priceConfirmPending&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onMouseDown={e=>{if(e.target===e.currentTarget){applyBudgetaryPrice();}}}>
+          <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:480,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>Price Entry — {priceConfirmPending.partNumber||"Item"}</div>
+            <div style={{fontSize:22,fontWeight:800,color:C.accent,marginBottom:12}}>${Number(priceConfirmPending.price).toFixed(2)}</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Is this a confirmed cost or a budgetary estimate?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+              <button onClick={applyBudgetaryPrice}
+                style={{padding:"11px 14px",background:"#1a1a0a",border:"1px solid #f59e0b66",borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#f59e0b",marginBottom:3}}>Budgetary Estimate</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Update BOM price only. No update to BC. Price date will show as unconfirmed (—).</div>
+              </button>
+              <div style={{background:"#0a1a12",border:"1px solid #4ade8066",borderRadius:7,padding:"11px 14px"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#4ade80",marginBottom:6}}>Confirmed Cost</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.4,marginBottom:8}}>Push to BC Item Card + Purchase Price. Sets today's date as price date.</div>
+                <div style={{marginBottom:8}}>
+                  <label style={{fontSize:10,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3,display:"block"}}>Supplier / Vendor</label>
+                  <input value={priceConfirmVendor} onChange={e=>setPriceConfirmVendor(e.target.value)} placeholder="Enter vendor name"
+                    style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text,fontSize:12,width:"100%",boxSizing:"border-box"}}/>
+                </div>
+                <button onClick={applyConfirmedPrice}
+                  style={{padding:"8px 16px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",width:"100%"}}>
+                  ✓ Confirm & Push to BC
+                </button>
+              </div>
+            </div>
+            <button onClick={()=>setPriceConfirmPending(null)}
+              style={{padding:"7px 14px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer"}}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ,document.body)}
       {crossOrCorrectPending&&(()=>{
         const aiSug=guessCorrection(crossOrCorrectPending.origPN,crossOrCorrectPending.newPN);
         const dismiss=()=>setCrossOrCorrectPending(null);
         return ReactDOM.createPortal(
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
             onMouseDown={e=>{if(e.target===e.currentTarget)dismiss();}}>
-            <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:520,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
               <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>ARC — Part Number Change Detected</div>
               <div style={{fontSize:13,color:C.muted,marginBottom:12}}>
                 <span style={{color:C.red,fontWeight:700}}>{crossOrCorrectPending.origPN}</span>
@@ -2461,6 +2681,11 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
                   <div style={{fontWeight:700,fontSize:13,color:"#4ade80",marginBottom:3}}>Formatting Error</div>
                   <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Part number is correct but formatted differently (dashes, spacing). Auto-corrected on future extractions. Noted on quote.</div>
                 </button>
+                <button onClick={()=>{commitBcItem(crossOrCorrectPending.bomRowId,crossOrCorrectPending.bcItem,false,null,true);dismiss();}}
+                  style={{padding:"11px 14px",background:"#111118",border:`1px solid ${C.border}`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                  <div style={{fontWeight:700,fontSize:13,color:C.muted,marginBottom:3}}>Just Apply — No Learning</div>
+                  <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Apply the BC item without recording a cross or correction. Nothing saved to learning databases.</div>
+                </button>
               </div>
               <button onClick={dismiss}
                 style={{padding:"7px 14px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer"}}>
@@ -2476,4 +2701,4 @@ export default function PanelCard({panel,idx,uid,projectId,projectName,bcProject
   );
 }
 
-// ─── End monolith verbatim copy ───────────────────────────────────────────
+export default PanelCard;

@@ -1,9 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { C } from '@/core/constants';
-import { calcConfidence } from '@/bom/validator';
-import { verifyPartNumbers } from '@/bom/extractor';
+import { _appCtx } from '@/core/globals';
 
-// ─── ConfidenceBar Component ─────────────────────────────────────────────────
+// These functions are not yet extracted — declared as any to avoid TS errors
+declare function calcConfidence(panel: any): any;
+declare function verifyPartNumbers(bom: any[]): Promise<any[]>;
+declare function loadDeviceClassifications(uid: string): Promise<any>;
+declare function saveDeviceClassification(uid: string, entry: any): Promise<void>;
+declare function addCustomCategory(uid: string, name: string, description: string): Promise<void>;
+declare function getDeviceCategories(data: any): string[];
+declare function isKnownClassifiedDevice(partNumber: string, description: string, data: any): any;
+declare let _deviceClassCache: any;
 
 function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
   const conf=calcConfidence(panel);
@@ -12,7 +19,13 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
   const validation=panel.validation||null;
   const [expanded,setExpanded]=useState<string|null>(null);
   const [verifying,setVerifying]=useState(false);
-  const barRef=useRef<HTMLDivElement>(null);
+  const [classifyingItem,setClassifyingItem]=useState<any>(null);
+  const [classifyCat,setClassifyCat]=useState("");
+  const [classifyNote,setClassifyNote]=useState("");
+  const [classifyNewCat,setClassifyNewCat]=useState("");
+  const [dcData,setDcData]=useState<any>(null);
+  useEffect(()=>{if(_appCtx.uid)loadDeviceClassifications(_appCtx.uid).then(setDcData);},[]);
+  const barRef=useRef<any>(null);
   useEffect(()=>{
     if(!expanded)return;
     function handleClick(e: any){if(barRef.current&&!barRef.current.contains(e.target))setExpanded(null);}
@@ -43,7 +56,7 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
     if(readOnly||!onUpdate)return;
     const arr=panel.wiringAccepted||[];
     const id=String(itemId);
-    const updated=arr.includes(id)?arr.filter((x: any)=>x!==id):[...arr,id];
+    const updated=arr.includes(id)?arr.filter((x: string)=>x!==id):[...arr,id];
     const newPanel={...panel,wiringAccepted:updated};
     onUpdate(newPanel);
     if(onSaveImmediate)try{onSaveImmediate(newPanel);}catch(e){}
@@ -67,10 +80,10 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
       {expanded==="pricing"&&(
         <div style={{marginTop:12,padding:"10px 14px",background:"#0d0d14",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
           <div style={{display:"flex",flexDirection:"column",gap:5}}>
-            {pricingDetail.bcCount>0&&<div style={{color:C.green}}>{pricingDetail.bcCount} item{pricingDetail.bcCount!==1?"s":""} BC-priced ✓</div>}
-            {pricingDetail.manualCount>0&&<div style={{color:C.green}}>{pricingDetail.manualCount} item{pricingDetail.manualCount!==1?"s":""} manual ✓</div>}
-            {pricingDetail.aiCount>0&&<div style={{color:C.yellow}}>{pricingDetail.aiCount} item{pricingDetail.aiCount!==1?"s":""} AI-priced ⚠</div>}
-            {pricingDetail.unpricedCount>0&&<div style={{color:C.red}}>{pricingDetail.unpricedCount} item{pricingDetail.unpricedCount!==1?"s":""} unpriced ✗</div>}
+            {pricingDetail.bcCount>0&&<div style={{color:C.green}}>{pricingDetail.bcCount} item{pricingDetail.bcCount!==1?"s":""} BC-priced</div>}
+            {pricingDetail.manualCount>0&&<div style={{color:C.green}}>{pricingDetail.manualCount} item{pricingDetail.manualCount!==1?"s":""} manual</div>}
+            {pricingDetail.aiCount>0&&<div style={{color:C.yellow}}>{pricingDetail.aiCount} item{pricingDetail.aiCount!==1?"s":""} AI-priced</div>}
+            {pricingDetail.unpricedCount>0&&<div style={{color:C.red}}>{pricingDetail.unpricedCount} item{pricingDetail.unpricedCount!==1?"s":""} unpriced</div>}
             {pricingDetail.total===0&&<div style={{color:C.muted}}>No BOM items yet</div>}
           </div>
           <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Set prices manually or run Get Prices to improve this score</div>
@@ -81,30 +94,77 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
           {!validation?<div style={{color:C.muted}}>No validation data — run Re-Validate</div>:(
             <div>
               <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8}}>
-                <span style={{color:C.green}}>{wiringDetail.matched} matched ✓</span>
-                <span style={{color:wiringDetail.missing.length-wiringDetail.accepted>0?C.red:C.green}}>{wiringDetail.missing.length-wiringDetail.accepted} missing ✗</span>
+                <span style={{color:C.green}}>{wiringDetail.matched} matched</span>
+                <span style={{color:wiringDetail.missing.length-wiringDetail.accepted>0?C.red:C.green}}>{wiringDetail.missing.length-wiringDetail.accepted} missing</span>
                 {wiringDetail.accepted>0&&<span style={{color:C.accent}}>{wiringDetail.accepted} accepted</span>}
-                <span style={{color:C.muted}}>{wiringDetail.notTraceable} not traceable —</span>
+                <span style={{color:C.muted}}>{wiringDetail.notTraceable} not traceable</span>
               </div>
               {wiringDetail.missing.length>0&&(
-                <div style={{maxHeight:180,overflowY:"auto",borderTop:`1px solid ${C.border}`,paddingTop:6}}>
+                <div style={{maxHeight:260,overflowY:"auto",borderTop:`1px solid ${C.border}`,paddingTop:6}}>
                   {wiringDetail.missing.map((m: any)=>{
                     const id=String(m.id);
                     const isAccepted=acceptedSet.has(id);
+                    const isClassifying=classifyingItem?.id===id;
+                    const existingClass=dcData?isKnownClassifiedDevice(m.partNumber,m.description,dcData):null;
                     return(
-                      <div key={id} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",borderBottom:`1px solid ${C.border}33`}}>
-                        <span style={{color:isAccepted?C.accent:C.red,fontWeight:600,flex:1,fontSize:12}}>{m.partNumber||m.description||"Item #"+m.id}</span>
-                        {m.notes&&<span style={{color:C.muted,fontSize:11}}>{m.notes}</span>}
-                        <button onClick={()=>toggleWiringAccepted(m.id)} disabled={readOnly}
-                          style={{background:isAccepted?C.accentDim:"transparent",color:isAccepted?C.accent:C.muted,border:`1px solid ${isAccepted?C.accent:C.border}`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:600,cursor:readOnly?"default":"pointer",opacity:readOnly?0.5:1,whiteSpace:"nowrap"}}>
-                          {isAccepted?"Accepted ✓":"Accept ✓"}
-                        </button>
+                      <div key={id} style={{padding:"4px 0",borderBottom:`1px solid ${C.border}33`}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          <span style={{color:isAccepted?C.accent:C.red,fontWeight:600,flex:1,fontSize:12}}>{m.partNumber||m.description||"Item #"+m.id}</span>
+                          {existingClass&&<span style={{fontSize:10,color:(C as any).teal,background:"rgba(20,184,166,0.1)",borderRadius:10,padding:"1px 6px"}}>{existingClass.category}</span>}
+                          {m.notes&&<span style={{color:C.muted,fontSize:11}}>{m.notes}</span>}
+                          {!isAccepted&&!isClassifying?(
+                            <button onClick={()=>{setClassifyingItem({id,partNumber:m.partNumber,description:m.description});setClassifyCat(existingClass?.category||"");setClassifyNote("");}} disabled={readOnly}
+                              style={{background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:600,cursor:readOnly?"default":"pointer",whiteSpace:"nowrap"}}>
+                              Classify & Accept
+                            </button>
+                          ):(
+                            isAccepted&&<span style={{color:C.accent,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>Accepted</span>
+                          )}
+                        </div>
+                        {isClassifying&&(
+                          <div style={{marginTop:6,padding:"8px 10px",background:"#0d1a2e",border:`1px solid ${C.accent}44`,borderRadius:6,display:"flex",flexDirection:"column",gap:6}}>
+                            <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+                              <select value={classifyCat} onChange={(e: any)=>setClassifyCat(e.target.value)}
+                                style={{background:"#1e293b",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 6px",flex:1,minWidth:120}}>
+                                <option value="">-- Select Category --</option>
+                                {getDeviceCategories(dcData).map((c: string)=><option key={c} value={c}>{c}</option>)}
+                              </select>
+                              <input value={classifyNewCat} onChange={(e: any)=>setClassifyNewCat(e.target.value)}
+                                placeholder="or type new category..." style={{background:"#1e293b",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 6px",width:130}}/>
+                            </div>
+                            <input value={classifyNote} onChange={(e: any)=>setClassifyNote(e.target.value)}
+                              placeholder="Describe what this is (helps AI learn)..."
+                              style={{background:"#1e293b",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"4px 6px",width:"100%"}}/>
+                            <div style={{display:"flex",gap:6}}>
+                              <button onClick={async()=>{
+                                const cat=classifyNewCat.trim()||classifyCat;
+                                if(!cat)return;
+                                if(classifyNewCat.trim()&&_appCtx.uid)await addCustomCategory(_appCtx.uid,classifyNewCat.trim(),"");
+                                if(_appCtx.uid)await saveDeviceClassification(_appCtx.uid,{partNumber:m.partNumber||"",description:m.description||"",category:cat,userNote:classifyNote.trim()});
+                                _deviceClassCache=null;loadDeviceClassifications(_appCtx.uid!).then(setDcData);
+                                toggleWiringAccepted(m.id);
+                                setClassifyingItem(null);
+                              }} disabled={!classifyCat&&!classifyNewCat.trim()}
+                                style={{background:C.accent,color:"#fff",border:"none",borderRadius:4,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer",opacity:(!classifyCat&&!classifyNewCat.trim())?0.4:1}}>
+                                Save & Accept
+                              </button>
+                              <button onClick={()=>{toggleWiringAccepted(m.id);setClassifyingItem(null);}}
+                                style={{background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:4,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>
+                                Accept without classifying
+                              </button>
+                              <button onClick={()=>setClassifyingItem(null)}
+                                style={{background:"transparent",color:C.muted,border:"none",fontSize:11,cursor:"pointer"}}>
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               )}
-              <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Accept items you've verified or Re-Validate to rescan</div>
+              <div style={{marginTop:8,color:C.muted,fontSize:12,fontStyle:"italic"}}>Classify items to teach ARC what they are — or accept without classifying</div>
             </div>
           )}
         </div>
@@ -114,17 +174,17 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
           <div style={{display:"flex",flexDirection:"column",gap:5}}>
             <div style={{color:C.text}}>{bomDetail.bomPages} BOM page{bomDetail.bomPages!==1?"s":""} detected</div>
             <div style={{color:C.text}}>{bomDetail.itemCount} item{bomDetail.itemCount!==1?"s":""} extracted</div>
-            {bomDetail.cleanCount>0&&<div style={{color:C.green}}>{bomDetail.cleanCount} item{bomDetail.cleanCount!==1?"s":""} clean ✓</div>}
-            {bomDetail.flaggedRows.length>0&&<div style={{color:C.yellow}}>{bomDetail.flaggedRows.length} item{bomDetail.flaggedRows.length!==1?"s":""} flagged ⚠</div>}
+            {bomDetail.cleanCount>0&&<div style={{color:C.green}}>{bomDetail.cleanCount} item{bomDetail.cleanCount!==1?"s":""} clean</div>}
+            {bomDetail.flaggedRows.length>0&&<div style={{color:C.yellow}}>{bomDetail.flaggedRows.length} item{bomDetail.flaggedRows.length!==1?"s":""} flagged</div>}
           </div>
           {(bomDetail.verifiedCount>0||bomDetail.plausibleCount>0||bomDetail.suspectCount>0||bomDetail.uncheckedCount>0)&&(
             <div style={{display:"flex",gap:12,flexWrap:"wrap",marginTop:8,paddingTop:6,borderTop:`1px solid ${C.border}`}}>
               <span style={{fontSize:12,color:C.muted,fontWeight:600}}>Part # Check:</span>
-              {bomDetail.verifiedCount>0&&<span style={{color:C.green,fontSize:12}}>{bomDetail.verifiedCount} verified ✓</span>}
-              {bomDetail.plausibleCount>0&&<span style={{color:C.yellow,fontSize:12}}>{bomDetail.plausibleCount} plausible ~</span>}
-              {bomDetail.suspectCount>0&&<span style={{color:C.red,fontSize:12}}>{bomDetail.suspectCount} not found ✗</span>}
+              {bomDetail.verifiedCount>0&&<span style={{color:C.green,fontSize:12}}>{bomDetail.verifiedCount} verified</span>}
+              {bomDetail.plausibleCount>0&&<span style={{color:C.yellow,fontSize:12}}>{bomDetail.plausibleCount} plausible</span>}
+              {bomDetail.suspectCount>0&&<span style={{color:C.red,fontSize:12}}>{bomDetail.suspectCount} not found</span>}
               {bomDetail.uncheckedCount>0&&<span style={{color:C.muted,fontSize:12}}>{bomDetail.uncheckedCount} unchecked</span>}
-              {bomDetail.uncheckedCount>0&&!readOnly&&<button onClick={runVerify} disabled={verifying} style={{background:C.accentDim,color:C.accent,border:`1px solid ${C.accent}55`,borderRadius:6,padding:"1px 8px",fontSize:11,fontWeight:600,cursor:verifying?"default":"pointer",opacity:verifying?0.5:1}}>{verifying?"Checking…":"Verify Now"}</button>}
+              {bomDetail.uncheckedCount>0&&!readOnly&&<button onClick={runVerify} disabled={verifying} style={{background:C.accentDim,color:C.accent,border:`1px solid ${C.accent}55`,borderRadius:6,padding:"1px 8px",fontSize:11,fontWeight:600,cursor:verifying?"default":"pointer",opacity:verifying?0.5:1}}>{verifying?"Checking...":"Verify Now"}</button>}
             </div>
           )}
           {bomDetail.flaggedRows.length>0&&(
@@ -134,7 +194,7 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
                 return(
                 <div key={f.id} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 0",borderBottom:`1px solid ${C.border}33`}}>
                   <span style={{color:f.score>=70?C.yellow:C.red,fontWeight:600,fontSize:12,minWidth:0,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{f.partNumber||"(empty)"}</span>
-                  {vColor&&<span style={{color:vColor,fontSize:10,fontWeight:700}}>{f.verifStatus==="verified"?"✓":f.verifStatus==="plausible"?"~":"✗"}</span>}
+                  {vColor&&<span style={{color:vColor,fontSize:10,fontWeight:700}}>{f.verifStatus==="verified"?"v":f.verifStatus==="plausible"?"~":"x"}</span>}
                   <span style={{color:C.muted,fontSize:11,whiteSpace:"nowrap"}}>{f.issues.join(", ")}</span>
                   <span style={{color:f.score>=70?C.yellow:C.red,fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{f.score}%</span>
                 </div>

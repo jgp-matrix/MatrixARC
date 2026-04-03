@@ -1,22 +1,25 @@
-import { useState } from 'react';
+// @ts-nocheck
+// Extracted verbatim from monolith public/index.html
+// TODO: Add proper TypeScript types and replace global references with imports
+
+import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
-import { C } from '@/core/constants';
+import { C, btn, inp, card } from '@/core/constants';
+import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
 
-import { copyProject } from '@/core/globals';
-
-function CopyProjectModal({project,uid,onCopied,onClose}: any){
+function CopyProjectModal({project,uid,onCopied,onClose}){
   const [name,setName]=useState((project.name||"")+" (Copy)");
   const [copying,setCopying]=useState(false);
-  const [progress,setProgress]=useState<any>(null);
+  const [progress,setProgress]=useState(null);
   const [error,setError]=useState("");
 
   async function handleCopy(){
     if(!name.trim())return;
     setCopying(true);setError("");
     try{
-      const newProj=await copyProject(uid,{...project,name:name.trim()},(p: any)=>setProgress(p));
+      const newProj=await copyProject(uid,{...project,name:name.trim()},p=>setProgress(p));
       onCopied(newProj);
-    }catch(e: any){
+    }catch(e){
       setError(e.message||"Copy failed");
       setCopying(false);setProgress(null);
     }
@@ -24,18 +27,18 @@ function CopyProjectModal({project,uid,onCopied,onClose}: any){
 
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
-      onMouseDown={(e: any)=>{if(!copying&&e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#0d0d1a",border:"1px solid "+C.accent+"66",borderRadius:10,padding:"24px 28px",width:420,boxShadow:"0 8px 40px rgba(0,0,0,0.7)"}}>
+      onMouseDown={e=>{if(!copying&&e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#0d0d1a",border:"1px solid "+C.accent+"66",borderRadius:10,padding:"24px 28px",width:420,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{fontSize:15,fontWeight:800,color:C.accent,marginBottom:12}}>Copy Project</div>
         <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.5}}>
           Creates a new BC project with all panels, BOM data, drawings, tasks, and planning lines copied from <strong style={{color:C.text}}>{project.bcProjectNumber}</strong>.
         </div>
         <label style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4,display:"block"}}>New Project Name</label>
-        <input value={name} onChange={(e: any)=>setName(e.target.value)} disabled={copying}
+        <input value={name} onChange={e=>setName(e.target.value)} disabled={copying}
           style={{width:"100%",boxSizing:"border-box",background:C.card,border:"1px solid "+C.border,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:14,marginBottom:12,outline:"none"}}
-          onFocus={(e: any)=>e.target.style.borderColor=C.accent} onBlur={(e: any)=>e.target.style.borderColor=C.border}/>
+          onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border}/>
         <div style={{fontSize:12,color:C.sub,marginBottom:12}}>
-          Customer: <strong style={{color:C.text}}>{project.bcCustomerName||"\u2014"}</strong>
+          Customer: <strong style={{color:C.text}}>{project.bcCustomerName||"—"}</strong>
         </div>
         {progress&&(
           <div style={{marginBottom:12}}>

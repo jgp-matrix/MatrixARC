@@ -1,32 +1,36 @@
-import { useState } from 'react';
-import { C, btn, inp, card } from '@/core/constants';
-import { _appCtx } from '@/core/globals';
-import { createCompany } from '@/services/firebase/firestore';
+// @ts-nocheck
+// Extracted verbatim from monolith public/index.html
+// TODO: Add proper TypeScript types and replace global references with imports
 
-export default function CompanySetupModal({uid,email,onDone,onClose}: any){
+import React, { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom';
+import { C, btn, inp, card } from '@/core/constants';
+import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
+
+function CompanySetupModal({uid,email,onDone,onClose}){
   const [name,setName]=useState("");
   const [loading,setLoading]=useState(false);
   const [err,setErr]=useState("");
 
-  async function create(e: any){
+  async function create(e){
     e.preventDefault();if(!name.trim())return;setLoading(true);setErr("");
     try{
       const cid=await createCompany(uid,email,name.trim());
-      _appCtx.companyId=cid;(_appCtx as any).role="admin";
-      (_appCtx as any).projectsPath=`companies/${cid}/projects`;
-      (_appCtx as any).configPath=`companies/${cid}/config`;
+      _appCtx.companyId=cid;_appCtx.role="admin";
+      _appCtx.projectsPath=`companies/${cid}/projects`;
+      _appCtx.configPath=`companies/${cid}/config`;
       onDone(cid,"admin",name.trim());
-    }catch(ex: any){setErr(ex.message);setLoading(false);}
+    }catch(ex){setErr(ex.message);setLoading(false);}
   }
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
-      <div style={{...card(),width:"100%",maxWidth:440}} onClick={(e: any)=>e.stopPropagation()}>
+      <div style={{...card(),width:"100%",maxWidth:440}} onClick={e=>e.stopPropagation()}>
         <div style={{fontSize:20,fontWeight:700,marginBottom:4}}>Set Up Company Workspace</div>
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Create a shared workspace so your team can collaborate on projects.</div>
         <form onSubmit={create}>
-          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase" as const,letterSpacing:0.5}}>Company Name</label>
-          <input value={name} onChange={(e: any)=>setName(e.target.value)} placeholder="e.g. Matrix Systems, Inc." style={{...inp(),marginBottom:16}} autoFocus/>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Company Name</label>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Matrix Systems, Inc." style={{...inp(),marginBottom:16}} autoFocus/>
           {err&&<div style={{color:C.red,fontSize:12,marginBottom:12}}>{err}</div>}
           <div style={{display:"flex",gap:10}}>
             <button type="button" onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
@@ -39,3 +43,5 @@ export default function CompanySetupModal({uid,email,onDone,onClose}: any){
     </div>
   );
 }
+
+export default CompanySetupModal;

@@ -1,17 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C } from '@/core/constants';
-
 import { getPageTypes } from '@/core/helpers';
 
 function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex((p: any)=>p.id===startId);return i>=0?i:0;});
   const pg=pages[idx]||pages[0];
-  const typeColors: any={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted,zoomed_detail:"#fde047",label:"#f97316",spec:"#38bdf8",other:"#a78bfa",ignore:"#6b7280"};
+  const typeColors: any={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:(C as any).teal||"#0d9488",layout:C.purple,pid:C.muted,zoomed_detail:"#fde047",label:"#f97316",spec:"#38bdf8",other:"#a78bfa",ignore:"#6b7280"};
   const typeLabels: any={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout",pid:"P&ID",zoomed_detail:"Zoomed Detail",label:"Label",spec:"Spec",other:"Other",ignore:"Ignore"};
   const regionTypeShort: any={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",pid:"P&ID",zoomed_detail:"Zoom",label:"Label",spec:"Spec",other:"Other",ignore:"Ignore"};
 
-  // Region drawing state
   const [regionMode,setRegionMode]=useState(false);
   const [drawStart,setDrawStart]=useState<any>(null);
   const [drawCurrent,setDrawCurrent]=useState<any>(null);
@@ -26,7 +24,6 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
   const noteInputRef=useRef<any>(null);
   const editNoteRef=useRef<any>(null);
 
-  // Sync regions when page index changes (not on every pages prop update)
   const prevIdxRef=useRef(idx);
   useEffect(()=>{
     if(prevIdxRef.current!==idx){
@@ -37,13 +34,11 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
     }
   },[idx,pages]);
 
-  // Save regions to parent
   function saveRegions(newRegions: any[]){
     setRegions(newRegions);
     if(onRegionsChange&&pg)onRegionsChange(pg.id,newRegions);
   }
 
-  // Get normalized coords from mouse event relative to image
   function getNormCoords(e: any){
     if(!imgRef.current)return null;
     const r=imgRef.current.getBoundingClientRect();
@@ -52,7 +47,6 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
 
   function onImgMouseDown(e: any){
     if(!regionMode||pendingRect)return;
-    // Don't start drawing if clicking inside an edit panel or region
     if(e.target.closest&&(e.target.closest('[data-region-panel]')||e.target.closest('[data-region-box]')))return;
     e.preventDefault();e.stopPropagation();
     const c=getNormCoords(e);if(!c)return;
@@ -69,17 +63,17 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
     const x=Math.min(drawStart.x,drawCurrent.x),y=Math.min(drawStart.y,drawCurrent.y);
     const w=Math.abs(drawCurrent.x-drawStart.x),h=Math.abs(drawCurrent.y-drawStart.y);
     setDrawStart(null);setDrawCurrent(null);
-    if(w<0.02||h<0.02)return; // too small, ignore
+    if(w<0.02||h<0.02)return;
     setPendingRect({x,y,w,h});
   }
 
-  function assignType(type: any){
+  function assignType(type: string){
     if(!pendingRect)return;
     setPendingType(type);setPendingNote("");
     setTimeout(()=>{if(noteInputRef.current)noteInputRef.current.focus();},50);
   }
 
-  function finishRegion(overrideNote?: any){
+  function finishRegion(overrideNote?: string){
     if(!pendingRect||!pendingType)return;
     const note=typeof overrideNote==="string"?overrideNote:pendingNote;
     const region={id:Date.now()+Math.random(),x:pendingRect.x,y:pendingRect.y,w:pendingRect.w,h:pendingRect.h,
@@ -100,7 +94,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
     setEditingRegion(null);setEditNote("");
   }
 
-  function changeRegionType(rid: any,newType: any){
+  function changeRegionType(rid: any,newType: string){
     saveRegions(regions.map((r: any)=>r.id===rid?{...r,type:newType,label:regionTypeShort[newType]||newType}:r));
   }
 
@@ -135,7 +129,6 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
   const types=getPageTypes(pg);
   const hasFilmstrip=pages.length>1;
 
-  // Build rubber-band rect style
   const rubberBand=drawStart&&drawCurrent?{
     left:(Math.min(drawStart.x,drawCurrent.x)*100)+"%",
     top:(Math.min(drawStart.y,drawCurrent.y)*100)+"%",
@@ -145,12 +138,10 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
 
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,zIndex:9999,display:"flex",flexDirection:"column",background:"rgba(0,0,0,0.97)"}}>
-
-      {/* Top bar */}
       <div style={{flexShrink:0,display:"flex",alignItems:"center",gap:12,padding:"12px 20px",background:"#0d0d14",borderBottom:`1px solid ${C.border}`}}>
         <div style={{flex:1,fontSize:15,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pg.name}</div>
         <div style={{display:"flex",gap:6}}>
-          {types.map((t: any)=>(
+          {types.map((t: string)=>(
             <span key={t} style={{background:typeColors[t]+"33",color:typeColors[t],border:`1px solid ${typeColors[t]}66`,borderRadius:10,padding:"3px 10px",fontSize:13,fontWeight:700}}>
               {typeLabels[t]}
             </span>
@@ -165,27 +156,22 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
         <button onClick={onClose} style={{background:C.border,border:"none",color:C.text,cursor:"pointer",borderRadius:6,padding:"6px 16px",fontSize:14,fontWeight:600}}>Close</button>
       </div>
 
-      {/* Region mode hint bar */}
       {regionMode&&!pendingRect&&!drawStart&&(
-        <div style={{flexShrink:0,padding:"6px 20px",background:"rgba(99,102,241,0.08)",borderBottom:`1px solid rgba(99,102,241,0.3)`,fontSize:12,color:"#818cf8",fontWeight:600,textAlign:"center"}}>
-          Draw to create a region &middot; Click a region to edit type, note, or delete &middot; Esc to exit
+        <div style={{flexShrink:0,padding:"6px 20px",background:"rgba(99,102,241,0.08)",borderBottom:"1px solid rgba(99,102,241,0.3)",fontSize:12,color:"#818cf8",fontWeight:600,textAlign:"center"}}>
+          Draw to create a region - Click a region to edit type, note, or delete - Esc to exit
         </div>
       )}
 
-      {/* Image area */}
       <div onClick={(e: any)=>{if(!regionMode)onClose();}} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",position:"relative",overflow:"hidden",padding:"16px 64px"}}>
         <div style={{position:"relative",display:"inline-block",maxWidth:"100%",maxHeight:"100%"}}>
           <img ref={imgRef} onClick={(e: any)=>e.stopPropagation()} src={pg.dataUrl||pg.storageUrl} alt={pg.name}
             draggable={false}
             style={{maxWidth:"100%",maxHeight:"calc(100vh - 180px)",objectFit:"contain",borderRadius:6,boxShadow:"0 4px 40px rgba(0,0,0,0.8)",display:"block",userSelect:"none"}}/>
 
-          {/* Region drawing overlay */}
           {regionMode&&(
             <div
               onMouseDown={onImgMouseDown} onMouseMove={onImgMouseMove} onMouseUp={onImgMouseUp}
               style={{position:"absolute",inset:0,cursor:pendingRect?"default":"crosshair",zIndex:2}}>
-
-              {/* Existing regions */}
               {regions.map((r: any)=>(
                 <div key={r.id} data-region-box="1" onClick={(e: any)=>{e.stopPropagation();if(e.target.closest&&e.target.closest('[data-region-panel]'))return;setSelectedRegion(selectedRegion===r.id?null:r.id);if(editingRegion&&editingRegion!==r.id)saveEditRegion();}}
                   onDoubleClick={(e: any)=>{e.stopPropagation();startEditRegion(r.id);}}
@@ -203,16 +189,14 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                       {r.note}
                     </div>
                   )}
-                  {/* Edit panel for selected region — rendered as portal to avoid overflow clipping */}
                   {selectedRegion===r.id&&(()=>{
                     const imgRect=imgRef.current?.getBoundingClientRect();
                     if(!imgRect)return null;
-                    const regionLeftPx=imgRect.left+r.x*imgRect.width;
                     const regionBottomPx=imgRect.top+(r.y+r.h)*imgRect.height;
                     const regionTopPx=imgRect.top+r.y*imgRect.height;
+                    const regionLeftPx=imgRect.left+r.x*imgRect.width;
                     const spaceBelow=window.innerHeight-regionBottomPx;
-                    const spaceAbove=regionTopPx;
-                    const showAbove=spaceBelow<240&&spaceAbove>240;
+                    const showAbove=spaceBelow<240&&regionTopPx>240;
                     const panelTop=showAbove?undefined:Math.min(regionBottomPx+6,window.innerHeight-260);
                     const panelBottom=showAbove?(window.innerHeight-regionTopPx+6):undefined;
                     const panelLeft=Math.max(8,Math.min(regionLeftPx,window.innerWidth-330));
@@ -221,10 +205,9 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                       ...(showAbove?{bottom:panelBottom}:{top:panelTop}),
                       zIndex:10001,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",
                       boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:240,maxWidth:320}}>
-                      {/* Type row */}
                       <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:5,textTransform:"uppercase",letterSpacing:0.5}}>Type</div>
                       <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
-                        {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","label","spec","other","ignore"].map((t: any)=>(
+                        {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","label","spec","other","ignore"].map((t: string)=>(
                           <button key={t} onClick={()=>changeRegionType(r.id,t)}
                             style={{background:r.type===t?(typeColors[t]||C.accent)+"44":(typeColors[t]||C.accent)+"15",
                               color:typeColors[t]||C.accent,border:`1px solid ${r.type===t?(typeColors[t]||C.accent):(typeColors[t]||C.accent)+"44"}`,
@@ -233,7 +216,6 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                           </button>
                         ))}
                       </div>
-                      {/* Note row */}
                       <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}}>Description</div>
                       <div style={{display:"flex",gap:4,marginBottom:8}}>
                         <input ref={editingRegion===r.id?editNoteRef:undefined} value={editingRegion===r.id?editNote:(r.note||"")}
@@ -249,25 +231,21 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                           </button>
                         )}
                       </div>
-                      {/* Delete */}
                       <button onClick={(e: any)=>{e.stopPropagation();deleteRegion(r.id);}}
                         style={{background:"rgba(239,68,68,0.1)",color:"#ef4444",border:"1px solid rgba(239,68,68,0.3)",borderRadius:6,
                           padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer",width:"100%"}}>
                         Delete Region
                       </button>
                     </div>,document.body);
-                    })()}
+                  })()}
                 </div>
               ))}
-
-              {/* Rubber-band preview */}
               {rubberBand&&(
                 <div style={{position:"absolute",...rubberBand,border:`2px dashed ${C.accent}`,background:C.accent+"18",borderRadius:3,pointerEvents:"none"}}/>
               )}
             </div>
           )}
 
-          {/* Show regions as faint overlays even when not in region mode */}
           {!regionMode&&regions.length>0&&(
             <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:1}}>
               {regions.map((r: any)=>(
@@ -275,14 +253,13 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                   border:`1px solid ${(typeColors[r.type]||C.accent)}55`,background:(typeColors[r.type]||C.accent)+"0a",borderRadius:3}}>
                   <span style={{position:"absolute",top:-1,left:-1,background:(typeColors[r.type]||C.accent)+"88",color:"#fff",fontSize:9,fontWeight:700,
                     padding:"0px 5px",borderRadius:"3px 0 3px 0",lineHeight:"14px",whiteSpace:"nowrap",opacity:0.7}}>
-                    {r.label||regionTypeShort[r.type]||r.type}{r.note?" — "+r.note:""}
+                    {r.label||regionTypeShort[r.type]||r.type}{r.note?" -- "+r.note:""}
                   </span>
                 </div>
               ))}
             </div>
           )}
 
-          {/* Type picker popup — two-step: pick type, then optional note — portal to avoid overflow */}
           {pendingRect&&(()=>{
             const imgRect=imgRef.current?.getBoundingClientRect();
             if(!imgRect)return null;
@@ -303,7 +280,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                 <>
                   <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>Region Type</div>
                   <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                    {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","label","spec","other","ignore"].map((t: any)=>(
+                    {["bom","schematic","backpanel","enclosure","pid","zoomed_detail","label","spec","other","ignore"].map((t: string)=>(
                       <button key={t} onClick={()=>assignType(t)}
                         style={{background:typeColors[t]+"22",color:typeColors[t],border:`1px solid ${typeColors[t]}66`,borderRadius:8,
                           padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",transition:"all 0.1s",whiteSpace:"nowrap"}}>
@@ -328,7 +305,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                     {pendingType==="other"?"Describe what you see (required)":"Describe what you see (optional)"}
                   </div>
                   <input ref={noteInputRef} value={pendingNote} onChange={(e: any)=>setPendingNote(e.target.value)}
-                    placeholder={pendingType==="other"?'e.g. "voltage schedule 480V/3ph", "wire termination table", "grounding diagram"':'e.g. "9 operators on DIN rail" or "AC unit detail"'}
+                    placeholder={pendingType==="other"?'e.g. "voltage schedule 480V/3ph"':'e.g. "9 operators on DIN rail"'}
                     onKeyDown={(e: any)=>{if(e.key==="Enter"){e.preventDefault();if(pendingType==="other"&&!pendingNote.trim())return;finishRegion();}if(e.key==="Escape"){e.stopPropagation();setPendingType(null);setPendingNote("");}}}
                     style={{width:"100%",background:"#0d0d14",border:`1px solid ${pendingType==="other"&&!pendingNote.trim()?"#a78bfa66":C.border}`,color:C.text,borderRadius:5,padding:"6px 10px",fontSize:12,outline:"none",boxSizing:"border-box",marginBottom:8}}/>
                   <div style={{display:"flex",gap:6}}>
@@ -352,18 +329,17 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
         {idx>0&&!regionMode&&(
           <button onClick={(e: any)=>{e.stopPropagation();setIdx((i: number)=>i-1);}}
             style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",background:"rgba(255,255,255,0.1)",border:`1px solid ${C.border}`,color:C.text,cursor:"pointer",borderRadius:8,padding:"10px 14px",fontSize:26,lineHeight:1}}>
-            &#8249;
+            &lsaquo;
           </button>
         )}
         {idx<pages.length-1&&!regionMode&&(
           <button onClick={(e: any)=>{e.stopPropagation();setIdx((i: number)=>i+1);}}
             style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",background:"rgba(255,255,255,0.1)",border:`1px solid ${C.border}`,color:C.text,cursor:"pointer",borderRadius:8,padding:"10px 14px",fontSize:26,lineHeight:1}}>
-            &#8250;
+            &rsaquo;
           </button>
         )}
       </div>
 
-      {/* Filmstrip */}
       {hasFilmstrip&&(
         <div style={{flexShrink:0,display:"flex",gap:8,padding:"10px 16px",overflowX:"auto",background:"#0d0d14",borderTop:`1px solid ${C.border}`}}>
           {pages.map((p: any,i: number)=>(
