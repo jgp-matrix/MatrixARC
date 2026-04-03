@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.374";
+const APP_VERSION="v1.19.375";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3620,7 +3620,8 @@ async function generateQuotePdf(project){
     const quoteNum=q.number||"Quote";
     const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
     const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-    const fileName=`[${quoteNum} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
+    // DECISION(v1.19.375): QTE_C- prefix for client quotes — sorts with other quotes in BC.
+    const fileName=`QTE_C-[${quoteNum} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
     const pdfBytes=doc.output("arraybuffer");
     // DECISION(v1.19.334): Delete same-rev file before re-uploading to prevent duplicates.
     // Every "Print Client Quote" click re-generates and uploads — without deletion, identical copies accumulate.
@@ -9696,7 +9697,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     for(const file of files){
       try{
         const arrayBuf=await file.arrayBuffer();
-        const fileName=`[REF] ${file.name}`;
+        // DECISION(v1.19.375): REF- prefix for reference/other documents.
+        const fileName=`REF-${file.name}`;
         await bcAttachPdfToJob(bcProjectNumber,fileName,arrayBuf,null);
         // Also upload to Firebase Storage for preview
         let storageUrl=null;
@@ -10381,9 +10383,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
       if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
+      // DECISION(v1.19.375): BC file naming convention — DWG- prefix for all drawings.
+      // Sorts drawings together in BC Attached Documents list.
       const fileName=isProduction
-        ?`[APPROVED TO PRODUCE${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
-        :`[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+        ?`DWG-[APPROVED TO PRODUCE${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
+        :`DWG-[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       // Clean up old bad-formatted files from previous code bugs
@@ -10401,20 +10405,25 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
       if(panel.bcPdfFileName){const old=panel.bcPdfFileName.replace(/\.pdf$/i,"");if(!oldBadNames.includes(old))oldBadNames.push(old);}
       for(const badName of oldBadNames){try{await bcDeleteAttachmentByName(bcProjectNumber,badName);}catch(e){}}
-      // Build previous rev filename to delete (one rev below current)
+      // Build previous rev filename to delete — check both DWG- prefixed and old non-prefixed formats
       const prevRev=rev-1;
       let previousFile=null;
       if(prevRev>0){
         const prevRevTag=` REV ${String(prevRev).padStart(2,'0')}`;
         previousFile=isProduction
-          ?`[APPROVED TO PRODUCE${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
-          :`[AS-QUOTED${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+          ?`DWG-[APPROVED TO PRODUCE${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
+          :`DWG-[AS-QUOTED${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+        // Also clean old non-prefixed version
+        const oldPrev=isProduction?`[APPROVED TO PRODUCE${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`:`[AS-QUOTED${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`;
+        try{await bcDeleteAttachmentByName(bcProjectNumber,oldPrev);}catch(e){}
       }else if(prevRev===0){
         previousFile=isProduction
-          ?`[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
-          :`[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+          ?`DWG-[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
+          :`DWG-[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+        const oldPrev=isProduction?`[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`:`[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`;
+        try{await bcDeleteAttachmentByName(bcProjectNumber,oldPrev);}catch(e){}
       }
-      // Also delete old format without lineSuffix
+      // Also delete old format without DWG- prefix and without lineSuffix
       const oldNoSuffix=isProduction
         ?`[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"}`
         :`[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"}`;
@@ -13581,7 +13590,7 @@ ${fullText.slice(0,8000)}`;
           const vendor=(quoteHeader.supplier||'Supplier').replace(/[^a-z0-9 &]/gi,' ').replace(/\s+/g,' ').trim();
           const rfqId=(quoteHeader.quoteId||'').replace(/[^a-z0-9-_]/gi,'').trim();
           const origName=(quoteHeader.fileName||`${vendor} Quote.pdf`).replace(/\.pdf$/i,'');
-          const bcFileName=`[${vendor}][${rfqId||'RFQ'}] ${origName}.pdf`.replace(/\s+/g,' ');
+          const bcFileName=`QTE_S-[${vendor}][${rfqId||'RFQ'}] ${origName}.pdf`.replace(/\s+/g,' ');
           const resp=await fetch(quoteHeader.pdfUrl);
           if(!resp.ok)throw new Error(`Storage fetch failed: ${resp.status}`);
           const ab=await resp.arrayBuffer();
@@ -14223,7 +14232,7 @@ ${fullText.slice(0,8000)}`;
                   const vendor=(quoteHeader.supplier||'Supplier').replace(/[^a-z0-9 &]/gi,' ').replace(/\s+/g,' ').trim();
                   const rfqId=(quoteHeader.quoteId||'').replace(/[^a-z0-9-_]/gi,'').trim();
                   const origName=(quoteHeader.fileName||`${vendor} Quote.pdf`).replace(/\.pdf$/i,'');
-                  const bcFileName=`[${vendor}][${rfqId||'RFQ'}] ${origName}.pdf`.replace(/\s+/g,' ');
+                  const bcFileName=`QTE_S-[${vendor}][${rfqId||'RFQ'}] ${origName}.pdf`.replace(/\s+/g,' ');
                   const resp=await fetch(quoteHeader.pdfUrl);
                   if(!resp.ok)throw new Error(`Storage fetch ${resp.status}`);
                   const ab=await resp.arrayBuffer();
@@ -14615,7 +14624,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
       const rev=project.quoteRev||0;
       const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
       const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-      const pdfName=`[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
+      const pdfName=`QTE_C-[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
       if(sendMode==="reply"){
         await graphReplyToMessage(graphToken,selectedThread.id,html,pdfBase64,pdfName);
       }else{
@@ -16158,7 +16167,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           const pdfBytes=await pdfResp.arrayBuffer();
           const vc=typeof vendorCode==="function"?vendorCode(submission.vendorName):(submission.vendorName||"SUPPLIER").slice(0,10).toUpperCase();
           const dateStr=new Date().toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"}).replace(/\//g,"-");
-          const quotePdfName=`[SUPPLIER QUOTE] ${vc} - ${submission.rfqNum||"RFQ"} - ${dateStr}.pdf`;
+          const quotePdfName=`QTE_S-[SUPPLIER QUOTE] ${vc} - ${submission.rfqNum||"RFQ"} - ${dateStr}.pdf`;
           await bcAttachPdfQueued(bcNum,quotePdfName,pdfBytes);
           console.log("Supplier quote PDF attached to BC:",quotePdfName);
         }
@@ -16258,7 +16267,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       const rev=project.quoteRev||0;
                       const co=(qq.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
                       const pn=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-                      const pdfName=`[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
+                      const pdfName=`QTE_C-[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
                       await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName);
                       const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to};
                       onUpdate(upd);
@@ -16545,7 +16554,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               const isReUpload=rev>0&&firstPanel?.bcPdfAttached;
               const dwg=firstPanel?.drawingNo||"NoDWG";
               const revTag=rev>0?` REV ${String(rev).padStart(2,'0')}`:"";
-              const fileName=`[AS-QUOTED${revTag}] ${dwg} - ${project.bcProjectNumber||"NoProject"}.pdf`;
+              const fileName=`DWG-[AS-QUOTED${revTag}] ${dwg} - ${project.bcProjectNumber||"NoProject"}.pdf`;
               return(<>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
                   <span style={{fontSize:22}}>{isReUpload?"⚠️":"✅"}</span>
@@ -16591,7 +16600,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               const firstPanel=(project.panels||[])[0];
               const dwg=firstPanel?.drawingNo||"NoDWG";
               const lineSuffix=String(1*100);
-              const fileName=`[APPROVED TO PRODUCE] ${dwg} - ${project.bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+              const fileName=`DWG-[APPROVED TO PRODUCE] ${dwg} - ${project.bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
               return(<>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
                   <span style={{fontSize:22}}>✅</span>
