@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.317";
+const APP_VERSION="v1.19.318";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9025,11 +9025,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 </div>
                 {showNewMfr?(
                   <div style={{background:C.accentDim,border:"1px solid "+C.accent,borderRadius:8,padding:10}}>
-                    <input value={newMfrCode} onChange={e=>setNewMfrCode(e.target.value.toUpperCase())} placeholder="Code (e.g. AB) *" maxLength={10} style={{...inp({marginBottom:6,fontSize:12})}}/>
+                    <input value={newMfrCode} onChange={e=>{setNewMfrCode(e.target.value.toUpperCase());setNewMfrErr("");}} placeholder="Code (e.g. AB) *" maxLength={10} style={{...inp({marginBottom:6,fontSize:12})}}/>
+                    {(()=>{const dup=newMfrCode.trim()&&bcManufacturers.find(m=>m.Code.toUpperCase()===newMfrCode.trim().toUpperCase());return dup?<div style={{color:C.yellow,fontSize:11,marginBottom:4}}>⚠ Code "{dup.Code}" already exists — {dup.Name}</div>:null;})()}
                     <input value={newMfrName} onChange={e=>setNewMfrName(e.target.value)} placeholder="Name (e.g. Allen-Bradley) *" style={{...inp({marginBottom:6,fontSize:12})}}/>
                     {newMfrErr&&<div style={{color:C.red,fontSize:11,marginBottom:4}}>{newMfrErr}</div>}
                     <div style={{display:"flex",gap:6}}>
-                      <button type="button" disabled={creatingMfr||!newMfrCode.trim()||!newMfrName.trim()} onClick={async()=>{
+                      <button type="button" disabled={creatingMfr||!newMfrCode.trim()||!newMfrName.trim()||bcManufacturers.some(m=>m.Code.toUpperCase()===newMfrCode.trim().toUpperCase())} onClick={async()=>{
                         setCreatingMfr(true);setNewMfrErr("");
                         try{
                           const code=newMfrCode.trim().slice(0,10);const name=newMfrName.trim();
@@ -9182,13 +9183,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   <td style={{padding:"4px 6px",fontSize:11,whiteSpace:"nowrap",minWidth:80}} onClick={e=>e.stopPropagation()}>
                     {inlineMfrCreate===item.number?(
                       <div style={{background:C.accentDim,border:"1px solid "+C.accent,borderRadius:6,padding:6,minWidth:140}}>
-                        <input value={inlineMfrCode} onChange={e=>setInlineMfrCode(e.target.value.toUpperCase())} placeholder="Code *" maxLength={10} autoFocus
+                        <input value={inlineMfrCode} onChange={e=>{setInlineMfrCode(e.target.value.toUpperCase());setInlineMfrErr("");}} placeholder="Code *" maxLength={10} autoFocus
                           style={{background:"#0a0a12",border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
+                        {(()=>{const dup=inlineMfrCode.trim()&&bcManufacturers.find(m=>m.Code.toUpperCase()===inlineMfrCode.trim().toUpperCase());return dup?<div style={{color:"#f59e0b",fontSize:10,marginBottom:3}}>⚠ "{dup.Code}" exists — {dup.Name}</div>:null;})()}
                         <input value={inlineMfrName} onChange={e=>setInlineMfrName(e.target.value)} placeholder="Name *"
                           style={{background:"#0a0a12",border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
                         {inlineMfrErr&&<div style={{color:C.red,fontSize:10,marginBottom:3}}>{inlineMfrErr}</div>}
                         <div style={{display:"flex",gap:4}}>
-                          <button disabled={inlineMfrCreating||!inlineMfrCode.trim()||!inlineMfrName.trim()} onClick={async()=>{
+                          <button disabled={inlineMfrCreating||!inlineMfrCode.trim()||!inlineMfrName.trim()||bcManufacturers.some(m=>m.Code.toUpperCase()===inlineMfrCode.trim().toUpperCase())} onClick={async()=>{
                             setInlineMfrCreating(true);setInlineMfrErr("");
                             try{
                               const code=inlineMfrCode.trim().slice(0,10);const name=inlineMfrName.trim();
