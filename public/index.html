@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.375";
+const APP_VERSION="v1.19.376";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9815,6 +9815,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [pendingPages,setPendingPages]=useState([]);
   const [alternates,setAlternates]=useState([]);
   const [crossOrCorrectPending,setCrossOrCorrectPending]=useState(null);
+  // DECISION(v1.19.376): Price confirmation popup — when user manually enters a price,
+  // ask if it's confirmed (push to BC Purchase Price + Item Card) or budgetary (BOM only, no BC update, no priceDate).
+  const [priceConfirmPending,setPriceConfirmPending]=useState(null); // {id, partNumber, price, row}
+  const [priceConfirmVendor,setPriceConfirmVendor]=useState("");
   const [cpdQuery,setCpdQuery]=useState("");
   const [showCpdSearch,setShowCpdSearch]=useState(false);
   const [bomVendorList,setBomVendorList]=useState([]);
@@ -10887,31 +10891,67 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       commitBcItem(bomRowId,bcItem,false);
     }
   }
+  // DECISION(v1.19.376): Manual price entry shows a confirmation popup asking if the cost is
+  // Confirmed (push to BC Item Card + Purchase Price) or Budgetary (BOM only, no BC, no priceDate).
   function updatePrice(id,val){
     const parsed=val===""?null:parseFloat(val);
     const row=(panel.bom||[]).find(r=>r.id===id);
-    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:isNaN(parsed)?null:parsed,priceSource:isNaN(parsed)||parsed===null?null:"manual",priceDate:Date.now()}:r);
-    const updated={...panel,bom:updatedBom};
-    onUpdate(updated);
-    if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
-    // Push updated cost to BC, then re-fetch to confirm and flip priceSource back to "bc"
+    if(parsed==null||isNaN(parsed)){
+      // Clearing price — no popup needed
+      const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:null,priceSource:null,priceDate:null}:r);
+      const updated={...panel,bom:updatedBom};onUpdate(updated);
+      if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},500);
+      return;
+    }
     const pn=(row?.partNumber||"").trim();
-    if(pn&&_bcToken&&parsed!=null&&!isNaN(parsed)){
-      bcPatchItemOData(pn,{Unit_Cost:parsed})
-        .then(()=>bcLookupItem(pn))
-        .then(bcItem=>{
-          if(!bcItem)return;
-          console.log("BC UNIT COST CONFIRMED:",pn,"→",bcItem.unitCost);
-          const confirmedCost=bcItem.unitCost??parsed;
-          if(autoSaveTimer.current){clearTimeout(autoSaveTimer.current);autoSaveTimer.current=null;}
+    // Show confirmation popup
+    setPriceConfirmPending({id,partNumber:pn,price:parsed,row});
+    setPriceConfirmVendor(row?.bcVendorName||"");
+  }
+  function applyBudgetaryPrice(){
+    if(!priceConfirmPending)return;
+    const{id,price}=priceConfirmPending;
+    // Budgetary: update BOM only, no BC push, no priceDate (show as dashed/unpriced)
+    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:price,priceSource:"manual",priceDate:null}:r);
+    const updated={...panel,bom:updatedBom};onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+    setPriceConfirmPending(null);
+  }
+  async function applyConfirmedPrice(){
+    if(!priceConfirmPending)return;
+    const{id,partNumber,price}=priceConfirmPending;
+    const vendorName=priceConfirmVendor.trim();
+    // Confirmed: update BOM with priceDate, push to BC Item Card + Purchase Price
+    const now=Date.now();
+    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:price,priceSource:"manual",priceDate:now,bcVendorName:vendorName||r.bcVendorName}:r);
+    const updated={...panel,bom:updatedBom};onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+    setPriceConfirmPending(null);
+    // Push to BC Item Card
+    if(partNumber&&_bcToken){
+      try{
+        await bcPatchItemOData(partNumber,{Unit_Cost:price});
+        const bcItem=await bcLookupItem(partNumber);
+        if(bcItem){
+          const confirmedCost=bcItem.unitCost??price;
           const cur=panelRef.current;
-          const bom2=(cur.bom||[]).map(r=>r.id===id?{...r,unitPrice:confirmedCost,priceSource:"bc",priceDate:Date.now()}:r);
-          const u2={...cur,bom:bom2};
-          onUpdate(u2);
-          try{onSaveImmediate(u2);}catch(e){}
-        })
-        .catch(e=>console.warn("BC unit cost update/verify failed:",pn,e));
+          const bom2=(cur.bom||[]).map(r=>r.id===id?{...r,unitPrice:confirmedCost,priceSource:"bc",priceDate:now,bcVendorName:vendorName||r.bcVendorName}:r);
+          const u2={...cur,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}
+        }
+      }catch(e){console.warn("BC unit cost update failed:",partNumber,e);}
+      // Push to Purchase Price card if vendor provided
+      if(vendorName){
+        try{
+          // Resolve vendor number from name
+          const vendors=await bcListVendors();
+          const v=vendors.find(v=>v.displayName===vendorName);
+          if(v?.number){
+            await bcPushPurchasePrice(partNumber,v.number,price,new Date().toISOString().split('T')[0],"EA");
+            console.log("BC PURCHASE PRICE pushed:",partNumber,v.number,price);
+          }
+        }catch(e){console.warn("BC purchase price push failed:",partNumber,e);}
+      }
     }
   }
   function updateVendor(id,vendorName){
@@ -12206,6 +12246,40 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           )
         ),document.body
       )}
+      {priceConfirmPending&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onMouseDown={e=>{if(e.target===e.currentTarget){applyBudgetaryPrice();}}}>
+          <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:480,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>Price Entry — {priceConfirmPending.partNumber||"Item"}</div>
+            <div style={{fontSize:22,fontWeight:800,color:C.accent,marginBottom:12}}>${Number(priceConfirmPending.price).toFixed(2)}</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Is this a confirmed cost or a budgetary estimate?</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
+              <button onClick={applyBudgetaryPrice}
+                style={{padding:"11px 14px",background:"#1a1a0a",border:"1px solid #f59e0b66",borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#f59e0b",marginBottom:3}}>Budgetary Estimate</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Update BOM price only. No update to BC. Price date will show as unconfirmed (—).</div>
+              </button>
+              <div style={{background:"#0a1a12",border:"1px solid #4ade8066",borderRadius:7,padding:"11px 14px"}}>
+                <div style={{fontWeight:700,fontSize:13,color:"#4ade80",marginBottom:6}}>Confirmed Cost</div>
+                <div style={{fontSize:11,color:C.muted,lineHeight:1.4,marginBottom:8}}>Push to BC Item Card + Purchase Price. Sets today's date as price date.</div>
+                <div style={{marginBottom:8}}>
+                  <label style={{fontSize:10,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3,display:"block"}}>Supplier / Vendor</label>
+                  <input value={priceConfirmVendor} onChange={e=>setPriceConfirmVendor(e.target.value)} placeholder="Enter vendor name"
+                    style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text,fontSize:12,width:"100%",boxSizing:"border-box"}}/>
+                </div>
+                <button onClick={applyConfirmedPrice}
+                  style={{padding:"8px 16px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",width:"100%"}}>
+                  ✓ Confirm & Push to BC
+                </button>
+              </div>
+            </div>
+            <button onClick={()=>setPriceConfirmPending(null)}
+              style={{padding:"7px 14px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer"}}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ,document.body)}
       {crossOrCorrectPending&&(()=>{
         const aiSug=guessCorrection(crossOrCorrectPending.origPN,crossOrCorrectPending.newPN);
         const dismiss=()=>setCrossOrCorrectPending(null);
