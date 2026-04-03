@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.356";
+const APP_VERSION="v1.19.357";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3383,14 +3383,16 @@ async function buildQuotePdfDoc(doc,project){
     const otherDocs=(pan.otherDocs||[]).filter(d=>d.name);
     if(drawingFileNames.length>0||otherDocs.length>0){
       const allDocNames=[...drawingFileNames,...otherDocs.map(d=>d.name)];
-      const docText=allDocNames.join("  ·  ");
       const maxDocW=ctx.contentWidth-8;
       doc.setFontSize(7.5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
       doc.text("Documents Provided",ARC_DOC.margin.left+2,ctx.y);ctx.y+=3.5;
       doc.setFont("helvetica","bold");doc.setFontSize(7);doc.setTextColor(...ARC_DOC.colors.black);
-      const docLines=doc.splitTextToSize(docText,maxDocW);
-      docLines.forEach(function(ln,li){doc.text(ln,ARC_DOC.margin.left+3,ctx.y+li*2.7);});
-      ctx.y+=docLines.length*2.7+2;
+      allDocNames.forEach(function(name,di){
+        var txt=(di+1)+") "+name;
+        doc.text(txt,ARC_DOC.margin.left+3,ctx.y);
+        ctx.y+=2.7;
+      });
+      ctx.y+=1.5;
     }
 
     // DECISION(v1.19.332): NOTES box always renders even when empty — user wants the field visible
