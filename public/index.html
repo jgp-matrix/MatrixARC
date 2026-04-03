@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.396";
+const APP_VERSION="v1.19.397";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11054,8 +11054,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             }
             updatedBom=updatedBom.map(r=>{const key=String(r.id);return key in poMap?{...r,bcPoDate:poMap[key]}:r;});
           }
-          // When called from Refresh button (no bomOverride), re-check bc rows too so updated costs are picked up
-          const eligible=bom.filter(r=>{if(r.isLaborRow)return false;const ps=r.priceSource;if(ps==="manual"&&bomOverride)return false;if(ps==="bc"&&bomOverride)return false;return true;});
+          // DECISION(v1.19.397): When refreshing prices, skip items that already have BOTH a price AND a priceDate.
+          // Previously, all items were re-processed and BC lookups returning null/0 would wipe out existing dates.
+          // Only re-check items that are unpriced, undated, or explicitly overridden.
+          const eligible=bom.filter(r=>{
+            if(r.isLaborRow)return false;
+            const ps=r.priceSource;
+            if(ps==="manual")return false; // Never touch manual prices
+            // If item already has a confirmed price with a date, skip it during refresh
+            if(!bomOverride&&r.unitPrice>0&&r.priceDate&&ps==="bc")return false;
+            return true;
+          });
           _pp({msg:`BC: Fuzzy-matching ${eligible.length} items…`,pct:27});
           await bcGetVendorMap();
           const bcMap={};
