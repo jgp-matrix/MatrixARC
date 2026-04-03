@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.360";
+const APP_VERSION="v1.19.361";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14799,7 +14799,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     </div>
                   ):(
                     <div style={{display:"inline-flex",alignItems:"center",gap:4}}>
-                      <select value={project.bcContactNo||""} onChange={e=>{
+                      <select value={project.bcContactNo||""}
+                        onFocus={()=>{if(project.bcCustomerNumber&&_bcToken)bcFetchCustomerContacts(project.bcCustomerNumber).then(c=>{if(c.length)setContactPersons(c);});}}
+                        onChange={e=>{
                         const no=e.target.value;
                         if(no==="__NEW__"){setShowNewContact(true);setNewContactName("");setNewContactEmail("");setNewContactPhone("");setNewContactErr("");return;}
                         const c=contactPersons.find(p=>p.number===no);
@@ -14807,7 +14809,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                           quote:{...(project.quote||{}),contact:c?c.displayName:"",email:c?.email||project.quote?.email,phone:c?.phone||project.quote?.phone}};
                         onUpdate(upd);
                         if(project.bcProjectNumber&&_bcToken&&no)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:no}).catch(()=>{});
-                      }} style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:200}}>
+                      }} style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",minWidth:220,maxWidth:360}}>
                         <option value="">— Select Person —</option>
                         <option value="__NEW__" style={{color:"#38bdf8",fontWeight:700}}>+ New Contact…</option>
                         {contactPersons.map(c=><option key={c.number} value={c.number}>{c.displayName}{c.email?" ("+c.email+")":""}</option>)}
@@ -15151,16 +15153,30 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
                 </div>
                 <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Client Quote{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?` (Rev ${project.quoteRev} ⚠ unsent)`:project.quoteRev>0?` (Rev ${project.quoteRev})`:""}</button>
-                {!readOnly&&<button onClick={()=>{
+                {!readOnly&&<button onClick={async()=>{
                   const q=project.quote||{};
                   const rev=project.quoteRev||0;
                   const isBudg=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
-                  // DECISION(v1.19.359): Pull contact/salesperson from project-level fields first,
-                  // then fall back to quote fields. The Sales/Contact dropdowns update project fields
-                  // (bcSalesperson, bcContactName, etc.) but may not sync to quote fields immediately.
-                  const contactName=project.bcContactName||q.contact||"";
+                  // DECISION(v1.19.360): Re-fetch contacts from BC to get latest email/phone before
+                  // opening the modal. This handles cases where email was added to BC after initial load.
+                  let contactName=project.bcContactName||q.contact||"";
+                  let toEmail=project.bcContactEmail||q.email||"";
+                  if(project.bcCustomerNumber&&_bcToken&&project.bcContactNo){
+                    try{
+                      const freshContacts=await bcFetchCustomerContacts(project.bcCustomerNumber);
+                      if(freshContacts.length)setContactPersons(freshContacts);
+                      const match=freshContacts.find(c=>c.number===project.bcContactNo);
+                      if(match){
+                        if(match.email&&!toEmail)toEmail=match.email;
+                        if(match.displayName)contactName=match.displayName;
+                        // Update project if email was missing
+                        if(match.email&&!project.bcContactEmail){
+                          onUpdate({...project,bcContactEmail:match.email,quote:{...(project.quote||{}),email:match.email}});
+                        }
+                      }
+                    }catch(e){}
+                  }
                   const custFirst=(contactName).split(" ")[0]||"";
-                  const toEmail=project.bcContactEmail||q.email||"";
                   // Resolve salesperson info — check cached salesperson list for current bcSalespersonCode
                   const spCode=project.bcSalespersonCode||"";
                   const spCached=spCode&&window._arcSalespersonCache?window._arcSalespersonCache.find(s=>s.Code===spCode):null;
