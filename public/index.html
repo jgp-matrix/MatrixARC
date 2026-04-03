@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.315";
+const APP_VERSION="v1.19.316";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8667,6 +8667,11 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [editMfrItem,setEditMfrItem]=useState(null);
   const [editMfrCode,setEditMfrCode]=useState("");
   const [savingMfr,setSavingMfr]=useState(false);
+  const [showNewMfr,setShowNewMfr]=useState(false);
+  const [newMfrCode,setNewMfrCode]=useState("");
+  const [newMfrName,setNewMfrName]=useState("");
+  const [creatingMfr,setCreatingMfr]=useState(false);
+  const [newMfrErr,setNewMfrErr]=useState("");
   const bomPages=((pages||[]).filter(p=>getPageTypes(p).includes('bom')&&(p.dataUrl||p.storageUrl)));
 
   async function locateInDrawing(pgIdx){
@@ -9004,12 +9009,43 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 </select>
               </div>
               <div style={{flex:1,minWidth:180}}>
-                <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Manufacturer</label>
-                <select value={createMfr} onChange={e=>setCreateMfr(e.target.value)}
-                  style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
-                  <option value="">— None —</option>
-                  {bcManufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
-                </select>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                  <label style={{fontSize:11,color:C.muted}}>Manufacturer</label>
+                  {!showNewMfr&&<button type="button" onClick={()=>{setShowNewMfr(true);setNewMfrCode("");setNewMfrName("");setNewMfrErr("");}} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,padding:0,fontWeight:600}}>+ New MFR</button>}
+                </div>
+                {showNewMfr?(
+                  <div style={{background:C.accentDim,border:"1px solid "+C.accent,borderRadius:8,padding:10}}>
+                    <input value={newMfrCode} onChange={e=>setNewMfrCode(e.target.value.toUpperCase())} placeholder="Code (e.g. AB) *" maxLength={10} style={{...inp({marginBottom:6,fontSize:12})}}/>
+                    <input value={newMfrName} onChange={e=>setNewMfrName(e.target.value)} placeholder="Name (e.g. Allen-Bradley) *" style={{...inp({marginBottom:6,fontSize:12})}}/>
+                    {newMfrErr&&<div style={{color:C.red,fontSize:11,marginBottom:4}}>{newMfrErr}</div>}
+                    <div style={{display:"flex",gap:6}}>
+                      <button type="button" disabled={creatingMfr||!newMfrCode.trim()||!newMfrName.trim()} onClick={async()=>{
+                        setCreatingMfr(true);setNewMfrErr("");
+                        try{
+                          const code=newMfrCode.trim().slice(0,10);const name=newMfrName.trim();
+                          const allPages=await bcDiscoverODataPages();
+                          const mPage=allPages.find(n=>n==='Manufacturer'||n==='Manufacturers');
+                          if(!mPage)throw new Error("Manufacturer OData page not found in BC");
+                          const r=await fetch(`${BC_ODATA_BASE}/${mPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
+                          if(!r.ok){const txt=await r.text();throw new Error(`BC error (${r.status}): ${txt}`);}
+                          _bcManufacturers=null;
+                          const fresh=await bcFetchManufacturers();setBcManufacturers(fresh);
+                          setCreateMfr(code);setShowNewMfr(false);
+                        }catch(e){setNewMfrErr(e.message||"Failed to create manufacturer");}
+                        setCreatingMfr(false);
+                      }} style={btn(C.accent,"#fff",{padding:"5px 12px",fontSize:11,fontWeight:700,opacity:creatingMfr||!newMfrCode.trim()||!newMfrName.trim()?0.5:1})}>
+                        {creatingMfr?"Creating…":"Create MFR"}
+                      </button>
+                      <button type="button" onClick={()=>setShowNewMfr(false)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 10px",color:C.muted,fontSize:11,cursor:"pointer"}}>Cancel</button>
+                    </div>
+                  </div>
+                ):(
+                  <select value={createMfr} onChange={e=>setCreateMfr(e.target.value)}
+                    style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                    <option value="">— None —</option>
+                    {bcManufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
+                  </select>
+                )}
               </div>
               <div style={{flex:1,minWidth:180}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
