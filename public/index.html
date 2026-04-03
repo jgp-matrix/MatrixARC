@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.368";
+const APP_VERSION="v1.19.369";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14351,6 +14351,127 @@ function ContingencyInput({value,readOnly,color,onSave}){
   );
 }
 
+// ── CADLINK BOM SEND MODAL ──
+// DECISION(v1.19.369): Modal to send all CADLink BOMs in the project via email or download them.
+function CADLinkSendModal({project,onClose}){
+  const [toEmail,setToEmail]=useState("");
+  const [sending,setSending]=useState(false);
+  const [downloading,setDownloading]=useState(false);
+  const panels=(project.panels||[]).filter(p=>(p.bom||[]).some(r=>!r.isLaborRow));
+  const bcNum=project.bcProjectNumber||"PRJ";
+  const projName=project.name||"Project";
+
+  function buildCADLinkRows(pan,panIdx){
+    const n=panIdx+1;
+    const lineSuffix=String(n*100);
+    const taskPN=`${bcNum}-${lineSuffix}`;
+    const desc=(pan.drawingNo?`${pan.drawingNo} Rev ${pan.drawingRev||"-"} - `:"")+(projName||pan.drawingDesc||pan.name||`Panel ${n}`);
+    const allBomRows=(pan.bom||[]).filter(r=>!r.isLaborRow);
+    const isTailRow=r=>CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())||/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim());
+    const isContingencyRow=r=>CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase());
+    const isBottomRow=r=>/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim());
+    const header=["Level","Part number","Part Revision","Short Description","Long Description","QtyPer","Part Type","UOM"];
+    const rows=[header];
+    rows.push([0,taskPN,1,desc.slice(0,50),"",1,2,"EA"]);
+    allBomRows.filter(isContingencyRow).forEach(r=>rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]));
+    allBomRows.filter(r=>!isTailRow(r)).forEach(r=>rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]));
+    allBomRows.filter(isBottomRow).forEach(r=>rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]));
+    return{rows,taskPN,fileName:`CADLink_${taskPN.replace(/[^a-z0-9\-]/gi,"_")}.xls`};
+  }
+
+  async function ensureXLSX(){
+    if(!window.XLSX){
+      await new Promise((res,rej)=>{
+        const s=document.createElement('script');s.src='https://unpkg.com/xlsx/dist/xlsx.full.min.js';
+        s.onload=res;s.onerror=()=>rej(new Error('Failed to load XLSX library'));document.head.appendChild(s);
+      });
+    }
+    return window.XLSX;
+  }
+
+  async function handleDownload(){
+    setDownloading(true);
+    try{
+      const XL=await ensureXLSX();
+      panels.forEach((pan,i)=>{
+        const{rows,fileName}=buildCADLinkRows(pan,i);
+        const ws=XL.utils.aoa_to_sheet(rows);
+        const wb=XL.utils.book_new();
+        XL.utils.book_append_sheet(wb,ws,"BOM");
+        XL.writeFile(wb,fileName,{bookType:"biff8"});
+      });
+    }catch(e){alert("Download failed: "+e.message);}
+    setDownloading(false);
+  }
+
+  async function handleSend(){
+    if(!toEmail.trim()){alert("Enter a recipient email.");return;}
+    setSending(true);
+    try{
+      const graphToken=await acquireGraphToken();
+      if(!graphToken){alert("Could not get Microsoft 365 token.");setSending(false);return;}
+      const XL=await ensureXLSX();
+      // Build all XLS files as base64 attachments
+      const attachments=panels.map((pan,i)=>{
+        const{rows,fileName}=buildCADLinkRows(pan,i);
+        const ws=XL.utils.aoa_to_sheet(rows);
+        const wb=XL.utils.book_new();
+        XL.utils.book_append_sheet(wb,ws,"BOM");
+        const xlsData=XL.write(wb,{bookType:"biff8",type:"base64"});
+        return{"@odata.type":"#microsoft.graph.fileAttachment",name:fileName,contentType:"application/vnd.ms-excel",contentBytes:xlsData};
+      });
+      const subject=`CADLink BOMs — ${bcNum} ${projName}`;
+      const htmlBody=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7"><p>Attached are the CADLink BOM files for <strong>${bcNum} ${projName}</strong>.</p><p>${panels.length} panel${panels.length!==1?"s":""}: ${panels.map((p,i)=>p.drawingNo||p.name||"Panel "+(i+1)).join(", ")}</p></div>`;
+      const msg={subject,body:{contentType:"HTML",content:htmlBody},toRecipients:toEmail.split(/[,;]\s*/).filter(e=>e.trim()).map(e=>({emailAddress:{address:e.trim()}})),attachments};
+      const r=await fetch("https://graph.microsoft.com/v1.0/me/sendMail",{method:"POST",headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},body:JSON.stringify({message:msg,saveToSentItems:true})});
+      if(!r.ok){const err=await r.text();throw new Error(err);}
+      onClose();alert("CADLink BOMs sent to "+toEmail);
+    }catch(e){alert("Send failed: "+e.message);}
+    setSending(false);
+  }
+
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:500,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+        <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:4}}>📦 CADLink BOM Export</div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:14}}>{bcNum} — {projName}</div>
+
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Panels ({panels.length})</div>
+          {panels.map((p,i)=>(
+            <div key={p.id||i} style={{display:"flex",justifyContent:"space-between",fontSize:12,color:C.sub,padding:"3px 0",borderBottom:`1px solid ${C.border}22`}}>
+              <span>Line {i+1}: {p.drawingNo||p.name||"Panel "+(i+1)}</span>
+              <span style={{color:C.muted}}>{(p.bom||[]).filter(r=>!r.isLaborRow).length} items</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Send To (email)</label>
+          <input value={toEmail} onChange={e=>setToEmail(e.target.value)} placeholder="engineering@matrixpci.com"
+            onKeyDown={e=>{if(e.key==="Enter"&&toEmail.trim())handleSend();}}
+            style={{...inp({fontSize:13}),width:"100%",boxSizing:"border-box"}}/>
+        </div>
+
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={handleDownload} disabled={downloading}
+            style={btn(C.greenDim,C.green,{flex:1,fontSize:13,fontWeight:700,border:`1px solid ${C.green}66`,opacity:downloading?0.5:1})}>
+            {downloading?"Downloading…":`⬇ Download ${panels.length} File${panels.length!==1?"s":""}`}
+          </button>
+          <button onClick={handleSend} disabled={sending||!toEmail.trim()}
+            style={btn("#0c2233","#38bdf8",{flex:1,fontSize:13,fontWeight:700,border:"1px solid #38bdf8",opacity:sending||!toEmail.trim()?0.5:1})}>
+            {sending?"Sending…":"✉ Send via Email"}
+          </button>
+        </div>
+        <div style={{textAlign:"right",marginTop:8}}>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,textDecoration:"underline"}}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  ,document.body);
+}
+
 // ── PANEL LIST VIEW ──
 // DECISION(v1.19.338): Extracted as a proper component (not IIFE) because React hooks require
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
@@ -14595,6 +14716,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
   const [selectedPanelId,setSelectedPanelId]=useState(()=>(project.panels||[])[0]?.id||null);
   const [eqModalPanelId,setEqModalPanelId]=useState(null);
   const [fbLaborMoreInfo,setFbLaborMoreInfo]=useState(false);
+  const [showCADLinkModal,setShowCADLinkModal]=useState(false);
   // Contact person dropdown state
   const [contactPersons,setContactPersons]=useState([]);
   const [showNewContact,setShowNewContact]=useState(false);
@@ -14874,6 +14996,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
+              {panels.some(p=>(p.bom||[]).some(r=>!r.isLaborRow))&&(
+                <button onClick={()=>setShowCADLinkModal(true)} style={btn("#0d1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>📦 CADLink BOMs</button>
+              )}
               {!readOnly&&onCopy&&(
                 <button onClick={onCopy} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⧉ Copy</button>
               )}
@@ -15256,6 +15381,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
       onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
     {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)}/>}
+    {showCADLinkModal&&<CADLinkSendModal project={project} onClose={()=>setShowCADLinkModal(false)}/>}
   </>);
 }
 
