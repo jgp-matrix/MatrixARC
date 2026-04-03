@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.362";
+const APP_VERSION="v1.19.363";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15216,7 +15216,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   setQuoteSendModalPLV({
                     to:toEmail,
                     subject:`${isBudg?"Budgetary ":""}Quote ${q.number||"Quote"}${rev>0?" Rev "+String(rev).padStart(2,"0"):""} — ${project.name||"Project"}`,
-                    message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
+                    message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
                 }} style={btn("#0c2233","#38bdf8",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #38bdf844"})}>✉ Send Quote{project.quoteSentAt?" (Resend)":""}</button>}
