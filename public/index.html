@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.336";
+const APP_VERSION="v1.19.337";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -782,6 +782,8 @@ function isPanelBudgetary(panel){
 function computePanelSellPrice(panel){
   const pr=panel.pricing||{};
   const laborEst=computeLaborEstimate(panel);
+  // DECISION(v1.19.314): Do NOT filter out isCrossed items here. Crossed items ARE the replacements
+  // (the new part that replaced the old one). Filtering them out excluded replacement costs from the sell price.
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow);
   const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
   // Contingency costs are now BOM line items (BOM CONTINGENCY, WIRE & CONSUMABLES) — included in materialCost
@@ -967,7 +969,9 @@ async function loadAlternates(uid){
   return _altCache;
 }
 async function saveAlternateEntry(uid,originalPN,replacement,autoReplace=false){
-  // Never save a cross where original and replacement are the same part
+  // DECISION(v1.19.319): Never save a cross where original and replacement are the same part.
+  // False crosses were polluting the alternates DB and showing bogus "Crossed/Superseded" notes on quotes.
+  // This guard + the one-time scrub in PanelListView cleaned up existing bad data.
   if(normPart(originalPN)===normPart(replacement?.partNumber||""))return await loadAlternates(uid);
   const alts=await loadAlternates(uid);
   const idx=alts.findIndex(a=>a.originalPN===originalPN);
@@ -1213,6 +1217,10 @@ async function bcGetJobGuid(jobNumber){
   return{compId,jobId:job.id};
 }
 
+// DECISION(v1.19.333): Sanitizes both expected and actual filenames before comparing.
+// Drawing numbers like LCP-100/200/500 contain slashes that BC mangles on upload.
+// Also uses flexible lineSuffix matching so old-format files are still found.
+// Without this, the "Deleted — Re-Upload" warning fires permanently for panels with special chars.
 async function bcCheckAttachmentExists(jobNumber,fileName){
   try{
     const {compId,jobId}=await bcGetJobGuid(jobNumber);
@@ -1264,7 +1272,10 @@ async function bcDeleteAttachmentByName(jobNumber,targetFileName){
   }catch(e){console.warn("bcDeleteAttachmentByName error:",e.message);}
 }
 
-// Bulk cleanup: fetch all attachments, keep only the latest of each unique fileName, delete old quote revs and bad-named files
+// DECISION(v1.19.334): Bulk cleanup runs after every drawing upload and quote upload.
+// Prior bugs produced dozens of duplicate files in BC (bad filenames, re-uploads without deletion,
+// old quote revisions not cleaned). This scans ALL attachments and removes: exact duplicates (keeps newest),
+// superseded quote revisions, and known bad-name patterns (bare lineSuffix, NoDWG). Keeps files in keepFileNames.
 async function bcCleanupDuplicateAttachments(jobNumber,keepFileNames=[]){
   if(!_bcToken||!jobNumber)return{deleted:0};
   try{
@@ -3221,7 +3232,11 @@ async function buildQuotePdfDoc(doc,project){
     const qp=(q.panelOverrides||{})[pan.id]||{};
     const panBom=pan.bom||[];
 
-    // Pre-estimate line item height to keep the whole box on one page
+    // DECISION(v1.19.331): Pre-estimate full line item height (header+specs+notes+crosses+pricing)
+    // and call arcDocCheckBreak so the entire box starts on a new page if it won't fit.
+    // Without this, the box spans pages and the roundedRect border only draws on the start page,
+    // leaving Line 2+ with no visible border. The border draws at line ~3340 with an
+    // if(ctx.pageNum===lineItemStartPage) guard — so the box MUST fit on one page.
     ctx._currentLineNum=pi+1;
     const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
     const estCrossH=crossedPre.length>0?(4+crossedPre.length*1.8):0;
@@ -3272,7 +3287,8 @@ async function buildQuotePdfDoc(doc,project){
     }
     ctx.y+=1;
 
-    // BOM Notes (always shown — inside bordered box)
+    // DECISION(v1.19.332): NOTES box always renders even when empty — user wants the field visible
+    // on every line item so it's clear where to add notes. Yellow background, "NOTES:" label.
     {
       const noteText=pan.bomNotes||"";
       doc.setFontSize(5.5);doc.setFont("helvetica","normal");
@@ -3302,7 +3318,9 @@ async function buildQuotePdfDoc(doc,project){
       ctx.y+=qnLines.length*2.5+1.5;
     }
 
-    // Crossed items — inside the bordered box, compact font
+    // DECISION(v1.19.330): Crossed items render INSIDE the bordered box (between notes and pricing).
+    // User wants crosses kept with their line item, not floating below. Font is 4.5pt with 1.8mm line
+    // height to keep the box compact enough to fit on one page (see height pre-estimate above).
     const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
     if(crossed.length>0){
       const maxCrossedW=ctx.contentWidth-8;
@@ -3462,7 +3480,10 @@ async function generateQuotePdf(project){
     const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
     const fileName=`[${quoteNum} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
     const pdfBytes=doc.output("arraybuffer");
-    // Delete same-rev duplicates before uploading (but keep different revs as history)
+    // DECISION(v1.19.334): Delete same-rev file before re-uploading to prevent duplicates.
+    // Every "Print Client Quote" click re-generates and uploads — without deletion, identical copies accumulate.
+    // We pass the same filename as previousFileName so bcAttachPdfToJob deletes it first.
+    // Different revisions are kept as history (only same-rev dupes are removed).
     bcAttachPdfToJob(bcNum,fileName,pdfBytes,fileName.replace(/\.pdf$/i,"")).then(()=>{
       console.log("[QUOTE] PDF uploaded to BC:",fileName);
       // Cleanup any remaining duplicates in background
@@ -10119,7 +10140,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const doc=new JsPDF({unit:"mm",format:[coverMm.mmW,coverMm.mmH],orientation:coverOrient,compress:true});
       setAttachPdfMsg("Building cover page…");
       await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH,uploadOpts);
-      // Compute naming/mode vars BEFORE stamp loop so they're available during burn
+      // DECISION(v1.19.320): These vars MUST be declared BEFORE the stamp loop below.
+      // Previously they were declared AFTER the loop — Babel hoisted const→var as undefined,
+      // so stamps burned with wrong values and filenames were malformed (e.g. "500 - PRJ402065").
+      // DECISION(v1.19.333): dwg must sanitize /\:*?"<>| chars to dashes — BC API rejects slashes
+      // in filenames (e.g. LCP-100/200/500 → LCP-100-200-500). Without this, uploads silently fail
+      // and the "Deleted — Re-Upload" warning triggers endlessly.
       const rev=quoteRev||0;
       const revTag=rev>0?` REV ${String(rev).padStart(2,'0')}`:"";
       const dwg=(panel.drawingNo||"NoDWG").replace(/[\/\\:*?"<>|]/g,"-");
@@ -10569,6 +10595,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const bom=(panel.bom||[]).map(r=>r.id===id?{...r,suggestedPartNumber:null}:r);
     onUpdate({...panel,bom});
   }
+  // DECISION(v1.19.315): commitBcItem has 5 params. skipLearning=true is the "Just Apply — No Learning" option
+  // from the cross/correction dialog. It applies the BC item without saving to alternates or corrections DB,
+  // and without setting isCrossed/isCorrection flags. This gives users an escape hatch when BC returns a
+  // different part number but it's not truly a cross or correction (e.g. cosmetic differences).
   function commitBcItem(bomRowId,bcItem,asCross,correctionType=null,skipLearning=false){
     const livePanel=latestPanelRef.current;
     let liveBom=livePanel.bom||[];
@@ -11181,6 +11211,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             return eqTotal>0?React.createElement("button",{onClick:()=>setShowEqModal(true),
               style:{background:eqOpen>0?"#451a03":"none",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,color:eqOpen>0?"#f59e0b":C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
               eqOpen>0?`❓ ${eqOpen} Question${eqOpen!==1?"s":""}`:`✓ ${eqTotal} Answered`):null;})()}
+          {/* DECISION(v1.19.336): Main upload button is disabled when green (current upload exists) to prevent
+              accidental re-uploads that create duplicates in BC. A small ↻ button appears next to it for intentional
+              re-uploads + duplicate cleanup. This was briefly made always-clickable in v1.19.335 but reverted because
+              every click re-uploads the same file, defeating the purpose of the duplicate prevention. */}
           {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&!extracting&&!aiPricing&&!validatingPanel&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(()=>{
             const hasUnsent=panel.bcPdfAttached&&!bcPdfMissing&&(quoteRev||0)>(panel.bcUploadQuoteRev||0);
             const needsUpload=hasUnsent||bcPdfMissing||(!panel.bcPdfAttached);
@@ -14149,7 +14183,10 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
     if(!selectedPanelId||!ids.includes(selectedPanelId))setSelectedPanelId(ids[0]||null);
   },[project.panels]);
 
-  // One-time scrub: clear isCrossed/crossedFrom where crossedFrom matches partNumber (false crosses)
+  // DECISION(v1.19.319): One-time scrub on project open — clears false crosses where crossedFrom===partNumber.
+  // A bug in applyPortalPrices was marking items as crossed to themselves (e.g. "2903148 → 2903148").
+  // This polluted the Crossed/Superseded notes on quotes. The scrub runs once per project open,
+  // cleans the data, and saves. Combined with the normPart guard in saveAlternateEntry, prevents recurrence.
   useEffect(()=>{
     let dirty=false;
     const cleaned=(project.panels||[]).map(panel=>{
