@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.384";
+const APP_VERSION="v1.19.385";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17561,6 +17561,28 @@ function APISetupModal({uid,onClose}){
   const [scrapersLoading,setScrapersLoading]=useState(true);
   const [editScraper,setEditScraper]=useState(null); // null=list, {}=new, {id:...}=editing
   const [scraperSaving,setScraperSaving]=useState(false);
+  const [testingId,setTestingId]=useState(null); // id of scraper/api currently being tested
+  const [testResult,setTestResult]=useState({}); // {id: {ok:bool, msg:string}}
+
+  async function testConnection(s){
+    setTestingId(s.id);setTestResult(prev=>({...prev,[s.id]:null}));
+    try{
+      const url=s.category==="api"?s.baseUrl:s.portalUrl||s.loginUrl;
+      if(!url){setTestResult(prev=>({...prev,[s.id]:{ok:false,msg:"No URL configured"}}));setTestingId(null);return;}
+      // For APIs, try a HEAD/GET request to verify the endpoint is reachable
+      // For scrapers, try to reach the portal URL
+      const r=await fetch(url,{method:"HEAD",mode:"no-cors"}).catch(()=>null);
+      // no-cors always returns opaque response (status 0) but if it doesn't throw, the host is reachable
+      if(r!==null){
+        setTestResult(prev=>({...prev,[s.id]:{ok:true,msg:`${s.category==="api"?"API endpoint":"Portal"} is reachable`}}));
+      }else{
+        setTestResult(prev=>({...prev,[s.id]:{ok:false,msg:"Could not reach URL — check the address"}}));
+      }
+    }catch(e){
+      setTestResult(prev=>({...prev,[s.id]:{ok:false,msg:e.message||"Connection failed"}}));
+    }
+    setTestingId(null);
+  }
 
   useEffect(()=>{
     const path=_appCtx.configPath||`users/${uid}/config`;
@@ -17714,11 +17736,14 @@ function APISetupModal({uid,onClose}){
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
               <span style={{width:8,height:8,borderRadius:"50%",background:s.enabled?C.green:C.muted,flexShrink:0}}/>
               <div style={{fontSize:12,color:C.sub,fontWeight:600,flex:1}}>{s.name}</div>
+              <button onClick={()=>testConnection(s)} disabled={testingId===s.id}
+                style={{background:"none",border:`1px solid ${C.accent}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.accent,cursor:"pointer",opacity:testingId===s.id?0.5:1}}>{testingId===s.id?"Testing…":"Test"}</button>
               <button onClick={()=>setEditScraper({...s})} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>Edit</button>
               <button onClick={()=>deleteScraperConfig(s.id)} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>✕</button>
             </div>
             <div style={{fontSize:11,color:C.muted}}>{s.baseUrl||"No URL"}</div>
             {s.notes&&<div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
+            {testResult[s.id]&&<div style={{fontSize:11,marginTop:6,color:testResult[s.id].ok?C.green:C.red,padding:"4px 8px",background:testResult[s.id].ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",borderRadius:4}}>{testResult[s.id].ok?"✓ ":"✗ "}{testResult[s.id].msg}</div>}
           </div>
         ))}
 
@@ -17774,11 +17799,14 @@ function APISetupModal({uid,onClose}){
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
               <span style={{width:8,height:8,borderRadius:"50%",background:s.enabled?C.green:C.muted,flexShrink:0}}/>
               <div style={{fontSize:12,color:C.sub,fontWeight:600,flex:1}}>{s.name}</div>
+              <button onClick={()=>testConnection(s)} disabled={testingId===s.id}
+                style={{background:"none",border:`1px solid #f59e0b44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:"#f59e0b",cursor:"pointer",opacity:testingId===s.id?0.5:1}}>{testingId===s.id?"Testing…":"Test"}</button>
               <button onClick={()=>setEditScraper({...s})} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>Edit</button>
               <button onClick={()=>deleteScraperConfig(s.id)} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>✕</button>
             </div>
             <div style={{fontSize:11,color:C.muted}}>{s.portalUrl||"No URL"} · {s.username||"No login"}</div>
             {s.notes&&<div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
+            {testResult[s.id]&&<div style={{fontSize:11,marginTop:6,color:testResult[s.id].ok?C.green:C.red,padding:"4px 8px",background:testResult[s.id].ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",borderRadius:4}}>{testResult[s.id].ok?"✓ ":"✗ "}{testResult[s.id].msg}</div>}
           </div>
         ))}
 
