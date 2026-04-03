@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.337";
+const APP_VERSION="v1.19.338";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -870,7 +870,9 @@ async function acquireBcToken(interactive=true){
 }
 
 let _graphToken=null;
-const GRAPH_MAIL_SCOPES=["https://graph.microsoft.com/Mail.Send"];
+// DECISION(v1.19.338): Mail.Read needed to search existing conversations for reply-to-thread.
+// Mail.ReadWrite needed to create draft replies with attachments before sending.
+const GRAPH_MAIL_SCOPES=["https://graph.microsoft.com/Mail.Send","https://graph.microsoft.com/Mail.Read","https://graph.microsoft.com/Mail.ReadWrite"];
 
 async function tryGraphTokenSilent(){
   try{
@@ -3797,6 +3799,62 @@ async function sendGraphEmail(graphToken,to,subject,htmlBody,pdfBase64,pdfFilena
     body:JSON.stringify({message:msg,saveToSentItems:true})
   });
   if(!r.ok){const err=await r.text();throw new Error(err);}
+}
+
+// DECISION(v1.19.338): Search Outlook for recent email threads with a customer so user can reply
+// to an existing conversation instead of starting a new one. Used in Send Quote modal.
+async function graphSearchEmails(graphToken,query,top=15){
+  if(!graphToken||!query)return[];
+  try{
+    const q=encodeURIComponent(query);
+    const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages?$search="${q}"&$top=${top}&$orderby=receivedDateTime desc&$select=id,subject,from,toRecipients,receivedDateTime,bodyPreview,conversationId,isRead`,{
+      headers:{"Authorization":`Bearer ${graphToken}`}
+    });
+    if(!r.ok){console.warn("Graph email search failed:",r.status);return[];}
+    const d=await r.json();
+    return(d.value||[]).map(m=>({
+      id:m.id,
+      subject:m.subject||"(No Subject)",
+      from:m.from?.emailAddress?.name||m.from?.emailAddress?.address||"Unknown",
+      fromEmail:m.from?.emailAddress?.address||"",
+      to:(m.toRecipients||[]).map(t=>t.emailAddress?.name||t.emailAddress?.address).join(", "),
+      date:m.receivedDateTime,
+      preview:(m.bodyPreview||"").slice(0,120),
+      conversationId:m.conversationId,
+      isRead:m.isRead
+    }));
+  }catch(e){console.warn("graphSearchEmails error:",e);return[];}
+}
+
+// Create a reply to an existing message with a PDF attachment and send it
+async function graphReplyToMessage(graphToken,messageId,htmlBody,pdfBase64,pdfFilename){
+  if(!graphToken||!messageId)throw new Error("Missing token or messageId");
+  // Step 1: Create a draft reply
+  const createR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/createReply`,{
+    method:"POST",
+    headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
+    body:JSON.stringify({comment:""})
+  });
+  if(!createR.ok){const t=await createR.text();throw new Error(`createReply failed (${createR.status}): ${t}`);}
+  const draft=await createR.json();
+  const draftId=draft.id;
+  // Step 2: Update the draft with our HTML body + attachment
+  const updateBody={body:{contentType:"HTML",content:htmlBody}};
+  if(pdfBase64){
+    updateBody.attachments=[{"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"Quote.pdf",contentType:"application/pdf",contentBytes:pdfBase64}];
+  }
+  const updateR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}`,{
+    method:"PATCH",
+    headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
+    body:JSON.stringify(updateBody)
+  });
+  if(!updateR.ok){const t=await updateR.text();throw new Error(`Draft update failed (${updateR.status}): ${t}`);}
+  // Step 3: Send the draft
+  const sendR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}/send`,{
+    method:"POST",
+    headers:{"Authorization":`Bearer ${graphToken}`}
+  });
+  if(!sendR.ok&&sendR.status!==202){const t=await sendR.text();throw new Error(`Send reply failed (${sendR.status}): ${t}`);}
 }
 
 async function bcClearAssemblyBOMLines(parentItemNo,bomPage){
@@ -14709,50 +14767,162 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
       onUpdate:updated=>onUpdate({...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)}),
       onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
-    {quoteSendModalPLV&&ReactDOM.createPortal(
-      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
-        <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:560,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+    {/* DECISION(v1.19.338): Send Quote modal supports two modes — "New Email" and "Reply to Thread".
+        Reply mode searches Outlook via Graph API for recent conversations with the customer,
+        lets the user pick a thread, then replies to it with the quote PDF attached.
+        This keeps the quote in the existing email conversation instead of starting a new one. */}
+    {quoteSendModalPLV&&(()=>{
+      const [sendMode,setSendMode]=React.useState("new"); // "new" | "reply"
+      const [threadSearch,setThreadSearch]=React.useState(project.quote?.company||project.bcCustomerName||project.name||"");
+      const [threadResults,setThreadResults]=React.useState([]);
+      const [threadSearching,setThreadSearching]=React.useState(false);
+      const [selectedThread,setSelectedThread]=React.useState(null);
+      const [sending,setSending]=React.useState(false);
+
+      async function searchThreads(q){
+        if(!q||q.length<2)return;
+        setThreadSearching(true);
+        const token=await acquireGraphToken();
+        if(token){const results=await graphSearchEmails(token,q,20);setThreadResults(results);}
+        setThreadSearching(false);
+      }
+
+      // Auto-search on first switch to reply mode
+      React.useEffect(()=>{if(sendMode==="reply"&&!threadResults.length&&threadSearch)searchThreads(threadSearch);},[sendMode]);
+
+      function fmtDate(iso){if(!iso)return"";try{return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit",hour:"numeric",minute:"2-digit"});}catch(e){return"";}}
+
+      async function handleSend(){
+        const m=quoteSendModalPLV;
+        if(sendMode==="new"&&!m.to.trim()){alert("Enter a recipient email.");return;}
+        if(sendMode==="reply"&&!selectedThread){alert("Select an email thread to reply to.");return;}
+        setSending(true);
+        try{
+          const graphToken=await acquireGraphToken();
+          if(!graphToken){alert("Could not get Microsoft 365 token.");setSending(false);return;}
+          const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
+          const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
+          const jsPDF=await ensureJsPDF();
+          const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
+          await buildQuotePdfDoc(pdfDoc,project);
+          const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
+          const q=project.quote||{};
+          const rev=project.quoteRev||0;
+          const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+          const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+          const pdfName=`[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
+
+          if(sendMode==="reply"){
+            await graphReplyToMessage(graphToken,selectedThread.id,html,pdfBase64,pdfName);
+          }else{
+            await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName);
+          }
+          const sentTo=sendMode==="reply"?selectedThread.fromEmail||selectedThread.from:m.to;
+          onUpdate({...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo});
+          if(project.bcProjectNumber&&_bcToken){
+            bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
+          }
+          setQuoteSendModalPLV(null);alert(sendMode==="reply"?"Quote sent as reply to: "+selectedThread.subject:"Quote sent to "+m.to);
+        }catch(e){alert("Send failed: "+e.message);}
+        setSending(false);
+      }
+
+      return ReactDOM.createPortal(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:640,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
           <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:12}}>✉ Send Quote</div>
-          <div style={{display:"flex",flexDirection:"column",gap:10}}>
-            <div><label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>To</label>
-            <input value={quoteSendModalPLV.to} onChange={e=>setQuoteSendModalPLV(prev=>({...prev,to:e.target.value}))} style={{...inp({fontSize:13})}}/></div>
-            <div><label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Subject</label>
-            <input value={quoteSendModalPLV.subject} onChange={e=>setQuoteSendModalPLV(prev=>({...prev,subject:e.target.value}))} style={{...inp({fontSize:13})}}/></div>
-            <div><label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Message</label>
-            <textarea value={quoteSendModalPLV.message} onChange={e=>setQuoteSendModalPLV(prev=>({...prev,message:e.target.value}))} rows={5} style={{...inp({fontSize:13,resize:"vertical",lineHeight:1.6})}}/></div>
-            <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line"}}>{quoteSendModalPLV.signature}</div>
+
+          {/* Mode Toggle */}
+          <div style={{display:"flex",gap:0,marginBottom:14,borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`}}>
+            <button onClick={()=>setSendMode("new")}
+              style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",
+                background:sendMode==="new"?C.accentDim:"transparent",color:sendMode==="new"?C.accent:C.muted}}>
+              ✉ New Email
+            </button>
+            <button onClick={()=>setSendMode("reply")}
+              style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",borderLeft:`1px solid ${C.border}`,
+                background:sendMode==="reply"?"#1a2a1a":"transparent",color:sendMode==="reply"?"#4ade80":C.muted}}>
+              ↩ Reply to Thread
+            </button>
           </div>
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+
+          <div style={{flex:1,overflow:"auto"}}>
+          {sendMode==="new"?(
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+              <div><label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>To</label>
+              <input value={quoteSendModalPLV.to} onChange={e=>setQuoteSendModalPLV(prev=>({...prev,to:e.target.value}))} style={{...inp({fontSize:13})}}/></div>
+              <div><label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Subject</label>
+              <input value={quoteSendModalPLV.subject} onChange={e=>setQuoteSendModalPLV(prev=>({...prev,subject:e.target.value}))} style={{...inp({fontSize:13})}}/></div>
+            </div>
+          ):(
+            <div>
+              {/* Thread Search */}
+              <div style={{display:"flex",gap:6,marginBottom:10}}>
+                <input value={threadSearch} onChange={e=>setThreadSearch(e.target.value)}
+                  placeholder="Search emails by customer, project, subject…"
+                  onKeyDown={e=>{if(e.key==="Enter")searchThreads(threadSearch);}}
+                  style={{...inp({fontSize:13}),flex:1}}/>
+                <button onClick={()=>searchThreads(threadSearch)} disabled={threadSearching||threadSearch.length<2}
+                  style={btn(C.accentDim,C.accent,{fontSize:12,padding:"6px 14px",fontWeight:700,opacity:threadSearching?0.5:1})}>
+                  {threadSearching?"Searching…":"Search"}
+                </button>
+              </div>
+              {/* Thread Results */}
+              <div style={{maxHeight:240,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
+                {threadResults.length===0&&!threadSearching&&(
+                  <div style={{padding:20,textAlign:"center",color:C.muted,fontSize:12}}>
+                    {threadSearch?"No results — try a different search":"Search for recent emails with this customer"}
+                  </div>
+                )}
+                {threadSearching&&<div style={{padding:20,textAlign:"center",color:C.accent,fontSize:12}}>Searching Outlook…</div>}
+                {threadResults.map((t,i)=>(
+                  <div key={t.id} onClick={()=>setSelectedThread(t)}
+                    style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}33`,cursor:"pointer",
+                      background:selectedThread?.id===t.id?"#0c2a1a":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}
+                    onMouseEnter={e=>{if(selectedThread?.id!==t.id)e.currentTarget.style.background=C.accentDim+"44";}}
+                    onMouseLeave={e=>{if(selectedThread?.id!==t.id)e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)";}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:selectedThread?.id===t.id?700:600,color:selectedThread?.id===t.id?"#4ade80":C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject}</div>
+                        <div style={{fontSize:11,color:C.muted,marginTop:2}}>{t.from}</div>
+                      </div>
+                      <div style={{fontSize:10,color:C.muted,whiteSpace:"nowrap",flexShrink:0}}>{fmtDate(t.date)}</div>
+                    </div>
+                    <div style={{fontSize:10,color:C.muted,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",opacity:0.7}}>{t.preview}</div>
+                    {selectedThread?.id===t.id&&<div style={{fontSize:10,color:"#4ade80",fontWeight:700,marginTop:4}}>✓ Selected — will reply to this thread</div>}
+                  </div>
+                ))}
+              </div>
+              {selectedThread&&(
+                <div style={{marginTop:8,background:"#0c2a1a",border:"1px solid #4ade8044",borderRadius:6,padding:"8px 12px"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:0.5,marginBottom:3}}>Replying To</div>
+                  <div style={{fontSize:12,fontWeight:700,color:C.text}}>{selectedThread.subject}</div>
+                  <div style={{fontSize:11,color:C.muted}}>From: {selectedThread.from} · {fmtDate(selectedThread.date)}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Message — shared between both modes */}
+          <div style={{marginTop:10}}>
+            <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Message</label>
+            <textarea value={quoteSendModalPLV.message} onChange={e=>setQuoteSendModalPLV(prev=>({...prev,message:e.target.value}))} rows={4} style={{...inp({fontSize:13,resize:"vertical",lineHeight:1.6})}}/>
+          </div>
+          <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line",marginTop:6}}>{quoteSendModalPLV.signature}</div>
+          </div>
+
+          {/* Actions */}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,flexShrink:0}}>
             <button onClick={()=>setQuoteSendModalPLV(null)} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
-            <button onClick={async()=>{
-              const m=quoteSendModalPLV;if(!m.to.trim()){alert("Enter a recipient email.");return;}
-              const graphToken=await acquireGraphToken();if(!graphToken){alert("Could not get Microsoft 365 token.");return;}
-              const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
-              const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
-              try{
-                // Generate PDF and attach to email
-                const jsPDF=await ensureJsPDF();
-                const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
-                await buildQuotePdfDoc(pdfDoc,project);
-                const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
-                const q=project.quote||{};
-                const rev=project.quoteRev||0;
-                const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-                const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-                const pdfName=`[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
-                await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName);
-                onUpdate({...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to});
-                // Also upload to BC
-                if(project.bcProjectNumber&&_bcToken){
-                  bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
-                }
-                setQuoteSendModalPLV(null);alert("Quote sent to "+m.to);
-              }catch(e){alert("Send failed: "+e.message);}
-            }} style={btn("#0c2233","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8"})}>✉ Send</button>
+            <button onClick={handleSend} disabled={sending}
+              style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:sending?0.5:1})}>
+              {sending?"Sending…":sendMode==="reply"?"↩ Reply with Quote":"✉ Send"}
+            </button>
           </div>
         </div>
       </div>
-    ,document.body)}
+    ,document.body);
+    })()}
   </>);
 }
 
