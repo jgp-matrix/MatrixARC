@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.365";
+const APP_VERSION="v1.19.366";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3967,45 +3967,27 @@ async function graphSearchEmails(graphToken,query,top=15){
 // DECISION(v1.19.344): Uses createReplyAll (not createReply) so the response goes to ALL
 // original recipients (To + Cc), not just the sender. Quote replies typically need to include
 // the full team (customer contacts, internal stakeholders) from the original conversation.
+// DECISION(v1.19.366): Uses the /replyAll action endpoint which sends immediately and supports
+// attachments in the message body. Previous draft-based approach (createReplyAll → PATCH → POST attachment → send)
+// was not attaching the PDF reliably. This single-call approach mirrors how sendGraphEmail works.
 async function graphReplyToMessage(graphToken,messageId,htmlBody,pdfBase64,pdfFilename){
   if(!graphToken||!messageId)throw new Error("Missing token or messageId");
-  // Step 1: Create a draft reply-all
-  const createR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/createReplyAll`,{
-    method:"POST",
-    headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
-    body:JSON.stringify({comment:""})
-  });
-  if(!createR.ok){const t=await createR.text();throw new Error(`createReply failed (${createR.status}): ${t}`);}
-  const draft=await createR.json();
-  const draftId=draft.id;
-  // Step 2: Update the draft body
-  const updateR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}`,{
-    method:"PATCH",
-    headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
-    body:JSON.stringify({body:{contentType:"HTML",content:htmlBody}})
-  });
-  if(!updateR.ok){const t=await updateR.text();throw new Error(`Draft update failed (${updateR.status}): ${t}`);}
-  // DECISION(v1.19.364): Attachments must be added via a separate POST to /attachments endpoint.
-  // Graph API ignores attachments in PATCH body — they silently don't attach.
-  console.log("[REPLY] Draft created:",draftId,"pdfBase64 length:",pdfBase64?.length||0);
+  const replyBody={
+    message:{
+      body:{contentType:"HTML",content:htmlBody}
+    }
+  };
   if(pdfBase64){
-    console.log("[REPLY] Uploading attachment:",pdfFilename,"size ~",Math.round(pdfBase64.length*3/4/1024),"KB");
-    const attR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}/attachments`,{
-      method:"POST",
-      headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
-      body:JSON.stringify({"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"Quote.pdf",contentType:"application/pdf",contentBytes:pdfBase64})
-    });
-    if(!attR.ok){const t=await attR.text();console.error("[REPLY] Attachment failed:",attR.status,t);throw new Error(`Attachment upload failed (${attR.status}): ${t}`);}
-    console.log("[REPLY] Attachment uploaded OK");
-  }else{
-    console.warn("[REPLY] No pdfBase64 — skipping attachment!");
+    replyBody.message.attachments=[{"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"Quote.pdf",contentType:"application/pdf",contentBytes:pdfBase64}];
+    console.log("[REPLY] Sending reply-all with attachment:",pdfFilename,"~",Math.round(pdfBase64.length*3/4/1024),"KB");
   }
-  // Step 3: Send the draft
-  const sendR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}/send`,{
+  const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/replyAll`,{
     method:"POST",
-    headers:{"Authorization":`Bearer ${graphToken}`}
+    headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
+    body:JSON.stringify(replyBody)
   });
-  if(!sendR.ok&&sendR.status!==202){const t=await sendR.text();throw new Error(`Send reply failed (${sendR.status}): ${t}`);}
+  if(!r.ok){const t=await r.text();console.error("[REPLY] replyAll failed:",r.status,t);throw new Error(`Reply failed (${r.status}): ${t}`);}
+  console.log("[REPLY] Reply-all sent OK");
 }
 
 async function bcClearAssemblyBOMLines(parentItemNo,bomPage){
