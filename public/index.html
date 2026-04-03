@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.352";
+const APP_VERSION="v1.19.353";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3329,7 +3329,8 @@ async function buildQuotePdfDoc(doc,project){
     const estCrossH=crossedPre.length>0?(4+crossedPre.length*1.8):0;
     const estSpecH=Math.ceil(6/2)*4.5; // 6 spec items in 2 cols
     const estNotesH=(pan.bomNotes?8:0)+(qp.lineNotes?5:0);
-    const estH=7+8+estSpecH+estNotesH+estCrossH+14+4; // header+title+specs+notes+crosses+pricing+padding
+    const estDocsH=((pan.pages||[]).length+(pan.otherDocs||[]).length)>0?6:0;
+    const estH=7+8+estSpecH+estNotesH+estCrossH+estDocsH+14+4; // header+title+specs+notes+crosses+docs+pricing+padding
     arcDocCheckBreak(ctx,estH);
     const lineItemStartY=ctx.y;
     const lineItemStartPage=ctx.pageNum;
@@ -3422,6 +3423,22 @@ async function buildQuotePdfDoc(doc,project){
         ctx.y+=lines.length*clh;
       });
       ctx.y+=1.5;
+    }
+
+    // DECISION(v1.19.353): Documents Provided section — lists all drawing pages and other docs
+    // for the supplier's reference. Shows filenames of all extracted drawings + uploaded specs/docs.
+    const drawingPages=(pan.pages||[]).filter(p=>p.name);
+    const otherDocs=(pan.otherDocs||[]).filter(d=>d.name);
+    if(drawingPages.length>0||otherDocs.length>0){
+      const allDocNames=[...drawingPages.map(p=>p.name),...otherDocs.map(d=>d.name)];
+      const docText=allDocNames.join("  ·  ");
+      const maxDocW=ctx.contentWidth-8;
+      doc.setFontSize(5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text("Documents Provided",ARC_DOC.margin.left+2,ctx.y);ctx.y+=2.5;
+      doc.setFont("helvetica","normal");doc.setFontSize(4.5);doc.setTextColor(...ARC_DOC.colors.black);
+      const docLines=doc.splitTextToSize(docText,maxDocW);
+      docLines.forEach(function(ln,li){doc.text(ln,ARC_DOC.margin.left+3,ctx.y+li*1.8);});
+      ctx.y+=docLines.length*1.8+1.5;
     }
 
     // Pricing row — INSIDE the bordered box
