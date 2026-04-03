@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.373";
+const APP_VERSION="v1.19.374";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1255,13 +1255,17 @@ async function bcCheckAttachmentExists(jobNumber,fileName){
   }catch(e){console.log("BC_ATT_CHECK: error",e.message);return null;}
 }
 
+// DECISION(v1.19.374): Delete by fetching ALL attachments and matching client-side.
+// BC $filter on fileName fails with special chars (&) and doesn't handle with/without .pdf extension.
 async function bcDeleteAttachmentByName(jobNumber,targetFileName){
   if(!targetFileName)return;
   try{
     const {compId,jobId}=await bcGetJobGuid(jobNumber);
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments?$filter=fileName eq '${targetFileName.replace(/'/g,"''")}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok)return;
-    const atts=(await r.json()).value||[];
+    const allAtts=(await r.json()).value||[];
+    const target=(targetFileName||"").toLowerCase().replace(/\.pdf$/i,"");
+    const atts=allAtts.filter(a=>{const f=(a.fileName||"").toLowerCase().replace(/\.pdf$/i,"");return f===target;});
     for(const a of atts){
       try{
         const dr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{
@@ -3620,9 +3624,8 @@ async function generateQuotePdf(project){
     const pdfBytes=doc.output("arraybuffer");
     // DECISION(v1.19.334): Delete same-rev file before re-uploading to prevent duplicates.
     // Every "Print Client Quote" click re-generates and uploads — without deletion, identical copies accumulate.
-    // We pass the same filename as previousFileName so bcAttachPdfToJob deletes it first.
-    // Different revisions are kept as history (only same-rev dupes are removed).
-    bcAttachPdfToJob(bcNum,fileName,pdfBytes,fileName.replace(/\.pdf$/i,"")).then(()=>{
+    // DECISION(v1.19.374): Pass full filename — bcDeleteAttachmentByName now normalizes with/without .pdf.
+    bcAttachPdfToJob(bcNum,fileName,pdfBytes,fileName).then(()=>{
       console.log("[QUOTE] PDF uploaded to BC:",fileName);
       // Cleanup any remaining duplicates in background
       bcCleanupDuplicateAttachments(bcNum,[fileName.replace(/\.pdf$/i,"")]).catch(()=>{});
