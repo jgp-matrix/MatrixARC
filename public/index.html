@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.345";
+const APP_VERSION="v1.19.346";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3186,11 +3186,30 @@ async function buildQuotePdfDoc(doc,project){
   });
 
   // ── INFO GRID: Attention / Prepared By ──
-  const addrLines=[q.company,q.address,q.phone?"Phone: "+q.phone:"",q.email].filter(Boolean).join("\n");
+  // DECISION(v1.19.346): Fall back to project-level fields if quote fields are empty.
+  // Salesperson is often set via the PanelListView dropdown (bcSalespersonCode) but the quote.salesperson
+  // name may not get auto-populated if the BC resolution fails. Use cached salesperson list as fallback.
+  const companyName=q.company||project.bcCustomerName||"—";
+  const addrLines=[companyName,q.address,q.phone?"Phone: "+q.phone:"",q.email].filter(Boolean).join("\n");
+  let salesName=q.salesperson||"";
+  if(!salesName&&project.bcSalespersonCode){
+    // Try cached list first, then direct BC lookup
+    if(window._arcSalespersonCache){
+      const sp=window._arcSalespersonCache.find(s=>s.Code===project.bcSalespersonCode);
+      if(sp)salesName=sp.Name||project.bcSalespersonCode;
+    }
+    if(!salesName&&_bcToken){
+      try{
+        const spR=await fetch(`${BC_ODATA_BASE}/Salesperson?$filter=Code eq '${project.bcSalespersonCode}'&$select=Code,Name&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(spR.ok){const spD=((await spR.json()).value||[])[0];if(spD?.Name)salesName=spD.Name;}
+      }catch(e){}
+    }
+    if(!salesName)salesName=project.bcSalespersonCode;
+  }
   const salesLines=["Salesperson",q.salesEmail?arcFmtPhone(q.salesPhone):"",q.salesEmail||""].filter(Boolean).join("\n");
   arcDocInfoGrid(ctx,
     [{label:"Attention",value:q.contact||"—",bold:true},{label:"",value:addrLines}],
-    [{label:"Prepared By",value:q.salesperson||"—",bold:true},{label:"",value:salesLines}]
+    [{label:"Prepared By",value:salesName||"—",bold:true},{label:"",value:salesLines}]
   );
 
   // ── PROJECT DETAILS ROW (boxed) ──
@@ -15333,6 +15352,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           if(pr.ok){
             const bc=((await pr.json()).value||[])[0];
             if(bc){
+              // DECISION(v1.19.346): Always re-populate company/salesperson/contact from BC if the quote
+              // fields are empty. Previous versions had timing bugs where these didn't get saved.
               if(!q.company&&bc.Sell_to_Customer_Name)autoFields.company=bc.Sell_to_Customer_Name;
               let addr=[bc.Sell_to_Address,bc.Sell_to_Address_2,bc.Sell_to_City&&bc.Sell_to_County?`${bc.Sell_to_City}, ${bc.Sell_to_County} ${bc.Sell_to_Post_Code||""}`.trim():bc.Sell_to_City].filter(Boolean).join("\n");
               // Fallback: if project card address is empty, fetch from Customer card
@@ -15383,7 +15404,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               if(!q.email&&!autoFields.email&&bc.SellToEmail)autoFields.email=bc.SellToEmail;
               if(bc.Payment_Terms_Code)autoFields.paymentTerms=bc.Payment_Terms_Code;
               if(bc.CCS_Shipment_Method_Code)autoFields.shippingMethod=bc.CCS_Shipment_Method_Code;
-              const spCode=bc.Person_Responsible||bc.CCS_Salesperson_Code||"";
+              // DECISION(v1.19.346): Use salesperson code from BC project card OR from the project's
+              // bcSalespersonCode (set via the Sales dropdown in PanelListView). BC card may not always
+              // have Person_Responsible populated even when the dropdown was set.
+              const spCode=bc.Person_Responsible||bc.CCS_Salesperson_Code||proj.bcSalespersonCode||"";
               if(spCode&&!proj.bcSalespersonCode){
                 proj={...proj,bcSalespersonCode:spCode};
               }
