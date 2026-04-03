@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.364";
+const APP_VERSION="v1.19.365";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3987,13 +3987,18 @@ async function graphReplyToMessage(graphToken,messageId,htmlBody,pdfBase64,pdfFi
   if(!updateR.ok){const t=await updateR.text();throw new Error(`Draft update failed (${updateR.status}): ${t}`);}
   // DECISION(v1.19.364): Attachments must be added via a separate POST to /attachments endpoint.
   // Graph API ignores attachments in PATCH body — they silently don't attach.
+  console.log("[REPLY] Draft created:",draftId,"pdfBase64 length:",pdfBase64?.length||0);
   if(pdfBase64){
+    console.log("[REPLY] Uploading attachment:",pdfFilename,"size ~",Math.round(pdfBase64.length*3/4/1024),"KB");
     const attR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}/attachments`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
       body:JSON.stringify({"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"Quote.pdf",contentType:"application/pdf",contentBytes:pdfBase64})
     });
-    if(!attR.ok){const t=await attR.text();throw new Error(`Attachment upload failed (${attR.status}): ${t}`);}
+    if(!attR.ok){const t=await attR.text();console.error("[REPLY] Attachment failed:",attR.status,t);throw new Error(`Attachment upload failed (${attR.status}): ${t}`);}
+    console.log("[REPLY] Attachment uploaded OK");
+  }else{
+    console.warn("[REPLY] No pdfBase64 — skipping attachment!");
   }
   // Step 3: Send the draft
   const sendR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}/send`,{
@@ -14433,6 +14438,7 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
       const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
       await buildQuotePdfDoc(pdfDoc,project);
       const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
+      console.log("[SEND QUOTE] PDF generated, base64 length:",pdfBase64?.length||0,"mode:",sendMode);
       const q=project.quote||{};
       const rev=project.quoteRev||0;
       const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
