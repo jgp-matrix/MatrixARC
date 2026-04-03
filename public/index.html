@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.372";
+const APP_VERSION="v1.19.373";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11166,21 +11166,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const regularRows=allBomRows.filter(r=>!isTailRow(r));
     const bottomRows=allBomRows.filter(isBottomRow);
 
-    const header=["Level","Part number","Part Revision","Short Description","Long Description","QtyPer","Part Type","UOM"];
+    const header=["Level","Part number","Part Revision","Short Description","Long Description","QtyPer","Part Type","UOM","Unit Cost"];
     const rows=[header];
     // Level 0 — parent assembly
-    rows.push([0,taskPN,1,desc.slice(0,50),"",panelQty,2,"EA"]);
+    rows.push([0,taskPN,1,desc.slice(0,50),"",panelQty,2,"EA",""]);
     // Level 1 — Contingency items first
     contingencyRows.forEach(r=>{
-      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]);
+      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA",r.unitPrice!=null?Number(r.unitPrice).toFixed(2):""]);
     });
     // Level 1 — Regular BOM items
     regularRows.forEach(r=>{
-      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]);
+      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA",r.unitPrice!=null?Number(r.unitPrice).toFixed(2):""]);
     });
     // Level 1 — Job Buyoff and Crate at bottom
     bottomRows.forEach(r=>{
-      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]);
+      rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA",r.unitPrice!=null?Number(r.unitPrice).toFixed(2):""]);
     });
 
     // Build proper XLSX using SheetJS (loaded on demand)
@@ -14371,12 +14371,12 @@ function CADLinkSendModal({project,onClose}){
     const isTailRow=r=>CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())||/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim());
     const isContingencyRow=r=>CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase());
     const isBottomRow=r=>/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim());
-    const header=["Level","Part number","Part Revision","Short Description","Long Description","QtyPer","Part Type","UOM"];
+    const header=["Level","Part number","Part Revision","Short Description","Long Description","QtyPer","Part Type","UOM","Unit Cost"];
     const rows=[header];
-    rows.push([0,taskPN,1,desc.slice(0,50),"",1,2,"EA"]);
-    allBomRows.filter(isContingencyRow).forEach(r=>rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]));
-    allBomRows.filter(r=>!isTailRow(r)).forEach(r=>rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]));
-    allBomRows.filter(isBottomRow).forEach(r=>rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA"]));
+    rows.push([0,taskPN,1,desc.slice(0,50),"",1,2,"EA",""]);
+    allBomRows.filter(isContingencyRow).forEach(r=>rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA",r.unitPrice!=null?Number(r.unitPrice).toFixed(2):""]));
+    allBomRows.filter(r=>!isTailRow(r)).forEach(r=>rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA",r.unitPrice!=null?Number(r.unitPrice).toFixed(2):""]));
+    allBomRows.filter(isBottomRow).forEach(r=>rows.push([1,(r.partNumber||"").trim(),1,(r.description||"").slice(0,50),"",r.qty||1,1,"EA",r.unitPrice!=null?Number(r.unitPrice).toFixed(2):""]));
     return{rows,taskPN,fileName:`CADLink_${taskPN.replace(/[^a-z0-9\-]/gi,"_")}.xls`};
   }
 
