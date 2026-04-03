@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.351";
+const APP_VERSION="v1.19.352";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1896,13 +1896,16 @@ async function bcFetchCustomerContacts(customerNumber){
     const compId=await bcGetCompanyId();
     if(!compId)return[];
     // Step 1: Get the company contact number linked to this customer via OData Customer Card
+    // DECISION(v1.19.352): Field is Primary_Contact_No (not Contact_No) on Customer_Card_Excel.
+    // If empty, fall back to REST API displayName for contact lookup.
+    // Company names with & must be URL-encoded in the $filter to avoid breaking the query.
     let companyContactNo="";let custName="";
     try{
       const allPages=await bcDiscoverODataPages();
       const custPage=allPages.find(n=>/^Customer_Card/i.test(n));
       if(custPage){
-        const cr=await fetch(`${BC_ODATA_BASE}/${custPage}?$filter=No eq '${customerNumber}'&$select=No,Contact_No,Name&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-        if(cr.ok){const cd=((await cr.json()).value||[])[0];if(cd){companyContactNo=cd.Contact_No||"";custName=cd.Name||"";}}
+        const cr=await fetch(`${BC_ODATA_BASE}/${custPage}?$filter=No eq '${customerNumber}'&$select=No,Primary_Contact_No,Contact_No,Name&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(cr.ok){const cd=((await cr.json()).value||[])[0];if(cd){companyContactNo=cd.Primary_Contact_No||cd.Contact_No||"";custName=cd.Name||"";}}
       }
     }catch(e){}
     // Fallback: REST API customer → use displayName
@@ -1913,11 +1916,15 @@ async function bcFetchCustomerContacts(customerNumber){
       }catch(e){}
     }
     // Step 2: Fetch contacts — by companyNumber (contact code) or companyName (fallback)
-    const filter=companyContactNo
-      ?`companyNumber eq '${companyContactNo}'`
-      :custName?`companyName eq '${custName.replace(/'/g,"''")}'`:null;
-    if(!filter){console.warn("bcFetchCustomerContacts: no filter for",customerNumber);return[];}
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=${filter}&$select=number,displayName,email,phoneNumber,companyName,type&$top=50&$orderby=displayName`,{
+    // Build URL with proper encoding — company names may contain & which breaks query strings
+    let filterParam="";
+    if(companyContactNo){
+      filterParam="$filter=companyNumber eq '"+companyContactNo+"'";
+    }else if(custName){
+      filterParam="$filter="+encodeURIComponent("companyName eq '"+custName.replace(/'/g,"''")+"'");
+    }
+    if(!filterParam){console.warn("bcFetchCustomerContacts: no filter for",customerNumber);return[];}
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?${filterParam}&$select=number,displayName,email,phoneNumber,companyName,type&$top=50&$orderby=displayName`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(!r.ok){console.warn("bcFetchCustomerContacts failed:",r.status);return[];}
