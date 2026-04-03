@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.388";
+const APP_VERSION="v1.19.389";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17794,7 +17794,25 @@ function APISetupModal({uid,onClose}){
                   </button>
                 </div>
                 {lr?.error&&<div style={{fontSize:11,color:C.red,padding:"4px 0"}}>{lr.error}</div>}
-                {lr?.results&&<pre style={{fontSize:10,color:C.sub,background:"#080810",border:`1px solid ${C.border}`,borderRadius:4,padding:8,maxHeight:200,overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",margin:0}}>{typeof lr.results==="string"?lr.results:JSON.stringify(lr.results,null,2)}</pre>}
+                {lr?.results&&(()=>{
+                  const d=lr.results;
+                  // If response has .results with price/description fields, show formatted
+                  const r=d.results||d;
+                  const price=r.price||r.Price||null;
+                  const desc=r.description||r.Description||r.productName||null;
+                  const avail=r.availability||r.Availability||r.stock||null;
+                  const pn=d.partNumber||null;
+                  if(price||desc||avail){
+                    return(<div style={{background:"#0a1a0a",border:"1px solid #4ade8044",borderRadius:6,padding:"10px 12px",marginTop:4}}>
+                      {pn&&<div style={{fontSize:11,color:C.muted,marginBottom:4}}>Part: <span style={{fontWeight:700,color:C.text}}>{pn}</span></div>}
+                      {price&&<div style={{fontSize:20,fontWeight:800,color:"#4ade80"}}>{price}</div>}
+                      {desc&&<div style={{fontSize:12,color:C.sub,marginTop:4}}>{desc}</div>}
+                      {avail&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>Availability: {avail}</div>}
+                    </div>);
+                  }
+                  // Fallback: raw JSON
+                  return <pre style={{fontSize:10,color:C.sub,background:"#080810",border:`1px solid ${C.border}`,borderRadius:4,padding:8,maxHeight:200,overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",margin:0}}>{typeof d==="string"?d:JSON.stringify(d,null,2)}</pre>;
+                })()}
               </div>
             )}
           </div>
@@ -17874,7 +17892,25 @@ function APISetupModal({uid,onClose}){
                   </button>
                 </div>
                 {lr?.error&&<div style={{fontSize:11,color:C.red,padding:"4px 0"}}>{lr.error}</div>}
-                {lr?.results&&<pre style={{fontSize:10,color:C.sub,background:"#080810",border:`1px solid ${C.border}`,borderRadius:4,padding:8,maxHeight:200,overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",margin:0}}>{typeof lr.results==="string"?lr.results:JSON.stringify(lr.results,null,2)}</pre>}
+                {lr?.results&&(()=>{
+                  const d=lr.results;
+                  // If response has .results with price/description fields, show formatted
+                  const r=d.results||d;
+                  const price=r.price||r.Price||null;
+                  const desc=r.description||r.Description||r.productName||null;
+                  const avail=r.availability||r.Availability||r.stock||null;
+                  const pn=d.partNumber||null;
+                  if(price||desc||avail){
+                    return(<div style={{background:"#0a1a0a",border:"1px solid #4ade8044",borderRadius:6,padding:"10px 12px",marginTop:4}}>
+                      {pn&&<div style={{fontSize:11,color:C.muted,marginBottom:4}}>Part: <span style={{fontWeight:700,color:C.text}}>{pn}</span></div>}
+                      {price&&<div style={{fontSize:20,fontWeight:800,color:"#4ade80"}}>{price}</div>}
+                      {desc&&<div style={{fontSize:12,color:C.sub,marginTop:4}}>{desc}</div>}
+                      {avail&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>Availability: {avail}</div>}
+                    </div>);
+                  }
+                  // Fallback: raw JSON
+                  return <pre style={{fontSize:10,color:C.sub,background:"#080810",border:`1px solid ${C.border}`,borderRadius:4,padding:8,maxHeight:200,overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",margin:0}}>{typeof d==="string"?d:JSON.stringify(d,null,2)}</pre>;
+                })()}
               </div>
             )}
           </div>
