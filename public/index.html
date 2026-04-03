@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.347";
+const APP_VERSION="v1.19.348";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14667,7 +14667,24 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                         {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:project.bcEnv&&project.bcEnv!==_bcConfig.env?"#64748b":C.accent,lineHeight:1}}>{project.bcProjectNumber}</span>}
                         {isBcDisconnected&&<span style={{fontSize:11,fontWeight:700,color:C.yellow,background:"rgba(234,179,8,0.1)",border:"1px solid rgba(234,179,8,0.3)",borderRadius:12,padding:"2px 10px",whiteSpace:"nowrap"}} title={"Linked to "+project.bcEnv}>⚠ BC Disconnected</span>}
                         {isBcDisconnected&&!readOnly&&onRelink&&<button onClick={e=>{e.stopPropagation();onRelink();}} disabled={relinking} style={{fontSize:11,fontWeight:700,color:"#38bdf8",background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.3)",borderRadius:12,padding:"2px 10px",cursor:relinking?"wait":"pointer",whiteSpace:"nowrap",opacity:relinking?0.6:1}}>{relinking?"Re-linking…":"🔗 Re-link to BC"}</button>}
-                        {project.bcCustomerName&&<span style={{fontSize:18,fontWeight:700,color:C.text}}>{project.bcCustomerName}</span>}
+                        {project.bcCustomerName&&!readOnly?(
+                          <span style={{fontSize:18,fontWeight:700,color:C.text,cursor:"text",borderBottom:"1px dashed transparent"}}
+                            contentEditable suppressContentEditableWarning
+                            onFocus={e=>{e.target.style.borderBottomColor=C.accent;e.target.style.outline="none";}}
+                            onBlur={e=>{
+                              e.target.style.borderBottomColor="transparent";
+                              const val=(e.target.textContent||"").trim();
+                              if(val&&val!==project.bcCustomerName){
+                                const upd={...project,bcCustomerName:val,quote:{...(project.quote||{}),company:val}};
+                                onUpdate(upd);
+                                // Update BC project card customer name if connected
+                                if(project.bcProjectNumber&&_bcToken)bcPatchJobOData(project.bcProjectNumber,{Bill_to_Name:val}).catch(()=>{});
+                              }
+                            }}
+                            onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();e.target.blur();}if(e.key==="Escape"){e.target.textContent=project.bcCustomerName;e.target.blur();}}}
+                            title="Click to edit customer name"
+                          >{project.bcCustomerName}</span>
+                        ):project.bcCustomerName?<span style={{fontSize:18,fontWeight:700,color:C.text}}>{project.bcCustomerName}</span>:null}
                       </div>
                     )}
                     <div style={{display:"flex",alignItems:"center",gap:6}}>
