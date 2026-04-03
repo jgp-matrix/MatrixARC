@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.349";
+const APP_VERSION="v1.19.350";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1886,27 +1886,42 @@ async function bcCreateCustomer(displayName,phone,email){
   return{number:d.number||"",displayName:d.displayName||displayName};
 }
 
-// DECISION(v1.19.347): Fetch contact people under a BC customer for the Contact Person dropdown.
-// Used in PanelListView header and NewProjectModal. Filters out the company-level record.
+// DECISION(v1.19.349): Fetches contacts by customer code, not name. First gets the company Contact_No
+// from BC Customer Card via OData (stable link by code), then fetches all person contacts under that
+// company contact. Falls back to REST API customer displayName if OData lookup fails.
+// This is stable even if the company name changes in BC.
 async function bcFetchCustomerContacts(customerNumber){
   if(!_bcToken||!customerNumber)return[];
   try{
     const compId=await bcGetCompanyId();
     if(!compId)return[];
-    // Step 1: Get customer name from customer number to use as contact company filter
-    let custName="";
+    // Step 1: Get the company contact number linked to this customer via OData Customer Card
+    let companyContactNo="";let custName="";
     try{
-      const cr=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${customerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(cr.ok){const cd=((await cr.json()).value||[])[0];if(cd)custName=cd.displayName||"";}
+      const allPages=await bcDiscoverODataPages();
+      const custPage=allPages.find(n=>/^Customer_Card/i.test(n));
+      if(custPage){
+        const cr=await fetch(`${BC_ODATA_BASE}/${custPage}?$filter=No eq '${customerNumber}'&$select=No,Contact_No,Name&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(cr.ok){const cd=((await cr.json()).value||[])[0];if(cd){companyContactNo=cd.Contact_No||"";custName=cd.Name||"";}}
+      }
     }catch(e){}
-    if(!custName){console.warn("bcFetchCustomerContacts: no customer name for",customerNumber);return[];}
-    // Step 2: Find contacts by companyName (the customer's display name)
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=companyName eq '${custName.replace(/'/g,"''")}'&$select=number,displayName,email,phoneNumber,companyName,type&$top=50&$orderby=displayName`,{
+    // Fallback: REST API customer → use displayName
+    if(!companyContactNo&&!custName){
+      try{
+        const cr=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${customerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(cr.ok){const cd=((await cr.json()).value||[])[0];if(cd)custName=cd.displayName||"";}
+      }catch(e){}
+    }
+    // Step 2: Fetch contacts — by companyNumber (contact code) or companyName (fallback)
+    const filter=companyContactNo
+      ?`companyNumber eq '${companyContactNo}'`
+      :custName?`companyName eq '${custName.replace(/'/g,"''")}'`:null;
+    if(!filter){console.warn("bcFetchCustomerContacts: no filter for",customerNumber);return[];}
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=${filter}&$select=number,displayName,email,phoneNumber,companyName,type&$top=50&$orderby=displayName`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(!r.ok){console.warn("bcFetchCustomerContacts failed:",r.status);return[];}
     const d=await r.json();
-    // Filter out company-level records — keep only people (type=Person or displayName != companyName)
     return(d.value||[]).filter(c=>c.type==="Person"||(c.displayName&&c.displayName!==c.companyName)).map(c=>({
       number:c.number||"",displayName:c.displayName||"",email:c.email||"",phone:c.phoneNumber||"",companyName:c.companyName||""
     }));
