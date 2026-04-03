@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.321";
+const APP_VERSION="v1.19.322";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1217,7 +1217,6 @@ async function bcGetJobGuid(jobNumber){
 async function bcCheckAttachmentExists(jobNumber,fileName){
   try{
     const {compId,jobId}=await bcGetJobGuid(jobNumber);
-    // Fetch ALL attachments for this project so we can compare
     const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
@@ -1226,12 +1225,18 @@ async function bcCheckAttachmentExists(jobNumber,fileName){
     const atts=d.value||[];
     console.log("BC_ATT_CHECK: looking for:",fileName);
     console.log("BC_ATT_CHECK: BC has",atts.length,"attachments:",atts.map(a=>a.fileName));
-    // Check exact match, without extension, or contains match
     const target=(fileName||"").toLowerCase();
     const targetNoExt=target.replace(/\.pdf$/i,"");
+    // Extract lineSuffix from filename for flexible matching (e.g. "- 500" pattern)
+    const lineSuffixMatch=target.match(/- (\d{3,4})(?:\.pdf)?$/);
+    const lineSuffix=lineSuffixMatch?lineSuffixMatch[1]:null;
     const found=atts.some(a=>{
       const f=(a.fileName||"").toLowerCase();
-      return f===target||f===targetNoExt||f+".pdf"===target;
+      // Exact match or no-extension match
+      if(f===target||f===targetNoExt||f+".pdf"===target)return true;
+      // Flexible: any AS-QUOTED or APPROVED file with same lineSuffix for this project
+      if(lineSuffix&&(f.includes("as-quoted")||f.includes("approved to produce"))&&f.includes(lineSuffix))return true;
+      return false;
     });
     console.log("BC_ATT_CHECK: found=",found);
     return found;
@@ -10107,6 +10112,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         :`[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
+      // Clean up old bad-formatted files from previous code bugs
+      // Old patterns: "500 - PRJ402065", "[AS-QUOTED] NoDWG - PRJ402065", "[AS-QUOTED REV 01] NoDWG - PRJ402065"
+      const oldBadNames=[
+        `${lineSuffix} - ${bcProjectNumber}`,                               // bare "500 - PRJ402065"
+        `[AS-QUOTED] NoDWG - ${bcProjectNumber||"NoProject"}`,               // missing drawingNo, no lineSuffix
+        `[AS-QUOTED] NoDWG - ${bcProjectNumber||"NoProject"} - ${lineSuffix}`,// missing drawingNo
+      ];
+      if(panel.bcPdfFileName&&!panel.bcPdfFileName.startsWith("["))oldBadNames.push(panel.bcPdfFileName.replace(/\.pdf$/i,""));
+      for(const badName of oldBadNames){try{await bcDeleteAttachmentByName(bcProjectNumber,badName);}catch(e){}}
       // Build previous rev filename to delete (one rev below current)
       const prevRev=rev-1;
       let previousFile=null;
@@ -10116,11 +10130,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           ?`[APPROVED TO PRODUCE${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
           :`[AS-QUOTED${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       }else if(prevRev===0){
-        // Rev 0 had no REV tag — also check old format without lineSuffix
         previousFile=isProduction
           ?`[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
           :`[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       }
+      // Also delete old format without lineSuffix
+      const oldNoSuffix=isProduction
+        ?`[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"}`
+        :`[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"}`;
+      try{await bcDeleteAttachmentByName(bcProjectNumber,oldNoSuffix);}catch(e){}
       await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes,previousFile);
       const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName,bcUploadCount:(panel.bcUploadCount||0)+1,bcUploadQuoteRev:quoteRev||0};
       onUpdate(updated);
