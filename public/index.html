@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.386";
+const APP_VERSION="v1.19.387";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17589,7 +17589,7 @@ function APISetupModal({uid,onClose}){
         // Scraper — call Cloud Function if available, otherwise show placeholder
         try{
           const fn=firebase.functions().httpsCallable("customScraperLookup",{timeout:120000});
-          const r=await fn({scraperId:s.id,partNumber:pn,config:{portalUrl:s.portalUrl,loginUrl:s.loginUrl,username:s.username,password:s.password}});
+          const r=await fn({scraperId:s.id,partNumber:pn,config:{username:s.username,password:s.password},steps:s.steps||[]});
           setLookupResult(prev=>({...prev,[s.id]:{loading:false,results:r.data,error:null}}));
         }catch(e){
           setLookupResult(prev=>({...prev,[s.id]:{loading:false,results:null,error:"Scraper function not deployed yet. Configure the Cloud Function 'customScraperLookup' to enable live lookups."}}));
@@ -17881,34 +17881,104 @@ function APISetupModal({uid,onClose}){
         );})}
 
         {/* Add scraper form */}
-        {editScraper&&editScraper.category==="scraper"&&(
+        {/* DECISION(v1.19.387): Step-based scraper configuration. Admin defines browser automation steps
+            (navigate, fill, click, wait, extract) that the Cloud Function executes with Puppeteer.
+            No code changes needed to add new suppliers — fully configurable from the UI. */}
+        {editScraper&&editScraper.category==="scraper"&&(()=>{
+          const steps=editScraper.steps||[];
+          const setSteps=newSteps=>setEditScraper(p=>({...p,steps:newSteps}));
+          const addStep=type=>{
+            const defaults={navigate:{type:"navigate",url:""},fill:{type:"fill",selector:"",value:""},click:{type:"click",selector:""},wait:{type:"wait",seconds:3,selector:""},extract:{type:"extract",selector:"",field:""}};
+            setSteps([...steps,{...defaults[type],_id:Date.now()}]);
+          };
+          const updateStep=(idx,updates)=>setSteps(steps.map((s,i)=>i===idx?{...s,...updates}:s));
+          const removeStep=idx=>setSteps(steps.filter((_,i)=>i!==idx));
+          const moveStep=(idx,dir)=>{const ns=[...steps];const t=ns[idx];ns[idx]=ns[idx+dir];ns[idx+dir]=t;setSteps(ns);};
+          const stepColors={navigate:"#38bdf8",fill:"#a78bfa",click:"#4ade80",wait:"#f59e0b",extract:"#f472b6"};
+          return(
           <div style={{marginBottom:12,border:"1px solid #f59e0b",borderRadius:8,padding:14,background:"rgba(245,158,11,0.05)"}}>
             <div style={{fontSize:13,fontWeight:700,color:"#f59e0b",marginBottom:12}}>{editScraper.id?"Edit Price Scraper":"New Price Scraper"}</div>
+            {/* Basic info */}
             <div style={{display:"grid",gap:8,marginBottom:12}}>
               <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Supplier Name *</label>
-              <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Royal Electric, Graybar, Rexel" style={inp()}/></div>
-              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Portal URL *</label>
-              <input value={editScraper.portalUrl||""} onChange={e=>setEditScraper(p=>({...p,portalUrl:e.target.value}))} placeholder="https://portal.supplier.com" style={inp()}/></div>
-              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Login Page URL</label>
-              <input value={editScraper.loginUrl||""} onChange={e=>setEditScraper(p=>({...p,loginUrl:e.target.value}))} placeholder="https://portal.supplier.com/login" style={inp()}/></div>
+              <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Royal Electric, Graybar" style={inp()}/></div>
               <div style={{display:"flex",gap:8}}>
                 <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Username</label>
-                <input value={editScraper.username||""} onChange={e=>setEditScraper(p=>({...p,username:e.target.value}))} placeholder="Username or email" style={inp()}/></div>
+                <input value={editScraper.username||""} onChange={e=>setEditScraper(p=>({...p,username:e.target.value}))} placeholder="Portal username" style={inp()}/></div>
                 <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Password</label>
-                <input value={editScraper.password||""} onChange={e=>setEditScraper(p=>({...p,password:e.target.value}))} placeholder="Password" type="password" style={inp()}/></div>
+                <input value={editScraper.password||""} onChange={e=>setEditScraper(p=>({...p,password:e.target.value}))} placeholder="Portal password" type="password" style={inp()}/></div>
               </div>
-              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Notes</label>
-              <textarea value={editScraper.notes||""} onChange={e=>setEditScraper(p=>({...p,notes:e.target.value}))} placeholder="Portal quirks, search page URL, etc." rows={2} style={{...inp(),resize:"vertical"}}/></div>
             </div>
-            <div style={{display:"flex",gap:8}}>
+            {/* Steps builder */}
+            <div style={{marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.sub,textTransform:"uppercase",letterSpacing:0.5}}>Automation Steps ({steps.length})</div>
+              </div>
+              <div style={{fontSize:10,color:C.muted,marginBottom:8,lineHeight:1.5}}>
+                Placeholders: <code style={{color:"#f59e0b"}}>{"{partNumber}"}</code> <code style={{color:"#a78bfa"}}>{"{username}"}</code> <code style={{color:"#a78bfa"}}>{"{password}"}</code>
+              </div>
+              {steps.map((step,si)=>(
+                <div key={step._id||si} style={{display:"flex",gap:6,alignItems:"flex-start",marginBottom:6,padding:"6px 8px",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6}}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,minWidth:16,paddingTop:4}}>{si+1}.</div>
+                  <span style={{fontSize:9,fontWeight:700,color:stepColors[step.type]||C.muted,background:(stepColors[step.type]||C.muted)+"22",borderRadius:4,padding:"2px 6px",textTransform:"uppercase",flexShrink:0,marginTop:2}}>{step.type}</span>
+                  <div style={{flex:1,display:"grid",gap:4}}>
+                    {step.type==="navigate"&&(
+                      <input value={step.url||""} onChange={e=>updateStep(si,{url:e.target.value})} placeholder="URL (e.g. https://portal.com/login)" style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}/>
+                    )}
+                    {step.type==="fill"&&(<>
+                      <input value={step.selector||""} onChange={e=>updateStep(si,{selector:e.target.value})} placeholder="CSS selector (e.g. #username, input[name='email'])" style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}/>
+                      <input value={step.value||""} onChange={e=>updateStep(si,{value:e.target.value})} placeholder="Value (e.g. {username}, {partNumber})" style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}/>
+                    </>)}
+                    {step.type==="click"&&(
+                      <input value={step.selector||""} onChange={e=>updateStep(si,{selector:e.target.value})} placeholder="CSS selector (e.g. button[type='submit'], .search-btn)" style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}/>
+                    )}
+                    {step.type==="wait"&&(
+                      <div style={{display:"flex",gap:6}}>
+                        <input value={step.selector||""} onChange={e=>updateStep(si,{selector:e.target.value})} placeholder="CSS selector to wait for (optional)" style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11,flex:1}}/>
+                        <input type="number" value={step.seconds||""} onChange={e=>updateStep(si,{seconds:parseInt(e.target.value)||0})} placeholder="sec" style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11,width:50}}/>
+                      </div>
+                    )}
+                    {step.type==="extract"&&(<>
+                      <input value={step.selector||""} onChange={e=>updateStep(si,{selector:e.target.value})} placeholder="CSS selector (e.g. .price-cell, #availability)" style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}/>
+                      <select value={step.field||""} onChange={e=>updateStep(si,{field:e.target.value})} style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}>
+                        <option value="">— Save as field —</option>
+                        <option value="price">Price</option>
+                        <option value="availability">Availability</option>
+                        <option value="description">Description</option>
+                        <option value="leadTime">Lead Time</option>
+                        <option value="uom">UOM</option>
+                        <option value="partNumber">Part Number</option>
+                      </select>
+                    </>)}
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:2,flexShrink:0}}>
+                    {si>0&&<button onClick={()=>moveStep(si,-1)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:10,padding:0}}>▲</button>}
+                    {si<steps.length-1&&<button onClick={()=>moveStep(si,1)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:10,padding:0}}>▼</button>}
+                    <button onClick={()=>removeStep(si)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:10,padding:0}}>✕</button>
+                  </div>
+                </div>
+              ))}
+              {/* Add step buttons */}
+              <div style={{display:"flex",gap:4,flexWrap:"wrap",marginTop:6}}>
+                {[["navigate","Navigate"],["fill","Fill Field"],["click","Click"],["wait","Wait"],["extract","Extract"]].map(([type,label])=>(
+                  <button key={type} onClick={()=>addStep(type)}
+                    style={{background:(stepColors[type]||C.muted)+"15",border:`1px solid ${(stepColors[type]||C.muted)}44`,borderRadius:4,padding:"3px 8px",fontSize:10,color:stepColors[type]||C.muted,cursor:"pointer",fontWeight:600}}>
+                    + {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Notes</label>
+            <textarea value={editScraper.notes||""} onChange={e=>setEditScraper(p=>({...p,notes:e.target.value}))} placeholder="Portal quirks, tips, etc." rows={2} style={{...inp(),resize:"vertical"}}/></div>
+            <div style={{display:"flex",gap:8,marginTop:10}}>
               <button onClick={()=>setEditScraper(null)} style={btn(C.border,C.muted,{fontSize:12})}>Cancel</button>
-              <button onClick={()=>saveScraperConfig(editScraper)} disabled={scraperSaving||!editScraper.name?.trim()||!editScraper.portalUrl?.trim()}
-                style={btn("#f59e0b","#0d0d1a",{fontSize:12,fontWeight:700,opacity:scraperSaving||!editScraper.name?.trim()||!editScraper.portalUrl?.trim()?0.5:1})}>
+              <button onClick={()=>saveScraperConfig(editScraper)} disabled={scraperSaving||!editScraper.name?.trim()}
+                style={btn("rgba(245,158,11,0.15)","#f59e0b",{fontSize:12,fontWeight:700,border:"1px solid #f59e0b66",opacity:scraperSaving||!editScraper.name?.trim()?0.5:1})}>
                 {scraperSaving?"Saving…":editScraper.id?"Save Changes":"Add Price Scraper"}
               </button>
             </div>
-          </div>
-        )}
+          </div>);
+        })()}
 
         {/* Pricing Reports — shared across both sections */}
         <div style={{marginTop:24,marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
