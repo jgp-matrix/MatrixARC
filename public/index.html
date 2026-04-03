@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.363";
+const APP_VERSION="v1.19.364";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3978,17 +3978,23 @@ async function graphReplyToMessage(graphToken,messageId,htmlBody,pdfBase64,pdfFi
   if(!createR.ok){const t=await createR.text();throw new Error(`createReply failed (${createR.status}): ${t}`);}
   const draft=await createR.json();
   const draftId=draft.id;
-  // Step 2: Update the draft with our HTML body + attachment
-  const updateBody={body:{contentType:"HTML",content:htmlBody}};
-  if(pdfBase64){
-    updateBody.attachments=[{"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"Quote.pdf",contentType:"application/pdf",contentBytes:pdfBase64}];
-  }
+  // Step 2: Update the draft body
   const updateR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}`,{
     method:"PATCH",
     headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
-    body:JSON.stringify(updateBody)
+    body:JSON.stringify({body:{contentType:"HTML",content:htmlBody}})
   });
   if(!updateR.ok){const t=await updateR.text();throw new Error(`Draft update failed (${updateR.status}): ${t}`);}
+  // DECISION(v1.19.364): Attachments must be added via a separate POST to /attachments endpoint.
+  // Graph API ignores attachments in PATCH body — they silently don't attach.
+  if(pdfBase64){
+    const attR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}/attachments`,{
+      method:"POST",
+      headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
+      body:JSON.stringify({"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"Quote.pdf",contentType:"application/pdf",contentBytes:pdfBase64})
+    });
+    if(!attR.ok){const t=await attR.text();throw new Error(`Attachment upload failed (${attR.status}): ${t}`);}
+  }
   // Step 3: Send the draft
   const sendR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${draftId}/send`,{
     method:"POST",
