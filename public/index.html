@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.319";
+const APP_VERSION="v1.19.320";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10059,8 +10059,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const doc=new JsPDF({unit:"mm",format:[coverMm.mmW,coverMm.mmH],orientation:coverOrient,compress:true});
       setAttachPdfMsg("Building cover page…");
       await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH,uploadOpts);
-      // Add drawing pages — burn production stamp if in production mode
+      // Compute naming/mode vars BEFORE stamp loop so they're available during burn
+      const rev=quoteRev||0;
+      const revTag=rev>0?` REV ${String(rev).padStart(2,'0')}`:"";
+      const dwg=panel.drawingNo||"NoDWG";
+      const lineSuffix=String((idx+1)*100);
+      const isProduction=uploadOpts.mode==="production";
+      // Add drawing pages — burn stamp FIRST, then add to PDF
       const totalPg=loaded.filter(p=>p.dataUrl).length;
+      setAttachPdfMsg("Stamping drawings…");
       for(let i=0;i<loaded.length;i++){
         const pg=loaded[i];
         if(!pg.dataUrl)continue;
@@ -10084,7 +10091,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const d=new Date();
           const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
           const scanned=`Scanned ${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
-          const rev=quoteRev||0;
           const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
           imgData=await burnStampCanvas(pg.dataUrl,{
             left:stampLabel,
@@ -10095,14 +10101,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
       if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
-      const rev=quoteRev||0;
-      const revTag=rev>0?` REV ${String(rev).padStart(2,'0')}`:"";
-      const dwg=panel.drawingNo||"NoDWG";
-      const lineSuffix=String((idx+1)*100);
-      const isProduction=uploadOpts.mode==="production";
       const fileName=isProduction
         ?`[APPROVED TO PRODUCE${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
-        :`[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"}.pdf`;
+        :`[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       // Build previous rev filename to delete (one rev below current)
@@ -10112,12 +10113,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const prevRevTag=` REV ${String(prevRev).padStart(2,'0')}`;
         previousFile=isProduction
           ?`[APPROVED TO PRODUCE${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
-          :`[AS-QUOTED${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"}.pdf`;
+          :`[AS-QUOTED${prevRevTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       }else if(prevRev===0){
-        // Rev 0 had no REV tag
+        // Rev 0 had no REV tag — also check old format without lineSuffix
         previousFile=isProduction
           ?`[APPROVED TO PRODUCE] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
-          :`[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"}.pdf`;
+          :`[AS-QUOTED] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       }
       await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes,previousFile);
       const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName,bcUploadCount:(panel.bcUploadCount||0)+1,bcUploadQuoteRev:quoteRev||0};
