@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.377";
+const APP_VERSION="v1.19.378";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11726,7 +11726,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
               <button data-tip="Re-run AI pricing on all BOM rows to fetch current prices from Business Central" onClick={()=>runPricingOnPanel()} disabled={aiPricing}
                 style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,cursor:aiPricing?"default":"pointer"})}>
-                {aiPricing?"Refreshing…":"↻ Re-Extract Pricing"}
+                {aiPricing?"Refreshing…":"↻ Get New Pricing"}
               </button>
             )}
             {bcProjectNumber&&!readOnly&&(
