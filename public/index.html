@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.383";
+const APP_VERSION="v1.19.384";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17683,7 +17683,7 @@ function APISetupModal({uid,onClose}){
             <div><div style={{fontSize:14,fontWeight:800,color:"#38bdf8",letterSpacing:0.3}}>🔗 API Integrations</div>
             <div style={{fontSize:11,color:C.muted,marginTop:2}}>Official vendor APIs with structured endpoints and API keys</div></div>
             {(!editScraper||editScraper.category!=="api")&&<button onClick={()=>setEditScraper({category:"api",name:"",type:"api_key",baseUrl:"",apiKey:"",headers:"",notes:"",enabled:true})}
-              style={{background:"#38bdf8",color:"#0d0d1a",border:"none",borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add API Integration</button>}
+              style={{background:"rgba(56,189,248,0.1)",color:"#38bdf8",border:"1px solid #38bdf866",borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add API Integration</button>}
           </div>
         </div>
 
@@ -17754,7 +17754,7 @@ function APISetupModal({uid,onClose}){
             <div><div style={{fontSize:14,fontWeight:800,color:"#f59e0b",letterSpacing:0.3}}>🕷 Price Scrapers</div>
             <div style={{fontSize:11,color:C.muted,marginTop:2}}>Supplier portal logins — browser automation to extract pricing</div></div>
             {(!editScraper||editScraper.category!=="scraper")&&<button onClick={()=>setEditScraper({category:"scraper",name:"",type:"login",portalUrl:"",loginUrl:"",username:"",password:"",notes:"",enabled:true})}
-              style={{background:"#f59e0b",color:"#0d0d1a",border:"none",borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add Scraper</button>}
+              style={{background:"rgba(245,158,11,0.1)",color:"#f59e0b",border:"1px solid #f59e0b66",borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add Scraper</button>}
           </div>
         </div>
 
