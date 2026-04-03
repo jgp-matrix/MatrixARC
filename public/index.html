@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.355";
+const APP_VERSION="v1.19.356";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3377,10 +3377,12 @@ async function buildQuotePdfDoc(doc,project){
 
     // DECISION(v1.19.353): Documents Provided — lists all drawing pages and other docs for supplier reference.
     // Renders ABOVE Notes per user request. Font increased 50% and bolded (v1.19.355).
-    const drawingPages=(pan.pages||[]).filter(p=>p.name);
+    // DECISION(v1.19.356): Only show primary filenames for drawings (not each page/sheet).
+    // Page names like "LCP500 PLC Panel.pdf — p1" are deduped to just "LCP500 PLC Panel.pdf".
+    const drawingFileNames=[...new Set((pan.pages||[]).filter(p=>p.name).map(p=>p.name.replace(/\s*—\s*p\d+$/i,"").trim()))];
     const otherDocs=(pan.otherDocs||[]).filter(d=>d.name);
-    if(drawingPages.length>0||otherDocs.length>0){
-      const allDocNames=[...drawingPages.map(p=>p.name),...otherDocs.map(d=>d.name)];
+    if(drawingFileNames.length>0||otherDocs.length>0){
+      const allDocNames=[...drawingFileNames,...otherDocs.map(d=>d.name)];
       const docText=allDocNames.join("  ·  ");
       const maxDocW=ctx.contentWidth-8;
       doc.setFontSize(7.5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
