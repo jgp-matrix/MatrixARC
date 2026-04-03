@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.343";
+const APP_VERSION="v1.19.344";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3828,11 +3828,13 @@ async function graphSearchEmails(graphToken,query,top=15){
   }catch(e){console.warn("graphSearchEmails error:",e);return[];}
 }
 
-// Create a reply to an existing message with a PDF attachment and send it
+// DECISION(v1.19.344): Uses createReplyAll (not createReply) so the response goes to ALL
+// original recipients (To + Cc), not just the sender. Quote replies typically need to include
+// the full team (customer contacts, internal stakeholders) from the original conversation.
 async function graphReplyToMessage(graphToken,messageId,htmlBody,pdfBase64,pdfFilename){
   if(!graphToken||!messageId)throw new Error("Missing token or messageId");
-  // Step 1: Create a draft reply
-  const createR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/createReply`,{
+  // Step 1: Create a draft reply-all
+  const createR=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/createReplyAll`,{
     method:"POST",
     headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
     body:JSON.stringify({comment:""})
