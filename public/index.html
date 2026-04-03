@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.346";
+const APP_VERSION="v1.19.347";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1884,6 +1884,43 @@ async function bcCreateCustomer(displayName,phone,email){
   if(!r.ok){const txt=await r.text();throw new Error(`BC customer creation failed (${r.status}): ${txt}`);}
   const d=await r.json();
   return{number:d.number||"",displayName:d.displayName||displayName};
+}
+
+// DECISION(v1.19.347): Fetch contact people under a BC customer for the Contact Person dropdown.
+// Used in PanelListView header and NewProjectModal. Filters out the company-level record.
+async function bcFetchCustomerContacts(customerNumber){
+  if(!_bcToken||!customerNumber)return[];
+  try{
+    const compId=await bcGetCompanyId();
+    if(!compId)return[];
+    // Use companyNumber filter to find all contacts under this customer
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=companyNumber eq '${customerNumber}'&$select=number,displayName,email,phoneNumber,companyName,type&$top=50&$orderby=displayName`,{
+      headers:{"Authorization":`Bearer ${_bcToken}`}
+    });
+    if(!r.ok){console.warn("bcFetchCustomerContacts failed:",r.status);return[];}
+    const d=await r.json();
+    // Filter out company-level records — keep only people (type=Person or displayName != companyName)
+    return(d.value||[]).filter(c=>c.type==="Person"||(c.displayName&&c.displayName!==c.companyName)).map(c=>({
+      number:c.number||"",displayName:c.displayName||"",email:c.email||"",phone:c.phoneNumber||"",companyName:c.companyName||""
+    }));
+  }catch(e){console.warn("bcFetchCustomerContacts error:",e);return[];}
+}
+
+async function bcCreateContact(displayName,companyNumber,email,phone){
+  if(!_bcToken)throw new Error("Not connected to Business Central");
+  const compId=await bcGetCompanyId();
+  if(!compId)throw new Error("Could not resolve BC company");
+  const body={displayName,companyNumber,type:"Person"};
+  if(email)body.email=email;
+  if(phone)body.phoneNumber=phone;
+  const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts`,{
+    method:"POST",
+    headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+    body:JSON.stringify(body)
+  });
+  if(!r.ok){const txt=await r.text();throw new Error(`BC contact creation failed (${r.status}): ${txt}`);}
+  const d=await r.json();
+  return{number:d.number||"",displayName:d.displayName||displayName,email:d.email||email||"",phone:d.phoneNumber||phone||""};
 }
 
 async function bcCreateVendor(displayName,phone,email,opts={}){
@@ -14479,6 +14516,19 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
   const [selectedPanelId,setSelectedPanelId]=useState(()=>(project.panels||[])[0]?.id||null);
   const [eqModalPanelId,setEqModalPanelId]=useState(null);
   const [fbLaborMoreInfo,setFbLaborMoreInfo]=useState(false);
+  // Contact person dropdown state
+  const [contactPersons,setContactPersons]=useState([]);
+  const [showNewContact,setShowNewContact]=useState(false);
+  const [newContactName,setNewContactName]=useState("");
+  const [newContactEmail,setNewContactEmail]=useState("");
+  const [newContactPhone,setNewContactPhone]=useState("");
+  const [creatingContact,setCreatingContact]=useState(false);
+  const [newContactErr,setNewContactErr]=useState("");
+  // Fetch contacts when project has a customer number
+  useEffect(()=>{
+    if(!project.bcCustomerNumber||!_bcToken)return;
+    bcFetchCustomerContacts(project.bcCustomerNumber).then(c=>{if(c.length)setContactPersons(c);});
+  },[project.bcCustomerNumber]);
   const [fbcConnecting,setFbcConnecting]=useState(false);
   const [fbcError,setFbcError]=useState("");
   useEffect(()=>{
@@ -14628,6 +14678,56 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     <span style={{fontSize:13,color:C.muted}}>Created: {project.createdAt?new Date(project.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):project.updatedAt?new Date(project.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</span>
                     <span style={{fontSize:11,color:C.muted}}>{(project.panels||[]).length} panel{(project.panels||[]).length!==1?"s":""}</span>
                   </div>
+                </div>
+              )}
+              {/* Contact Person dropdown — DECISION(v1.19.347) */}
+              {project.bcCustomerNumber&&!isBcDisconnected&&(
+                <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                  <span style={{fontSize:11,color:C.muted,fontWeight:600}}>Contact:</span>
+                  {readOnly?(
+                    <span style={{fontSize:11,color:C.sub}}>{project.bcContactName||project.quote?.contact||"—"}</span>
+                  ):showNewContact?(
+                    <div style={{display:"inline-flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+                      <input value={newContactName} onChange={e=>setNewContactName(e.target.value)} placeholder="Name *" style={{background:"#0d1526",border:"1px solid "+C.accent,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:110}}/>
+                      <input value={newContactEmail} onChange={e=>setNewContactEmail(e.target.value)} placeholder="Email" style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:130}}/>
+                      <input value={newContactPhone} onChange={e=>setNewContactPhone(e.target.value)} placeholder="Phone" style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:100}}/>
+                      {newContactErr&&<span style={{fontSize:10,color:C.red}}>{newContactErr}</span>}
+                      <button onClick={async()=>{
+                        if(!newContactName.trim())return;setCreatingContact(true);setNewContactErr("");
+                        try{
+                          const c=await bcCreateContact(newContactName.trim(),project.bcCustomerNumber,newContactEmail.trim(),newContactPhone.trim());
+                          const fresh=await bcFetchCustomerContacts(project.bcCustomerNumber);setContactPersons(fresh);
+                          // Auto-select the new contact
+                          const upd={...project,bcContactNo:c.number,bcContactName:c.displayName,bcContactEmail:c.email,bcContactPhone:c.phone,
+                            quote:{...(project.quote||{}),contact:c.displayName,email:c.email||project.quote?.email,phone:c.phone||project.quote?.phone}};
+                          onUpdate(upd);
+                          if(project.bcProjectNumber&&_bcToken)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:c.number}).catch(()=>{});
+                          setShowNewContact(false);setNewContactName("");setNewContactEmail("");setNewContactPhone("");
+                        }catch(e){setNewContactErr(e.message||"Failed");}
+                        setCreatingContact(false);
+                      }} disabled={creatingContact||!newContactName.trim()}
+                        style={{background:C.accent,color:"#fff",border:"none",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",opacity:creatingContact||!newContactName.trim()?0.5:1}}>
+                        {creatingContact?"…":"Create"}
+                      </button>
+                      <button onClick={()=>{setShowNewContact(false);setNewContactErr("");}} style={{background:"none",border:"1px solid "+C.border,borderRadius:4,padding:"1px 6px",fontSize:10,color:C.muted,cursor:"pointer"}}>✕</button>
+                    </div>
+                  ):(
+                    <div style={{display:"inline-flex",alignItems:"center",gap:4}}>
+                      <select value={project.bcContactNo||""} onChange={e=>{
+                        const no=e.target.value;
+                        if(no==="__NEW__"){setShowNewContact(true);setNewContactName("");setNewContactEmail("");setNewContactPhone("");setNewContactErr("");return;}
+                        const c=contactPersons.find(p=>p.number===no);
+                        const upd={...project,bcContactNo:no,bcContactName:c?c.displayName:"",bcContactEmail:c?c.email:"",bcContactPhone:c?c.phone:"",
+                          quote:{...(project.quote||{}),contact:c?c.displayName:"",email:c?.email||project.quote?.email,phone:c?.phone||project.quote?.phone}};
+                        onUpdate(upd);
+                        if(project.bcProjectNumber&&_bcToken&&no)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:no}).catch(()=>{});
+                      }} style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:200}}>
+                        <option value="">— Select Person —</option>
+                        <option value="__NEW__" style={{color:"#38bdf8",fontWeight:700}}>+ New Contact…</option>
+                        {contactPersons.map(c=><option key={c.number} value={c.number}>{c.displayName}{c.email?" ("+c.email+")":""}</option>)}
+                      </select>
+                    </div>
+                  )}
                 </div>
               )}
               <div style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",marginTop:4}}>
@@ -17485,6 +17585,15 @@ function NewProjectModal({uid,onCreated,onClose}){
   const [selectedSalesperson,setSelectedSalesperson]=useState("");
   const [selectedPM,setSelectedPM]=useState("");
   const [selectedDesigner,setSelectedDesigner]=useState("");
+  // Contact person state
+  const [contactPersons,setContactPersons]=useState([]);
+  const [selectedContact,setSelectedContact]=useState("");
+  const [showNewContact,setShowNewContact]=useState(false);
+  const [newContactName,setNewContactName]=useState("");
+  const [newContactEmail,setNewContactEmail]=useState("");
+  const [newContactPhone,setNewContactPhone]=useState("");
+  const [creatingContact,setCreatingContact]=useState(false);
+  const [newContactErr,setNewContactErr]=useState("");
 
   useEffect(()=>{
     if(_bcToken){loadCustomers();return;}
@@ -17538,6 +17647,9 @@ function NewProjectModal({uid,onCreated,onClose}){
     setSelectedCustomer(c);
     setCustomerQuery(c.displayName);
     setShowDropdown(false);
+    // Auto-fetch contacts for selected customer
+    setContactPersons([]);setSelectedContact("");
+    if(c.number)bcFetchCustomerContacts(c.number).then(contacts=>{if(contacts.length)setContactPersons(contacts);});
   }
 
   async function createNewCustomer(){
@@ -17574,11 +17686,12 @@ function NewProjectModal({uid,onCreated,onClose}){
         taskWarn=te.message;
       }
       setBcStatus(taskWarn?"taskwarn":"ok");
-      // Write salesperson/PM/designer to BC project card
-      if(selectedSalesperson||selectedPM||selectedDesigner){
+      // Write salesperson/PM/designer/contact to BC project card
+      if(selectedSalesperson||selectedPM||selectedDesigner||selectedContact){
         const spFields={};
         if(selectedSalesperson)spFields.CCS_Salesperson_Code=selectedSalesperson;
         if(selectedPM)spFields.Person_Responsible=selectedPM;
+        if(selectedContact)spFields.Sell_to_Contact_No=selectedContact;
         bcPatchJobOData(bc.number,spFields).catch(e=>console.warn("BC role assignment failed:",e));
       }
       const spName=salespersons.find(s=>s.Code===selectedSalesperson)?.Name||"";
@@ -17597,6 +17710,13 @@ function NewProjectModal({uid,onCreated,onClose}){
         bcProjectManagerCode:selectedPM||"",
         bcDesigner:designerName,
         bcDesignerCode:selectedDesigner||"",
+        bcContactNo:selectedContact||"",
+        bcContactName:(contactPersons.find(c=>c.number===selectedContact)||{}).displayName||"",
+        bcContactEmail:(contactPersons.find(c=>c.number===selectedContact)||{}).email||"",
+        bcContactPhone:(contactPersons.find(c=>c.number===selectedContact)||{}).phone||"",
+        quote:selectedContact?{contact:(contactPersons.find(c=>c.number===selectedContact)||{}).displayName||"",
+          email:(contactPersons.find(c=>c.number===selectedContact)||{}).email||"",
+          phone:(contactPersons.find(c=>c.number===selectedContact)||{}).phone||""}:undefined,
         status:"draft",
         panels:panelList.map(panel=>({...panel,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'})),
         createdAt:Date.now(),updatedAt:Date.now()
@@ -17681,6 +17801,41 @@ function NewProjectModal({uid,onCreated,onClose}){
               )}
               {showDropdown&&!customerSearching&&customerResults.length===0&&customerQuery&&(
                 <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#2a4a6e",border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,padding:"10px 12px",marginTop:4,fontSize:12,color:C.muted}}>No customers found</div>
+              )}
+            </div>
+          )}
+          {/* Contact Person dropdown */}
+          {selectedCustomer&&contactPersons.length>0&&(
+            <div style={{marginBottom:16}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Contact Person</div>
+                {!showNewContact&&<button type="button" onClick={()=>{setShowNewContact(true);setNewContactName("");setNewContactEmail("");setNewContactPhone("");setNewContactErr("");}} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:12,padding:0,fontWeight:600}}>+ New Contact</button>}
+              </div>
+              {showNewContact?(
+                <div style={{background:C.accentDim,border:`1px solid ${C.accent}`,borderRadius:8,padding:14}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:10}}>Add Contact to {selectedCustomer.displayName}</div>
+                  <input value={newContactName} onChange={e=>setNewContactName(e.target.value)} placeholder="Contact Name *" style={{...inp(),marginBottom:8}}/>
+                  <input value={newContactEmail} onChange={e=>setNewContactEmail(e.target.value)} placeholder="Email (optional)" style={{...inp(),marginBottom:8}}/>
+                  <input value={newContactPhone} onChange={e=>setNewContactPhone(e.target.value)} placeholder="Phone (optional)" style={{...inp(),marginBottom:10}}/>
+                  {newContactErr&&<div style={{fontSize:11,color:C.red,marginBottom:8}}>{newContactErr}</div>}
+                  <div style={{display:"flex",gap:8}}>
+                    <button type="button" onClick={()=>{setShowNewContact(false);setNewContactErr("");}} style={btn(C.border,C.sub,{flex:1,fontSize:12})}>Cancel</button>
+                    <button type="button" onClick={async()=>{
+                      if(!newContactName.trim())return;setCreatingContact(true);setNewContactErr("");
+                      try{
+                        const c=await bcCreateContact(newContactName.trim(),selectedCustomer.number,newContactEmail.trim(),newContactPhone.trim());
+                        const fresh=await bcFetchCustomerContacts(selectedCustomer.number);setContactPersons(fresh);
+                        setSelectedContact(c.number);setShowNewContact(false);setNewContactName("");setNewContactEmail("");setNewContactPhone("");
+                      }catch(e){setNewContactErr(e.message||"Failed to create contact");}
+                      setCreatingContact(false);
+                    }} disabled={!newContactName.trim()||creatingContact} style={btn(C.accent,"#fff",{flex:2,fontSize:12,opacity:!newContactName.trim()||creatingContact?0.5:1})}>{creatingContact?"Creating…":"Create Contact"}</button>
+                  </div>
+                </div>
+              ):(
+                <select value={selectedContact} onChange={e=>setSelectedContact(e.target.value)} style={{...inp({fontSize:12,padding:"8px 10px"})}}>
+                  <option value="">— Select Contact Person —</option>
+                  {contactPersons.map(c=><option key={c.number} value={c.number}>{c.displayName}{c.email?" ("+c.email+")":""}</option>)}
+                </select>
               )}
             </div>
           )}
