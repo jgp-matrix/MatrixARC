@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.342";
+const APP_VERSION="v1.19.343";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14233,13 +14233,24 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
   const [previewEmail,setPreviewEmail]=useState(null); // {subject,from,date,bodyHtml} or null
   const [previewLoading,setPreviewLoading]=useState(false);
 
+  const searchDebounceRef=useRef(null);
+
   async function searchThreads(q){
-    if(!q||q.length<2)return;
+    if(!q||q.length<2){setThreadResults([]);return;}
     setThreadSearching(true);
     const token=await acquireGraphToken();
     if(token){const results=await graphSearchEmails(token,q,20);setThreadResults(results);}
     setThreadSearching(false);
   }
+
+  // Debounced live search as user types (500ms delay)
+  useEffect(()=>{
+    if(sendMode!=="reply")return;
+    if(searchDebounceRef.current)clearTimeout(searchDebounceRef.current);
+    if(!threadSearch||threadSearch.length<2){setThreadResults([]);return;}
+    searchDebounceRef.current=setTimeout(()=>searchThreads(threadSearch),500);
+    return()=>{if(searchDebounceRef.current)clearTimeout(searchDebounceRef.current);};
+  },[threadSearch,sendMode]);
 
   async function loadEmailPreview(msg){
     setPreviewLoading(true);setPreviewEmail({subject:msg.subject,from:msg.from,date:msg.date,bodyHtml:null});
@@ -14260,7 +14271,7 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
     setPreviewLoading(false);
   }
 
-  useEffect(()=>{if(sendMode==="reply"&&!threadResults.length&&threadSearch)searchThreads(threadSearch);},[sendMode]);
+  // Auto-search handled by debounce effect above — no separate useEffect needed
 
   function fmtDate(iso){if(!iso)return"";try{return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit",hour:"numeric",minute:"2-digit"});}catch(e){return"";}}
 
@@ -14324,15 +14335,11 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
           </div>
         ):(
           <div>
-            <div style={{display:"flex",gap:6,marginBottom:10}}>
+            <div style={{position:"relative",marginBottom:10}}>
               <input value={threadSearch} onChange={e=>setThreadSearch(e.target.value)}
-                placeholder="Search emails by customer, project, subject…"
-                onKeyDown={e=>{if(e.key==="Enter")searchThreads(threadSearch);}}
-                style={{...inp({fontSize:13}),flex:1}}/>
-              <button onClick={()=>searchThreads(threadSearch)} disabled={threadSearching||threadSearch.length<2}
-                style={btn(C.accentDim,C.accent,{fontSize:12,padding:"6px 14px",fontWeight:700,opacity:threadSearching?0.5:1})}>
-                {threadSearching?"Searching…":"Search"}
-              </button>
+                placeholder="Search emails by customer, project, subject…" autoFocus
+                style={{...inp({fontSize:13}),width:"100%",boxSizing:"border-box",paddingRight:threadSearching?30:12}}/>
+              {threadSearching&&<div style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",fontSize:11,color:C.accent}}>⏳</div>}
             </div>
             <div style={{maxHeight:240,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
               {threadResults.length===0&&!threadSearching&&(
