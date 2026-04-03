@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.323";
+const APP_VERSION="v1.19.324";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7919,8 +7919,11 @@ function QuoteTab({project,onUpdate}){
               const panBom=pan.bom||[];
               const qp=(q.panelOverrides||{})[pan.id]||{};
               const setQP=(updates)=>{const po={...(q.panelOverrides||{}),[pan.id]:{...qp,...updates}};setQ({panelOverrides:po});};
+              const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
               return(
-              <div key={pan.id||pi} className="qd-li">
+              <div key={pan.id||pi} style={{marginBottom:12}}>
+              {/* Main line item box — kept together on one page */}
+              <div className="qd-li">
               <div className="qd-li-hdr">
                 <span className="qd-li-num">Line {pi+1}</span>
                 <span className="qd-li-part">Part #: {pan.drawingNo||qp.panelId||pan.name||`Panel ${pi+1}`}</span>
@@ -7949,20 +7952,6 @@ function QuoteTab({project,onUpdate}){
                     <span>QUOTE NOTES: </span>
                     <textarea value={qp.lineNotes||""} onChange={e=>setQP({lineNotes:e.target.value})} placeholder="Additional quote-specific notes…" rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
                   </div>
-                  {(()=>{
-                    const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
-                    if(!crossedItems.length)return null;
-                    return(
-                      <div className="qd-crossed">
-                        <div className="qd-crossed-title">Crossed / Superseded — Alternate Products Used</div>
-                        {crossedItems.map((item,i)=>(
-                          <div key={item.id||i} className="qd-crossed-row">
-                            {i+1}. <span className="qd-muted">Scanned:</span> <strong>{item.crossedFrom}</strong> <span className="qd-muted">→ Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span className="qd-muted"> ({item.description})</span>:null}
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
                 </div>
               </div>
 
@@ -7989,7 +7978,19 @@ function QuoteTab({project,onUpdate}){
                   <div className={"qd-pval qd-total-val"}>{panHasSell?fmtMoney(panSell*panQty):"—"}</div>
                 </div>
               </div>
-            </div>);
+              </div>
+              {/* Crossed items — outside the box so the box stays compact */}
+              {crossedItems.length>0&&(
+                <div className="qd-crossed" style={{marginTop:0,padding:"4px 16px 8px",fontSize:12}}>
+                  <div className="qd-crossed-title">Crossed / Superseded — Alternate Products Used</div>
+                  {crossedItems.map((item,i)=>(
+                    <div key={item.id||i} className="qd-crossed-row">
+                      {i+1}. <span className="qd-muted">Scanned:</span> <strong>{item.crossedFrom}</strong> <span className="qd-muted">→ Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span className="qd-muted"> ({item.description})</span>:null}
+                    </div>
+                  ))}
+                </div>
+              )}
+              </div>);
             })}
           </div>
 
