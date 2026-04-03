@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.381";
+const APP_VERSION="v1.19.382";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17677,151 +17677,148 @@ function APISetupModal({uid,onClose}){
           )}
         </div>
 
-        {/* Codale Price Scraper */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Codale Price Scraper</div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Test price lookup from Codale Electric Supply. Enter part numbers (comma-separated) to fetch live pricing.</div>
-          <CodaleTestPanel uid={uid}/>
+        {/* ═══ API INTEGRATIONS SECTION ═══ */}
+        <div style={{marginBottom:10,marginTop:20,borderTop:`1px solid ${C.border}`,paddingTop:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div><div style={{fontSize:14,fontWeight:800,color:"#38bdf8",letterSpacing:0.3}}>🔗 API Integrations</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>Official vendor APIs with structured endpoints and API keys</div></div>
+            {(!editScraper||editScraper.category!=="api")&&<button onClick={()=>setEditScraper({category:"api",name:"",type:"api_key",baseUrl:"",apiKey:"",headers:"",notes:"",enabled:true})}
+              style={{background:"#38bdf8",color:"#0d0d1a",border:"none",borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"})}>+ Add API Integration</button>}
+          </div>
         </div>
 
-        {/* Mouser API */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Mouser Electronics API</div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Real-time pricing and availability via Mouser's official API.</div>
+        {/* Built-in: Mouser */}
+        <div style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}/>
+            <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Mouser Electronics</div>
+            <span style={{fontSize:9,color:C.muted,background:C.surface,borderRadius:10,padding:"1px 6px"}}>Built-in</span>
+          </div>
           <MouserTestPanel uid={uid}/>
         </div>
 
-        {/* DigiKey API */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>DigiKey API</div>
-          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Real-time pricing and availability via DigiKey's Product Information V4 API.</div>
+        {/* Built-in: DigiKey */}
+        <div style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}/>
+            <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>DigiKey</div>
+            <span style={{fontSize:9,color:C.muted,background:C.surface,borderRadius:10,padding:"1px 6px"}}>Built-in</span>
+          </div>
           <DigikeyTestPanel uid={uid}/>
           <DigikeyUpdatePanel uid={uid}/>
         </div>
 
-        {/* Pricing Reports */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        {/* Custom API entries */}
+        {customScrapers.filter(s=>s.category==="api").map(s=>(
+          <div key={s.id} style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:s.enabled?C.green:C.muted,flexShrink:0}}/>
+              <div style={{fontSize:12,color:C.sub,fontWeight:600,flex:1}}>{s.name}</div>
+              <button onClick={()=>setEditScraper({...s})} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>Edit</button>
+              <button onClick={()=>deleteScraperConfig(s.id)} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{fontSize:11,color:C.muted}}>{s.baseUrl||"No URL"}</div>
+            {s.notes&&<div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
+          </div>
+        ))}
+
+        {/* Add API form */}
+        {editScraper&&editScraper.category==="api"&&(
+          <div style={{marginBottom:12,border:"1px solid #38bdf8",borderRadius:8,padding:14,background:"rgba(56,189,248,0.05)"}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#38bdf8",marginBottom:12}}>{editScraper.id?"Edit API Integration":"New API Integration"}</div>
+            <div style={{display:"grid",gap:8,marginBottom:12}}>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Provider Name *</label>
+              <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Newark, Arrow, Octopart" style={inp()}/></div>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>API Endpoint URL *</label>
+              <input value={editScraper.baseUrl} onChange={e=>setEditScraper(p=>({...p,baseUrl:e.target.value}))} placeholder="https://api.provider.com/v1/search" style={inp()}/></div>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>API Key</label>
+              <input value={editScraper.apiKey||""} onChange={e=>setEditScraper(p=>({...p,apiKey:e.target.value}))} placeholder="Enter API key" type="password" style={inp()}/></div>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Custom Headers (JSON, optional)</label>
+              <input value={editScraper.headers||""} onChange={e=>setEditScraper(p=>({...p,headers:e.target.value}))} placeholder='{"X-Custom-Header": "value"}' style={inp()}/></div>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Notes</label>
+              <textarea value={editScraper.notes||""} onChange={e=>setEditScraper(p=>({...p,notes:e.target.value}))} placeholder="API docs link, rate limits, etc." rows={2} style={{...inp(),resize:"vertical"}}/></div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setEditScraper(null)} style={btn(C.border,C.muted,{fontSize:12})}>Cancel</button>
+              <button onClick={()=>saveScraperConfig(editScraper)} disabled={scraperSaving||!editScraper.name?.trim()||!editScraper.baseUrl?.trim()}
+                style={btn("#38bdf8","#0d0d1a",{fontSize:12,fontWeight:700,opacity:scraperSaving||!editScraper.name?.trim()||!editScraper.baseUrl?.trim()?0.5:1})}>
+                {scraperSaving?"Saving…":editScraper.id?"Save Changes":"Add API Integration"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ═══ PRICE SCRAPERS SECTION ═══ */}
+        <div style={{marginBottom:10,marginTop:24,borderTop:`1px solid ${C.border}`,paddingTop:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div><div style={{fontSize:14,fontWeight:800,color:"#f59e0b",letterSpacing:0.3}}>🕷 Price Scrapers</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>Supplier portal logins — browser automation to extract pricing</div></div>
+            {(!editScraper||editScraper.category!=="scraper")&&<button onClick={()=>setEditScraper({category:"scraper",name:"",type:"login",portalUrl:"",loginUrl:"",username:"",password:"",notes:"",enabled:true})}
+              style={{background:"#f59e0b",color:"#0d0d1a",border:"none",borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add Scraper</button>}
+          </div>
+        </div>
+
+        {/* Built-in: Codale */}
+        <div style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}/>
+            <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Codale Electric Supply</div>
+            <span style={{fontSize:9,color:C.muted,background:C.surface,borderRadius:10,padding:"1px 6px"}}>Built-in</span>
+          </div>
+          <CodaleTestPanel uid={uid}/>
+        </div>
+
+        {/* Custom scraper entries */}
+        {customScrapers.filter(s=>s.category==="scraper").map(s=>(
+          <div key={s.id} style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:s.enabled?C.green:C.muted,flexShrink:0}}/>
+              <div style={{fontSize:12,color:C.sub,fontWeight:600,flex:1}}>{s.name}</div>
+              <button onClick={()=>setEditScraper({...s})} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>Edit</button>
+              <button onClick={()=>deleteScraperConfig(s.id)} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>✕</button>
+            </div>
+            <div style={{fontSize:11,color:C.muted}}>{s.portalUrl||"No URL"} · {s.username||"No login"}</div>
+            {s.notes&&<div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
+          </div>
+        ))}
+
+        {/* Add scraper form */}
+        {editScraper&&editScraper.category==="scraper"&&(
+          <div style={{marginBottom:12,border:"1px solid #f59e0b",borderRadius:8,padding:14,background:"rgba(245,158,11,0.05)"}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#f59e0b",marginBottom:12}}>{editScraper.id?"Edit Price Scraper":"New Price Scraper"}</div>
+            <div style={{display:"grid",gap:8,marginBottom:12}}>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Supplier Name *</label>
+              <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Royal Electric, Graybar, Rexel" style={inp()}/></div>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Portal URL *</label>
+              <input value={editScraper.portalUrl||""} onChange={e=>setEditScraper(p=>({...p,portalUrl:e.target.value}))} placeholder="https://portal.supplier.com" style={inp()}/></div>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Login Page URL</label>
+              <input value={editScraper.loginUrl||""} onChange={e=>setEditScraper(p=>({...p,loginUrl:e.target.value}))} placeholder="https://portal.supplier.com/login" style={inp()}/></div>
+              <div style={{display:"flex",gap:8}}>
+                <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Username</label>
+                <input value={editScraper.username||""} onChange={e=>setEditScraper(p=>({...p,username:e.target.value}))} placeholder="Username or email" style={inp()}/></div>
+                <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Password</label>
+                <input value={editScraper.password||""} onChange={e=>setEditScraper(p=>({...p,password:e.target.value}))} placeholder="Password" type="password" style={inp()}/></div>
+              </div>
+              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Notes</label>
+              <textarea value={editScraper.notes||""} onChange={e=>setEditScraper(p=>({...p,notes:e.target.value}))} placeholder="Portal quirks, search page URL, etc." rows={2} style={{...inp(),resize:"vertical"}}/></div>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>setEditScraper(null)} style={btn(C.border,C.muted,{fontSize:12})}>Cancel</button>
+              <button onClick={()=>saveScraperConfig(editScraper)} disabled={scraperSaving||!editScraper.name?.trim()||!editScraper.portalUrl?.trim()}
+                style={btn("#f59e0b","#0d0d1a",{fontSize:12,fontWeight:700,opacity:scraperSaving||!editScraper.name?.trim()||!editScraper.portalUrl?.trim()?0.5:1})}>
+                {scraperSaving?"Saving…":editScraper.id?"Save Changes":"Add Price Scraper"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Pricing Reports — shared across both sections */}
+        <div style={{marginTop:24,marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Pricing Sync Reports</div>
           <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>View history of all pricing sync runs with detailed results and CSV export.</div>
           <button onClick={()=>setShowPricingReports(true)} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>View Pricing Reports</button>
         </div>
         {showPricingReports&&<PricingReportsModal uid={uid} onClose={()=>setShowPricingReports(false)}/>}
-
-        {/* ═══ PRICING CONNECTIONS ═══ */}
-        <div style={{marginBottom:10,marginTop:20,borderTop:`1px solid ${C.border}`,paddingTop:16}}>
-          <div style={{fontSize:14,fontWeight:800,color:C.text,letterSpacing:0.3}}>Pricing Connections</div>
-          <div style={{fontSize:11,color:C.muted,marginTop:2}}>Add and manage API integrations and portal scrapers for automated pricing.</div>
-        </div>
-
-        {/* ── API Integrations ── */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div><div style={{fontSize:12,color:"#38bdf8",fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>🔗 API Integrations</div>
-            <div style={{fontSize:10,color:C.muted,marginTop:2}}>Official vendor APIs with structured endpoints and API keys</div></div>
-            {(!editScraper||editScraper.category!=="api")&&<button onClick={()=>setEditScraper({category:"api",name:"",type:"api_key",baseUrl:"",apiKey:"",headers:"",notes:"",enabled:true})}
-              style={{background:"#38bdf8",color:"#0d0d1a",border:"none",borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add API</button>}
-          </div>
-
-          {editScraper&&editScraper.category==="api"?(
-            <div style={{border:"1px solid #38bdf8",borderRadius:8,padding:14,background:"rgba(56,189,248,0.05)"}}>
-              <div style={{fontSize:13,fontWeight:700,color:"#38bdf8",marginBottom:12}}>{editScraper.id?"Edit API Integration":"New API Integration"}</div>
-              <div style={{display:"grid",gap:8,marginBottom:12}}>
-                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Provider Name *</label>
-                <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Mouser, DigiKey, Newark, Arrow" style={inp()}/></div>
-                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>API Endpoint URL *</label>
-                <input value={editScraper.baseUrl} onChange={e=>setEditScraper(p=>({...p,baseUrl:e.target.value}))} placeholder="https://api.provider.com/v1/search" style={inp()}/></div>
-                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>API Key</label>
-                <input value={editScraper.apiKey||""} onChange={e=>setEditScraper(p=>({...p,apiKey:e.target.value}))} placeholder="Enter API key" type="password" style={inp()}/></div>
-                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Custom Headers (JSON, optional)</label>
-                <input value={editScraper.headers||""} onChange={e=>setEditScraper(p=>({...p,headers:e.target.value}))} placeholder='{"X-Custom-Header": "value"}' style={inp()}/></div>
-                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Notes</label>
-                <textarea value={editScraper.notes||""} onChange={e=>setEditScraper(p=>({...p,notes:e.target.value}))} placeholder="API documentation link, rate limits, etc." rows={2} style={{...inp(),resize:"vertical"}}/></div>
-              </div>
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>setEditScraper(null)} style={btn(C.border,C.muted,{fontSize:12})}>Cancel</button>
-                <button onClick={()=>saveScraperConfig(editScraper)} disabled={scraperSaving||!editScraper.name?.trim()||!editScraper.baseUrl?.trim()}
-                  style={btn("#38bdf8","#0d0d1a",{fontSize:12,fontWeight:700,opacity:scraperSaving||!editScraper.name?.trim()||!editScraper.baseUrl?.trim()?0.5:1})}>
-                  {scraperSaving?"Saving…":editScraper.id?"Save Changes":"Add API Integration"}
-                </button>
-              </div>
-            </div>
-          ):(
-            <div>
-              {(()=>{const apis=customScrapers.filter(s=>s.category==="api");
-                return apis.length===0
-                  ?<div style={{fontSize:11,color:C.muted,padding:"6px 0"}}>No custom API integrations. Built-in: Mouser, DigiKey.</div>
-                  :apis.map(s=>(
-                    <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderBottom:`1px solid ${C.border}22`}}>
-                      <span style={{width:8,height:8,borderRadius:"50%",background:s.enabled?C.green:C.muted,flexShrink:0}}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:700,color:C.text}}>{s.name}</div>
-                        <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.baseUrl||"No URL"}</div>
-                      </div>
-                      <button onClick={()=>setEditScraper({...s})} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>Edit</button>
-                      <button onClick={()=>deleteScraperConfig(s.id)} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>✕</button>
-                    </div>
-                  ));
-              })()}
-            </div>
-          )}
-        </div>
-
-        {/* ── Price Scrapers (Portal Login) ── */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-            <div><div style={{fontSize:12,color:"#f59e0b",fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>🕷 Price Scrapers</div>
-            <div style={{fontSize:10,color:C.muted,marginTop:2}}>Supplier portal logins — browser automation to extract pricing</div></div>
-            {(!editScraper||editScraper.category!=="scraper")&&<button onClick={()=>setEditScraper({category:"scraper",name:"",type:"login",portalUrl:"",loginUrl:"",username:"",password:"",notes:"",enabled:true})}
-              style={{background:"#f59e0b",color:"#0d0d1a",border:"none",borderRadius:6,padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add Scraper</button>}
-          </div>
-
-          {editScraper&&editScraper.category==="scraper"?(
-            <div style={{border:"1px solid #f59e0b",borderRadius:8,padding:14,background:"rgba(245,158,11,0.05)"}}>
-              <div style={{fontSize:13,fontWeight:700,color:"#f59e0b",marginBottom:12}}>{editScraper.id?"Edit Price Scraper":"New Price Scraper"}</div>
-              <div style={{display:"grid",gap:8,marginBottom:12}}>
-                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Supplier Name *</label>
-                <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Royal Electric, Codale, Graybar" style={inp()}/></div>
-                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Portal URL *</label>
-                <input value={editScraper.portalUrl||""} onChange={e=>setEditScraper(p=>({...p,portalUrl:e.target.value}))} placeholder="https://portal.supplier.com" style={inp()}/></div>
-                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Login Page URL</label>
-                <input value={editScraper.loginUrl||""} onChange={e=>setEditScraper(p=>({...p,loginUrl:e.target.value}))} placeholder="https://portal.supplier.com/login" style={inp()}/></div>
-                <div style={{display:"flex",gap:8}}>
-                  <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Username</label>
-                  <input value={editScraper.username||""} onChange={e=>setEditScraper(p=>({...p,username:e.target.value}))} placeholder="Username or email" style={inp()}/></div>
-                  <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Password</label>
-                  <input value={editScraper.password||""} onChange={e=>setEditScraper(p=>({...p,password:e.target.value}))} placeholder="Password" type="password" style={inp()}/></div>
-                </div>
-                <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Notes</label>
-                <textarea value={editScraper.notes||""} onChange={e=>setEditScraper(p=>({...p,notes:e.target.value}))} placeholder="Portal quirks, search page URL, etc." rows={2} style={{...inp(),resize:"vertical"}}/></div>
-              </div>
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>setEditScraper(null)} style={btn(C.border,C.muted,{fontSize:12})}>Cancel</button>
-                <button onClick={()=>saveScraperConfig(editScraper)} disabled={scraperSaving||!editScraper.name?.trim()||!editScraper.portalUrl?.trim()}
-                  style={btn("#f59e0b","#0d0d1a",{fontSize:12,fontWeight:700,opacity:scraperSaving||!editScraper.name?.trim()||!editScraper.portalUrl?.trim()?0.5:1})}>
-                  {scraperSaving?"Saving…":editScraper.id?"Save Changes":"Add Price Scraper"}
-                </button>
-              </div>
-            </div>
-          ):(
-            <div>
-              {(()=>{const scrapers=customScrapers.filter(s=>s.category==="scraper");
-                return scrapers.length===0
-                  ?<div style={{fontSize:11,color:C.muted,padding:"6px 0"}}>No custom portal scrapers. Built-in: Codale Electric.</div>
-                  :scrapers.map(s=>(
-                    <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderBottom:`1px solid ${C.border}22`}}>
-                      <span style={{width:8,height:8,borderRadius:"50%",background:s.enabled?C.green:C.muted,flexShrink:0}}/>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:700,color:C.text}}>{s.name}</div>
-                        <div style={{fontSize:11,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.portalUrl||s.baseUrl||"No URL"} · {s.username||"No login"}</div>
-                      </div>
-                      <button onClick={()=>setEditScraper({...s})} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>Edit</button>
-                      <button onClick={()=>deleteScraperConfig(s.id)} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>✕</button>
-                    </div>
-                  ));
-              })()}
-            </div>
-          )}
-        </div>
 
         <div style={{marginTop:24,textAlign:"center"}}>
           <button onClick={onClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
