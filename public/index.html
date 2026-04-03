@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.333";
+const APP_VERSION="v1.19.334";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1262,6 +1262,55 @@ async function bcDeleteAttachmentByName(jobNumber,targetFileName){
       }catch(e){console.warn("Delete attachment error:",a.fileName,e.message);}
     }
   }catch(e){console.warn("bcDeleteAttachmentByName error:",e.message);}
+}
+
+// Bulk cleanup: fetch all attachments, keep only the latest of each unique fileName, delete old quote revs and bad-named files
+async function bcCleanupDuplicateAttachments(jobNumber,keepFileNames=[]){
+  if(!_bcToken||!jobNumber)return{deleted:0};
+  try{
+    const {compId,jobId}=await bcGetJobGuid(jobNumber);
+    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!r.ok)return{deleted:0};
+    const atts=(await r.json()).value||[];
+    if(!atts.length)return{deleted:0};
+    const keepSet=new Set(keepFileNames.map(n=>(n||"").toLowerCase().replace(/\.pdf$/i,"")));
+    // Group by fileName — keep newest (highest id or latest in list) of exact dupes
+    const groups={};
+    atts.forEach(a=>{const k=(a.fileName||"").toLowerCase();if(!groups[k])groups[k]=[];groups[k].push(a);});
+    const toDelete=[];
+    for(const [fname,copies] of Object.entries(groups)){
+      if(copies.length>1){
+        // Keep the last one (most recent), delete the rest
+        copies.slice(0,-1).forEach(a=>toDelete.push(a));
+      }
+      // Delete old quote revisions (keep only the latest rev)
+      // Pattern: [MTX-Qxxxxxx Rev NN] — if a higher rev exists, delete lower revs
+      const revMatch=fname.match(/^\[mtx-q\d+\s+rev\s+(\d+)\]/);
+      if(revMatch){
+        const revNum=parseInt(revMatch[1]);
+        const quoteBase=fname.replace(/rev\s+\d+/,"rev");
+        // Check if a higher rev exists in the full attachment list
+        const hasHigherRev=atts.some(a2=>{const f2=(a2.fileName||"").toLowerCase();const m2=f2.match(/^\[mtx-q\d+\s+rev\s+(\d+)\]/);return m2&&f2.replace(/rev\s+\d+/,"rev")===quoteBase&&parseInt(m2[1])>revNum;});
+        if(hasHigherRev)copies.forEach(a=>{if(!toDelete.includes(a))toDelete.push(a);});
+      }
+      // Delete known bad patterns
+      if(/^\d{3,4}\s*-\s*prj/i.test(fname)){copies.forEach(a=>{if(!toDelete.includes(a))toDelete.push(a);});}
+      if(/nodwg/i.test(fname)&&/as-quoted/i.test(fname)){copies.forEach(a=>{if(!toDelete.includes(a))toDelete.push(a);});}
+    }
+    // Never delete files in the keep list
+    const finalDelete=toDelete.filter(a=>!keepSet.has((a.fileName||"").toLowerCase().replace(/\.pdf$/i,"")));
+    let deleted=0;
+    for(const a of finalDelete){
+      try{
+        const dr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{
+          method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}
+        });
+        if(dr.ok||dr.status===204){deleted++;console.log("CLEANUP: deleted",a.fileName);}
+      }catch(e){}
+    }
+    console.log(`CLEANUP: removed ${deleted} of ${finalDelete.length} duplicates from ${jobNumber}`);
+    return{deleted,total:finalDelete.length};
+  }catch(e){console.warn("bcCleanupDuplicateAttachments error:",e.message);return{deleted:0};}
 }
 
 async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer,previousFileName){
@@ -3413,9 +3462,11 @@ async function generateQuotePdf(project){
     const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
     const fileName=`[${quoteNum} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
     const pdfBytes=doc.output("arraybuffer");
-    // Do NOT delete old copies — each rev stays as a record
-    bcAttachPdfToJob(bcNum,fileName,pdfBytes,null).then(()=>{
+    // Delete same-rev duplicates before uploading (but keep different revs as history)
+    bcAttachPdfToJob(bcNum,fileName,pdfBytes,fileName.replace(/\.pdf$/i,"")).then(()=>{
       console.log("[QUOTE] PDF uploaded to BC:",fileName);
+      // Cleanup any remaining duplicates in background
+      bcCleanupDuplicateAttachments(bcNum,[fileName.replace(/\.pdf$/i,"")]).catch(()=>{});
     }).catch(e=>{console.warn("[QUOTE] BC upload failed:",e.message);});
   }
   return{printed:true,hash:computeBomHash(project.panels)};
@@ -10153,8 +10204,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
       setBcPdfMissing(false);
-      setAttachPdfMsg("✓ Uploaded: "+fileName);
-      setTimeout(()=>setAttachPdfMsg(""),5000);
+      setAttachPdfMsg("✓ Uploaded — cleaning duplicates…");
+      // Run bulk duplicate cleanup in background (non-blocking)
+      bcCleanupDuplicateAttachments(bcProjectNumber,[fileName.replace(/\.pdf$/i,"")]).then(r=>{
+        if(r.deleted>0)setAttachPdfMsg(`✓ Uploaded + cleaned ${r.deleted} old file${r.deleted>1?"s":""}`);
+        else setAttachPdfMsg("✓ Uploaded: "+fileName);
+        setTimeout(()=>setAttachPdfMsg(""),5000);
+      }).catch(()=>{setAttachPdfMsg("✓ Uploaded: "+fileName);setTimeout(()=>setAttachPdfMsg(""),5000);});
     }catch(e){
       console.error("Attach PDF failed:",e);
       setAttachPdfMsg("✗ "+e.message);
