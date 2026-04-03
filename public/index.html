@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.370";
+const APP_VERSION="v1.19.371";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14485,6 +14485,28 @@ function CADLinkSendModal({project,onClose}){
 
         <div style={{marginBottom:14}}>
           <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Send To (separate multiple with commas)</label>
+          {/* BC user quick-select chips */}
+          {(()=>{const users=(window._arcSalespersonCache||[]).filter(s=>s.E_Mail);
+            return users.length>0?(
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
+                {users.map(s=>{
+                  const isSelected=toEmail.toLowerCase().includes(s.E_Mail.toLowerCase());
+                  return <button key={s.Code} type="button" onClick={()=>{
+                    if(isSelected){
+                      // Remove this email
+                      const emails=toEmail.split(/[,;]\s*/).filter(e=>e.trim().toLowerCase()!==s.E_Mail.toLowerCase()).join(", ");
+                      setToEmail(emails);
+                    }else{
+                      // Add this email
+                      setToEmail(prev=>prev.trim()?(prev.trim().replace(/[,;]\s*$/,"")+", "+s.E_Mail):s.E_Mail);
+                    }
+                  }} style={{background:isSelected?"#0c2a1a":"transparent",border:`1px solid ${isSelected?"#4ade80":C.border}`,borderRadius:12,padding:"2px 8px",fontSize:10,color:isSelected?"#4ade80":C.muted,cursor:"pointer",fontWeight:isSelected?700:400}}>
+                    {isSelected?"✓ ":""}{s.Name}{s.Job_Title?" ("+s.Job_Title+")":""}
+                  </button>;
+                })}
+              </div>
+            ):null;
+          })()}
           <input value={toEmail} onChange={e=>setToEmail(e.target.value)} placeholder="engineering@matrixpci.com, cad@matrixpci.com"
             onKeyDown={e=>{if(e.key==="Enter"&&toEmail.trim())handleSend();}}
             style={{...inp({fontSize:13}),width:"100%",boxSizing:"border-box"}}/>
@@ -15033,7 +15055,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
               {panels.some(p=>(p.bom||[]).some(r=>!r.isLaborRow))&&(
-                <button onClick={()=>setShowCADLinkModal(true)} style={btn("#0d1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>📦 CADLink BOMs</button>
+                <button onClick={()=>setShowCADLinkModal(true)} style={btn("#0d1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>📦 Send CADLink BOM's</button>
               )}
               {!readOnly&&onCopy&&(
                 <button onClick={onCopy} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⧉ Copy</button>
