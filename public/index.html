@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.361";
+const APP_VERSION="v1.19.362";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1935,11 +1935,41 @@ async function bcFetchCustomerContacts(customerNumber){
   }catch(e){console.warn("bcFetchCustomerContacts error:",e);return[];}
 }
 
-async function bcCreateContact(displayName,companyNumber,email,phone){
+// DECISION(v1.19.362): bcCreateContact resolves the company contact number (CT######) from the
+// customer number (C#####) before creating. BC contacts API's companyNumber field expects the
+// company-type contact number, not the customer number. Without this, contacts are created
+// but not linked to the company card.
+async function bcCreateContact(displayName,customerNumber,email,phone){
   if(!_bcToken)throw new Error("Not connected to Business Central");
   const compId=await bcGetCompanyId();
   if(!compId)throw new Error("Could not resolve BC company");
-  const body={displayName,companyNumber,type:"Person"};
+  // Resolve company contact number from customer number
+  let companyContactNo="";
+  try{
+    const allPages=await bcDiscoverODataPages();
+    const custPage=allPages.find(n=>/^Customer_Card/i.test(n));
+    if(custPage){
+      const cr=await fetch(`${BC_ODATA_BASE}/${custPage}?$filter=No eq '${customerNumber}'&$select=No,Primary_Contact_No,Contact_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(cr.ok){const cd=((await cr.json()).value||[])[0];if(cd)companyContactNo=cd.Primary_Contact_No||cd.Contact_No||"";}
+    }
+  }catch(e){}
+  // Fallback: find the company-type contact by customer name
+  if(!companyContactNo){
+    try{
+      const cr=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${customerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(cr.ok){
+        const cust=((await cr.json()).value||[])[0];
+        if(cust?.displayName){
+          const filterParam="$filter="+encodeURIComponent("companyName eq '"+cust.displayName.replace(/'/g,"''")+"' and type eq 'Company'");
+          const ccr=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?${filterParam}&$select=number&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          if(ccr.ok){const ccd=((await ccr.json()).value||[])[0];if(ccd)companyContactNo=ccd.number||"";}
+        }
+      }
+    }catch(e){}
+  }
+  if(!companyContactNo)console.warn("bcCreateContact: could not resolve company contact number for customer",customerNumber);
+  const body={displayName,type:"Person"};
+  if(companyContactNo)body.companyNumber=companyContactNo;
   if(email)body.email=email;
   if(phone)body.phoneNumber=phone;
   const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts`,{
