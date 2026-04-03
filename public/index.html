@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.324";
+const APP_VERSION="v1.19.325";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7979,13 +7979,13 @@ function QuoteTab({project,onUpdate}){
                 </div>
               </div>
               </div>
-              {/* Crossed items — outside the box so the box stays compact */}
+              {/* Crossed items — outside the bordered box so .qd-li stays compact and doesn't page-break */}
               {crossedItems.length>0&&(
-                <div className="qd-crossed" style={{marginTop:0,padding:"4px 16px 8px",fontSize:12}}>
-                  <div className="qd-crossed-title">Crossed / Superseded — Alternate Products Used</div>
+                <div style={{padding:"4px 44px 8px",fontSize:12}}>
+                  <div className="qd-crossed-title" style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:"#94a3b8",marginBottom:4}}>Crossed / Superseded — Alternate Products Used</div>
                   {crossedItems.map((item,i)=>(
-                    <div key={item.id||i} className="qd-crossed-row">
-                      {i+1}. <span className="qd-muted">Scanned:</span> <strong>{item.crossedFrom}</strong> <span className="qd-muted">→ Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span className="qd-muted"> ({item.description})</span>:null}
+                    <div key={item.id||i} style={{fontSize:9,color:"#334155",marginBottom:1}}>
+                      {i+1}. <span style={{color:"#64748b"}}>Scanned:</span> <strong>{item.crossedFrom}</strong> <span style={{color:"#64748b"}}> → Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:"#64748b"}}> ({item.description})</span>:null}
                     </div>
                   ))}
                 </div>
