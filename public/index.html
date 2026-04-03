@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.353";
+const APP_VERSION="v1.19.354";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3406,7 +3406,24 @@ async function buildQuotePdfDoc(doc,project){
       ctx.y+=qnLines.length*2.5+1.5;
     }
 
-    // DECISION(v1.19.330): Crossed items render INSIDE the bordered box (between notes and pricing).
+    // DECISION(v1.19.353): Documents Provided section — lists all drawing pages and other docs
+    // for the supplier's reference. Shows filenames of all extracted drawings + uploaded specs/docs.
+    // Renders ABOVE Crossed/Superseded per user request (v1.19.354).
+    const drawingPages=(pan.pages||[]).filter(p=>p.name);
+    const otherDocs=(pan.otherDocs||[]).filter(d=>d.name);
+    if(drawingPages.length>0||otherDocs.length>0){
+      const allDocNames=[...drawingPages.map(p=>p.name),...otherDocs.map(d=>d.name)];
+      const docText=allDocNames.join("  ·  ");
+      const maxDocW=ctx.contentWidth-8;
+      doc.setFontSize(5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text("Documents Provided",ARC_DOC.margin.left+2,ctx.y);ctx.y+=2.5;
+      doc.setFont("helvetica","normal");doc.setFontSize(4.5);doc.setTextColor(...ARC_DOC.colors.black);
+      const docLines=doc.splitTextToSize(docText,maxDocW);
+      docLines.forEach(function(ln,li){doc.text(ln,ARC_DOC.margin.left+3,ctx.y+li*1.8);});
+      ctx.y+=docLines.length*1.8+1.5;
+    }
+
+    // DECISION(v1.19.330): Crossed items render INSIDE the bordered box (between docs and pricing).
     // User wants crosses kept with their line item, not floating below. Font is 4.5pt with 1.8mm line
     // height to keep the box compact enough to fit on one page (see height pre-estimate above).
     const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
@@ -3423,22 +3440,6 @@ async function buildQuotePdfDoc(doc,project){
         ctx.y+=lines.length*clh;
       });
       ctx.y+=1.5;
-    }
-
-    // DECISION(v1.19.353): Documents Provided section — lists all drawing pages and other docs
-    // for the supplier's reference. Shows filenames of all extracted drawings + uploaded specs/docs.
-    const drawingPages=(pan.pages||[]).filter(p=>p.name);
-    const otherDocs=(pan.otherDocs||[]).filter(d=>d.name);
-    if(drawingPages.length>0||otherDocs.length>0){
-      const allDocNames=[...drawingPages.map(p=>p.name),...otherDocs.map(d=>d.name)];
-      const docText=allDocNames.join("  ·  ");
-      const maxDocW=ctx.contentWidth-8;
-      doc.setFontSize(5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
-      doc.text("Documents Provided",ARC_DOC.margin.left+2,ctx.y);ctx.y+=2.5;
-      doc.setFont("helvetica","normal");doc.setFontSize(4.5);doc.setTextColor(...ARC_DOC.colors.black);
-      const docLines=doc.splitTextToSize(docText,maxDocW);
-      docLines.forEach(function(ln,li){doc.text(ln,ARC_DOC.margin.left+3,ctx.y+li*1.8);});
-      ctx.y+=docLines.length*1.8+1.5;
     }
 
     // Pricing row — INSIDE the bordered box
