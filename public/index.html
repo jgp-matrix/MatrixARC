@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.344";
+const APP_VERSION="v1.19.345";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14376,9 +14376,13 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
             </div>
             {selectedThread&&(
               <div style={{marginTop:8,background:"#0c2a1a",border:"1px solid #4ade8044",borderRadius:6,padding:"8px 12px"}}>
-                <div style={{fontSize:10,fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:0.5,marginBottom:3}}>Replying To</div>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:0.5}}>↩ Reply All</div>
+                  <div style={{fontSize:9,color:"#4ade80",opacity:0.7}}>— all original recipients will be included</div>
+                </div>
                 <div style={{fontSize:12,fontWeight:700,color:C.text}}>{selectedThread.subject}</div>
                 <div style={{fontSize:11,color:C.muted}}>From: {selectedThread.from} · {fmtDate(selectedThread.date)}</div>
+                {selectedThread.to&&<div style={{fontSize:10,color:C.muted,marginTop:2}}>To: {selectedThread.to}</div>}
               </div>
             )}
           </div>
@@ -14393,7 +14397,7 @@ function QuoteSendModal({project,modalData,setModalData,onUpdate,onClose}){
           <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
           <button onClick={handleSend} disabled={sending}
             style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:sending?0.5:1})}>
-            {sending?"Sending…":sendMode==="reply"?"↩ Reply with Quote":"✉ Send"}
+            {sending?"Sending…":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
           </button>
         </div>
       </div>
