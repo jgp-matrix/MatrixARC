@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.400";
+const APP_VERSION="v1.19.401";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16009,10 +16009,36 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               if(!q.contact&&!autoFields.contact&&bc.Sell_to_Contact)autoFields.contact=bc.Sell_to_Contact;
               if(!q.phone&&!autoFields.phone&&bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
               if(!q.email&&!autoFields.email&&bc.SellToEmail)autoFields.email=bc.SellToEmail;
-              // DECISION(v1.19.400): BC project card uses CCS_ prefixed field names for payment/shipping.
-              // Check both CCS_ and non-CCS versions for compatibility across BC configurations.
-              if(bc.CCS_Payment_Terms_Code||bc.Payment_Terms_Code)autoFields.paymentTerms=bc.CCS_Payment_Terms_Code||bc.Payment_Terms_Code;
-              if(bc.CCS_Shipment_Method_Code||bc.Shipment_Method_Code)autoFields.shippingMethod=bc.CCS_Shipment_Method_Code||bc.Shipment_Method_Code;
+              // DECISION(v1.19.401): Payment terms & shipping come from project card first, then customer card fallback.
+              // Project card uses CCS_ prefixed fields. Customer card uses paymentTermsId/shipmentMethodId (GUIDs)
+              // that need to be resolved via REST API.
+              let pmtTerms=bc.CCS_Payment_Terms_Code||bc.Payment_Terms_Code||"";
+              let shipMethod=bc.CCS_Shipment_Method_Code||bc.Shipment_Method_Code||"";
+              // Fallback to customer card if project card fields are empty
+              if((!pmtTerms||!shipMethod)&&(bc.Bill_to_Customer_No||bc.Sell_to_Customer_No)){
+                try{
+                  const custNo=bc.Bill_to_Customer_No||bc.Sell_to_Customer_No;
+                  const compId2=await bcGetCompanyId();
+                  const custR=await fetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${custNo}'&$select=number,paymentTermsId,shipmentMethodId`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                  if(custR.ok){
+                    const cust=((await custR.json()).value||[])[0];
+                    if(cust){
+                      // Resolve payment terms from ID to code
+                      if(!pmtTerms&&cust.paymentTermsId){
+                        try{const ptr=await fetch(`${BC_API_BASE}/companies(${compId2})/paymentTerms(${cust.paymentTermsId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                          if(ptr.ok){const pt=await ptr.json();pmtTerms=pt.code||pt.displayName||"";}}catch(e){}
+                      }
+                      // Resolve shipment method from ID to code
+                      if(!shipMethod&&cust.shipmentMethodId){
+                        try{const smr=await fetch(`${BC_API_BASE}/companies(${compId2})/shipmentMethods(${cust.shipmentMethodId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                          if(smr.ok){const sm=await smr.json();shipMethod=sm.code||sm.displayName||"";}}catch(e){}
+                      }
+                    }
+                  }
+                }catch(e){console.warn("Customer card payment/shipping lookup failed:",e);}
+              }
+              if(pmtTerms)autoFields.paymentTerms=pmtTerms;
+              if(shipMethod)autoFields.shippingMethod=shipMethod;
               // DECISION(v1.19.346): Use salesperson code from BC project card OR from the project's
               // bcSalespersonCode (set via the Sales dropdown in PanelListView). BC card may not always
               // have Person_Responsible populated even when the dropdown was set.
