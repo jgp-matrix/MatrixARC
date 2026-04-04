@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.401";
+const APP_VERSION="v1.19.402";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15164,7 +15164,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                           const fresh=await bcFetchCustomerContacts(project.bcCustomerNumber);setContactPersons(fresh);
                           // Auto-select the new contact
                           const upd={...project,bcContactNo:c.number,bcContactName:c.displayName,bcContactEmail:c.email,bcContactPhone:c.phone,
-                            quote:{...(project.quote||{}),contact:c.displayName,email:c.email||project.quote?.email,phone:c.phone||project.quote?.phone}};
+                            quote:{...(project.quote||{}),contact:c.displayName,email:c.email||"",phone:c.phone||""}};
                           onUpdate(upd);saveProject(uid,upd).catch(()=>{});
                           if(project.bcProjectNumber&&_bcToken)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:c.number}).catch(()=>{});
                           setShowNewContact(false);setNewContactName("");setNewContactEmail("");setNewContactPhone("");
@@ -15185,7 +15185,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                         if(no==="__NEW__"){setShowNewContact(true);setNewContactName("");setNewContactEmail("");setNewContactPhone("");setNewContactErr("");return;}
                         const c=contactPersons.find(p=>p.number===no);
                         const upd={...project,bcContactNo:no,bcContactName:c?c.displayName:"",bcContactEmail:c?c.email:"",bcContactPhone:c?c.phone:"",
-                          quote:{...(project.quote||{}),contact:c?c.displayName:"",email:c?.email||project.quote?.email,phone:c?.phone||project.quote?.phone}};
+                          // DECISION(v1.19.402): Always use the selected contact's email/phone — never fall back
+                          // to previous person's info. If the contact has no email, leave it blank.
+                          quote:{...(project.quote||{}),contact:c?c.displayName:"",email:c?.email||"",phone:c?.phone||""}};
                         onUpdate(upd);saveProject(uid,upd).catch(()=>{});
                         if(project.bcProjectNumber&&_bcToken&&no)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:no}).catch(()=>{});
                       }} style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",minWidth:220,maxWidth:360}}>
