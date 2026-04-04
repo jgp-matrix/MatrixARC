@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.402";
+const APP_VERSION="v1.19.403";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15986,24 +15986,25 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               const compId=await bcGetCompanyId();
               const contactNo=bc.Sell_to_Contact_No||"";
               const custName=bc.Sell_to_Customer_Name||"";
-              if(compId&&(contactNo||custName)&&(!q.contact||!q.phone||!q.email)){
+              // DECISION(v1.19.403): Only auto-fill contact info from BC if NO contact person has been
+              // explicitly selected via the dropdown. If a contact is selected (proj.bcContactNo set),
+              // their info is authoritative — don't override with a different person's email/phone.
+              if(compId&&(contactNo||custName)&&!proj.bcContactNo&&!q.contact){
                 try{
-                  // Find all contacts under this company — prefer ones with email
                   const cFilter=custName?`companyName eq '${custName.replace(/'/g,"''")}'`:`number eq '${contactNo}'`;
                   const cr=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=${cFilter}&$select=number,displayName,email,phoneNumber,companyName&$top=10`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                   if(cr.ok){
                     const contacts=(await cr.json()).value||[];
-                    // Find best contact: person with email, or first person (not company record)
                     const people=contacts.filter(c=>c.displayName!==c.companyName);
                     const withEmail=people.filter(c=>c.email);
                     const bestContact=withEmail[0]||people[0]||contacts[0];
                     if(bestContact){
-                      if(!q.contact&&bestContact.displayName&&bestContact.displayName!==custName)autoFields.contact=bestContact.displayName;
-                      else if(!q.contact&&bc.Sell_to_Contact)autoFields.contact=bc.Sell_to_Contact;
-                      if(!q.phone&&bestContact.phoneNumber)autoFields.phone=bestContact.phoneNumber;
-                      else if(!q.phone&&bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
-                      if(!q.email&&bestContact.email)autoFields.email=bestContact.email;
-                      else if(!q.email&&bc.SellToEmail)autoFields.email=bc.SellToEmail;
+                      if(bestContact.displayName&&bestContact.displayName!==custName)autoFields.contact=bestContact.displayName;
+                      else if(bc.Sell_to_Contact)autoFields.contact=bc.Sell_to_Contact;
+                      if(bestContact.phoneNumber)autoFields.phone=bestContact.phoneNumber;
+                      else if(bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
+                      if(bestContact.email)autoFields.email=bestContact.email;
+                      else if(bc.SellToEmail)autoFields.email=bc.SellToEmail;
                     }
                   }
                 }catch(e){console.warn("BC contact lookup failed:",e);}
