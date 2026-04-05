@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.404";
+const APP_VERSION="v1.19.405";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4300,6 +4300,22 @@ async function saveProject(uid,project){
   await ref.set(toSave);
   return data; // return with dataUrls intact for in-memory use
 }
+// DECISION(v1.19.405): Safe save wrapper — retries on failure and shows user notification.
+// Replaces silent `.catch(()=>{})` patterns that swallowed save errors.
+let _saveFailBanner=null; // global setter for save-fail banner (set by App component)
+async function safeSave(uid,project,retries=2){
+  for(let attempt=0;attempt<=retries;attempt++){
+    try{await saveProject(uid,project);return true;}
+    catch(e){
+      console.warn(`Save failed (attempt ${attempt+1}/${retries+1}):`,e.message);
+      if(attempt<retries)await new Promise(r=>setTimeout(r,2000));
+    }
+  }
+  console.error("Save failed after all retries for project:",project?.id||project?.name);
+  if(_saveFailBanner)_saveFailBanner("Save failed — changes may not be persisted. Check your connection.");
+  return false;
+}
+
 // Save a single panel into its project in Firestore (used by background extraction tasks)
 // Uses a mutex to prevent concurrent saves from racing
 const _panelSaveLocks={};
@@ -10916,9 +10932,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
   // DECISION(v1.19.376): Manual price entry shows a confirmation popup asking if the cost is
   // Confirmed (push to BC Item Card + Purchase Price) or Budgetary (BOM only, no BC, no priceDate).
+  // DECISION(v1.19.405): Price validation — reject negative, warn on high values.
   function updatePrice(id,val){
     const parsed=val===""?null:parseFloat(val);
     const row=(panel.bom||[]).find(r=>r.id===id);
+    if(parsed!=null&&!isNaN(parsed)){
+      if(parsed<0){alert("Price cannot be negative.");return;}
+      if(parsed>100000&&!window.confirm(`$${parsed.toLocaleString()} seems very high for a single unit. Are you sure?`))return;
+    }
     if(parsed==null||isNaN(parsed)){
       // Clearing price — no popup needed
       const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:null,priceSource:null,priceDate:null}:r);
@@ -11193,8 +11214,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }catch(e){console.warn("Custom scraper pricing phase failed:",e);}
 
-    // Phase 2: AI fallback for items not priced by BC
-    const unpricedBom=updatedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual");
+    // DECISION(v1.19.405): AI fallback only for truly unpriced items — skip anything with a price > 0.
+    // Previously could overwrite extraction-time prices that had priceSource=null.
+    const unpricedBom=updatedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual"&&!(r.unitPrice>0));
     if(unpricedBom.length>0){
       const BATCH=20;
       const total=Math.ceil(unpricedBom.length/BATCH);
@@ -14790,7 +14812,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
         ?(selectedThread.to?selectedThread.from+", "+selectedThread.to:selectedThread.fromEmail||selectedThread.from)
         :m.to;
       const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo};
-      onUpdate(upd);saveProject(uid,upd).catch(()=>{});
+      onUpdate(upd);safeSave(uid,upd);
       if(project.bcProjectNumber&&_bcToken){
         bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
       }
@@ -14976,7 +14998,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
         if(cust&&cust.displayName&&cust.displayName!==project.bcCustomerName){
           console.log("BC_SYNC: Customer name changed:",project.bcCustomerName,"→",cust.displayName);
           const upd={...project,bcCustomerName:cust.displayName,quote:{...(project.quote||{}),company:cust.displayName}};
-          onUpdate(upd);saveProject(uid,upd).catch(()=>{});
+          onUpdate(upd);safeSave(uid,upd);
         }
       }catch(e){}
     })();
@@ -15008,7 +15030,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
       console.log("SCRUB: clearing dupe crosses from",project.name);
       const updated={...project,panels:cleaned};
       onUpdate(updated);
-      saveProject(uid,updated).catch(()=>{});
+      safeSave(uid,updated);
     }
   },[project.id]);
 
@@ -15128,7 +15150,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                               const val=(e.target.textContent||"").trim();
                               if(val&&val!==project.bcCustomerName){
                                 const upd={...project,bcCustomerName:val,quote:{...(project.quote||{}),company:val}};
-                                onUpdate(upd);saveProject(uid,upd).catch(()=>{});
+                                onUpdate(upd);safeSave(uid,upd);
                                 // Update BC project card customer name if connected
                                 if(project.bcProjectNumber&&_bcToken)bcPatchJobOData(project.bcProjectNumber,{Bill_to_Name:val}).catch(()=>{});
                               }
@@ -15169,7 +15191,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                           // Auto-select the new contact
                           const upd={...project,bcContactNo:c.number,bcContactName:c.displayName,bcContactEmail:c.email,bcContactPhone:c.phone,
                             quote:{...(project.quote||{}),contact:c.displayName,email:c.email||"",phone:c.phone||""}};
-                          onUpdate(upd);saveProject(uid,upd).catch(()=>{});
+                          onUpdate(upd);safeSave(uid,upd);
                           if(project.bcProjectNumber&&_bcToken)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:c.number}).catch(()=>{});
                           setShowNewContact(false);setNewContactName("");setNewContactEmail("");setNewContactPhone("");
                         }catch(e){setNewContactErr(e.message||"Failed");}
@@ -15192,7 +15214,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                           // DECISION(v1.19.402): Always use the selected contact's email/phone — never fall back
                           // to previous person's info. If the contact has no email, leave it blank.
                           quote:{...(project.quote||{}),contact:c?c.displayName:"",email:c?.email||"",phone:c?.phone||""}};
-                        onUpdate(upd);saveProject(uid,upd).catch(()=>{});
+                        onUpdate(upd);safeSave(uid,upd);
                         if(project.bcProjectNumber&&_bcToken&&no)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:no}).catch(()=>{});
                       }} style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",minWidth:220,maxWidth:360}}>
                         <option value="">— Select Person —</option>
@@ -15218,7 +15240,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                       var cached=cache.find(function(s){return s.Code===code;});
                       // DECISION(v1.19.367): Must saveProject after updating Sales/PM/Designer so changes persist.
                       // Previously only called onUpdate (React state) — changes were lost on navigation.
-                      var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;onUpdate(upd);saveProject(uid,upd).catch(function(){});
+                      var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;onUpdate(upd);safeSave(uid,upd);
                       if(bcField&&project.bcProjectNumber&&_bcToken){var patch={};patch[bcField]=code;bcPatchJobOData(project.bcProjectNumber,patch).catch(function(){});}
                     },style:{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:150}},opts)
                   );
@@ -15550,7 +15572,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:14,padding:"8px 12px",flex:3,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Supplier Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
                   <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
                 </div>
-                <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Client Quote{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?` (Rev ${project.quoteRev} ⚠ unsent)`:project.quoteRev>0?` (Rev ${project.quoteRev})`:""}</button>
+                <button data-tour="print-quote-btn" onClick={onViewQuote} disabled={quotePrinting} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%",opacity:quotePrinting?0.5:1})}>{quotePrinting?"Preparing Quote…":"🖨 Print Client Quote"}{!quotePrinting&&((project.quoteRev||0)>(project.quoteRevAtPrint||0)?` (Rev ${project.quoteRev} ⚠ unsent)`:project.quoteRev>0?` (Rev ${project.quoteRev})`:"")||""}</button>
                 {!readOnly&&<button onClick={async()=>{
                   const q=project.quote||{};
                   const rev=project.quoteRev||0;
@@ -15845,7 +15867,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   useEffect(()=>{
     if(didMigrate.current){
       didMigrate.current=false;
-      saveProject(uid,migrateProject(init)).catch(()=>{});
+      safeSave(uid,migrateProject(init));
     }
   },[]);
 
@@ -15861,7 +15883,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         p={...p,quoteRev:(p.quoteRev||0)+1};
         // Save the revision bump after a short delay (prevents stacking from rapid updates)
         if(revBumpTimer.current)clearTimeout(revBumpTimer.current);
-        revBumpTimer.current=setTimeout(()=>{saveProject(uid,projectRef.current).catch(()=>{});},2000);
+        revBumpTimer.current=setTimeout(()=>{safeSave(uid,projectRef.current);},2000);
       }
     }
     setProject(p);projectRef.current=p;onChange(p);
@@ -15931,7 +15953,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     setRfqLoading(false);
   }
 
+  // DECISION(v1.19.405): Debounce guard — prevents double-click triggering parallel quote generation.
+  const [quotePrinting,setQuotePrinting]=useState(false);
   async function handlePrintQuote(){
+    if(quotePrinting)return;
+    setQuotePrinting(true);
+    try{
     // Auto-assign quote number if not yet set
     let proj=projectRef.current;
     if(!proj.quote?.number||!/^MTX-Q\d{6}$/.test(String(proj.quote.number))){
@@ -16121,6 +16148,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(openEqs.length>0){setEqWarnOpen(openEqs);if(warn.length>0)setEqWarnPriceRows(warn);return;}
     if(warn.length>0){setQuoteWarnRows(warn);}
     else{await verifyBcLineCount();}
+    }finally{setQuotePrinting(false);}
   }
 
   async function verifyBcLineCount(){
@@ -21398,7 +21426,8 @@ INSTRUCTIONS:
         ];
         saveDefaultBomItems(user.uid,_defaultBomItems).catch(()=>{});
       }
-      console.log("API key loaded:",_apiKey?"YES ("+_apiKey.slice(0,8)+"…)":"NO — set in Settings");
+      // DECISION(v1.19.405): Don't log any API key content — security risk.
+      console.log("API key loaded:",_apiKey?"YES":"NO — set in Settings");
       setProjects(await loadProjects(user.uid));
       setLoading(false);
       // Auto-connect BC silently in background
