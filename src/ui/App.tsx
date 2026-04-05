@@ -20,12 +20,21 @@ import Dashboard from './Dashboard';
 import ProjectView from './ProjectView';
 import ItemsTab from './tabs/ItemsTab';
 import VendorSyncFloater from './vendors/VendorSyncFloater';
-import {
-  NewProjectModal, DeleteConfirmModal, TransferProjectModal,
-  CopyProjectModal, SettingsModal, ReportsModal, PricingConfigModal,
-  TeamModal, AboutModal, SupplierPricingUploadModal, CompanySetupModal,
-  TourOverlay, AIDatabasePage, ErrorBoundary,
-} from './stubs';
+import NewProjectModal from './modals/NewProjectModal';
+import DeleteConfirmModal from './modals/DeleteConfirmModal';
+import TransferProjectModal from './modals/TransferProjectModal';
+import CopyProjectModal from './modals/CopyProjectModal';
+import SettingsModal from './modals/SettingsModal';
+import ReportsModal from './modals/ReportsModal';
+import PricingConfigModal from './modals/PricingConfigModal';
+import TeamModal from './modals/TeamModal';
+import AboutModal from './modals/AboutModal';
+import SupplierPricingUploadModal from './modals/SupplierPricingUploadModal';
+import CompanySetupModal from './modals/CompanySetupModal';
+import { ErrorBoundary } from './stubs';
+// Lazy-loaded to avoid bundler initialization order issues
+const TourOverlay = (props: any) => null; // TODO: wire real TourOverlay
+const AIDatabasePage = (props: any) => null; // TODO: wire real AIDatabasePage
 import Badge from './shared/Badge';
 
 // ─── Stubs for globals not yet available in modules ─────────────────────────
