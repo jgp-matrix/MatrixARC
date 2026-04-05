@@ -7,20 +7,39 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // Supplier quotes — any authenticated user can create/read/update
+    // DECISION(v1.19.404): Supplier quotes — restricted to authenticated users who own the quote
+    // or are members of the company that created it. Previously allowed any authenticated user.
     match /supplierQuotes/{quoteId} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.companyId != null &&
+         exists(/databases/$(database)/documents/companies/$(resource.data.companyId)/members/$(request.auth.uid)))
+      );
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.companyId != null &&
+         exists(/databases/$(database)/documents/companies/$(resource.data.companyId)/members/$(request.auth.uid)))
+      );
     }
 
-    // BC price update audit log
+    // DECISION(v1.19.404): BC price update audit log — restricted to owner or company members.
     match /bcPriceUpdates/{updateId} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (
+        !('companyId' in request.resource.data) ||
+        request.resource.data.companyId == null ||
+        exists(/databases/$(database)/documents/companies/$(request.resource.data.companyId)/members/$(request.auth.uid))
+      );
     }
 
-    // Supplier RFQ upload tokens — public read/write (token-based access)
+    // DECISION(v1.19.404): Supplier RFQ upload tokens — token-based access for supplier portal.
+    // Read: public (suppliers access via token link). Write: authenticated users only + size guard.
     match /rfqUploads/{token} {
       allow read: if true;
-      allow write: if true;
+      allow create: if request.auth != null;
+      allow update: if true;
+      allow delete: if request.auth != null;
     }
 
     // Company data

@@ -237,7 +237,9 @@ exports.updateMemberRole = functions.https.onCall(async (data, context) => {
   return { success: true };
 });
 
+// DECISION(v1.19.404): Added auth check — previously missing, allowing unauthenticated email sends.
 exports.sendInviteEmail = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { to, inviteUrl, role } = data;
   if (!to || !inviteUrl) throw new functions.https.HttpsError('invalid-argument', 'Missing fields');
   if (!SENDGRID_KEY) throw new functions.https.HttpsError('failed-precondition', 'Email not configured');
@@ -635,6 +637,427 @@ exports.codaleTestScrape = functions.runWith({ timeoutSeconds: 300, memory: '2GB
     return { success: true, results };
   } catch (e) {
     throw new functions.https.HttpsError('internal', 'Scrape failed: ' + e.message);
+  }
+});
+
+// ── CUSTOM SCRAPER LOOKUP (Step-Based) ──
+// DECISION(v1.19.387): Generic scraper that executes admin-defined browser automation steps.
+// Steps are configured in ARC UI and stored in Firestore. Puppeteer runs each step sequentially.
+// Supports: navigate, fill, click, wait, extract. Placeholders: {partNumber}, {username}, {password}.
+exports.customScraperLookup = functions.runWith({ timeoutSeconds: 300, memory: '2GB' }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const { partNumber, config, steps } = data || {};
+  if (!partNumber) throw new functions.https.HttpsError('invalid-argument', 'partNumber is required');
+  if (!steps || !steps.length) throw new functions.https.HttpsError('invalid-argument', 'No automation steps configured for this scraper');
+
+  const username = config?.username || '';
+  const password = config?.password || '';
+  const accountId = config?.accountId || '';
+
+  // Replace placeholders in a string
+  function replacePlaceholders(str) {
+    return (str || '')
+      .replace(/\{partNumber\}/gi, partNumber)
+      .replace(/\{username\}/gi, username)
+      .replace(/\{password\}/gi, password)
+      .replace(/\{accountId\}/gi, accountId);
+  }
+
+  // DECISION(v1.19.392): After login, verify/select the correct customer account.
+  // Checks page text for the accountId. If not found, clicks the account dropdown
+  // and selects the matching option.
+  async function verifyAccount(page, targetAccountId) {
+    if (!targetAccountId) return { ok: true, msg: 'No account ID configured — skipping verification' };
+    const pageText = await page.evaluate(() => document.body.innerText || '');
+    if (pageText.includes(targetAccountId)) {
+      return { ok: true, msg: 'Account ' + targetAccountId + ' already selected' };
+    }
+    // Account not selected — try to find and click the dropdown, then select the right account
+    console.log('Account', targetAccountId, 'not found on page, attempting to switch...');
+    try {
+      // Click the account dropdown button (shadow DOM: button.secondary-add)
+      const clicked = await page.evaluate((targetId) => {
+        function deepQueryAll(root, sel) {
+          let results = [...root.querySelectorAll(sel)];
+          for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) results.push(...deepQueryAll(el.shadowRoot, sel));
+          }
+          return results;
+        }
+        // Find and click the account dropdown button
+        const btns = deepQueryAll(document, 'button');
+        const accountBtn = btns.find(b => (b.textContent || '').includes('Customer Account'));
+        if (accountBtn) { accountBtn.click(); return 'clicked dropdown'; }
+        return 'dropdown not found';
+      });
+      console.log('Account dropdown:', clicked);
+      await new Promise(r => setTimeout(r, 2000));
+      // Now find and click the account option matching targetAccountId
+      const selected = await page.evaluate((targetId) => {
+        function deepQueryAll(root, sel) {
+          let results = [...root.querySelectorAll(sel)];
+          for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) results.push(...deepQueryAll(el.shadowRoot, sel));
+          }
+          return results;
+        }
+        // Look for any clickable element containing the account ID
+        const allEls = deepQueryAll(document, '*');
+        const match = allEls.find(el => {
+          const text = (el.textContent || '').trim();
+          return text.includes(targetId) && (el.tagName === 'A' || el.tagName === 'BUTTON' || el.tagName === 'LI' || el.tagName === 'DIV' || el.tagName === 'SPAN') && text.length < 200;
+        });
+        if (match) { match.click(); return 'selected ' + targetId; }
+        return 'account option not found for ' + targetId;
+      }, targetAccountId);
+      console.log('Account selection:', selected);
+      await new Promise(r => setTimeout(r, 3000));
+      // Verify after switch
+      const verifyText = await page.evaluate(() => document.body.innerText || '');
+      if (verifyText.includes(targetAccountId)) return { ok: true, msg: 'Switched to account ' + targetAccountId };
+      return { ok: false, msg: 'Account switch attempted but ' + targetAccountId + ' not confirmed on page' };
+    } catch (e) {
+      return { ok: false, msg: 'Account switch failed: ' + e.message };
+    }
+  }
+
+  let browser = null;
+  try {
+    const chromium = require('@sparticuz/chromium');
+    const puppeteer = require('puppeteer-core');
+    browser = await puppeteer.launch({
+      args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      defaultViewport: { width: 1366, height: 768 },
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
+    const page = await browser.newPage();
+    // Set a realistic user agent
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+
+    const extracted = {};
+    const stepLog = [];
+
+    // Helper: find element by CSS selector, piercing shadow DOMs
+    // Supports ">>>" as shadow DOM piercing separator (e.g. "host-element >>> .inner-class")
+    // Also tries document-level first, then recursively searches shadow roots
+    async function findInShadow(sel) {
+      // First try native selector (works for non-shadow elements)
+      let el = await page.$(sel).catch(() => null);
+      if (el) return el;
+      // Try piercing shadow DOMs via page.evaluate
+      const handle = await page.evaluateHandle((selector) => {
+        function deepQuery(root, sel) {
+          let found = root.querySelector(sel);
+          if (found) return found;
+          // Search inside shadow roots
+          const allEls = root.querySelectorAll('*');
+          for (const el of allEls) {
+            if (el.shadowRoot) {
+              found = deepQuery(el.shadowRoot, sel);
+              if (found) return found;
+            }
+          }
+          return null;
+        }
+        // Handle ">>>" piercing syntax
+        if (selector.includes('>>>')) {
+          const parts = selector.split('>>>').map(s => s.trim());
+          let current = document;
+          for (const part of parts) {
+            const el = current.querySelector(part);
+            if (!el) return null;
+            current = el.shadowRoot || el;
+          }
+          return current === document ? null : current;
+        }
+        return deepQuery(document, selector);
+      }, sel);
+      const el2 = handle.asElement();
+      return el2;
+    }
+
+    // Helper: wait for element with shadow DOM support
+    async function waitForShadow(sel, timeout = 10000) {
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        const el = await findInShadow(sel);
+        if (el) return el;
+        await new Promise(r => setTimeout(r, 500));
+      }
+      throw new Error(`Timeout waiting for: ${sel}`);
+    }
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      try {
+        switch (step.type) {
+          case 'navigate': {
+            const url = replacePlaceholders(step.url);
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+            stepLog.push({ step: i + 1, type: 'navigate', url, ok: true });
+            break;
+          }
+          case 'fill': {
+            const selector = replacePlaceholders(step.selector);
+            const value = replacePlaceholders(step.value);
+            const el = await waitForShadow(selector);
+            if (!el) throw new Error('Element not found: ' + selector);
+            await el.click({ clickCount: 3 });
+            await el.type(value, { delay: 50 });
+            stepLog.push({ step: i + 1, type: 'fill', selector, ok: true });
+            break;
+          }
+          case 'click': {
+            const selector = replacePlaceholders(step.selector);
+            const el = await waitForShadow(selector);
+            if (!el) throw new Error('Element not found: ' + selector);
+            await el.click();
+            await new Promise(r => setTimeout(r, 1500));
+            stepLog.push({ step: i + 1, type: 'click', selector, ok: true });
+            break;
+          }
+          case 'wait': {
+            if (step.selector) {
+              const selector = replacePlaceholders(step.selector);
+              await waitForShadow(selector, 15000);
+              stepLog.push({ step: i + 1, type: 'wait', selector, ok: true });
+            } else {
+              const secs = Math.min(step.seconds || 3, 30);
+              await new Promise(r => setTimeout(r, secs * 1000));
+              stepLog.push({ step: i + 1, type: 'wait', seconds: secs, ok: true });
+            }
+            break;
+          }
+          case 'verifyAccount': {
+            const result = await verifyAccount(page, accountId || step.accountId || '');
+            stepLog.push({ step: i + 1, type: 'verifyAccount', ...result });
+            break;
+          }
+          case 'extract': {
+            const selector = replacePlaceholders(step.selector);
+            const field = step.field || 'value';
+            try {
+              const el = await waitForShadow(selector, 10000);
+              if (!el) throw new Error('not found');
+              const text = await page.evaluate(e => (e.textContent || e.value || '').trim(), el);
+              extracted[field] = text;
+              stepLog.push({ step: i + 1, type: 'extract', field, value: text, ok: true });
+            } catch (e) {
+              extracted[field] = null;
+              stepLog.push({ step: i + 1, type: 'extract', field, ok: false, error: 'Element not found: ' + selector });
+            }
+            break;
+          }
+          case 'extractPageText': {
+            // Extract data from full page text using regex — works even with Shadow DOM
+            const field = step.field || 'value';
+            try {
+              // Use innerText which Chrome resolves through shadow DOMs for visible content
+              // Falls back to textContent if innerText is empty
+              const allText = await page.evaluate(() => {
+                return document.body.innerText || document.body.textContent || '';
+              });
+              // Extract first price pattern
+              if (field === 'price') {
+                const m = allText.match(/\$[\d,]+\.\d{2}/);
+                extracted[field] = m ? m[0] : null;
+                stepLog.push({ step: i + 1, type: 'extractPageText', field, value: extracted[field], ok: !!m });
+              } else if (field === 'allPrices') {
+                const ms = allText.match(/\$[\d,]+\.\d{2}/g) || [];
+                extracted[field] = ms;
+                stepLog.push({ step: i + 1, type: 'extractPageText', field, value: ms.slice(0,5).join(', '), ok: ms.length > 0 });
+              } else {
+                // Generic: save full page text (truncated)
+                extracted[field] = allText.substring(0, 2000);
+                stepLog.push({ step: i + 1, type: 'extractPageText', field, ok: true });
+              }
+            } catch (e) {
+              extracted[field] = null;
+              stepLog.push({ step: i + 1, type: 'extractPageText', field, ok: false, error: e.message });
+            }
+            break;
+          }
+          default:
+            stepLog.push({ step: i + 1, type: step.type, ok: false, error: 'Unknown step type' });
+        }
+      } catch (e) {
+        stepLog.push({ step: i + 1, type: step.type, ok: false, error: e.message });
+        if (step.type === 'navigate') break;
+      }
+    }
+
+    await browser.close();
+    browser = null;
+
+    return {
+      success: true,
+      partNumber,
+      results: extracted,
+      stepLog,
+      stepsExecuted: stepLog.length,
+      totalSteps: steps.length
+    };
+  } catch (e) {
+    if (browser) try { await browser.close(); } catch (_) {}
+    throw new functions.https.HttpsError('internal', 'Scraper failed: ' + e.message);
+  }
+});
+
+// ── CUSTOM SCRAPER BATCH ──
+// DECISION(v1.19.390): Batch version of customScraperLookup. Logs in ONCE, then searches
+// multiple part numbers in the same browser session. Used by "Get New Pricing" to auto-price
+// all items from a vendor (Royal, etc.) in one go.
+exports.customScraperBatch = functions.runWith({ timeoutSeconds: 540, memory: '2GB' }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const { partNumbers, config, steps } = data || {};
+  if (!partNumbers || !partNumbers.length) throw new functions.https.HttpsError('invalid-argument', 'partNumbers array required');
+  if (!steps || !steps.length) throw new functions.https.HttpsError('invalid-argument', 'No steps configured');
+
+  const username = config?.username || '';
+  const password = config?.password || '';
+  const accountId = config?.accountId || '';
+
+  function replacePlaceholders(str, partNumber) {
+    return (str || '').replace(/\{partNumber\}/gi, partNumber).replace(/\{username\}/gi, username).replace(/\{password\}/gi, password).replace(/\{accountId\}/gi, accountId);
+  }
+
+  let browser = null;
+  try {
+    const chromium = require('@sparticuz/chromium');
+    const puppeteer = require('puppeteer-core');
+    browser = await puppeteer.launch({
+      args: [...chromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      defaultViewport: { width: 1366, height: 768 },
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
+    });
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+
+    // Shadow DOM helper
+    async function findInShadow(sel) {
+      let el = await page.$(sel).catch(() => null);
+      if (el) return el;
+      const handle = await page.evaluateHandle((selector) => {
+        function deepQuery(root, sel) {
+          let found = root.querySelector(sel);
+          if (found) return found;
+          for (const el of root.querySelectorAll('*')) {
+            if (el.shadowRoot) { found = deepQuery(el.shadowRoot, sel); if (found) return found; }
+          }
+          return null;
+        }
+        return deepQuery(document, selector);
+      }, sel);
+      return handle.asElement();
+    }
+    async function waitForShadow(sel, timeout = 10000) {
+      const start = Date.now();
+      while (Date.now() - start < timeout) {
+        const el = await findInShadow(sel);
+        if (el) return el;
+        await new Promise(r => setTimeout(r, 500));
+      }
+      return null;
+    }
+
+    // Step 1: Execute login steps (everything before the first {partNumber} reference)
+    const loginSteps = [];
+    const searchSteps = [];
+    let foundPartRef = false;
+    for (const step of steps) {
+      const hasPartRef = JSON.stringify(step).includes('{partNumber}');
+      if (hasPartRef) foundPartRef = true;
+      if (foundPartRef) searchSteps.push(step);
+      else loginSteps.push(step);
+    }
+
+    // Execute login
+    for (const step of loginSteps) {
+      try {
+        if (step.type === 'navigate') await page.goto(replacePlaceholders(step.url, ''), { waitUntil: 'networkidle2', timeout: 30000 });
+        else if (step.type === 'fill') { const el = await waitForShadow(replacePlaceholders(step.selector, '')); if (el) { await el.click({ clickCount: 3 }); await el.type(replacePlaceholders(step.value, ''), { delay: 50 }); } }
+        else if (step.type === 'click') { const el = await waitForShadow(replacePlaceholders(step.selector, '')); if (el) { await el.click(); await new Promise(r => setTimeout(r, 1500)); } }
+        else if (step.type === 'wait') { if (step.selector) await waitForShadow(replacePlaceholders(step.selector, ''), 15000); else await new Promise(r => setTimeout(r, (step.seconds || 3) * 1000)); }
+      } catch (e) { console.warn('Login step failed:', step.type, e.message); }
+    }
+    // Verify/select the correct customer account after login
+    if (accountId) {
+      const pageText = await page.evaluate(() => document.body.innerText || '');
+      if (!pageText.includes(accountId)) {
+        console.log('Batch: account', accountId, 'not selected, attempting switch...');
+        // Click account dropdown
+        await page.evaluate(() => {
+          function deepQueryAll(root, sel) {
+            let results = [...root.querySelectorAll(sel)];
+            for (const el of root.querySelectorAll('*')) { if (el.shadowRoot) results.push(...deepQueryAll(el.shadowRoot, sel)); }
+            return results;
+          }
+          const btn = deepQueryAll(document, 'button').find(b => (b.textContent || '').includes('Customer Account'));
+          if (btn) btn.click();
+        });
+        await new Promise(r => setTimeout(r, 2000));
+        // Select the target account
+        await page.evaluate((targetId) => {
+          function deepQueryAll(root, sel) {
+            let results = [...root.querySelectorAll(sel)];
+            for (const el of root.querySelectorAll('*')) { if (el.shadowRoot) results.push(...deepQueryAll(el.shadowRoot, sel)); }
+            return results;
+          }
+          const match = deepQueryAll(document, '*').find(el => (el.textContent || '').includes(targetId) && ['A','BUTTON','LI','DIV','SPAN'].includes(el.tagName) && (el.textContent||'').length < 200);
+          if (match) match.click();
+        }, accountId);
+        await new Promise(r => setTimeout(r, 3000));
+        const verifyText = await page.evaluate(() => document.body.innerText || '');
+        console.log('Batch: account switch', verifyText.includes(accountId) ? 'SUCCESS' : 'FAILED', 'for', accountId);
+      } else {
+        console.log('Batch: account', accountId, 'already selected');
+      }
+    }
+    console.log('Batch scraper: logged in, searching', partNumbers.length, 'parts');
+
+    // Step 2: For each part number, execute the search+extract steps
+    const results = {};
+    const limit = Math.min(partNumbers.length, 50); // Cap at 50 per batch
+    for (let pi = 0; pi < limit; pi++) {
+      const pn = partNumbers[pi].trim();
+      if (!pn) continue;
+      try {
+        for (const step of searchSteps) {
+          if (step.type === 'navigate') await page.goto(replacePlaceholders(step.url, pn), { waitUntil: 'networkidle2', timeout: 30000 });
+          else if (step.type === 'wait') { if (step.selector) await waitForShadow(replacePlaceholders(step.selector, pn), 15000); else await new Promise(r => setTimeout(r, (step.seconds || 3) * 1000)); }
+          else if (step.type === 'extractPageText') {
+            const allText = await page.evaluate(() => document.body.innerText || document.body.textContent || '');
+            if (step.field === 'price') {
+              const m = allText.match(/\$[\d,]+\.\d{2}/);
+              if (!results[pn.toUpperCase()]) results[pn.toUpperCase()] = {};
+              results[pn.toUpperCase()].price = m ? m[0] : null;
+            }
+          }
+          else if (step.type === 'extract') {
+            const el = await findInShadow(replacePlaceholders(step.selector, pn));
+            if (el) {
+              const text = await page.evaluate(e => (e.textContent || '').trim(), el);
+              if (!results[pn.toUpperCase()]) results[pn.toUpperCase()] = {};
+              results[pn.toUpperCase()][step.field || 'value'] = text;
+            }
+          }
+        }
+        console.log(`Batch ${pi + 1}/${limit}: ${pn} → ${results[pn.toUpperCase()]?.price || 'no price'}`);
+        // Brief delay between searches to avoid rate limiting
+        if (pi < limit - 1) await new Promise(r => setTimeout(r, 2000));
+      } catch (e) {
+        console.warn(`Batch search failed for ${pn}:`, e.message);
+        results[pn.toUpperCase()] = { price: null, error: e.message };
+      }
+    }
+
+    await browser.close();
+    return { success: true, results, totalSearched: limit };
+  } catch (e) {
+    if (browser) try { await browser.close(); } catch (_) {}
+    throw new functions.https.HttpsError('internal', 'Batch scraper failed: ' + e.message);
   }
 });
 
