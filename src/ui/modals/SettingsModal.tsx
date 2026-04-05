@@ -7,7 +7,7 @@ import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, setApiKey, loadBcConfig } from '@/core/globals';
 import { saveBcConfig } from '@/services/firebase/firestore';
-import { getCompanyId as bcGetCompanyId } from '@/services/businessCentral/client';
+import { getCompanyId as bcGetCompanyId, clearCompanyCache } from '@/services/businessCentral/client';
 // Graph token stubs — TODO: extract real MS Graph auth module
 async function tryGraphTokenSilent(): Promise<any> { return null; }
 async function acquireGraphToken(): Promise<any> { return null; }
@@ -56,7 +56,7 @@ function SettingsModal({uid,onClose,onNameChange}){
     try{
       const token=await acquireBcToken(true);
       if(!token){setBcConnStatus("failed");setBcConnDetail("Could not acquire token");return;}
-      _bcCompanyId=null; // force re-resolve
+      clearCompanyCache(); // force re-resolve
       const compId=await bcGetCompanyId();
       if(compId){setBcConnStatus("connected");setBcConnDetail(_bcConfig.companyName);}
       else{setBcConnStatus("failed");setBcConnDetail("Company '"+_bcConfig.companyName+"' not found in environment");}

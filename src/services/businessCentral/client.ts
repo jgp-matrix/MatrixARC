@@ -13,6 +13,10 @@ export function setClientConfig(config: BCConfig | null) {
   _bcCompanyId = null;
 }
 
+export function clearCompanyCache() {
+  _bcCompanyId = null;
+}
+
 const BC_TENANT = 'd1f2c7f7-fab2-40b5-85c1-06a715e6a157';
 
 function apiBase(): string {
