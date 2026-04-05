@@ -13,7 +13,11 @@ import {
 } from '@/core/globals';
 import { normPart, partMatch, mergeBoms } from '@/bom/deduplicator';
 import { computeBomHash } from '@/core/helpers';
-import { generateQuotePdf } from '@/core/arcDoc';
+// Lazy import to avoid circular initialization with arcDoc
+const generateQuotePdf = async (...args: any[]) => {
+  const { generateQuotePdf: fn } = await import('@/core/arcDoc');
+  return fn(...args);
+};
 import { buildRfqSupplierGroups, getNextQuoteNumber } from '@/services/rfq';
 import { bcCreateProject, bcSyncPanelPlanningLines, bcCreatePanelTaskStructure } from '@/services/businessCentral/projects';
 import { bcListVendors, bcGetVendorEmail } from '@/services/businessCentral/vendors';
