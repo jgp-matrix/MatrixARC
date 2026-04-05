@@ -43,7 +43,7 @@ declare function loadPartLibrary(uid: string): Promise<any[]>;
 declare function loadPartCorrections(uid: string): Promise<any[]>;
 declare function bcAttachPdfToJob(jobNumber: string, fileName: string, pdfBytes: ArrayBuffer, prev: string | null): Promise<void>;
 declare function bcDeleteAttachmentByName(jobNumber: string, fileName: string): Promise<void>;
-declare function useSmoothProgress(estSeconds?: number): any;
+import { useSmoothProgress } from '@/core/useSmoothProgress';
 
 // ─── Monolith inline helpers referenced but defined at module scope ──────────
 declare function isReadOnly(): boolean;
