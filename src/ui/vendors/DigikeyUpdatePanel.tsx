@@ -4,7 +4,7 @@ import { fbDb, _bcToken } from '@/core/globals';
 declare const firebase: any;
 declare const BC_ODATA_BASE: string;
 declare const BC_MFR_CODE_NAMES: Record<string, string>;
-declare function bcPushPurchasePrice(partNumber: string, vendor: string, price: number, date: number, uom: string): Promise<void>;
+import { pushPurchasePrice as bcPushPurchasePrice } from '@/services/businessCentral/prices';
 
 export default function DigikeyUpdatePanel({uid}: any){
   const [vendorNo,setVendorNo]=useState(()=>localStorage.getItem('_arc_dk_vendor')||'');

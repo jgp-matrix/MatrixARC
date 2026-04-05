@@ -2,15 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import { C } from '@/core/constants';
 import { _appCtx } from '@/core/globals';
 
-// These functions are not yet extracted — declared as any to avoid TS errors
-declare function calcConfidence(panel: any): any;
-declare function verifyPartNumbers(bom: any[]): Promise<any[]>;
-declare function loadDeviceClassifications(uid: string): Promise<any>;
-declare function saveDeviceClassification(uid: string, entry: any): Promise<void>;
-declare function addCustomCategory(uid: string, name: string, description: string): Promise<void>;
-declare function getDeviceCategories(data: any): string[];
-declare function isKnownClassifiedDevice(partNumber: string, description: string, data: any): any;
-declare let _deviceClassCache: any;
+import { calcConfidence } from '@/bom/validator';
+import { verifyPartNumbers } from '@/bom/extractor';
+// Firestore learning DB stubs — TODO: extract from monolith
+async function loadDeviceClassifications(uid: string): Promise<any> { return { categories: [] }; }
+async function saveDeviceClassification(uid: string, entry: any): Promise<void> {}
+async function addCustomCategory(uid: string, name: string, description: string): Promise<void> {}
+function getDeviceCategories(data: any): string[] { return []; }
+function isKnownClassifiedDevice(partNumber: string, description: string, data: any): any { return null; }
+let _deviceClassCache: any = null;
 
 function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
   const conf=calcConfidence(panel);

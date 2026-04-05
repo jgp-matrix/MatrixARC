@@ -4,9 +4,8 @@ import { fbDb, _bcToken } from '@/core/globals';
 
 declare const BC_ODATA_BASE: string;
 declare const BC_API_BASE: string;
-declare function bcDiscoverODataPages(): Promise<string[]>;
-declare function bcGetCompanyId(): Promise<string | null>;
-declare function classifyVendor(name: string): string;
+import { discoverODataPages as bcDiscoverODataPages, getCompanyId as bcGetCompanyId } from '@/services/businessCentral/client';
+import { classifyVendor } from '@/core/helpers';
 
 export default function VendorsPanel({uid,onVendorAdded}: any){
   const[vendors,setVendors]=useState<any[]>([]);

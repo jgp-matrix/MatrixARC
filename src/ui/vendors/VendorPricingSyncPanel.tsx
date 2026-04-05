@@ -3,7 +3,7 @@ import { fbDb, _bcToken } from '@/core/globals';
 import { useVendorSyncState, startVendorSync, _vSync, _vSyncNotify } from './useVendorSyncState';
 
 declare const BC_ODATA_BASE: string;
-declare function bcDiscoverODataPages(): Promise<string[]>;
+import { discoverODataPages as bcDiscoverODataPages } from '@/services/businessCentral/client';
 
 export default function VendorPricingSyncPanel({uid}: any){
   const[dkVendor,setDkVendor]=useState('');

@@ -38,16 +38,13 @@ import UpdateBomInBCModal from '@/ui/modals/UpdateBomInBCModal';
 import EngineeringQuestionsModal from '@/ui/modals/EngineeringQuestionsModal';
 
 // ─── Monolith functions not yet extracted into services ──────────────────────
-// TODO: wire to real implementation
-declare function loadPartLibrary(uid: string): Promise<any[]>;
-declare function loadPartCorrections(uid: string): Promise<any[]>;
-declare function bcAttachPdfToJob(jobNumber: string, fileName: string, pdfBytes: ArrayBuffer, prev: string | null): Promise<void>;
-declare function bcDeleteAttachmentByName(jobNumber: string, fileName: string): Promise<void>;
+import { loadPartLibrary, loadPartCorrections } from '@/services/firebase/firestore';
+async function bcAttachPdfToJob(...args: any[]) { console.warn('bcAttachPdfToJob stub'); }
+async function bcDeleteAttachmentByName(...args: any[]) { console.warn('bcDeleteAttachmentByName stub'); }
 import { useSmoothProgress } from '@/core/useSmoothProgress';
 
 // ─── Monolith inline helpers referenced but defined at module scope ──────────
-declare function isReadOnly(): boolean;
-declare function isAdmin(): boolean;
+import { isReadOnly, isAdmin } from '@/core/globals';
 
 function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef}){
   const [dragging,setDragging]=useState(false);

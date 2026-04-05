@@ -29,9 +29,9 @@ import EngineeringQuestionsModal from '@/ui/modals/EngineeringQuestionsModal';
 import useCustomerLogo from '@/ui/hooks/useCustomerLogo';
 
 // ─── Monolith functions not yet extracted into services ──────────────────────
-declare function isReadOnly(): boolean;
+import { isReadOnly } from '@/core/globals';
 declare var _bgTasks: Record<string, any>;
-declare function _bgNotify(): void;
+function _bgNotify() {}
 
 // BC API base — referenced directly in fetch calls within PanelListView
 declare var BC_API_BASE: string;

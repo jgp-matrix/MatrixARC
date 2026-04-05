@@ -3,7 +3,7 @@ import { fbDb, _bcToken } from '@/core/globals';
 
 declare const firebase: any;
 declare const BC_ODATA_BASE: string;
-declare function bcPushPurchasePrice(partNumber: string, vendor: string, price: number, date: number, uom: string): Promise<void>;
+import { pushPurchasePrice as bcPushPurchasePrice } from '@/services/businessCentral/prices';
 
 export default function CodaleTestPanel({uid}: any){
   const [parts,setParts]=useState("25B-D4P0N114, 5069-OB16, 1734-AENTR");

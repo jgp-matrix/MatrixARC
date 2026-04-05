@@ -34,7 +34,7 @@ import PortalSubmissionsModal from '@/ui/modals/PortalSubmissionsModal';
 import SupplierQuoteImportModal from '@/ui/modals/SupplierQuoteImportModal';
 
 // ─── Monolith functions not yet extracted ────────────────────────────────────
-declare function isAdmin(): boolean;
+import { isAdmin } from '@/core/globals';
 
 function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,autoOpenPortal,onPortalOpened}){
   const [project,setProject]=useState(()=>migrateProject(init));
