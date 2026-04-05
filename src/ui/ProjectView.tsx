@@ -143,7 +143,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   },[autoOpenPortal,portalSubmissions.length]);
   const saveTimer=useRef(null);
   const readOnly=isReadOnly();
-  const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
+  const isBcDisconnected=!!(project.bcEnv&&_bcConfig&&project.bcEnv!==_bcConfig.env);
   const didMigrate=useRef(!init.panels);
 
   // Keep ref in sync with state for use in callbacks

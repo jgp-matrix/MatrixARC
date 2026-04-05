@@ -35,7 +35,7 @@ export let _appCtx: AppCtxType & { company?: any } = {
 };
 export let _pricingConfig = { contingencyBOM: 1500, contingencyConsumables: 400, budgetaryContingencyPct: 20 };
 export let _bcToken: string | null = null;
-export let _bcConfig: any = null;
+export let _bcConfig: any = { env: null, companyName: null, clientId: null };
 export let _tooltipsEnabled = true;
 export let _defaultBomItems: any[] = [];
 export let _appProjectUpdateFn: ((p: Project) => void) | null = null;
