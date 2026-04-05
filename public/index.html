@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.405";
+const APP_VERSION="v1.19.406";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14955,7 +14955,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
   </>,document.body);
 }
 
-function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink,bcUploadRef}){
+function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink,bcUploadRef}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -16434,6 +16434,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             readOnly={readOnly}
             onBack={onBack}
             onViewQuote={handlePrintQuote}
+            quotePrinting={quotePrinting}
             onPrintRfq={onPrintRfq}
             onSendRfqEmails={onSendRfqEmails}
             onShowRfqHistory={()=>setShowRfqHistory(true)}
