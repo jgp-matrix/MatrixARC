@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.409";
+const APP_VERSION="v1.19.410";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -531,8 +531,13 @@ const card=(x={})=>({background:C.card,border:`1px solid ${C.border}`,borderRadi
 
 // ── API KEY (loaded from Firestore) ──
 let _apiKey=null;
+// DECISION(v1.19.410): Load API key from user config first, then fall back to company config.
+// This ensures new team members get the shared API key without needing admin to set it per-user.
 async function loadApiKey(uid){
-  try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists)_apiKey=d.data().key||null;}catch(e){}
+  try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists&&d.data().key)_apiKey=d.data().key;}catch(e){}
+  if(!_apiKey&&_appCtx.configPath){
+    try{const cd=await fbDb.doc(`${_appCtx.configPath}/api`).get();if(cd.exists&&cd.data().key)_apiKey=cd.data().key;}catch(e){}
+  }
 }
 
 // ── ARC NEURAL IQ (NIQ) — AI learning & standards knowledge engine ──
@@ -17945,7 +17950,12 @@ function APISetupModal({uid,onClose}){
 
   useEffect(()=>{fbDb.doc(`users/${uid}/config/api`).get().then(d=>{if(d.exists)setKey(d.data().key||"");setLoading(false);}).catch(()=>setLoading(false));},[]);
 
-  async function save(){await fbDb.doc(`users/${uid}/config/api`).set({key});_apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);}
+  // DECISION(v1.19.410): Save API key to both user config AND company config so all team members inherit it.
+  async function save(){
+    await fbDb.doc(`users/${uid}/config/api`).set({key});
+    if(_appCtx.configPath)await fbDb.doc(`${_appCtx.configPath}/api`).set({key}).catch(()=>{});
+    _apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);
+  }
   async function testApiKey(){
     const k=key.trim()||_apiKey;if(!k){setApiTestMsg({ok:false,text:"No API key entered"});return;}
     setApiTesting(true);setApiTestMsg(null);
@@ -18411,6 +18421,7 @@ function SettingsModal({uid,onClose,onNameChange}){
 
   async function save(){
     await fbDb.doc(`users/${uid}/config/api`).set({key});
+    if(_appCtx.configPath)await fbDb.doc(`${_appCtx.configPath}/api`).set({key}).catch(()=>{});
     _apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);
   }
   async function testApiKey(){
