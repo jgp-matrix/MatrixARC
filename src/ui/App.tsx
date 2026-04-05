@@ -17,7 +17,7 @@ import {
   initPushNotifications, unsubscribePushNotifications,
 } from '@/core/globals';
 import Dashboard from './Dashboard';
-import ProjectView from './ProjectView';
+const ProjectView = React.lazy(() => import('./ProjectView'));
 import ItemsTab from './tabs/ItemsTab';
 import VendorSyncFloater from './vendors/VendorSyncFloater';
 import NewProjectModal from './modals/NewProjectModal';
@@ -877,7 +877,9 @@ INSTRUCTIONS:
       )}
       {view==="project"&&openProject&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed((s: any)=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)}/>
+          <React.Suspense fallback={<div style={{padding:40,textAlign:"center",color:C.muted}}>Loading project...</div>}>
+            <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed((s: any)=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)}/>
+          </React.Suspense>
         </ErrorBoundary>
       )}
       {view==="aidb"&&userRole==="admin"&&(
