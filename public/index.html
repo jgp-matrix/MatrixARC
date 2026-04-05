@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.408";
+const APP_VERSION="v1.19.409";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6956,30 +6956,41 @@ function TeamModal({uid,companyId,userRole,onClose}){
   const [err,setErr]=useState("");
   const [removingMember,setRemovingMember]=useState(null);
 
+  const [pendingInvites,setPendingInvites]=useState([]);
+
   useEffect(()=>{
     if(!companyId){setLoading(false);return;}
-    loadCompanyMembers(companyId)
-      .then(m=>{
-        // Ensure the current user always appears; repair missing member doc if needed
+    Promise.all([
+      loadCompanyMembers(companyId),
+      loadPendingInvites(companyId)
+    ]).then(([m,invites])=>{
         if(!m.some(x=>x.uid===uid)){
           const self={uid,email:fbAuth.currentUser?.email||"",role:userRole};
           fbDb.doc(`companies/${companyId}/members/${uid}`).set(self,{merge:true}).catch(()=>{});
           m=[self,...m];
         }
-        setMembers(m);setLoading(false);
+        setMembers(m);setPendingInvites(invites);setLoading(false);
       })
       .catch(e=>{setErr("Failed to load members: "+e.message);setLoading(false);});
   },[companyId]);
 
+  // DECISION(v1.19.409): Create pending invite record in Firestore AND send email.
+  // Previously only sent email — no record of pending invites was persisted.
   async function sendInvite(e){
     e.preventDefault();if(!inviteEmail.trim())return;
     setInviting(true);setErr("");
     try{
       const email=inviteEmail.trim();
-      const payload=btoa(JSON.stringify({c:companyId,r:inviteRole,e:email}));
+      const token=Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+      const payload=btoa(JSON.stringify({c:companyId,r:inviteRole,e:email,t:token}));
       const url=`${window.location.origin}${window.location.pathname}?join=${payload}`;
+      // Save pending invite to Firestore
+      await fbDb.doc(`companies/${companyId}/pendingInvites/${token}`).set({
+        email,role:inviteRole,invitedBy:uid,invitedAt:Date.now(),url
+      });
       await fbFunctions.httpsCallable("sendInviteEmail")({to:email,inviteUrl:url,role:inviteRole});
       setGeneratedLinks(l=>[...l,{email,role:inviteRole,url,sent:true}]);
+      setPendingInvites(p=>[...p,{token,email,role:inviteRole,invitedAt:Date.now()}]);
       setInviteEmail("");
     }catch(ex){setErr(ex.message);}
     setInviting(false);
@@ -7076,6 +7087,24 @@ function TeamModal({uid,companyId,userRole,onClose}){
                   </div>
                   <div style={{fontSize:11,color:C.muted,marginTop:4}}>Sends an invite email automatically. Link also appears below if you need to share it manually.</div>
                 </form>
+              </div>
+            )}
+
+            {/* Pending Invites */}
+            {pendingInvites.length>0&&(
+              <div style={{marginTop:16}}>
+                <div style={{fontSize:12,color:"#f59e0b",fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Pending Invites ({pendingInvites.length})</div>
+                {pendingInvites.map(inv=>(
+                  <div key={inv.token} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${C.border}22`}}>
+                    <span style={{fontSize:13,color:C.text,flex:1}}>{inv.email}</span>
+                    <span style={{...(() => {const rb=roleBadge[inv.role]||[C.border,C.muted];return{background:rb[0],color:rb[1]};})(),borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}}>{inv.role}</span>
+                    <span style={{fontSize:10,color:C.muted}}>{inv.invitedAt?new Date(inv.invitedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—"}</span>
+                    {admin&&<button onClick={async()=>{
+                      if(!confirm("Cancel this invite?"))return;
+                      try{await fbDb.doc(`companies/${companyId}/pendingInvites/${inv.token}`).delete();setPendingInvites(p=>p.filter(i=>i.token!==inv.token));}catch(e){setErr(e.message);}
+                    }} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>Cancel</button>}
+                  </div>
+                ))}
               </div>
             )}
           </>
