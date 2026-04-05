@@ -173,6 +173,15 @@ export async function loadBcConfig(companyId: string): Promise<any | null> {
 
 export async function saveBcConfig(companyId: string, config: any): Promise<void> {
   await db().doc(`companies/${companyId}/config/bcEnvironment`).set(config);
+  // Update in-memory globals + propagate to service modules
+  const globals = await import('@/core/globals');
+  globals._bcConfig.env = config.env;
+  globals._bcConfig.companyName = config.companyName;
+  globals._bcConfig.clientId = config.clientId;
+  const { setBcConfig } = await import('@/services/businessCentral/auth');
+  const { setClientConfig } = await import('@/services/businessCentral/client');
+  setBcConfig(config);
+  setClientConfig(config);
 }
 
 // ─── Cloud Functions ─────────────────────────────────────────────────────────
