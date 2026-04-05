@@ -2,7 +2,7 @@
 // Extracted verbatim from monolith v1.19.376 lines 19347-19392, 20480-21359
 
 import React, { useState, useEffect, useRef } from 'react';
-import { C, btn, inp, card } from '@/core/constants';
+import { C, btn, inp, card, SANDBOX_VERSION } from '@/core/constants';
 import {
   APP_VERSION, fbAuth, fbDb, _appCtx, _apiKey, _bcToken, _bcConfig,
   _tooltipsEnabled, _defaultBomItems, _appProjectUpdateFn, _bcQueueCountSetter,
@@ -25,6 +25,7 @@ import DeleteConfirmModal from './modals/DeleteConfirmModal';
 import TransferProjectModal from './modals/TransferProjectModal';
 import CopyProjectModal from './modals/CopyProjectModal';
 import SettingsModal from './modals/SettingsModal';
+import APISetupModal from './modals/APISetupModal';
 import ReportsModal from './modals/ReportsModal';
 import PricingConfigModal from './modals/PricingConfigModal';
 import TeamModal from './modals/TeamModal';
@@ -149,6 +150,7 @@ export default function App({user}: any){
   const sqInputRef=useRef<any>(null);
   const [tourStep,setTourStep]=useState<any>(null); // null=off, 0-N=active step
   const TOUR_KEY='arc_tour_step_'+user.uid;
+  const [showApiSetup,setShowApiSetup]=useState(false);
   const [showGearMenu,setShowGearMenu]=useState(false);
   const [showUserMenu,setShowUserMenu]=useState(false);
   const [showBellMenu,setShowBellMenu]=useState(false);
@@ -688,7 +690,7 @@ INSTRUCTIONS:
           <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1,pointerEvents:"none"}}>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:28,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
             <span style={{fontSize:10,color:C.muted,letterSpacing:1.5,marginTop:4,fontWeight:600}}>Powered by <span style={{color:C.accent,fontWeight:700,letterSpacing:2}}>ARC Neural IQ</span></span>
-            <span style={{fontSize:10,fontWeight:600,color:"#ffffff",opacity:0.5,letterSpacing:0.3,marginTop:3}}>{APP_VERSION}</span>
+            <span style={{fontSize:10,fontWeight:600,color:"#ef4444",opacity:0.7,letterSpacing:0.3,marginTop:3}}>SANDBOX {SANDBOX_VERSION}</span>
           </div>
           {/* Flex spacer */}
           <div style={{flex:1}}/>
@@ -773,10 +775,11 @@ INSTRUCTIONS:
             {showGearMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 0 30px 8px rgba(56,189,248,0.6),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
               <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,marginBottom:4}}>
                 <div style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3}}>ARC Software</div>
-                <div style={{fontSize:11,color:C.accent,fontWeight:600,marginTop:2,fontFamily:"'Orbitron',monospace",letterSpacing:1}}>{APP_VERSION}</div>
+                <div style={{fontSize:11,color:"#ef4444",fontWeight:600,marginTop:2,fontFamily:"'Orbitron',monospace",letterSpacing:1}}>SANDBOX {SANDBOX_VERSION}</div>
               </div>
               <button onClick={()=>{setShowSettings(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\u2699"} Settings</button>
               <button data-tour="config-btn" onClick={()=>{setShowConfig(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDD27"} Configuration</button>
+              {userRole==="admin"&&<button onClick={()=>{setShowApiSetup(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDD11"} API Setup</button>}
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
               <button data-tour="training-btn" onClick={()=>{startTour();setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null?"#172554":"none",border:"none",color:tourStep!==null?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null?700:500}} onMouseEnter={(e: any)=>{if(tourStep===null)e.target.style.background="#1a1a2e";}} onMouseLeave={(e: any)=>{if(tourStep===null)e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`\uD83D\uDCCB Resume Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'\uD83D\uDCCB Training'}</button>
               <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDCCA"} Reports</button>
@@ -904,6 +907,7 @@ INSTRUCTIONS:
       {/* Global modals -- rendered outside tab conditionals so they work from any tab */}
       {showNew&&<NewProjectModal uid={user.uid} onCreated={handleCreated} onClose={()=>setShowNew(false)}/>}
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={(n: any)=>setUserFirstName(n)}/>}
+      {showApiSetup&&<APISetupModal uid={user.uid} onClose={()=>setShowApiSetup(false)}/>}
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={(url: any)=>{setCompanyLogo(url||null);_appCtx.company={...(_appCtx.company||{}),logoUrl:url||null};}}/>}
       {showTeam&&<TeamModal uid={user.uid} companyId={companyId} userRole={userRole} onClose={()=>setShowTeam(false)}/>}

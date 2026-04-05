@@ -40,13 +40,18 @@ export function computePanelSellPrice(panel: Panel): number {
   const contingencyBOM = pricing.contingencyBOM ?? PRICING_DEFAULTS.contingencyBOM;
   const contingencyConsumables = pricing.contingencyConsumables ?? PRICING_DEFAULTS.contingencyConsumables;
 
+  const marginPct = pricing.marginPct ?? PRICING_DEFAULTS.marginPct ?? 0;
+
   const materialCost = computeMaterialCost(bom);
   const laborHours = computeLaborHours(panel);
   const laborCost = laborHours * laborRate;
   const grandTotal = materialCost + laborCost + contingencyBOM + contingencyConsumables;
 
-  // Markup not applied here — sell price IS grand total for planning lines
-  return grandTotal;
+  // Apply margin: sellPrice = cost / (1 - margin%)
+  // Guard against marginPct >= 100 which would produce infinity or negative
+  if (marginPct >= 100) return grandTotal * 100; // safety cap
+  if (marginPct <= 0) return grandTotal;
+  return grandTotal / (1 - marginPct / 100);
 }
 
 /**
