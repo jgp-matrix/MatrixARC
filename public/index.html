@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.406";
+const APP_VERSION="v1.19.407";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4314,6 +4314,40 @@ async function safeSave(uid,project,retries=2){
   console.error("Save failed after all retries for project:",project?.id||project?.name);
   if(_saveFailBanner)_saveFailBanner("Save failed — changes may not be persisted. Check your connection.");
   return false;
+}
+
+// DECISION(v1.19.407): Snapshot system — saves panel state before destructive operations.
+// Stored in Firestore at {projectPath}/_snapshots/{timestamp}. Max 10 per project, auto-cleanup oldest.
+async function saveSnapshot(uid,projectId,panel,reason){
+  try{
+    const path=_appCtx.projectsPath||`users/${uid}/projects`;
+    const snapPath=`${path}/${projectId}/_snapshots`;
+    const snap={panelId:panel.id,panelName:panel.name||"",reason,createdAt:Date.now(),
+      bom:JSON.parse(JSON.stringify(panel.bom||[])),
+      pricing:panel.pricing||null,validation:panel.validation||null,laborData:panel.laborData||null,
+      status:panel.status||"draft"};
+    await fbDb.collection(snapPath).add(snap);
+    // Auto-cleanup: keep only last 10 snapshots per project
+    const allSnaps=await fbDb.collection(snapPath).orderBy("createdAt","desc").get();
+    if(allSnaps.size>10){const toDelete=allSnaps.docs.slice(10);for(const d of toDelete)await d.ref.delete().catch(()=>{});}
+    console.log(`SNAPSHOT: saved "${reason}" for ${panel.name||panel.id}`);
+  }catch(e){console.warn("Snapshot save failed:",e.message);}
+}
+async function loadSnapshots(uid,projectId){
+  try{
+    const path=_appCtx.projectsPath||`users/${uid}/projects`;
+    const snap=await fbDb.collection(`${path}/${projectId}/_snapshots`).orderBy("createdAt","desc").limit(10).get();
+    return snap.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){console.warn("Snapshot load failed:",e);return[];}
+}
+async function restoreSnapshot(uid,projectId,snapshot,panel,onUpdate,onSaveImmediate){
+  const restored={...panel,bom:snapshot.bom||panel.bom,pricing:snapshot.pricing||panel.pricing,
+    validation:snapshot.validation||panel.validation,laborData:snapshot.laborData||panel.laborData,
+    status:snapshot.status||panel.status};
+  onUpdate(restored);
+  try{if(onSaveImmediate)onSaveImmediate(restored);else await saveProject(uid,{...restored});}catch(e){}
+  console.log(`SNAPSHOT: restored "${snapshot.reason}" from ${new Date(snapshot.createdAt).toLocaleString()}`);
+  return restored;
 }
 
 // Save a single panel into its project in Firestore (used by background extraction tasks)
@@ -9849,6 +9883,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // DECISION(v1.19.376): Price confirmation popup — when user manually enters a price,
   // ask if it's confirmed (push to BC Purchase Price + Item Card) or budgetary (BOM only, no BC update, no priceDate).
   const [priceConfirmPending,setPriceConfirmPending]=useState(null); // {id, partNumber, price, row}
+  const [showSnapshots,setShowSnapshots]=useState(false);
+  const [snapshots,setSnapshots]=useState([]);
+  const [snapshotsLoading,setSnapshotsLoading]=useState(false);
   const [priceConfirmVendor,setPriceConfirmVendor]=useState("");
   const [priceConfirmVendors,setPriceConfirmVendors]=useState([]); // BC vendor list for dropdown
   const [cpdQuery,setCpdQuery]=useState("");
@@ -10608,6 +10645,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   async function runExtraction(startMsg){
     let bomPages=pages.filter(p=>getPageTypes(p).includes("bom"));
     if(!bomPages.length){setErr("No pages tagged BOM yet.");return;}
+    // Save snapshot before re-extraction so user can revert
+    if((panel.bom||[]).length>0)saveSnapshot(uid,projectId,panel,"Before re-extraction").catch(()=>{});
     setExtracting(true);setErr("");ep.start(startMsg||"Extracting BOM…",bomPages.length*15);
     const noData=bomPages.find(pg=>!pg.dataUrl&&!pg.storageUrl);
     if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();return;}
@@ -11054,6 +11093,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   async function runPricingOnPanel(bomOverride,panelOverride,onEpProgress){
     const bom=bomOverride||panel.bom||[];
     if(!bom.length||!_apiKey)return;
+    // Save snapshot before bulk pricing so user can revert
+    if(!bomOverride)saveSnapshot(uid,projectId,panel,"Before Get New Pricing").catch(()=>{});
     if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
     const _pp=(o)=>{setPricingProgress(o);if(onEpProgress)onEpProgress(o.pct);};
     setAiPricing(true);_pp({msg:"Getting prices…",pct:5});
@@ -11826,6 +11867,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 {aiPricing?"Refreshing…":"↻ Get New Pricing"}
               </button>
             )}
+            {!readOnly&&(
+              <button onClick={async()=>{
+                if(showSnapshots){setShowSnapshots(false);return;}
+                setSnapshotsLoading(true);setShowSnapshots(true);
+                const snaps=await loadSnapshots(uid,projectId);setSnapshots(snaps);setSnapshotsLoading(false);
+              }} style={btn("#1a1a2e",C.muted,{fontSize:11,padding:"4px 10px",border:`1px solid ${C.border}`})}>
+                ↩ Restore
+              </button>
+            )}
             {bcProjectNumber&&!readOnly&&(
               <button data-tip="Push BOM and labor costs to Business Central job planning lines" onClick={syncPlanningLinesToBC} disabled={bcSyncing}
                 style={btn(bcSyncStatus==="ok"?C.greenDim:bcSyncStatus==="error"?"#2a0a0a":bcSyncStatus==="pending"?"#3a1f00":C.accentDim, bcSyncStatus==="ok"?C.green:bcSyncStatus==="error"?C.red:bcSyncStatus==="pending"?"#f59e0b":C.accent,{fontSize:12,padding:"4px 12px",opacity:bcSyncing?0.5:1,animation:bcSyncStatus==="pending"?"pulseYellow 2s ease-in-out infinite":"none"})}>
@@ -11835,6 +11885,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {(panel.bom||[]).length>0&&<button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>}
             {(panel.bom||[]).length>0&&<button onClick={exportCADLinkBOM} style={btn("#0d1a2a","#38bdf8",{fontSize:12,padding:"4px 12px",border:"1px solid #38bdf844"})}>⬇ CADLink BOM</button>}
           </div>
+          {showSnapshots&&(
+            <div style={{marginBottom:12,background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px"}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Restore Previous State</div>
+              {snapshotsLoading?<div style={{fontSize:12,color:C.muted}}>Loading snapshots…</div>
+              :snapshots.length===0?<div style={{fontSize:12,color:C.muted}}>No snapshots available. Snapshots are created automatically before re-extraction, bulk pricing, and panel deletion.</div>
+              :snapshots.filter(s=>s.panelId===panel.id).length===0?<div style={{fontSize:12,color:C.muted}}>No snapshots for this panel.</div>
+              :snapshots.filter(s=>s.panelId===panel.id).map(s=>(
+                <div key={s.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${C.border}22`}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,color:C.text,fontWeight:600}}>{s.reason}</div>
+                    <div style={{fontSize:10,color:C.muted}}>{new Date(s.createdAt).toLocaleString()} · {(s.bom||[]).length} BOM items</div>
+                  </div>
+                  <button onClick={async()=>{
+                    if(!window.confirm(`Restore BOM to "${s.reason}" from ${new Date(s.createdAt).toLocaleString()}? This will replace the current BOM.`))return;
+                    await restoreSnapshot(uid,projectId,s,panel,onUpdate,onSaveImmediate);
+                    setShowSnapshots(false);
+                  }} style={btn("#0d2a1a","#4ade80",{fontSize:11,padding:"3px 10px",border:"1px solid #4ade8044"})}>Restore</button>
+                </div>
+              ))}
+              <button onClick={()=>setShowSnapshots(false)} style={{marginTop:6,background:"none",border:"none",color:C.muted,fontSize:11,cursor:"pointer",textDecoration:"underline"}}>Close</button>
+            </div>
+          )}
           {(panel.bom||[]).length>0&&<div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
@@ -15041,6 +15113,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
   }
   function deletePanel(id){
     if(!window.confirm("Delete this panel and all its data?"))return;
+    // Save snapshot before deletion so user can potentially recover
+    const panelToDelete=(project.panels||[]).find(p=>p.id===id);
+    if(panelToDelete)saveSnapshot(uid,project.id,panelToDelete,"Before panel deletion").catch(()=>{});
     // Cancel any background task for this panel
     if(_bgTasks[id]){bgDone(id,"Cancelled — panel deleted");delete _bgTasks[id];_bgNotify();}
     // Mark panel as deleted so saveProjectPanel won't re-add it
