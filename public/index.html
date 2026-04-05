@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.403";
+const APP_VERSION="v1.19.404";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10803,7 +10803,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Open BC browser after a short delay to let React re-render with the new row first
     if(_bcToken){setTimeout(()=>{setBcBrowserTarget(newId);setBcBrowserQuery("");setBcBrowserOpen(true);},300);}
   }
+  // DECISION(v1.19.404): BOM row deletion requires confirmation — previously one-click permanent delete.
   function deleteBomRow(id){
+    const row=(panel.bom||[]).find(r=>r.id===id);
+    const desc=row?`${row.partNumber||""}${row.description?" — "+row.description.slice(0,40):""}`.trim()||"this row":"this row";
+    if(!window.confirm(`Delete BOM row "${desc}"? This cannot be undone.`))return;
     const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
   }
