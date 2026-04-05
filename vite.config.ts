@@ -12,10 +12,9 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    minify: false,
     rollupOptions: {
       output: {
-        // Single chunk to avoid initialization order issues between modules
-        manualChunks: undefined,
         inlineDynamicImports: true,
       },
     },
