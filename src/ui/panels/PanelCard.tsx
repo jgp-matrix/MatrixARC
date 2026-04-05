@@ -113,6 +113,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // Unified progress: pricing takes priority when active, then extraction, then null
   const _showExtract=extractProgress&&(!awaitingConfirm||detecting);
   // When aiPricing=true, guarantee a non-null value even if pricingProgress state hasn't synced yet
+  // NOTE: aiPricing and pricingProgress are declared below but referenced here.
+  // In the monolith, Babel converts const→var (hoisted). In ESM builds, const has TDZ.
+  // We use var here to match monolith behavior.
+  var [aiPricing,setAiPricing]=useState(false);
+  var [pricingProgress,setPricingProgress]=useState(null);
   const _activePricing=aiPricing?(pricingProgress||{msg:"Getting prices…",pct:5}):pricingProgress;
   const _rawUnified=_activePricing||(_showExtract?extractProgress:null);
   const unifiedProgress=_rawUnified?{..._rawUnified,isError:_rawUnified.isError||bgTask?.status==="error"}:null;
@@ -157,8 +162,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   },[panel.bcPdfAttached,panel.bcPdfFileName,bcProjectNumber]);
   const [partLibrary,setPartLibrary]=useState([]);
   const [partCorrections,setPartCorrections]=useState([]);
-  const [aiPricing,setAiPricing]=useState(false);
-  const [pricingProgress,setPricingProgress]=useState(null);
+  // aiPricing and pricingProgress declared earlier (before _activePricing)
   const [bcConnecting,setBcConnecting]=useState(false);
   const [bcError,setBcError]=useState("");
   const [validatingPanel,setValidatingPanel]=useState(false);
