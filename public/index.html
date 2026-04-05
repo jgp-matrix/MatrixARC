@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.407";
+const APP_VERSION="v1.19.408";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2234,8 +2234,13 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   }
 }
 
+// DECISION(v1.19.408): Validates data before pushing to BC — rejects empty part numbers,
+// negative prices, and null values that could corrupt BC records.
 async function bcPatchItemOData(itemNo,fields){
-  if(!_bcToken||!itemNo||!fields||!Object.keys(fields).length)return;
+  if(!_bcToken||!itemNo?.trim()||!fields||!Object.keys(fields).length)return;
+  // Validate fields before pushing
+  if(fields.Unit_Cost!=null&&(isNaN(fields.Unit_Cost)||fields.Unit_Cost<0)){console.warn("bcPatchItemOData: rejected negative/NaN Unit_Cost for",itemNo);return;}
+  if(fields.Unit_Price!=null&&(isNaN(fields.Unit_Price)||fields.Unit_Price<0)){console.warn("bcPatchItemOData: rejected negative/NaN Unit_Price for",itemNo);return;}
   // 1. GET the item from OData ItemCard to obtain ETag
   const filterUrl=`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'`;
   const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
@@ -2541,7 +2546,7 @@ async function bcPatchPanelEndDate(projectNumber,panelIndex,endDate){
 }
 
 async function bcPatchJobOData(jobNo,fields){
-  if(!_bcToken||!jobNo||!fields||!Object.keys(fields).length)return;
+  if(!_bcToken||!jobNo?.trim()||!fields||!Object.keys(fields).length)return;
   // Discover published OData pages and find a project-related one
   const allPages=await bcDiscoverODataPages();
   // Match project card/header pages — common names: ProjectCard, JobCard, Project, Job
@@ -15845,6 +15850,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [sqPanelId,setSqPanelId]=useState(null);
   const [pendingRfqUploads,setPendingRfqUploads]=useState(0);
   const [portalSubmissions,setPortalSubmissions]=useState([]);
+  // DECISION(v1.19.407): Concurrent editing detection — listen for external updates to this project.
+  const [externalUpdate,setExternalUpdate]=useState(false);
+  const lastSavedAt=useRef(null);
   const [showPortalModal,setShowPortalModal]=useState(false);
   const [showPoModal,setShowPoModal]=useState(false);
   const [showPriceCheckModal,setShowPriceCheckModal]=useState(false);
@@ -15923,6 +15931,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     },err=>{console.error('PORTAL SUBS error:',err);setPendingRfqUploads(0);setPortalSubmissions([]);});
     return()=>unsub();
   },[uid,init.id]);
+  // Concurrent editing detection — listen for external updates
+  useEffect(()=>{
+    if(!init.id)return;
+    const path=_appCtx.projectsPath||`users/${uid}/projects`;
+    const unsub=fbDb.doc(`${path}/${init.id}`).onSnapshot(snap=>{
+      if(!snap.exists)return;
+      const remote=snap.data();
+      const remoteAt=remote.updatedAt||0;
+      // If remote updatedAt is newer than our last save AND we didn't trigger it, show warning
+      if(lastSavedAt.current&&remoteAt>lastSavedAt.current+3000){
+        setExternalUpdate(true);
+      }
+    });
+    return()=>unsub();
+  },[init.id]);
+
   // Auto-open portal modal when navigated from a notification
   useEffect(()=>{
     if(autoOpenPortal&&portalSubmissions.length>0){
@@ -15961,6 +15985,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         revBumpTimer.current=setTimeout(()=>{safeSave(uid,projectRef.current);},2000);
       }
     }
+    lastSavedAt.current=Date.now();
     setProject(p);projectRef.current=p;onChange(p);
   }
 
@@ -16503,6 +16528,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         </div>
       ):(
         <>
+          {externalUpdate&&(
+            <div style={{position:"fixed",top:80,left:"50%",transform:"translateX(-50%)",zIndex:800,background:"#451a03",border:"1px solid #f59e0b",borderRadius:8,padding:"10px 20px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>
+              <span style={{fontSize:13,color:"#f59e0b",fontWeight:700}}>⚠ This project was updated by another user.</span>
+              <button onClick={()=>{window.location.reload();}} style={{background:"#f59e0b",color:"#0d0d1a",border:"none",borderRadius:6,padding:"4px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Refresh</button>
+              <button onClick={()=>setExternalUpdate(false)} style={{background:"none",border:"1px solid #f59e0b44",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#f59e0b",cursor:"pointer"}}>Dismiss</button>
+            </div>
+          )}
           <PanelListView
             project={project}
             uid={uid}
