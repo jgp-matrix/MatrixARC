@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.428";
+const APP_VERSION="v1.19.429";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1660,22 +1660,22 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   const layoutHrs=laborEst.lines.filter(l=>["Device Mounting","Duct & DIN Rail","Labels"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
   const wireHrs=laborEst.lines.filter(l=>["Wire Time","Door Wiring"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
 
-  // DECISION(v1.19.428): Include Unit_Price on labor lines (rounded cost) so BC matches ARC exactly.
-  const laborRate=panel.pricing?.laborRate??45;
+  // DECISION(v1.19.429): Push rounded whole hours to BC — no Unit_Price. BC calculates cost
+  // from R0020's configured rate × hours. Previously pushed fractional hours causing mismatch.
   // 30000 — CUT
   lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:30000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"CUT",
-    Quantity:Math.round(cutHrs*100)/100,Unit_Price:Math.round(laborRate),Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+    Quantity:Math.round(cutHrs),Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
   // 40000 — LAYOUT
   lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:40000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"LAYOUT",
-    Quantity:Math.round(layoutHrs*100)/100,Unit_Price:Math.round(laborRate),Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+    Quantity:Math.round(layoutHrs),Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
   // 50000 — WIRE
   lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:50000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"WIRE",
-    Quantity:Math.round(wireHrs*100)/100,Unit_Price:Math.round(laborRate),Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+    Quantity:Math.round(wireHrs),Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
   // 60000+ — ALL BOM items (non-labor; isCrossed rows ARE the replacement parts and must be included)
   const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow);
