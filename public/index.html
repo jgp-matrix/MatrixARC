@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.457";
+const APP_VERSION="v1.19.458";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16598,22 +16598,38 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             priceMismatches.push({panel:pan.drawingNo||pan.name||"Panel "+n,pn:"PROGRESS BILLING (Line 10000)",arcPrice:arcSell,bcPrice:bcSell,type:"sellPrice"});
           }
         }
-        // Check BOM items (Line_No >= 60000)
+        // Check BOM items exist in planning lines (Line_No >= 60000)
         const bcBomLines=bcLines.filter(l=>l.Line_No>=60000);
         totalBcBom+=bcBomLines.length;
-        // DECISION(v1.19.455): Compare against Unit_Cost — BC auto-populates this from the Item Card.
-        // ARC does NOT push Unit_Price to BOM item planning lines (v1.19.433), so Unit_Price is always $0.
-        const bcMap={};bcBomLines.forEach(l=>{bcMap[(l.No||'').trim().toUpperCase()]={price:l.Unit_Cost||0,qty:l.Quantity||0};});
+        const bcPlanSet=new Set(bcBomLines.map(l=>(l.No||'').trim().toUpperCase()));
         const panelBom=(pan.bom||[]).filter(r=>!r.isLaborRow);
         panelBom.forEach(r=>{
           const pn=(r.partNumber||'').trim().toUpperCase();
-          if(!bcMap[pn]){allMissing.push({pn:r.partNumber,desc:r.description});return;}
-          const arcCost=r.unitPrice||0;const bcCost=bcMap[pn].price;
-          // Compare ARC price vs BC Unit_Cost (from Item Card). Flag if >5% difference and >$1 apart.
-          if(arcCost>0&&bcCost>0&&Math.abs(arcCost-bcCost)>1&&Math.abs(arcCost-bcCost)/Math.max(arcCost,bcCost)>0.05){
-            priceMismatches.push({panel:pan.drawingNo||pan.name||"Panel "+n,pn:r.partNumber,arcPrice:arcCost,bcPrice:bcCost,type:"itemCost"});
-          }
+          if(!bcPlanSet.has(pn)){allMissing.push({pn:r.partNumber,desc:r.description});}
         });
+      }
+      // DECISION(v1.19.458): Compare ARC prices against BC Item Card (Purchase Prices),
+      // NOT planning line Unit_Cost which is a stale snapshot from line creation time.
+      // This catches genuine ARC vs BC discrepancies without false positives from stale planning lines.
+      if(_bcToken){
+        try{
+          const allPns=[...new Set(allBom.map(r=>(r.partNumber||'').trim()).filter(Boolean))];
+          if(allPns.length>0){
+            const ppMap=await bcFetchPurchasePrices(allPns);
+            for(let i=0;i<(proj.panels||[]).length;i++){
+              const pan=proj.panels[i];
+              (pan.bom||[]).filter(r=>!r.isLaborRow).forEach(r=>{
+                const pn=(r.partNumber||'').trim();
+                const pp=ppMap.get(pn);
+                if(!pp||!pp.directUnitCost)return;
+                const arcCost=r.unitPrice||0;const bcCost=pp.directUnitCost;
+                if(arcCost>0&&bcCost>0&&Math.abs(arcCost-bcCost)>1&&Math.abs(arcCost-bcCost)/Math.max(arcCost,bcCost)>0.05){
+                  priceMismatches.push({panel:pan.drawingNo||pan.name||"Panel "+(i+1),pn,arcPrice:arcCost,bcPrice:bcCost,type:"itemCost"});
+                }
+              });
+            }
+          }
+        }catch(e){console.warn("BC Item Card price check failed:",e);}
       }
       if(allMissing.length>0||priceMismatches.length>0){setBcCountMismatch({arcCount:allBom.length,bcCount:totalBcBom,missing:allMissing,priceMismatches});return;}
     }catch(e){console.warn("BC line count check failed:",e);}
