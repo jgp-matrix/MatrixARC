@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.434";
+const APP_VERSION="v1.19.435";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9878,6 +9878,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const bgTask=bgTasks[panel.id];
   // Restore extracting spinner if a bg task is still running when this panel mounts
   useEffect(()=>{if(bgTask?.status==="running")setExtracting(true);},[]);
+  // DECISION(v1.19.435): Auto-sync labor BOM rows on mount and when BOM changes.
+  // Labor rows are dynamic — always recalculated from computeLaborEstimate.
+  // This ensures labor costs update immediately when hours or rates change.
+  useEffect(()=>{
+    if(!(panel.bom||[]).some(r=>!r.isLaborRow))return; // No non-labor BOM items — skip
+    const synced=syncLaborBomRows(panel);
+    const oldLabor=(panel.bom||[]).filter(r=>r.isLaborRow);
+    const newLabor=(synced.bom||[]).filter(r=>r.isLaborRow);
+    // Only update if labor rows actually changed (avoid infinite loop)
+    const changed=oldLabor.length!==newLabor.length||oldLabor.some((r,i)=>r.qty!==newLabor[i]?.qty||r.unitPrice!==newLabor[i]?.unitPrice);
+    if(changed){onUpdate(synced);try{onSaveImmediate(synced);}catch(e){}}
+  },[panel.id]);
   // Progress bar: use bgTask (persists navigation) or ep (for re-extract/validate flows)
   const extractProgress=(bgTask?.status==="running"||bgTask?.status==="done")?{pct:bgTask.pct||0,msg:bgTask.msg}:ep.progress;
   // Unified progress: pricing takes priority when active, then extraction, then null
