@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.414";
+const APP_VERSION="v1.19.416";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -21185,6 +21185,7 @@ function App({user}){
   const [showApiSetup,setShowApiSetup]=useState(false);
   const [showAbout,setShowAbout]=useState(false);
   const [showConfig,setShowConfig]=useState(false);
+  const [newVersionAvailable,setNewVersionAvailable]=useState(null); // null or "v1.19.XXX"
   const [companyId,setCompanyId]=useState(null);
   const [userRole,setUserRole]=useState(null);
   const [companyName,setCompanyName]=useState(null);
@@ -21602,6 +21603,20 @@ INSTRUCTIONS:
     })();
   },[user.uid]);
 
+  // DECISION(v1.19.415): Version update push notification — listens to Firestore _system/version doc.
+  // When a new deploy changes the version, ALL logged-in users see a banner instantly.
+  // The deploy script writes the new version to Firestore after deploying.
+  useEffect(()=>{
+    // Also write current version on load (in case _system/version doesn't exist yet)
+    if(userRole==="admin")fbDb.doc("_system/version").set({version:APP_VERSION,updatedAt:Date.now()},{merge:true}).catch(()=>{});
+    const unsub=fbDb.doc("_system/version").onSnapshot(snap=>{
+      if(!snap.exists)return;
+      const remote=snap.data().version;
+      if(remote&&remote!==APP_VERSION)setNewVersionAvailable(remote);
+    },()=>{});
+    return()=>unsub();
+  },[]);
+
   // Register handler so background extraction tasks can update App state after navigation
   useEffect(()=>{
     _appProjectUpdateFn=(liveProject)=>{
@@ -21730,6 +21745,15 @@ INSTRUCTIONS:
 
   return(
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column"}}>
+      {/* DECISION(v1.19.415): New version banner — pushed to all users via Firestore onSnapshot */}
+      {newVersionAvailable&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,zIndex:10000,background:"linear-gradient(90deg,#1e3a5f,#2563eb)",padding:"10px 20px",display:"flex",alignItems:"center",justifyContent:"center",gap:16,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>
+          <span style={{fontSize:14,fontWeight:700,color:"#fff"}}>🚀 New version {newVersionAvailable} is available!</span>
+          <span style={{fontSize:12,color:"#93c5fd"}}>Please refresh to get the latest features and fixes.</span>
+          <button onClick={()=>window.location.reload()} style={{background:"#fff",color:"#1e3a5f",border:"none",borderRadius:6,padding:"6px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Refresh Now (Ctrl+Shift+R)</button>
+          <button onClick={()=>setNewVersionAvailable(null)} style={{background:"none",border:"1px solid #ffffff44",borderRadius:6,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>Later</button>
+        </div>
+      )}
       {/* ── SPLASH SCREEN ── */}
       {splash!=="done"&&(
         <div style={{position:"fixed",inset:0,zIndex:9999,background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
