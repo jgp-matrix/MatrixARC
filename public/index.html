@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.456";
+const APP_VERSION="v1.19.457";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17234,10 +17234,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 ))}
               </div>
             </>)}
-            <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Click <strong style={{color:"#f1f5f9"}}>Sync BC</strong> on the BOM toolbar to update BC, or proceed anyway.</div>
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Click <strong style={{color:"#4ade80"}}>Sync BC & Continue</strong> to fix mismatches and proceed, or skip the check.</div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
               <button onClick={()=>setBcCountMismatch(null)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Go Back</button>
-              <button onClick={()=>{setBcCountMismatch(null);setShowBcUploadPrompt(true);}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Proceed Anyway</button>
+              <button onClick={()=>{setBcCountMismatch(null);setShowBcUploadPrompt(true);}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Skip Check</button>
+              <button onClick={async()=>{
+                setBcCountMismatch(null);
+                // Sync all panels to BC then proceed
+                const proj=projectRef.current;
+                const bcNum=proj.bcProjectNumber;
+                if(bcNum&&_bcToken){
+                  for(let i=0;i<(proj.panels||[]).length;i++){
+                    try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);}catch(e){console.warn("Pre-print sync panel",i+1,"failed:",e);}
+                  }
+                }
+                setShowBcUploadPrompt(true);
+              }} style={{background:"#052e16",border:"1px solid #22c55e",color:"#4ade80",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Sync BC & Continue</button>
             </div>
           </div>
         </div>
