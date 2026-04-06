@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.446";
+const APP_VERSION="v1.19.447";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10268,6 +10268,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const t=setTimeout(()=>onSaveImmediate(updated).catch(()=>{}),800);
     return()=>clearTimeout(t);
   },[_laborSyncKey]);
+
+  // DECISION(v1.19.447): Auto-sync labor Qty to BC planning lines when project opens.
+  // Matches the auto-update of BOM item prices on open.
+  const laborBcSyncRan=useRef(false);
+  useEffect(()=>{
+    if(laborBcSyncRan.current)return;
+    if(!bcProjectNumber||!_bcToken)return;
+    laborBcSyncRan.current=true;
+    bcPatchLaborPlanningLines(bcProjectNumber,idx+1,panel)
+      .then(()=>console.log("LABOR BC SYNC: auto-updated planning lines on open for panel",idx+1))
+      .catch(e=>console.warn("LABOR BC SYNC on open:",e.message));
+  },[bcProjectNumber,_bcToken]);
 
   // Keep latestPanelRef current so async closures always have fresh panel data
   latestPanelRef.current=panel;
