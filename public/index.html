@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.429";
+const APP_VERSION="v1.19.430";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1743,7 +1743,10 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
       const noChanged=existing.No!==(payload.No||"");
       const descChanged=existing.Description!==(payload.Description||"");
       const qtyChanged=Math.abs((existing.Quantity||0)-(payload.Quantity||0))>0.001;
-      const priceChanged=Math.abs((existing.Unit_Price||0)-(payload.Unit_Price||0))>0.001;
+      // DECISION(v1.19.430): Only compare Unit_Price for Item lines, not Resource lines.
+      // Resource lines (labor) have their price set by BC from the resource rate.
+      const isResource=payload.Type==="Resource";
+      const priceChanged=!isResource&&"Unit_Price"in payload&&Math.abs((existing.Unit_Price||0)-(payload.Unit_Price||0))>0.001;
       if(!noChanged&&!descChanged&&!qtyChanged&&!priceChanged){skipped++;continue;}
       // PATCH changed fields
       await sleep(100);
