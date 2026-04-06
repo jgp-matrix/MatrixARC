@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.448";
+const APP_VERSION="v1.19.449";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16621,11 +16621,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       console.log('PORTAL CROSSINGS: saved',crossings.length,'confirmed supplier→Matrix part crossings');
     }
     // Build normalized part# → price map (skip cannot-supply items)
+    // DECISION(v1.19.449): For crossed items (supplier quotes a different PN than the BOM),
+    // push the price to the SUPPLIER's part number in BC, NOT the original BOM part.
+    // Skip BOM row update for crossed items — the BOM uses a different part already priced elsewhere.
     const priceMap={};
+    const crossedPNs=new Set(); // original PNs that have a supplier cross — skip BOM matching for these
     (submission.lineItems||[]).forEach(item=>{
       if(item.cannotSupply)return;
       if(item.unitPrice!=null&&item.partNumber){
-        priceMap[normPart(item.partNumber)]={price:item.unitPrice,partNumber:(item.partNumber||'').trim(),uom:item.uom||''};
+        const isCrossed=item.supplierPartNumber&&normPart(item.supplierPartNumber)!==normPart(item.partNumber);
+        if(isCrossed){
+          // Price goes to the supplier's PN in BC, not the original BOM PN
+          priceMap[normPart(item.supplierPartNumber)]={price:item.unitPrice,partNumber:(item.supplierPartNumber||'').trim(),uom:item.uom||'',isCrossed:true};
+          crossedPNs.add(normPart(item.partNumber));
+        }else{
+          priceMap[normPart(item.partNumber)]={price:item.unitPrice,partNumber:(item.partNumber||'').trim(),uom:item.uom||''};
+        }
       }
     });
     const now=Date.now();
@@ -16663,18 +16674,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }
     }
     // Apply to BOM — priceSource:'bc', bcPoDate:now so rows don't get flagged
+    // Skip crossed items — their price belongs to the supplier's PN, not the BOM row
     let matched=0;
+    let crossedSkipped=0;
     const updatedPanels=(projectRef.current.panels||[]).map(panel=>({
       ...panel,
       bom:(panel.bom||[]).map(row=>{
         const nk=normPart(row.partNumber);
+        // Skip if this BOM PN was crossed by the supplier (price goes to supplier's item, not this row)
+        if(crossedPNs.has(nk)){crossedSkipped++;return row;}
         // Try exact normalized match first, then fuzzy contains/prefix match
         let hit=priceMap[nk];
         if(!hit){
-          const supplierKey=Object.keys(priceMap).find(sk=>partMatch(nk,sk));
+          const supplierKey=Object.keys(priceMap).find(sk=>!priceMap[sk].isCrossed&&partMatch(nk,sk));
           if(supplierKey)hit=priceMap[supplierKey];
         }
-        if(hit){
+        if(hit&&!hit.isCrossed){
           matched++;
           return{...row,unitPrice:hit.price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName};
         }
@@ -16698,7 +16713,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }catch(e){console.warn("Failed to attach supplier quote to BC:",e);}
     }
     const cantCount=cantItems.length;
-    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.`);
+    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${crossedSkipped>0?`\n${crossedSkipped} crossed item${crossedSkipped!==1?'s':''} — price pushed to supplier's PN in BC only (BOM unchanged).`:''}${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.`);
     }catch(e){
       console.error("applyPortalPrices error:",e);
       alert("Error applying prices: "+e.message+"\nPrices may have been partially applied. Check console for details.");
