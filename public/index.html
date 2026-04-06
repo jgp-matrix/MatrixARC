@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.450";
+const APP_VERSION="v1.19.451";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5880,51 +5880,87 @@ async function saveExtractionLearning(uid,projectId,panel,projectName,bcProjectN
 
 // DECISION(v1.19.450): Scan all drawing pages for hazardous location indicators during extraction.
 // Flags panels that may require UL698/UL1203 certification — user must be notified to quote differently.
+// DECISION(v1.19.451): Critical hazardous location scan — uses Sonnet on ALL pages.
+// This is a safety-critical scan: missing a hazloc indicator means quoting wrong.
+// Scans all pages in batches of 20 (Anthropic API image limit) using Sonnet for accuracy.
 async function scanForHazardousLocation(pages){
   if(!_apiKey||!pages?.length)return null;
   const allPages=pages.filter(p=>p.dataUrl||p.storageUrl);
   if(!allPages.length)return null;
-  // Send up to 6 pages to Haiku for a quick keyword scan
-  const scanPages=allPages.slice(0,6);
-  const imageContents=[];
-  for(const pg of scanPages){
+  // Prepare all page images
+  const allImages=[];
+  for(const pg of allPages){
     let dataUrl=pg.dataUrl;
     if(!dataUrl&&pg.storageUrl){try{dataUrl=await ensureDataUrl(pg);}catch(e){continue;}}
     if(!dataUrl)continue;
-    const small=await resizeForAnalysis(dataUrl,1200);
+    const small=await resizeForAnalysis(dataUrl,1600);
     const b64=small?.split(",")[1];
-    if(b64)imageContents.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}});
+    if(b64)allImages.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}});
   }
-  if(!imageContents.length)return null;
-  try{
-    const resp=await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({
-        model:"claude-haiku-4-5-20251001",
-        max_tokens:500,
-        messages:[{role:"user",content:[
-          ...imageContents,
-          {type:"text",text:`Scan these engineering drawings for ANY reference to hazardous locations, intrinsic safety, or explosion-proof requirements. Look for these terms or similar: "intrinsic", "intrinsically safe", "hazloc", "hazardous location", "hazardous area", "explosion-proof", "explosion proof", "Class I", "Class II", "Division 1", "Division 2", "Zone 0", "Zone 1", "Zone 2", "Group A", "Group B", "Group C", "Group D", "ATEX", "UL698", "UL1203", "XP", "IS barrier", "Zener barrier", "purge", "pressurized enclosure".
+  if(!allImages.length)return null;
+  console.log(`HAZLOC SCAN: scanning ${allImages.length} pages with Sonnet`);
+  // Process in batches of 20 (API limit), merge results
+  const BATCH=20;
+  const allTerms=[];
+  const allDetails=[];
+  for(let i=0;i<allImages.length;i+=BATCH){
+    const batch=allImages.slice(i,i+BATCH);
+    const batchLabel=allImages.length>BATCH?` (batch ${Math.floor(i/BATCH)+1}/${Math.ceil(allImages.length/BATCH)})`:"";
+    try{
+      const resp=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({
+          model:"claude-sonnet-4-6",
+          max_tokens:1000,
+          messages:[{role:"user",content:[
+            ...batch,
+            {type:"text",text:`CRITICAL SAFETY SCAN: Thoroughly examine every drawing page for ANY reference to hazardous locations, intrinsic safety, or explosion-proof requirements. This scan determines whether the panel requires UL698 or UL1203 certification — missing an indicator is a serious quoting error.
+
+Search for these terms and ANY variations, abbreviations, or related concepts:
+- "intrinsic", "intrinsically safe", "IS", "IS barrier"
+- "hazloc", "hazardous location", "hazardous area", "classified area"
+- "explosion-proof", "explosion proof", "XP", "explosionproof"
+- "Class I", "Class II", "Class III"
+- "Division 1", "Division 2", "Div 1", "Div 2"
+- "Zone 0", "Zone 1", "Zone 2", "Zone 20", "Zone 21", "Zone 22"
+- "Group A", "Group B", "Group C", "Group D", "Group E", "Group F", "Group G"
+- "ATEX", "IECEx"
+- "UL698", "UL 698", "UL1203", "UL 1203"
+- "Zener barrier", "galvanic isolator", "purge", "pressurized enclosure", "NFPA 497", "NFPA 499"
+- "NEC Article 500", "NEC Article 505", "CEC Section 18"
+- Any note block, title block, or legend referencing hazardous classification
+
+Also look for schematic symbols indicating IS barriers, Zener diodes in barrier configurations, or purge/pressurization systems.
 
 Return ONLY valid JSON:
-{"found":true/false,"terms":["exact terms found"],"details":"brief description of what was found and where"}
-If NOTHING related to hazardous locations is found, return: {"found":false,"terms":[],"details":""}`}
-        ]}]
-      })
-    });
-    const d=await resp.json();
-    if(!resp.ok)return null;
-    const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
-    const cleaned=raw.replace(/```json|```/gi,"").trim();
-    const result=JSON.parse(cleaned);
-    if(result.found){
-      console.log("HAZLOC SCAN: FOUND hazardous location indicators:",result.terms?.join(", "));
-      return{found:true,terms:result.terms||[],details:result.details||"",scannedAt:Date.now()};
-    }
-    console.log("HAZLOC SCAN: no hazardous location indicators found");
-    return null;
-  }catch(e){console.warn("HAZLOC SCAN error:",e);return null;}
+{"found":true/false,"terms":["exact terms or phrases found on the drawings"],"details":"describe what was found, which page/area, and the classification if visible (e.g. Class I Div 2 Group D)"}
+If NOTHING related is found, return: {"found":false,"terms":[],"details":""}`}
+          ]}]
+        })
+      });
+      const d=await resp.json();
+      if(!resp.ok){console.warn(`HAZLOC SCAN${batchLabel}: API error`,d.error?.message);continue;}
+      const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
+      const cleaned=raw.replace(/```json|```/gi,"").trim();
+      const result=JSON.parse(cleaned);
+      if(result.found){
+        console.log(`HAZLOC SCAN${batchLabel}: FOUND`,result.terms?.join(", "));
+        if(result.terms?.length)allTerms.push(...result.terms);
+        if(result.details)allDetails.push(result.details);
+      }else{
+        console.log(`HAZLOC SCAN${batchLabel}: clean`);
+      }
+    }catch(e){console.warn(`HAZLOC SCAN${batchLabel}: error`,e);}
+  }
+  if(allTerms.length>0){
+    // De-duplicate terms (case-insensitive)
+    const seen=new Set();
+    const uniqueTerms=allTerms.filter(t=>{const k=t.toLowerCase();if(seen.has(k))return false;seen.add(k);return true;});
+    return{found:true,terms:uniqueTerms,details:allDetails.join(" | "),scannedAt:Date.now()};
+  }
+  console.log("HAZLOC SCAN: all pages clean — no hazardous location indicators");
+  return null;
 }
 
 async function runExtractionTask(uid,projectId,panel,cbs={}){
