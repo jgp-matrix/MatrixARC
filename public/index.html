@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.452";
+const APP_VERSION="v1.19.453";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15886,7 +15886,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                   const pmk=ppr.markup??30;
                   const ple=computeLaborEstimate(p);
                   const plc=ple.totalHours>0?ple.totalCost:(ppr.manualLaborCost||0);
-                  const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+                  const pmat=(p.bom||[]).filter(r=>!r.isLaborRow).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
                   const pgt=pmat+plc;
                   const psp=pmk>=100?pgt:pgt/(1-pmk/100);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
@@ -15917,7 +15917,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                     const pmk=ppr.markup??30;
                     const ple=computeLaborEstimate(p);
                     const plc=ple.totalHours>0?ple.totalCost:(ppr.manualLaborCost||0);
-                    const pmat=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+                    const pmat=(p.bom||[]).filter(r=>!r.isLaborRow).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
                     const mg=ppr.markup??30;
                     return sum+(mg>=100?(pmat+plc):(pmat+plc)/(1-mg/100))*(p.lineQty??p.qty??1);
                   },0);
@@ -16091,7 +16091,7 @@ function QuoteView({project,uid,onBack,onUpdate}){
               <div style={{fontSize:12,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Panel Breakdown</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
                 {panels.map(p=>{
-                  const mats=(p.bom||[]).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+                  const mats=(p.bom||[]).filter(r=>!r.isLaborRow).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
                   return(
                     <div key={p.id} style={{...card({padding:"10px 14px"}),minWidth:170}}>
                       <div style={{fontSize:13,fontWeight:700,marginBottom:4}}>{p.name}</div>
