@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.444";
+const APP_VERSION="v1.19.445";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -767,9 +767,9 @@ function computeLaborEstimate(panel){
   const layoutHrs=lines.filter(l=>["Device Mounting","Duct & DIN Rail","Labels"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
   const wireHrs=lines.filter(l=>["Wire Time","Door Wiring"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
   const groups={
-    cut:{hours:Math.round(cutHrs),cost:Math.round(cutHrs)*laborRate},
-    layout:{hours:Math.round(layoutHrs),cost:Math.round(layoutHrs)*laborRate},
-    wire:{hours:Math.round(wireHrs),cost:Math.round(wireHrs)*laborRate}
+    cut:{hours:Math.ceil(cutHrs),cost:Math.ceil(cutHrs)*laborRate},
+    layout:{hours:Math.ceil(layoutHrs),cost:Math.ceil(layoutHrs)*laborRate},
+    wire:{hours:Math.ceil(wireHrs),cost:Math.ceil(wireHrs)*laborRate}
   };
   const totalHours=groups.cut.hours+groups.layout.hours+groups.wire.hours;
   const totalCost=groups.cut.cost+groups.layout.cost+groups.wire.cost;
@@ -1671,17 +1671,17 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   // 30000 — CUT (multiply by lineQty like BOM items)
   lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:30000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"CUT",
-    Quantity:Math.round(cutHrs)*lineQty,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+    Quantity:Math.ceil(cutHrs)*lineQty,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
   // 40000 — LAYOUT
   lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:40000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"LAYOUT",
-    Quantity:Math.round(layoutHrs)*lineQty,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+    Quantity:Math.ceil(layoutHrs)*lineQty,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
   // 50000 — WIRE
   lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:50000,Planning_Date:today,
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"WIRE",
-    Quantity:Math.round(wireHrs)*lineQty,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+    Quantity:Math.ceil(wireHrs)*lineQty,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
   // 60000+ — ALL BOM items (non-labor; isCrossed rows ARE the replacement parts and must be included)
   const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow);
@@ -3787,7 +3787,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
   // ── Labor summary — B&W ──
   const laborEst=computeLaborEstimate(panel);
   const LABOR_GROUPS=[
-    {label:"CUT",   cats:new Set(["Panel Holes","Side-Mounted Components","HVAC/Fans","Side Devices"])},
+    {label:"CUT",   cats:new Set(["Panel Holes","Side-Mounted Components"])},
     {label:"LAYOUT", cats:new Set(["Device Mounting","Duct & DIN Rail","Labels"])},
     {label:"WIRE",  cats:new Set(["Wire Time","Door Wiring"])},
   ];
@@ -15533,7 +15533,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
             const laborAccepted=sp.laborData?.accepted||{};
             const acceptedCount=laborEst.lines.filter(l=>laborAccepted[l.category]).length;
             const GDEF=[
-              {label:"CUT",color:"#f97316",cats:["Panel Holes","Side Devices","HVAC/Fans"]},
+              {label:"CUT",color:"#f97316",cats:["Panel Holes","Side-Mounted Components"]},
               {label:"LAYOUT",color:"#a78bfa",cats:["Device Mounting","Duct & DIN Rail","Labels"]},
               {label:"WIRE",color:"#38bdf8",cats:["Wire Time","Door Wiring"]},
             ];
