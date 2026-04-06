@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.453";
+const APP_VERSION="v1.19.454";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17265,7 +17265,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                   <div style={{fontSize:13,color:C.accent,fontWeight:700,fontFamily:"monospace"}}>{fileName}</div>
                 </div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-                  <button onClick={()=>{setShowBcUploadPrompt(false);setAutoPrint(true);setView("quote");}}
+                  <button onClick={()=>{
+                    // DECISION(v1.19.454): Reset BOM hash on Skip so rev doesn't keep bumping
+                    const hash=computeBomHash(projectRef.current.panels);
+                    const upd={...projectRef.current,lastPrintedBomHash:hash};
+                    setProject(upd);projectRef.current=upd;onChange(upd);
+                    setShowBcUploadPrompt(false);setAutoPrint(true);setView("quote");
+                  }}
                     style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>
                     Skip & Print
                   </button>
