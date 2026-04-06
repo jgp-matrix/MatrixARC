@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.435";
+const APP_VERSION="v1.19.436";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -760,26 +760,15 @@ function computeLaborEstimate(panel){
   if(sideDeviceHours>0)lines.push({category:"Side-Mounted Components",qty:sideDeviceHours,unit:"hours",minPerUnit:60,hours:sideDeviceHours,cost:sideDeviceHours*laborRate,field:"sideDeviceHours"});
   // Labels: stored as hours directly
   lines.push({category:"Labels",qty:labelHours,unit:"hours",minPerUnit:60,hours:labelHours,cost:labelHours*laborRate,field:"labelHours"});
-  addLine("Project Mgmt",pmUnits,LABOR_RATES.pmMinPerUnit,"sessions","pmUnits");
-
-  addLine("Crating Time",cratingUnits,LABOR_RATES.cratingMinPerUnit,"crates","cratingUnits");
+  // DECISION(v1.19.436): Removed Project Mgmt and Crating Time from labor calculations — not needed.
 
   // DECISION(v1.19.426): Round each line cost and total to nearest dollar.
   // Prevents ARC vs BC mismatch from fractional cents in labor calculations.
   lines.forEach(l=>{l.cost=Math.round(l.cost);});
-  // DECISION(v1.19.434): Use rounded hours per group for total, matching what BOM rows and BC get.
+  // DECISION(v1.19.436): Total cost = sum of ALL rounded line costs. Previously excluded Project Mgmt
+  // and Crating Time, causing labor summary to not match BOM total.
   const totalHours=lines.reduce((s,l)=>s+l.hours,0);
-  // Calculate total cost the same way as BOM rows: sum of (roundedHours × laborRate) per group
-  const LABOR_CATS=[
-    ["Panel Holes","Side-Mounted Components"],
-    ["Device Mounting","Duct & DIN Rail","Labels"],
-    ["Wire Time","Door Wiring"]
-  ];
-  const roundedTotalHours=LABOR_CATS.reduce((s,cats)=>{
-    const hrs=lines.filter(l=>cats.includes(l.category)).reduce((ss,l)=>ss+l.hours,0);
-    return s+Math.round(hrs);
-  },0);
-  const totalCost=roundedTotalHours*laborRate;
+  const totalCost=lines.reduce((s,l)=>s+l.cost,0);
 
   return{
     lines,totalCost,totalHours,
