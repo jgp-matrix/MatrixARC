@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.417";
+const APP_VERSION="v1.19.418";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11039,11 +11039,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Previously, changing these updated the BC Item Card cost globally, affecting all other projects.
     // DECISION(v1.19.414): Contingency items save as "bc" source with priceDate so they show as priced.
     // Skip Item Card push (project-specific) but allow planning line sync. Trigger BC sync pending.
+    // DECISION(v1.19.418): Contingency/Job Buyoff/Crate price changes auto-sync to BC planning lines.
+    // No Item Card push (project-specific), but planning line updates immediately.
     if(CONTINGENCY_PNS.has(pn.toUpperCase())||/^job.?buyoff$/i.test(pn)||/^crat(e|ing)$/i.test((row?.description||"").trim())){
       const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:parsed,priceSource:"bc",priceDate:Date.now()}:r);
       const updated={...panel,bom:updatedBom};onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
-      if(bcProjectNumber&&_bcToken)setBcSyncStatus("pending");
+      // Auto-sync planning lines to BC in background
+      if(bcProjectNumber&&_bcToken){
+        setBcSyncStatus(null);setBcSyncing(true);
+        bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated,projectName)
+          .then(r=>{setBcSyncStatus("ok");setTimeout(()=>setBcSyncStatus(null),3000);})
+          .catch(e=>{console.warn("Auto-sync contingency failed:",e);setBcSyncStatus("error");})
+          .finally(()=>setBcSyncing(false));
+      }
       return;
     }
     // Show confirmation popup for regular items
