@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.459";
+const APP_VERSION="v1.19.460";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10365,7 +10365,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const laborBcSyncRan=useRef(false);
   useEffect(()=>{
     if(laborBcSyncRan.current)return;
-    if(!bcProjectNumber||!_bcToken)return;
+    if(!bcProjectNumber||!_bcToken||readOnly)return;
     laborBcSyncRan.current=true;
     bcPatchLaborPlanningLines(bcProjectNumber,idx+1,panel)
       .then(()=>console.log("LABOR BC SYNC: auto-updated planning lines on open for panel",idx+1))
@@ -10745,7 +10745,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // Auto-sync to BC when BC-confirmed item count INCREASES (user priced something) — debounced 3s
   // Only auto-syncs when ALL non-labor rows are already priced (bc or manual) — avoids triggering on initial extraction
   useEffect(()=>{
-    if(!bcProjectNumber)return;
+    if(!bcProjectNumber||readOnly)return;
     const bom=panel.bom||[];
     const bcCount=bom.filter(r=>r.priceSource==='bc').length;
     if(bcPrevSyncCount.current===-1){bcPrevSyncCount.current=bcCount;return;}
@@ -10767,7 +10767,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   useEffect(()=>{
     if(prevSellPrice.current===_sellPrice){return;}
     prevSellPrice.current=_sellPrice;
-    if(!bcProjectNumber||!_bcToken)return;
+    if(!bcProjectNumber||!_bcToken||readOnly)return;
     const taskNo=String(20000+(idx+1)*100+10);
     // Debounce 2s to avoid rapid-fire patches during bulk price updates
     const t=setTimeout(()=>{
@@ -15176,7 +15176,14 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
       const sentTo=sendMode==="reply"
         ?(selectedThread.to?selectedThread.from+", "+selectedThread.to:selectedThread.fromEmail||selectedThread.from)
         :m.to;
-      const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo};
+      // DECISION(v1.19.460): Full BC sync before locking — ensures planning lines match ARC
+      if(project.bcProjectNumber&&_bcToken){
+        for(let i=0;i<(project.panels||[]).length;i++){
+          try{await bcSyncPanelPlanningLines(project.bcProjectNumber,i+1,project.panels[i],project.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",i+1,"failed:",e);}
+        }
+      }
+      // Lock the quote — BOM and BC planning lines are now frozen
+      const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true};
       onUpdate(upd);safeSave(uid,upd);
       if(project.bcProjectNumber&&_bcToken){
         bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
@@ -15327,6 +15334,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
   const [validating,setValidating]=useState(false);
   const [validateMsg,setValidateMsg]=useState("");
   const [showDeleteAdminWarn,setShowDeleteAdminWarn]=useState(false);
+  const [showUnlockConfirm,setShowUnlockConfirm]=useState(false);
   const [quoteSendModalPLV,setQuoteSendModalPLV]=useState(null);
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
@@ -15999,6 +16007,12 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                   });
                 }} style={btn("#0c2233","#38bdf8",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #38bdf844"})}>✉ Send Quote{project.quoteSentAt?" (Resend)":""}</button>}
                 {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
+                {project.quoteLocked&&(
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:4}}>
+                    <span style={{fontSize:12,fontWeight:700,color:"#f59e0b",background:"#3a2800",borderRadius:6,padding:"3px 10px",letterSpacing:0.5}}>QUOTE LOCKED</span>
+                    {!isReadOnly()&&<button onClick={()=>setShowUnlockConfirm(true)} style={{background:"none",border:"1px solid #f59e0b44",borderRadius:6,color:"#f59e0b",cursor:"pointer",fontSize:11,padding:"2px 10px",fontWeight:600}}>Unlock</button>}
+                  </div>
+                )}
                 {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📬 PO Received</button>}
                 {!readOnly&&sp.bcItemNumber&&(
                   <button onClick={()=>{}} disabled={pendingBcCount>0}
@@ -16034,6 +16048,28 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
     {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)}/>}
     {showCADLinkModal&&<CADLinkSendModal project={project} onClose={()=>setShowCADLinkModal(false)}/>}
+    {showUnlockConfirm&&ReactDOM.createPortal(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:440,boxShadow:"0 0 40px 10px rgba(245,158,11,0.3)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+            <span style={{fontSize:22}}>&#x1F513;</span>
+            <div style={{fontSize:15,fontWeight:800,color:"#f59e0b"}}>Unlock Quote?</div>
+          </div>
+          <div style={{fontSize:13,color:"#94a3b8",lineHeight:1.7,marginBottom:16}}>
+            This quote has been sent to the customer. Unlocking will allow BOM and pricing changes, and BC planning lines will resume syncing.<br/><br/>
+            If the customer has requested changes, unlock to make edits and then re-send the updated quote.
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>setShowUnlockConfirm(false)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
+            <button onClick={()=>{
+              const upd={...project,quoteLocked:false,quoteRev:(project.quoteRev||0)+1};
+              onUpdate(upd);safeSave(uid,upd);
+              setShowUnlockConfirm(false);
+            }} style={{background:"#7c2d12",border:"1px solid #f59e0b",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Unlock &amp; Edit</button>
+          </div>
+        </div>
+      </div>
+    ,document.body)}
   </>);
 }
 
@@ -16264,7 +16300,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     }
   },[autoOpenPortal,portalSubmissions.length]);
   const saveTimer=useRef(null);
-  const readOnly=isReadOnly();
+  const readOnly=isReadOnly()||!!project.quoteLocked;
+  const quoteLocked=!!project.quoteLocked;
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
   const didMigrate=useRef(!init.panels);
 
@@ -16281,6 +16318,28 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   // Listen for live updates from background extraction tasks (survives navigation)
   useEffect(()=>onProjectUpdated(project.id,p=>{setProject(p);projectRef.current=p;onChange(p);}),[project.id]);
+
+  // DECISION(v1.19.460): Full BC sync on project open — ensures planning lines are current.
+  // Debounced 2s to let BC token auto-connect. Skip if locked.
+  const bcOpenSyncRan=useRef(false);
+  useEffect(()=>{
+    if(bcOpenSyncRan.current)return;
+    const bcNum=init.bcProjectNumber;
+    if(!bcNum||init.quoteLocked)return;
+    const hasBom=(init.panels||[]).some(p=>(p.bom||[]).some(r=>!r.isLaborRow));
+    if(!hasBom)return;
+    const t=setTimeout(()=>{
+      if(bcOpenSyncRan.current||!_bcToken)return;
+      bcOpenSyncRan.current=true;
+      (async()=>{
+        for(let i=0;i<(init.panels||[]).length;i++){
+          try{await bcSyncPanelPlanningLines(bcNum,i+1,init.panels[i],init.name);}catch(e){console.warn("Open BC sync panel",i+1,"failed:",e);}
+        }
+        console.log("OPEN BC SYNC: planning lines synced for",bcNum);
+      })();
+    },3000);
+    return()=>clearTimeout(t);
+  },[]);
 
   const revBumpTimer=useRef(null);
   function update(p){
@@ -16570,6 +16629,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       const hasUpload=(proj.panels||[]).some(p=>p.bcPdfAttached);
       if(hasUpload||bcNum){setShowBcUploadPrompt(true);return;}
       setAutoPrint(true);setView("quote");return;
+    }
+    // DECISION(v1.19.460): Full BC sync before verification — ensures planning lines are current.
+    // Skip if quote is locked (no changes should be pushed).
+    if(!proj.quoteLocked&&(proj.panels||[]).some(p=>(p.bom||[]).some(r=>!r.isLaborRow))){
+      for(let i=0;i<(proj.panels||[]).length;i++){
+        try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);}catch(e){console.warn("Pre-print BC sync panel",i+1,"failed:",e);}
+      }
     }
     try{
       const allPages=await bcDiscoverODataPages();
@@ -16946,13 +17012,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       const pn=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
                       const pdfName=`QTE_C-[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
                       await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName);
-                      const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to};
+                      // Full BC sync before locking
+                      if(project.bcProjectNumber&&_bcToken){
+                        for(let pi=0;pi<(project.panels||[]).length;pi++){
+                          try{await bcSyncPanelPlanningLines(project.bcProjectNumber,pi+1,project.panels[pi],project.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",pi+1,"failed:",e);}
+                        }
+                      }
+                      const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to,quoteLocked:true};
                       onUpdate(upd);
                       if(project.bcProjectNumber&&_bcToken){
                         bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
                       }
                       setQuoteSendModal(null);
-                      alert("Quote sent to "+m.to);
+                      alert("Quote sent to "+m.to+" — quote is now locked.");
                     }catch(e){alert("Send failed: "+e.message);}
                   }} style={btn("#0c2233","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8"})}>✉ Send</button>
                 </div>
