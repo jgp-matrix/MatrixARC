@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.466";
+const APP_VERSION="v1.19.467";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3335,9 +3335,14 @@ function arcDocKeyValueRow(ctx,items){
 }
 
 function arcDocOpen(doc){
+  // DECISION(v1.19.467): Use <a> download link instead of window.open to avoid popup blockers.
+  // The BC sync before print adds async delay that makes window.open lose "user-initiated" status.
   const blob=doc.output("blob");
   const url=URL.createObjectURL(blob);
-  window.open(url,"_blank");
+  const a=document.createElement("a");
+  a.href=url;a.target="_blank";a.rel="noopener";
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},1000);
 }
 
 function arcDocBase64(doc){
@@ -16389,7 +16394,6 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   // Auto-print: wait for quote DOM to render, trigger print, then go back
   useEffect(()=>{
-    console.log("[PRINT FLOW] useEffect: autoPrint=",autoPrint,"view=",view);
     if(autoPrint&&view==="quote"){
       const t=setTimeout(async()=>{await generateQuotePdf(projectRef.current);const hash=computeBomHash(projectRef.current.panels);const upd={...projectRef.current,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:projectRef.current.quoteRev||0};setProject(upd);projectRef.current=upd;onChange(upd);saveProject(uid,upd);setAutoPrint(false);setView("panels");},400);
       return()=>clearTimeout(t);
@@ -16634,13 +16638,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     }
     // DECISION(v1.19.460): Full BC sync before verification — ensures planning lines are current.
     // Skip if quote is locked (no changes should be pushed).
-    console.log("[PRINT FLOW] verifyBcLineCount started, bcNum=",bcNum,"locked=",proj.quoteLocked);
     if(!proj.quoteLocked&&(proj.panels||[]).some(p=>(p.bom||[]).some(r=>!r.isLaborRow))){
-      console.log("[PRINT FLOW] Starting pre-print BC sync for",proj.panels.length,"panels");
       for(let i=0;i<(proj.panels||[]).length;i++){
-        try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);console.log("[PRINT FLOW] BC sync panel",i+1,"done");}catch(e){console.warn("Pre-print BC sync panel",i+1,"failed:",e);}
+        try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);}catch(e){console.warn("Pre-print BC sync panel",i+1,"failed:",e);}
       }
-      console.log("[PRINT FLOW] Pre-print BC sync complete");
     }
     try{
       const allPages=await bcDiscoverODataPages();
@@ -16685,7 +16686,6 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           }
         });
       }
-      console.log("[PRINT FLOW] verification done: missing=",allMissing.length,"priceMismatches=",priceMismatches.length);
       if(allMissing.length>0||priceMismatches.length>0){setBcCountMismatch({arcCount:allBom.length,bcCount:totalBcBom,missing:allMissing,priceMismatches});return;}
     }catch(e){console.warn("BC line count check failed:",e);}
     // All checks passed — show BC upload prompt only if current revision hasn't been uploaded yet
@@ -16694,8 +16694,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!hasDrawings){setAutoPrint(true);setView("quote");return;}
     const currentRev=proj.quoteRev||0;
     const alreadyUploaded=(proj.panels||[]).every(p=>(p.bcUploadQuoteRev||0)>=currentRev);
-    if(!alreadyUploaded&&bcNum){console.log("[PRINT FLOW] showing upload prompt");setShowBcUploadPrompt(true);return;}
-    console.log("[PRINT FLOW] all checks passed — opening quote with autoPrint");
+    if(!alreadyUploaded&&bcNum){setShowBcUploadPrompt(true);return;}
     setAutoPrint(true);setView("quote");
   }
 
