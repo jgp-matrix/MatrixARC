@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.447";
+const APP_VERSION="v1.19.448";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1484,7 +1484,8 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
       const rev=panels[i].drawingRev||"-";
       const pfx=`${projectNumber}-${suffix}`;
       t.push(makeTask(prefix,projectNumber,beginNo,`${pfx} - ${panelDesc}`,"Begin-Total"));
-      t.push(makeTask(prefix,projectNumber,postingNo,`${panels[i].drawingNo||pfx} Rev ${rev} - ${panelDesc}`,"Posting"));
+      const pQty=panels[i].lineQty??1;
+      t.push(makeTask(prefix,projectNumber,postingNo,`${panels[i].drawingNo||pfx} Rev ${rev} - ${panelDesc} [${pQty}]`,"Posting"));
       t.push(makeTask(prefix,projectNumber,engNo,`Engineering Design - ${panelDesc}`,"Posting"));
       t.push(makeTask(prefix,projectNumber,endNo,`TOTAL: ${pfx} - ${panelDesc}`,"End-Total",{Totaling:`${beginNo}..${endNo}`}));
     }
@@ -1575,9 +1576,10 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, pro
   const panelDesc=projectName||panel.drawingDesc||panel.name||`Panel ${n}`;
   const rev=panel.drawingRev||"-";
   const base=20000+n*100;
+  const pQty=panel.lineQty??1;
   const taskDescs={
     [String(base)]:    `${pfx} - ${panelDesc}`,
-    [String(base+10)]: `${panel.drawingNo||pfx} Rev ${rev} - ${panelDesc}`,
+    [String(base+10)]: `${panel.drawingNo||pfx} Rev ${rev} - ${panelDesc} [${pQty}]`,
     [String(base+20)]: `Engineering Design - ${panelDesc}`,
     [String(base+99)]: `TOTAL: ${pfx} - ${panelDesc}`,
   };
@@ -1652,7 +1654,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   const rev=panel.drawingRev||"-";
   lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:10000,Planning_Date:panel.requestedShipDate||today,
     Line_Type:"Billable",Type:"Item",No:"PROGRESS BILLING",
-    Description:`${panel.drawingNo||pfx} Rev ${rev} - ${panelDesc}`,
+    Description:`${panel.drawingNo||pfx} Rev ${rev} - ${panelDesc} [${lineQty}]`,
     Quantity:lineQty,Unit_Price:sellPrice,Location_Code:"MAIN"});
 
   // 20000 — Engineering (Budget, qty=0 until ARC tracks engineering hours)
