@@ -893,7 +893,7 @@ ${fullText.slice(0,8000)}`;
         {phase==='upload'&&(<>
           {/* Duplicate warning dialog */}
           {dupWarning&&(
-            <div style={{background:"#1a1000",border:`1px solid ${C.yellow}`,borderRadius:12,padding:20,marginBottom:8}}>
+            <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}`,borderRadius:12,padding:20,marginBottom:8}}>
               <div style={{fontSize:15,fontWeight:700,color:C.yellow,marginBottom:8}}>⚠ Duplicate Quote Detected</div>
               <div style={{fontSize:13,color:C.sub,marginBottom:16,lineHeight:1.6}}>
                 Quote <strong style={{color:C.text}}>#{dupWarning.parsedData.quoteId}</strong> from <strong style={{color:C.text}}>{dupWarning.parsedData.supplier}</strong> was already imported
@@ -904,9 +904,9 @@ ${fullText.slice(0,8000)}`;
                 <button onClick={()=>setDupWarning(null)}
                   style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
                 <button onClick={async()=>{const d=dupWarning;setDupWarning(null);await saveAndMatch(d.parsedData,d.targetFile,null);}}
-                  style={btn("#1a1a2e",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Save as Separate Copy</button>
+                  style={btn(C.bg,C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Save as Separate Copy</button>
                 <button onClick={async()=>{const d=dupWarning;setPrecedingQuoteId(d.existingDocId);setDupWarning(null);await saveAndMatch(d.parsedData,d.targetFile,d.existingDocId);}}
-                  style={btn("#0d1f0d","#4ade80",{fontSize:13,border:"1px solid #4ade8044"})}>↑ Supersede Previous Version</button>
+                  style={btn(C.greenDim,C.green,{fontSize:13,border:`1px solid ${C.green}44`})}>↑ Supersede Previous Version</button>
               </div>
             </div>
           )}
@@ -1097,12 +1097,12 @@ ${fullText.slice(0,8000)}`;
                                 if(matchedNo){setAutoVendor({vendorNo:matchedNo,vendorName:matchedName});setNewItemForm(f=>({...f,vendor:matchedNo}));}
                               }
                             }} style={{
-                              background:'#0d0d1a',border:`1px solid ${C.accent}`,color:C.accent,
+                              background:C.accentDim,border:`1px solid ${C.accent}`,color:C.accent,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
                             }}>+ Add to BC</button>
                           :isMatched
                           ?<button onClick={()=>toggleApprove(i)} style={{
-                              background:item.approved?'#0d2a1a':'#1a0d0d',
+                              background:item.approved?C.greenDim:C.redDim,
                               border:`1px solid ${item.approved?C.green:C.red}`,
                               color:item.approved?C.green:C.red,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
@@ -1114,13 +1114,13 @@ ${fullText.slice(0,8000)}`;
                             <div style={{fontSize:10,color:C.accent,fontFamily:"monospace",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:130}} title={fuzzyResults[i].number}>{fuzzyResults[i].number}</div>
                             <div style={{fontSize:9,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:130}} title={fuzzyResults[i].displayName}>{fuzzyResults[i].displayName}</div>
                             <div style={{display:"flex",gap:4}}>
-                              <button onClick={()=>acceptFuzzyMatch(i,fuzzyResults[i])} style={{background:'#0d2a0d',border:`1px solid ${C.green}`,color:C.green,borderRadius:10,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Accept ✓</button>
+                              <button onClick={()=>acceptFuzzyMatch(i,fuzzyResults[i])} style={{background:C.greenDim,border:`1px solid ${C.green}`,color:C.green,borderRadius:10,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Accept ✓</button>
                               <button onClick={()=>{setLinkingIdx(i);setLinkQuery(item.partNumber||'');setLinkResults([]);setNewItemIdx(null);}} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:10,padding:"2px 6px",fontSize:10,cursor:"pointer"}} title="Link to a different item">⟳</button>
                             </div>
                           </div>
                           :<div style={{display:"flex",gap:4}}>
                             <button onClick={()=>{setLinkingIdx(i);setLinkQuery(item.partNumber||'');setLinkResults([]);setNewItemIdx(null);}} style={{
-                              background:'#1a1200',border:`1px solid ${C.yellow}`,color:C.yellow,
+                              background:C.yellowDim,border:`1px solid ${C.yellow}`,color:C.yellow,
                               borderRadius:12,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"pointer"
                             }}>🔗 Link</button>
                             <button onClick={async()=>{
@@ -1138,7 +1138,7 @@ ${fullText.slice(0,8000)}`;
                                 if(matchedNo){setAutoVendor({vendorNo:matchedNo,vendorName:matchedName});setNewItemForm(f=>({...f,vendor:matchedNo}));}
                               }
                             }} style={{
-                              background:'#1a1a00',border:`1px solid #6060a0`,color:C.muted,
+                              background:C.bg,border:`1px solid ${C.border}`,color:C.muted,
                               borderRadius:12,padding:"2px 8px",fontSize:11,cursor:"pointer"
                             }}>+ New</button>
                           </div>
@@ -1155,7 +1155,7 @@ ${fullText.slice(0,8000)}`;
             const item=lineItems[linkingIdx];
             if(!item)return null;
             return(
-              <div style={{background:"#0f120f",border:`1px solid ${C.yellow}`,borderRadius:10,padding:16,display:"flex",flexDirection:"column",gap:10}}>
+              <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}`,borderRadius:10,padding:16,display:"flex",flexDirection:"column",gap:10}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                   <div style={{fontSize:13,fontWeight:700,color:C.yellow}}>
                     🔗 Link to BC Item — <span style={{fontFamily:"monospace",color:C.text}}>{item.mfr?`${item.mfr} `:''}{item.partNumber}</span>
@@ -1169,7 +1169,7 @@ ${fullText.slice(0,8000)}`;
                     onKeyDown={e=>{if(e.key==='Escape'){setLinkingIdx(null);setLinkResults([]);}}}
                     placeholder="Type BC part number or description…"
                     autoFocus
-                    style={{flex:1,background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"8px 10px",color:C.text,fontSize:13,outline:"none"}}/>
+                    style={{flex:1,background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",color:C.text,fontSize:13,outline:"none"}}/>
                   {linkSearching&&<span style={{color:C.muted,fontSize:13,flexShrink:0}}>Searching…</span>}
                 </div>
                 {linkResults.length>0&&(
@@ -1186,7 +1186,7 @@ ${fullText.slice(0,8000)}`;
                         <div style={{fontSize:12,color:C.green,fontWeight:700,flexShrink:0}}>
                           {bc.unitCost!=null?`$${bc.unitCost.toFixed(2)}`:'—'}
                         </div>
-                        <button onClick={e=>{e.stopPropagation();applyLink(bc);}} style={btn('#1a2a1a',C.green,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.green}`})}>
+                        <button onClick={e=>{e.stopPropagation();applyLink(bc);}} style={btn(C.greenDim,C.green,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.green}`})}>
                           Link & Remember ✓
                         </button>
                       </div>
@@ -1204,14 +1204,14 @@ ${fullText.slice(0,8000)}`;
           })()}
           {/* New BC Item Form */}
           {newItemIdx!==null&&(()=>{const item=lineItems[newItemIdx];return item?(
-            <div style={{background:"#0f1a0f",border:`1px solid ${C.accent}`,borderRadius:10,padding:16,display:"flex",flexDirection:"column",gap:12}}>
+            <div style={{background:C.accentDim,border:`1px solid ${C.accent}`,borderRadius:10,padding:16,display:"flex",flexDirection:"column",gap:12}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                 <div style={{fontSize:13,fontWeight:700,color:C.accent}}>Create New BC Item — {item.mfr?`${item.mfr} `:''}{item.partNumber||item.rawPartNumber}</div>
                 <button onClick={()=>{setNewItemIdx(null);setCreateError('');}} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer",lineHeight:1}}>×</button>
               </div>
               {bcCfg.loading&&<div style={{fontSize:11,color:C.muted}}>Loading BC data…</div>}
               {(()=>{
-                const si={background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"8px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"};
+                const si={background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"};
                 const ii={...si};
                 const lbl=(t)=><label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>{t}</label>;
                 const nif=(key,ph,type="text")=><input type={type} value={newItemForm[key]} placeholder={ph||''} step={type==="number"?"0.01":undefined} onChange={e=>setNewItemForm(p=>({...p,[key]:e.target.value}))} style={ii}/>;
@@ -1254,7 +1254,7 @@ ${fullText.slice(0,8000)}`;
               {createError&&<div style={{fontSize:12,color:C.red}}>{createError}</div>}
               <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
                 <button onClick={()=>{setNewItemIdx(null);setCreateError('');}} style={btn(C.card,C.sub,{fontSize:12,border:`1px solid ${C.border}`})}>Cancel</button>
-                <button onClick={handleCreateInBC} disabled={creatingItem||!newItemForm.description} style={btn('#0d2a1a',C.green,{fontSize:12,border:`1px solid ${C.green}`,opacity:creatingItem||!newItemForm.description?0.5:1})}>
+                <button onClick={handleCreateInBC} disabled={creatingItem||!newItemForm.description} style={btn(C.greenDim,C.green,{fontSize:12,border:`1px solid ${C.green}`,opacity:creatingItem||!newItemForm.description?0.5:1})}>
                   {creatingItem?'Creating…':'Create in BC →'}
                 </button>
               </div>
@@ -1262,19 +1262,19 @@ ${fullText.slice(0,8000)}`;
           ):null;})()}
           {/* Vendor correction prompt */}
           {showVendorPrompt&&(
-            <div style={{background:"#1a1200",border:`1px solid ${C.yellow}`,borderRadius:10,padding:14,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}`,borderRadius:10,padding:14,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
               <div style={{fontSize:13,color:C.text,flex:1}}>
                 Remember <strong style={{color:C.accent}}>{showVendorPrompt.vendorName}</strong> as the default vendor for <strong style={{color:C.sub}}>{showVendorPrompt.supplierName}</strong>?
               </div>
               <button onClick={async()=>{await sqSaveVendorMapping(uid,showVendorPrompt.supplierName,showVendorPrompt.vendorNo);setAutoVendor({vendorNo:showVendorPrompt.vendorNo,vendorName:showVendorPrompt.vendorName});setShowVendorPrompt(null);setNewItemIdx(null);}}
-                style={btn('#1a2a1a',C.green,{fontSize:12,border:`1px solid ${C.green}`,padding:"5px 14px"})}>Yes, remember this</button>
+                style={btn(C.greenDim,C.green,{fontSize:12,border:`1px solid ${C.green}`,padding:"5px 14px"})}>Yes, remember this</button>
               <button onClick={()=>{setShowVendorPrompt(null);setNewItemIdx(null);}}
                 style={btn(C.card,C.muted,{fontSize:12,border:`1px solid ${C.border}`,padding:"5px 14px"})}>No thanks</button>
             </div>
           )}
           {statusMsg&&<div style={{fontSize:13,color:C.red}}>{statusMsg}</div>}
           {precedingQuoteId&&(
-            <div style={{background:"#1a1a00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 14px",fontSize:12,color:C.yellow}}>
+            <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 14px",fontSize:12,color:C.yellow}}>
               ⚠ This quote will supersede the previous version — history is retained in the database.
             </div>
           )}
@@ -1307,28 +1307,28 @@ ${fullText.slice(0,8000)}`;
               const prevRevisions=savedQuotes.filter(q=>q.quoteId===quoteHeader?.quoteId&&q.id!==quoteDocId);
               return prevRevisions.length>0&&(
                 <button onClick={()=>setShowRevisions(v=>!v)}
-                  style={btn('#0d1a2a','#93c5fd',{fontSize:13,border:'1px solid #3b82f655',display:"flex",alignItems:"center",gap:6})}>
+                  style={btn(C.accentDim,C.accent,{fontSize:13,border:`1px solid ${C.accent}55`,display:"flex",alignItems:"center",gap:6})}>
                   📂 View Previous Revisions
-                  <span style={{background:'#3b82f644',borderRadius:10,padding:"0 7px",fontSize:11,fontWeight:800,color:'#93c5fd'}}>{prevRevisions.length}</span>
+                  <span style={{background:`${C.accent}44`,borderRadius:10,padding:"0 7px",fontSize:11,fontWeight:800,color:C.accent}}>{prevRevisions.length}</span>
                 </button>
               );
             })()}
             <div style={{position:"relative"}}>
               <button onClick={()=>setShowExportMenu(v=>!v)}
-                style={btn('#0d1a0d',C.green,{fontSize:13,border:`1px solid ${C.green}55`})}>⬇ Export Excel ▾</button>
+                style={btn(C.greenDim,C.green,{fontSize:13,border:`1px solid ${C.green}55`})}>⬇ Export Excel ▾</button>
               {showExportMenu&&(
                 <div style={{position:"absolute",bottom:"calc(100% + 6px)",left:0,background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:12,display:"flex",flexDirection:"column",gap:8,minWidth:230,zIndex:20,boxShadow:"0 4px 20px #0008"}}>
                   <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Export Format</div>
-                  <div style={{fontSize:11,color:panelBom&&panelBom.length?C.green:C.yellow,background:panelBom&&panelBom.length?C.greenDim:'#1a1200',borderRadius:6,padding:"4px 8px"}}>
+                  <div style={{fontSize:11,color:panelBom&&panelBom.length?C.green:C.yellow,background:panelBom&&panelBom.length?C.greenDim:C.yellowDim,borderRadius:6,padding:"4px 8px"}}>
                     {panelBom&&panelBom.length?`📋 Panel BOM: ${panelBom.filter(r=>!r.isLaborRow).length} items`:'⚠ No panel BOM — open from a panel card'}
                   </div>
                   <button onClick={()=>exportQuoteToExcel(false,false)}
-                    style={btn('#0d2a1a',C.green,{fontSize:13,border:`1px solid ${C.green}`,textAlign:"left",padding:"8px 12px",display:"flex",flexDirection:"column",gap:2})}>
+                    style={btn(C.greenDim,C.green,{fontSize:13,border:`1px solid ${C.green}`,textAlign:"left",padding:"8px 12px",display:"flex",flexDirection:"column",gap:2})}>
                     <span style={{fontWeight:700}}>⬇ Full Export</span>
                     <span style={{fontSize:11,opacity:0.75}}>All columns including costs</span>
                   </button>
                   <button onClick={()=>exportQuoteToExcel(false,true)}
-                    style={btn('#1a0d2a','#a78bfa',{fontSize:13,border:`1px solid #a78bfa`,textAlign:"left",padding:"8px 12px",display:"flex",flexDirection:"column",gap:2})}>
+                    style={btn(C.accentDim,C.purple,{fontSize:13,border:`1px solid ${C.purple}`,textAlign:"left",padding:"8px 12px",display:"flex",flexDirection:"column",gap:2})}>
                     <span style={{fontWeight:700}}>👤 Customer Pricing</span>
                     <span style={{fontSize:11,opacity:0.75}}>Hides Quote $, Cost &amp; Margin</span>
                   </button>
@@ -1338,7 +1338,7 @@ ${fullText.slice(0,8000)}`;
               )}
             </div>
             <button onClick={()=>{setPrecedingQuoteId(quoteDocId);setFile(null);setPdfPreview(null);setQuoteHeader(null);setLineItems([]);setQuoteDocId(null);setPhase('upload');setStatusMsg('');setShowRevisions(false);}}
-              style={btn('#1a1200',C.yellow,{fontSize:13,border:`1px solid ${C.yellow}`})}>↑ Upload Revision</button>
+              style={btn(C.yellowDim,C.yellow,{fontSize:13,border:`1px solid ${C.yellow}`})}>↑ Upload Revision</button>
             <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
             {onBomUpdate&&<button onClick={()=>{
                 const now=Date.now();
@@ -1359,24 +1359,24 @@ ${fullText.slice(0,8000)}`;
                 }));
                 if(newRows.length>0){onBomUpdate(newRows);alert(`${newRows.length} item${newRows.length!==1?"s":""} added to BOM (not pushed to BC).`);}
                 onClose();
-              }} style={btn("#1a1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>
+              }} style={btn(C.accentDim,C.accent,{fontSize:13,border:`1px solid ${C.accent}44`})}>
                 Add to BOM Only
               </button>}
             {allPushed&&newlyLinkedCount===0
               ?<span style={{fontSize:12,color:C.green,fontWeight:700,padding:"5px 14px",background:C.greenDim,border:`1px solid ${C.green}55`,borderRadius:8}}>✓ All Prices Current in BC</span>
               :<>
-              <button onClick={()=>setShowImportReview(true)} style={btn("#1a1500","#f59e0b",{fontSize:13,border:"1px solid #f59e0b44"})}>
+              <button onClick={()=>setShowImportReview(true)} style={btn(C.yellowDim,C.yellow,{fontSize:13,border:`1px solid ${C.yellow}44`})}>
                 Review & Match
               </button>
-              <button onClick={handlePush} disabled={unpushedCount===0} style={btn(unpushedCount>0?"#0d2a1a":C.card,unpushedCount>0?C.green:C.muted,{fontSize:13,border:`1px solid ${unpushedCount>0?C.green:C.border}`,opacity:unpushedCount>0?1:0.5})}>
+              <button onClick={handlePush} disabled={unpushedCount===0} style={btn(unpushedCount>0?C.greenDim:C.card,unpushedCount>0?C.green:C.muted,{fontSize:13,border:`1px solid ${unpushedCount>0?C.green:C.border}`,opacity:unpushedCount>0?1:0.5})}>
                 {bcConnecting?'Connecting…':allPushed?`Push ${newlyLinkedCount} New Link${newlyLinkedCount!==1?'s':''} to BC →`:`Push ${unpushedCount} Price${unpushedCount!==1?'s':''} to BC →`}
               </button>
               </>}
           </div>
           {/* TEMP TEST BUTTON — remove when BC upload is verified */}
           {bcProjectNumber&&quoteHeader?.pdfUrl&&(
-            <div style={{marginTop:8,padding:"8px 10px",background:"#1a0d00",border:"1px dashed #f97316",borderRadius:8,display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontSize:10,color:"#f97316",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"}}>Test</span>
+            <div style={{marginTop:8,padding:"8px 10px",background:C.yellowDim,border:`1px dashed ${C.yellow}`,borderRadius:8,display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:10,color:C.yellow,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"}}>Test</span>
               <button onClick={async()=>{
                 setBcAttachMsg('Uploading test PDF to BC…');
                 try{
@@ -1391,15 +1391,15 @@ ${fullText.slice(0,8000)}`;
                   setBcAttachMsg(`✓ Test upload OK: ${bcFileName}`);
                   setTimeout(()=>setBcAttachMsg(''),8000);
                 }catch(e){setBcAttachMsg(`⚠ Test failed: ${e.message}`);}
-              }} style={btn('#1a0d00','#f97316',{fontSize:12,border:'1px solid #f9731644',padding:'4px 12px'})}>
+              }} style={btn(C.yellowDim,C.yellow,{fontSize:12,border:`1px solid ${C.yellow}44`,padding:'4px 12px'})}>
                 📎 Test Upload to BC ({bcProjectNumber})
               </button>
-              <span style={{fontSize:10,color:"#94a3b8"}}>→ {[quoteHeader.supplier,quoteHeader.quoteId,quoteHeader.fileName].filter(Boolean).join(' · ')}</span>
+              <span style={{fontSize:10,color:C.muted}}>→ {[quoteHeader.supplier,quoteHeader.quoteId,quoteHeader.fileName].filter(Boolean).join(' · ')}</span>
             </div>
           )}
           {bcAttachMsg&&(
             <div style={{fontSize:12,marginTop:6,padding:"5px 10px",borderRadius:6,
-              background:bcAttachMsg.startsWith('✓')?C.greenDim:bcAttachMsg.startsWith('⚠')?C.redDim:"#0a0a1a",
+              background:bcAttachMsg.startsWith('✓')?C.greenDim:bcAttachMsg.startsWith('⚠')?C.redDim:C.bg,
               color:bcAttachMsg.startsWith('✓')?C.green:bcAttachMsg.startsWith('⚠')?C.red:C.muted,
               border:`1px solid ${bcAttachMsg.startsWith('✓')?C.green+'44':bcAttachMsg.startsWith('⚠')?C.red+'44':C.border}`}}>
               {bcAttachMsg}
@@ -1437,7 +1437,7 @@ ${fullText.slice(0,8000)}`;
     </div>
   {showImportReview&&ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:C.card,border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexShrink:0}}>
           <span style={{fontSize:22}}>📋</span>
           <div style={{flex:1}}>
@@ -1448,7 +1448,7 @@ ${fullText.slice(0,8000)}`;
         </div>
         <div style={{flex:1,overflowY:"auto",marginBottom:12}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-            <thead style={{position:"sticky",top:0,zIndex:1}}><tr style={{background:"#111128"}}>
+            <thead style={{position:"sticky",top:0,zIndex:1}}><tr style={{background:C.accentDim}}>
               <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700}}>Quote Item</th>
               <th style={{padding:"6px 8px",textAlign:"right",color:C.muted,fontWeight:700,width:70}}>Price</th>
               <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700}}>→ BOM Match</th>
@@ -1461,7 +1461,7 @@ ${fullText.slice(0,8000)}`;
               <tr key={i} style={{borderTop:`1px solid ${C.border}33`,background:matched&&item.isPriced?"rgba(34,197,94,0.04)":"transparent"}}>
                 <td style={{padding:"6px 8px"}}>
                   <div style={{fontFamily:"monospace",fontWeight:600,color:C.text,fontSize:12}}>{item.rawPartNumber||item.partNumber||"—"}</div>
-                  {item.supplierPartNumber&&item.supplierPartNumber!==item.rawPartNumber&&<div style={{fontSize:10,color:"#a78bfa"}}>Matched: {item.partNumber}</div>}
+                  {item.supplierPartNumber&&item.supplierPartNumber!==item.rawPartNumber&&<div style={{fontSize:10,color:C.purple}}>Matched: {item.partNumber}</div>}
                   <div style={{fontSize:10,color:C.muted,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.description||""}</div>
                 </td>
                 <td style={{padding:"6px 8px",textAlign:"right",fontWeight:700,color:item.isPriced?C.green:C.muted,fontVariantNumeric:"tabular-nums"}}>
@@ -1481,7 +1481,7 @@ ${fullText.slice(0,8000)}`;
                     setNewItemForm({itemNo:stripMfrPrefix(item.rawPartNumber||item.partNumber||"").toUpperCase(),description:(item.description||"").slice(0,100),cost:item.price||"",category:"PARTS",uom:"EA",vendor:autoVendor.vendorNo||"",genGroup:"INVENTORY",invGroup:"RAW MAT"});
                     setCreateError("");
                     setShowImportReview(false);
-                  }} style={{background:"#0d1a10",border:"1px solid #4ade8044",color:"#4ade80",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>
+                  }} style={{background:C.greenDim,border:`1px solid ${C.green}44`,color:C.green,borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>
                     + Create in BC
                   </button>}
                 </td>
@@ -1490,7 +1490,7 @@ ${fullText.slice(0,8000)}`;
           </table>
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexShrink:0}}>
-          <button onClick={()=>setShowImportReview(false)} style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13}}>Close</button>
+          <button onClick={()=>setShowImportReview(false)} style={{background:C.bg,border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13}}>Close</button>
         </div>
       </div>
     </div>

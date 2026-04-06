@@ -419,7 +419,7 @@ export default function VendorsPanel({uid,onVendorAdded}: any){
 
   return(<div>
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,gap:8}}>
-      <span style={{fontSize:12,color:"#94a3b8",lineHeight:1.6}}>Vendors from Business Central. Click a code to edit it.</span>
+      <span style={{fontSize:12,color:C.muted,lineHeight:1.6}}>Vendors from Business Central. Click a code to edit it.</span>
     </div>
 
     {/* Add Vendor form */}
@@ -430,145 +430,145 @@ export default function VendorsPanel({uid,onVendorAdded}: any){
     const codeOk=hasCode&&!codeDupMatch;
     const canAdd=nameOk&&codeOk&&!adding;
     return(
-    <div style={{marginBottom:14,border:`1px solid ${canAdd?"#166534":"#1e3a5f"}`,borderRadius:6,padding:"10px 12px",background:"#0d1926",transition:"border-color 0.2s"}}>
-      <div style={{fontSize:11,fontWeight:700,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Add New Vendor</div>
+    <div style={{marginBottom:14,border:`1px solid ${canAdd?C.green:C.border}`,borderRadius:6,padding:"10px 12px",background:C.card,transition:"border-color 0.2s"}}>
+      <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Add New Vendor</div>
       {/* Row 1 -- Name + Code */}
       <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap",marginBottom:8}}>
         <div style={{display:"flex",flexDirection:"column",gap:2,flex:1,minWidth:160}}>
-          <label style={{fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>Vendor Name <span style={{color:"#ef4444"}}>*</span></label>
+          <label style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Vendor Name <span style={{color:C.red}}>*</span></label>
           <input value={newName} onChange={e=>{setNewName(e.target.value);setLastCreated(null);setAddErr(null);}} placeholder="Vendor Name"
             onKeyDown={e=>e.key==="Enter"&&addVendor()}
-            style={{width:"100%",background:"#0f172a",
-              border:`1px solid ${dupMatch?.type==='warn'?"#f59e0b":"#334155"}`,
-              borderRadius:4,padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+            style={{width:"100%",background:C.input,
+              border:`1px solid ${dupMatch?.type==='warn'?C.yellow:C.border}`,
+              borderRadius:4,padding:"5px 9px",color:C.text,fontSize:12,fontFamily:"inherit"}}/>
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:2}}>
-          <label style={{fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>
-            Vendor Code <span style={{color:"#94a3b8"}}>(ARC short code)</span>
+          <label style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>
+            Vendor Code <span style={{color:C.muted}}>(ARC short code)</span>
           </label>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <input value={newCode} onChange={e=>{setNewCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,''));setAddErr(null);}}
               placeholder="e.g. CODALE" maxLength={10}
               onKeyDown={e=>e.key==="Enter"&&addVendor()}
-              style={{width:110,background:"#0f172a",
-                border:`1px solid ${codeDupMatch?"#ef4444":canAdd?"#22c55e":"#334155"}`,
-                borderRadius:4,padding:"5px 9px",color:"#34d399",fontSize:12,
+              style={{width:110,background:C.input,
+                border:`1px solid ${codeDupMatch?C.red:canAdd?C.green:C.border}`,
+                borderRadius:4,padding:"5px 9px",color:C.green,fontSize:12,
                 fontFamily:"monospace",fontWeight:700,textTransform:"uppercase"}}/>
-            {codeDupMatch&&<span style={{fontSize:11,color:"#f87171",whiteSpace:"nowrap"}}>{"\uD83D\uDEAB"} {codeDupMatch.msg}</span>}
-            {!codeDupMatch&&hasName&&!hasCode&&<span style={{fontSize:11,color:"#f59e0b",whiteSpace:"nowrap"}}>{"\u26A0"} Code required</span>}
-            {canAdd&&<span style={{fontSize:12,fontWeight:700,color:"#22c55e",whiteSpace:"nowrap"}}>{"\u2705"} Ready to add</span>}
+            {codeDupMatch&&<span style={{fontSize:11,color:C.red,whiteSpace:"nowrap"}}>{"\uD83D\uDEAB"} {codeDupMatch.msg}</span>}
+            {!codeDupMatch&&hasName&&!hasCode&&<span style={{fontSize:11,color:C.yellow,whiteSpace:"nowrap"}}>{"\u26A0"} Code required</span>}
+            {canAdd&&<span style={{fontSize:12,fontWeight:700,color:C.green,whiteSpace:"nowrap"}}>{"\u2705"} Ready to add</span>}
           </div>
         </div>
       </div>
       {/* Row 2 -- Posting groups + Tax area */}
       <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap",marginBottom:8}}>
         <div style={{display:"flex",flexDirection:"column",gap:2}}>
-          <label style={{fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>Gen. Bus. Posting Group <span style={{color:"#ef4444"}}>*</span></label>
+          <label style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Gen. Bus. Posting Group <span style={{color:C.red}}>*</span></label>
           {genBusGroups.length>0?(
             <select value={newGenBus} onChange={e=>setNewGenBus(e.target.value)}
-              style={{background:"#0f172a",border:`1px solid ${newGenBus?"#3b82f6":"#ef4444"}`,borderRadius:4,
-                padding:"5px 9px",color:newGenBus?"#e2e8f0":"#94a3b8",fontSize:12,fontFamily:"inherit",minWidth:140}}>
+              style={{background:C.input,border:`1px solid ${newGenBus?C.accent:C.red}`,borderRadius:4,
+                padding:"5px 9px",color:newGenBus?C.text:C.muted,fontSize:12,fontFamily:"inherit",minWidth:140}}>
               <option value="">— select —</option>
               {genBusGroups.map(g=><option key={g} value={g}>{g}</option>)}
             </select>
           ):(
             <input value={newGenBus} onChange={e=>setNewGenBus(e.target.value.toUpperCase())} placeholder="e.g. DOMESTIC"
-              style={{width:140,background:"#0f172a",border:`1px solid ${newGenBus?"#3b82f6":"#ef4444"}`,
-                borderRadius:4,padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+              style={{width:140,background:C.input,border:`1px solid ${newGenBus?C.accent:C.red}`,
+                borderRadius:4,padding:"5px 9px",color:C.text,fontSize:12,fontFamily:"inherit"}}/>
           )}
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:2}}>
-          <label style={{fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>Vendor Posting Group <span style={{color:"#ef4444"}}>*</span></label>
+          <label style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Vendor Posting Group <span style={{color:C.red}}>*</span></label>
           {vendorPostingGroups.length>0?(
             <select value={newVendorPosting} onChange={e=>setNewVendorPosting(e.target.value)}
-              style={{background:"#0f172a",border:`1px solid ${newVendorPosting?"#3b82f6":"#ef4444"}`,borderRadius:4,
-                padding:"5px 9px",color:newVendorPosting?"#e2e8f0":"#94a3b8",fontSize:12,fontFamily:"inherit",minWidth:130}}>
+              style={{background:C.input,border:`1px solid ${newVendorPosting?C.accent:C.red}`,borderRadius:4,
+                padding:"5px 9px",color:newVendorPosting?C.text:C.muted,fontSize:12,fontFamily:"inherit",minWidth:130}}>
               <option value="">— select —</option>
               {vendorPostingGroups.map(g=><option key={g} value={g}>{g}</option>)}
             </select>
           ):(
             <input value={newVendorPosting} onChange={e=>setNewVendorPosting(e.target.value.toUpperCase())} placeholder="e.g. VENDORS"
-              style={{width:130,background:"#0f172a",border:`1px solid ${newVendorPosting?"#3b82f6":"#ef4444"}`,
-                borderRadius:4,padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+              style={{width:130,background:C.input,border:`1px solid ${newVendorPosting?C.accent:C.red}`,
+                borderRadius:4,padding:"5px 9px",color:C.text,fontSize:12,fontFamily:"inherit"}}/>
           )}
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:2}}>
-          <label style={{fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>Tax Area Code</label>
+          <label style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Tax Area Code</label>
           {taxAreas.length>0?(
             <select value={newTaxArea} onChange={e=>setNewTaxArea(e.target.value)}
-              style={{background:"#0f172a",border:"1px solid #334155",borderRadius:4,
-                padding:"5px 9px",color:newTaxArea?"#e2e8f0":"#94a3b8",fontSize:12,fontFamily:"inherit",minWidth:120}}>
+              style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,
+                padding:"5px 9px",color:newTaxArea?C.text:C.muted,fontSize:12,fontFamily:"inherit",minWidth:120}}>
               <option value="">— none —</option>
               {taxAreas.map(g=><option key={g} value={g}>{g}</option>)}
             </select>
           ):(
             <input value={newTaxArea} onChange={e=>setNewTaxArea(e.target.value.toUpperCase())} placeholder="e.g. PA"
-              style={{width:120,background:"#0f172a",border:"1px solid #334155",
-                borderRadius:4,padding:"5px 9px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+              style={{width:120,background:C.input,border:`1px solid ${C.border}`,
+                borderRadius:4,padding:"5px 9px",color:C.text,fontSize:12,fontFamily:"inherit"}}/>
           )}
         </div>
         <button onClick={addVendor} disabled={!canAdd}
-          style={{background:canAdd?"#2563eb":"#1e293b",color:canAdd?"#fff":"#475569",
-            border:`1px solid ${canAdd?"#2563eb":"#334155"}`,borderRadius:5,
+          style={{background:canAdd?C.accent:C.card,color:canAdd?"#fff":C.muted,
+            border:`1px solid ${canAdd?C.accent:C.border}`,borderRadius:5,
             padding:"6px 14px",fontSize:12,fontWeight:600,alignSelf:"flex-end",marginBottom:1,
             cursor:canAdd?"pointer":"not-allowed",transition:"all 0.15s"}}>
           {adding?"Adding\u2026":"+ Add Vendor"}
         </button>
       </div>
       {/* Success banner */}
-      {lastCreated&&<div style={{marginTop:6,padding:"6px 10px",background:"#052e16",border:"1px solid #22c55e",
-        borderRadius:5,fontSize:11,color:"#86efac",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+      {lastCreated&&<div style={{marginTop:6,padding:"6px 10px",background:C.greenDim,border:`1px solid ${C.green}`,
+        borderRadius:5,fontSize:11,color:C.green,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         {"\u2713"} Created: <strong>{lastCreated.name}</strong>
-        {lastCreated.no&&<span style={{fontFamily:"monospace",background:"#064e3b",padding:"1px 7px",borderRadius:3,color:"#6ee7b7"}}>
+        {lastCreated.no&&<span style={{fontFamily:"monospace",background:C.greenDim,padding:"1px 7px",borderRadius:3,color:C.green}}>
           {lastCreated.no}
         </span>}
-        {lastCreated.code&&<span style={{fontFamily:"monospace",background:"#064e3b",padding:"1px 7px",borderRadius:3,color:"#34d399"}}>
+        {lastCreated.code&&<span style={{fontFamily:"monospace",background:C.greenDim,padding:"1px 7px",borderRadius:3,color:C.green}}>
           code: {lastCreated.code}
         </span>}
       </div>}
       {/* Duplicate warnings */}
       {dupMatch&&<div style={{marginTop:4,fontSize:11,display:"flex",alignItems:"center",gap:5,
-        color:dupMatch.type==='error'?"#f87171":"#fbbf24"}}>
+        color:dupMatch.type==='error'?C.red:C.yellow}}>
         {dupMatch.type==='error'?"\uD83D\uDEAB Duplicate \u2014 ":"\u26A0\uFE0F Similar name \u2014 "}{dupMatch.msg}
         {dupMatch.type==='warn'&&<>
-          {dupMatch.score&&<span style={{color:"#94a3b8",fontFamily:"monospace"}}>({Math.round(dupMatch.score*100)}% match)</span>}
-          <span style={{color:"#94a3b8"}}>{"\u00B7"} add anyway if intentional</span>
+          {dupMatch.score&&<span style={{color:C.muted,fontFamily:"monospace"}}>({Math.round(dupMatch.score*100)}% match)</span>}
+          <span style={{color:C.muted}}>{"\u00B7"} add anyway if intentional</span>
         </>}
       </div>}
-      {(!newGenBus||!newVendorPosting)&&newName.trim()&&<div style={{marginTop:4,fontSize:11,color:"#fbbf24"}}>
+      {(!newGenBus||!newVendorPosting)&&newName.trim()&&<div style={{marginTop:4,fontSize:11,color:C.yellow}}>
         {"\u26A0"} Gen. Bus. Posting Group and Vendor Posting Group are required in BC — vendor may be unusable without them.
       </div>}
-      {addErr&&<div style={{marginTop:4,color:"#f87171",fontSize:11}}>{"\u26A0"} {addErr}</div>}
+      {addErr&&<div style={{marginTop:4,color:C.red,fontSize:11}}>{"\u26A0"} {addErr}</div>}
     </div>
     );})()}
 
     {/* Vendor list header + filter */}
     <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-      <span style={{fontSize:11,color:"#94a3b8"}}>{vendors.filter((v: any)=>showAll||v.Vendor_Posting_Group==='PARTS').length} vendors</span>
-      <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,color:showAll?"#a78bfa":"#94a3b8"}}>
-        <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} style={{accentColor:"#7c3aed"}}/>
+      <span style={{fontSize:11,color:C.muted}}>{vendors.filter((v: any)=>showAll||v.Vendor_Posting_Group==='PARTS').length} vendors</span>
+      <label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,color:showAll?C.purple:C.muted}}>
+        <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} style={{accentColor:C.purple}}/>
         Show all
       </label>
     </div>
-    {error&&<div style={{color:"#f87171",fontSize:12,marginBottom:8}}>{error}</div>}
-    {loading?<div style={{color:"#94a3b8",fontSize:12,padding:"8px 0"}}>Loading vendors\u2026</div>:(
+    {error&&<div style={{color:C.red,fontSize:12,marginBottom:8}}>{error}</div>}
+    {loading?<div style={{color:C.muted,fontSize:12,padding:"8px 0"}}>Loading vendors\u2026</div>:(
       <div style={{border:`1px solid ${C.border}`,borderRadius:6,overflow:"hidden"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,tableLayout:"auto"}}>
           <thead>
-            <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
-              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1,width:1,whiteSpace:"nowrap"}}>CODE</th>
-              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1,width:1,whiteSpace:"nowrap"}}>NO</th>
-              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1}}>NAME</th>
-              <th style={{padding:"7px 10px",textAlign:"left",color:"#94a3b8",fontWeight:700,fontSize:10,letterSpacing:1,width:1,whiteSpace:"nowrap"}}>POST. GROUP</th>
+            <tr style={{background:C.bg,borderBottom:`2px solid ${C.border}`}}>
+              <th style={{padding:"7px 10px",textAlign:"left",color:C.muted,fontWeight:700,fontSize:10,letterSpacing:1,width:1,whiteSpace:"nowrap"}}>CODE</th>
+              <th style={{padding:"7px 10px",textAlign:"left",color:C.muted,fontWeight:700,fontSize:10,letterSpacing:1,width:1,whiteSpace:"nowrap"}}>NO</th>
+              <th style={{padding:"7px 10px",textAlign:"left",color:C.muted,fontWeight:700,fontSize:10,letterSpacing:1}}>NAME</th>
+              <th style={{padding:"7px 10px",textAlign:"left",color:C.muted,fontWeight:700,fontSize:10,letterSpacing:1,width:1,whiteSpace:"nowrap"}}>POST. GROUP</th>
             </tr>
           </thead>
           <tbody>
-            {vendors.length===0&&<tr><td colSpan={4} style={{padding:"16px 10px",color:"#94a3b8",textAlign:"center",fontSize:12}}>
+            {vendors.length===0&&<tr><td colSpan={4} style={{padding:"16px 10px",color:C.muted,textAlign:"center",fontSize:12}}>
               No vendors — connect to BC or add one above.
             </td></tr>}
             {vendors.filter((v: any)=>showAll||v.Vendor_Posting_Group==='PARTS').map((v: any,idx: number)=>(
               <tr key={v.No} style={{borderBottom:`1px solid ${C.border}`,
-                background:idx%2===0?"#1a2235":"#162040"}}>
+                background:idx%2===0?C.card:C.bg}}>
                 <td style={{padding:"4px 10px",whiteSpace:"nowrap"}}>
                   {editingCode===v.No?(
                     <input autoFocus value={editVal}
@@ -576,28 +576,28 @@ export default function VendorsPanel({uid,onVendorAdded}: any){
                       onKeyDown={e=>{if(e.key==="Enter")saveVendorCode(v.No,editVal);if(e.key==="Escape")setEditingCode(null);}}
                       onBlur={()=>saveVendorCode(v.No,editVal)}
                       maxLength={10}
-                      style={{width:70,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
+                      style={{width:70,background:C.input,border:`1px solid ${C.accent}`,borderRadius:4,
                         padding:"2px 6px",color:C.text,fontSize:12,fontFamily:"monospace",fontWeight:700}}/>
                   ):(
                     <span onClick={()=>{setEditingCode(v.No);setEditVal(vendorCodes[v.No]||'');}}
-                      style={{cursor:"pointer",color:"#34d399",fontFamily:"monospace",fontWeight:700}}>
+                      style={{cursor:"pointer",color:C.green,fontFamily:"monospace",fontWeight:700}}>
                       {vendorCodes[v.No]||"\u2014"}
                     </span>
                   )}
                 </td>
-                <td style={{padding:"6px 10px",color:"#93c5fd",fontFamily:"monospace",fontSize:11,whiteSpace:"nowrap"}}>{v.No}</td>
-                <td style={{padding:"6px 10px",color:"#e2e8f0",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:0}} title={v.Name}>
+                <td style={{padding:"6px 10px",color:C.accent,fontFamily:"monospace",fontSize:11,whiteSpace:"nowrap"}}>{v.No}</td>
+                <td style={{padding:"6px 10px",color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:0}} title={v.Name}>
                   {v.Name}
                 </td>
                 <td style={{padding:"4px 8px",whiteSpace:"nowrap"}}>
                   {vpgSaving[v.No]
-                    ? <span style={{fontSize:10,color:"#94a3b8"}}>saving\u2026</span>
+                    ? <span style={{fontSize:10,color:C.muted}}>saving\u2026</span>
                     : <select
                         value={v.Vendor_Posting_Group||''}
                         onChange={e=>saveVendorPostingGroup(v.No,e.target.value)}
-                        style={{background:"#1e293b",border:"1px solid #334155",borderRadius:4,
-                          padding:"2px 5px",color:v.Vendor_Posting_Group==='PARTS'?"#a78bfa":
-                            v.Vendor_Posting_Group==='TRADE'?"#60a5fa":"#94a3b8",
+                        style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,
+                          padding:"2px 5px",color:v.Vendor_Posting_Group==='PARTS'?C.purple:
+                            v.Vendor_Posting_Group==='TRADE'?C.accent:C.muted,
                           fontSize:10,fontWeight:700,fontFamily:"monospace",cursor:"pointer"}}>
                         <option value="">—</option>
                         <option value="PARTS">PARTS</option>

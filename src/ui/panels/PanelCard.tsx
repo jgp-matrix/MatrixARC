@@ -1652,7 +1652,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";saveTitleFields();}}
               onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftNo(panel.drawingNo||"");e.target.blur();}}}
               style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:Math.max(5,(draftNo||"").length+2)+"ch",fontFamily:"inherit"}}/>
-            {draftNoWarn&&<div style={{position:"absolute",top:"100%",left:0,marginTop:4,background:"#1a0a0a",border:"1px solid "+C.red,borderRadius:6,padding:"5px 10px",fontSize:12,color:C.red,whiteSpace:"nowrap",zIndex:100}}>Max 25 characters (BC limit)</div>}
+            {draftNoWarn&&<div style={{position:"absolute",top:"100%",left:0,marginTop:4,background:C.redDim,border:"1px solid "+C.red,borderRadius:6,padding:"5px 10px",fontSize:12,color:C.red,whiteSpace:"nowrap",zIndex:100}}>Max 25 characters (BC limit)</div>}
           </div>
           <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,minWidth:40}}>
             <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Rev</div>
@@ -1761,7 +1761,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             ,document.body);
           })()}
           <button onClick={()=>setPanelCollapsed(v=>!v)} title={panelCollapsed?"Expand panel":"Collapse panel"}
-            style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:panelCollapsed?C.accent:C.sub,borderRadius:6,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0,letterSpacing:0.3}}>
+            style={{background:C.bg,border:`1px solid ${C.border}`,color:panelCollapsed?C.accent:C.sub,borderRadius:6,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0,letterSpacing:0.3}}>
             {panelCollapsed?"▶ Expand":"▼ Collapse"}
           </button>
           <Badge status={panel.status||"draft"}/>
@@ -1772,7 +1772,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {!panelCollapsed&&<>
       {/* CPD Search bar — hidden after drawings have been extracted */}
       {!((panel.bom&&panel.bom.length>0)||["extracted","validated","costed","quoted"].includes(panel.status))&&<div style={{marginBottom:12}}>
-        <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:`1px solid ${C.accent}55`,background:"#0a0a16"}}>
+        <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:`1px solid ${C.accent}55`,background:C.bg}}>
           <input
             value={cpdQuery}
             onChange={e=>setCpdQuery(e.target.value)}
@@ -1794,8 +1794,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           {label:"Total",count:pages.length,color:C.sub,dim:C.border+"44"},
           {label:"BOM",count:bomCount,color:C.accent,dim:C.accentDim},
           {label:"Schematic",count:schCount,color:C.green,dim:C.greenDim},
-          {label:"Back Panel",count:backpanelCount+layoutCount,color:C.purple,dim:"#2e1a4a"},
-          {label:"Enclosure",count:enclosureCount,color:C.teal||"#0d9488",dim:"#042f2e"},
+          {label:"Back Panel",count:backpanelCount+layoutCount,color:C.purple,dim:C.accentDim},
+          {label:"Enclosure",count:enclosureCount,color:C.teal||"#0d9488",dim:C.accentDim},
         ].map(s=>(
           <div key={s.label} style={{background:s.dim,border:`1px solid ${s.color}44`,borderRadius:8,padding:"10px 6px",textAlign:"center"}}>
             <div style={{fontSize:24,fontWeight:800,color:s.color,lineHeight:1}}>{s.count}</div>
@@ -1819,7 +1819,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           )}
           {(()=>{const eqOpen=(panel.engineeringQuestions||[]).filter(q=>q.status==="open").length;const eqTotal=(panel.engineeringQuestions||[]).length;
             return eqTotal>0?React.createElement("button",{onClick:()=>setShowEqModal(true),
-              style:{background:eqOpen>0?"#451a03":"none",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,color:eqOpen>0?"#f59e0b":C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
+              style:{background:eqOpen>0?C.yellowDim:"none",border:`1px solid ${eqOpen>0?C.yellow+"88":C.accent+"88"}`,color:eqOpen>0?C.yellow:C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
               eqOpen>0?`❓ ${eqOpen} Question${eqOpen!==1?"s":""}`:`✓ ${eqTotal} Answered`):null;})()}
           {/* DECISION(v1.19.336): Main upload button is disabled when green (current upload exists) to prevent
               accidental re-uploads that create duplicates in BC. A small ↻ button appears next to it for intentional
@@ -1832,9 +1832,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <span style={{display:"inline-flex",alignItems:"center",gap:0}}>
             <button data-tip={bcPdfMissing?"File deleted from BC — click to re-upload":hasUnsent?"BOM changed — click to upload updated drawings to BC":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:"Upload drawings to BC"}
               onClick={needsUpload?()=>buildAndAttachPdf():undefined} disabled={attachingPdf||!needsUpload}
-              style={{background:bcPdfMissing?"#3a0a0a":hasUnsent?"#3a1f00":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",
-                border:`1px solid ${bcPdfMissing?"#ef444488":hasUnsent?"#f59e0b88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,
-                color:bcPdfMissing?C.red:hasUnsent?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",
+              style={{background:bcPdfMissing?C.redDim:hasUnsent?C.yellowDim:panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",
+                border:`1px solid ${bcPdfMissing?C.red+"88":hasUnsent?C.yellow+"88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":C.accent+"88"}`,
+                color:bcPdfMissing?C.red:hasUnsent?C.yellow:panel.bcPdfAttached&&!bcPdfMissing?C.green:C.accent,
                 cursor:needsUpload?"pointer":"default",borderRadius:needsUpload?20:"20px 0 0 20px",padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
                 opacity:attachingPdf?0.5:1,animation:needsUpload&&!attachingPdf?"pulseYellow 2s ease-in-out infinite":"none"}}>
               {attachingPdf?"Uploading…":bcPdfMissing?"⚠ Deleted — Click to Re-Upload":hasUnsent?"⚠ Unsent Revision — Click to Update":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
@@ -1859,7 +1859,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             return(
               <div key={pg.id} style={{flexShrink:0,width:420,display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
-                  <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
+                  <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:C.bg,display:"block"}}/>
                   {!readOnly&&<button data-tip="Remove this drawing page" onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
                 </div>
                 <div style={{lineHeight:1.4}}>
@@ -1877,12 +1877,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 </div>
                 <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
                   {pg.isZoomedSection&&(
-                    <span style={{background:"rgba(250,204,21,0.15)",color:"#fde047",border:"1px solid rgba(250,204,21,0.4)",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>
+                    <span style={{background:C.yellowDim,color:C.yellow,border:`1px solid ${C.yellow}44`,borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>
                       Zoomed Section
                     </span>
                   )}
                   {pg.regions?.length>0&&(
-                    <span style={{background:"rgba(99,102,241,0.15)",color:"#818cf8",border:"1px solid rgba(99,102,241,0.4)",borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>
+                    <span style={{background:C.accentDim,color:C.purple,border:`1px solid ${C.purple}44`,borderRadius:10,padding:"2px 8px",fontSize:11,fontWeight:700}}>
                       {pg.regions.length} region{pg.regions.length>1?"s":""}
                     </span>
                   )}
@@ -1898,14 +1898,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 </div>
                 {awaitingConfirm&&reasonPickerFor===pg.id&&(
                   <div style={{marginTop:4,background:"rgba(250,204,21,0.08)",border:"1px solid rgba(250,204,21,0.35)",borderRadius:6,padding:"8px 10px"}}>
-                    <div style={{fontSize:11,color:"#fde047",fontWeight:700,marginBottom:5}}>Why was this type removed?</div>
+                    <div style={{fontSize:11,color:C.yellow,fontWeight:700,marginBottom:5}}>Why was this type removed?</div>
                     <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
                       {["Zoomed section","Wrong type","No useful content","Other"].map(r=>(
                         <button key={r} onClick={()=>{
                           const ch=pageTypeChangesRef.current[pg.id];
                           if(ch){pageTypeChangesRef.current[pg.id]={...ch,reason:r};}
                           setReasonPickerFor(null);
-                        }} style={{background:"rgba(250,204,21,0.12)",color:"#fde047",border:"1px solid rgba(250,204,21,0.4)",borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:600,cursor:"pointer"}}>
+                        }} style={{background:C.yellowDim,color:C.yellow,border:`1px solid ${C.yellow}44`,borderRadius:8,padding:"3px 10px",fontSize:11,fontWeight:600,cursor:"pointer"}}>
                           {r}
                         </button>
                       ))}
@@ -1941,8 +1941,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
           {(panel.otherDocs||[]).map((doc,di)=>(
             <div key={di} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,display:"flex",alignItems:"center",gap:6,maxWidth:240,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)window.open(doc.storageUrl,"_blank");}}>
-              <span style={{color:"#94a3b8"}}>📄</span>
-              <span style={{color:doc.storageUrl?"#38bdf8":C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textDecoration:doc.storageUrl?"underline":"none"}} title={doc.name}>{doc.name}</span>
+              <span style={{color:C.muted}}>📄</span>
+              <span style={{color:doc.storageUrl?C.accent:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textDecoration:doc.storageUrl?"underline":"none"}} title={doc.name}>{doc.name}</span>
               {!readOnly&&<button onClick={e=>{e.stopPropagation();removeOtherDoc(di);}} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
             </div>
           ))}
@@ -1967,10 +1967,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         <div style={{border:"1px solid",borderRadius:8,padding:"12px 16px",marginBottom:12,animation:"pulseYellow 1.6s ease-in-out infinite"}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:16}}>
             <div>
-              <div style={{fontSize:13,fontWeight:700,color:"#fde047",marginBottom:3,animation:"pulse 1.6s ease-in-out infinite"}}>Review drawing types before extracting</div>
+              <div style={{fontSize:13,fontWeight:700,color:C.yellow,marginBottom:3,animation:"pulse 1.6s ease-in-out infinite"}}>Review drawing types before extracting</div>
               <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>Check that each page above is tagged correctly — <span style={{color:C.accent,fontWeight:600}}>BOM</span>, <span style={{color:C.green,fontWeight:600}}>SCH</span>, <span style={{color:C.purple,fontWeight:600}}>BP</span>, <span style={{color:C.teal||"#0d9488",fontWeight:600}}>ENC</span>, <span style={{color:C.muted,fontWeight:600}}>P&amp;ID</span>. Click a tag to add or remove it, then proceed.</div>
               {(()=>{const rCount=(pendingPages.length>0?pendingPages:pages).reduce((n,p)=>(p.regions||[]).filter(r=>r.type==="bom").length+n,0);return rCount>0?(
-                <div style={{fontSize:12,color:"#818cf8",fontWeight:600,marginTop:4}}>{rCount} BOM region{rCount>1?"s":""} defined — extraction will use cropped regions for better accuracy</div>
+                <div style={{fontSize:12,color:C.accent,fontWeight:600,marginTop:4}}>{rCount} BOM region{rCount>1?"s":""} defined — extraction will use cropped regions for better accuracy</div>
               ):null;})()}
             </div>
             <button data-tip="Confirm drawing types are correct and begin BOM extraction, validation, and pricing" onClick={confirmAndExtract} style={{flexShrink:0,background:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
@@ -1991,7 +1991,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {unifiedProgress&&(()=>{
         const pct=unifiedProgress.pct;
         const isErr=unifiedProgress.isError;
-        const barBg=isErr?`linear-gradient(90deg,${C.red},#b91c1c)`:`linear-gradient(90deg,${C.accent},#818cf8)`;
+        const barBg=isErr?`linear-gradient(90deg,${C.red},#b91c1c)`:`linear-gradient(90deg,${C.accent},${C.purple})`;
         const dismiss=()=>{if(pricingProgress?.isError)setPricingProgress(null);else bgDismiss(panel.id);};
         return(
         <div style={{marginBottom:12}}>
@@ -2031,21 +2031,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {/* Compliance Review */}
       {panel.complianceReview&&panel.complianceReview.concerns?.length>0&&(()=>{
         const cr=panel.complianceReview;
-        const sevColors={critical:'#ef4444',warning:'#f59e0b',info:'#38bdf8'};
+        const sevColors={critical:C.red,warning:C.yellow,info:C.accent};
         const sevLabels={critical:'CRITICAL',warning:'WARNING',info:'INFO'};
         const sevIcons={critical:'\u26D4',warning:'\u26A0\uFE0F',info:'\u2139\uFE0F'};
         const critCount=cr.concerns.filter(c=>c.severity==='critical').length;
         const warnCount=cr.concerns.filter(c=>c.severity==='warning').length;
         const infoCount=cr.concerns.filter(c=>c.severity==='info').length;
-        const headerColor=critCount>0?'#ef4444':warnCount>0?'#f59e0b':'#38bdf8';
+        const headerColor=critCount>0?C.red:warnCount>0?C.yellow:C.accent;
         return <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,cursor:"pointer"}} onClick={()=>setShowCompliance(prev=>!prev)}>
             <div style={{fontSize:12,color:headerColor,fontWeight:700,letterSpacing:0.7}}>
               UL508A / C22.2 COMPLIANCE REVIEW
             </div>
-            {critCount>0&&<span style={{fontSize:10,fontWeight:700,color:'#fff',background:'#ef4444',borderRadius:10,padding:'1px 7px'}}>{critCount} critical</span>}
-            {warnCount>0&&<span style={{fontSize:10,fontWeight:700,color:'#1a1a2e',background:'#f59e0b',borderRadius:10,padding:'1px 7px'}}>{warnCount} warning{warnCount>1?'s':''}</span>}
-            {infoCount>0&&<span style={{fontSize:10,fontWeight:700,color:'#fff',background:'#38bdf8',borderRadius:10,padding:'1px 7px'}}>{infoCount} info</span>}
+            {critCount>0&&<span style={{fontSize:10,fontWeight:700,color:'#fff',background:C.red,borderRadius:10,padding:'1px 7px'}}>{critCount} critical</span>}
+            {warnCount>0&&<span style={{fontSize:10,fontWeight:700,color:C.card,background:C.yellow,borderRadius:10,padding:'1px 7px'}}>{warnCount} warning{warnCount>1?'s':''}</span>}
+            {infoCount>0&&<span style={{fontSize:10,fontWeight:700,color:'#fff',background:C.accent,borderRadius:10,padding:'1px 7px'}}>{infoCount} info</span>}
             <div style={{flex:1}}/>
             <span style={{fontSize:11,color:C.muted,fontWeight:600}}>{showCompliance?'Hide':'Show'}</span>
           </div>
@@ -2057,12 +2057,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               </div>
               <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:3}}>{c.title}</div>
               <div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>{c.detail}</div>
-              {c.reference&&<div style={{fontSize:11,color:'#818cf8',marginTop:4,fontWeight:600}}>{c.reference}{c.page?' (p.'+c.page+')':''}</div>}
+              {c.reference&&<div style={{fontSize:11,color:C.accent,marginTop:4,fontWeight:600}}>{c.reference}{c.page?' (p.'+c.page+')':''}</div>}
             </div>)}
             {cr.checklist?.length>0&&<div style={{background:'rgba(99,102,241,0.06)',border:'1px solid rgba(99,102,241,0.15)',borderRadius:8,padding:'10px 12px'}}>
-              <div style={{fontSize:11,fontWeight:700,color:'#818cf8',letterSpacing:0.5,marginBottom:6}}>INSPECTION CHECKLIST</div>
+              <div style={{fontSize:11,fontWeight:700,color:C.accent,letterSpacing:0.5,marginBottom:6}}>INSPECTION CHECKLIST</div>
               {cr.checklist.map((item,i)=><div key={i} style={{fontSize:12,color:C.muted,padding:'2px 0',display:'flex',gap:6,alignItems:'flex-start'}}>
-                <span style={{color:'#818cf8',fontSize:14,lineHeight:1}}>{'☐'}</span>
+                <span style={{color:C.accent,fontSize:14,lineHeight:1}}>{'☐'}</span>
                 <span>{item}</span>
               </div>)}
             </div>}
@@ -2096,12 +2096,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             )}
             {bcProjectNumber&&!readOnly&&(
               <button data-tip="Push BOM and labor costs to Business Central job planning lines" onClick={syncPlanningLinesToBC} disabled={bcSyncing}
-                style={btn(bcSyncStatus==="ok"?C.greenDim:bcSyncStatus==="error"?"#2a0a0a":bcSyncStatus==="pending"?"#3a1f00":C.accentDim, bcSyncStatus==="ok"?C.green:bcSyncStatus==="error"?C.red:bcSyncStatus==="pending"?"#f59e0b":C.accent,{fontSize:12,padding:"4px 12px",opacity:bcSyncing?0.5:1,animation:bcSyncStatus==="pending"?"pulseYellow 2s ease-in-out infinite":"none"})}>
+                style={btn(bcSyncStatus==="ok"?C.greenDim:bcSyncStatus==="error"?C.redDim:bcSyncStatus==="pending"?C.yellowDim:C.accentDim, bcSyncStatus==="ok"?C.green:bcSyncStatus==="error"?C.red:bcSyncStatus==="pending"?C.yellow:C.accent,{fontSize:12,padding:"4px 12px",opacity:bcSyncing?0.5:1,animation:bcSyncStatus==="pending"?"pulseYellow 2s ease-in-out infinite":"none"})}>
                 {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":bcSyncStatus==="pending"?"⚠ Push Update to BC":"⇅ Sync BC"}
               </button>
             )}
             {(panel.bom||[]).length>0&&<button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>}
-            {(panel.bom||[]).length>0&&<button onClick={exportCADLinkBOM} style={btn("#0d1a2a","#38bdf8",{fontSize:12,padding:"4px 12px",border:"1px solid #38bdf844"})}>⬇ CADLink BOM</button>}
+            {(panel.bom||[]).length>0&&<button onClick={exportCADLinkBOM} style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",border:`1px solid ${C.accent}44`})}>⬇ CADLink BOM</button>}
           </div>
           {(panel.bom||[]).length>0&&<div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
@@ -2112,7 +2112,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <col style={{width:82}}/><col style={{width:72}}/><col style={{width:60}}/><col style={{width:40}}/>
               </colgroup>
               <thead>
-                <tr style={{background:"#0a0a12"}}>
+                <tr style={{background:C.bg}}>
                   {["#","Ref","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Priced",""].map((h,hi)=>(
                     <th key={h||"bc"+hi} style={{padding:"9px 4px",textAlign:h==="Unit $"||h==="Ext $"?"right":hi<3?"center":"left",color:C.muted,fontWeight:700,fontSize:11,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
@@ -2132,13 +2132,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     return (a.itemNo||"").localeCompare(b.itemNo||"");
                   });
                   return sortedBom.map((row,i)=>{
-                  const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":(!row.isLaborRow&&!row.customerSupplied&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)";
+                  const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?C.accentDim:(!row.isLaborRow&&!row.customerSupplied&&(+row.qty===0||+row.unitPrice===0))?C.redDim:i%2===0?"transparent":C.bg;
                   return(
                   <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:rowBg}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
                       {i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
-                        <div onClick={e=>{e.stopPropagation();setBcUpdateNotif(false);}} style={{position:"absolute",top:-26,left:0,zIndex:200,background:"#052e16",border:"1px solid #4ade80",borderRadius:6,padding:"3px 10px",color:"#4ade80",fontSize:11,fontWeight:600,whiteSpace:"nowrap",boxShadow:"0 2px 12px rgba(0,0,0,0.6)",cursor:"pointer",animation:"fadeIn 0.2s ease-out",display:"flex",alignItems:"center",gap:5}}>
+                        <div onClick={e=>{e.stopPropagation();setBcUpdateNotif(false);}} style={{position:"absolute",top:-26,left:0,zIndex:200,background:C.greenDim,border:`1px solid ${C.green}`,borderRadius:6,padding:"3px 10px",color:C.green,fontSize:11,fontWeight:600,whiteSpace:"nowrap",boxShadow:"0 2px 12px rgba(0,0,0,0.6)",cursor:"pointer",animation:"fadeIn 0.2s ease-out",display:"flex",alignItems:"center",gap:5}}>
                           <span>↻</span><span>BC price updated</span>
                         </div>
                       )}
@@ -2155,7 +2155,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               if(result.match)applyBcItem(row.id,result.match);
                               else if(result.suggestions.length>0)setBcFuzzySuggestions(prev=>({...prev,[row.id]:result.suggestions}));
                               else{setBcBrowserTarget(row.id);setBcBrowserQuery(pn);setBcBrowserOpen(true);}
-                            }} style={{background:"#2563eb",border:"none",color:"#fff",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}>BC</button>
+                            }} style={{background:C.accent,border:"none",color:"#fff",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}>BC</button>
                           )}
                         </td>
                       ):f==="_supplier"?(
@@ -2258,7 +2258,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                                   const alt=avail.find(a=>a.replacement.partNumber===e.target.value);
                                   if(alt)applyBcItem(row.id,{number:alt.replacement.partNumber,unitCost:alt.replacement.unitCost,displayName:alt.replacement.description});
                                   e.target.value="";
-                                }} style={{fontSize:10,background:"#1a1040",border:`1px solid ${C.accent}`,borderRadius:4,color:C.accent,padding:"1px 4px",cursor:"pointer",maxWidth:"100%",boxSizing:"border-box"}}>
+                                }} style={{fontSize:10,background:C.accentDim,border:`1px solid ${C.accent}`,borderRadius:4,color:C.accent,padding:"1px 4px",cursor:"pointer",maxWidth:"100%",boxSizing:"border-box"}}>
                                   <option value="">⇄ Alternates…</option>
                                   {avail.map(a=>(
                                     <option key={a.replacement.partNumber} value={a.replacement.partNumber}>
@@ -2278,7 +2278,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             </div>
                           )}
                           {f==="partNumber"&&bcFuzzySuggestions[row.id]&&!readOnly&&(
-                            <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto",maxWidth:"100%",minWidth:0,boxSizing:"border-box"}}>
+                            <div style={{marginTop:4,background:C.bg,border:`1px solid ${C.accent}`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto",maxWidth:"100%",minWidth:0,boxSizing:"border-box"}}>
                               <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
                                 <div style={{fontSize:10,color:C.accent,fontWeight:700,flex:1}}>BC FUZZY MATCHES</div>
                                 <button onClick={()=>setBcFuzzySuggestions(prev=>{const next={...prev};delete next[row.id];return next;})}
@@ -2322,8 +2322,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     ))}
                     <td style={{padding:"3px 5px",textAlign:"right",width:110}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
-                        {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>LABOR</span>}
-                        {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
+                        {row.isLaborRow&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>LABOR</span>}
+                        {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
                         {!row.isLaborRow&&row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",cursor:"pointer"}}
                           onMouseEnter={e=>{clearTimeout(aiSourceTooltipTimer.current);setAiSourceTooltip({x:e.clientX,y:e.clientY,sources:row.aiSources||[],basis:row.aiBasis||""});}}
                           onMouseLeave={()=>{aiSourceTooltipTimer.current=setTimeout(()=>setAiSourceTooltip(null),200);}}
@@ -2351,12 +2351,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,whiteSpace:"nowrap",cursor:(!row.isLaborRow&&row.unitPrice!=null)?"help":"default",...(()=>{
                       if(row.isLaborRow)return{color:C.muted};
-                      if(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)return{color:"#4ade80",fontWeight:700};
+                      if(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)return{color:C.green,fontWeight:700};
                       const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
                       if(!d)return{color:C.muted};
                       const age=Date.now()-d;
-                      if(age<=30*24*60*60*1000)return{color:"#4ade80",fontWeight:700};
-                      return{color:"#f87171",fontWeight:700};
+                      if(age<=30*24*60*60*1000)return{color:C.green,fontWeight:700};
+                      return{color:C.red,fontWeight:700};
                     })()}}
                     onMouseEnter={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
                       const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
@@ -2370,7 +2370,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       {row.isLaborRow?"—":(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)?"Matrix":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
                     </td>
                     <td style={{padding:"3px 10px 3px 6px",textAlign:"center",width:44}}>
-                      {!readOnly&&!row.isLaborRow&&<button onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
+                      {!readOnly&&!row.isLaborRow&&<button onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:18,opacity:0.6,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
                     </td>
                   </tr>
                   );});
@@ -2388,12 +2388,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             return(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
                 {crossedItems.length>0&&(
-                  <div style={{marginBottom:8,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 12px"}}>
+                  <div style={{marginBottom:8,background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 12px"}}>
                     <div style={{fontSize:11,fontWeight:700,color:C.red,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Crossed / Superseded</div>
                     {crossedItems.map((r,i)=>(
                       <div key={r.id} style={{fontSize:12,color:C.sub,marginBottom:2}}>
                         <span style={{color:C.muted}}>{i+1}.</span>{" "}
-                        {r.autoReplaced&&<span style={{fontSize:10,color:"#a78bfa",fontWeight:700,marginRight:4}}>[ARC]</span>}
+                        {r.autoReplaced&&<span style={{fontSize:10,color:C.purple,fontWeight:700,marginRight:4}}>[ARC]</span>}
                         <span style={{color:C.red,fontWeight:600}}>{r.crossedFrom}</span>
                         <span style={{color:C.muted}}> → </span>
                         <span style={{color:C.accent,fontWeight:600}}>{r.partNumber}</span>
@@ -2403,12 +2403,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   </div>
                 )}
                 {formatCorrections.length>0&&(
-                  <div style={{marginBottom:8,background:"#0a0a12",border:"1px solid #f0c04044",borderRadius:6,padding:"8px 12px"}}>
-                    <div style={{fontSize:11,fontWeight:700,color:"#f0c040",textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Format Corrections</div>
+                  <div style={{marginBottom:8,background:C.bg,border:`1px solid ${C.yellow}44`,borderRadius:6,padding:"8px 12px"}}>
+                    <div style={{fontSize:11,fontWeight:700,color:C.yellow,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Format Corrections</div>
                     {formatCorrections.map((r,i)=>(
                       <div key={r.id} style={{fontSize:12,color:C.sub,marginBottom:2}}>
                         <span style={{color:C.muted}}>{i+1}.</span>{" "}
-                        <span style={{color:"#f0c040",fontWeight:600}}>{r.correctionFrom}</span>
+                        <span style={{color:C.yellow,fontWeight:600}}>{r.correctionFrom}</span>
                         <span style={{color:C.muted}}> → </span>
                         <span style={{color:C.accent,fontWeight:600}}>{r.partNumber}</span>
                         {r.description&&<span style={{color:C.muted,fontSize:11}}> ({r.description})</span>}
@@ -2425,7 +2425,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     readOnly={readOnly}
                     rows={3}
                     placeholder="Additional notes about this panel's BOM…"
-                    style={{width:"100%",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,padding:"6px 8px",resize:"vertical",fontFamily:"inherit",boxSizing:"border-box",outline:"none"}}
+                    style={{width:"100%",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,padding:"6px 8px",resize:"vertical",fontFamily:"inherit",boxSizing:"border-box",outline:"none"}}
                   />
                 </div>
               </div>
@@ -2458,12 +2458,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
       {showAiQuestions&&(panel.aiQuestions||[]).length>0&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.85)"}}>
-          <div style={{background:"#12121f",border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",maxWidth:560,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 12px 48px rgba(0,0,0,0.6)"}}>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",maxWidth:560,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
             <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:4}}>AI has questions about this BOM</div>
             <div style={{fontSize:12,color:C.muted,marginBottom:16,lineHeight:1.5}}>The extraction AI wasn't sure about a few items. Your answers will improve accuracy.</div>
             {(panel.aiQuestions||[]).map((q,qi)=>(
               <div key={qi} style={{marginBottom:14,padding:"10px 14px",background:"rgba(99,102,241,0.06)",border:`1px solid rgba(99,102,241,0.15)`,borderRadius:8}}>
-                <div style={{fontSize:12,color:"#818cf8",fontWeight:700,marginBottom:2}}>{q.pageName||"BOM"} — {q.rowRef||"Item"}</div>
+                <div style={{fontSize:12,color:C.accent,fontWeight:700,marginBottom:2}}>{q.pageName||"BOM"} — {q.rowRef||"Item"}</div>
                 <div style={{fontSize:13,color:C.text,marginBottom:8,lineHeight:1.5}}>{q.question}</div>
                 {q.options&&q.options.length>0?(
                   <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:4}}>
@@ -2478,7 +2478,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 ):null}
                 <input value={aiAnswers[qi]||""} onChange={e=>setAiAnswers(a=>({...a,[qi]:e.target.value}))}
                   placeholder="Type your answer..."
-                  style={{width:"100%",background:"#0d0d14",border:`1px solid ${C.border}`,color:C.text,borderRadius:5,padding:"5px 10px",fontSize:12,outline:"none",boxSizing:"border-box",marginTop:4}}/>
+                  style={{width:"100%",background:C.input,border:`1px solid ${C.border}`,color:C.text,borderRadius:5,padding:"5px 10px",fontSize:12,outline:"none",boxSizing:"border-box",marginTop:4}}/>
               </div>
             ))}
             <div style={{display:"flex",gap:10,marginTop:16}}>
@@ -2535,23 +2535,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
       {priceTooltip&&ReactDOM.createPortal(
         <div style={{position:"fixed",left:priceTooltip.x+14,top:priceTooltip.y-8,zIndex:99999,pointerEvents:"none",
-          background:"#0d0d1a",border:"1px solid #334155",borderRadius:10,boxShadow:"0 6px 28px rgba(0,0,0,0.7)",
+          background:C.card,border:`1px solid ${C.border}`,borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",
           padding:"10px 14px",minWidth:180,maxWidth:260,fontSize:12,lineHeight:1.6}}>
-          <div style={{fontWeight:700,color:"#f1f5f9",marginBottom:4,fontSize:13}}>
+          <div style={{fontWeight:700,color:C.text,marginBottom:4,fontSize:13}}>
             {priceTooltip.vendor||"Unknown Vendor"}
           </div>
           {priceTooltip.date&&(
-            <div style={{color:"#94a3b8",marginBottom:2}}>
-              <span style={{color:"#94a3b8",fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginRight:6}}>Quoted</span>
+            <div style={{color:C.muted,marginBottom:2}}>
+              <span style={{color:C.muted,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginRight:6}}>Quoted</span>
               {new Date(priceTooltip.date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
             </div>
           )}
-          <div style={{color:"#4ade80",fontWeight:700,fontSize:15,marginTop:2}}>
+          <div style={{color:C.green,fontWeight:700,fontSize:15,marginTop:2}}>
             ${(priceTooltip.price||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}
-            <span style={{color:"#94a3b8",fontWeight:400,fontSize:11,marginLeft:4}}>/ ea</span>
+            <span style={{color:C.muted,fontWeight:400,fontSize:11,marginLeft:4}}>/ ea</span>
           </div>
           {priceTooltip.source&&(
-            <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #1e293b",fontSize:10,color:"#94a3b8",textTransform:"uppercase",letterSpacing:0.5}}>
+            <div style={{marginTop:6,paddingTop:6,borderTop:`1px solid ${C.border}`,fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>
               Source: {priceTooltip.source==="bc"?"BC (Approved)":priceTooltip.source==="manual"?"Manual Entry":priceTooltip.source==="ai"?"ARC AI Estimated":priceTooltip.source}
             </div>
           )}
@@ -2559,56 +2559,56 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       )}
       {aiSourceTooltip&&ReactDOM.createPortal(
         <div style={{position:"fixed",left:aiSourceTooltip.x+14,top:aiSourceTooltip.y-8,zIndex:99999,pointerEvents:"auto",
-          background:"#0d0d1a",border:"1px solid "+C.teal+"44",borderRadius:10,boxShadow:"0 6px 28px rgba(0,0,0,0.7)",
+          background:C.card,border:"1px solid "+C.teal+"44",borderRadius:10,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",
           padding:"10px 14px",minWidth:200,maxWidth:300,fontSize:12,lineHeight:1.6}}
           onMouseEnter={()=>{clearTimeout(aiSourceTooltipTimer.current);}}
           onMouseLeave={()=>{setAiSourceTooltip(null);}}>
           <div style={{fontWeight:700,color:C.teal,marginBottom:6,fontSize:12,textTransform:"uppercase",letterSpacing:0.5}}>ARC AI Price Sources</div>
-          {aiSourceTooltip.basis&&<div style={{color:"#c0c4cc",fontSize:11,marginBottom:6,lineHeight:1.4,fontStyle:"italic"}}>{aiSourceTooltip.basis}</div>}
+          {aiSourceTooltip.basis&&<div style={{color:C.muted,fontSize:11,marginBottom:6,lineHeight:1.4,fontStyle:"italic"}}>{aiSourceTooltip.basis}</div>}
           {aiSourceTooltip.sources.length>0?aiSourceTooltip.sources.map((s,i)=>(
             <div key={i} style={{marginBottom:i<aiSourceTooltip.sources.length-1?4:0}}>
               <a href={s.url} target="_blank" rel="noopener noreferrer"
-                style={{color:s.type==="direct"?"#4ade80":"#38bdf8",textDecoration:"none",fontSize:12,fontWeight:600}}
+                style={{color:s.type==="direct"?C.green:C.accent,textDecoration:"none",fontSize:12,fontWeight:600}}
                 onMouseOver={e=>e.target.style.textDecoration="underline"}
                 onMouseOut={e=>e.target.style.textDecoration="none"}>
                 {s.type==="search"?"Search on "+s.name:s.name}
               </a>
-              <span style={{color:"#94a3b8",fontSize:10,marginLeft:6}}>{s.type==="direct"?"Product page":"Search results"}</span>
+              <span style={{color:C.muted,fontSize:10,marginLeft:6}}>{s.type==="direct"?"Product page":"Search results"}</span>
             </div>
-          )):<div style={{color:"#94a3b8",fontSize:11,lineHeight:1.5}}>No source links available.<br/>Re-run AI pricing to generate sources.</div>}
+          )):<div style={{color:C.muted,fontSize:11,lineHeight:1.5}}>No source links available.<br/>Re-run AI pricing to generate sources.</div>}
         </div>,document.body
       )}
       {deleteConfirmId&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
           onMouseDown={e=>{if(e.target===e.currentTarget)setDeleteConfirmId(null);}}>
-          <div style={{background:"#0d0d1a",border:"1px solid #ef444466",borderRadius:10,padding:"24px 28px",width:340,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
-            <div style={{fontSize:15,fontWeight:800,color:"#f87171",marginBottom:8}}>Delete BOM Row?</div>
-            <div style={{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.5}}>
-              {(()=>{const r=(panel.bom||[]).find(x=>x.id===deleteConfirmId);return r?<><strong style={{color:"#f1f5f9",fontFamily:"monospace"}}>{r.partNumber||"(no part #)"}</strong>{r.description?<span style={{color:"#94a3b8"}}> — {r.description}</span>:null}</>:"This row";})()}
-              <span style={{display:"block",marginTop:6,color:"#94a3b8",fontSize:12}}>This cannot be undone.</span>
+          <div style={{background:C.card,border:`1px solid ${C.red}44`,borderRadius:10,padding:"24px 28px",width:340,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.red,marginBottom:8}}>Delete BOM Row?</div>
+            <div style={{fontSize:13,color:C.muted,marginBottom:20,lineHeight:1.5}}>
+              {(()=>{const r=(panel.bom||[]).find(x=>x.id===deleteConfirmId);return r?<><strong style={{color:C.text,fontFamily:"monospace"}}>{r.partNumber||"(no part #)"}</strong>{r.description?<span style={{color:C.muted}}> — {r.description}</span>:null}</>:"This row";})()}
+              <span style={{display:"block",marginTop:6,color:C.muted,fontSize:12}}>This cannot be undone.</span>
             </div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <button onClick={()=>setDeleteConfirmId(null)} style={{background:"#1e1e2e",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}}>Cancel</button>
-              <button onClick={()=>{deleteBomRow(deleteConfirmId);setDeleteConfirmId(null);}} style={{background:"#450a0a",border:"1px solid #ef444466",color:"#f87171",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:700}}>Delete</button>
+              <button onClick={()=>setDeleteConfirmId(null)} style={{background:C.bg,border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}}>Cancel</button>
+              <button onClick={()=>{deleteBomRow(deleteConfirmId);setDeleteConfirmId(null);}} style={{background:C.redDim,border:`1px solid ${C.red}44`,color:C.red,borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:700}}>Delete</button>
             </div>
           </div>
         </div>,document.body
       )}
       {reExtractWarn&&ReactDOM.createPortal(
         React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onMouseDown:e=>{if(e.target===e.currentTarget)setReExtractWarn(false);}},
-          React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b66",borderRadius:10,padding:"24px 28px",width:380,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}},
-            React.createElement("div",{style:{fontSize:15,fontWeight:800,color:"#f59e0b",marginBottom:8}},"Re-Extract Drawings?"),
-            React.createElement("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.6}},"This will overwrite the current BOM, pricing, and validation data with a fresh extraction. Any manual edits will be lost."),
+          React.createElement("div",{style:{background:C.card,border:`1px solid ${C.yellow}44`,borderRadius:10,padding:"24px 28px",width:380,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}},
+            React.createElement("div",{style:{fontSize:15,fontWeight:800,color:C.yellow,marginBottom:8}},"Re-Extract Drawings?"),
+            React.createElement("div",{style:{fontSize:13,color:C.muted,marginBottom:20,lineHeight:1.6}},"This will overwrite the current BOM, pricing, and validation data with a fresh extraction. Any manual edits will be lost."),
             React.createElement("div",{style:{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}},
-              React.createElement("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#94a3b8",cursor:"pointer",marginRight:"auto"}},
+              React.createElement("label",{style:{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.muted,cursor:"pointer",marginRight:"auto"}},
                 React.createElement("input",{type:"checkbox",id:"_reextract_dismiss",style:{accentColor:C.accent}}),
                 "Don't show this again"
               ),
-              React.createElement("button",{onClick:()=>setReExtractWarn(false),style:{background:"#1e1e2e",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}},"Cancel"),
+              React.createElement("button",{onClick:()=>setReExtractWarn(false),style:{background:C.bg,border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}},"Cancel"),
               React.createElement("button",{onClick:()=>{
                 if(document.getElementById("_reextract_dismiss")?.checked)localStorage.setItem("_arc_skip_reextract_warn","1");
                 setReExtractWarn(false);runExtraction();
-              },style:{background:"#451a03",border:"1px solid #f59e0b66",color:"#f59e0b",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:700}},"Re-Extract")
+              },style:{background:C.yellowDim,border:`1px solid ${C.yellow}44`,color:C.yellow,borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:700}},"Re-Extract")
             )
           )
         ),document.body
@@ -2616,26 +2616,26 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {priceConfirmPending&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
           onMouseDown={e=>{if(e.target===e.currentTarget){applyBudgetaryPrice();}}}>
-          <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:480,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:480,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
             <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>Price Entry — {priceConfirmPending.partNumber||"Item"}</div>
             <div style={{fontSize:22,fontWeight:800,color:C.accent,marginBottom:12}}>${Number(priceConfirmPending.price).toFixed(2)}</div>
             <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Is this a confirmed cost or a budgetary estimate?</div>
             <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:14}}>
               <button onClick={applyBudgetaryPrice}
-                style={{padding:"11px 14px",background:"#1a1a0a",border:"1px solid #f59e0b66",borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
-                <div style={{fontWeight:700,fontSize:13,color:"#f59e0b",marginBottom:3}}>Budgetary Estimate</div>
+                style={{padding:"11px 14px",background:C.yellowDim,border:`1px solid ${C.yellow}44`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                <div style={{fontWeight:700,fontSize:13,color:C.yellow,marginBottom:3}}>Budgetary Estimate</div>
                 <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Update BOM price only. No update to BC. Price date will show as unconfirmed (—).</div>
               </button>
-              <div style={{background:"#0a1a12",border:"1px solid #4ade8066",borderRadius:7,padding:"11px 14px"}}>
-                <div style={{fontWeight:700,fontSize:13,color:"#4ade80",marginBottom:6}}>Confirmed Cost</div>
+              <div style={{background:C.greenDim,border:`1px solid ${C.green}44`,borderRadius:7,padding:"11px 14px"}}>
+                <div style={{fontWeight:700,fontSize:13,color:C.green,marginBottom:6}}>Confirmed Cost</div>
                 <div style={{fontSize:11,color:C.muted,lineHeight:1.4,marginBottom:8}}>Push to BC Item Card + Purchase Price. Sets today's date as price date.</div>
                 <div style={{marginBottom:8}}>
                   <label style={{fontSize:10,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:3,display:"block"}}>Supplier / Vendor</label>
                   <input value={priceConfirmVendor} onChange={e=>setPriceConfirmVendor(e.target.value)} placeholder="Enter vendor name"
-                    style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text,fontSize:12,width:"100%",boxSizing:"border-box"}}/>
+                    style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text,fontSize:12,width:"100%",boxSizing:"border-box"}}/>
                 </div>
                 <button onClick={applyConfirmedPrice}
-                  style={{padding:"8px 16px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",width:"100%"}}>
+                  style={{padding:"8px 16px",background:C.green,border:`1px solid ${C.green}88`,borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",width:"100%"}}>
                   ✓ Confirm & Push to BC
                 </button>
               </div>
@@ -2653,16 +2653,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         return ReactDOM.createPortal(
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
             onMouseDown={e=>{if(e.target===e.currentTarget)dismiss();}}>
-            <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",minWidth:400,maxWidth:520,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
               <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>ARC — Part Number Change Detected</div>
               <div style={{fontSize:13,color:C.muted,marginBottom:12}}>
                 <span style={{color:C.red,fontWeight:700}}>{crossOrCorrectPending.origPN}</span>
                 <span style={{color:C.muted}}> → </span>
                 <span style={{color:C.accent,fontWeight:700}}>{crossOrCorrectPending.newPN}</span>
               </div>
-              <div style={{fontSize:11,background:"#120a2a",border:"1px solid #a78bfa",borderRadius:6,padding:"7px 10px",marginBottom:16,display:"flex",alignItems:"center",gap:6}}>
+              <div style={{fontSize:11,background:C.accentDim,border:`1px solid ${C.purple}88`,borderRadius:6,padding:"7px 10px",marginBottom:16,display:"flex",alignItems:"center",gap:6}}>
                 <span style={{fontSize:13}}>🤖</span>
-                <span style={{color:"#a78bfa",fontWeight:700}}>ARC suggests: </span>
+                <span style={{color:C.purple,fontWeight:700}}>ARC suggests: </span>
                 <span style={{color:C.text,fontWeight:600}}>{aiSug==='format'?'Formatting Error':'Bad Extraction'}</span>
                 <span style={{color:C.muted,fontSize:10,marginLeft:2}}>— based on part number similarity</span>
               </div>
@@ -2673,17 +2673,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>An alternate product intentionally replacing the original. Saved to Alternates DB. Shown in BOM notes and on quote.</div>
                 </button>
                 <button onClick={()=>{commitBcItem(crossOrCorrectPending.bomRowId,crossOrCorrectPending.bcItem,false,'extraction');dismiss();}}
-                  style={{padding:"11px 14px",background:"#1a0a0a",border:`1px solid ${C.red}`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                  style={{padding:"11px 14px",background:C.redDim,border:`1px solid ${C.red}`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
                   <div style={{fontWeight:700,fontSize:13,color:C.red,marginBottom:3}}>Bad Extraction</div>
                   <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>AI misread the part number entirely. Fixed quietly — logged for AI learning. No note on quote.</div>
                 </button>
                 <button onClick={()=>{commitBcItem(crossOrCorrectPending.bomRowId,crossOrCorrectPending.bcItem,false,'formatting');dismiss();}}
-                  style={{padding:"11px 14px",background:"#0a1a12",border:"1px solid #4ade80",borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
-                  <div style={{fontWeight:700,fontSize:13,color:"#4ade80",marginBottom:3}}>Formatting Error</div>
+                  style={{padding:"11px 14px",background:C.greenDim,border:`1px solid ${C.green}88`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                  <div style={{fontWeight:700,fontSize:13,color:C.green,marginBottom:3}}>Formatting Error</div>
                   <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Part number is correct but formatted differently (dashes, spacing). Auto-corrected on future extractions. Noted on quote.</div>
                 </button>
                 <button onClick={()=>{commitBcItem(crossOrCorrectPending.bomRowId,crossOrCorrectPending.bcItem,false,null,true);dismiss();}}
-                  style={{padding:"11px 14px",background:"#111118",border:`1px solid ${C.border}`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
+                  style={{padding:"11px 14px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,textAlign:"left",cursor:"pointer"}}>
                   <div style={{fontWeight:700,fontSize:13,color:C.muted,marginBottom:3}}>Just Apply — No Learning</div>
                   <div style={{fontSize:11,color:C.muted,lineHeight:1.4}}>Apply the BC item without recording a cross or correction. Nothing saved to learning databases.</div>
                 </button>

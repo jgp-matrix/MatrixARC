@@ -57,14 +57,14 @@ function RemoveMemberModal({uid,companyId,member,members,onRemoved,onClose}){
             {memberProjects.length>0?(
               <div style={{marginBottom:20}}>
                 <div style={{fontSize:12,color:C.sub,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Their Projects ({memberProjects.length})</div>
-                <div style={{background:"#0a0a12",borderRadius:8,padding:10,marginBottom:14,maxHeight:130,overflow:"auto"}}>
+                <div style={{background:C.bg,borderRadius:8,padding:10,marginBottom:14,maxHeight:130,overflow:"auto"}}>
                   {memberProjects.map(p=>(
                     <div key={p.id} style={{fontSize:13,color:C.text,padding:"5px 0",borderBottom:`1px solid ${C.border}22`}}>{p.name}</div>
                   ))}
                 </div>
                 <div style={{fontSize:13,color:C.sub,marginBottom:8}}>Transfer projects to:</div>
                 <select value={transferTo} onChange={e=>setTransferTo(e.target.value)}
-                  style={{width:"100%",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",color:transferTo?C.text:C.muted,fontSize:14,marginBottom:6}}>
+                  style={{width:"100%",background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",color:transferTo?C.text:C.muted,fontSize:14,marginBottom:6}}>
                   <option value="">Leave in workspace (no specific owner)</option>
                   {recipients.map(m=>(
                     <option key={m.uid} value={m.uid}>{m.email} ({m.role})</option>
@@ -73,7 +73,7 @@ function RemoveMemberModal({uid,companyId,member,members,onRemoved,onClose}){
                 {transferTo&&<div style={{fontSize:11,color:C.muted}}>Projects will appear in the recipient's Transferred Projects section.</div>}
               </div>
             ):(
-              <div style={{background:"#0a0a12",borderRadius:8,padding:14,marginBottom:20,fontSize:13,color:C.muted}}>This member has no projects.</div>
+              <div style={{background:C.bg,borderRadius:8,padding:14,marginBottom:20,fontSize:13,color:C.muted}}>This member has no projects.</div>
             )}
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
               <button onClick={onClose} disabled={removing} style={btn(C.border,C.sub)}>Cancel</button>

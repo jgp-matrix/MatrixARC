@@ -63,11 +63,11 @@ function AIDatabasePage({uid,onBack}: any){
       <div style={{display:"flex",alignItems:"center",gap:16,marginBottom:24}}>
         <button onClick={onBack} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,padding:"5px 12px",cursor:"pointer"}}>{"\u2190 Back"}</button>
         <div>
-          <div style={{fontSize:20,fontWeight:800,color:"#a78bfa",letterSpacing:1}}>{"\u{1F9E0} ARC AI DATABASE"}</div>
+          <div style={{fontSize:20,fontWeight:800,color:C.purple,letterSpacing:1}}>{"\u{1F9E0} ARC AI DATABASE"}</div>
           <div style={{fontSize:12,color:C.muted,marginTop:2}}>{panels.length} panels cataloged · {products.length} unique parts</div>
         </div>
         <input value={filter} onChange={(e: any)=>setFilter(e.target.value)} placeholder="Filter by any field…"
-          style={{marginLeft:"auto",background:"#0a0a16",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,padding:"6px 12px",width:240,outline:"none"}}/>
+          style={{marginLeft:"auto",background:C.input,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,padding:"6px 12px",width:240,outline:"none"}}/>
       </div>
 
       {filteredSorted.length===0&&(
@@ -76,12 +76,12 @@ function AIDatabasePage({uid,onBack}: any){
 
       {filteredSorted.map(([equipType,panelGroup]: any)=>(
         <div key={equipType} style={{marginBottom:32}}>
-          <div style={{fontSize:13,fontWeight:800,color:"#a78bfa",textTransform:"uppercase",letterSpacing:1,marginBottom:10,paddingBottom:6,borderBottom:`1px solid #a78bfa33`,display:"flex",alignItems:"center",gap:8}}>
+          <div style={{fontSize:13,fontWeight:800,color:C.purple,textTransform:"uppercase",letterSpacing:1,marginBottom:10,paddingBottom:6,borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
             <span>{"\u26A1"}</span>{equipType}
             <span style={{fontSize:11,fontWeight:400,color:C.muted}}>({panelGroup.length} panel{panelGroup.length!==1?"s":""})</span>
           </div>
           {panelGroup.map((p: any)=>(
-            <div key={p.panelId} style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:8,padding:"14px 18px",marginBottom:10}}>
+            <div key={p.panelId} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"14px 18px",marginBottom:10}}>
               <div style={{display:"flex",alignItems:"flex-start",gap:16,flexWrap:"wrap"}}>
                 {/* Panel identity */}
                 <div style={{minWidth:200,flex:"0 0 auto"}}>
@@ -106,10 +106,10 @@ function AIDatabasePage({uid,onBack}: any){
                 <div style={{flex:"0 0 auto",display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
                   {[
                     {label:"Items",val:p.specs?.itemCount,color:C.accent},
-                    {label:"Motors",val:p.specs?.motorCount,color:"#fb923c"},
+                    {label:"Motors",val:p.specs?.motorCount,color:C.yellow},
                     {label:"PLC In",val:p.specs?.plcInputs,color:C.green},
-                    {label:"PLC Out",val:p.specs?.plcOutputs,color:"#f472b6"},
-                    {label:"Processors",val:p.specs?.plcProcessors,color:"#93c5fd"},
+                    {label:"PLC Out",val:p.specs?.plcOutputs,color:C.purple},
+                    {label:"Processors",val:p.specs?.plcProcessors,color:C.accent},
                   ].filter((s: any)=>s.val>0).map((s: any)=>(
                     <div key={s.label} style={{background:s.color+'18',border:`1px solid ${s.color}44`,borderRadius:6,padding:"4px 8px",textAlign:"center",minWidth:52}}>
                       <div style={{fontSize:14,fontWeight:800,color:s.color,lineHeight:1}}>{s.val}</div>
@@ -126,7 +126,7 @@ function AIDatabasePage({uid,onBack}: any){
                 return(
                   <div style={{marginTop:10,display:"flex",gap:5,flexWrap:"wrap"}}>
                     {Object.entries(cats).sort((a: any,b: any)=>b[1]-a[1]).map(([cat,cnt]: any)=>(
-                      <span key={cat} style={{fontSize:10,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px",color:C.muted}}>
+                      <span key={cat} style={{fontSize:10,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 7px",color:C.muted}}>
                         {cat} <span style={{color:C.sub,fontWeight:700}}>{cnt}</span>
                       </span>
                     ))}
@@ -145,13 +145,13 @@ function AIDatabasePage({uid,onBack}: any){
               <div style={{marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
                 {editingId===p.panelId?(
                   <div>
-                    <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",marginBottom:4}}>Admin Notes</div>
+                    <div style={{fontSize:11,fontWeight:700,color:C.purple,marginBottom:4}}>Admin Notes</div>
                     <textarea value={editNotes} onChange={(e: any)=>setEditNotes(e.target.value)} rows={3} autoFocus
                       placeholder="Add additional details, corrections, or learning notes for this panel…"
-                      style={{width:"100%",background:"#0a0814",border:"1px solid #a78bfa66",borderRadius:6,color:C.text,fontSize:12,padding:"7px 10px",resize:"vertical",fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}/>
+                      style={{width:"100%",background:C.input,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,padding:"7px 10px",resize:"vertical",fontFamily:"inherit",outline:"none",boxSizing:"border-box"}}/>
                     <div style={{display:"flex",gap:8,marginTop:6}}>
                       <button onClick={()=>saveAdminNotes(p.panelId)} disabled={saving}
-                        style={btn("#1a0a2a","#a78bfa",{fontSize:12,border:"1px solid #a78bfa66",opacity:saving?0.5:1})}>
+                        style={btn(C.accentDim,C.purple,{fontSize:12,border:`1px solid ${C.border}`,opacity:saving?0.5:1})}>
                         {saving?"Saving…":"Save Notes"}
                       </button>
                       <button onClick={()=>setEditingId(null)} style={btn(C.border,C.muted,{fontSize:12})}>Cancel</button>
@@ -160,14 +160,14 @@ function AIDatabasePage({uid,onBack}: any){
                 ):(
                   <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
                     {p.adminNotes?(
-                      <div style={{flex:1,fontSize:11,color:"#c4b5fd",lineHeight:1.5,background:"#1a0a2a",borderRadius:6,padding:"6px 10px",border:"1px solid #a78bfa33"}}>
-                        <span style={{fontSize:10,fontWeight:700,color:"#a78bfa",marginRight:6}}>ADMIN:</span>{p.adminNotes}
+                      <div style={{flex:1,fontSize:11,color:C.purple,lineHeight:1.5,background:C.accentDim,borderRadius:6,padding:"6px 10px",border:`1px solid ${C.border}`}}>
+                        <span style={{fontSize:10,fontWeight:700,color:C.purple,marginRight:6}}>ADMIN:</span>{p.adminNotes}
                       </div>
                     ):(
                       <div style={{flex:1,fontSize:11,color:C.muted,fontStyle:"italic"}}>No admin notes yet</div>
                     )}
                     <button onClick={()=>{setEditingId(p.panelId);setEditNotes(p.adminNotes||"");}}
-                      style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:"#a78bfa",fontSize:11,padding:"3px 10px",cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
+                      style={{background:"none",border:`1px solid ${C.border}`,borderRadius:5,color:C.purple,fontSize:11,padding:"3px 10px",cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>
                       {p.adminNotes?"Edit Notes":"+ Add Notes"}
                     </button>
                   </div>
@@ -183,20 +183,20 @@ function AIDatabasePage({uid,onBack}: any){
         <div style={{marginTop:16,paddingTop:24,borderTop:`1px solid ${C.border}`}}>
           <div onClick={()=>setCatalogOpen((o: any)=>!o)}
             style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",marginBottom:catalogOpen?12:0}}>
-            <span style={{fontSize:13,transition:"transform 0.15s",display:"inline-block",transform:catalogOpen?"rotate(90deg)":"none",color:"#a78bfa"}}>{"\u25B8"}</span>
-            <div style={{fontSize:13,fontWeight:800,color:"#a78bfa",textTransform:"uppercase",letterSpacing:1}}>{"\u{1F4E6} Product Catalog"}</div>
+            <span style={{fontSize:13,transition:"transform 0.15s",display:"inline-block",transform:catalogOpen?"rotate(90deg)":"none",color:C.purple}}>{"\u25B8"}</span>
+            <div style={{fontSize:13,fontWeight:800,color:C.purple,textTransform:"uppercase",letterSpacing:1}}>{"\u{1F4E6} Product Catalog"}</div>
             <span style={{fontSize:11,color:C.muted,fontWeight:400}}>({products.length} parts)</span>
           </div>
           {catalogOpen&&(
             <>
               <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:8}}>
                 {products.filter((p: any)=>!filter||JSON.stringify(p).toLowerCase().includes(filterLow)).slice(0,100).map((p: any)=>(
-                  <div key={p.partNumber} style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:6,padding:"9px 12px",fontSize:11}}>
+                  <div key={p.partNumber} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"9px 12px",fontSize:11}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
                       <span style={{fontWeight:700,color:C.accent}}>{p.partNumber}</span>
                       <span style={{fontSize:9,background:C.border,borderRadius:3,padding:"1px 5px",color:C.muted}}>{p.category}</span>
                       {p.seenCount>1&&<span style={{fontSize:9,color:C.green}}>{"×"}{p.seenCount}</span>}
-                      {p.enriched&&<span style={{fontSize:9,color:"#a78bfa"}}>{"\u2713 enriched"}</span>}
+                      {p.enriched&&<span style={{fontSize:9,color:C.purple}}>{"\u2713 enriched"}</span>}
                     </div>
                     <div style={{color:C.sub,marginBottom:2}}>{p.description}</div>
                     {p.manufacturer&&<div style={{color:C.muted}}>MFR: {p.manufacturer}</div>}
@@ -204,7 +204,7 @@ function AIDatabasePage({uid,onBack}: any){
                     {p.enriched&&(p.approvals?.ul||p.approvals?.ce||p.approvals?.csa)&&(
                       <div style={{marginTop:3,display:"flex",gap:4}}>
                         {['ul','ce','csa'].filter((k: any)=>p.approvals[k]&&p.approvals[k]!=='unknown').map((k: any)=>(
-                          <span key={k} style={{fontSize:9,background:p.approvals[k]==='yes'?"#14532d":"#1a1a1a",border:`1px solid ${p.approvals[k]==='yes'?"#22c55e":C.border}`,borderRadius:3,padding:"1px 5px",color:p.approvals[k]==='yes'?"#4ade80":C.muted,textTransform:"uppercase"}}>{k}: {p.approvals[k]}</span>
+                          <span key={k} style={{fontSize:9,background:p.approvals[k]==='yes'?C.greenDim:C.bg,border:`1px solid ${p.approvals[k]==='yes'?C.green:C.border}`,borderRadius:3,padding:"1px 5px",color:p.approvals[k]==='yes'?C.green:C.muted,textTransform:"uppercase"}}>{k}: {p.approvals[k]}</span>
                         ))}
                       </div>
                     )}

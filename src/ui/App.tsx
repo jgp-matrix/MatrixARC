@@ -77,14 +77,14 @@ function LeftNav({tab,onTabChange,pinned,onPinChange}: any){
       onMouseEnter={()=>{if(!pinned)setHovered(true);}}
       onMouseLeave={()=>{if(!pinned)setHovered(false);}}
       style={{position:"fixed",top:78,left:isOpen?0:-42,width:50,height:"calc(100vh - 78px)",
-        background:"#bfdbfe",borderRight:"1px solid #93c5fd",zIndex:450,
+        background:C.nav,borderRight:`1px solid ${C.navBorder}`,zIndex:450,
         transition:"left 0.25s ease",display:"flex",flexDirection:"column",userSelect:"none"}}
     >
       {/* Pin toggle */}
-      <div style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #93c5fd",minHeight:36}}>
+      <div style={{display:"flex",justifyContent:"center",alignItems:"center",padding:"8px 0",borderBottom:`1px solid ${C.navBorder}`,minHeight:36}}>
         <button onClick={()=>onPinChange(!pinned)} title={pinned?"Unpin sidebar (auto-hide)":"Pin sidebar"}
           style={{background:"none",border:"none",cursor:"pointer",padding:"2px",borderRadius:4,
-            color:pinned?"#1e3a8a":"#6b7280",fontSize:13,lineHeight:1,transition:"color 0.15s"}}
+            color:pinned?C.navHover:C.navText,fontSize:13,lineHeight:1,transition:"color 0.15s"}}
         >{pinned?"\uD83D\uDCCC":"\uD83D\uDCCD"}</button>
       </div>
       {/* Tab buttons */}
@@ -92,11 +92,11 @@ function LeftNav({tab,onTabChange,pinned,onPinChange}: any){
         {NAV_TABS.map(t=>(
           <button key={t.id} onClick={()=>onTabChange(t.id)}
             style={{width:"100%",border:"none",cursor:"pointer",
-              borderLeft:tab===t.id?"3px solid #1e3a8a":"3px solid transparent",
-              color:tab===t.id?"#93c5fd":"#e2e8f0",
+              borderLeft:tab===t.id?`3px solid ${C.accent}`:"3px solid transparent",
+              color:tab===t.id?C.navHover:C.navText,
               display:"flex",flexDirection:"column",alignItems:"center",
               padding:"18px 0",gap:0,transition:"background 0.15s, color 0.15s",
-              background:tab===t.id?"rgba(30,58,138,0.12)":"#9ca3af"}}
+              background:tab===t.id?"rgba(255,255,255,0.07)":"transparent"}}
           >
             <span style={{writingMode:"vertical-lr",fontSize:tab===t.id?24:20,fontWeight:800,letterSpacing:3,
               textTransform:"uppercase",transition:"font-size 0.15s"}}>{t.label}</span>
@@ -675,7 +675,7 @@ INSTRUCTIONS:
           </div>
           {splash==="loading"&&(
             <div style={{width:280,height:4,background:C.border,borderRadius:4,overflow:"hidden",transition:"opacity 0.3s",opacity:splash==="loading"?1:0}}>
-              <div style={{height:"100%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.15s linear",width:splashPct+"%"}}/>
+              <div style={{height:"100%",background:`linear-gradient(90deg,${C.accent},${C.purple})`,borderRadius:4,transition:"width 0.15s linear",width:splashPct+"%"}}/>
             </div>
           )}
         </div>
@@ -690,34 +690,34 @@ INSTRUCTIONS:
           <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1,pointerEvents:"none"}}>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:28,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
             <span style={{fontSize:10,color:C.muted,letterSpacing:1.5,marginTop:4,fontWeight:600}}>Powered by <span style={{color:C.accent,fontWeight:700,letterSpacing:2}}>ARC Neural IQ</span></span>
-            <span style={{fontSize:10,fontWeight:600,color:"#ef4444",opacity:0.7,letterSpacing:0.3,marginTop:3}}>SANDBOX {SANDBOX_VERSION}</span>
+            <span style={{fontSize:10,fontWeight:600,color:C.red,opacity:0.7,letterSpacing:0.3,marginTop:3}}>SANDBOX {SANDBOX_VERSION}</span>
           </div>
           {/* Flex spacer */}
           <div style={{flex:1}}/>
           {/* Status indicators */}
           {bgRunning.length>0&&(
             <div title={bgRunning.map((t: any)=>t.panelName+": "+t.msg).join("\n")}
-              style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,background:"#0d2a0d",border:"1px solid #22c55e99",cursor:"default",flexShrink:0}}>
-              <span className="spin" style={{fontSize:12,color:"#86efac",lineHeight:1}}>{"\u25CC"}</span>
-              <span style={{fontSize:12,fontWeight:600,color:"#86efac",whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
+              style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,background:C.greenDim,border:`1px solid ${C.green}44`,cursor:"default",flexShrink:0}}>
+              <span className="spin" style={{fontSize:12,color:C.green,lineHeight:1}}>{"\u25CC"}</span>
+              <span style={{fontSize:12,fontWeight:600,color:C.green,whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
             </div>
           )}
           {connStatus!=="good"&&(
             <div style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,
-              background:connStatus==="offline"?"#3b080844":"#3a1f0044",border:`1px solid ${connStatus==="offline"?"#ef444466":"#f59e0b66"}`}}>
+              background:connStatus==="offline"?C.redDim:C.yellowDim,border:`1px solid ${connStatus==="offline"?`${C.red}66`:`${C.yellow}66`}`}}>
               <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:connStatus==="offline"?C.red:C.yellow,boxShadow:`0 0 4px ${connStatus==="offline"?C.red:C.yellow}`,animation:"pulse 2s ease-in-out infinite"}}/>
-              <span style={{fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:connStatus==="offline"?"#fca5a5":"#fcd34d"}}>{connStatus==="offline"?"Offline":"Slow"}</span>
+              <span style={{fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:connStatus==="offline"?C.red:C.yellow}}>{connStatus==="offline"?"Offline":"Slow"}</span>
             </div>
           )}
           <div title={bcOnline?"Business Central is connected":"Click to connect to Business Central"}
             onClick={bcOnline?undefined:async()=>{const t=await acquireBcToken(true);if(t){setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();}}}
-            style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,background:bcOnline?"#1e4a8a55":"#3a1a1a44",border:`1px solid ${bcOnline?"#3b82f699":"#7f1d1d88"}`,cursor:bcOnline?"default":"pointer"}}>
-            <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:bcOnline?"#3b82f6":"#ef4444",boxShadow:bcOnline?"0 0 5px #3b82f6":"0 0 5px #ef4444"}}/>
-            <span style={{fontSize:12,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline \u2014 Click to connect"}</span>
+            style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,background:bcOnline?C.accentDim:C.redDim,border:`1px solid ${bcOnline?C.accent+"66":C.red+"66"}`,cursor:bcOnline?"default":"pointer"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:bcOnline?C.accent:C.red,boxShadow:bcOnline?`0 0 5px ${C.accent}`:`0 0 5px ${C.red}`}}/>
+            <span style={{fontSize:12,fontWeight:600,color:bcOnline?C.accent:C.red,whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline \u2014 Click to connect"}</span>
           </div>
           {bcQueueCount>0&&(
             <div title={`${bcQueueCount} BC operation${bcQueueCount>1?'s':''} pending \u2014 will retry when connected`}
-              style={{background:"#78350f",color:"#fde68a",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"default",flexShrink:0}}>
+              style={{background:C.yellowDim,color:C.yellow,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"default",flexShrink:0}}>
               {"\u23F3"} {bcQueueCount} pending
             </div>
           )}
@@ -733,25 +733,25 @@ INSTRUCTIONS:
           <button title="ARC AI Assistant \u2014 Ask about projects, UL508A, C22, parts, pricing" onClick={()=>setShowSearch(v=>!v)} style={{background:showSearch?C.accentDim:"none",border:showSearch?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showSearch?C.accent:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{"\u2728"}</button>
           {/* Bell icon */}
           <div style={{position:"relative",flexShrink:0}}>
-            <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:notifications.length>0?"#fbbf24":C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{"\uD83D\uDD14"}</button>
+            <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:notifications.length>0?C.yellow:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{"\uD83D\uDD14"}</button>
             {notifications.length>0&&<div style={{position:"absolute",top:5,right:5,background:"#dc2626",color:"#fff",borderRadius:"50%",fontSize:10,fontWeight:800,minWidth:17,height:17,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,pointerEvents:"none"}}>{notifications.length>9?"9+":notifications.length}</div>}
-            {showBellMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:320,maxWidth:380,boxShadow:"0 0 30px 8px rgba(56,189,248,0.6),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+            {showBellMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:320,maxWidth:380,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:600}}>
               <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,flex:1}}>Notifications {notifications.length>0&&`(${notifications.length})`}</span>
                 {notifications.length>0&&<button onClick={markAllNotifsRead} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>Mark all read</button>}
               </div>
               <div style={{maxHeight:360,overflowY:"auto"}}>
-                {notifications.length===0&&<div style={{padding:"20px 16px",textAlign:"center",color:"#94a3b8",fontSize:13}}>No new notifications</div>}
+                {notifications.length===0&&<div style={{padding:"20px 16px",textAlign:"center",color:C.muted,fontSize:13}}>No new notifications</div>}
                 {notifications.map((n: any)=>(
                   <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:n.type==='supplier_quote'?"pointer":"default"}}
                     onClick={()=>n.type==='supplier_quote'?handleNotifClick(n):undefined}>
                     <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
                       <span style={{fontSize:16,flexShrink:0,marginTop:1}}>{n.type==='supplier_quote'?'\uD83D\uDCE5':'\uD83D\uDD14'}</span>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:700,color:"#f1f5f9",marginBottom:2,lineHeight:1.3}}>{n.title||"Notification"}</div>
-                        <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.4,marginBottom:4}}>{n.body||""}</div>
+                        <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:2,lineHeight:1.3}}>{n.title||"Notification"}</div>
+                        <div style={{fontSize:12,color:C.muted,lineHeight:1.4,marginBottom:4}}>{n.body||""}</div>
                         {n.type==='supplier_quote'&&<span style={{fontSize:11,fontWeight:700,color:C.accent}}>Click to Review Quote {"\u2192"}</span>}
-                        <div style={{fontSize:10,color:"#94a3b8",marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
+                        <div style={{fontSize:10,color:C.muted,marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
                       </div>
                     </div>
                   </div>
@@ -772,36 +772,36 @@ INSTRUCTIONS:
           {/* Gear menu */}
           <div style={{position:"relative",flexShrink:0}}>
             <button data-tour="config-btn" data-tour-training="training-btn" title="Settings & Tools" onClick={()=>{setShowGearMenu(v=>!v);setShowUserMenu(false);}} style={{background:showGearMenu?C.accentDim:"none",border:showGearMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showGearMenu?C.accent:C.muted,cursor:"pointer",fontSize:23,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center"}}>{"\u2699"}</button>
-            {showGearMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 0 30px 8px rgba(56,189,248,0.6),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+            {showGearMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:600}}>
               <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,marginBottom:4}}>
                 <div style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3}}>ARC Software</div>
-                <div style={{fontSize:11,color:"#ef4444",fontWeight:600,marginTop:2,fontFamily:"'Orbitron',monospace",letterSpacing:1}}>SANDBOX {SANDBOX_VERSION}</div>
+                <div style={{fontSize:11,color:C.red,fontWeight:600,marginTop:2,fontFamily:"'Orbitron',monospace",letterSpacing:1}}>SANDBOX {SANDBOX_VERSION}</div>
               </div>
-              <button onClick={()=>{setShowSettings(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\u2699"} Settings</button>
-              <button data-tour="config-btn" onClick={()=>{setShowConfig(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDD27"} Configuration</button>
-              {userRole==="admin"&&<button onClick={()=>{setShowApiSetup(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDD11"} API Setup</button>}
+              <button onClick={()=>{setShowSettings(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background=C.bg} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\u2699"} Settings</button>
+              <button data-tour="config-btn" onClick={()=>{setShowConfig(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background=C.bg} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDD27"} Configuration</button>
+              {userRole==="admin"&&<button onClick={()=>{setShowApiSetup(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background=C.bg} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDD11"} API Setup</button>}
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
-              <button data-tour="training-btn" onClick={()=>{startTour();setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null?"#172554":"none",border:"none",color:tourStep!==null?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null?700:500}} onMouseEnter={(e: any)=>{if(tourStep===null)e.target.style.background="#1a1a2e";}} onMouseLeave={(e: any)=>{if(tourStep===null)e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`\uD83D\uDCCB Resume Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'\uD83D\uDCCB Training'}</button>
-              <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDCCA"} Reports</button>
-              <button onClick={()=>{setShowSupplierPricing(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDCE5"} Upload Supplier Pricing</button>
-              {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?"#1a0a2a":"none",border:"none",color:"#a78bfa",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={(e: any)=>{if(view!=="aidb")e.target.style.background="#1a1a2e";}} onMouseLeave={(e: any)=>{if(view!=="aidb")e.target.style.background="none";}}>{"\uD83E\uDDE0"} ARC AI Database</button>}
+              <button data-tour="training-btn" onClick={()=>{startTour();setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null?C.accentDim:"none",border:"none",color:tourStep!==null?C.accent:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null?700:500}} onMouseEnter={(e: any)=>{if(tourStep===null)e.target.style.background=C.bg;}} onMouseLeave={(e: any)=>{if(tourStep===null)e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`\uD83D\uDCCB Resume Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'\uD83D\uDCCB Training'}</button>
+              <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background=C.bg} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDCCA"} Reports</button>
+              <button onClick={()=>{setShowSupplierPricing(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background=C.bg} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDCE5"} Upload Supplier Pricing</button>
+              {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?C.accentDim:"none",border:"none",color:C.purple,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={(e: any)=>{if(view!=="aidb")e.target.style.background=C.bg;}} onMouseLeave={(e: any)=>{if(view!=="aidb")e.target.style.background="none";}}>{"\uD83E\uDDE0"} ARC AI Database</button>}
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
-              <button onClick={()=>{setShowAbout(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\u2139"} About</button>
+              <button onClick={()=>{setShowAbout(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background=C.bg} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\u2139"} About</button>
             </div>)}
           </div>
           {/* User menu */}
           <div style={{position:"relative",flexShrink:0}}>
-            <div data-tour="team-btn" title={user.email} onClick={()=>{setShowUserMenu(v=>!v);setShowGearMenu(false);}} style={{width:44,height:44,borderRadius:"50%",background:showUserMenu?"#1e3a5f":C.border,border:showUserMenu?`2px solid ${C.accent}`:`2px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:18,fontWeight:800,color:showUserMenu?C.accent:"#94a3b8",flexShrink:0,userSelect:"none",letterSpacing:0}}>
+            <div data-tour="team-btn" title={user.email} onClick={()=>{setShowUserMenu(v=>!v);setShowGearMenu(false);}} style={{width:44,height:44,borderRadius:"50%",background:showUserMenu?C.accentDim:C.border,border:showUserMenu?`2px solid ${C.accent}`:`2px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:18,fontWeight:800,color:showUserMenu?C.accent:C.muted,flexShrink:0,userSelect:"none",letterSpacing:0}}>
               {user.email?user.email[0].toUpperCase():"?"}
             </div>
-            {showUserMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 0 30px 8px rgba(56,189,248,0.6),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+            {showUserMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:600}}>
               <div style={{padding:"12px 16px 10px",borderBottom:`1px solid ${C.border}`}}>
                 <div style={{fontSize:13,color:C.text,fontWeight:600,marginBottom:6,wordBreak:"break-all"}}>{user.email}</div>
-                {userRole&&<span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:8,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
+                {userRole&&<span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:8,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?C.accent:userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
               </div>
-              <button data-tour="team-btn" onClick={()=>{setShowTeam(true);setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background="#1a1a2e"} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDC65"} Team & Permissions</button>
+              <button data-tour="team-btn" onClick={()=>{setShowTeam(true);setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={(e: any)=>e.target.style.background=C.bg} onMouseLeave={(e: any)=>e.target.style.background="none"}>{"\uD83D\uDC65"} Team & Permissions</button>
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
-              <button onClick={()=>{fbAuth.signOut();setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:"#f87171",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:600}} onMouseEnter={(e: any)=>e.target.style.background="#1a0a0a"} onMouseLeave={(e: any)=>e.target.style.background="none"}>Sign Out</button>
+              <button onClick={()=>{fbAuth.signOut();setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.red,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:600}} onMouseEnter={(e: any)=>e.target.style.background=C.redDim} onMouseLeave={(e: any)=>e.target.style.background="none"}>Sign Out</button>
             </div>)}
           </div>
         </div>
@@ -809,7 +809,7 @@ INSTRUCTIONS:
         {(showGearMenu||showUserMenu||showBellMenu)&&<div style={{position:"fixed",inset:0,zIndex:590}} onClick={()=>{setShowGearMenu(false);setShowUserMenu(false);setShowBellMenu(false);}}/>}
       </div>
       {/* Horizontal tab bar -- fixed below header */}
-      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:490,background:"#253354",borderBottom:"2px solid #3b82f6",display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
+      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:490,background:C.nav,borderBottom:`2px solid ${C.accent}`,display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
         {NAV_TABS.map(t=>{
           const active=navTab===t.id;
           const hasOpenProject=view==="project"&&openProject;
@@ -826,12 +826,12 @@ INSTRUCTIONS:
             style={{cursor:"pointer",padding:"0 24px",
               height:active?46:38,
               fontSize:12,fontWeight:700,letterSpacing:isBackBtn?1:isReturnBtn?1:2,textTransform:"uppercase",
-              color:isBackBtn?"#fbbf24":isReturnBtn?"#93c5fd":active?"#fff":"#93c5fd",
-              background:isBackBtn?"#1a1500":active?"#1e293b":"#1a2d4a",
-              borderTop:isBackBtn?"2px solid #b45309":active?"2px solid #3b82f6":"1px solid #3b5a8a",
-              borderLeft:isBackBtn?"1px solid #b45309":active?"1px solid #3b82f6":"1px solid #3b5a8a",
-              borderRight:isBackBtn?"1px solid #b45309":active?"1px solid #3b82f6":"1px solid #3b5a8a",
-              borderBottom:active?"2px solid #1e293b":"1px solid #253354",
+              color:isBackBtn?C.yellow:isReturnBtn?C.navText:active?"#fff":C.navText,
+              background:isBackBtn?C.yellowDim:active?"rgba(255,255,255,0.07)":"transparent",
+              borderTop:isBackBtn?`2px solid ${C.yellow}`:active?`2px solid ${C.accent}`:`1px solid ${C.navBorder}`,
+              borderLeft:isBackBtn?`1px solid ${C.yellow}44`:active?`1px solid ${C.accent}`:`1px solid ${C.navBorder}`,
+              borderRight:isBackBtn?`1px solid ${C.yellow}44`:active?`1px solid ${C.accent}`:`1px solid ${C.navBorder}`,
+              borderBottom:active?"2px solid rgba(255,255,255,0.07)":"none",
               borderRadius:"8px 8px 0 0",
               marginBottom:active?"-2px":0,
               position:"relative",zIndex:active?1:0,
@@ -869,7 +869,7 @@ INSTRUCTIONS:
         <>
           {/* Company setup banner */}
           {!companyId&&!setupDismissed&&(
-            <div style={{background:"#1a1a3e",borderBottom:`1px solid ${C.accent}`,padding:"8px 32px",display:"flex",alignItems:"center",gap:12,fontSize:13,flexWrap:"wrap"}}>
+            <div style={{background:C.accentDim,borderBottom:`1px solid ${C.accent}`,padding:"8px 32px",display:"flex",alignItems:"center",gap:12,fontSize:13,flexWrap:"wrap"}}>
               <span style={{color:C.sub,flex:1}}>Set up a Company workspace to collaborate with your team.</span>
               <button onClick={()=>setShowSetup(true)} style={btn(C.accent,"#fff",{fontSize:12,padding:"5px 14px"})}>Set up Company</button>
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
@@ -897,8 +897,8 @@ INSTRUCTIONS:
           React.createElement("div",{style:{fontSize:16,fontWeight:700,color:C.text,marginBottom:8}},"Quote Revision "+rev+" Unsent"),
           React.createElement("div",{style:{fontSize:13,color:C.sub,lineHeight:1.6,marginBottom:24}},"The BOM has changed since the last quote was printed. Rev "+rev+" has not been sent to the client."),
           React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:10}},
-            React.createElement("button",{onClick:()=>{setRevSnoozed((s: any)=>({...s,[rm.project.id]:true}));rm.pendingAction();setRevWarnModal(null);},style:{background:"#1e1b4b",color:"#818cf8",border:"1px solid #818cf844",borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Snooze \u2014 Remind Next Time I Open This Project"),
-            React.createElement("button",{onClick:()=>{const upd={...rm.project,quoteRevAcknowledgedAt:Date.now()};handleChange(upd);saveProject(user.uid,upd);rm.pendingAction();setRevWarnModal(null);},style:{background:"#1a0d0d",color:"#f87171",border:"1px solid #f8717144",borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Don't Remind Until Next Change"),
+            React.createElement("button",{onClick:()=>{setRevSnoozed((s: any)=>({...s,[rm.project.id]:true}));rm.pendingAction();setRevWarnModal(null);},style:{background:C.accentDim,color:C.purple,border:`1px solid ${C.purple}44`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Snooze \u2014 Remind Next Time I Open This Project"),
+            React.createElement("button",{onClick:()=>{const upd={...rm.project,quoteRevAcknowledgedAt:Date.now()};handleChange(upd);saveProject(user.uid,upd);rm.pendingAction();setRevWarnModal(null);},style:{background:C.redDim,color:C.red,border:`1px solid ${C.red}44`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Don't Remind Until Next Change"),
             React.createElement("button",{onClick:()=>{rm.pendingAction();setRevWarnModal(null);},style:{background:C.card,color:C.muted,border:`1px solid ${C.border}`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}},"Dismiss")
           )
         )
@@ -916,7 +916,7 @@ INSTRUCTIONS:
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid: any,role: any,name: any)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
       </div>{/* end main content column */}
       {/* ARC AI Assistant -- right slide-out panel */}
-      <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
+      <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:C.bg,position:"relative"}}>
         <div style={{width:420,height:"100%",display:"flex",flexDirection:"column",visibility:showSearch?"visible":"hidden"}}>
           {/* Header */}
           <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
@@ -934,17 +934,17 @@ INSTRUCTIONS:
             </div>}
             {sqHistory.map((msg: any,i: number)=>(
               <div key={i} style={{display:"flex",gap:10,marginBottom:14,alignItems:"flex-start"}}>
-                <div style={{width:24,height:24,borderRadius:"50%",background:msg.role==='user'?C.accent:'#6366f1',display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0,marginTop:2}}>{msg.role==='user'?'Y':'AI'}</div>
+                <div style={{width:24,height:24,borderRadius:"50%",background:msg.role==='user'?C.accent:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0,marginTop:2}}>{msg.role==='user'?'Y':'AI'}</div>
                 <div style={{flex:1,minWidth:0}}>
                   {msg.role==='user'
                     ?<div style={{fontSize:13,color:C.text,fontWeight:600}}>{msg.content}</div>
-                    :<div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7}} dangerouslySetInnerHTML={{__html:(()=>{
+                    :<div style={{fontSize:13,color:C.sub,lineHeight:1.7}} dangerouslySetInnerHTML={{__html:(()=>{
                       let html=msg.content
-                        .replace(/\*\*(.+?)\*\*/g,'<strong style="color:#f1f5f9">$1</strong>')
+                        .replace(/\*\*(.+?)\*\*/g,`<strong style="color:${C.text}">$1</strong>`)
                         .replace(/\*(.+?)\*/g,'<em>$1</em>')
-                        .replace(/`([^`]+)`/g,'<code style="background:#1e293b;padding:1px 5px;border-radius:3px;font-size:12px">$1</code>')
-                        .replace(/^### (.+)$/gm,'<div style="font-size:13px;font-weight:700;color:#f1f5f9;margin:8px 0 4px">$1</div>')
-                        .replace(/^## (.+)$/gm,'<div style="font-size:14px;font-weight:700;color:#f1f5f9;margin:10px 0 4px">$1</div>')
+                        .replace(/`([^`]+)`/g,`<code style="background:${C.border};padding:1px 5px;border-radius:3px;font-size:12px">$1</code>`)
+                        .replace(/^### (.+)$/gm,`<div style="font-size:13px;font-weight:700;color:${C.text};margin:8px 0 4px">$1</div>`)
+                        .replace(/^## (.+)$/gm,`<div style="font-size:14px;font-weight:700;color:${C.text};margin:10px 0 4px">$1</div>`)
                         .replace(/^- (.+)$/gm,'<div style="padding-left:12px">\u2022 $1</div>')
                         .replace(/^\d+\. (.+)$/gm,(m: any,p1: any)=>'<div style="padding-left:12px">'+m.match(/^\d+/)[0]+'. '+p1+'</div>')
                         .replace(/\n{2,}/g,'<br/><br/>')
@@ -956,7 +956,7 @@ INSTRUCTIONS:
               </div>
             ))}
             {sqSearching&&<div style={{display:"flex",gap:10,alignItems:"center",padding:"8px 0"}}>
-              <div style={{width:24,height:24,borderRadius:"50%",background:"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}} className="spin">{"\u25CC"}</div>
+              <div style={{width:24,height:24,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}} className="spin">{"\u25CC"}</div>
               <span style={{fontSize:13,color:C.muted}}>Thinking\u2026</span>
             </div>}
           </div>
@@ -975,7 +975,7 @@ INSTRUCTIONS:
           {sqResults&&sqResults.error&&<div style={{fontSize:11,color:C.red,padding:"4px 16px"}}>{sqResults.error}</div>}
           {/* Input bar */}
           <div style={{padding:"8px 12px",borderTop:`1px solid ${C.border}`,flexShrink:0}}>
-            <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
+            <div style={{display:"flex",alignItems:"center",background:C.bg,border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
               <input ref={sqInputRef} value={sqQuery} placeholder={sqHistory.length?"Follow up\u2026":"Ask a question\u2026"} autoFocus
                 onChange={(e: any)=>setSqQuery(e.target.value)}
                 onKeyDown={(e: any)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runAiSearch(sqQuery);}}}

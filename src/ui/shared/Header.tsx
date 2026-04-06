@@ -3,6 +3,7 @@
 // Used by SupplierPortalPage in both upload and review phases.
 
 import React from 'react';
+import { C } from '@/core/constants';
 
 interface HeaderProps {
   /** Portal info object containing company/RFQ details */
@@ -23,10 +24,10 @@ interface HeaderProps {
 }
 
 export default function Header({ info, colors }: HeaderProps) {
-  const dark = colors?.dark || '#1e293b';
-  const muted = colors?.muted || '#64748b';
-  const accent = colors?.accent || '#2563eb';
-  const border = colors?.border || '#e2e8f0';
+  const dark = colors?.dark || C.text;
+  const muted = colors?.muted || C.muted;
+  const accent = colors?.accent || C.accent;
+  const border = colors?.border || C.border;
 
   return (
     <>

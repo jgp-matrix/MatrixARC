@@ -706,8 +706,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {quoteSendModal&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
-              <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:560,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
-                <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:12}}>✉ Send Quote</div>
+              <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:560,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
+                <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:12}}>✉ Send Quote</div>
                 <div style={{display:"flex",flexDirection:"column",gap:10}}>
                   <div>
                     <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>To</label>
@@ -721,19 +721,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Message</label>
                     <textarea value={quoteSendModal.message} onChange={e=>setQuoteSendModal(prev=>({...prev,message:e.target.value}))} rows={5} style={{...inp({fontSize:13,resize:"vertical",lineHeight:1.6})}}/>
                   </div>
-                  <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line"}}>
+                  <div style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line"}}>
                     {quoteSendModal.signature}
                   </div>
                 </div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
-                  <button onClick={()=>setQuoteSendModal(null)} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
+                  <button onClick={()=>setQuoteSendModal(null)} style={btn(C.card,C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
                   <button onClick={async()=>{
                     const m=quoteSendModal;
                     if(!m.to.trim()){alert("Enter a recipient email.");return;}
                     const graphToken=await acquireGraphToken();
                     if(!graphToken){alert("Could not get Microsoft 365 token.");return;}
                     const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
-                    const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
+                    const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:${C.text};line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
                     try{
                       const jsPDF=await ensureJsPDF();
                       const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
@@ -753,7 +753,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       setQuoteSendModal(null);
                       alert("Quote sent to "+m.to);
                     }catch(e){alert("Send failed: "+e.message);}
-                  }} style={btn("#0c2233","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8"})}>✉ Send</button>
+                  }} style={btn(C.accentDim,C.accent,{fontSize:13,fontWeight:700,border:`1px solid ${C.accent}`})}>✉ Send</button>
                 </div>
               </div>
             </div>
@@ -811,7 +811,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
           {quoteReview&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-              <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+              <div style={{background:C.card,border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexShrink:0}}>
                   <span style={{fontSize:22}}>📥</span>
                   <div>
@@ -825,7 +825,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 </div>
                 <div style={{flex:1,overflowY:"auto",marginBottom:12}}>
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-                    <thead style={{position:"sticky",top:0,zIndex:1}}><tr style={{background:"#111128"}}>
+                    <thead style={{position:"sticky",top:0,zIndex:1}}><tr style={{background:C.bg}}>
                       <th style={{padding:"6px 8px",textAlign:"center",color:C.muted,fontWeight:700,width:50}}>Action</th>
                       <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700}}>Supplier Item</th>
                       <th style={{padding:"6px 8px",textAlign:"right",color:C.muted,fontWeight:700,width:70}}>Price</th>
@@ -847,7 +847,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                           </td>
                           <td style={{padding:"6px 8px"}}>
                             <div style={{fontFamily:"monospace",fontWeight:600,color:C.text,fontSize:12}}>{si.partNumber||"—"}</div>
-                            {si.supplierPartNumber&&si.supplierPartNumber!==si.partNumber&&<div style={{fontSize:10,color:"#a78bfa"}}>Supplier PN: {si.supplierPartNumber}</div>}
+                            {si.supplierPartNumber&&si.supplierPartNumber!==si.partNumber&&<div style={{fontSize:10,color:C.purple}}>Supplier PN: {si.supplierPartNumber}</div>}
                             <div style={{fontSize:10,color:C.muted,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{si.description||""}</div>
                             {si.supplierNote&&<div style={{fontSize:10,color:C.yellow,fontStyle:"italic"}}>Note: {si.supplierNote}</div>}
                           </td>
@@ -859,7 +859,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                               const newId=e.target.value||null;
                               const newRow=newId?bomRows.find(r=>r.id==newId):null;
                               setQuoteReview(prev=>({...prev,matches:prev.matches.map((mm,j)=>j===i?{...mm,bomRowId:newId,bomPartNumber:newRow?.partNumber||null,bomDescription:newRow?.description||null,action:newId&&si.unitPrice!=null?"apply":"skip",isVariance:newId&&normPart(stripMfrPrefix(si.partNumber||""))!==normPart(newRow?.partNumber||"")&&normPart(si.partNumber||"")!==normPart(newRow?.partNumber||"")}:mm)}));
-                            }} style={{background:"#1e293b",border:`1px solid ${m.isVariance?C.yellow:m.bomRowId?C.green:C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 5px",width:"100%",maxWidth:200}}>
+                            }} style={{background:C.input,border:`1px solid ${m.isVariance?C.yellow:m.bomRowId?C.green:C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 5px",width:"100%",maxWidth:200}}>
                               <option value="">— No match —</option>
                               {bomRows.map(r=><option key={r.id} value={r.id}>{r.partNumber} — {(r.description||"").slice(0,30)}</option>)}
                             </select>
@@ -885,7 +885,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                               }
                               setQuoteReview(null);
                               alert(`Item "${pn}" added to BOM. Use the 🔍 icon on the BOM row to create it in BC with the proper setup fields.`);
-                            }} style={{background:"#0d1a10",border:"1px solid #4ade8044",color:"#4ade80",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                            }} style={{background:C.greenDim,border:`1px solid ${C.green}44`,color:C.green,borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
                               + Add to BOM
                             </button>
                             :<span style={{fontSize:10,fontWeight:700,color:C.muted}}>Skip</span>}
@@ -894,13 +894,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       })}
                     </tbody>
                   </table>
-                  {quoteReview.unmatchedBom.length>0&&<div style={{marginTop:10,padding:"8px 10px",background:"#1a0a0a",border:`1px solid ${C.red}44`,borderRadius:6}}>
+                  {quoteReview.unmatchedBom.length>0&&<div style={{marginTop:10,padding:"8px 10px",background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:6}}>
                     <div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>{quoteReview.unmatchedBom.length} BOM items not quoted by supplier:</div>
                     <div style={{fontSize:10,color:C.muted}}>{quoteReview.unmatchedBom.map(r=>r.partNumber||r.description).join(", ")}</div>
                   </div>}
                 </div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexShrink:0}}>
-                  <button onClick={()=>setQuoteReview(null)} style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13}}>Cancel</button>
+                  <button onClick={()=>setQuoteReview(null)} style={{background:C.card,border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13}}>Cancel</button>
                   <button disabled={varianceProcessing} onClick={async()=>{
                     setVarianceProcessing(true);
                     // Build updated submission with only the "apply" matches
@@ -920,7 +920,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     await doApplyPortalPrices(remapped);
                     setVarianceProcessing(false);
                     setQuoteReview(null);
-                  }} style={{background:varianceProcessing?"#334155":C.accent,color:"#fff",border:"none",padding:"7px 18px",borderRadius:6,cursor:varianceProcessing?"wait":"pointer",fontSize:13,fontWeight:700}}>
+                  }} style={{background:varianceProcessing?C.border:C.accent,color:"#fff",border:"none",padding:"7px 18px",borderRadius:6,cursor:varianceProcessing?"wait":"pointer",fontSize:13,fontWeight:700}}>
                     {varianceProcessing?"Applying…":`Apply ${quoteReview.matches.filter(m=>m.action==="apply").length} Items to BOM`}
                   </button>
                 </div>
@@ -929,56 +929,56 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           ,document.body)}
           {eqWarnOpen&&ReactDOM.createPortal(
             React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}},
-              React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}},
+              React.createElement("div",{style:{background:C.card,border:`1px solid ${C.yellow}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}},
                 React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:8}},
                   React.createElement("span",{style:{fontSize:22}},"❓"),
-                  React.createElement("div",{style:{fontSize:15,fontWeight:800,color:"#fbbf24"}},"Unanswered Engineering Questions")
+                  React.createElement("div",{style:{fontSize:15,fontWeight:800,color:C.yellow}},"Unanswered Engineering Questions")
                 ),
-                React.createElement("div",{style:{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}},
-                  React.createElement("strong",{style:{color:"#f1f5f9"}},eqWarnOpen.length+" question"+(eqWarnOpen.length!==1?"s":""))," still need"+(eqWarnOpen.length===1?"s":"")+" answers before this quote is finalized. Printing without answering may result in an inaccurate or incomplete quote."
+                React.createElement("div",{style:{fontSize:13,color:C.muted,marginBottom:14,lineHeight:1.6}},
+                  React.createElement("strong",{style:{color:C.text}},eqWarnOpen.length+" question"+(eqWarnOpen.length!==1?"s":""))," still need"+(eqWarnOpen.length===1?"s":"")+" answers before this quote is finalized. Printing without answering may result in an inaccurate or incomplete quote."
                 ),
-                React.createElement("div",{style:{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,maxHeight:200,overflowY:"auto",marginBottom:16}},
-                  eqWarnOpen.map((q,i)=>React.createElement("div",{key:q.id||i,style:{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 10px",borderBottom:i<eqWarnOpen.length-1?"1px solid #1a1a2e":"none",fontSize:12}},
-                    React.createElement("span",{style:{color:q.severity==="critical"?"#ef4444":q.severity==="warning"?"#f59e0b":"#818cf8",fontWeight:700,fontSize:9,textTransform:"uppercase",minWidth:40,paddingTop:2}},q.severity),
+                React.createElement("div",{style:{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,maxHeight:200,overflowY:"auto",marginBottom:16}},
+                  eqWarnOpen.map((q,i)=>React.createElement("div",{key:q.id||i,style:{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 10px",borderBottom:i<eqWarnOpen.length-1?`1px solid ${C.border}`:"none",fontSize:12}},
+                    React.createElement("span",{style:{color:q.severity==="critical"?C.red:q.severity==="warning"?C.yellow:C.purple,fontWeight:700,fontSize:9,textTransform:"uppercase",minWidth:40,paddingTop:2}},q.severity),
                     React.createElement("span",{style:{color:C.text,flex:1,lineHeight:1.4}},q.question)
                   ))
                 ),
                 React.createElement("div",{style:{display:"flex",gap:8,justifyContent:"flex-end"}},
-                  React.createElement("button",{onClick:()=>{setEqWarnOpen(null);setEqWarnPriceRows(null);},style:{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}},"Go Back"),
-                  React.createElement("button",{onClick:()=>{setEqWarnOpen(null);if(eqWarnPriceRows){setQuoteWarnRows(eqWarnPriceRows);setEqWarnPriceRows(null);}else{verifyBcLineCount();}},style:{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}},"Acknowledge & Proceed")
+                  React.createElement("button",{onClick:()=>{setEqWarnOpen(null);setEqWarnPriceRows(null);},style:{background:C.card,border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}},"Go Back"),
+                  React.createElement("button",{onClick:()=>{setEqWarnOpen(null);if(eqWarnPriceRows){setQuoteWarnRows(eqWarnPriceRows);setEqWarnPriceRows(null);}else{verifyBcLineCount();}},style:{background:C.yellowDim,border:`1px solid ${C.yellow}`,color:C.yellow,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}},"Acknowledge & Proceed")
                 )
               )
             ),document.body
           )}
           {quoteWarnRows&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-              <div style={{background:"#0d0d1a",border:"1px solid #b45309",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+              <div style={{background:C.card,border:`1px solid ${C.yellow}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
                   <span style={{fontSize:22}}>⚠️</span>
-                  <div style={{fontSize:15,fontWeight:800,color:"#fbbf24"}}>Item Errors to Correct</div>
+                  <div style={{fontSize:15,fontWeight:800,color:C.yellow}}>Item Errors to Correct</div>
                 </div>
-                <div style={{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}}>
+                <div style={{fontSize:13,color:C.muted,marginBottom:14,lineHeight:1.6}}>
                   {(()=>{const zero=quoteWarnRows.filter(r=>r._warnReason==="ZERO");const ai=quoteWarnRows.filter(r=>r._warnReason==="AI");const nopo=quoteWarnRows.filter(r=>r._warnReason==="NoPO");const old=quoteWarnRows.filter(r=>r._warnReason==="OLD");return(<>
-                    {zero.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{zero.length} item{zero.length!==1?"s":""}</strong> with <strong style={{color:"#ef4444"}}>$0 cost</strong> — no pricing assigned.</div>}
-                    {ai.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{ai.length} item{ai.length!==1?"s":""}</strong> with <strong style={{color:"#c084fc"}}>AI-estimated pricing</strong> — not confirmed from a real source.</div>}
-                    {nopo.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:"#f1f5f9"}}>{nopo.length} item{nopo.length!==1?"s":""}</strong> with <strong style={{color:"#fbbf24"}}>No POs</strong> — no purchase order pricing on record.</div>}
-                    {old.length>0&&<div>• <strong style={{color:"#f1f5f9"}}>{old.length} item{old.length!==1?"s":""}</strong> with pricing <strong style={{color:"#fb923c"}}>older than 60 days</strong>.</div>}
+                    {zero.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:C.text}}>{zero.length} item{zero.length!==1?"s":""}</strong> with <strong style={{color:C.red}}>$0 cost</strong> — no pricing assigned.</div>}
+                    {ai.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:C.text}}>{ai.length} item{ai.length!==1?"s":""}</strong> with <strong style={{color:C.purple}}>AI-estimated pricing</strong> — not confirmed from a real source.</div>}
+                    {nopo.length>0&&<div style={{marginBottom:4}}>• <strong style={{color:C.text}}>{nopo.length} item{nopo.length!==1?"s":""}</strong> with <strong style={{color:C.yellow}}>No POs</strong> — no purchase order pricing on record.</div>}
+                    {old.length>0&&<div>• <strong style={{color:C.text}}>{old.length} item{old.length!==1?"s":""}</strong> with pricing <strong style={{color:C.yellow}}>older than 60 days</strong>.</div>}
                   </>);})()}
                 </div>
-                <div style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,maxHeight:180,overflowY:"auto",marginBottom:16}}>
+                <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,maxHeight:180,overflowY:"auto",marginBottom:16}}>
                   {quoteWarnRows.map((r,i)=>(
-                    <div key={r.id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:i<quoteWarnRows.length-1?"1px solid #1a1a2e":"none",fontSize:12}}>
-                      <span style={{color:r._warnReason==="ZERO"?"#ef4444":r._warnReason==="AI"?"#c084fc":r._warnReason==="NoPO"?"#fbbf24":"#fb923c",fontWeight:700,fontSize:10,minWidth:34}}>{r._warnReason==="ZERO"?"$0":r._warnReason}</span>
-                      <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:120}}>{r.partNumber||"—"}</span>
-                      <span style={{color:"#94a3b8",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||""}</span>
-                      <span style={{color:"#94a3b8",fontSize:10,whiteSpace:"nowrap"}}>{r.priceSource==="ai"?"ARC AI est.":r.bcPoDate||r.priceDate?new Date(r.bcPoDate||r.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"no date"}</span>
+                    <div key={r.id||i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:i<quoteWarnRows.length-1?`1px solid ${C.border}`:"none",fontSize:12}}>
+                      <span style={{color:r._warnReason==="ZERO"?C.red:r._warnReason==="AI"?C.purple:r._warnReason==="NoPO"?C.yellow:C.yellow,fontWeight:700,fontSize:10,minWidth:34}}>{r._warnReason==="ZERO"?"$0":r._warnReason}</span>
+                      <span style={{color:C.sub,fontWeight:600,fontFamily:"monospace",minWidth:120}}>{r.partNumber||"—"}</span>
+                      <span style={{color:C.muted,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||""}</span>
+                      <span style={{color:C.muted,fontSize:10,whiteSpace:"nowrap"}}>{r.priceSource==="ai"?"ARC AI est.":r.bcPoDate||r.priceDate?new Date(r.bcPoDate||r.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"no date"}</span>
                     </div>
                   ))}
                 </div>
-                <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Fix $0 items in the BC Item Browser, run <strong style={{color:"#f1f5f9"}}>Refresh Pricing</strong> for stale prices, or acknowledge and proceed.</div>
+                <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Fix $0 items in the BC Item Browser, run <strong style={{color:C.text}}>Refresh Pricing</strong> for stale prices, or acknowledge and proceed.</div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-                  <button onClick={()=>setQuoteWarnRows(null)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
-                  <button onClick={()=>{setQuoteWarnRows(null);verifyBcLineCount();}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Acknowledge &amp; Proceed</button>
+                  <button onClick={()=>setQuoteWarnRows(null)} style={{background:C.card,border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
+                  <button onClick={()=>{setQuoteWarnRows(null);verifyBcLineCount();}} style={{background:C.yellowDim,border:`1px solid ${C.yellow}`,color:C.yellow,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Acknowledge &amp; Proceed</button>
                 </div>
               </div>
             </div>
@@ -996,34 +996,34 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }}/>
       {bcCountMismatch&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:"#0d0d1a",border:"1px solid #ef4444",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{background:C.card,border:`1px solid ${C.red}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
               <span style={{fontSize:22}}>⚠️</span>
-              <div style={{fontSize:15,fontWeight:800,color:"#ef4444"}}>BC Planning Lines Mismatch</div>
+              <div style={{fontSize:15,fontWeight:800,color:C.red}}>BC Planning Lines Mismatch</div>
             </div>
-            <div style={{fontSize:13,color:"#94a3b8",marginBottom:10,lineHeight:1.6}}>
-              ARC has <strong style={{color:"#f1f5f9"}}>{bcCountMismatch.arcCount} BOM items</strong> but BC only has <strong style={{color:"#f1f5f9"}}>{bcCountMismatch.bcCount} planning lines</strong>. The following items are missing from BC:
+            <div style={{fontSize:13,color:C.muted,marginBottom:10,lineHeight:1.6}}>
+              ARC has <strong style={{color:C.text}}>{bcCountMismatch.arcCount} BOM items</strong> but BC only has <strong style={{color:C.text}}>{bcCountMismatch.bcCount} planning lines</strong>. The following items are missing from BC:
             </div>
-            <div style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,maxHeight:180,overflowY:"auto",marginBottom:16}}>
+            <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,maxHeight:180,overflowY:"auto",marginBottom:16}}>
               {bcCountMismatch.missing.map((m,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:i<bcCountMismatch.missing.length-1?"1px solid #1a1a2e":"none",fontSize:12}}>
-                  <span style={{color:"#ef4444",fontWeight:700,fontSize:10,minWidth:34}}>MISSING</span>
-                  <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:120}}>{m.pn||"—"}</span>
-                  <span style={{color:"#94a3b8",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.desc||""}</span>
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:i<bcCountMismatch.missing.length-1?`1px solid ${C.border}`:"none",fontSize:12}}>
+                  <span style={{color:C.red,fontWeight:700,fontSize:10,minWidth:34}}>MISSING</span>
+                  <span style={{color:C.sub,fontWeight:600,fontFamily:"monospace",minWidth:120}}>{m.pn||"—"}</span>
+                  <span style={{color:C.muted,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.desc||""}</span>
                 </div>
               ))}
             </div>
-            <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Click <strong style={{color:"#f1f5f9"}}>Sync BC</strong> on the BOM toolbar to push missing items, or proceed anyway.</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Click <strong style={{color:C.text}}>Sync BC</strong> on the BOM toolbar to push missing items, or proceed anyway.</div>
             <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-              <button onClick={()=>setBcCountMismatch(null)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Go Back</button>
-              <button onClick={()=>{setBcCountMismatch(null);setShowBcUploadPrompt(true);}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Proceed Anyway</button>
+              <button onClick={()=>setBcCountMismatch(null)} style={{background:C.card,border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Go Back</button>
+              <button onClick={()=>{setBcCountMismatch(null);setShowBcUploadPrompt(true);}} style={{background:C.yellowDim,border:`1px solid ${C.yellow}`,color:C.yellow,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Proceed Anyway</button>
             </div>
           </div>
         </div>
       ,document.body)}
       {showBcUploadPrompt&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{background:C.card,border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
             {(()=>{
               const firstPanel=(project.panels||[])[0];
               const rev=project.quoteRev||0;
@@ -1034,20 +1034,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               return(<>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
                   <span style={{fontSize:22}}>{isReUpload?"⚠️":"✅"}</span>
-                  <div style={{fontSize:15,fontWeight:800,color:isReUpload?"#fbbf24":"#22c55e"}}>{isReUpload?"BOM Changed Since Last Upload":"All BOM Items Verified"}</div>
+                  <div style={{fontSize:15,fontWeight:800,color:isReUpload?C.yellow:C.green}}>{isReUpload?"BOM Changed Since Last Upload":"All BOM Items Verified"}</div>
                 </div>
-                <div style={{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}}>
+                <div style={{fontSize:13,color:C.muted,marginBottom:14,lineHeight:1.6}}>
                   {isReUpload
                     ?"The BOM has changed since the last drawing package was uploaded to BC. Would you like to upload a new version?"
                     :"Would you like to push the drawing package to Business Central as the quoted version?"}
                 </div>
-                <div style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,padding:"10px 14px",marginBottom:16}}>
-                  <div style={{fontSize:11,color:"#64748b",fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>File</div>
+                <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"10px 14px",marginBottom:16}}>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>File</div>
                   <div style={{fontSize:13,color:C.accent,fontWeight:700,fontFamily:"monospace"}}>{fileName}</div>
                 </div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
                   <button onClick={()=>{setShowBcUploadPrompt(false);setAutoPrint(true);setView("quote");}}
-                    style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>
+                    style={{background:C.card,border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>
                     Skip & Print
                   </button>
                   <button disabled={bcUploading} onClick={async()=>{
@@ -1060,7 +1060,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     setShowBcUploadPrompt(false);
                     setAutoPrint(true);setView("quote");
                   }}
-                    style={{background:bcUploading?"#334155":"#166534",border:`1px solid ${bcUploading?"#475569":"#22c55e"}`,color:bcUploading?"#94a3b8":"#4ade80",padding:"7px 18px",borderRadius:6,cursor:bcUploading?"wait":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
+                    style={{background:bcUploading?C.border:C.greenDim,border:`1px solid ${bcUploading?C.border:C.green}`,color:bcUploading?C.muted:C.green,padding:"7px 18px",borderRadius:6,cursor:bcUploading?"wait":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
                     {bcUploading?"Uploading…":isReUpload?"Upload New Version & Print":"Upload & Print"}
                   </button>
                 </div>
@@ -1071,7 +1071,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       ,document.body)}
       {showProductionUpload&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:"#0d0d1a",border:"1px solid #22c55e",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+          <div style={{background:C.card,border:`1px solid ${C.green}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
             {(()=>{
               const firstPanel=(project.panels||[])[0];
               const dwg=firstPanel?.drawingNo||"NoDWG";
@@ -1080,22 +1080,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               return(<>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
                   <span style={{fontSize:22}}>✅</span>
-                  <div style={{fontSize:15,fontWeight:800,color:"#22c55e"}}>PO Recorded — Upload Production Drawings?</div>
+                  <div style={{fontSize:15,fontWeight:800,color:C.green}}>PO Recorded — Upload Production Drawings?</div>
                 </div>
                 <div style={{display:"flex",gap:16,marginBottom:14}}>
-                  <div><span style={{fontSize:11,color:"#64748b"}}>PO #</span><div style={{fontSize:14,fontWeight:700,color:"#f1f5f9"}}>{showProductionUpload.poNumber}</div></div>
-                  <div><span style={{fontSize:11,color:"#64748b"}}>Due Date</span><div style={{fontSize:14,fontWeight:700,color:"#f1f5f9"}}>{showProductionUpload.dueDate||"—"}</div></div>
+                  <div><span style={{fontSize:11,color:C.muted}}>PO #</span><div style={{fontSize:14,fontWeight:700,color:C.text}}>{showProductionUpload.poNumber}</div></div>
+                  <div><span style={{fontSize:11,color:C.muted}}>Due Date</span><div style={{fontSize:14,fontWeight:700,color:C.text}}>{showProductionUpload.dueDate||"—"}</div></div>
                 </div>
-                <div style={{fontSize:13,color:"#94a3b8",marginBottom:14,lineHeight:1.6}}>
+                <div style={{fontSize:13,color:C.muted,marginBottom:14,lineHeight:1.6}}>
                   Upload stamped production drawings to Business Central with "APPROVED TO PRODUCE" designation?
                 </div>
-                <div style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,padding:"10px 14px",marginBottom:16}}>
-                  <div style={{fontSize:11,color:"#64748b",fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>File</div>
-                  <div style={{fontSize:13,color:"#22c55e",fontWeight:700,fontFamily:"monospace"}}>{fileName}</div>
+                <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"10px 14px",marginBottom:16}}>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>File</div>
+                  <div style={{fontSize:13,color:C.green,fontWeight:700,fontFamily:"monospace"}}>{fileName}</div>
                 </div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
                   <button onClick={()=>setShowProductionUpload(null)}
-                    style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>
+                    style={{background:C.card,border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>
                     Skip
                   </button>
                   <button disabled={bcUploading} onClick={async()=>{
@@ -1111,7 +1111,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     setBcUploading(false);
                     setShowProductionUpload(null);
                   }}
-                    style={{background:bcUploading?"#334155":"#166534",border:`1px solid ${bcUploading?"#475569":"#22c55e"}`,color:bcUploading?"#94a3b8":"#4ade80",padding:"7px 18px",borderRadius:6,cursor:bcUploading?"wait":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
+                    style={{background:bcUploading?C.border:C.greenDim,border:`1px solid ${bcUploading?C.border:C.green}`,color:bcUploading?C.muted:C.green,padding:"7px 18px",borderRadius:6,cursor:bcUploading?"wait":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
                     {bcUploading?"Uploading…":"Upload Production Drawings"}
                   </button>
                 </div>

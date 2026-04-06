@@ -209,7 +209,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,width:"100%",maxWidth:isQuoteMode?1100:780,maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 12px 60px rgba(0,0,0,0.8)"}}>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,width:"100%",maxWidth:isQuoteMode?1100:780,maxHeight:"88vh",display:"flex",flexDirection:"column",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
         {/* Header */}
         <div style={{padding:"18px 24px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,flexShrink:0}}>
           <div>
@@ -223,11 +223,11 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
         <div style={{flex:1,overflowY:"auto",padding:"16px 24px"}}>
           {similarPanels.length>0&&(
             <div style={{marginBottom:14}}>
-              <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",textTransform:"uppercase",letterSpacing:0.7,marginBottom:8}}>Similar Panels in Database</div>
+              <div style={{fontSize:11,fontWeight:700,color:C.purple,textTransform:"uppercase",letterSpacing:0.7,marginBottom:8}}>Similar Panels in Database</div>
               {similarPanels.map((p,i)=>(
-                <div key={p.panelId||i} style={{background:"#120a2a",border:"1px solid #a78bfa44",borderRadius:7,padding:"9px 12px",marginBottom:6}}>
+                <div key={p.panelId||i} style={{background:C.bg,border:`1px solid ${C.purple}44`,borderRadius:7,padding:"9px 12px",marginBottom:6}}>
                   <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
-                    <span style={{fontSize:11,fontWeight:700,color:"#a78bfa"}}>{p.panelType||'Control Panel'}</span>
+                    <span style={{fontSize:11,fontWeight:700,color:C.purple}}>{p.panelType||'Control Panel'}</span>
                     {p.controlledEquipment&&<span style={{fontSize:10,color:C.muted}}>— {p.controlledEquipment}</span>}
                   </div>
                   <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
@@ -257,7 +257,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
               <div style={{display:"flex",flexDirection:"column",gap:12}}>
                 {/* Summary bar */}
                 <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-                  <div style={{background:"#0d1a0d",border:`1px solid ${C.green}44`,borderRadius:8,padding:"8px 16px"}}>
+                  <div style={{background:C.greenDim,border:`1px solid ${C.green}44`,borderRadius:8,padding:"8px 16px"}}>
                     <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Complete Panels Buildable</div>
                     <div style={{fontSize:28,fontWeight:800,color:C.green,lineHeight:1.1}}>{totalPanels!=null?totalPanels:'—'}</div>
                   </div>
@@ -266,7 +266,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
                     <div style={{fontSize:20,fontWeight:700,color:C.accent}}>{matchedCount} / {results.length}</div>
                   </div>
                   {unmatchedCount>0&&(
-                    <div style={{background:"#1a0d00",border:`1px solid ${C.yellow}44`,borderRadius:8,padding:"8px 16px"}}>
+                    <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}44`,borderRadius:8,padding:"8px 16px"}}>
                       <div style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Unmatched (no quote data)</div>
                       <div style={{fontSize:20,fontWeight:700,color:C.yellow}}>{unmatchedCount}</div>
                     </div>
@@ -281,10 +281,10 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
                   <span style={{fontSize:12,color:C.muted,flexShrink:0}}>Gross Margin %</span>
                   <input type="number" min={0} max={99} value={marginPct}
                     onChange={e=>setMarginPct(Math.max(0,Math.min(99,Number(e.target.value)||0)))}
-                    style={{width:60,background:"#0a0a12",border:`1px solid ${C.accent}55`,borderRadius:6,padding:"3px 8px",color:C.accent,fontSize:13,fontWeight:700,outline:"none",textAlign:"center"}}/>
+                    style={{width:60,background:C.input,border:`1px solid ${C.accent}55`,borderRadius:6,padding:"3px 8px",color:C.accent,fontSize:13,fontWeight:700,outline:"none",textAlign:"center"}}/>
                   <span style={{fontSize:11,color:C.muted}}>Sale Price = Unit Cost ÷ (1 − margin)</span>
                   <button onClick={downloadExcel}
-                    style={{marginLeft:"auto",background:"#0d2a0d",border:`1px solid ${C.green}`,color:C.green,borderRadius:8,padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                    style={{marginLeft:"auto",background:C.greenDim,border:`1px solid ${C.green}`,color:C.green,borderRadius:8,padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
                     ⬇ Download Excel
                   </button>
                 </div>
@@ -303,7 +303,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
                         const sp=r.unitPrice!=null?r.unitPrice/(1-margin):null;
                         const panelOk=r.panelsFromItem!=null&&r.panelsFromItem>=totalPanels;
                         return(
-                          <tr key={i} style={{borderBottom:`1px solid ${C.border}33`,background:r.matched?"transparent":"#1a0d0011"}}>
+                          <tr key={i} style={{borderBottom:`1px solid ${C.border}33`,background:r.matched?"transparent":C.yellowDim+"44"}}>
                             <td style={{padding:"7px 10px",fontFamily:"monospace",color:C.accent,fontWeight:700,whiteSpace:"nowrap"}}>{r.partNumber}</td>
                             <td style={{padding:"7px 10px",color:C.sub,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description}</td>
                             <td style={{padding:"7px 10px",textAlign:"center",color:C.text}}>{r.unitPrice!=null?'$'+r.unitPrice.toFixed(2):'—'}</td>
@@ -327,7 +327,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
                   </table>
                 </div>
                 {unmatchedCount>0&&(
-                  <div style={{fontSize:11,color:C.yellow,background:"#1a0d00",border:`1px solid ${C.yellow}33`,borderRadius:6,padding:"8px 12px"}}>
+                  <div style={{fontSize:11,color:C.yellow,background:C.yellowDim,border:`1px solid ${C.yellow}33`,borderRadius:6,padding:"8px 12px"}}>
                     ⚠ {unmatchedCount} BOM item{unmatchedCount!==1?'s':''} had no matching line in the supplier quote — shown as "—" for quoted qty and panels buildable.
                   </div>
                 )}
@@ -355,10 +355,10 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                 {result.map(r=>{
                   const checked=selected.has(r.id);
-                  const col=catColors[r.cpdCategory]||'#6b7280';
+                  const col=catColors[r.cpdCategory]||C.muted;
                   return(
                     <div key={r.id} onClick={()=>setSelected(prev=>{const s=new Set(prev);checked?s.delete(r.id):s.add(r.id);return s;})}
-                      style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:6,background:checked?"#0d1a2a":"#0a0a12",border:`1px solid ${checked?C.accent+'44':C.border}`,cursor:"pointer"}}>
+                      style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderRadius:6,background:checked?C.accentDim:C.bg,border:`1px solid ${checked?C.accent+'44':C.border}`,cursor:"pointer"}}>
                       <div style={{width:16,height:16,borderRadius:3,border:`2px solid ${checked?C.accent:C.muted}`,background:checked?C.accent:"transparent",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                         {checked&&<span style={{color:"#000",fontSize:10,fontWeight:800,lineHeight:1}}>✓</span>}
                       </div>
@@ -371,7 +371,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
                   );
                 })}
               </div>
-              <div style={{fontSize:11,color:C.muted,marginTop:12,padding:"8px 10px",background:"#0a0a12",borderRadius:6,border:`1px solid ${C.border}`,lineHeight:1.5}}>
+              <div style={{fontSize:11,color:C.muted,marginTop:12,padding:"8px 10px",background:C.bg,borderRadius:6,border:`1px solid ${C.border}`,lineHeight:1.5}}>
                 ⚠ This is an AI-generated preliminary BOM. Part numbers and pricing should be verified before quoting. All items are marked as AI-generated in the BOM.
               </div>
             </>

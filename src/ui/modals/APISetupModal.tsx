@@ -156,20 +156,20 @@ function APISetupModal({uid,onClose}){
         <div style={{fontSize:12,color:C.muted,marginBottom:20}}>API keys, connections, and price scrapers — Admin only</div>
 
         {/* Anthropic API Key */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        <div style={{marginBottom:20,background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Anthropic API Key</div>
           {loading?<div style={{color:C.muted,fontSize:13,padding:"9px 0"}}>Loading…</div>
             :<input value={key} onChange={e=>setKey(e.target.value)} type="text" placeholder="sk-ant-…" style={inp()}/>}
           <div style={{fontSize:11,color:C.muted,marginTop:6}}>Stored in Firebase. Shared across all team members.</div>
           <div style={{display:"flex",gap:10,marginTop:8}}>
-            <button onClick={testApiKey} disabled={apiTesting||loading} style={btn("#1e3a5f","#93c5fd",{flex:1,opacity:apiTesting||loading?0.5:1,fontSize:12})}>{apiTesting?"Testing…":"Test Key"}</button>
+            <button onClick={testApiKey} disabled={apiTesting||loading} style={btn(C.accentDim,C.accent,{flex:1,opacity:apiTesting||loading?0.5:1,fontSize:12})}>{apiTesting?"Testing…":"Test Key"}</button>
             <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:1,opacity:loading||!key.trim()?0.5:1,fontSize:12})}>{saved?"✓ Saved":"Save Key"}</button>
           </div>
           {apiTestMsg&&<div style={{fontSize:12,color:apiTestMsg.ok?C.green:C.red,marginTop:6,padding:"6px 10px",background:apiTestMsg.ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",border:`1px solid ${apiTestMsg.ok?"rgba(34,197,94,0.25)":"rgba(239,68,68,0.25)"}`,borderRadius:6}}>{apiTestMsg.text}</div>}
         </div>
 
         {/* BC Environment */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        <div style={{marginBottom:20,background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Business Central Environment</div>
           <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"6px 10px",background:C.surface,borderRadius:6,flexWrap:"wrap"}}>
             <span style={{width:8,height:8,borderRadius:"50%",background:bcConnStatus==="connected"?C.green:bcConnStatus==="failed"?C.red:bcConnStatus==="testing"?C.yellow:C.muted,flexShrink:0}}/>
@@ -190,7 +190,7 @@ function APISetupModal({uid,onClose}){
           {bcErr&&<div style={{color:C.red,fontSize:12,marginBottom:8}}>{bcErr}</div>}
           {bcSaved&&<div style={{color:C.green,fontSize:12,marginBottom:8}}>✓ BC environment updated.</div>}
           {!bcConfirm?(
-            <button onClick={()=>{setBcErr("");setBcSaved(false);if(!bcEnvName.trim()||!bcCompName.trim()||!bcClientIdVal.trim()){setBcErr("All fields required.");return;}if(bcEnvName===_bcConfig.env&&bcCompName===_bcConfig.companyName&&bcClientIdVal===_bcConfig.clientId){setBcErr("No changes.");return;}setBcConfirm(true);}} disabled={bcSaving} style={btn("#334155","#fff",{fontSize:12})}>Save Environment</button>
+            <button onClick={()=>{setBcErr("");setBcSaved(false);if(!bcEnvName.trim()||!bcCompName.trim()||!bcClientIdVal.trim()){setBcErr("All fields required.");return;}if(bcEnvName===_bcConfig.env&&bcCompName===_bcConfig.companyName&&bcClientIdVal===_bcConfig.clientId){setBcErr("No changes.");return;}setBcConfirm(true);}} disabled={bcSaving} style={btn(C.border,C.text,{fontSize:12})}>Save Environment</button>
           ):(
             <div style={{background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:8,padding:12}}>
               <div style={{fontSize:13,color:C.red,fontWeight:600,marginBottom:6}}>⚠ Confirm Environment Change</div>
@@ -206,15 +206,15 @@ function APISetupModal({uid,onClose}){
         {/* ═══ API INTEGRATIONS SECTION ═══ */}
         <div style={{marginBottom:10,marginTop:20,borderTop:`1px solid ${C.border}`,paddingTop:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><div style={{fontSize:14,fontWeight:800,color:"#38bdf8",letterSpacing:0.3}}>🔗 API Integrations</div>
+            <div><div style={{fontSize:14,fontWeight:800,color:C.accent,letterSpacing:0.3}}>🔗 API Integrations</div>
             <div style={{fontSize:11,color:C.muted,marginTop:2}}>Official vendor APIs with structured endpoints and API keys</div></div>
             {(!editScraper||editScraper.category!=="api")&&<button onClick={()=>setEditScraper({category:"api",name:"",type:"api_key",baseUrl:"",apiKey:"",headers:"",notes:"",enabled:true})}
-              style={{background:"rgba(56,189,248,0.1)",color:"#38bdf8",border:"1px solid #38bdf866",borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add API Integration</button>}
+              style={{background:C.accentDim,color:C.accent,border:`1px solid ${C.accent}66`,borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add API Integration</button>}
           </div>
         </div>
 
         {/* Built-in: Mouser */}
-        <div style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        <div style={{marginBottom:12,background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
             <span style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}/>
             <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Mouser Electronics</div>
@@ -224,7 +224,7 @@ function APISetupModal({uid,onClose}){
         </div>
 
         {/* Built-in: DigiKey */}
-        <div style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        <div style={{marginBottom:12,background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
             <span style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}/>
             <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>DigiKey</div>
@@ -236,12 +236,12 @@ function APISetupModal({uid,onClose}){
 
         {/* Custom API entries */}
         {customScrapers.filter(s=>s.category==="api").map(s=>{const lr=lookupResult[s.id];return(
-          <div key={s.id} style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div key={s.id} style={{marginBottom:12,background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
               <span style={{width:8,height:8,borderRadius:"50%",background:s.enabled?C.green:C.muted,flexShrink:0}}/>
               <div style={{fontSize:12,color:C.sub,fontWeight:600,flex:1}}>{s.name}</div>
               <button onClick={()=>setLookupExpanded(p=>({...p,[s.id]:!p[s.id]}))}
-                style={{background:"none",border:`1px solid #38bdf844`,borderRadius:4,padding:"2px 8px",fontSize:10,color:"#38bdf8",cursor:"pointer"}}>🔍 Lookup</button>
+                style={{background:"none",border:`1px solid ${C.accent}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.accent,cursor:"pointer"}}>🔍 Lookup</button>
               <button onClick={()=>testConnection(s)} disabled={testingId===s.id}
                 style={{background:"none",border:`1px solid ${C.accent}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.accent,cursor:"pointer",opacity:testingId===s.id?0.5:1}}>{testingId===s.id?"Testing…":"Test"}</button>
               <button onClick={()=>setEditScraper({...s})} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>Edit</button>
@@ -251,13 +251,13 @@ function APISetupModal({uid,onClose}){
             {s.notes&&<div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
             {testResult[s.id]&&<div style={{fontSize:11,marginTop:6,color:testResult[s.id].ok?C.green:C.red,padding:"4px 8px",background:testResult[s.id].ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",borderRadius:4}}>{testResult[s.id].ok?"✓ ":"✗ "}{testResult[s.id].msg}</div>}
             {lookupExpanded[s.id]&&(
-              <div style={{marginTop:8,padding:"8px 10px",background:"#0d1526",border:`1px solid #38bdf833`,borderRadius:6}}>
+              <div style={{marginTop:8,padding:"8px 10px",background:C.accentDim,border:`1px solid ${C.accent}33`,borderRadius:6}}>
                 <div style={{display:"flex",gap:6,marginBottom:6}}>
                   <input value={lookupPart[s.id]||""} onChange={e=>setLookupPart(p=>({...p,[s.id]:e.target.value}))}
                     placeholder="Enter part number…" onKeyDown={e=>{if(e.key==="Enter")lookupPartNumber(s);}}
-                    style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",color:C.text,fontSize:12,flex:1}}/>
+                    style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",color:C.text,fontSize:12,flex:1}}/>
                   <button onClick={()=>lookupPartNumber(s)} disabled={lr?.loading||!(lookupPart[s.id]||"").trim()}
-                    style={btn("#38bdf8","#0d0d1a",{fontSize:11,fontWeight:700,padding:"4px 12px",opacity:lr?.loading||!(lookupPart[s.id]||"").trim()?0.5:1})}>
+                    style={btn(C.accent,"#fff",{fontSize:11,fontWeight:700,padding:"4px 12px",opacity:lr?.loading||!(lookupPart[s.id]||"").trim()?0.5:1})}>
                     {lr?.loading?"Searching…":"Search"}
                   </button>
                 </div>
@@ -270,14 +270,14 @@ function APISetupModal({uid,onClose}){
                   const avail=r.availability||r.Availability||r.stock||null;
                   const pn=d.partNumber||null;
                   if(price||desc||avail){
-                    return(<div style={{background:"#0a1a0a",border:"1px solid #4ade8044",borderRadius:6,padding:"10px 12px",marginTop:4}}>
+                    return(<div style={{background:C.greenDim,border:`1px solid ${C.green}44`,borderRadius:6,padding:"10px 12px",marginTop:4}}>
                       {pn&&<div style={{fontSize:11,color:C.muted,marginBottom:4}}>Part: <span style={{fontWeight:700,color:C.text}}>{pn}</span></div>}
-                      {price&&<div style={{fontSize:20,fontWeight:800,color:"#4ade80"}}>{price}</div>}
+                      {price&&<div style={{fontSize:20,fontWeight:800,color:C.green}}>{price}</div>}
                       {desc&&<div style={{fontSize:12,color:C.sub,marginTop:4}}>{desc}</div>}
                       {avail&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>Availability: {avail}</div>}
                     </div>);
                   }
-                  return <pre style={{fontSize:10,color:C.sub,background:"#080810",border:`1px solid ${C.border}`,borderRadius:4,padding:8,maxHeight:200,overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",margin:0}}>{typeof d==="string"?d:JSON.stringify(d,null,2)}</pre>;
+                  return <pre style={{fontSize:10,color:C.sub,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:8,maxHeight:200,overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",margin:0}}>{typeof d==="string"?d:JSON.stringify(d,null,2)}</pre>;
                 })()}
               </div>
             )}
@@ -286,8 +286,8 @@ function APISetupModal({uid,onClose}){
 
         {/* Add API form */}
         {editScraper&&editScraper.category==="api"&&(
-          <div style={{marginBottom:12,border:"1px solid #38bdf8",borderRadius:8,padding:14,background:"rgba(56,189,248,0.05)"}}>
-            <div style={{fontSize:13,fontWeight:700,color:"#38bdf8",marginBottom:12}}>{editScraper.id?"Edit API Integration":"New API Integration"}</div>
+          <div style={{marginBottom:12,border:`1px solid ${C.accent}`,borderRadius:8,padding:14,background:C.accentDim}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.accent,marginBottom:12}}>{editScraper.id?"Edit API Integration":"New API Integration"}</div>
             <div style={{display:"grid",gap:8,marginBottom:12}}>
               <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Provider Name *</label>
               <input value={editScraper.name} onChange={e=>setEditScraper(p=>({...p,name:e.target.value}))} placeholder="e.g. Newark, Arrow, Octopart" style={inp()}/></div>
@@ -303,7 +303,7 @@ function APISetupModal({uid,onClose}){
             <div style={{display:"flex",gap:8}}>
               <button onClick={()=>setEditScraper(null)} style={btn(C.border,C.muted,{fontSize:12})}>Cancel</button>
               <button onClick={()=>saveScraperConfig(editScraper)} disabled={scraperSaving||!editScraper.name?.trim()||!editScraper.baseUrl?.trim()}
-                style={btn("#38bdf8","#0d0d1a",{fontSize:12,fontWeight:700,opacity:scraperSaving||!editScraper.name?.trim()||!editScraper.baseUrl?.trim()?0.5:1})}>
+                style={btn(C.accent,"#fff",{fontSize:12,fontWeight:700,opacity:scraperSaving||!editScraper.name?.trim()||!editScraper.baseUrl?.trim()?0.5:1})}>
                 {scraperSaving?"Saving…":editScraper.id?"Save Changes":"Add API Integration"}
               </button>
             </div>
@@ -313,15 +313,15 @@ function APISetupModal({uid,onClose}){
         {/* ═══ PRICE SCRAPERS SECTION ═══ */}
         <div style={{marginBottom:10,marginTop:24,borderTop:`1px solid ${C.border}`,paddingTop:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><div style={{fontSize:14,fontWeight:800,color:"#f59e0b",letterSpacing:0.3}}>🕷 Price Scrapers</div>
+            <div><div style={{fontSize:14,fontWeight:800,color:C.yellow,letterSpacing:0.3}}>🕷 Price Scrapers</div>
             <div style={{fontSize:11,color:C.muted,marginTop:2}}>Supplier portal logins — browser automation to extract pricing</div></div>
             {(!editScraper||editScraper.category!=="scraper")&&<button onClick={()=>setEditScraper({category:"scraper",name:"",type:"login",portalUrl:"",loginUrl:"",username:"",password:"",notes:"",enabled:true})}
-              style={{background:"rgba(245,158,11,0.1)",color:"#f59e0b",border:"1px solid #f59e0b66",borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add Scraper</button>}
+              style={{background:C.yellowDim,color:C.yellow,border:`1px solid ${C.yellow}66`,borderRadius:6,padding:"5px 14px",fontSize:11,fontWeight:700,cursor:"pointer"}}>+ Add Scraper</button>}
           </div>
         </div>
 
         {/* Built-in: Codale */}
-        <div style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        <div style={{marginBottom:12,background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
             <span style={{width:8,height:8,borderRadius:"50%",background:C.green,flexShrink:0}}/>
             <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Codale Electric Supply</div>
@@ -332,14 +332,14 @@ function APISetupModal({uid,onClose}){
 
         {/* Custom scraper entries */}
         {customScrapers.filter(s=>s.category==="scraper").map(s=>{const lr=lookupResult[s.id];return(
-          <div key={s.id} style={{marginBottom:12,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div key={s.id} style={{marginBottom:12,background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
               <span style={{width:8,height:8,borderRadius:"50%",background:s.enabled?C.green:C.muted,flexShrink:0}}/>
               <div style={{fontSize:12,color:C.sub,fontWeight:600,flex:1}}>{s.name}</div>
               <button onClick={()=>setLookupExpanded(p=>({...p,[s.id]:!p[s.id]}))}
-                style={{background:"none",border:`1px solid #f59e0b44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:"#f59e0b",cursor:"pointer"}}>🔍 Lookup</button>
+                style={{background:"none",border:`1px solid ${C.yellow}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.yellow,cursor:"pointer"}}>🔍 Lookup</button>
               <button onClick={()=>testConnection(s)} disabled={testingId===s.id}
-                style={{background:"none",border:`1px solid #f59e0b44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:"#f59e0b",cursor:"pointer",opacity:testingId===s.id?0.5:1}}>{testingId===s.id?"Testing…":"Test"}</button>
+                style={{background:"none",border:`1px solid ${C.yellow}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.yellow,cursor:"pointer",opacity:testingId===s.id?0.5:1}}>{testingId===s.id?"Testing…":"Test"}</button>
               <button onClick={()=>setEditScraper({...s})} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>Edit</button>
               <button onClick={()=>deleteScraperConfig(s.id)} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>✕</button>
             </div>
@@ -347,13 +347,13 @@ function APISetupModal({uid,onClose}){
             {s.notes&&<div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
             {testResult[s.id]&&<div style={{fontSize:11,marginTop:6,color:testResult[s.id].ok?C.green:C.red,padding:"4px 8px",background:testResult[s.id].ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",borderRadius:4}}>{testResult[s.id].ok?"✓ ":"✗ "}{testResult[s.id].msg}</div>}
             {lookupExpanded[s.id]&&(
-              <div style={{marginTop:8,padding:"8px 10px",background:"#1a1408",border:`1px solid #f59e0b33`,borderRadius:6}}>
+              <div style={{marginTop:8,padding:"8px 10px",background:C.yellowDim,border:`1px solid ${C.yellow}33`,borderRadius:6}}>
                 <div style={{display:"flex",gap:6,marginBottom:6}}>
                   <input value={lookupPart[s.id]||""} onChange={e=>setLookupPart(p=>({...p,[s.id]:e.target.value}))}
                     placeholder="Enter part number…" onKeyDown={e=>{if(e.key==="Enter")lookupPartNumber(s);}}
-                    style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",color:C.text,fontSize:12,flex:1}}/>
+                    style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",color:C.text,fontSize:12,flex:1}}/>
                   <button onClick={()=>lookupPartNumber(s)} disabled={lr?.loading||!(lookupPart[s.id]||"").trim()}
-                    style={btn("rgba(245,158,11,0.15)","#f59e0b",{fontSize:11,fontWeight:700,padding:"4px 12px",border:"1px solid #f59e0b66",opacity:lr?.loading||!(lookupPart[s.id]||"").trim()?0.5:1})}>
+                    style={btn(C.yellowDim,C.yellow,{fontSize:11,fontWeight:700,padding:"4px 12px",border:`1px solid ${C.yellow}66`,opacity:lr?.loading||!(lookupPart[s.id]||"").trim()?0.5:1})}>
                     {lr?.loading?"Searching…":"Search"}
                   </button>
                 </div>
@@ -366,14 +366,14 @@ function APISetupModal({uid,onClose}){
                   const avail=r.availability||r.Availability||r.stock||null;
                   const pn=d.partNumber||null;
                   if(price||desc||avail){
-                    return(<div style={{background:"#0a1a0a",border:"1px solid #4ade8044",borderRadius:6,padding:"10px 12px",marginTop:4}}>
+                    return(<div style={{background:C.greenDim,border:`1px solid ${C.green}44`,borderRadius:6,padding:"10px 12px",marginTop:4}}>
                       {pn&&<div style={{fontSize:11,color:C.muted,marginBottom:4}}>Part: <span style={{fontWeight:700,color:C.text}}>{pn}</span></div>}
-                      {price&&<div style={{fontSize:20,fontWeight:800,color:"#4ade80"}}>{price}</div>}
+                      {price&&<div style={{fontSize:20,fontWeight:800,color:C.green}}>{price}</div>}
                       {desc&&<div style={{fontSize:12,color:C.sub,marginTop:4}}>{desc}</div>}
                       {avail&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>Availability: {avail}</div>}
                     </div>);
                   }
-                  return <pre style={{fontSize:10,color:C.sub,background:"#080810",border:`1px solid ${C.border}`,borderRadius:4,padding:8,maxHeight:200,overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",margin:0}}>{typeof d==="string"?d:JSON.stringify(d,null,2)}</pre>;
+                  return <pre style={{fontSize:10,color:C.sub,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:8,maxHeight:200,overflow:"auto",whiteSpace:"pre-wrap",wordBreak:"break-all",margin:0}}>{typeof d==="string"?d:JSON.stringify(d,null,2)}</pre>;
                 })()}
               </div>
             )}
@@ -394,10 +394,10 @@ function APISetupModal({uid,onClose}){
           const updateStep=(idx,updates)=>setSteps(steps.map((s,i)=>i===idx?{...s,...updates}:s));
           const removeStep=idx=>setSteps(steps.filter((_,i)=>i!==idx));
           const moveStep=(idx,dir)=>{const ns=[...steps];const t=ns[idx];ns[idx]=ns[idx+dir];ns[idx+dir]=t;setSteps(ns);};
-          const stepColors={navigate:"#38bdf8",fill:"#a78bfa",click:"#4ade80",wait:"#f59e0b",extract:"#f472b6",extractPageText:"#ec4899",verifyAccount:"#06b6d4"};
+          const stepColors={navigate:C.accent,fill:C.purple,click:C.green,wait:C.yellow,extract:"#f472b6",extractPageText:"#ec4899",verifyAccount:C.teal};
           return(
-          <div style={{marginBottom:12,border:"1px solid #f59e0b",borderRadius:8,padding:14,background:"rgba(245,158,11,0.05)"}}>
-            <div style={{fontSize:13,fontWeight:700,color:"#f59e0b",marginBottom:12}}>{editScraper.id?"Edit Price Scraper":"New Price Scraper"}</div>
+          <div style={{marginBottom:12,border:`1px solid ${C.yellow}`,borderRadius:8,padding:14,background:C.yellowDim}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.yellow,marginBottom:12}}>{editScraper.id?"Edit Price Scraper":"New Price Scraper"}</div>
             {/* Basic info */}
             <div style={{display:"grid",gap:8,marginBottom:12}}>
               <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Supplier Name *</label>
@@ -419,10 +419,10 @@ function APISetupModal({uid,onClose}){
                 <div style={{fontSize:11,fontWeight:700,color:C.sub,textTransform:"uppercase",letterSpacing:0.5}}>Automation Steps ({steps.length})</div>
               </div>
               <div style={{fontSize:10,color:C.muted,marginBottom:8,lineHeight:1.5}}>
-                Placeholders: <code style={{color:"#f59e0b"}}>{"{partNumber}"}</code> <code style={{color:"#a78bfa"}}>{"{username}"}</code> <code style={{color:"#a78bfa"}}>{"{password}"}</code>
+                Placeholders: <code style={{color:C.yellow}}>{"{partNumber}"}</code> <code style={{color:C.purple}}>{"{username}"}</code> <code style={{color:C.purple}}>{"{password}"}</code>
               </div>
               {steps.map((step,si)=>(
-                <div key={step._id||si} style={{display:"flex",gap:6,alignItems:"flex-start",marginBottom:6,padding:"6px 8px",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6}}>
+                <div key={step._id||si} style={{display:"flex",gap:6,alignItems:"flex-start",marginBottom:6,padding:"6px 8px",background:C.input,border:`1px solid ${C.border}`,borderRadius:6}}>
                   <div style={{fontSize:10,color:C.muted,fontWeight:700,minWidth:16,paddingTop:4}}>{si+1}.</div>
                   <span style={{fontSize:9,fontWeight:700,color:stepColors[step.type]||C.muted,background:(stepColors[step.type]||C.muted)+"22",borderRadius:4,padding:"2px 6px",textTransform:"uppercase",flexShrink:0,marginTop:2}}>{step.type}</span>
                   <div style={{flex:1,display:"grid",gap:4}}>
@@ -444,7 +444,7 @@ function APISetupModal({uid,onClose}){
                     )}
                     {step.type==="extract"&&(<>
                       <input value={step.selector||""} onChange={e=>updateStep(si,{selector:e.target.value})} placeholder="CSS selector (e.g. .price-cell, #availability)" style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}/>
-                      <select value={step.field||""} onChange={e=>updateStep(si,{field:e.target.value})} style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}>
+                      <select value={step.field||""} onChange={e=>updateStep(si,{field:e.target.value})} style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}>
                         <option value="">— Save as field —</option>
                         <option value="price">Price</option>
                         <option value="availability">Availability</option>
@@ -455,7 +455,7 @@ function APISetupModal({uid,onClose}){
                       </select>
                     </>)}
                     {step.type==="extractPageText"&&(
-                      <select value={step.field||""} onChange={e=>updateStep(si,{field:e.target.value})} style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}>
+                      <select value={step.field||""} onChange={e=>updateStep(si,{field:e.target.value})} style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:3,padding:"3px 6px",color:C.text,fontSize:11}}>
                         <option value="price">First Price ($)</option>
                         <option value="allPrices">All Prices</option>
                         <option value="pageText">Full Page Text</option>
@@ -487,7 +487,7 @@ function APISetupModal({uid,onClose}){
             <div style={{display:"flex",gap:8,marginTop:10}}>
               <button onClick={()=>setEditScraper(null)} style={btn(C.border,C.muted,{fontSize:12})}>Cancel</button>
               <button onClick={()=>saveScraperConfig(editScraper)} disabled={scraperSaving||!editScraper.name?.trim()}
-                style={btn("rgba(245,158,11,0.15)","#f59e0b",{fontSize:12,fontWeight:700,border:"1px solid #f59e0b66",opacity:scraperSaving||!editScraper.name?.trim()?0.5:1})}>
+                style={btn(C.yellowDim,C.yellow,{fontSize:12,fontWeight:700,border:`1px solid ${C.yellow}66`,opacity:scraperSaving||!editScraper.name?.trim()?0.5:1})}>
                 {scraperSaving?"Saving…":editScraper.id?"Save Changes":"Add Price Scraper"}
               </button>
             </div>
@@ -495,10 +495,10 @@ function APISetupModal({uid,onClose}){
         })()}
 
         {/* Pricing Reports — shared across both sections */}
-        <div style={{marginTop:24,marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        <div style={{marginTop:24,marginBottom:20,background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Pricing Sync Reports</div>
           <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>View history of all pricing sync runs with detailed results and CSV export.</div>
-          <button onClick={()=>setShowPricingReports(true)} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>View Pricing Reports</button>
+          <button onClick={()=>setShowPricingReports(true)} style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>View Pricing Reports</button>
         </div>
         {showPricingReports&&<PricingReportsModal uid={uid} onClose={()=>setShowPricingReports(false)}/>}
 

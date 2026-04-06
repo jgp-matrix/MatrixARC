@@ -172,14 +172,14 @@ function ItemsTab({uid}){
         {loading&&<span style={{color:C.muted,fontSize:12,whiteSpace:"nowrap",alignSelf:"center"}}>searching…</span>}
       </div>
       <button onClick={()=>setShowVendorSync(v=>!v)}
-        style={{background:showVendorSync?"#0d9488":"#1e3a5f",color:"#fff",
-          border:`1px solid ${showVendorSync?"#0d9488":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
+        style={{background:showVendorSync?C.teal:C.accentDim,color:showVendorSync?"#fff":C.accent,
+          border:`1px solid ${showVendorSync?C.teal:C.accent}`,borderRadius:6,padding:"6px 14px",fontSize:12,
           fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
         🔄 Sync Pricing
       </button>
       <button onClick={()=>setShowMfrLookup(v=>!v)}
-        style={{background:showMfrLookup?"#2563eb":"#1e3a5f",color:"#fff",
-          border:`1px solid ${showMfrLookup?"#2563eb":"#3b6aad"}`,borderRadius:6,padding:"6px 14px",fontSize:12,
+        style={{background:showMfrLookup?C.accent:C.accentDim,color:"#fff",
+          border:`1px solid ${showMfrLookup?C.accent:C.border}`,borderRadius:6,padding:"6px 14px",fontSize:12,
           fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
         🔍 Lookup MFR Codes
       </button>
@@ -216,7 +216,7 @@ function ItemsTab({uid}){
             setMfrLookupProgress("");
           }catch(e){setMfrLookupProgress("Error: "+e.message);}
           setMfrLookupRunning(false);
-        }} style={btn(mfrLookupRunning?"#334155":"#1e3a5f","#93c5fd",{fontSize:12,fontWeight:600,border:"1px solid #3b82f655"})}>
+        }} style={btn(mfrLookupRunning?C.border:C.accentDim,C.accent,{fontSize:12,fontWeight:600,border:`1px solid ${C.accent}55`})}>
           {mfrLookupRunning?"Running…":"Preview (Dry Run)"}
         </button>
         <button disabled={mfrLookupRunning||!mfrLookupResult} onClick={async()=>{
@@ -237,22 +237,22 @@ function ItemsTab({uid}){
             setMfrLookupProgress(`Done! Patched ${totalPatched} items.`);
           }catch(e){setMfrLookupProgress("Error: "+e.message);}
           setMfrLookupRunning(false);
-        }} style={btn(mfrLookupRunning||!mfrLookupResult?"#334155":"#064e3b",mfrLookupResult?"#34d399":"#475569",{fontSize:12,fontWeight:600,border:`1px solid ${mfrLookupResult?"#059669":"#334155"}`})}>
+        }} style={btn(mfrLookupRunning||!mfrLookupResult?C.border:C.greenDim,mfrLookupResult?C.green:C.muted,{fontSize:12,fontWeight:600,border:`1px solid ${mfrLookupResult?C.green:C.border}`})}>
           Push to BC
         </button>
-        {mfrLookupProgress&&<span style={{fontSize:11,color:mfrLookupProgress.startsWith("Error")?"#f87171":"#93c5fd"}}>{mfrLookupProgress}</span>}
+        {mfrLookupProgress&&<span style={{fontSize:11,color:mfrLookupProgress.startsWith("Error")?C.red:C.accent}}>{mfrLookupProgress}</span>}
       </div>
       {mfrLookupResult&&<div>
         <div style={{fontSize:12,color:C.muted,marginBottom:8}}>
           {mfrLookupResult.totalInBC} items missing MFR in BC · Found: {mfrLookupResult.found} · Not found: {mfrLookupResult.notFound} · Patched: {mfrLookupResult.patched||0}
         </div>
         {mfrLookupResult.unknownMfr?.length>0&&<div style={{marginBottom:8}}>
-          <div style={{fontSize:11,fontWeight:700,color:"#fbbf24",marginBottom:4}}>Unknown manufacturers (no BC code mapping):</div>
+          <div style={{fontSize:11,fontWeight:700,color:C.yellow,marginBottom:4}}>Unknown manufacturers (no BC code mapping):</div>
           {mfrLookupResult.unknownMfr.map((u,i)=><div key={i} style={{fontSize:11,color:C.muted}}>{u.itemNo} → {u.manufacturer}</div>)}
         </div>}
         <div style={{maxHeight:300,overflowY:"auto",border:`1px solid ${C.border}`,borderRadius:6}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
-            <thead><tr style={{background:"#111d30"}}>
+            <thead><tr style={{background:C.bg}}>
               <th style={{padding:"5px 8px",textAlign:"left",color:C.sub,fontWeight:700}}>ITEM</th>
               <th style={{padding:"5px 8px",textAlign:"left",color:C.sub,fontWeight:700}}>MANUFACTURER</th>
               <th style={{padding:"5px 8px",textAlign:"left",color:C.sub,fontWeight:700}}>CODE</th>
@@ -261,11 +261,11 @@ function ItemsTab({uid}){
             </tr></thead>
             <tbody>{(mfrLookupResult.results||[]).map((r,i)=>(
               <tr key={i} style={{borderBottom:`1px solid ${C.border}`,background:r.status==="patched"||r.status==="dry_run"?"rgba(34,197,94,0.06)":r.status==="not_found"?"rgba(239,68,68,0.06)":"rgba(251,191,36,0.06)"}}>
-                <td style={{padding:"4px 8px",color:"#93c5fd",fontFamily:"monospace"}}>{r.itemNo}</td>
+                <td style={{padding:"4px 8px",color:C.accent,fontFamily:"monospace"}}>{r.itemNo}</td>
                 <td style={{padding:"4px 8px",color:C.text}}>{r.manufacturer||"—"}</td>
-                <td style={{padding:"4px 8px",color:r.code?"#22c55e":"#ef4444",fontWeight:700}}>{r.code||"—"}</td>
+                <td style={{padding:"4px 8px",color:r.code?C.green:C.red,fontWeight:700}}>{r.code||"—"}</td>
                 <td style={{padding:"4px 8px",color:C.muted}}>{r.source||"—"}</td>
-                <td style={{padding:"4px 8px",color:r.status==="patched"?"#22c55e":r.status==="not_found"?"#ef4444":"#fbbf24"}}>{r.status}</td>
+                <td style={{padding:"4px 8px",color:r.status==="patched"?C.green:r.status==="not_found"?C.red:C.yellow}}>{r.status}</td>
               </tr>
             ))}</tbody>
           </table>
@@ -284,7 +284,7 @@ function ItemsTab({uid}){
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13,tableLayout:"fixed"}}>
             <colgroup>{colWidths.map((w,i)=><col key={i} style={{width:w}}/>)}</colgroup>
             <thead>
-              <tr style={{background:"#111d30",borderBottom:`2px solid ${C.border}`}}>
+              <tr style={{background:C.bg,borderBottom:`2px solid ${C.border}`}}>
                 {["ITEM NO","DESCRIPTION","MFR CODE","VENDOR","LAST COST","PRICED DATE"].map((h,i)=>(
                   <th key={h} style={{position:"relative",padding:"9px 12px",
                     textAlign:i===4?"right":"left",
@@ -299,7 +299,7 @@ function ItemsTab({uid}){
                         background:"transparent",
                         borderRight:"2px solid transparent",
                         transition:"border-color 0.15s"}}
-                      onMouseEnter={e=>e.currentTarget.style.borderRightColor="#3b82f6"}
+                      onMouseEnter={e=>e.currentTarget.style.borderRightColor=C.accent}
                       onMouseLeave={e=>e.currentTarget.style.borderRightColor="transparent"}
                       title="Drag to resize · Double-click to reset"/>
                   </th>
@@ -312,7 +312,7 @@ function ItemsTab({uid}){
                 const daysSince=priceMs!=null
                   ?Math.floor((Date.now()-priceMs)/(1000*60*60*24))
                   :null;
-                const priceColor=daysSince===null?"#ef4444":daysSince<=30?"#22c55e":"#ef4444";
+                const priceColor=daysSince===null?C.red:daysSince<=30?C.green:C.red;
                 const priceBold=700; // always bold — red when no/stale date, green when fresh
                 const pricedDate=priceMs!=null
                   ?new Date(priceMs).toLocaleDateString("en-US",{month:"2-digit",day:"2-digit",year:"2-digit"})
@@ -320,8 +320,8 @@ function ItemsTab({uid}){
                 const vendorName=vendorMap[item.Vendor_No]||item.Vendor_No||"—";
                 return(
                 <tr key={item.No} style={{borderBottom:`1px solid ${C.border}`,
-                  background:idx%2===0?"#1a2235":"#162040"}}>
-                  <td style={{padding:"7px 12px",color:"#93c5fd",fontFamily:"monospace",fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{item.No}</td>
+                  background:idx%2===0?C.card:C.bg}}>
+                  <td style={{padding:"7px 12px",color:C.accent,fontFamily:"monospace",fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{item.No}</td>
                   <td style={{padding:"7px 12px",color:C.text,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
                     title={item.Description}>{item.Description}</td>
                   <td style={{padding:"4px 12px",whiteSpace:"nowrap"}}>
@@ -330,7 +330,7 @@ function ItemsTab({uid}){
                         <select value={editingMfr.val||""} autoFocus
                           onChange={e=>{const v=e.target.value;setEditingMfr(null);saveMfr(item.No,v);}}
                           onBlur={()=>{setTimeout(()=>setEditingMfr(prev=>prev?.no===item.No?null:prev),150);}}
-                          style={{background:"#1e293b",border:"1px solid #3b82f6",
+                          style={{background:C.input,border:`1px solid ${C.accent}`,
                             borderRadius:4,padding:"3px 6px",
                             color:C.text,
                             fontSize:11,fontFamily:"inherit",width:"100%",maxWidth:120,cursor:"pointer"}}>
@@ -341,8 +341,8 @@ function ItemsTab({uid}){
                         <span onClick={()=>setEditingMfr({no:item.No,val:item.Manufacturer_Code||""})}
                           style={{cursor:"pointer",display:"inline-block",padding:"2px 7px",
                             borderRadius:4,border:"1px solid transparent",fontSize:12,
-                            color:item.Manufacturer_Code?"#60a5fa":C.muted,
-                            background:item.Manufacturer_Code?"rgba(59,130,246,0.12)":"transparent",
+                            color:item.Manufacturer_Code?C.accent:C.muted,
+                            background:item.Manufacturer_Code?C.accentDim:"transparent",
                             fontWeight:item.Manufacturer_Code?700:400}}
                           title={item.Manufacturer_Code?manufacturers.find(m=>m.Code===item.Manufacturer_Code)?.Name||"Click to change":"Click to set"}>
                           {savingMfr===item.No?"…":item.Manufacturer_Code||"—"}
@@ -353,15 +353,15 @@ function ItemsTab({uid}){
                         title="Click to edit"
                         style={{cursor:"pointer",display:"inline-block",minWidth:52,padding:"2px 7px",
                           borderRadius:4,border:"1px solid transparent",fontSize:13,
-                          color:item.Manufacturer_Code?"#60a5fa":C.muted,
-                          background:item.Manufacturer_Code?"rgba(59,130,246,0.12)":"transparent",
+                          color:item.Manufacturer_Code?C.accent:C.muted,
+                          background:item.Manufacturer_Code?C.accentDim:"transparent",
                           fontWeight:item.Manufacturer_Code?600:400}}>
                         {editingMfr?.no===item.No?(
                           <input value={editingMfr.val}
                             onChange={e=>setEditingMfr({no:item.No,val:e.target.value})}
                             onKeyDown={e=>{if(e.key==="Enter")saveMfr(item.No,editingMfr.val);if(e.key==="Escape")setEditingMfr(null);}}
                             maxLength={10} autoFocus
-                            style={{width:80,background:"#1e293b",border:"1px solid #3b82f6",borderRadius:4,
+                            style={{width:80,background:C.input,border:`1px solid ${C.accent}`,borderRadius:4,
                               padding:"3px 6px",color:C.text,fontSize:13,fontFamily:"inherit",textTransform:"uppercase"}}/>
                         ):item.Manufacturer_Code||"—"}
                       </span>
@@ -980,7 +980,7 @@ INSTRUCTIONS:
           </div>
           {splash==="loading"&&(
             <div style={{width:280,height:4,background:C.border,borderRadius:4,overflow:"hidden",transition:"opacity 0.3s",opacity:splash==="loading"?1:0}}>
-              <div style={{height:"100%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.15s linear",width:splashPct+"%"}}/>
+              <div style={{height:"100%",background:`linear-gradient(90deg,${C.accent},${C.purple})`,borderRadius:4,transition:"width 0.15s linear",width:splashPct+"%"}}/>
             </div>
           )}
         </div>
@@ -995,34 +995,34 @@ INSTRUCTIONS:
           <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1,pointerEvents:"none"}}>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:28,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
             <span style={{fontSize:10,color:C.muted,letterSpacing:1.5,marginTop:4,fontWeight:600}}>Powered by <span style={{color:C.accent,fontWeight:700,letterSpacing:2}}>ARC Neural IQ</span></span>
-            <span style={{fontSize:10,fontWeight:600,color:"#ffffff",opacity:0.5,letterSpacing:0.3,marginTop:3}}>{APP_VERSION}</span>
+            <span style={{fontSize:10,fontWeight:600,color:C.muted,letterSpacing:0.3,marginTop:3}}>{APP_VERSION}</span>
           </div>
           {/* Flex spacer */}
           <div style={{flex:1}}/>
           {/* Status indicators */}
           {bgRunning.length>0&&(
             <div title={bgRunning.map(t=>t.panelName+": "+t.msg).join("\n")}
-              style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,background:"#0d2a0d",border:"1px solid #22c55e99",cursor:"default",flexShrink:0}}>
-              <span className="spin" style={{fontSize:12,color:"#86efac",lineHeight:1}}>◌</span>
-              <span style={{fontSize:12,fontWeight:600,color:"#86efac",whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
+              style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,background:C.greenDim,border:`1px solid ${C.green}99`,cursor:"default",flexShrink:0}}>
+              <span className="spin" style={{fontSize:12,color:C.green,lineHeight:1}}>◌</span>
+              <span style={{fontSize:12,fontWeight:600,color:C.green,whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
             </div>
           )}
           {connStatus!=="good"&&(
             <div style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,
-              background:connStatus==="offline"?"#3b080844":"#3a1f0044",border:`1px solid ${connStatus==="offline"?"#ef444466":"#f59e0b66"}`}}>
+              background:connStatus==="offline"?C.redDim:C.yellowDim,border:`1px solid ${connStatus==="offline"?C.red+"66":C.yellow+"66"}`}}>
               <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:connStatus==="offline"?C.red:C.yellow,boxShadow:`0 0 4px ${connStatus==="offline"?C.red:C.yellow}`,animation:"pulse 2s ease-in-out infinite"}}/>
-              <span style={{fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:connStatus==="offline"?"#fca5a5":"#fcd34d"}}>{connStatus==="offline"?"Offline":"Slow"}</span>
+              <span style={{fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:connStatus==="offline"?C.red:C.yellow}}>{connStatus==="offline"?"Offline":"Slow"}</span>
             </div>
           )}
           <div title={bcOnline?"Business Central is connected":"Click to connect to Business Central"}
             onClick={bcOnline?undefined:async()=>{const t=await acquireBcToken(true);if(t){setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();}}}
-            style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,background:bcOnline?"#1e4a8a55":"#3a1a1a44",border:`1px solid ${bcOnline?"#3b82f699":"#7f1d1d88"}`,cursor:bcOnline?"default":"pointer"}}>
-            <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:bcOnline?"#3b82f6":"#ef4444",boxShadow:bcOnline?"0 0 5px #3b82f6":"0 0 5px #ef4444"}}/>
-            <span style={{fontSize:12,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline — Click to connect"}</span>
+            style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,background:bcOnline?C.accentDim:C.redDim,border:`1px solid ${bcOnline?C.accent+"99":C.red+"88"}`,cursor:bcOnline?"default":"pointer"}}>
+            <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:bcOnline?C.accent:C.red,boxShadow:`0 0 5px ${bcOnline?C.accent:C.red}`}}/>
+            <span style={{fontSize:12,fontWeight:600,color:bcOnline?C.accent:C.red,whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline — Click to connect"}</span>
           </div>
           {bcQueueCount>0&&(
             <div title={`${bcQueueCount} BC operation${bcQueueCount>1?'s':''} pending — will retry when connected`}
-              style={{background:"#78350f",color:"#fde68a",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"default",flexShrink:0}}>
+              style={{background:C.yellowDim,color:C.yellow,borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"default",flexShrink:0}}>
               ⏳ {bcQueueCount} pending
             </div>
           )}
@@ -1038,25 +1038,25 @@ INSTRUCTIONS:
           <button title="ARC AI Assistant — Ask about projects, UL508A, C22, parts, pricing" onClick={()=>setShowSearch(v=>!v)} style={{background:showSearch?C.accentDim:"none",border:showSearch?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showSearch?C.accent:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✨</button>
           {/* 🔔 Bell icon */}
           <div style={{position:"relative",flexShrink:0}}>
-            <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:notifications.length>0?"#fbbf24":C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔔</button>
-            {notifications.length>0&&<div style={{position:"absolute",top:5,right:5,background:"#dc2626",color:"#fff",borderRadius:"50%",fontSize:10,fontWeight:800,minWidth:17,height:17,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,pointerEvents:"none"}}>{notifications.length>9?"9+":notifications.length}</div>}
-            {showBellMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:320,maxWidth:380,boxShadow:"0 0 30px 8px rgba(56,189,248,0.6),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+            <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:notifications.length>0?C.yellow:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔔</button>
+            {notifications.length>0&&<div style={{position:"absolute",top:5,right:5,background:C.red,color:"#fff",borderRadius:"50%",fontSize:10,fontWeight:800,minWidth:17,height:17,display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1,pointerEvents:"none"}}>{notifications.length>9?"9+":notifications.length}</div>}
+            {showBellMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:320,maxWidth:380,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:600}}>
               <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,flex:1}}>Notifications {notifications.length>0&&`(${notifications.length})`}</span>
                 {notifications.length>0&&<button onClick={markAllNotifsRead} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>Mark all read</button>}
               </div>
               <div style={{maxHeight:360,overflowY:"auto"}}>
-                {notifications.length===0&&<div style={{padding:"20px 16px",textAlign:"center",color:"#94a3b8",fontSize:13}}>No new notifications</div>}
+                {notifications.length===0&&<div style={{padding:"20px 16px",textAlign:"center",color:C.muted,fontSize:13}}>No new notifications</div>}
                 {notifications.map(n=>(
-                  <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:n.type==='supplier_quote'?"pointer":"default"}}
+                  <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}`,cursor:n.type==='supplier_quote'?"pointer":"default"}}
                     onClick={()=>n.type==='supplier_quote'?handleNotifClick(n):undefined}>
                     <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
                       <span style={{fontSize:16,flexShrink:0,marginTop:1}}>{n.type==='supplier_quote'?'📥':'🔔'}</span>
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:700,color:"#f1f5f9",marginBottom:2,lineHeight:1.3}}>{n.title||"Notification"}</div>
-                        <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.4,marginBottom:4}}>{n.body||""}</div>
+                        <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:2,lineHeight:1.3}}>{n.title||"Notification"}</div>
+                        <div style={{fontSize:12,color:C.muted,lineHeight:1.4,marginBottom:4}}>{n.body||""}</div>
                         {n.type==='supplier_quote'&&<span style={{fontSize:11,fontWeight:700,color:C.accent}}>Click to Review Quote →</span>}
-                        <div style={{fontSize:10,color:"#94a3b8",marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
+                        <div style={{fontSize:10,color:C.muted,marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
                       </div>
                     </div>
                   </div>
@@ -1065,7 +1065,7 @@ INSTRUCTIONS:
               {/* Push notification toggle */}
               {fbMessaging&&<div style={{padding:"8px 16px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:12,color:C.muted,flex:1}}>{pushEnabled?"Push notifications on":"Push notifications off"}</span>
-                <button onClick={togglePush} disabled={pushLoading} style={{background:pushEnabled?"#16a34a":"#334155",border:"none",borderRadius:12,width:40,height:22,cursor:pushLoading?"wait":"pointer",position:"relative",transition:"background 0.2s",flexShrink:0,opacity:pushLoading?0.5:1}}>
+                <button onClick={togglePush} disabled={pushLoading} style={{background:pushEnabled?C.green:C.border,border:"none",borderRadius:12,width:40,height:22,cursor:pushLoading?"wait":"pointer",position:"relative",transition:"background 0.2s",flexShrink:0,opacity:pushLoading?0.5:1}}>
                   <div style={{width:16,height:16,borderRadius:"50%",background:"#fff",position:"absolute",top:3,left:pushEnabled?21:3,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.3)"}}/>
                 </button>
               </div>}
@@ -1077,35 +1077,35 @@ INSTRUCTIONS:
           {/* ⚙ Gear menu */}
           <div style={{position:"relative",flexShrink:0}}>
             <button data-tour="config-btn" data-tour-training="training-btn" title="Settings & Tools" onClick={()=>{setShowGearMenu(v=>!v);setShowUserMenu(false);}} style={{background:showGearMenu?C.accentDim:"none",border:showGearMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showGearMenu?C.accent:C.muted,cursor:"pointer",fontSize:23,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center"}}>⚙</button>
-            {showGearMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 0 30px 8px rgba(56,189,248,0.6),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+            {showGearMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:600}}>
               <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,marginBottom:4}}>
                 <div style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3}}>ARC Software</div>
                 <div style={{fontSize:11,color:C.accent,fontWeight:600,marginTop:2,fontFamily:"'Orbitron',monospace",letterSpacing:1}}>{APP_VERSION}</div>
               </div>
-              <button onClick={()=>{setShowSettings(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>⚙ Settings</button>
-              <button data-tour="config-btn" onClick={()=>{setShowConfig(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>🔧 Configuration</button>
+              <button onClick={()=>{setShowSettings(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background=C.bg} onMouseLeave={e=>e.target.style.background="none"}>⚙ Settings</button>
+              <button data-tour="config-btn" onClick={()=>{setShowConfig(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background=C.bg} onMouseLeave={e=>e.target.style.background="none"}>🔧 Configuration</button>
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
-              <button data-tour="training-btn" onClick={()=>{startTour();setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null?"#172554":"none",border:"none",color:tourStep!==null?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null?700:500}} onMouseEnter={e=>{if(tourStep===null)e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(tourStep===null)e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Training'}</button>
-              <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📊 Reports</button>
-              <button onClick={()=>{setShowSupplierPricing(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📥 Upload Supplier Pricing</button>
-              {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?"#1a0a2a":"none",border:"none",color:"#a78bfa",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={e=>{if(view!=="aidb")e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(view!=="aidb")e.target.style.background="none";}}>🧠 ARC AI Database</button>}
+              <button data-tour="training-btn" onClick={()=>{startTour();setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null?C.accentDim:"none",border:"none",color:tourStep!==null?C.accent:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null?700:500}} onMouseEnter={e=>{if(tourStep===null)e.target.style.background=C.bg;}} onMouseLeave={e=>{if(tourStep===null)e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Training'}</button>
+              <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background=C.bg} onMouseLeave={e=>e.target.style.background="none"}>📊 Reports</button>
+              <button onClick={()=>{setShowSupplierPricing(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background=C.bg} onMouseLeave={e=>e.target.style.background="none"}>📥 Upload Supplier Pricing</button>
+              {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?C.accentDim:"none",border:"none",color:C.purple,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={e=>{if(view!=="aidb")e.target.style.background=C.bg;}} onMouseLeave={e=>{if(view!=="aidb")e.target.style.background="none";}}>🧠 ARC AI Database</button>}
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
-              <button onClick={()=>{setShowAbout(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>ℹ About</button>
+              <button onClick={()=>{setShowAbout(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background=C.bg} onMouseLeave={e=>e.target.style.background="none"}>ℹ About</button>
             </div>)}
           </div>
           {/* 👤 User menu */}
           <div style={{position:"relative",flexShrink:0}}>
-            <div data-tour="team-btn" title={user.email} onClick={()=>{setShowUserMenu(v=>!v);setShowGearMenu(false);}} style={{width:44,height:44,borderRadius:"50%",background:showUserMenu?"#1e3a5f":C.border,border:showUserMenu?`2px solid ${C.accent}`:`2px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:18,fontWeight:800,color:showUserMenu?C.accent:"#94a3b8",flexShrink:0,userSelect:"none",letterSpacing:0}}>
+            <div data-tour="team-btn" title={user.email} onClick={()=>{setShowUserMenu(v=>!v);setShowGearMenu(false);}} style={{width:44,height:44,borderRadius:"50%",background:showUserMenu?C.accentDim:C.border,border:showUserMenu?`2px solid ${C.accent}`:`2px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:18,fontWeight:800,color:showUserMenu?C.accent:C.muted,flexShrink:0,userSelect:"none",letterSpacing:0}}>
               {user.email?user.email[0].toUpperCase():"?"}
             </div>
-            {showUserMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 0 30px 8px rgba(56,189,248,0.6),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
+            {showUserMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:230,boxShadow:"0 4px 20px rgba(0,0,0,0.12)",zIndex:600}}>
               <div style={{padding:"12px 16px 10px",borderBottom:`1px solid ${C.border}`}}>
                 <div style={{fontSize:13,color:C.text,fontWeight:600,marginBottom:6,wordBreak:"break-all"}}>{user.email}</div>
-                {userRole&&<span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:8,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?"#93c5fd":userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
+                {userRole&&<span style={{fontSize:11,fontWeight:700,padding:"2px 10px",borderRadius:8,background:userRole==="admin"?C.accentDim:userRole==="edit"?C.greenDim:C.border,color:userRole==="admin"?C.accent:userRole==="edit"?C.green:C.muted}}>{userRole}</span>}
               </div>
-              <button data-tour="team-btn" onClick={()=>{setShowTeam(true);setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>👥 Team & Permissions</button>
+              <button data-tour="team-btn" onClick={()=>{setShowTeam(true);setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background=C.bg} onMouseLeave={e=>e.target.style.background="none"}>👥 Team & Permissions</button>
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
-              <button onClick={()=>{fbAuth.signOut();setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:"#f87171",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:600}} onMouseEnter={e=>e.target.style.background="#1a0a0a"} onMouseLeave={e=>e.target.style.background="none"}>Sign Out</button>
+              <button onClick={()=>{fbAuth.signOut();setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.red,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:600}} onMouseEnter={e=>e.target.style.background=C.redDim} onMouseLeave={e=>e.target.style.background="none"}>Sign Out</button>
             </div>)}
           </div>
         </div>
@@ -1113,7 +1113,7 @@ INSTRUCTIONS:
         {(showGearMenu||showUserMenu||showBellMenu)&&<div style={{position:"fixed",inset:0,zIndex:590}} onClick={()=>{setShowGearMenu(false);setShowUserMenu(false);setShowBellMenu(false);}}/>}
       </div>
       {/* Horizontal tab bar — fixed below header */}
-      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:490,background:"#253354",borderBottom:"2px solid #3b82f6",display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
+      <div style={{position:"fixed",top:78,left:0,right:0,zIndex:490,background:C.nav,borderBottom:`2px solid ${C.accent}`,display:"flex",alignItems:"flex-end",paddingLeft:16,gap:4,height:50}}>
         {NAV_TABS.map(t=>{
           const active=navTab===t.id;
           const hasOpenProject=view==="project"&&openProject;
@@ -1130,12 +1130,12 @@ INSTRUCTIONS:
             style={{cursor:"pointer",padding:"0 24px",
               height:active?46:38,
               fontSize:12,fontWeight:700,letterSpacing:isBackBtn?1:isReturnBtn?1:2,textTransform:"uppercase",
-              color:isBackBtn?"#fbbf24":isReturnBtn?"#93c5fd":active?"#fff":"#93c5fd",
-              background:isBackBtn?"#1a1500":active?"#1e293b":"#1a2d4a",
-              borderTop:isBackBtn?"2px solid #b45309":active?"2px solid #3b82f6":"1px solid #3b5a8a",
-              borderLeft:isBackBtn?"1px solid #b45309":active?"1px solid #3b82f6":"1px solid #3b5a8a",
-              borderRight:isBackBtn?"1px solid #b45309":active?"1px solid #3b82f6":"1px solid #3b5a8a",
-              borderBottom:active?"2px solid #1e293b":"1px solid #253354",
+              color:isBackBtn?C.yellow:isReturnBtn?C.navText:active?"#fff":C.navText,
+              background:isBackBtn?C.yellowDim:active?"rgba(255,255,255,0.07)":C.nav,
+              borderTop:isBackBtn?`2px solid ${C.yellow}`:active?`2px solid ${C.accent}`:`1px solid ${C.navBorder}`,
+              borderLeft:isBackBtn?`1px solid ${C.yellow}`:active?`1px solid ${C.accent}`:`1px solid ${C.navBorder}`,
+              borderRight:isBackBtn?`1px solid ${C.yellow}`:active?`1px solid ${C.accent}`:`1px solid ${C.navBorder}`,
+              borderBottom:active?`2px solid rgba(255,255,255,0.07)`:`1px solid ${C.nav}`,
               borderRadius:"8px 8px 0 0",
               marginBottom:active?"-2px":0,
               position:"relative",zIndex:active?1:0,
@@ -1155,8 +1155,8 @@ INSTRUCTIONS:
       {/* BC Connection Lost popup */}
       {bcLostAlert&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{...card(),maxWidth:400,width:"100%",border:"1px solid #ef444455",boxShadow:"0 0 40px #ef444422"}}>
-            <div style={{fontSize:22,fontWeight:700,marginBottom:8,color:"#fca5a5"}}>⚠ BC Connection Lost</div>
+          <div style={{...card(),maxWidth:400,width:"100%",border:`1px solid ${C.red}55`,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
+            <div style={{fontSize:22,fontWeight:700,marginBottom:8,color:C.red}}>⚠ BC Connection Lost</div>
             <div style={{fontSize:13,color:C.muted,marginBottom:20,lineHeight:1.6}}>The connection to Business Central has timed out. This can happen when the app is left open overnight. BC features (projects, customers, items) are unavailable until you reconnect.</div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
               <button onClick={()=>setBcLostAlert(false)} style={btn(C.border,C.muted,{fontSize:13})}>Dismiss</button>
@@ -1173,7 +1173,7 @@ INSTRUCTIONS:
         <>
           {/* Company setup banner */}
           {!companyId&&!setupDismissed&&(
-            <div style={{background:"#1a1a3e",borderBottom:`1px solid ${C.accent}`,padding:"8px 32px",display:"flex",alignItems:"center",gap:12,fontSize:13,flexWrap:"wrap"}}>
+            <div style={{background:C.accentDim,borderBottom:`1px solid ${C.accent}`,padding:"8px 32px",display:"flex",alignItems:"center",gap:12,fontSize:13,flexWrap:"wrap"}}>
               <span style={{color:C.sub,flex:1}}>Set up a Company workspace to collaborate with your team.</span>
               <button onClick={()=>setShowSetup(true)} style={btn(C.accent,"#fff",{fontSize:12,padding:"5px 14px"})}>Set up Company</button>
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
@@ -1207,8 +1207,8 @@ INSTRUCTIONS:
           React.createElement("div",{style:{fontSize:16,fontWeight:700,color:C.text,marginBottom:8}},"Quote Revision "+rev+" Unsent"),
           React.createElement("div",{style:{fontSize:13,color:C.sub,lineHeight:1.6,marginBottom:24}},"The BOM has changed since the last quote was printed. Rev "+rev+" has not been sent to the client."),
           React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:10}},
-            React.createElement("button",{onClick:()=>{setRevSnoozed(s=>({...s,[rm.project.id]:true}));rm.pendingAction();setRevWarnModal(null);},style:{background:"#1e1b4b",color:"#818cf8",border:"1px solid #818cf844",borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Snooze — Remind Next Time I Open This Project"),
-            React.createElement("button",{onClick:()=>{const upd={...rm.project,quoteRevAcknowledgedAt:Date.now()};handleChange(upd);saveProject(user.uid,upd);rm.pendingAction();setRevWarnModal(null);},style:{background:"#1a0d0d",color:"#f87171",border:"1px solid #f8717144",borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Don't Remind Until Next Change"),
+            React.createElement("button",{onClick:()=>{setRevSnoozed(s=>({...s,[rm.project.id]:true}));rm.pendingAction();setRevWarnModal(null);},style:{background:C.accentDim,color:C.accent,border:`1px solid ${C.accent}44`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Snooze — Remind Next Time I Open This Project"),
+            React.createElement("button",{onClick:()=>{const upd={...rm.project,quoteRevAcknowledgedAt:Date.now()};handleChange(upd);saveProject(user.uid,upd);rm.pendingAction();setRevWarnModal(null);},style:{background:C.redDim,color:C.red,border:`1px solid ${C.red}44`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}},"Don't Remind Until Next Change"),
             React.createElement("button",{onClick:()=>{rm.pendingAction();setRevWarnModal(null);},style:{background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:600,cursor:"pointer"}},"Dismiss")
           )
         )
@@ -1216,7 +1216,7 @@ INSTRUCTIONS:
       </>}{/* end projects tab */}
       </div>{/* end main content column */}
       {/* ARC AI Assistant — right slide-out panel */}
-      <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
+      <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:C.bg,position:"relative"}}>
         <div style={{width:420,height:"100%",display:"flex",flexDirection:"column",visibility:showSearch?"visible":"hidden"}}>
           {/* Header */}
           <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
@@ -1234,17 +1234,17 @@ INSTRUCTIONS:
             </div>}
             {sqHistory.map((msg,i)=>(
               <div key={i} style={{display:"flex",gap:10,marginBottom:14,alignItems:"flex-start"}}>
-                <div style={{width:24,height:24,borderRadius:"50%",background:msg.role==='user'?C.accent:'#6366f1',display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0,marginTop:2}}>{msg.role==='user'?'Y':'AI'}</div>
+                <div style={{width:24,height:24,borderRadius:"50%",background:msg.role==='user'?C.accent:C.purple,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0,marginTop:2}}>{msg.role==='user'?'Y':'AI'}</div>
                 <div style={{flex:1,minWidth:0}}>
                   {msg.role==='user'
                     ?<div style={{fontSize:13,color:C.text,fontWeight:600}}>{msg.content}</div>
-                    :<div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7}} dangerouslySetInnerHTML={{__html:(()=>{
+                    :<div style={{fontSize:13,color:C.sub,lineHeight:1.7}} dangerouslySetInnerHTML={{__html:(()=>{
                       let html=msg.content
-                        .replace(/\*\*(.+?)\*\*/g,'<strong style="color:#f1f5f9">$1</strong>')
+                        .replace(/\*\*(.+?)\*\*/g,`<strong style="color:${C.text}">$1</strong>`)
                         .replace(/\*(.+?)\*/g,'<em>$1</em>')
-                        .replace(/`([^`]+)`/g,'<code style="background:#1e293b;padding:1px 5px;border-radius:3px;font-size:12px">$1</code>')
-                        .replace(/^### (.+)$/gm,'<div style="font-size:13px;font-weight:700;color:#f1f5f9;margin:8px 0 4px">$1</div>')
-                        .replace(/^## (.+)$/gm,'<div style="font-size:14px;font-weight:700;color:#f1f5f9;margin:10px 0 4px">$1</div>')
+                        .replace(/`([^`]+)`/g,`<code style="background:${C.border};padding:1px 5px;border-radius:3px;font-size:12px">$1</code>`)
+                        .replace(/^### (.+)$/gm,`<div style="font-size:13px;font-weight:700;color:${C.text};margin:8px 0 4px">$1</div>`)
+                        .replace(/^## (.+)$/gm,`<div style="font-size:14px;font-weight:700;color:${C.text};margin:10px 0 4px">$1</div>`)
                         .replace(/^- (.+)$/gm,'<div style="padding-left:12px">• $1</div>')
                         .replace(/^\d+\. (.+)$/gm,(m,p1)=>'<div style="padding-left:12px">'+m.match(/^\d+/)[0]+'. '+p1+'</div>')
                         .replace(/\n{2,}/g,'<br/><br/>')
@@ -1256,7 +1256,7 @@ INSTRUCTIONS:
               </div>
             ))}
             {sqSearching&&<div style={{display:"flex",gap:10,alignItems:"center",padding:"8px 0"}}>
-              <div style={{width:24,height:24,borderRadius:"50%",background:"#6366f1",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}} className="spin">◌</div>
+              <div style={{width:24,height:24,borderRadius:"50%",background:C.purple,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff",flexShrink:0}} className="spin">◌</div>
               <span style={{fontSize:13,color:C.muted}}>Thinking…</span>
             </div>}
           </div>
@@ -1275,7 +1275,7 @@ INSTRUCTIONS:
           {sqResults&&sqResults.error&&<div style={{fontSize:11,color:C.red,padding:"4px 16px"}}>{sqResults.error}</div>}
           {/* Input bar */}
           <div style={{padding:"8px 12px",borderTop:`1px solid ${C.border}`,flexShrink:0}}>
-            <div style={{display:"flex",alignItems:"center",background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
+            <div style={{display:"flex",alignItems:"center",background:C.input,border:`1px solid ${C.border}`,borderRadius:10,overflow:"hidden"}}>
               <input ref={sqInputRef} value={sqQuery} placeholder={sqHistory.length?"Follow up…":"Ask a question…"} autoFocus
                 onChange={e=>setSqQuery(e.target.value)}
                 onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runAiSearch(sqQuery);}}}

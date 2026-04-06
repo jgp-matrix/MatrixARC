@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { C } from '@/core/constants';
 import { fbDb, _bcToken } from '@/core/globals';
 import { useVendorSyncState, startVendorSync, _vSync, _vSyncNotify } from './useVendorSyncState';
 
@@ -83,89 +84,89 @@ export default function VendorPricingSyncPanel({uid}: any){
   }
 
   const{running,status,result,error}=sync;
-  const statusColor=status?.phase==="Complete"?"#22c55e":"#94a3b8";
+  const statusColor=status?.phase==="Complete"?C.green:C.muted;
   const norm=(s: string)=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
   const dkMatch=vendors.find((v: any)=>norm(v.Name).includes('digikey'));
   const moMatch=vendors.find((v: any)=>norm(v.Name).includes('mouser'));
 
   return(<div>
-    <div style={{fontSize:12,color:"#94a3b8",marginBottom:10,lineHeight:1.6}}>
+    <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>
       Searches all BC items on DigiKey and Mouser with manufacturer validation and writes
       prices to BC as alternate vendor purchase prices. Runs in the background — you can
       switch tabs while it runs.
     </div>
     {/* Vendor load status */}
     {vendorLoadErr&&<div style={{marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
-      <span style={{fontSize:12,color:"#f87171"}}>{"\u26A0"} {vendorLoadErr}</span>
+      <span style={{fontSize:12,color:C.red}}>{"\u26A0"} {vendorLoadErr}</span>
       <button onClick={fetchVendors} disabled={loadingVendors}
-        style={{background:"#1e3a5f",color:"#93c5fd",border:"1px solid #3b6aad",borderRadius:4,
+        style={{background:C.accentDim,color:C.accent,border:`1px solid ${C.accent}`,borderRadius:4,
           padding:"3px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>
         {loadingVendors?"Loading\u2026":"\u21BA Retry"}
       </button>
     </div>}
-    {loadingVendors&&!vendorLoadErr&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:8}}>Loading BC vendors\u2026</div>}
+    {loadingVendors&&!vendorLoadErr&&<div style={{fontSize:12,color:C.muted,marginBottom:8}}>Loading BC vendors\u2026</div>}
 
     <div style={{display:"flex",gap:10,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
       {/* DigiKey vendor selector */}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
-        <span style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap"}}>DigiKey Vendor:</span>
+        <span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>DigiKey Vendor:</span>
         {vendors.length>0?(
           <select value={dkVendor} onChange={e=>saveVendors(e.target.value,undefined)} disabled={running}
-            style={{background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:dkVendor?"#e2e8f0":"#475569",fontSize:12,fontFamily:"inherit",minWidth:160}}>
+            style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",color:dkVendor?C.text:C.muted,fontSize:12,fontFamily:"inherit",minWidth:160}}>
             <option value="">— not set —</option>
             {vendors.map((v: any)=><option key={v.No} value={v.No}>{v.No} — {v.Name}</option>)}
           </select>
         ):(
           <input value={dkVendor} onChange={e=>saveVendors(e.target.value,undefined)} disabled={running}
             placeholder={loadingVendors?"Loading\u2026":"Enter vendor No manually"}
-            style={{width:160,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+            style={{width:160,background:C.input,border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",color:C.text,fontSize:12,fontFamily:"inherit"}}/>
         )}
-        {dkMatch&&dkVendor===dkMatch.No&&<span style={{fontSize:11,color:"#22c55e"}}>{"\u2713"} auto-detected</span>}
+        {dkMatch&&dkVendor===dkMatch.No&&<span style={{fontSize:11,color:C.green}}>{"\u2713"} auto-detected</span>}
       </div>
       {/* Mouser vendor selector */}
       <div style={{display:"flex",gap:6,alignItems:"center"}}>
-        <span style={{fontSize:11,color:"#94a3b8",whiteSpace:"nowrap"}}>Mouser Vendor:</span>
+        <span style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>Mouser Vendor:</span>
         {vendors.length>0?(
           <select value={mouserVendor} onChange={e=>saveVendors(undefined,e.target.value)} disabled={running}
-            style={{background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:mouserVendor?"#e2e8f0":"#475569",fontSize:12,fontFamily:"inherit",minWidth:160}}>
+            style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",color:mouserVendor?C.text:C.muted,fontSize:12,fontFamily:"inherit",minWidth:160}}>
             <option value="">— not set —</option>
             {vendors.map((v: any)=><option key={v.No} value={v.No}>{v.No} — {v.Name}</option>)}
           </select>
         ):(
           <input value={mouserVendor} onChange={e=>saveVendors(undefined,e.target.value)} disabled={running}
             placeholder={loadingVendors?"Loading\u2026":"Enter vendor No manually"}
-            style={{width:160,background:"#111",border:"1px solid #333",borderRadius:4,padding:"5px 8px",color:"#e2e8f0",fontSize:12,fontFamily:"inherit"}}/>
+            style={{width:160,background:C.input,border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",color:C.text,fontSize:12,fontFamily:"inherit"}}/>
         )}
-        {moMatch&&mouserVendor===moMatch.No&&<span style={{fontSize:11,color:"#22c55e"}}>{"\u2713"} auto-detected</span>}
+        {moMatch&&mouserVendor===moMatch.No&&<span style={{fontSize:11,color:C.green}}>{"\u2713"} auto-detected</span>}
       </div>
       {/* Manual reload button (always visible so user can re-fetch if needed) */}
       {!loadingVendors&&<button onClick={fetchVendors} title="Reload vendor list from BC"
-        style={{background:"none",border:"1px solid #334155",borderRadius:4,
-          padding:"4px 8px",fontSize:11,color:"#94a3b8",cursor:"pointer"}}>{"\u21BA"}</button>}
+        style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,
+          padding:"4px 8px",fontSize:11,color:C.muted,cursor:"pointer"}}>{"\u21BA"}</button>}
       <button onClick={running?()=>{_vSync.abort=true;}:handleStart}
-        style={{background:running?"#7f1d1d":"#0d9488",color:"#fff",border:"none",borderRadius:6,
+        style={{background:running?C.redDim:C.teal,color:running?C.red:"#fff",border:"none",borderRadius:6,
           padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
         {running?"\u23F9 Stop":"\uD83D\uDD04 Sync DigiKey & Mouser Prices"}
       </button>
     </div>
     {status&&<div style={{fontSize:12,marginBottom:6}}>
       <span style={{color:statusColor,fontWeight:600}}>{status.phase}</span>
-      {status.total>0&&<span style={{color:"#94a3b8",marginLeft:8}}>
+      {status.total>0&&<span style={{color:C.muted,marginLeft:8}}>
         {status.searched||0}/{status.total} searched
         {" \u00B7 "}DK: {status.dkFound||0}/{status.dkWritten||0} written
         {" \u00B7 "}Mouser: {status.mouserFound||0}/{status.mouserWritten||0} written
-        {status.errors>0&&<span style={{color:"#f59e0b"}}> {"\u00B7"} {status.errors} errors</span>}
+        {status.errors>0&&<span style={{color:C.yellow}}> {"\u00B7"} {status.errors} errors</span>}
       </span>}
-      {status.detail&&<div style={{color:"#94a3b8",fontSize:11,marginTop:2,fontFamily:"monospace"}}>{status.detail}</div>}
+      {status.detail&&<div style={{color:C.muted,fontSize:11,marginTop:2,fontFamily:"monospace"}}>{status.detail}</div>}
     </div>}
-    {error&&<div style={{color:"#ef4444",fontSize:12,marginTop:6}}>{error}</div>}
+    {error&&<div style={{color:C.red,fontSize:12,marginTop:6}}>{error}</div>}
     {result&&<div style={{marginTop:8,fontSize:12}}>
-      <div style={{color:"#22c55e",marginBottom:4}}>
+      <div style={{color:C.green,marginBottom:4}}>
         {"\u2713"} Complete — DigiKey: <strong>{result.dkWritten}</strong> {"\u00B7"} Mouser: <strong>{result.mouserWritten}</strong> written to BC
-        <span style={{color:"#94a3b8",marginLeft:8}}>| {result.errors} errors | {Math.round(result.durationMs/1000)}s</span>
+        <span style={{color:C.muted,marginLeft:8}}>| {result.errors} errors | {Math.round(result.durationMs/1000)}s</span>
       </div>
       <button onClick={()=>setShowLog(v=>!v)}
-        style={{background:"#1e293b",color:"#94a3b8",border:"1px solid #334155",borderRadius:4,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>
+        style={{background:C.bg,color:C.muted,border:`1px solid ${C.border}`,borderRadius:4,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>
         {showLog?"Hide":"Show"} Results ({result.results.length} items)
       </button>
       {showLog&&<div style={{marginTop:6,maxHeight:300,overflowY:"auto",fontSize:11,fontFamily:"monospace"}}>
@@ -173,10 +174,10 @@ export default function VendorPricingSyncPanel({uid}: any){
           const dk=r.digikey||{};const mo=r.mouser||{};
           const hasDk=dk.found&&dk.price>0;const hasMo=mo.found&&mo.price>0;
           if(!hasDk&&!hasMo)return null;
-          return(<div key={i} style={{padding:"1px 0",color:hasDk&&hasMo?"#34d399":hasDk?"#93c5fd":hasMo?"#fbbf24":"#475569"}}>
+          return(<div key={i} style={{padding:"1px 0",color:hasDk&&hasMo?C.green:hasDk?C.accent:hasMo?C.yellow:C.muted}}>
             {r.partNumber}
-            {hasDk&&<span style={{color:"#93c5fd"}}> {"\u00B7"} DK ${dk.price?.toFixed(2)} ({dk.manufacturer||'?'})</span>}
-            {hasMo&&<span style={{color:"#fbbf24"}}> {"\u00B7"} Mouser ${mo.price?.toFixed(2)} ({mo.manufacturer||'?'})</span>}
+            {hasDk&&<span style={{color:C.accent}}> {"\u00B7"} DK ${dk.price?.toFixed(2)} ({dk.manufacturer||'?'})</span>}
+            {hasMo&&<span style={{color:C.yellow}}> {"\u00B7"} Mouser ${mo.price?.toFixed(2)} ({mo.manufacturer||'?'})</span>}
           </div>);
         })}
       </div>}

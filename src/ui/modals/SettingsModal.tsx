@@ -102,7 +102,7 @@ function SettingsModal({uid,onClose,onNameChange}){
         <div style={{marginBottom:20}}/>
 
         {/* Account */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        <div style={{marginBottom:20,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Account</div>
           <div style={{marginBottom:12}}>
             <label style={{fontSize:12,color:C.muted,display:"block",marginBottom:4}}>Email</label>
@@ -123,7 +123,7 @@ function SettingsModal({uid,onClose,onNameChange}){
         </div>
 
         {/* Outlook Email Integration */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        <div style={{marginBottom:20,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Outlook Email — RFQ Sending</div>
           <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Authorize ARC to send RFQ emails via your Microsoft 365 / Outlook account. Required for the <strong style={{color:C.text}}>✉ Email RFQs</strong> feature.</div>
           {graphStatus==="checking"&&<div style={{fontSize:12,color:C.muted}}>Checking authorization…</div>}
@@ -138,11 +138,11 @@ function SettingsModal({uid,onClose,onNameChange}){
         {/* BC Environment, Codale, Mouser, DigiKey, Pricing Reports — moved to API Setup modal (v1.19.379) */}
 
         {/* Terms & Conditions */}
-        <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+        <div style={{marginBottom:20,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Quote Terms & Conditions</div>
           <div style={{fontSize:12,color:C.muted,marginBottom:8,lineHeight:1.6}}>
             Paste your full Terms & Conditions below. These will appear on page 2 of the printed Client Quote. Use the format:<br/>
-            <code style={{fontSize:10,color:"#38bdf8"}}>1. Section Title: Section body text here.</code>
+            <code style={{fontSize:10,color:C.accent}}>1. Section Title: Section body text here.</code>
           </div>
           {tcLoading?<div style={{fontSize:12,color:C.muted}}>Loading…</div>:(
             <>

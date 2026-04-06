@@ -34,7 +34,7 @@ function QuoteTab({project,onUpdate}){
   const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
 
   const defaultTerms="Standard Payment Terms for Panel Builds (Order Total over $30,000): 30% ARO; 40% @ Procurement, 30% @ Readiness To Ship\nStandard Payment Terms for Engineering / Programming: 50% ARO / 50% due @ Completion of Work";
-  const qInp=(x={})=>({background:"transparent",border:"none",borderBottom:"1px dashed #cbd5e1",outline:"none",color:"#e2e8f0",fontSize:"inherit",fontFamily:"inherit",padding:"1px 2px",width:"100%",...x});
+  const qInp=(x={})=>({background:"transparent",border:"none",borderBottom:`1px dashed ${C.border}`,outline:"none",color:C.text,fontSize:"inherit",fontFamily:"inherit",padding:"1px 2px",width:"100%",...x});
 
   return(
     <div>
@@ -56,7 +56,7 @@ function QuoteTab({project,onUpdate}){
             <div key={key} style={{display:"flex",flexDirection:"column",gap:2,minWidth:w||180,flex:1}}>
               <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.8px",color:C.muted}}>{label}</label>
               <input value={q[key]||""} onChange={e=>setQ({[key]:e.target.value})} placeholder={ph}
-                style={{background:C.cardBg||"#181825",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text||"#e8e8f0",fontSize:13,outline:"none"}}/>
+                style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text,fontSize:13,outline:"none"}}/>
             </div>
           );
           return(
@@ -96,12 +96,12 @@ function QuoteTab({project,onUpdate}){
               <div style={{display:"flex",flexDirection:"column",gap:2}}>
                 <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.8px",color:C.muted}}>Payment Terms Text</label>
                 <textarea value={q.termsText!=null?q.termsText:defaultTerms} onChange={e=>setQ({termsText:e.target.value})} rows={2}
-                  style={{background:C.cardBg||"#181825",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text||"#e8e8f0",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+                  style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:2}}>
                 <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.8px",color:C.muted}}>Line Item Notes</label>
                 <textarea value={q.lineNotes||""} onChange={e=>setQ({lineNotes:e.target.value})} placeholder="e.g. Grey duct quoted instead of white." rows={1}
-                  style={{background:C.cardBg||"#181825",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text||"#e8e8f0",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+                  style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text,fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
               </div>
             </div>
           );
@@ -124,9 +124,9 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-addr">{_appCtx.company?.address||"5591 Leo Park Road, West Jordan, UT 84081 US"}</div>
             </div>
             <div className="qd-hdr-right">
-              <div className="qd-qlabel" style={isProjectBudgetary?{fontSize:22,fontWeight:800,color:"#dc2626",letterSpacing:2}:{}}>{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
+              <div className="qd-qlabel" style={isProjectBudgetary?{fontSize:22,fontWeight:800,color:C.red,letterSpacing:2}:{}}>{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
               <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="MTX-Q2#####" style={{...qInp({width:220,fontSize:28,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
-              <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":"#64748b",letterSpacing:0.3}}>Rev {String(project.quoteRev||0).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>
+              <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?C.yellow:C.muted,letterSpacing:0.3}}>Rev {String(project.quoteRev||0).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>
               {(()=>{const hasEq=(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-qmeta">{q.date||today}<br/>Page 1 of {totalPages}</div>;})()}
             </div>
           </div>
@@ -137,7 +137,7 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-info-label">Attention</div>
               <div className="qd-info-name"><input value={q.contact||""} onChange={e=>setQ({contact:e.target.value})} placeholder="Contact name" style={qInp({fontWeight:700,fontSize:18})}/></div>
               <div className="qd-info-detail">
-                <strong><input value={q.company||""} onChange={e=>setQ({company:e.target.value})} placeholder="Company" style={qInp({fontWeight:600,color:"#f1f5f9",marginBottom:2})}/></strong>
+                <strong><input value={q.company||""} onChange={e=>setQ({company:e.target.value})} placeholder="Company" style={qInp({fontWeight:600,color:C.text,marginBottom:2})}/></strong>
                 <input value={q.address||""} onChange={e=>setQ({address:e.target.value})} placeholder="Address" style={qInp({marginBottom:2})}/>
                 <div>Phone: <input value={q.phone||""} onChange={e=>setQ({phone:e.target.value})} placeholder="—" style={{...qInp({display:"inline",width:"60%"})}}/></div>
               </div>
@@ -174,7 +174,7 @@ function QuoteTab({project,onUpdate}){
 
           {/* Terms Banner */}
           <div className="qd-terms">
-            <textarea value={q.termsText!=null?q.termsText:defaultTerms} onChange={e=>setQ({termsText:e.target.value})} rows={3} style={{...qInp({display:"block",width:"100%",resize:"vertical",fontSize:"14px",lineHeight:"1.7",color:"#94a3b8",borderBottom:"none"})}}/>
+            <textarea value={q.termsText!=null?q.termsText:defaultTerms} onChange={e=>setQ({termsText:e.target.value})} rows={3} style={{...qInp({display:"block",width:"100%",resize:"vertical",fontSize:"14px",lineHeight:"1.7",color:C.muted,borderBottom:"none"})}}/>
           </div>
 
           {/* Line Items */}
@@ -217,7 +217,7 @@ function QuoteTab({project,onUpdate}){
                   {pan.bomNotes&&<div className="qd-li-notes">
                     <span>NOTES: </span>{pan.bomNotes}
                   </div>}
-                  <div className="qd-li-notes" style={{borderLeftColor:"#3b82f6"}}>
+                  <div className="qd-li-notes" style={{borderLeftColor:C.accent}}>
                     <span>QUOTE NOTES: </span>
                     <textarea value={qp.lineNotes||""} onChange={e=>setQP({lineNotes:e.target.value})} placeholder="Additional quote-specific notes…" rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
                   </div>
@@ -251,10 +251,10 @@ function QuoteTab({project,onUpdate}){
               {/* Crossed items — outside the bordered box so .qd-li stays compact and doesn't page-break */}
               {crossedItems.length>0&&(
                 <div style={{padding:"4px 44px 8px",fontSize:12}}>
-                  <div className="qd-crossed-title" style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:"#94a3b8",marginBottom:4}}>Crossed / Superseded — Alternate Products Used</div>
+                  <div className="qd-crossed-title" style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:C.muted,marginBottom:4}}>Crossed / Superseded — Alternate Products Used</div>
                   {crossedItems.map((item,i)=>(
-                    <div key={item.id||i} style={{fontSize:9,color:"#334155",marginBottom:1}}>
-                      {i+1}. <span style={{color:"#64748b"}}>Scanned:</span> <strong>{item.crossedFrom}</strong> <span style={{color:"#64748b"}}> → Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:"#64748b"}}> ({item.description})</span>:null}
+                    <div key={item.id||i} style={{fontSize:9,color:C.sub,marginBottom:1}}>
+                      {i+1}. <span style={{color:C.muted}}>Scanned:</span> <strong>{item.crossedFrom}</strong> <span style={{color:C.muted}}> → Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:C.muted}}> ({item.description})</span>:null}
                     </div>
                   ))}
                 </div>
@@ -269,7 +269,7 @@ function QuoteTab({project,onUpdate}){
             const hasTotalPrice=totalPrice>0;
             return(
           <div style={{breakInside:"avoid",pageBreakInside:"avoid"}}>
-          <div style={{padding:"8px 44px",fontSize:11,color:"#475569",lineHeight:1.6,fontStyle:"italic",borderTop:"2px solid #0f172a",marginTop:8}}>
+          <div style={{padding:"8px 44px",fontSize:11,color:C.muted,lineHeight:1.6,fontStyle:"italic",borderTop:`2px solid ${C.border}`,marginTop:8}}>
             Budgetary quotes are provided for planning purposes only and do not represent a firm or binding price. Firm quoted prices are valid for 30 days from the date of issue unless otherwise noted. All prices are subject to change without notice and do not constitute a binding contract until a purchase order is accepted and confirmed by Matrix Systems. Lead times and material availability are estimated and subject to supplier confirmation at time of order.
           </div>
           <div className="qd-totals-bar">
@@ -277,7 +277,7 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-totals-row"><span>Subtotal</span><span>{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
-              {isProjectBudgetary&&<div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>BUDGETARY</div>}
+              {isProjectBudgetary&&<div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:C.red,letterSpacing:2,textTransform:"uppercase"}}>BUDGETARY</div>}
             </div>
           </div>
           </div>);
@@ -291,7 +291,7 @@ function QuoteTab({project,onUpdate}){
             </div>
             <div style={{textAlign:"right"}}>
               <div className="qd-footer-label">Prices Valid Until</div>
-              <div className="qd-footer-value"><input value={q.validUntil||""} onChange={e=>setQ({validUntil:e.target.value})} placeholder={defaultValidUntil} style={{...qInp({textAlign:"right",color:"#dc2626",fontWeight:500})}}/></div>
+              <div className="qd-footer-value"><input value={q.validUntil||""} onChange={e=>setQ({validUntil:e.target.value})} placeholder={defaultValidUntil} style={{...qInp({textAlign:"right",color:C.red,fontWeight:500})}}/></div>
             </div>
           </div>
 
@@ -300,7 +300,7 @@ function QuoteTab({project,onUpdate}){
             <div className="qd-foot-left"><strong>Matrix Systems</strong><br/>5591 Leo Park Rd · West Jordan, UT 84081</div>
             <div className="qd-foot-right">(801) 930-9492<br/>sales@matrixpci.com</div>
           </div>
-          <div className="qd-continued" style={{textAlign:"center",fontStyle:"italic",fontSize:10,color:"#94a3b8",padding:"8px 0",display:"none"}}>continued on next page...</div>
+          <div className="qd-continued" style={{textAlign:"center",fontStyle:"italic",fontSize:10,color:C.muted,padding:"8px 0",display:"none"}}>continued on next page...</div>
         </div>
 
         {/* ═══ QUESTIONS FOR CUSTOMER (if any on_quote) ═══ */}
@@ -311,18 +311,18 @@ function QuoteTab({project,onUpdate}){
               React.createElement("div",{className:"qd-hc-right"},(q.date||today)+"\nPage 2 of "+((project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"))?3:2))
             ),
             React.createElement("div",{style:{padding:"24px 44px"}},
-              React.createElement("div",{style:{fontSize:16,fontWeight:700,color:"#f1f5f9",marginBottom:4,textTransform:"uppercase",letterSpacing:1,textAlign:"center"}},"Questions for Customer"),
-              React.createElement("div",{style:{fontSize:11,color:"#94a3b8",textAlign:"center",marginBottom:20}},"The following items require clarification before final quote acceptance."),
+              React.createElement("div",{style:{fontSize:16,fontWeight:700,color:C.text,marginBottom:4,textTransform:"uppercase",letterSpacing:1,textAlign:"center"}},"Questions for Customer"),
+              React.createElement("div",{style:{fontSize:11,color:C.muted,textAlign:"center",marginBottom:20}},"The following items require clarification before final quote acceptance."),
               React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:12}},
-                onQ.map((eq,i)=>React.createElement("div",{key:eq.id||i,style:{padding:"10px 14px",border:"1px solid #e2e8f0",borderRadius:6}},
+                onQ.map((eq,i)=>React.createElement("div",{key:eq.id||i,style:{padding:"10px 14px",border:`1px solid ${C.border}`,borderRadius:6}},
                   React.createElement("div",{style:{display:"flex",alignItems:"center",gap:8,marginBottom:4}},
-                    React.createElement("span",{style:{fontSize:10,fontWeight:700,color:eq.severity==="critical"?"#dc2626":"#d97706",textTransform:"uppercase"}},eq.severity),
-                    React.createElement("span",{style:{fontSize:10,color:"#94a3b8",fontWeight:600}},eq.category)
+                    React.createElement("span",{style:{fontSize:10,fontWeight:700,color:eq.severity==="critical"?C.red:C.yellow,textTransform:"uppercase"}},eq.severity),
+                    React.createElement("span",{style:{fontSize:10,color:C.muted,fontWeight:600}},eq.category)
                   ),
-                  React.createElement("div",{style:{fontSize:12,color:"#e2e8f0",lineHeight:1.6}},String(i+1)+". "+eq.question),
-                  React.createElement("div",{style:{marginTop:6,borderTop:"1px dashed #e2e8f0",paddingTop:6}},
-                    React.createElement("span",{style:{fontSize:10,color:"#94a3b8"}},"Answer: "),
-                    React.createElement("span",{style:{borderBottom:"1px solid #cbd5e1",display:"inline-block",minWidth:200,fontSize:11}}," ")
+                  React.createElement("div",{style:{fontSize:12,color:C.text,lineHeight:1.6}},String(i+1)+". "+eq.question),
+                  React.createElement("div",{style:{marginTop:6,borderTop:`1px dashed ${C.border}`,paddingTop:6}},
+                    React.createElement("span",{style:{fontSize:10,color:C.muted}},"Answer: "),
+                    React.createElement("span",{style:{borderBottom:`1px solid ${C.border}`,display:"inline-block",minWidth:200,fontSize:11}}," ")
                   )
                 ))
               )
@@ -331,7 +331,7 @@ function QuoteTab({project,onUpdate}){
               React.createElement("div",{className:"qd-foot-left"},"Matrix Systems, LLC"),
               React.createElement("div",{className:"qd-foot-right"},"(801) 930-9492",React.createElement("br"),"sales@matrixpci.com")
             ),
-            React.createElement("div",{className:"qd-continued",style:{textAlign:"center",fontStyle:"italic",fontSize:10,color:"#94a3b8",padding:"8px 0",display:"none"}},"continued on next page...")
+            React.createElement("div",{className:"qd-continued",style:{textAlign:"center",fontStyle:"italic",fontSize:10,color:C.muted,padding:"8px 0",display:"none"}},"continued on next page...")
           ):null;
         })()}
 
@@ -348,7 +348,7 @@ function QuoteTab({project,onUpdate}){
             <div className="qd-tc-body">
               {(()=>{
                 const raw=_appCtx.termsAndConditions||"";
-                if(!raw.trim())return <div className="qd-tc-item"><p style={{fontStyle:"italic",color:"#94a3b8"}}>No Terms & Conditions configured. Go to Settings to add your T&C.</p></div>;
+                if(!raw.trim())return <div className="qd-tc-item"><p style={{fontStyle:"italic",color:C.muted}}>No Terms & Conditions configured. Go to Settings to add your T&C.</p></div>;
                 // Pre-process: split sections that are crammed onto the same line
                 // Insert newline before patterns like "2." or "12." that appear mid-text (preceded by space or sentence-ending punctuation)
                 const preprocessed=raw.replace(/(\D)(\d{1,2})[.\)]\s*([A-Z])/g,function(m,pre,num,letter){return pre+"\n"+num+". "+letter;});

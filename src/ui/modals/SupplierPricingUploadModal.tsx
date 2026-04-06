@@ -160,7 +160,7 @@ function SupplierPricingUploadModal({uid,onClose}){
               <div key={key} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:12}}>
                 <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:6}}>{label} {req&&<span style={{color:C.red}}>*</span>}</div>
                 <select value={colMap[key]} onChange={e=>setColMap(prev=>({...prev,[key]:parseInt(e.target.value)}))}
-                  style={{width:"100%",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:13,fontFamily:"inherit"}}>
+                  style={{width:"100%",background:C.input,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:13,fontFamily:"inherit"}}>
                   <option value={-1}>— Select column —</option>
                   {headers.map((h,i)=><option key={i} value={i}>{h}</option>)}
                 </select>
@@ -170,7 +170,7 @@ function SupplierPricingUploadModal({uid,onClose}){
           <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:8}}>Preview (first 5 rows)</div>
           <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`,marginBottom:16}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-              <thead><tr style={{background:"#0a0a12"}}>{headers.map((h,i)=><th key={i} style={{padding:"6px 10px",textAlign:"left",color:i===colMap.partNumber?C.accent:i===colMap.unitCost?C.green:i===colMap.description?C.yellow:C.muted,fontWeight:700,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>)}</tr></thead>
+              <thead><tr style={{background:C.bg}}>{headers.map((h,i)=><th key={i} style={{padding:"6px 10px",textAlign:"left",color:i===colMap.partNumber?C.accent:i===colMap.unitCost?C.green:i===colMap.description?C.yellow:C.muted,fontWeight:700,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>)}</tr></thead>
               <tbody>{rawRows.slice(0,5).map((row,ri)=><tr key={ri}>{row.map((cell,ci)=><td key={ci} style={{padding:"5px 10px",color:C.text,borderBottom:`1px solid ${C.border}22`,whiteSpace:"nowrap"}}>{cell}</td>)}</tr>)}</tbody>
             </table>
           </div>
@@ -186,7 +186,7 @@ function SupplierPricingUploadModal({uid,onClose}){
 
         {phase==='review'&&lookupProgress&&(
           <div style={{textAlign:"center",padding:"40px 0"}}>
-            <div style={{width:48,height:48,margin:"0 auto 16px",border:"4px solid #e2e8f0",borderTop:`4px solid ${C.accent}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+            <div style={{width:48,height:48,margin:"0 auto 16px",border:`4px solid ${C.border}`,borderTop:`4px solid ${C.accent}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
             <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:6}}>Looking up items in Business Central…</div>
             <div style={{fontSize:13,color:C.muted}}>{lookupProgress.current} of {lookupProgress.total}</div>
           </div>
@@ -198,7 +198,7 @@ function SupplierPricingUploadModal({uid,onClose}){
           </div>
           <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`,marginBottom:16,maxHeight:400,overflowY:"auto"}}>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-              <thead><tr style={{background:"#0a0a12",position:"sticky",top:0,zIndex:1}}>
+              <thead><tr style={{background:C.bg,position:"sticky",top:0,zIndex:1}}>
                 <th style={{padding:"8px 10px",width:36}}><input type="checkbox" checked={reviewRows.every((_,i)=>checked[i])} onChange={e=>{const v=e.target.checked;const c={};reviewRows.forEach((_,i)=>{c[i]=v;});setChecked(c);}} style={{accentColor:C.accent}}/></th>
                 <th style={{padding:"8px 10px",textAlign:"left",color:C.muted,fontWeight:700}}>Status</th>
                 <th style={{padding:"8px 10px",textAlign:"left",color:C.muted,fontWeight:700}}>Part Number</th>
@@ -214,7 +214,7 @@ function SupplierPricingUploadModal({uid,onClose}){
                 return(
                   <tr key={i} style={{borderBottom:`1px solid ${C.border}22`,opacity:checked[i]?1:0.4}}>
                     <td style={{padding:"6px 10px",textAlign:"center"}}><input type="checkbox" checked={!!checked[i]} onChange={e=>setChecked(prev=>({...prev,[i]:e.target.checked}))} style={{accentColor:C.accent}}/></td>
-                    <td style={{padding:"6px 10px"}}><span style={{fontSize:11,fontWeight:700,borderRadius:6,padding:"2px 8px",background:row.status==='update'?(noChange?"#334155":C.greenDim):C.accentDim,color:row.status==='update'?(noChange?C.muted:C.green):C.accent}}>{row.status==='update'?(noChange?"No Change":"Update"):"New"}</span></td>
+                    <td style={{padding:"6px 10px"}}><span style={{fontSize:11,fontWeight:700,borderRadius:6,padding:"2px 8px",background:row.status==='update'?(noChange?C.border:C.greenDim):C.accentDim,color:row.status==='update'?(noChange?C.muted:C.green):C.accent}}>{row.status==='update'?(noChange?"No Change":"Update"):"New"}</span></td>
                     <td style={{padding:"6px 10px",fontWeight:600,color:C.text,fontFamily:"monospace"}}>{row.partNumber}</td>
                     <td style={{padding:"6px 10px",color:C.muted,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.description||row.bcItem?.displayName||"—"}</td>
                     <td style={{padding:"6px 10px",textAlign:"right",color:C.muted,fontVariantNumeric:"tabular-nums"}}>{cur!=null?"$"+cur.toFixed(2):"—"}</td>
@@ -235,7 +235,7 @@ function SupplierPricingUploadModal({uid,onClose}){
 
         {phase==='processing'&&progress&&(
           <div style={{textAlign:"center",padding:"40px 0"}}>
-            <div style={{width:48,height:48,margin:"0 auto 16px",border:"4px solid #e2e8f0",borderTop:`4px solid ${C.accent}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+            <div style={{width:48,height:48,margin:"0 auto 16px",border:`4px solid ${C.border}`,borderTop:`4px solid ${C.accent}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
             <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:8}}>Updating Business Central…</div>
             <div style={{fontSize:13,color:C.muted,marginBottom:12}}>{progress.current} of {progress.total}</div>
             <div style={{display:"flex",justifyContent:"center",gap:20,fontSize:13}}>
@@ -257,7 +257,7 @@ function SupplierPricingUploadModal({uid,onClose}){
             </div>
           </div>
           {results.errors.length>0&&(
-            <div style={{background:"#1a0a0a",border:`1px solid ${C.red}44`,borderRadius:8,padding:12,marginBottom:16,maxHeight:200,overflowY:"auto"}}>
+            <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:12,marginBottom:16,maxHeight:200,overflowY:"auto"}}>
               <div style={{fontSize:12,fontWeight:700,color:C.red,marginBottom:8}}>Errors</div>
               {results.errors.map((err,i)=>(
                 <div key={i} style={{fontSize:12,color:C.muted,marginBottom:4,display:"flex",gap:8}}>

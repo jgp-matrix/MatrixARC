@@ -131,8 +131,8 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
 
   return ReactDOM.createPortal(<>
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:640,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
-        <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:12}}>✉ Send Quote</div>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:640,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
+        <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:12}}>✉ Send Quote</div>
         <div style={{display:"flex",gap:0,marginBottom:14,borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`}}>
           <button onClick={()=>setSendMode("new")}
             style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",
@@ -141,7 +141,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
           </button>
           <button onClick={()=>setSendMode("reply")}
             style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",borderLeft:`1px solid ${C.border}`,
-              background:sendMode==="reply"?"#1a2a1a":"transparent",color:sendMode==="reply"?"#4ade80":C.muted}}>
+              background:sendMode==="reply"?C.greenDim:"transparent",color:sendMode==="reply"?C.green:C.muted}}>
             ↩ Reply to Thread
           </button>
         </div>
@@ -171,12 +171,12 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
               {threadResults.map((t,i)=>(
                 <div key={t.id} onClick={()=>setSelectedThread(t)}
                   style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}33`,cursor:"pointer",
-                    background:selectedThread?.id===t.id?"#0c2a1a":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}
+                    background:selectedThread?.id===t.id?C.greenDim:i%2===0?"transparent":"rgba(255,255,255,0.015)"}}
                   onMouseEnter={e=>{if(selectedThread?.id!==t.id)e.currentTarget.style.background=C.accentDim+"44";}}
                   onMouseLeave={e=>{if(selectedThread?.id!==t.id)e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)";}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:selectedThread?.id===t.id?700:600,color:selectedThread?.id===t.id?"#4ade80":C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject}</div>
+                      <div style={{fontSize:12,fontWeight:selectedThread?.id===t.id?700:600,color:selectedThread?.id===t.id?C.green:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject}</div>
                       <div style={{fontSize:11,color:C.muted,marginTop:2}}>{t.from}</div>
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
@@ -188,15 +188,15 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
                     </div>
                   </div>
                   <div style={{fontSize:10,color:C.muted,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",opacity:0.7}}>{t.preview}</div>
-                  {selectedThread?.id===t.id&&<div style={{fontSize:10,color:"#4ade80",fontWeight:700,marginTop:4}}>✓ Selected — will reply to this thread</div>}
+                  {selectedThread?.id===t.id&&<div style={{fontSize:10,color:C.green,fontWeight:700,marginTop:4}}>✓ Selected — will reply to this thread</div>}
                 </div>
               ))}
             </div>
             {selectedThread&&(
-              <div style={{marginTop:8,background:"#0c2a1a",border:"1px solid #4ade8044",borderRadius:6,padding:"8px 12px"}}>
+              <div style={{marginTop:8,background:C.greenDim,border:`1px solid ${C.green}44`,borderRadius:6,padding:"8px 12px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
-                  <div style={{fontSize:10,fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:0.5}}>↩ Reply All</div>
-                  <div style={{fontSize:9,color:"#4ade80",opacity:0.7}}>— all original recipients will be included</div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:0.5}}>↩ Reply All</div>
+                  <div style={{fontSize:9,color:C.green,opacity:0.7}}>— all original recipients will be included</div>
                 </div>
                 <div style={{fontSize:12,fontWeight:700,color:C.text}}>{selectedThread.subject}</div>
                 <div style={{fontSize:11,color:C.muted}}>From: {selectedThread.from} · {fmtDate(selectedThread.date)}</div>
@@ -209,12 +209,12 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
           <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Message</label>
           <textarea value={modalData.message} onChange={e=>setModalData(prev=>({...prev,message:e.target.value}))} rows={4} style={{...inp({fontSize:13,resize:"vertical",lineHeight:1.6})}}/>
         </div>
-        <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line",marginTop:6}}>{modalData.signature}</div>
+        <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line",marginTop:6}}>{modalData.signature}</div>
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,flexShrink:0}}>
-          <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
+          <button onClick={onClose} style={btn(C.bg,C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
           <button onClick={handleSend} disabled={sending}
-            style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:sending?0.5:1})}>
+            style={btn(sendMode==="reply"?C.greenDim:C.accentDim,sendMode==="reply"?C.green:C.accent,{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?C.green+"44":C.accent+"44"}`,opacity:sending?0.5:1})}>
             {sending?"Sending…":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
           </button>
         </div>
@@ -224,7 +224,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
     {previewEmail&&(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}
         onClick={()=>setPreviewEmail(null)}>
-        <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,width:"95%",maxWidth:800,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 60px 15px rgba(56,189,248,0.5)"}}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,width:"95%",maxWidth:800,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}
           onClick={e=>e.stopPropagation()}>
           {/* Preview Header */}
           <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
@@ -238,7 +238,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
               </div>
               <div style={{display:"flex",gap:6,flexShrink:0}}>
                 <button onClick={()=>{const t=threadResults.find(r=>r.subject===previewEmail.subject);if(t)setSelectedThread(t);setPreviewEmail(null);}}
-                  style={btn("#0d2a1a","#4ade80",{fontSize:11,fontWeight:700,border:"1px solid #4ade8066",padding:"5px 12px"})}>
+                  style={btn(C.greenDim,C.green,{fontSize:11,fontWeight:700,border:`1px solid ${C.green}66`,padding:"5px 12px"})}>
                   ↩ Select & Reply
                 </button>
                 <button onClick={()=>setPreviewEmail(null)}
@@ -448,7 +448,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                       <div style={{display:"flex",alignItems:"baseline",gap:10}}>
                         {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:project.bcEnv&&project.bcEnv!==_bcConfig.env?"#64748b":C.accent,lineHeight:1}}>{project.bcProjectNumber}</span>}
                         {isBcDisconnected&&<span style={{fontSize:11,fontWeight:700,color:C.yellow,background:"rgba(234,179,8,0.1)",border:"1px solid rgba(234,179,8,0.3)",borderRadius:12,padding:"2px 10px",whiteSpace:"nowrap"}} title={"Linked to "+project.bcEnv}>⚠ BC Disconnected</span>}
-                        {isBcDisconnected&&!readOnly&&onRelink&&<button onClick={e=>{e.stopPropagation();onRelink();}} disabled={relinking} style={{fontSize:11,fontWeight:700,color:"#38bdf8",background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.3)",borderRadius:12,padding:"2px 10px",cursor:relinking?"wait":"pointer",whiteSpace:"nowrap",opacity:relinking?0.6:1}}>{relinking?"Re-linking…":"🔗 Re-link to BC"}</button>}
+                        {isBcDisconnected&&!readOnly&&onRelink&&<button onClick={e=>{e.stopPropagation();onRelink();}} disabled={relinking} style={{fontSize:11,fontWeight:700,color:C.accent,background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:12,padding:"2px 10px",cursor:relinking?"wait":"pointer",whiteSpace:"nowrap",opacity:relinking?0.6:1}}>{relinking?"Re-linking…":"🔗 Re-link to BC"}</button>}
                         {project.bcCustomerName&&!readOnly?(
                           <span style={{fontSize:18,fontWeight:700,color:C.text,cursor:"text",borderBottom:"1px dashed transparent"}}
                             contentEditable suppressContentEditableWarning
@@ -487,9 +487,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     <span style={{fontSize:11,color:C.sub}}>{project.bcContactName||project.quote?.contact||"—"}</span>
                   ):showNewContact?(
                     <div style={{display:"inline-flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
-                      <input value={newContactName} onChange={e=>setNewContactName(e.target.value)} placeholder="Name *" style={{background:"#0d1526",border:"1px solid "+C.accent,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:110}}/>
-                      <input value={newContactEmail} onChange={e=>setNewContactEmail(e.target.value)} placeholder="Email" style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:130}}/>
-                      <input value={newContactPhone} onChange={e=>setNewContactPhone(e.target.value)} placeholder="Phone" style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:100}}/>
+                      <input value={newContactName} onChange={e=>setNewContactName(e.target.value)} placeholder="Name *" style={{background:C.input,border:"1px solid "+C.accent,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:110}}/>
+                      <input value={newContactEmail} onChange={e=>setNewContactEmail(e.target.value)} placeholder="Email" style={{background:C.input,border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:130}}/>
+                      <input value={newContactPhone} onChange={e=>setNewContactPhone(e.target.value)} placeholder="Phone" style={{background:C.input,border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:100}}/>
                       {newContactErr&&<span style={{fontSize:10,color:C.red}}>{newContactErr}</span>}
                       <button onClick={async()=>{
                         if(!newContactName.trim())return;setCreatingContact(true);setNewContactErr("");
@@ -522,9 +522,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                           quote:{...(project.quote||{}),contact:c?c.displayName:"",email:c?.email||project.quote?.email,phone:c?.phone||project.quote?.phone}};
                         onUpdate(upd);saveProject(uid,upd).catch(()=>{});
                         if(project.bcProjectNumber&&_bcToken&&no)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:no}).catch(()=>{});
-                      }} style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",minWidth:220,maxWidth:360}}>
+                      }} style={{background:C.input,border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",minWidth:220,maxWidth:360}}>
                         <option value="">— Select Person —</option>
-                        <option value="__NEW__" style={{color:"#38bdf8",fontWeight:700}}>+ New Contact…</option>
+                        <option value="__NEW__" style={{color:C.accent,fontWeight:700}}>+ New Contact…</option>
                         {contactPersons.map(c=><option key={c.number} value={c.number}>{c.displayName}{c.email?" ("+c.email+")":""}</option>)}
                       </select>
                     </div>
@@ -548,7 +548,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                       // Previously only called onUpdate (React state) — changes were lost on navigation.
                       var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;onUpdate(upd);saveProject(uid,upd).catch(function(){});
                       if(bcField&&project.bcProjectNumber&&_bcToken){var patch={};patch[bcField]=code;bcPatchJobOData(project.bcProjectNumber,patch).catch(function(){});}
-                    },style:{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:150}},opts)
+                    },style:{background:C.input,border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:150}},opts)
                   );
                 })}
               </div>
@@ -559,7 +559,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
               {panels.some(p=>(p.bom||[]).some(r=>!r.isLaborRow))&&(
-                <button onClick={()=>setShowCADLinkModal(true)} style={btn("#0d1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>📦 Send CADLink BOM's</button>
+                <button onClick={()=>setShowCADLinkModal(true)} style={btn(C.accentDim,C.accent,{fontSize:13,border:`1px solid ${C.accent}44`})}>📦 Send CADLink BOM's</button>
               )}
               {!readOnly&&onCopy&&(
                 <button onClick={onCopy} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⧉ Copy</button>
@@ -581,7 +581,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   <div style={{flex:1}}>
                     <div style={{fontSize:12,fontWeight:700,color:C.accent}}>{t.panelName||"Panel"}: {t.msg||"Processing…"}</div>
                     <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden",marginTop:4}}>
-                      <div style={{height:"100%",width:(t.pct||0)+"%",background:"linear-gradient(90deg,"+C.accent+",#818cf8)",borderRadius:4,transition:"width 0.4s"}}/>
+                      <div style={{height:"100%",width:(t.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},${C.purple})`,borderRadius:4,transition:"width 0.4s"}}/>
                     </div>
                   </div>
                 </div>
@@ -630,7 +630,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
           )}
         </div>
         </div>
-        <div style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",overflow:"hidden"}}>
+        <div style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:C.bg,overflow:"hidden"}}>
           {(()=>{
             const sp=(project.panels||[]).find(p=>p.id===selectedPanelId)||(project.panels||[])[0]||null;
             if(!sp)return <div style={{color:C.muted,fontSize:13,textAlign:"center",marginTop:40}}>No panels</div>;
@@ -650,15 +650,15 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
             const laborAccepted=sp.laborData?.accepted||{};
             const acceptedCount=laborEst.lines.filter(l=>laborAccepted[l.category]).length;
             const GDEF=[
-              {label:"CUT",color:"#f97316",cats:["Panel Holes","Side Devices","HVAC/Fans"]},
-              {label:"LAYOUT",color:"#a78bfa",cats:["Device Mounting","Duct & DIN Rail","Labels"]},
-              {label:"WIRE",color:"#38bdf8",cats:["Wire Time","Door Wiring"]},
+              {label:"CUT",color:C.yellow,cats:["Panel Holes","Side Devices","HVAC/Fans"]},
+              {label:"LAYOUT",color:C.purple,cats:["Device Mounting","Duct & DIN Rail","Labels"]},
+              {label:"WIRE",color:C.accent,cats:["Wire Time","Door Wiring"]},
             ];
             return(<>
               <div style={{flex:1,overflowY:"auto",minHeight:0,padding:16,display:"flex",flexDirection:"column",gap:12}}>
               <div style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5,marginBottom:2}}>PANEL SUMMARY</div>
               {/* Selected panel name header */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
+              <div style={{background:C.bg,border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",marginBottom:6}}>Line {(project.panels||[]).indexOf(sp)+1}</div>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                   <div style={{fontSize:14,fontWeight:800,color:C.accent,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{sp.drawingNo||sp.name||`Panel ${(project.panels||[]).indexOf(sp)+1}`}</div>
@@ -671,7 +671,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               </div>
 
               {/* Pricing Summary */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"12px 14px"}}>
+              <div style={{background:C.bg,border:`1px solid ${C.accent}`,borderRadius:8,padding:"12px 14px"}}>
                 <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
                 {[
                   ["Materials",fmt(matCost),"#fff",null,null],
@@ -704,7 +704,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               </div>
 
               {/* Labor */}
-              <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
+              <div style={{background:C.bg,border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
                   <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LABOR</div>
                   <span style={{background:laborEst.isLegacy?C.yellowDim:laborEst.hasLayoutData?C.greenDim:C.accentDim,color:laborEst.isLegacy?C.yellow:laborEst.hasLayoutData?C.green:C.accent,borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700}}>
@@ -753,7 +753,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                       {laborEst.lines.map((l,i)=>{
                         const isAcc=!!laborAccepted[l.category];
                         return(
-                        <tr key={i} style={{borderBottom:`1px solid ${C.border}22`,background:isAcc?"#0a1a0a":"transparent"}}>
+                        <tr key={i} style={{borderBottom:`1px solid ${C.border}22`,background:isAcc?C.greenDim:"transparent"}}>
                           <td style={{padding:"3px 4px",textAlign:"center"}}>
                             <input type="checkbox" checked={isAcc} disabled={readOnly}
                               onChange={e=>saveSelectedLaborAccepted(l.category,e.target.checked)}
@@ -793,10 +793,10 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
               </div>
 
               {/* Quote Summary — third pane, locked to bottom */}
-              <div style={{flexShrink:0,borderTop:`2px solid ${C.accent}`,background:"#06060f",padding:"12px 16px 16px",display:"flex",flexDirection:"column",gap:8}}>
+              <div style={{flexShrink:0,borderTop:`2px solid ${C.accent}`,background:C.bg,padding:"12px 16px 16px",display:"flex",flexDirection:"column",gap:8}}>
                 <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:2}}>
                   <span style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Rev ${String(project.quoteRev).padStart(2,'0')}`:""}</span>
-                  {(project.quoteRev||0)>(project.quoteRevAtPrint||0)&&<span style={{fontSize:10,fontWeight:700,color:"#f59e0b",letterSpacing:0.3}}>unsent revision</span>}
+                  {(project.quoteRev||0)>(project.quoteRevAtPrint||0)&&<span style={{fontSize:10,fontWeight:700,color:C.yellow,letterSpacing:0.3}}>unsent revision</span>}
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {(project.panels||[]).map((p,pi)=>{
@@ -811,13 +811,13 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   const pqty=p.lineQty??p.qty??1;
                   return(
                     <div key={p.id} onClick={()=>setSelectedPanelId(p.id)}
-                      style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:p.id===selectedPanelId?"#1a1a2e":"transparent",border:`1px solid ${p.id===selectedPanelId?C.accent:C.border}`,cursor:"pointer"}}>
+                      style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:p.id===selectedPanelId?C.accentDim:"transparent",border:`1px solid ${p.id===selectedPanelId?C.accent:C.border}`,cursor:"pointer"}}>
                       <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:20,textAlign:"center"}}>{pqty}</span>
                       <span style={{fontSize:12,color:p.id===selectedPanelId?C.accent:C.sub,fontWeight:p.id===selectedPanelId?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{p.drawingNo||p.name||`Panel ${pi+1}`}</span>
                       {(()=>{const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;return openEqs>0?
-                        React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:"1px solid #fde04766",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:"#fde047",animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?"):
+                        React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:`1px solid ${C.yellow}66`,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:C.yellow,animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?"):
                         React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer"}},React.createElement(Badge,{status:p.status||"draft"}));})()}
-                      {ppr.isBudgetary&&<span style={{fontSize:9,fontWeight:700,color:"#f59e0b",background:"#3a1f00",borderRadius:4,padding:"1px 5px",flexShrink:0}}>BUDGETARY</span>}
+                      {ppr.isBudgetary&&<span style={{fontSize:9,fontWeight:700,color:C.yellow,background:C.yellowDim,borderRadius:4,padding:"1px 5px",flexShrink:0}}>BUDGETARY</span>}
                       <span style={{fontSize:13,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{pfmt(psp*pqty)}</span>
                     </div>
                   );
@@ -840,8 +840,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   );
                 })()}
                 {(()=>{const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);if(!sp)return null;const isBudg=(sp.pricing||{}).isBudgetary||false;
-                  return <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",cursor:"pointer",fontSize:11,color:isBudg?"#f59e0b":"#64748b",marginTop:2}}>
-                    <input type="checkbox" checked={isBudg} onChange={e=>saveSelectedPricing({isBudgetary:e.target.checked})} style={{accentColor:"#f59e0b",width:13,height:13,cursor:"pointer"}}/>
+                  return <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",cursor:"pointer",fontSize:11,color:isBudg?C.yellow:C.muted,marginTop:2}}>
+                    <input type="checkbox" checked={isBudg} onChange={e=>saveSelectedPricing({isBudgetary:e.target.checked})} style={{accentColor:C.yellow,width:13,height:13,cursor:"pointer"}}/>
                     {isBudg?"Budgetary Quote — pricing is estimated":"Mark as Budgetary Quote"}
                   </label>;
                 })()}
@@ -862,13 +862,13 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                   const expiredVendors=new Set(expired.map(r=>r.bcVendorName||"Unknown"));
                   const badge=expired.length>0?`⚠ ${expiredVendors.size} Expired RFQ${expiredVendors.size!==1?"s":""}`:awaitingCount>0?`${pendingVendors.size} RFQ${pendingVendors.size!==1?"s":""} Awaiting Response`:null;
                   return <div>
-                    <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
-                    {badge&&<div style={{fontSize:10,fontWeight:700,textAlign:"center",marginTop:3,color:expired.length>0?"#f59e0b":"#38bdf8"}}>{badge}</div>}
+                    <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn(C.accentDim,C.accent,{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
+                    {badge&&<div style={{fontSize:10,fontWeight:700,textAlign:"center",marginTop:3,color:expired.length>0?C.yellow:C.accent}}>{badge}</div>}
                   </div>;
                 })()}
                 <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
-                  <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:14,padding:"8px 12px",flex:3,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Supplier Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
-                  <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
+                  <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn(C.greenDim,C.green,{fontSize:14,padding:"8px 12px",flex:3,border:`1px solid ${C.green}44`,fontWeight:700})}>📥 Upload Supplier Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
+                  <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn(C.bg,C.muted,{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
                 </div>
                 <button data-tour="print-quote-btn" onClick={onViewQuote} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%"})}>🖨 Print Client Quote{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?` (Rev ${project.quoteRev} ⚠ unsent)`:project.quoteRev>0?` (Rev ${project.quoteRev})`:""}</button>
                 {!readOnly&&<button onClick={async()=>{
@@ -907,13 +907,13 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
                     message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
-                }} style={btn("#0c2233","#38bdf8",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #38bdf844"})}>✉ Send Quote{project.quoteSentAt?" (Resend)":""}</button>}
-                {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
-                {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #4ade8044"})}>📬 PO Received</button>}
+                }} style={btn(C.accentDim,C.accent,{fontSize:13,padding:"6px 18px",width:"100%",border:`1px solid ${C.accent}44`})}>✉ Send Quote{project.quoteSentAt?" (Resend)":""}</button>}
+                {project.quoteSentAt&&<div style={{fontSize:11,color:C.accent,textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
+                {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button onClick={onPoReceived} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%",border:`1px solid ${C.green}44`})}>📬 PO Received</button>}
                 {!readOnly&&sp.bcItemNumber&&(
                   <button onClick={()=>{}} disabled={pendingBcCount>0}
                     title={pendingBcCount>0?`${pendingBcCount} unverified BC parts — resolve blue circles first`:`Update Assembly BOM for item ${sp.bcItemNumber}`}
-                    style={{background:pendingBcCount>0?"#111":"#0d1f3c",border:'1px solid '+(pendingBcCount>0?"#444":"#38bdf866"),color:pendingBcCount>0?"#555":"#38bdf8",cursor:pendingBcCount>0?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:pendingBcCount>0?0.5:1,textAlign:"center"}}>
+                    style={{background:pendingBcCount>0?C.bg:C.accentDim,border:`1px solid ${pendingBcCount>0?C.border:C.accent+"66"}`,color:pendingBcCount>0?C.muted:C.accent,cursor:pendingBcCount>0?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:pendingBcCount>0?0.5:1,textAlign:"center"}}>
                     🔄 Update BOM in BC (Item# {sp.bcItemNumber})
                   </button>
                 )}
@@ -926,7 +926,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
     {showDeleteAdminWarn&&(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
         onClick={()=>setShowDeleteAdminWarn(false)}>
-        <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",maxWidth:380,width:"100%",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"28px 32px",maxWidth:380,width:"100%",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}} onClick={e=>e.stopPropagation()}>
           <div style={{fontSize:18,fontWeight:800,color:C.red,marginBottom:10}}>Admin Required</div>
           <div style={{fontSize:13,color:C.sub,lineHeight:1.6,marginBottom:20}}>
             Only an <strong style={{color:C.accent}}>Admin</strong> can delete a project. Please contact your administrator to have this project removed.

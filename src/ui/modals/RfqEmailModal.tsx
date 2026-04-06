@@ -257,36 +257,36 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     if(sentItemIds.length>0&&onSent)onSent(sentItemIds);
     if(shouldPrint&&onPrint)onPrint(groups);
   }
-  const stColors={sent:"#4ade80",error:"#f87171",skipped:"#64748b",sending:"#818cf8"};
+  const stColors={sent:C.green,error:C.red,skipped:C.muted,sending:C.purple};
   const stLabel=st=>st?.state==="sending"?(st.msg?`⏳ ${st.msg}`:"⏳ Sending…"):st?.state==="sent"?(st.msg?`✓ ${st.msg}`:"✓ Sent"):st?.state==="error"?`✗ ${st.msg||"Failed"}`:st?.state==="skipped"?"— Skipped":null;
   return ReactDOM.createPortal(
     <>
     {previewGroup&&(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:10001,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
         <div style={{width:"100%",maxWidth:1440,background:"#fff",borderRadius:10,overflow:"hidden",boxShadow:"0 8px 40px rgba(0,0,0,0.8)",display:"flex",flexDirection:"column",maxHeight:"calc(100vh - 80px)"}}>
-          <div style={{background:"#1e1b4b",padding:"10px 16px",display:"flex",alignItems:"center",gap:8}}>
-            <span style={{color:"#a5b4fc",fontWeight:700,fontSize:13,flex:1}}>Preview: {previewGroup.vendorName} — {_makeRfqNum(previewGroup.vendorName)}</span>
-            <button onClick={()=>setPreviewGroup(null)} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>✕</button>
+          <div style={{background:C.accentDim,padding:"10px 16px",display:"flex",alignItems:"center",gap:8}}>
+            <span style={{color:C.accent,fontWeight:700,fontSize:13,flex:1}}>Preview: {previewGroup.vendorName} — {_makeRfqNum(previewGroup.vendorName)}</span>
+            <button onClick={()=>setPreviewGroup(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>✕</button>
           </div>
           <iframe srcDoc={buildRfqEmailHtml(previewGroup,projectName,_makeRfqNum(previewGroup.vendorName),_rfqDate,_responseBy,null,_appCtx.company)} style={{flex:1,border:"none",minHeight:1000}} title="RFQ Preview"/>
         </div>
         <div style={{marginTop:12}}>
-          <button onClick={()=>setPreviewGroup(null)} style={{background:"#1e1b4b",border:"1px solid #4f46e5",color:"#a5b4fc",padding:"7px 24px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Close Preview</button>
+          <button onClick={()=>setPreviewGroup(null)} style={{background:C.accentDim,border:`1px solid ${C.accent}`,color:C.accent,padding:"7px 24px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Close Preview</button>
         </div>
       </div>
     )}
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",minWidth:560,maxWidth:720,width:"95%",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
-        <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:8}}>Send RFQ Emails</div>
-        <div style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,padding:"7px 10px",marginBottom:14,fontSize:12,display:"flex",alignItems:"center",gap:8}}>
-          <span style={{color:"#94a3b8"}}>From:</span>
-          <span style={{color:"#93c5fd",fontWeight:600}}>{fromEmail}</span>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"24px 28px",minWidth:560,maxWidth:720,width:"95%",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
+        <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:8}}>Send RFQ Emails</div>
+        <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 10px",marginBottom:14,fontSize:12,display:"flex",alignItems:"center",gap:8}}>
+          <span style={{color:C.muted}}>From:</span>
+          <span style={{color:C.accent,fontWeight:600}}>{fromEmail}</span>
         </div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-          <div style={{fontSize:12,color:"#94a3b8"}}>Uncheck any supplier to skip their email this send.</div>
+          <div style={{fontSize:12,color:C.muted}}>Uncheck any supplier to skip their email this send.</div>
           <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setIncluded(prev=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;})} disabled={sending||done} style={{background:"none",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Check All</button>
-            <button onClick={()=>setIncluded(prev=>{const m={};groups.forEach(g=>{m[g.vendorName]=false;});return m;})} disabled={sending||done} style={{background:"none",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Uncheck All</button>
+            <button onClick={()=>setIncluded(prev=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;})} disabled={sending||done} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Check All</button>
+            <button onClick={()=>setIncluded(prev=>{const m={};groups.forEach(g=>{m[g.vendorName]=false;});return m;})} disabled={sending||done} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Uncheck All</button>
           </div>
         </div>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18,maxHeight:360,overflowY:"auto"}}>
@@ -296,17 +296,17 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
             const lbl=stLabel(st);
             const lastSent=g.items.reduce((max,it)=>Math.max(max,it.rfqSentDate||0),0);
             return(
-              <div key={g.vendorName} style={{background:isOn?"#111128":"#090910",border:`1px solid ${isOn?"#3d6090":"#151520"}`,borderRadius:6,padding:"10px 12px",opacity:isOn?1:0.55,transition:"opacity 0.15s"}}>
+              <div key={g.vendorName} style={{background:isOn?C.accentDim:C.bg,border:`1px solid ${isOn?C.border:C.border}`,borderRadius:6,padding:"10px 12px",opacity:isOn?1:0.55,transition:"opacity 0.15s"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:isOn?6:0}}>
-                  <input type="checkbox" checked={isOn} disabled={sending||done} onChange={e=>setIncluded(prev=>({...prev,[g.vendorName]:e.target.checked}))} style={{cursor:"pointer",accentColor:"#818cf8",width:14,height:14,flexShrink:0}}/>
-                  <span style={{fontWeight:700,color:"#f1f5f9",fontSize:13,flex:1}}>{g.vendorName}</span>
-                  {lastSent>0&&<span style={{fontSize:10,color:"#f59e0b",fontWeight:600,background:"#3a1f00",borderRadius:4,padding:"1px 6px"}}>RFQ Sent {new Date(lastSent).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
-                  <button onClick={()=>setPreviewGroup(g)} title="Preview email" style={{background:"#0d1520",border:"1px solid #0284c7",borderRadius:4,color:"#38bdf8",cursor:"pointer",fontSize:11,padding:"1px 6px",fontFamily:"inherit"}}>👁 Preview</button>
-                  <span style={{fontSize:11,color:lbl?stColors[st.state]:"#64748b"}}>{lbl||`${g.items.length} item${g.items.length!==1?"s":""}`}</span>
+                  <input type="checkbox" checked={isOn} disabled={sending||done} onChange={e=>setIncluded(prev=>({...prev,[g.vendorName]:e.target.checked}))} style={{cursor:"pointer",accentColor:C.purple,width:14,height:14,flexShrink:0}}/>
+                  <span style={{fontWeight:700,color:C.text,fontSize:13,flex:1}}>{g.vendorName}</span>
+                  {lastSent>0&&<span style={{fontSize:10,color:C.yellow,fontWeight:600,background:C.yellowDim,borderRadius:4,padding:"1px 6px"}}>RFQ Sent {new Date(lastSent).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
+                  <button onClick={()=>setPreviewGroup(g)} title="Preview email" style={{background:C.accentDim,border:`1px solid ${C.accent}`,borderRadius:4,color:C.accent,cursor:"pointer",fontSize:11,padding:"1px 6px",fontFamily:"inherit"}}>👁 Preview</button>
+                  <span style={{fontSize:11,color:lbl?stColors[st.state]:C.muted}}>{lbl||`${g.items.length} item${g.items.length!==1?"s":""}`}</span>
                 </div>
                 {isOn&&(()=>{
                   const api=isApiVendor(g.vendorName);
-                  if(api)return <div style={{fontSize:11,color:"#4ade80",fontWeight:600,padding:"4px 0"}}>⚡ Pricing will be obtained automatically via {api.label}</div>;
+                  if(api)return <div style={{fontSize:11,color:C.green,fontWeight:600,padding:"4px 0"}}>⚡ Pricing will be obtained automatically via {api.label}</div>;
                   const contacts=vendorContacts[g.vendorName]||[];
                   const emailList=(emails[g.vendorName]||"").split(/[,;]\s*/).filter(e=>e.trim());
                   const rows=Math.max(1,emailList.length);
@@ -315,7 +315,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                       <textarea value={(emails[g.vendorName]||"").replace(/;\s*/g,";\n")} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value.replace(/\n/g,"; ")}))}
                         placeholder={contactsLoading?"Loading contacts…":"supplier@email.com"} disabled={sending||done}
                         rows={rows}
-                        style={{flex:1,boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none",resize:"vertical",lineHeight:1.6}}/>
+                        style={{flex:1,boxSizing:"border-box",background:C.input,border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 8px",color:C.text,fontSize:12,fontFamily:"inherit",outline:"none",resize:"vertical",lineHeight:1.6}}/>
                       {contacts.length>0&&<select disabled={sending||done} value="" onChange={e=>{
                         if(!e.target.value)return;
                         const cur=(emails[g.vendorName]||"").trim();
@@ -326,12 +326,12 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                           setEmails(prev=>({...prev,[g.vendorName]:newEmail}));
                         }
                         e.target.value="";
-                      }} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 4px",color:"#93c5fd",fontSize:10,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
+                      }} style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,padding:"5px 4px",color:C.accent,fontSize:10,cursor:"pointer",fontFamily:"inherit",flexShrink:0}}>
                         <option value="">📇 Contacts</option>
                         {contacts.map((c,ci)=><option key={ci} value={c.email}>{c.name} — {c.email}</option>)}
                       </select>}
                     </div>
-                    <label style={{display:"flex",alignItems:"center",gap:4,marginTop:3,cursor:"pointer",fontSize:10,color:remember[g.vendorName]?"#4ade80":"#64748b"}}>
+                    <label style={{display:"flex",alignItems:"center",gap:4,marginTop:3,cursor:"pointer",fontSize:10,color:remember[g.vendorName]?C.green:C.muted}}>
                       <input type="checkbox" checked={!!remember[g.vendorName]} onChange={e=>{
                         const checked=e.target.checked;
                         setRemember(prev=>({...prev,[g.vendorName]:checked}));
@@ -344,7 +344,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                             fbDb.doc(`users/${currentUid}/config/vendorEmails`).set({[g.vendorName]:firebase.firestore.FieldValue.delete()},{merge:true}).catch(()=>{});
                           }
                         }
-                      }} style={{accentColor:"#4ade80",width:12,height:12,cursor:"pointer"}}/>
+                      }} style={{accentColor:C.green,width:12,height:12,cursor:"pointer"}}/>
                       {remember[g.vendorName]?"Default for future RFQs":"Remember for future RFQs"}
                     </label>
                   </div>;
@@ -354,11 +354,11 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
           })}
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",alignItems:"center"}}>
-          {done&&groups.filter(g=>included[g.vendorName]).every(g=>statuses[g.vendorName]?.state==="sent")&&<span style={{fontSize:12,color:"#4ade80",marginRight:"auto"}}>✓ All RFQs sent!</span>}
-          <button onClick={onClose} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{done?"Close":"Cancel"}</button>
-          {!sending&&!done&&<button onClick={()=>{if(onPrint)onPrint(groups);onClose();}} style={{background:"#1a1a2a",border:"1px solid #4f46e5",color:"#a5b4fc",padding:"6px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600}}>📋 Print</button>}
-          {!sending&&!done&&<button onClick={()=>sendAll(false)} disabled={groups.length===0} style={{background:"#1e1b4b",border:"none",color:"#818cf8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>✉ Send</button>}
-          {sending&&<span style={{fontSize:12,color:"#818cf8"}}>Sending…</span>}
+          {done&&groups.filter(g=>included[g.vendorName]).every(g=>statuses[g.vendorName]?.state==="sent")&&<span style={{fontSize:12,color:C.green,marginRight:"auto"}}>✓ All RFQs sent!</span>}
+          <button onClick={onClose} style={{background:C.bg,border:`1px solid ${C.border}`,color:C.muted,padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{done?"Close":"Cancel"}</button>
+          {!sending&&!done&&<button onClick={()=>{if(onPrint)onPrint(groups);onClose();}} style={{background:C.accentDim,border:`1px solid ${C.accent}`,color:C.accent,padding:"6px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600}}>📋 Print</button>}
+          {!sending&&!done&&<button onClick={()=>sendAll(false)} disabled={groups.length===0} style={{background:C.accent,border:"none",color:"#fff",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>✉ Send</button>}
+          {sending&&<span style={{fontSize:12,color:C.purple}}>Sending…</span>}
         </div>
       </div>
     </div>

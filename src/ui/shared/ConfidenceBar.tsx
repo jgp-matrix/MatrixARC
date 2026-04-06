@@ -63,7 +63,7 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
   }
   const acceptedSet=new Set((panel.wiringAccepted||[]).map(String));
   return(
-    <div ref={barRef} style={{background:C.card,border:compact?`1px solid ${C.accent}`:`1px solid #3a3a55`,borderRadius:compact?8:10,padding:compact?"8px 12px":"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
+    <div ref={barRef} style={{background:C.card,border:compact?`1px solid ${C.accent}`:`1px solid ${C.border}`,borderRadius:compact?8:10,padding:compact?"8px 12px":"14px 20px",display:"flex",flexDirection:"column",justifyContent:"center"}}>
       <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
         <span style={{fontSize:compact?14:17,color:C.sub,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>OVERALL CONFIDENCE</span>
         <span style={{fontSize:compact?18:23,color:barColor(overall),fontWeight:800}}>{overall}%</span>
@@ -78,7 +78,7 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
         ))}
       </div>
       {expanded==="pricing"&&(
-        <div style={{marginTop:12,padding:"10px 14px",background:"#0d0d14",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
+        <div style={{marginTop:12,padding:"10px 14px",background:C.card,borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
           <div style={{display:"flex",flexDirection:"column",gap:5}}>
             {pricingDetail.bcCount>0&&<div style={{color:C.green}}>{pricingDetail.bcCount} item{pricingDetail.bcCount!==1?"s":""} BC-priced</div>}
             {pricingDetail.manualCount>0&&<div style={{color:C.green}}>{pricingDetail.manualCount} item{pricingDetail.manualCount!==1?"s":""} manual</div>}
@@ -90,7 +90,7 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
         </div>
       )}
       {expanded==="wiring"&&(
-        <div style={{marginTop:12,padding:"10px 14px",background:"#0d0d14",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
+        <div style={{marginTop:12,padding:"10px 14px",background:C.card,borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
           {!validation?<div style={{color:C.muted}}>No validation data — run Re-Validate</div>:(
             <div>
               <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:8}}>
@@ -122,19 +122,19 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
                           )}
                         </div>
                         {isClassifying&&(
-                          <div style={{marginTop:6,padding:"8px 10px",background:"#0d1a2e",border:`1px solid ${C.accent}44`,borderRadius:6,display:"flex",flexDirection:"column",gap:6}}>
+                          <div style={{marginTop:6,padding:"8px 10px",background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:6,display:"flex",flexDirection:"column",gap:6}}>
                             <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
                               <select value={classifyCat} onChange={(e: any)=>setClassifyCat(e.target.value)}
-                                style={{background:"#1e293b",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 6px",flex:1,minWidth:120}}>
+                                style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 6px",flex:1,minWidth:120}}>
                                 <option value="">-- Select Category --</option>
                                 {getDeviceCategories(dcData).map((c: string)=><option key={c} value={c}>{c}</option>)}
                               </select>
                               <input value={classifyNewCat} onChange={(e: any)=>setClassifyNewCat(e.target.value)}
-                                placeholder="or type new category..." style={{background:"#1e293b",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 6px",width:130}}/>
+                                placeholder="or type new category..." style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"3px 6px",width:130}}/>
                             </div>
                             <input value={classifyNote} onChange={(e: any)=>setClassifyNote(e.target.value)}
                               placeholder="Describe what this is (helps AI learn)..."
-                              style={{background:"#1e293b",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"4px 6px",width:"100%"}}/>
+                              style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:11,padding:"4px 6px",width:"100%"}}/>
                             <div style={{display:"flex",gap:6}}>
                               <button onClick={async()=>{
                                 const cat=classifyNewCat.trim()||classifyCat;
@@ -170,7 +170,7 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}: any){
         </div>
       )}
       {expanded==="bom"&&(
-        <div style={{marginTop:12,padding:"10px 14px",background:"#0d0d14",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
+        <div style={{marginTop:12,padding:"10px 14px",background:C.card,borderRadius:8,border:`1px solid ${C.border}`,fontSize:13}}>
           <div style={{display:"flex",flexDirection:"column",gap:5}}>
             <div style={{color:C.text}}>{bomDetail.bomPages} BOM page{bomDetail.bomPages!==1?"s":""} detected</div>
             <div style={{color:C.text}}>{bomDetail.itemCount} item{bomDetail.itemCount!==1?"s":""} extracted</div>

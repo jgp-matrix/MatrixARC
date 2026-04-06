@@ -1,41 +1,64 @@
 // ─── Theme Colors ────────────────────────────────────────────────────────────
 
 export const C = {
-  bg: '#0d0d14',
-  card: '#13131e',
-  border: '#1e2030',
-  accent: '#3b82f6',
-  accentDim: '#1d3a6e',
-  green: '#10b981',
-  greenDim: '#052e1c',
-  yellow: '#f59e0b',
-  yellowDim: '#3a1f00',
-  red: '#ef4444',
-  redDim: '#3b0808',
-  muted: '#c0c4cc',
-  text: '#e8e8f0',
-  sub: '#d4d8e0',
-  purple: '#8b5cf6',
-  teal: '#14b8a6',
+  // Surfaces (light mode)
+  bg: '#f5f5f7',
+  card: '#ffffff',
+  input: '#ffffff',
+
+  // Borders
+  border: '#e1e2e5',
+  borderLight: '#f0f0f2',
+
+  // Text
+  text: '#111111',
+  muted: '#777777',
+  sub: '#555555',
+  faint: '#aaaaaa',
+
+  // Accent — muted indigo
+  accent: '#5e6ad2',
+  accentDim: '#eef2ff',
+  accentHover: '#4f5ab8',
+
+  // Semantic
+  green: '#3b8c5f',
+  greenDim: '#edf7f1',
+  yellow: '#c07a00',
+  yellowDim: '#fef9e8',
+  red: '#d14343',
+  redDim: '#fdf0f0',
+  blue: '#5e6ad2',
+  blueDim: '#eef2ff',
+
+  // Navigation (dark strip — Clyde sidebar aesthetic)
+  nav: '#1c1c22',
+  navText: 'rgba(255,255,255,0.75)',
+  navHover: 'rgba(255,255,255,0.92)',
+  navBorder: 'rgba(255,255,255,0.08)',
+
+  // Extended
+  purple: '#6b5fbd',
+  teal: '#3d8a8a',
 } as const;
 
 // ─── Style Helpers ───────────────────────────────────────────────────────────
 
 export const btn = (bg: string, color: string, x: React.CSSProperties = {}): React.CSSProperties => ({
-  background: bg, color, border: 'none', borderRadius: 8,
-  padding: '9px 16px', fontWeight: 600, cursor: 'pointer',
-  fontSize: 14, transition: 'opacity 0.15s', ...x,
+  background: bg, color, border: `1px solid ${C.border}`,
+  borderRadius: 6, padding: '6px 12px', fontWeight: 500, cursor: 'pointer',
+  fontSize: 12, transition: 'all 0.12s ease', ...x,
 });
 
 export const inp = (x: React.CSSProperties = {}): React.CSSProperties => ({
-  background: '#0a0a12', border: `1px solid ${C.border}`,
-  borderRadius: 8, padding: '9px 12px', color: C.text,
-  fontSize: 14, width: '100%', outline: 'none', ...x,
+  background: C.input, border: `1px solid ${C.border}`,
+  borderRadius: 6, padding: '7px 10px', color: C.text,
+  fontSize: 13, width: '100%', outline: 'none', ...x,
 });
 
 export const card = (x: React.CSSProperties = {}): React.CSSProperties => ({
   background: C.card, border: `1px solid ${C.border}`,
-  borderRadius: 12, padding: 20, ...x,
+  borderRadius: 8, padding: 16, ...x,
 });
 
 // ─── Pricing Defaults ────────────────────────────────────────────────────────

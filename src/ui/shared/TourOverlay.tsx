@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { C } from '@/core/constants';
 
 const TOUR_STEPS: any[]=[
   // -- OVERVIEW --
@@ -170,36 +171,36 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize}: any){
   return(
     <div style={{position:'fixed',inset:0,zIndex:99997,pointerEvents:'all'}}>
       {!rect&&<div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.75)'}}/>}
-      {rect&&<div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:12,boxShadow:'0 0 0 9999px rgba(0,0,0,0.75)',border:'2px solid #60a5fa',pointerEvents:'none',zIndex:99998,transition:'top 0.25s ease,left 0.25s ease,width 0.25s ease,height 0.25s ease'}}/>}
-      <div style={{...popStyle,zIndex:99999,background:'#131929',border:'1px solid #1e3a5f',borderRadius:16,overflow:'hidden',boxShadow:'0 16px 56px rgba(0,0,0,0.75)',color:'#f1f5f9',pointerEvents:'all'}}>
+      {rect&&<div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:12,boxShadow:'0 0 0 9999px rgba(0,0,0,0.75)',border:`2px solid ${C.accent}`,pointerEvents:'none',zIndex:99998,transition:'top 0.25s ease,left 0.25s ease,width 0.25s ease,height 0.25s ease'}}/>}
+      <div style={{...popStyle,zIndex:99999,background:C.card,border:`1px solid ${C.border}`,borderRadius:16,overflow:'hidden',boxShadow:'0 16px 56px rgba(0,0,0,0.18)',color:C.text,pointerEvents:'all'}}>
         {/* Phase + progress header */}
-        <div style={{background:'#0d1f3c',padding:'13px 20px',borderBottom:'1px solid #1e3a5f',display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
-          <span style={{fontSize:13,fontWeight:700,color:'#60a5fa',letterSpacing:0.5,textTransform:'uppercase'}}>{step.phase}</span>
-          <div style={{flex:1,height:4,background:'#1e293b',borderRadius:2,overflow:'hidden'}}>
-            <div style={{height:'100%',width:phasePct+'%',background:'#3b82f6',borderRadius:2,transition:'width 0.3s ease'}}/>
+        <div style={{background:C.bg,padding:'13px 20px',borderBottom:`1px solid ${C.border}`,display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
+          <span style={{fontSize:13,fontWeight:700,color:C.accent,letterSpacing:0.5,textTransform:'uppercase'}}>{step.phase}</span>
+          <div style={{flex:1,height:4,background:C.border,borderRadius:2,overflow:'hidden'}}>
+            <div style={{height:'100%',width:phasePct+'%',background:C.accent,borderRadius:2,transition:'width 0.3s ease'}}/>
           </div>
-          <span style={{fontSize:13,color:'#64748b',flexShrink:0,fontWeight:600}}>{stepIdx+1} / {TOUR_STEPS.length}</span>
-          <button onClick={onMinimize} title="Minimize \u2014 your progress is saved" style={{background:'none',border:'1px solid #1e3a5f',color:'#94a3b8',cursor:'pointer',fontSize:13,lineHeight:1,padding:'3px 10px',borderRadius:5,flexShrink:0,fontFamily:'inherit'}}>{"\u2013 Hide"}</button>
+          <span style={{fontSize:13,color:C.muted,flexShrink:0,fontWeight:600}}>{stepIdx+1} / {TOUR_STEPS.length}</span>
+          <button onClick={onMinimize} title="Minimize \u2014 your progress is saved" style={{background:'none',border:`1px solid ${C.border}`,color:C.muted,cursor:'pointer',fontSize:13,lineHeight:1,padding:'3px 10px',borderRadius:5,flexShrink:0,fontFamily:'inherit'}}>{"\u2013 Hide"}</button>
         </div>
         {/* Body */}
         <div style={{padding:'22px 26px'}}>
-          <div style={{fontSize:18,fontWeight:700,color:'#93c5fd',lineHeight:1.3,marginBottom:14}}>{step.title}</div>
-          <div style={{fontSize:15,color:'#cbd5e1',lineHeight:1.75,whiteSpace:'pre-line',marginBottom:step.action?16:22}}>{step.body}</div>
+          <div style={{fontSize:18,fontWeight:700,color:C.accent,lineHeight:1.3,marginBottom:14}}>{step.title}</div>
+          <div style={{fontSize:15,color:C.sub,lineHeight:1.75,whiteSpace:'pre-line',marginBottom:step.action?16:22}}>{step.body}</div>
           {/* Action prompt */}
           {step.action&&(
-            <div style={{background:'#0f2a1a',border:'1px solid #166534',borderRadius:10,padding:'14px 18px',marginBottom:18}}>
-              <div style={{fontSize:13,fontWeight:700,color:'#86efac',marginBottom:4}}>{"\u{1F446} Your Turn"}</div>
-              <div style={{fontSize:14,color:'#4ade80',lineHeight:1.7}}>{step.actionLabel}</div>
+            <div style={{background:C.greenDim,border:`1px solid ${C.green}`,borderRadius:10,padding:'14px 18px',marginBottom:18}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.green,marginBottom:4}}>{"\u{1F446} Your Turn"}</div>
+              <div style={{fontSize:14,color:C.green,lineHeight:1.7}}>{step.actionLabel}</div>
             </div>
           )}
           {/* Navigation */}
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
-            <button onClick={onSkip} style={{background:'none',border:'none',color:'#334155',cursor:'pointer',fontSize:13,padding:0,fontFamily:'inherit',textDecoration:'underline'}}>End tour</button>
+            <button onClick={onSkip} style={{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:13,padding:0,fontFamily:'inherit',textDecoration:'underline'}}>End tour</button>
             <div style={{display:'flex',gap:10}}>
-              {!isFirst&&<button onClick={onPrev} style={{background:'none',border:'1px solid #1e3a5f',color:'#94a3b8',borderRadius:8,padding:'9px 20px',cursor:'pointer',fontSize:14,fontFamily:'inherit'}}>{"\u2190 Back"}</button>}
+              {!isFirst&&<button onClick={onPrev} style={{background:'none',border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:'9px 20px',cursor:'pointer',fontSize:14,fontFamily:'inherit'}}>{"\u2190 Back"}</button>}
               {isLast
-                ?<button onClick={onDone} style={{background:'#16a34a',border:'none',color:'#fff',borderRadius:8,padding:'9px 24px',cursor:'pointer',fontSize:15,fontWeight:700,fontFamily:'inherit'}}>{"Finish \u2713"}</button>
-                :<button onClick={onNext} style={{background:'#2563eb',border:'none',color:'#fff',borderRadius:8,padding:'9px 24px',cursor:'pointer',fontSize:15,fontWeight:700,fontFamily:'inherit'}}>{step.action?'Done, Next \u2192':'Next \u2192'}</button>
+                ?<button onClick={onDone} style={{background:C.green,border:'none',color:'#fff',borderRadius:8,padding:'9px 24px',cursor:'pointer',fontSize:15,fontWeight:700,fontFamily:'inherit'}}>{"Finish \u2713"}</button>
+                :<button onClick={onNext} style={{background:C.accent,border:'none',color:'#fff',borderRadius:8,padding:'9px 24px',cursor:'pointer',fontSize:15,fontWeight:700,fontFamily:'inherit'}}>{step.action?'Done, Next \u2192':'Next \u2192'}</button>
               }
             </div>
           </div>

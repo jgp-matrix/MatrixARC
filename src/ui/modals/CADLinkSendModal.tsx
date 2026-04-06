@@ -125,8 +125,8 @@ function CADLinkSendModal({project,onClose}){
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:500,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
-        <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:4}}>📦 CADLink BOM Export</div>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:500,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
+        <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:4}}>📦 CADLink BOM Export</div>
         <div style={{fontSize:12,color:C.muted,marginBottom:14}}>{bcNum} — {projName}</div>
 
         <div style={{marginBottom:14}}>
@@ -156,7 +156,7 @@ function CADLinkSendModal({project,onClose}){
                       // Add this email
                       setToEmail(prev=>prev.trim()?(prev.trim().replace(/[,;]\s*$/,"")+", "+s.E_Mail):s.E_Mail);
                     }
-                  }} style={{background:isSelected?"#0c2a1a":"transparent",border:`1px solid ${isSelected?"#4ade80":C.border}`,borderRadius:12,padding:"2px 8px",fontSize:10,color:isSelected?"#4ade80":C.muted,cursor:"pointer",fontWeight:isSelected?700:400}}>
+                  }} style={{background:isSelected?C.greenDim:"transparent",border:`1px solid ${isSelected?C.green:C.border}`,borderRadius:12,padding:"2px 8px",fontSize:10,color:isSelected?C.green:C.muted,cursor:"pointer",fontWeight:isSelected?700:400}}>
                     {isSelected?"✓ ":""}{s.Name}{s.Job_Title?" ("+s.Job_Title+")":""}
                   </button>;
                 })}
@@ -180,7 +180,7 @@ function CADLinkSendModal({project,onClose}){
             {downloading?"Downloading…":`⬇ Download ${panels.length} File${panels.length!==1?"s":""}`}
           </button>
           <button onClick={handleSend} disabled={sending||!toEmail.trim()}
-            style={btn("#0c2233","#38bdf8",{flex:1,fontSize:13,fontWeight:700,border:"1px solid #38bdf8",opacity:sending||!toEmail.trim()?0.5:1})}>
+            style={btn(C.accentDim,C.accent,{flex:1,fontSize:13,fontWeight:700,border:`1px solid ${C.accent}`,opacity:sending||!toEmail.trim()?0.5:1})}>
             {sending?"Sending…":"✉ Send via Email"}
           </button>
         </div>

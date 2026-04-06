@@ -74,7 +74,7 @@ function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,project,onConfi
                 onChange={e=>setConfirmText(e.target.value.toUpperCase())}
                 placeholder="DELETE"
                 autoFocus
-                style={{width:"100%",boxSizing:"border-box",background:"#0d0d1a",border:`1px solid ${confirmText==="DELETE"?C.red:C.border}`,borderRadius:8,padding:"9px 12px",color:confirmText==="DELETE"?C.red:C.text,fontSize:14,fontWeight:700,fontFamily:"monospace",letterSpacing:2,outline:"none"}}
+                style={{width:"100%",boxSizing:"border-box",background:C.input,border:`1px solid ${confirmText==="DELETE"?C.red:C.border}`,borderRadius:8,padding:"9px 12px",color:confirmText==="DELETE"?C.red:C.text,fontSize:14,fontWeight:700,fontFamily:"monospace",letterSpacing:2,outline:"none"}}
               />
             </div>
 

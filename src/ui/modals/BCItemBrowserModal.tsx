@@ -291,7 +291,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>BC Item Browser</div>
             {targetRow&&(targetRow.partNumber||targetRow.description)&&(
-              <div style={{display:"flex",alignItems:"baseline",gap:10,background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",flexWrap:"wrap"}}>
+              <div style={{display:"flex",alignItems:"baseline",gap:10,background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 12px",flexWrap:"wrap"}}>
                 <span style={{fontSize:11,color:C.muted,fontWeight:600,letterSpacing:0.5,whiteSpace:"nowrap"}}>ORIGINAL</span>
                 {targetRow.partNumber&&<span style={{fontSize:13,fontWeight:700,color:C.yellow,fontFamily:"monospace"}}>{targetRow.partNumber}</span>}
                 {targetRow.description&&<span style={{fontSize:12,color:C.sub}}>{targetRow.description}</span>}
@@ -317,11 +317,11 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
           }
           const msg=friendlyErr(e);
           return(
-            <div style={{marginBottom:10,background:isBcSetup?"#1a0900":"#160a0a",border:`1px solid ${C.red}`,borderRadius:8,padding:"10px 14px",fontSize:12,display:"flex",flexDirection:"column",gap:4}}>
+            <div style={{marginBottom:10,background:C.redDim,border:`1px solid ${C.red}`,borderRadius:8,padding:"10px 14px",fontSize:12,display:"flex",flexDirection:"column",gap:4}}>
               <div style={{fontWeight:700,color:C.red,fontSize:13}}>⚠ Last sync failed for this item</div>
-              <div style={{color:"#ffb3a7"}}>{msg}</div>
+              <div style={{color:C.sub}}>{msg}</div>
               {isBcSetup&&(
-                <div style={{marginTop:4,padding:"6px 10px",background:"#2a1000",borderRadius:6,border:`1px solid ${C.red}55`,color:C.yellow,fontSize:11,fontWeight:600}}>
+                <div style={{marginTop:4,padding:"6px 10px",background:C.yellowDim,borderRadius:6,border:`1px solid ${C.red}55`,color:C.yellow,fontSize:11,fontWeight:600}}>
                   This is a BC data setup issue. The item exists in BC but is missing required posting group fields. You or a BC administrator must open this item in Business Central and fill in the missing Posting Group values before it can be included on a project planning line.
                 </div>
               )}
@@ -333,7 +333,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
         })()}
         {/* Customer Supplied banner */}
         {customerSupplied&&(
-          <div style={{marginBottom:10,background:"#1a0d2a",border:`1px solid #a78bfa`,borderRadius:8,padding:"7px 14px",fontSize:12,color:"#a78bfa",fontWeight:600,display:"flex",alignItems:"center",gap:8}}>
+          <div style={{marginBottom:10,background:C.accentDim,border:`1px solid ${C.purple}`,borderRadius:8,padding:"7px 14px",fontSize:12,color:C.purple,fontWeight:600,display:"flex",alignItems:"center",gap:8}}>
             ✔ Customer Supplied — $0 cost will be accepted; row will not highlight red
           </div>
         )}
@@ -342,7 +342,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             onKeyDown={e=>{if(e.key==="Enter"){if(debounceRef.current)clearTimeout(debounceRef.current);doSearch();}}}
             style={{...inp(),flex:1,minWidth:200}} autoFocus/>
           <select value={field} onChange={e=>{setField(e.target.value);if(query.trim().length>=3)setTimeout(()=>doSearch(false),50);}}
-            style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13}}>
+            style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13}}>
             <option value="both">All Fields</option>
             <option value="number">Part # Only</option>
             <option value="displayName">Description Only</option>
@@ -362,23 +362,23 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 bcFetchManufacturers().then(v=>{if(v.length)setBcManufacturers(v);}),
               ]);
             }}}
-            style={btn("#1a2a1a","#4ade80",{padding:"9px 16px",border:"1px solid #4ade8044",fontSize:13,fontWeight:600})}>
+            style={btn(C.greenDim,C.green,{padding:"9px 16px",border:`1px solid ${C.green}44`,fontSize:13,fontWeight:600})}>
             + New Item
           </button>
-          <label style={{display:"flex",alignItems:"center",gap:7,cursor:"pointer",padding:"9px 12px",background:customerSupplied?"#1a0d2a":"transparent",border:`1px solid ${customerSupplied?"#a78bfa":"#3a3a54"}`,borderRadius:8,userSelect:"none",flexShrink:0}}>
+          <label style={{display:"flex",alignItems:"center",gap:7,cursor:"pointer",padding:"9px 12px",background:customerSupplied?C.accentDim:"transparent",border:`1px solid ${customerSupplied?C.purple:C.border}`,borderRadius:8,userSelect:"none",flexShrink:0}}>
             <input type="checkbox" checked={customerSupplied} onChange={e=>setCustomerSupplied(e.target.checked)}
-              style={{width:15,height:15,accentColor:"#a78bfa",cursor:"pointer"}}/>
-            <span style={{fontSize:12,fontWeight:600,color:customerSupplied?"#a78bfa":C.muted,whiteSpace:"nowrap"}}>Customer Supplied</span>
+              style={{width:15,height:15,accentColor:C.purple,cursor:"pointer"}}/>
+            <span style={{fontSize:12,fontWeight:600,color:customerSupplied?C.purple:C.muted,whiteSpace:"nowrap"}}>Customer Supplied</span>
           </label>
           {customerSupplied&&(
             <button onClick={()=>onSelect({_customerSupplied:true,unitCost:0})}
-              style={btn("#1a0d2a","#a78bfa",{padding:"9px 16px",border:"1px solid #a78bfa66",fontSize:13,fontWeight:700,flexShrink:0})}>
+              style={btn(C.accentDim,C.purple,{padding:"9px 16px",border:`1px solid ${C.purple}66`,fontSize:13,fontWeight:700,flexShrink:0})}>
               Done ✓
             </button>
           )}
         </div>
         {showCreate&&(
-          <div style={{marginBottom:14,padding:14,borderRadius:8,border:`1px solid ${C.border}`,background:"#0a0a12"}}>
+          <div style={{marginBottom:14,padding:14,borderRadius:8,border:`1px solid ${C.border}`,background:C.input}}>
             <div style={{fontSize:13,fontWeight:700,marginBottom:10,color:C.text}}>Create New BC Item</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
               <div style={{flex:1,minWidth:140}}>
@@ -408,7 +408,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               <div style={{flex:1,minWidth:160}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Item Category</label>
                 <select value={createCategory} onChange={e=>setCreateCategory(e.target.value)}
-                  style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcCategories.map(c=><option key={c.code} value={c.code}>{c.code}{c.description?` — ${c.description}`:""}</option>)}
                 </select>
@@ -416,7 +416,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               <div style={{flex:1,minWidth:140}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Unit of Measure</label>
                 <select value={createUom} onChange={e=>setCreateUom(e.target.value)}
-                  style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcUoms.map(u=><option key={u.code} value={u.code}>{u.code}{u.displayName&&u.displayName!==u.code?` — ${u.displayName}`:""}</option>)}
                 </select>
@@ -455,7 +455,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   </div>
                 ):(
                   <select value={createMfr} onChange={e=>setCreateMfr(e.target.value)}
-                    style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                    style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                     <option value="">— None —</option>
                     {bcManufacturers.map(m=><option key={m.Code} value={m.Code}>{m.Code} — {m.Name}</option>)}
                   </select>
@@ -513,7 +513,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   </div>
                 ):(
                   <select value={createVendor} onChange={e=>setCreateVendor(e.target.value)}
-                    style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                    style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                     <option value="">— None —</option>
                     {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
                   </select>
@@ -524,7 +524,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               <div style={{flex:1}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Gen. Prod. Posting Group <span style={{color:C.red}}>*</span></label>
                 <select value={createGenProd} onChange={e=>setCreateGenProd(e.target.value)}
-                  style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcGenProdGroups.map(g=><option key={g.code} value={g.code}>{g.code}{g.description?` — ${g.description}`:""}</option>)}
                 </select>
@@ -532,7 +532,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               <div style={{flex:1}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Inventory Posting Group <span style={{color:C.red}}>*</span></label>
                 <select value={createInvPosting} onChange={e=>setCreateInvPosting(e.target.value)}
-                  style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
+                  style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 10px",color:C.text,fontSize:13,width:"100%",boxSizing:"border-box"}}>
                   <option value="">— None —</option>
                   {bcInvPostingGroups.map(g=><option key={g.code} value={g.code}>{g.code}{g.description?` — ${g.description}`:""}</option>)}
                 </select>
@@ -556,7 +556,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName});
                 }catch(e){setCreateErr(e.message||"Failed to create item");}
                 finally{setCreating(false);}
-              }} disabled={creating||!createNumber.trim()||!createGenProd||!createInvPosting} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!createNumber.trim()||!createGenProd||!createInvPosting?0.5:1})}>
+              }} disabled={creating||!createNumber.trim()||!createGenProd||!createInvPosting} style={btn(C.greenDim,C.green,{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!createNumber.trim()||!createGenProd||!createInvPosting?0.5:1})}>
                 {creating?"Creating…":"Create in BC"}
               </button>
               <button onClick={()=>{setShowCreate(false);setCreateErr("");}}
@@ -568,7 +568,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
         <div style={{flex:1,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead style={{position:"sticky",top:0,zIndex:1}}>
-              <tr style={{background:"#0a0a12"}}>
+              <tr style={{background:C.card}}>
                 {["Part #","Description","MFR","Vendor","Unit Cost","Last Purchased",""].map(h=>(
                   <th key={h} style={{padding:"9px 10px",textAlign:h==="Unit Cost"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                 ))}
@@ -587,10 +587,10 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                     {inlineMfrCreate===item.number?(
                       <div style={{background:C.accentDim,border:"1px solid "+C.accent,borderRadius:6,padding:6,minWidth:140}}>
                         <input value={inlineMfrCode} onChange={e=>{setInlineMfrCode(e.target.value.toUpperCase());setInlineMfrErr("");}} placeholder="Code *" maxLength={10} autoFocus
-                          style={{background:"#0a0a12",border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
-                        {(()=>{const dup=inlineMfrCode.trim()&&bcManufacturers.find(m=>m.Code.toUpperCase()===inlineMfrCode.trim().toUpperCase());return dup?<div style={{color:"#f59e0b",fontSize:10,marginBottom:3}}>⚠ "{dup.Code}" exists — {dup.Name}</div>:null;})()}
+                          style={{background:C.input,border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
+                        {(()=>{const dup=inlineMfrCode.trim()&&bcManufacturers.find(m=>m.Code.toUpperCase()===inlineMfrCode.trim().toUpperCase());return dup?<div style={{color:C.yellow,fontSize:10,marginBottom:3}}>⚠ "{dup.Code}" exists — {dup.Name}</div>:null;})()}
                         <input value={inlineMfrName} onChange={e=>setInlineMfrName(e.target.value)} placeholder="Name *"
-                          style={{background:"#0a0a12",border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
+                          style={{background:C.input,border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
                         {inlineMfrErr&&<div style={{color:C.red,fontSize:10,marginBottom:3}}>{inlineMfrErr}</div>}
                         <div style={{display:"flex",gap:4}}>
                           <button disabled={inlineMfrCreating||!inlineMfrCode.trim()||!inlineMfrName.trim()||bcManufacturers.some(m=>m.Code.toUpperCase()===inlineMfrCode.trim().toUpperCase())} onClick={async()=>{
@@ -635,9 +635,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                             setSavingMfr(false);setEditMfrItem(null);
                           },
                           onBlur:function(){if(!savingMfr)setEditMfrItem(null);},
-                          style:{background:"#0a0a12",border:"1px solid "+C.accent,borderRadius:6,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",opacity:savingMfr?0.6:1}},
+                          style:{background:C.input,border:"1px solid "+C.accent,borderRadius:6,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",opacity:savingMfr?0.6:1}},
                           React.createElement("option",{value:""},"—"),
-                          React.createElement("option",{value:"__NEW__",style:{color:"#38bdf8",fontWeight:700}},"+ New MFR…"),
+                          React.createElement("option",{value:"__NEW__",style:{color:C.accent,fontWeight:700}},"+ New MFR…"),
                           ...(bcManufacturers.map(function(m){return React.createElement("option",{key:m.Code,value:m.Code},m.Code);}))
                         )}
                       </div>
@@ -655,7 +655,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                     {inlineVendorCreate===item.number?(
                       <div style={{background:C.accentDim,border:"1px solid "+C.accent,borderRadius:6,padding:6,minWidth:160}}>
                         <input value={inlineVendorName} onChange={e=>setInlineVendorName(e.target.value)} placeholder="Vendor Name *" autoFocus
-                          style={{background:"#0a0a12",border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
+                          style={{background:C.input,border:"1px solid "+C.border,borderRadius:4,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",boxSizing:"border-box",marginBottom:4}}/>
                         {inlineVendorErr&&<div style={{color:C.red,fontSize:10,marginBottom:3}}>{inlineVendorErr}</div>}
                         <div style={{display:"flex",gap:4}}>
                           <button disabled={inlineVendorCreating||!inlineVendorName.trim()} onClick={async()=>{
@@ -684,9 +684,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                             setEditVendorNo(no);await saveVendorEdit(item.number,no);}}
                           onBlur={()=>{if(!savingVendor){setEditVendorItem(null);setVendorSaveErr("");}}}
                           disabled={savingVendor}
-                          style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:6,padding:"4px 8px",color:C.text,fontSize:12,width:"100%",opacity:savingVendor?0.6:1}}>
+                          style={{background:C.input,border:`1px solid ${C.accent}`,borderRadius:6,padding:"4px 8px",color:C.text,fontSize:12,width:"100%",opacity:savingVendor?0.6:1}}>
                           <option value="">— None —</option>
-                          <option value="__NEW__" style={{color:"#38bdf8",fontWeight:700}}>+ New Vendor…</option>
+                          <option value="__NEW__" style={{color:C.accent,fontWeight:700}}>+ New Vendor…</option>
                           {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
                         </select>
                         {savingVendor&&<span style={{fontSize:10,color:C.muted}}>Saving…</span>}
@@ -739,7 +739,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             <div style={{padding:"6px 10px",display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.5}}>DRAWING REFERENCE</span>
               {locating&&<span style={{fontSize:11,color:C.yellow,animation:"pulse 1s ease-in-out infinite"}}>🔍 Scanning for {targetRow?.partNumber||initialQuery}…</span>}
-              {!locating&&croppedDataUrl&&<span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✓ Row found</span>}
+              {!locating&&croppedDataUrl&&<span style={{fontSize:11,color:C.green,fontWeight:600}}>✓ Row found</span>}
               {!locating&&!croppedDataUrl&&_apiKey&&<span style={{fontSize:11,color:C.muted}}>Row not found in drawing</span>}
               {bomPages.length>1&&(
                 <div style={{display:"flex",gap:4,marginLeft:"auto"}}>
@@ -757,7 +757,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               onMouseMove={e=>{const c=e.currentTarget;if(!c._drag)return;c.scrollLeft=c._drag.sl-(e.clientX-c._drag.x);c.scrollTop=c._drag.st-(e.clientY-c._drag.y);}}
               onMouseUp={e=>{e.currentTarget._drag=null;e.currentTarget.style.cursor='grab';}}
               onMouseLeave={e=>{e.currentTarget._drag=null;e.currentTarget.style.cursor='grab';}}
-              style={{overflow:"auto",background:"#020208",borderRadius:"0 0 8px 8px",minHeight:locating?60:croppedDataUrl?undefined:0,maxHeight:300,cursor:"grab",userSelect:"none"}}>
+              style={{overflow:"auto",background:C.bg,borderRadius:"0 0 8px 8px",minHeight:locating?60:croppedDataUrl?undefined:0,maxHeight:300,cursor:"grab",userSelect:"none"}}>
               {locating&&!croppedDataUrl&&(
                 <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:60,color:C.muted,fontSize:12,gap:8}}>
                   <span style={{animation:"pulse 1s ease-in-out infinite"}}>🔍</span> Locating row in drawing…

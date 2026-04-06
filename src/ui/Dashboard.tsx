@@ -21,9 +21,9 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     draggable={isDraggable||false}
     onDragStart={onDragStart}
     onDragEnd={onDragEnd}
-    style={{...card({padding:"4px 10px"}),border:"1px solid #4a5080",cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column",gap:1}}
+    style={{...card({padding:"4px 10px"}),border:`1px solid ${C.border}`,cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column",gap:1}}
     onMouseEnter={(e: any)=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
-    onMouseLeave={(e: any)=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
+    onMouseLeave={(e: any)=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.transform="none";}}>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
       {customerLogo&&<img src={customerLogo} alt="" style={{width:22,height:22,objectFit:"contain",borderRadius:3,background:"#fff",padding:2,flexShrink:0}} onError={(e: any)=>{e.target.style.display="none";}}/>}
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>{p.bcProjectNumber||"\u2013"}{bcDisconnected&&<span style={{fontSize:9,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={"Linked to "+p.bcEnv}>{"\u26A0"}</span>}</div>
@@ -40,7 +40,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
         <div style={{fontSize:10,color:activeTask.status==="error"?C.red:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
         {activeTask.status!=="error"?(
           <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
-            <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+            <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},${C.purple})`,borderRadius:4,transition:"width 0.4s"}}/>
           </div>
         ):null}
       </div>
@@ -165,7 +165,7 @@ export default function Dashboard({uid,userFirstName,memberMap,projects,loading,
     }
   }
   const filterBtn=(label: string,val: string)=>(
-    <button key={val} onClick={()=>setGroupBy(val)} style={{background:groupBy===val?C.accent:"#383850",color:groupBy===val?"#fff":C.muted,border:groupBy===val?`1.5px solid ${C.accent}`:"1.5px solid #7a7a9a",borderRadius:8,padding:"8px 20px",fontSize:14,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>
+    <button key={val} onClick={()=>setGroupBy(val)} style={{background:groupBy===val?C.accent:C.bg,color:groupBy===val?"#fff":C.muted,border:groupBy===val?`1.5px solid ${C.accent}`:`1.5px solid ${C.border}`,borderRadius:8,padding:"8px 20px",fontSize:14,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>
       {label}
     </button>
   );
@@ -227,10 +227,10 @@ export default function Dashboard({uid,userFirstName,memberMap,projects,loading,
           {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g: any,gi: number)=>{
-                const statusColColors: any={Draft:C.muted,"In Process":C.yellow,"RFQ's Send/Receive":C.red,"Ready To Review/Send":C.green,"Quotes Sent":"#38bdf8","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa"};
-                const statusColBg: any={Draft:C.border,"In Process":C.yellowDim,"RFQ's Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033"};
+                const statusColColors: any={Draft:C.muted,"In Process":C.yellow,"RFQ's Send/Receive":C.red,"Ready To Review/Send":C.green,"Quotes Sent":C.accent,"To Be Purchased":C.yellow,"Purchasing In Process":C.accent,"Purchasing Completed":C.green,"Parts Orders Open":C.yellow,"In Production":C.purple};
+                const statusColBg: any={Draft:C.border,"In Process":C.yellowDim,"RFQ's Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":C.accentDim,"To Be Purchased":C.yellowDim,"Purchasing In Process":C.accentDim,"Purchasing Completed":C.greenDim,"Parts Orders Open":C.yellowDim,"In Production":"#f3f0ff"};
                 const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColColors[g.label]||C.muted):C.sub;
-                const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColBg[g.label]||C.border):"#3d6090";
+                const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColBg[g.label]||C.border):C.accentDim;
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
                 const isDropTarget_=groupBy==="customer"&&!isNoCustomer&&!!g.customerNumber&&!!dragProjectId;
                 const isOver=dropTarget===gi;
@@ -240,7 +240,7 @@ export default function Dashboard({uid,userFirstName,memberMap,projects,loading,
                   onDragLeave={isDropTarget_?(e: any)=>{if(!e.currentTarget.contains(e.relatedTarget))setDropTarget(null);}:undefined}
                   onDrop={isDropTarget_?(e: any)=>{e.preventDefault();setDropTarget(null);if(dragProjectId)assignCustomer(dragProjectId,g.label,g.customerNumber);setDragProjectId(null);}:undefined}>
                   {g.label&&<div style={{background:isOver?C.accent:colBg,color:isOver?"#fff":colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",transition:"background 0.15s,color 0.15s",outline:isDropTarget_&&dragProjectId?(isOver?"2px solid "+C.accent:"2px dashed "+C.accent+"66"):"none",outlineOffset:2}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
-                  <div style={{display:"flex",flexDirection:"column",gap:8,borderRadius:8,padding:isOver?"6px":"0",background:isOver?"#1e2e1e":"transparent",transition:"background 0.15s,padding 0.15s"}}>
+                  <div style={{display:"flex",flexDirection:"column",gap:8,borderRadius:8,padding:isOver?"6px":"0",background:isOver?C.accentDim:"transparent",transition:"background 0.15s,padding 0.15s"}}>
                     {g.items.map((p: any)=>(
                       <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
                         onUpdateStatus={onUpdateProject?async(proj: any,newStatus: any)=>{const u={...proj,bcPoStatus:newStatus,updatedAt:Date.now()};await onUpdateProject(u);}:undefined}
@@ -276,7 +276,7 @@ export default function Dashboard({uid,userFirstName,memberMap,projects,loading,
                 {transferred.map((p: any)=>{
                   const activeTask=Object.values(bgTasks).find((t: any)=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error")) as any;
                   const st=projectStatus(p);
-                  const statusColors: any={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8"};
+                  const statusColors: any={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:C.accent};
                   const statusLabels: any={draft:"DRAFT",in_progress:"PROCESSING",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC"};
                   return(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
@@ -292,7 +292,7 @@ export default function Dashboard({uid,userFirstName,memberMap,projects,loading,
                         <div style={{fontSize:10,color:activeTask.status==="error"?C.red:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
                         {activeTask.status!=="error"?(
                           <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
-                            <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+                            <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},${C.purple})`,borderRadius:4,transition:"width 0.4s"}}/>
                           </div>
                         ):null}
                       </div>

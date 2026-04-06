@@ -79,7 +79,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
               {members.map(m=>{
                 const [bg,col]=roleBadge[m.role]||roleBadge.view;
                 return(
-                  <div key={m.uid} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,padding:"8px 12px",background:"#0a0a12",borderRadius:8}}>
+                  <div key={m.uid} style={{display:"flex",alignItems:"center",gap:10,marginBottom:8,padding:"8px 12px",background:C.bg,borderRadius:8}}>
                     <div style={{flex:1,fontSize:13,color:C.text}}>{m.email}</div>
                     {admin&&m.uid!==uid?(
                       <select value={m.role} onChange={e=>changeRole(m.uid,e.target.value)}
@@ -104,7 +104,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
               <div style={{marginBottom:20}}>
                 <div style={{fontSize:12,color:C.sub,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Invite Links</div>
                 {generatedLinks.map((inv,i)=>(
-                  <div key={i} style={{marginBottom:8,padding:"8px 12px",background:"#0a0a12",borderRadius:8}}>
+                  <div key={i} style={{marginBottom:8,padding:"8px 12px",background:C.bg,borderRadius:8}}>
                     <div style={{display:"flex",alignItems:"center",gap:10}}>
                       <div style={{flex:1,fontSize:13,color:C.text}}>{inv.email}</div>
                       <span style={{background:C.yellowDim,color:C.yellow,borderRadius:10,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{inv.role}</span>
@@ -128,7 +128,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
                   <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap"}}>
                     <input value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)} type="email" placeholder="email@company.com" style={{...inp(),flex:"2 1 180px"}}/>
                     <select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}
-                      style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",color:C.text,fontSize:14}}>
+                      style={{background:C.input,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",color:C.text,fontSize:14}}>
                       <option value="admin">Admin</option>
                       <option value="edit">Edit</option>
                       <option value="view">View</option>
@@ -221,11 +221,11 @@ function LoginScreen({invite}){
   }
 
   return(
-    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 50% 0%,#1a1a3e 0%,${C.bg} 60%)`}}>
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 50% 0%,${C.accentDim} 0%,${C.bg} 60%)`}}>
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{fontSize:104,marginBottom:10}}>⬡</div>
         <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:64,fontWeight:900,letterSpacing:8,color:C.accent,lineHeight:1}}>ARC</div>
-        <div style={{fontSize:14,color:C.muted,fontWeight:500,marginTop:6,letterSpacing:2}}>by <span style={{color:"#38bdf8",fontWeight:700,letterSpacing:1}}>Parallax</span> Software</div>
+        <div style={{fontSize:14,color:C.muted,fontWeight:500,marginTop:6,letterSpacing:2}}>by <span style={{color:C.accent,fontWeight:700,letterSpacing:1}}>Parallax</span> Software</div>
         <div style={{fontSize:13,color:C.muted,marginTop:4,opacity:0.6}}>{APP_VERSION}</div>
       </div>
       {invite&&(
@@ -270,11 +270,11 @@ function LoginScreen({invite}){
             </form>
             <div style={{textAlign:"center",margin:"14px 0",color:C.muted,fontSize:12}}>or</div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              <button onClick={google} disabled={loading} style={btn("#fff","#1a1a1a",{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})}>
+              <button onClick={google} disabled={loading} style={btn(C.card,C.text,{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})}>
                 <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.18 1.48-4.97 2.31-8.16 2.31-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
                 Continue with Google
               </button>
-              <button onClick={microsoft} disabled={loading} style={btn("#2f2f2f","#fff",{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})}>
+              <button onClick={microsoft} disabled={loading} style={btn(C.border,C.text,{width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:8})}>
                 <svg width="16" height="16" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>
                 Continue with Microsoft
               </button>

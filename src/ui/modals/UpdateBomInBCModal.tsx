@@ -90,56 +90,56 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
 
         {phase==="checking"&&(
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:12,padding:"20px 0"}}>
-            <div style={{width:36,height:36,border:"3px solid #38bdf844",borderTop:"3px solid #38bdf8",borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+            <div style={{width:36,height:36,border:`3px solid ${C.accent}44`,borderTop:`3px solid ${C.accent}`,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
             <div style={{fontSize:13,color:C.sub}}>Checking item usage in Business Central…</div>
           </div>
         )}
 
         {phase==="in_use"&&(
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <div style={{background:"#451a0355",border:"1px solid #f9731644",borderRadius:8,padding:"14px 16px",display:"flex",alignItems:"flex-start",gap:12}}>
+            <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}44`,borderRadius:8,padding:"14px 16px",display:"flex",alignItems:"flex-start",gap:12}}>
               <span style={{fontSize:22,flexShrink:0}}>⚠️</span>
               <div>
-                <div style={{fontWeight:700,color:"#f97316",fontSize:14,marginBottom:6}}>Item {itemNo} is already in use on a BC Project</div>
+                <div style={{fontWeight:700,color:C.yellow,fontSize:14,marginBottom:6}}>Item {itemNo} is already in use on a BC Project</div>
                 <div style={{fontSize:13,color:C.sub,lineHeight:1.6}}>This item has ledger entries in Business Central and cannot be edited. To update the BOM, you must create a new item with the revised components.</div>
               </div>
             </div>
             <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
+              <button onClick={onClose} style={btn(C.border,C.muted,{fontSize:13})}>Cancel</button>
             </div>
           </div>
         )}
 
         {phase==="confirm"&&(<>
           {pendingBcCount>0&&(
-            <div style={{background:"#450a0a55",border:"1px solid #ef444466",borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"flex-start",gap:10}}>
+            <div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 14px",display:"flex",alignItems:"flex-start",gap:10}}>
               <span style={{fontSize:18,flexShrink:0}}>🚫</span>
               <div>
-                <div style={{fontWeight:700,color:"#f87171",fontSize:13,marginBottom:3}}>{pendingBcCount} part{pendingBcCount>1?"s":""} not yet verified in BC</div>
+                <div style={{fontWeight:700,color:C.red,fontSize:13,marginBottom:3}}>{pendingBcCount} part{pendingBcCount>1?"s":""} not yet verified in BC</div>
                 <div style={{fontSize:12,color:C.sub}}>Resolve all blue BC circles before updating.</div>
               </div>
             </div>
           )}
           {projectWarning.length>0&&(
-            <div style={{background:"#422006aa",border:"1px solid #f9731655",borderRadius:8,padding:"12px 14px",display:"flex",alignItems:"flex-start",gap:10}}>
+            <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}44`,borderRadius:8,padding:"12px 14px",display:"flex",alignItems:"flex-start",gap:10}}>
               <span style={{fontSize:18,flexShrink:0}}>⚠️</span>
               <div>
-                <div style={{fontWeight:700,color:"#fb923c",fontSize:13,marginBottom:4}}>Item {itemNo} is assigned to {projectWarning.length} BC Project{projectWarning.length>1?"s":""}</div>
+                <div style={{fontWeight:700,color:C.yellow,fontSize:13,marginBottom:4}}>Item {itemNo} is assigned to {projectWarning.length} BC Project{projectWarning.length>1?"s":""}</div>
                 <div style={{fontSize:12,color:C.sub,marginBottom:6,lineHeight:1.5}}>Updating the Assembly BOM will affect this item on the following project{projectWarning.length>1?"s":""}. Only proceed if you are sure the change is intentional.</div>
                 <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                  {projectWarning.map(p=><span key={p} style={{background:"#f9731622",color:"#fb923c",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,fontFamily:"monospace"}}>{p}</span>)}
+                  {projectWarning.map(p=><span key={p} style={{background:C.yellowDim,color:C.yellow,borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,fontFamily:"monospace"}}>{p}</span>)}
                 </div>
               </div>
             </div>
           )}
-          <div style={{background:"#0d1f3c",border:"1px solid #38bdf844",borderRadius:8,padding:"14px 16px"}}>
-            <div style={{fontSize:13,color:C.sub,marginBottom:4}}>BC Item: <span style={{fontFamily:"monospace",color:"#38bdf8",fontWeight:700}}>{itemNo}</span></div>
-            <div style={{fontSize:13,color:C.sub}}>This will <strong style={{color:"#f87171"}}>delete all existing Assembly BOM lines</strong> for this item and replace them with the current ARC BOM ({mergedBom.length} component{mergedBom.length!==1?"s":""}).</div>
+          <div style={{background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:8,padding:"14px 16px"}}>
+            <div style={{fontSize:13,color:C.sub,marginBottom:4}}>BC Item: <span style={{fontFamily:"monospace",color:C.accent,fontWeight:700}}>{itemNo}</span></div>
+            <div style={{fontSize:13,color:C.sub}}>This will <strong style={{color:C.red}}>delete all existing Assembly BOM lines</strong> for this item and replace them with the current ARC BOM ({mergedBom.length} component{mergedBom.length!==1?"s":""}).</div>
           </div>
           <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:4}}>
-            <button onClick={onClose} style={btn("#383850",C.muted,{fontSize:13})}>Cancel</button>
+            <button onClick={onClose} style={btn(C.border,C.muted,{fontSize:13})}>Cancel</button>
             <button onClick={handleUpdate} disabled={pendingBcCount>0}
-              style={btn("#0d1f3c","#38bdf8",{fontSize:13,opacity:pendingBcCount>0?0.4:1,border:"1px solid #38bdf866"})}>
+              style={btn(C.accentDim,C.accent,{fontSize:13,opacity:pendingBcCount>0?0.4:1,border:`1px solid ${C.accent}66`})}>
               Replace BOM in BC
             </button>
           </div>
@@ -147,7 +147,7 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
 
         {phase==="updating"&&(
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:16,padding:"20px 0"}}>
-            <div style={{width:40,height:40,border:`3px solid ${"#38bdf8"}44`,borderTop:`3px solid ${"#38bdf8"}`,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
+            <div style={{width:40,height:40,border:`3px solid ${C.accent}44`,borderTop:`3px solid ${C.accent}`,borderRadius:"50%",animation:"spin 0.8s linear infinite"}}/>
             <div style={{fontSize:14,color:C.sub,textAlign:"center"}}>{progress}</div>
           </div>
         )}
@@ -155,8 +155,8 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
         {phase==="done"&&result&&(
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             {result.success?(
-              <div style={{background:"#0d1f3c",border:"1px solid #38bdf844",borderRadius:8,padding:16}}>
-                <div style={{fontSize:15,fontWeight:700,color:"#38bdf8",marginBottom:6}}>✓ BOM Updated Successfully</div>
+              <div style={{background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:8,padding:16}}>
+                <div style={{fontSize:15,fontWeight:700,color:C.accent,marginBottom:6}}>✓ BOM Updated Successfully</div>
                 <div style={{fontSize:13,color:C.sub}}>Removed <strong>{result.deleted}</strong> old line{result.deleted!==1?"s":""} · Added <strong>{result.added}</strong> new line{result.added!==1?"s":""}</div>
               </div>
             ):(

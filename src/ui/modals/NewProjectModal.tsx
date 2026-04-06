@@ -232,11 +232,11 @@ function NewProjectModal({uid,onCreated,onClose}){
               />
               {selectedCustomer&&<div style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:C.green,fontSize:14}}>✓</div>}
               {showDropdown&&customerResults.length>0&&(
-                <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#2a4a6e",border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,maxHeight:200,overflowY:"auto",marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
+                <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.card,border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,maxHeight:200,overflowY:"auto",marginTop:4,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
                   {customerResults.map(c=>(
                     <div key={c.number} onMouseDown={()=>selectCustomer(c)}
                       style={{padding:"9px 12px",cursor:"pointer",display:"flex",gap:10,alignItems:"center",borderBottom:`1px solid ${C.border}33`}}
-                      onMouseEnter={e=>e.currentTarget.style.background="#345880"}
+                      onMouseEnter={e=>e.currentTarget.style.background=C.bg}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                       <span style={{fontSize:11,color:C.muted,minWidth:60,fontFamily:"monospace"}}>{c.number}</span>
                       <span style={{fontSize:13,color:C.text}}>{c.displayName}</span>
@@ -245,7 +245,7 @@ function NewProjectModal({uid,onCreated,onClose}){
                 </div>
               )}
               {showDropdown&&!customerSearching&&customerResults.length===0&&customerQuery&&(
-                <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#2a4a6e",border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,padding:"10px 12px",marginTop:4,fontSize:12,color:C.muted}}>No customers found</div>
+                <div style={{position:"absolute",top:"100%",left:0,right:0,background:C.card,border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,padding:"10px 12px",marginTop:4,fontSize:12,color:C.muted}}>No customers found</div>
               )}
             </div>
           )}

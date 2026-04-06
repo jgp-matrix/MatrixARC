@@ -28,7 +28,7 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
       onMouseDown={e=>{if(!copying&&e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#0d0d1a",border:"1px solid "+C.accent+"66",borderRadius:10,padding:"24px 28px",width:420,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+      <div style={{background:C.card,border:"1px solid "+C.accent+"66",borderRadius:10,padding:"24px 28px",width:420,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
         <div style={{fontSize:15,fontWeight:800,color:C.accent,marginBottom:12}}>Copy Project</div>
         <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.5}}>
           Creates a new BC project with all panels, BOM data, drawings, tasks, and planning lines copied from <strong style={{color:C.text}}>{project.bcProjectNumber}</strong>.
@@ -44,7 +44,7 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
           <div style={{marginBottom:12}}>
             <div style={{fontSize:11,color:progress.step==="done"?C.green:C.accent,marginBottom:4}}>{progress.msg}</div>
             <div style={{width:"100%",height:6,background:C.border,borderRadius:4,overflow:"hidden"}}>
-              <div style={{height:"100%",width:(progress.pct||0)+"%",background:progress.step==="done"?C.green:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+              <div style={{height:"100%",width:(progress.pct||0)+"%",background:progress.step==="done"?C.green:`linear-gradient(90deg,${C.accent},${C.purple})`,borderRadius:4,transition:"width 0.4s"}}/>
             </div>
           </div>
         )}
@@ -52,7 +52,7 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
         <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
           {!copying&&<button onClick={onClose} style={{background:"transparent",border:"1px solid "+C.border,borderRadius:6,padding:"8px 16px",color:C.muted,fontSize:13,cursor:"pointer"}}>Cancel</button>}
           <button onClick={handleCopy} disabled={copying||!name.trim()}
-            style={{background:copying?"#1e293b":C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:copying?"default":"pointer",opacity:copying?0.7:1}}>
+            style={{background:copying?C.border:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:copying?"default":"pointer",opacity:copying?0.7:1}}>
             {copying?"Copying…":"Copy Project"}
           </button>
         </div>

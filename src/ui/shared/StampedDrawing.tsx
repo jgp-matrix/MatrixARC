@@ -1,4 +1,5 @@
 import React from 'react';
+import { C } from '@/core/constants';
 
 function StampedDrawing({src,overlay,width,height,onClick}: any){
   width=width||420;height=height||381;
@@ -10,7 +11,7 @@ function StampedDrawing({src,overlay,width,height,onClick}: any){
     const img=new Image();img.crossOrigin='anonymous';
     img.onload=()=>{
       canvas.width=width;canvas.height=height;
-      ctx.fillStyle='#080810';ctx.fillRect(0,0,width,height);
+      ctx.fillStyle=C.bg;ctx.fillRect(0,0,width,height);
       ctx.drawImage(img,0,0,width,height);
       if(overlay){
         const barH=14;
@@ -23,7 +24,7 @@ function StampedDrawing({src,overlay,width,height,onClick}: any){
         ctx.textAlign='right';ctx.fillText((overlay.right||'').slice(0,50),width-6,y);
       }
     };
-    img.onerror=()=>{const c=canvasRef.current;if(!c)return;c.getContext('2d').fillStyle='#080810';c.getContext('2d').fillRect(0,0,width,height);};
+    img.onerror=()=>{const c=canvasRef.current;if(!c)return;c.getContext('2d').fillStyle=C.bg;c.getContext('2d').fillRect(0,0,width,height);};
     img.src=src;
   },[src,JSON.stringify(overlay),width,height]);
   return <canvas ref={canvasRef} width={width} height={height} onClick={onClick} style={{borderRadius:6,display:'block',cursor:'zoom-in'}}/>;

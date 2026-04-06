@@ -101,8 +101,8 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
 
   return ReactDOM.createPortal(<>
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-      <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:640,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
-        <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:12}}>✉ Send Quote</div>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:640,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
+        <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:12}}>✉ Send Quote</div>
         <div style={{display:"flex",gap:0,marginBottom:14,borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`}}>
           <button onClick={()=>setSendMode("new")}
             style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",
@@ -111,7 +111,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
           </button>
           <button onClick={()=>setSendMode("reply")}
             style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",borderLeft:`1px solid ${C.border}`,
-              background:sendMode==="reply"?"#1a2a1a":"transparent",color:sendMode==="reply"?"#4ade80":C.muted}}>
+              background:sendMode==="reply"?C.greenDim:"transparent",color:sendMode==="reply"?C.green:C.muted}}>
             ↩ Reply to Thread
           </button>
         </div>
@@ -141,12 +141,12 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
               {threadResults.map((t,i)=>(
                 <div key={t.id} onClick={()=>setSelectedThread(t)}
                   style={{padding:"8px 12px",borderBottom:`1px solid ${C.border}33`,cursor:"pointer",
-                    background:selectedThread?.id===t.id?"#0c2a1a":i%2===0?"transparent":"rgba(255,255,255,0.015)"}}
+                    background:selectedThread?.id===t.id?C.greenDim:i%2===0?"transparent":C.bg}}
                   onMouseEnter={e=>{if(selectedThread?.id!==t.id)e.currentTarget.style.background=C.accentDim+"44";}}
                   onMouseLeave={e=>{if(selectedThread?.id!==t.id)e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)";}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:selectedThread?.id===t.id?700:600,color:selectedThread?.id===t.id?"#4ade80":C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject}</div>
+                      <div style={{fontSize:12,fontWeight:selectedThread?.id===t.id?700:600,color:selectedThread?.id===t.id?C.green:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject}</div>
                       <div style={{fontSize:11,color:C.muted,marginTop:2}}>{t.from}</div>
                     </div>
                     <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
@@ -158,15 +158,15 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
                     </div>
                   </div>
                   <div style={{fontSize:10,color:C.muted,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",opacity:0.7}}>{t.preview}</div>
-                  {selectedThread?.id===t.id&&<div style={{fontSize:10,color:"#4ade80",fontWeight:700,marginTop:4}}>✓ Selected — will reply to this thread</div>}
+                  {selectedThread?.id===t.id&&<div style={{fontSize:10,color:C.green,fontWeight:700,marginTop:4}}>✓ Selected — will reply to this thread</div>}
                 </div>
               ))}
             </div>
             {selectedThread&&(
-              <div style={{marginTop:8,background:"#0c2a1a",border:"1px solid #4ade8044",borderRadius:6,padding:"8px 12px"}}>
+              <div style={{marginTop:8,background:C.greenDim,border:`1px solid ${C.green}44`,borderRadius:6,padding:"8px 12px"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
-                  <div style={{fontSize:10,fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:0.5}}>↩ Reply All</div>
-                  <div style={{fontSize:9,color:"#4ade80",opacity:0.7}}>— all original recipients will be included</div>
+                  <div style={{fontSize:10,fontWeight:700,color:C.green,textTransform:"uppercase",letterSpacing:0.5}}>↩ Reply All</div>
+                  <div style={{fontSize:9,color:C.green,opacity:0.7}}>— all original recipients will be included</div>
                 </div>
                 <div style={{fontSize:12,fontWeight:700,color:C.text}}>{selectedThread.subject}</div>
                 <div style={{fontSize:11,color:C.muted}}>From: {selectedThread.from} · {fmtDate(selectedThread.date)}</div>
@@ -179,12 +179,12 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
           <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Message</label>
           <textarea value={modalData.message} onChange={e=>setModalData(prev=>({...prev,message:e.target.value}))} rows={4} style={{...inp({fontSize:13,resize:"vertical",lineHeight:1.6})}}/>
         </div>
-        <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line",marginTop:6}}>{modalData.signature}</div>
+        <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line",marginTop:6}}>{modalData.signature}</div>
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,flexShrink:0}}>
-          <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
+          <button onClick={onClose} style={btn(C.bg,C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
           <button onClick={handleSend} disabled={sending}
-            style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:sending?0.5:1})}>
+            style={btn(sendMode==="reply"?C.greenDim:C.accentDim,sendMode==="reply"?C.green:C.accent,{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?C.green:C.accent}`,opacity:sending?0.5:1})}>
             {sending?"Sending…":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
           </button>
         </div>
@@ -194,7 +194,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
     {previewEmail&&(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}
         onClick={()=>setPreviewEmail(null)}>
-        <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,width:"95%",maxWidth:800,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 60px 15px rgba(56,189,248,0.5)"}}
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,width:"95%",maxWidth:800,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}
           onClick={e=>e.stopPropagation()}>
           {/* Preview Header */}
           <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
@@ -208,7 +208,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
               </div>
               <div style={{display:"flex",gap:6,flexShrink:0}}>
                 <button onClick={()=>{const t=threadResults.find(r=>r.subject===previewEmail.subject);if(t)setSelectedThread(t);setPreviewEmail(null);}}
-                  style={btn("#0d2a1a","#4ade80",{fontSize:11,fontWeight:700,border:"1px solid #4ade8066",padding:"5px 12px"})}>
+                  style={btn(C.greenDim,C.green,{fontSize:11,fontWeight:700,border:`1px solid ${C.green}66`,padding:"5px 12px"})}>
                   ↩ Select & Reply
                 </button>
                 <button onClick={()=>setPreviewEmail(null)}

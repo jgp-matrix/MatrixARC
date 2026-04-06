@@ -175,8 +175,8 @@ function SupplierPortalPage({token}){
     setUploading(false);
   }
 
-  const bg="#f8fafc";const card="#ffffff";const accent="#2563eb";const dark="#1e293b";const muted="#64748b";const border="#e2e8f0";
-  const inp={border:`1px solid ${border}`,borderRadius:6,padding:"7px 10px",fontSize:14,fontFamily:"inherit",color:dark,outline:"none",background:"#f8fafc"};
+  const bg=C.bg;const accent=C.accent;const dark=C.text;const muted=C.muted;const border=C.border;
+  const localInp={border:`1px solid ${border}`,borderRadius:6,padding:"7px 10px",fontSize:14,fontFamily:"inherit",color:dark,outline:"none",background:C.input};
 
   function Header(){
     return(<>
@@ -210,12 +210,12 @@ function SupplierPortalPage({token}){
   if(phase==='analyzing')return(
     <div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"40px 36px",maxWidth:440,width:"100%",textAlign:"center",boxShadow:"0 4px 24px rgba(0,0,0,0.08)"}}>
-        <div style={{width:48,height:48,margin:"0 auto 16px",border:"4px solid #e2e8f0",borderTop:`4px solid ${accent}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+        <div style={{width:48,height:48,margin:"0 auto 16px",border:`4px solid ${C.border}`,borderTop:`4px solid ${accent}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}
 .spn-drop{max-height:200px;overflow-y:auto;scrollbar-width:auto;}
 .spn-drop::-webkit-scrollbar{width:14px;}
-.spn-drop::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:7px;border:3px solid #fff;}
-.spn-drop::-webkit-scrollbar-track{background:#f1f5f9;border-radius:7px;}
+.spn-drop::-webkit-scrollbar-thumb{background:${C.muted};border-radius:7px;border:3px solid ${C.card};}
+.spn-drop::-webkit-scrollbar-track{background:${C.bg};border-radius:7px;}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
 input[type=number]{-moz-appearance:textfield;}`}</style>
         <div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Analyzing Your Quote</div>
@@ -235,24 +235,24 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
         <div style={{maxWidth:1200,margin:"0 auto"}}>
           <Header/>
           {(unmatchedRfqCount>0||unmatchedSupplierCount>0)&&(
-            <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:12}}>
+            <div style={{background:C.redDim,border:`1px solid ${C.red}`,borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:12}}>
               <span style={{fontSize:22,flexShrink:0}}>⚠️</span>
               <div>
-                <div style={{fontSize:14,fontWeight:700,color:"#991b1b",marginBottom:3}}>Validation Check</div>
-                <div style={{fontSize:14,color:"#7f1d1d",lineHeight:1.5}}>
+                <div style={{fontSize:14,fontWeight:700,color:C.red,marginBottom:3}}>Validation Check</div>
+                <div style={{fontSize:14,color:C.sub,lineHeight:1.5}}>
                   {unmatchedRfqCount>0&&<div><strong>{unmatchedRfqCount} of {lineItems.length}</strong> requested items have no price yet. Please review and enter prices manually or select the correct Supplier Part # from the dropdown.</div>}
                   {unmatchedSupplierCount>0&&<div style={{marginTop:unmatchedRfqCount>0?4:0}}><strong>{unmatchedSupplierCount}</strong> item{unmatchedSupplierCount!==1?'s':''} on your quote {unmatchedSupplierCount!==1?'were':'was'} not matched to any RFQ line item. Use the Supplier Part # dropdown to assign them.</div>}
                 </div>
               </div>
             </div>
           )}
-          <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:10,padding:"16px 20px",marginBottom:20,display:"flex",alignItems:"flex-start",gap:12}}>
+          <div style={{background:C.yellowDim,border:`1px solid ${C.yellow}`,borderRadius:10,padding:"16px 20px",marginBottom:20,display:"flex",alignItems:"flex-start",gap:12}}>
             <span style={{fontSize:22,flexShrink:0}}>📋</span>
             <div>
-              <div style={{fontSize:14,fontWeight:700,color:"#92400e",marginBottom:3}}>Review Extracted Pricing</div>
+              <div style={{fontSize:14,fontWeight:700,color:C.yellow,marginBottom:3}}>Review Extracted Pricing</div>
               {aiError
-                ?<div style={{fontSize:14,color:"#991b1b"}}>AI extraction encountered an issue: {aiError}. Please enter prices manually below.</div>
-                :<div style={{fontSize:14,color:"#78350f"}}>AI found prices for <strong>{extractedCount} of {lineItems.length}</strong> items. Please review for accuracy, correct any errors, and fill in any missing prices before submitting.</div>
+                ?<div style={{fontSize:14,color:C.red}}>AI extraction encountered an issue: {aiError}. Please enter prices manually below.</div>
+                :<div style={{fontSize:14,color:C.sub}}>AI found prices for <strong>{extractedCount} of {lineItems.length}</strong> items. Please review for accuracy, correct any errors, and fill in any missing prices before submitting.</div>
               }
             </div>
           </div>
@@ -279,7 +279,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
             </div>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:14,fontFamily:"inherit"}}>
               <thead>
-                <tr style={{background:"#f1f5f9"}}>
+                <tr style={{background:C.bg}}>
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600,width:50}}>Ln #</th>
                   <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Matrix Part #</th>
                   <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Supplier Part #</th>
@@ -287,7 +287,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600}}>Qty</th>
                   <th style={{padding:"8px 12px",textAlign:"right",color:accent,fontWeight:700,minWidth:160}}>Unit Price</th>
                   <th style={{padding:"8px 12px",textAlign:"center",color:muted,fontWeight:600,minWidth:110}}>Lead Time (days)</th>
-                  <th style={{padding:"8px 12px",textAlign:"center",color:"#dc2626",fontWeight:600,minWidth:70}}>No Bid</th>
+                  <th style={{padding:"8px 12px",textAlign:"center",color:C.red,fontWeight:600,minWidth:70}}>No Bid</th>
                   <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600,minWidth:120}}>Notes</th>
                 </tr>
               </thead>
@@ -300,16 +300,16 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                   const isMatch=!cant&&(confirmed||conf==='high'||conf==='medium');
                   const isNoMatch=!cant&&!confirmed&&(conf==='low');
                   const confLabel=confirmed?"CONFIRMED ✓":isMatch?"MATCH":isNoMatch?"NO MATCH":null;
-                  const confColor=confirmed?"#166534":isMatch?"#166534":"#991b1b";
-                  const confBg=confirmed?"#bbf7d0":isMatch?"#dcfce7":"#fee2e2";
+                  const confColor=confirmed?C.green:isMatch?C.green:C.red;
+                  const confBg=confirmed?C.greenDim:isMatch?C.greenDim:C.redDim;
                   const hasSupplierPN=!!supplierPartNums[i];
                   return(
-                    <tr key={i} style={{borderTop:`1px solid ${border}`,background:cant?"#fef2f2":isNoMatch?"#fff5f5":hasPrice?"#f0fdf4":"#fff",opacity:cant?0.6:1}}>
+                    <tr key={i} style={{borderTop:`1px solid ${border}`,background:cant?C.redDim:isNoMatch?C.redDim:hasPrice?C.greenDim:C.card,opacity:cant?0.6:1}}>
                       <td style={{padding:"10px 12px",textAlign:"center",color:muted,fontFamily:"monospace"}}>{supplierLineNums[i]||"—"}</td>
                       <td style={{padding:"8px 12px",fontFamily:"monospace"}}>
                         <input value={supplierCorrectedPNs[i]!==undefined?supplierCorrectedPNs[i]:(item.partNumber||"")}
                           onChange={e=>setSupplierCorrectedPNs(prev=>({...prev,[i]:e.target.value}))}
-                          style={{...inp,padding:"4px 6px",fontSize:13,fontWeight:600,fontFamily:"monospace",width:140,color:supplierCorrectedPNs[i]!==undefined&&supplierCorrectedPNs[i]!==item.partNumber?"#2563eb":dark,textDecoration:cant?"line-through":"none"}}/>
+                          style={{...localInp,padding:"4px 6px",fontSize:13,fontWeight:600,fontFamily:"monospace",width:140,color:supplierCorrectedPNs[i]!==undefined&&supplierCorrectedPNs[i]!==item.partNumber?C.accent:dark,textDecoration:cant?"line-through":"none"}}/>
                       </td>
                       <td style={{padding:"10px 12px",fontFamily:"monospace",fontSize:12}}>{(()=>{
                         const opts=allExtractedItems.filter(ex=>ex.supplierPartNumber).map(ex=>ex.supplierPartNumber);
@@ -334,7 +334,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                           setOpenSpnDrop(null);setSpnDropRect(null);
                         }
                         const naturalH=Math.min(200,(unique.length+1)*32+2);
-                        let dropStyle={position:"fixed",zIndex:700,background:"#fff",border:`1px solid ${border}`,borderRadius:6,width:240,boxShadow:"0 4px 16px rgba(0,0,0,0.15)"};
+                        let dropStyle={position:"fixed",zIndex:700,background:C.card,border:`1px solid ${border}`,borderRadius:6,width:240,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"};
                         if(isOpen&&spnDropRect){
                           const spaceBelow=window.innerHeight-spnDropRect.bottom-10;
                           const spaceAbove=spnDropRect.top-10;
@@ -350,16 +350,16 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                         }
                         return<div>
                           <div style={{display:"flex",gap:4,alignItems:"center"}}>
-                            <input value={cur} onChange={e=>{setSupplierPartNums(prev=>({...prev,[i]:e.target.value}));if(e.target.value)setConfirmedMatches(prev=>({...prev,[i]:true}));}} placeholder="Type or select…" style={{...inp,padding:"4px 6px",fontSize:13,fontFamily:"monospace",width:140,color:dark}}/>
-                            <button onClick={e=>{if(isOpen){setOpenSpnDrop(null);setSpnDropRect(null);}else{setSpnDropRect(e.currentTarget.getBoundingClientRect());setOpenSpnDrop(i);}}} style={{background:"#f1f5f9",border:`1px solid ${border}`,borderRadius:4,padding:"4px 6px",cursor:"pointer",fontSize:10,color:muted,whiteSpace:"nowrap"}}>
+                            <input value={cur} onChange={e=>{setSupplierPartNums(prev=>({...prev,[i]:e.target.value}));if(e.target.value)setConfirmedMatches(prev=>({...prev,[i]:true}));}} placeholder="Type or select…" style={{...localInp,padding:"4px 6px",fontSize:13,fontFamily:"monospace",width:140,color:dark}}/>
+                            <button onClick={e=>{if(isOpen){setOpenSpnDrop(null);setSpnDropRect(null);}else{setSpnDropRect(e.currentTarget.getBoundingClientRect());setOpenSpnDrop(i);}}} style={{background:C.bg,border:`1px solid ${border}`,borderRadius:4,padding:"4px 6px",cursor:"pointer",fontSize:10,color:muted,whiteSpace:"nowrap"}}>
                               {isOpen?"▲":"▼"}
                             </button>
                           </div>
                           {isOpen&&<>
                             <div style={{position:"fixed",inset:0,zIndex:699}} onClick={()=>{setOpenSpnDrop(null);setSpnDropRect(null);}}/>
                             <div className="spn-drop" style={dropStyle}>
-                              <div onClick={()=>pick("")} style={{padding:"7px 10px",fontSize:14,color:muted,cursor:"pointer",borderBottom:`1px solid ${border}`}} onMouseEnter={e=>e.target.style.background="#f1f5f9"} onMouseLeave={e=>e.target.style.background="#fff"}>— Clear —</div>
-                              {unique.map(pn=><div key={pn} onClick={()=>pick(pn)} style={{padding:"7px 10px",fontSize:14,fontFamily:"monospace",color:pn===cur?accent:dark,fontWeight:pn===cur?700:400,cursor:"pointer",background:pn===cur?"#eff6ff":"#fff"}} onMouseEnter={e=>{if(pn!==cur)e.target.style.background="#f1f5f9";}} onMouseLeave={e=>{if(pn!==cur)e.target.style.background="#fff";}}>{pn}</div>)}
+                              <div onClick={()=>pick("")} style={{padding:"7px 10px",fontSize:14,color:muted,cursor:"pointer",borderBottom:`1px solid ${border}`}} onMouseEnter={e=>e.target.style.background=C.bg} onMouseLeave={e=>e.target.style.background=C.card}>— Clear —</div>
+                              {unique.map(pn=><div key={pn} onClick={()=>pick(pn)} style={{padding:"7px 10px",fontSize:14,fontFamily:"monospace",color:pn===cur?accent:dark,fontWeight:pn===cur?700:400,cursor:"pointer",background:pn===cur?C.accentDim:C.card}} onMouseEnter={e=>{if(pn!==cur)e.target.style.background=C.bg;}} onMouseLeave={e=>{if(pn!==cur)e.target.style.background=C.card;}}>{pn}</div>)}
                             </div>
                           </>}
                         </div>;
@@ -367,12 +367,12 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                       <td style={{padding:"10px 12px",color:muted,textDecoration:cant?"line-through":undefined}}>{item.description||"—"}</td>
                       <td style={{padding:"10px 12px",textAlign:"center",color:dark}}>{item.qty||1}</td>
                       <td style={{padding:"8px 12px"}}>
-                        {cant?<span style={{fontSize:14,color:"#dc2626",fontWeight:700,display:"block",textAlign:"right"}}>No Bid</span>:(
+                        {cant?<span style={{fontSize:14,color:C.red,fontWeight:700,display:"block",textAlign:"right"}}>No Bid</span>:(
                         <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:6}}>
                           {confLabel&&<span style={{fontSize:12,fontWeight:700,borderRadius:4,padding:"2px 8px",background:confBg,color:confColor,flexShrink:0}}>{confLabel}</span>}
-                          {!confirmed&&hasSupplierPN&&(isNoMatch||isMatch)&&<button onClick={()=>setConfirmedMatches(prev=>({...prev,[i]:true}))} style={{fontSize:12,fontWeight:600,borderRadius:4,padding:"2px 8px",background:"#eff6ff",color:"#2563eb",border:"1px solid #bfdbfe",cursor:"pointer",flexShrink:0,fontFamily:"inherit"}}>✓ Confirm</button>}
-                          {!conf&&!hasPrice&&<span style={{fontSize:14,color:"#dc2626",fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
-                          {isNoMatch&&<span style={{fontSize:12,color:"#991b1b",flexShrink:0}}>Please enter price</span>}
+                          {!confirmed&&hasSupplierPN&&(isNoMatch||isMatch)&&<button onClick={()=>setConfirmedMatches(prev=>({...prev,[i]:true}))} style={{fontSize:12,fontWeight:600,borderRadius:4,padding:"2px 8px",background:C.accentDim,color:C.accent,border:`1px solid ${C.border}`,cursor:"pointer",flexShrink:0,fontFamily:"inherit"}}>✓ Confirm</button>}
+                          {!conf&&!hasPrice&&<span style={{fontSize:14,color:C.red,fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
+                          {isNoMatch&&<span style={{fontSize:12,color:C.red,flexShrink:0}}>Please enter price</span>}
                           <span style={{color:muted}}>$</span>
                           <input type="text" inputMode="decimal" placeholder="0.00"
                             value={unitPrices[i]??''}
@@ -380,7 +380,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                             onFocus={e=>e.target.select()}
                             onBlur={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))setUnitPrices(prev=>({...prev,[i]:v.toFixed(2)}));}}
                             onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                            style={{width:100,textAlign:"right",...inp,border:`1px solid ${hasPrice?(isMatch?"#86efac":"#e2e8f0"):"#fca5a5"}`,background:hasPrice?"#f0fdf4":"#fff5f5"}}
+                            style={{width:100,textAlign:"right",...localInp,border:`1px solid ${hasPrice?(isMatch?C.green:C.border):C.red}`,background:hasPrice?C.greenDim:C.redDim}}
                           />
                         </div>)}
                       </td>
@@ -390,23 +390,23 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                           onChange={e=>setItemLeadTimes(prev=>({...prev,[i]:e.target.value}))}
                           onFocus={e=>e.target.select()}
                           onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                          style={{width:70,textAlign:"center",...inp}}
+                          style={{width:70,textAlign:"center",...localInp}}
                         />}
                       </td>
                       <td style={{padding:"8px 12px",textAlign:"center"}}>
                         <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer",userSelect:"none"}}>
                           <input type="checkbox" checked={cant}
                             onChange={e=>setCannotSupply(prev=>({...prev,[i]:e.target.checked}))}
-                            style={{width:16,height:16,accentColor:"#dc2626",cursor:"pointer"}}
+                            style={{width:16,height:16,accentColor:C.red,cursor:"pointer"}}
                           />
-                          {cant&&<span style={{fontSize:14,color:"#dc2626",fontWeight:700}}>Yes</span>}
+                          {cant&&<span style={{fontSize:14,color:C.red,fontWeight:700}}>Yes</span>}
                         </label>
                       </td>
                       <td style={{padding:"8px 12px"}}>
                         <input type="text" placeholder="Add note…"
                           value={itemNotes[i]||''}
                           onChange={e=>setItemNotes(prev=>({...prev,[i]:e.target.value}))}
-                          style={{...inp,width:"100%",padding:"4px 6px"}}
+                          style={{...localInp,width:"100%",padding:"4px 6px"}}
                         />
                       </td>
                     </tr>
@@ -415,8 +415,8 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               </tbody>
             </table>
           </div>
-          <div style={{background:card,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-            <label style={{display:"block",fontSize:14,fontWeight:700,color:dark,marginBottom:4}}>Lead Time (days ARO) <span style={{color:"#dc2626"}}>*</span></label>
+          <div style={{background:C.card,border:`1px solid ${!leadTime.trim()?C.red:border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 4px 20px rgba(0,0,0,0.12)"}}>
+            <label style={{display:"block",fontSize:14,fontWeight:700,color:dark,marginBottom:4}}>Lead Time (days ARO) <span style={{color:C.red}}>*</span></label>
             <div style={{fontSize:14,color:muted,marginBottom:8}}>Required — enter your standard lead time for this entire order. You may optionally enter different lead times per line item above to override.</div>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime}
@@ -434,13 +434,13 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                     });
                   }
                 }}
-                style={{width:120,...inp,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`}}/>
+                style={{width:120,...localInp,border:`1px solid ${!leadTime.trim()?C.red:border}`}}/>
               <span style={{fontSize:14,color:muted}}>calendar days after receipt of order</span>
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
             <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setSupplierLineNums({});setItemNotes({});setConfirmedMatches({});setQuoteHeaderInfo(null);setAllExtractedItems([]);setExtractionSummary(null);setMorePages(null);pdfRef.current=null;}}
-              style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              style={{flex:1,background:C.card,border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
               ← Start Over
             </button>
             <button onClick={handleSubmit} disabled={uploading}
@@ -474,7 +474,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
             onDragOver={e=>{e.preventDefault();setDragOver(true);}}
             onDragLeave={()=>setDragOver(false)}
             onDrop={handleDrop}
-            style={{border:`2px dashed ${dragOver?"#2563eb":border}`,borderRadius:10,padding:"40px 20px",textAlign:"center",transition:"all 0.2s",background:dragOver?"#eff6ff":"#f8fafc",marginBottom:16}}>
+            style={{border:`2px dashed ${dragOver?C.accent:border}`,borderRadius:10,padding:"40px 20px",textAlign:"center",transition:"all 0.2s",background:dragOver?C.accentDim:C.bg,marginBottom:16}}>
             <div style={{fontSize:36,marginBottom:10}}>📄</div>
             <div style={{fontSize:15,fontWeight:600,color:dragOver?accent:dark,marginBottom:6}}>{dragOver?"Drop PDF here":"Drag & drop your quote PDF here"}</div>
             <div style={{fontSize:14,color:muted,marginBottom:16}}>or</div>
@@ -489,7 +489,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
           <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
             <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,fontSize:14,fontWeight:700,color:dark}}>Items Requested ({info.lineItems.length})</div>
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:14}}>
-              <thead><tr style={{background:"#f1f5f9"}}>
+              <thead><tr style={{background:C.bg}}>
                 <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>#</th>
                 <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Part Number</th>
                 <th style={{padding:"8px 12px",textAlign:"left",color:muted,fontWeight:600}}>Description</th>

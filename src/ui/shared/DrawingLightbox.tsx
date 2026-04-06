@@ -147,7 +147,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
             </span>
           ))}
         </div>
-        {regions.length>0&&<span style={{fontSize:12,color:"#818cf8",fontWeight:600}}>{regions.length} region{regions.length>1?"s":""}</span>}
+        {regions.length>0&&<span style={{fontSize:12,color:C.purple,fontWeight:600}}>{regions.length} region{regions.length>1?"s":""}</span>}
         <button onClick={()=>{setRegionMode((m: boolean)=>!m);setPendingRect(null);setDrawStart(null);setSelectedRegion(null);}}
           style={{background:regionMode?C.accent+"33":"transparent",color:regionMode?C.accent:C.muted,border:`1px solid ${regionMode?C.accent:C.border}`,borderRadius:6,padding:"6px 14px",fontSize:13,fontWeight:600,cursor:"pointer",transition:"all 0.15s"}}>
           {regionMode?"Exit Regions":"Regions"}
@@ -157,7 +157,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
       </div>
 
       {regionMode&&!pendingRect&&!drawStart&&(
-        <div style={{flexShrink:0,padding:"6px 20px",background:"rgba(99,102,241,0.08)",borderBottom:"1px solid rgba(99,102,241,0.3)",fontSize:12,color:"#818cf8",fontWeight:600,textAlign:"center"}}>
+        <div style={{flexShrink:0,padding:"6px 20px",background:C.accentDim,borderBottom:`1px solid ${C.accent}4d`,fontSize:12,color:C.purple,fontWeight:600,textAlign:"center"}}>
           Draw to create a region - Click a region to edit type, note, or delete - Esc to exit
         </div>
       )}
@@ -203,7 +203,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                     return ReactDOM.createPortal(
                     <div data-region-panel="1" onMouseDown={(e: any)=>e.stopPropagation()} onClick={(e: any)=>e.stopPropagation()} style={{position:"fixed",left:panelLeft,
                       ...(showAbove?{bottom:panelBottom}:{top:panelTop}),
-                      zIndex:10001,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",
+                      zIndex:10001,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",
                       boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:240,maxWidth:320}}>
                       <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:5,textTransform:"uppercase",letterSpacing:0.5}}>Type</div>
                       <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:8}}>
@@ -223,7 +223,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                           onChange={(e: any)=>{if(editingRegion===r.id)setEditNote(e.target.value);}}
                           placeholder='e.g. "9 operators on DIN rail"'
                           onKeyDown={(e: any)=>{if(e.key==="Enter"){e.preventDefault();saveEditRegion();}if(e.key==="Escape"){e.stopPropagation();setEditingRegion(null);}}}
-                          style={{flex:1,background:"#0d0d14",border:`1px solid ${C.border}`,color:C.text,borderRadius:4,padding:"5px 8px",fontSize:12,outline:"none"}}/>
+                          style={{flex:1,background:C.input,border:`1px solid ${C.border}`,color:C.text,borderRadius:4,padding:"5px 8px",fontSize:12,outline:"none"}}/>
                         {editingRegion===r.id&&(
                           <button onClick={saveEditRegion}
                             style={{background:C.accent,color:"#fff",border:"none",borderRadius:4,padding:"4px 10px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
@@ -232,7 +232,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                         )}
                       </div>
                       <button onClick={(e: any)=>{e.stopPropagation();deleteRegion(r.id);}}
-                        style={{background:"rgba(239,68,68,0.1)",color:"#ef4444",border:"1px solid rgba(239,68,68,0.3)",borderRadius:6,
+                        style={{background:C.redDim,color:C.red,border:`1px solid ${C.red}4d`,borderRadius:6,
                           padding:"4px 12px",fontSize:11,fontWeight:700,cursor:"pointer",width:"100%"}}>
                         Delete Region
                       </button>
@@ -274,7 +274,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
             return ReactDOM.createPortal(
             <div onClick={(e: any)=>e.stopPropagation()} onMouseDown={(e: any)=>e.stopPropagation()}
               style={{position:"fixed",left:pLeft,...(showAbove?{bottom:pBottom}:{top:pTop}),
-                zIndex:10001,background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,
+                zIndex:10001,background:C.card,border:`1px solid ${C.border}`,borderRadius:8,
                 padding:"10px 12px",boxShadow:"0 8px 32px rgba(0,0,0,0.6)",minWidth:200}}>
               {!pendingType?(
                 <>
@@ -301,16 +301,16 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}: any){
                       borderRadius:8,padding:"3px 8px",fontSize:11,fontWeight:700}}>{regionTypeShort[pendingType]}</span>
                     <button onClick={()=>{setPendingType(null);setPendingNote("");}} style={{background:"transparent",border:"none",color:C.muted,cursor:"pointer",fontSize:11}}>change</button>
                   </div>
-                  <div style={{fontSize:11,color:pendingType==="other"?"#a78bfa":C.muted,fontWeight:600,marginBottom:4}}>
+                  <div style={{fontSize:11,color:pendingType==="other"?C.purple:C.muted,fontWeight:600,marginBottom:4}}>
                     {pendingType==="other"?"Describe what you see (required)":"Describe what you see (optional)"}
                   </div>
                   <input ref={noteInputRef} value={pendingNote} onChange={(e: any)=>setPendingNote(e.target.value)}
                     placeholder={pendingType==="other"?'e.g. "voltage schedule 480V/3ph"':'e.g. "9 operators on DIN rail"'}
                     onKeyDown={(e: any)=>{if(e.key==="Enter"){e.preventDefault();if(pendingType==="other"&&!pendingNote.trim())return;finishRegion();}if(e.key==="Escape"){e.stopPropagation();setPendingType(null);setPendingNote("");}}}
-                    style={{width:"100%",background:"#0d0d14",border:`1px solid ${pendingType==="other"&&!pendingNote.trim()?"#a78bfa66":C.border}`,color:C.text,borderRadius:5,padding:"6px 10px",fontSize:12,outline:"none",boxSizing:"border-box",marginBottom:8}}/>
+                    style={{width:"100%",background:C.input,border:`1px solid ${pendingType==="other"&&!pendingNote.trim()?"#a78bfa66":C.border}`,color:C.text,borderRadius:5,padding:"6px 10px",fontSize:12,outline:"none",boxSizing:"border-box",marginBottom:8}}/>
                   <div style={{display:"flex",gap:6}}>
                     <button onClick={()=>{if(pendingType==="other"&&!pendingNote.trim())return;finishRegion();}}
-                      style={{flex:1,background:pendingType==="other"&&!pendingNote.trim()?"#333":C.accent,color:"#fff",border:"none",borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:pendingType==="other"&&!pendingNote.trim()?"default":"pointer"}}>
+                      style={{flex:1,background:pendingType==="other"&&!pendingNote.trim()?C.border:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"5px 12px",fontSize:12,fontWeight:700,cursor:pendingType==="other"&&!pendingNote.trim()?"default":"pointer"}}>
                       Save Region
                     </button>
                     {pendingType!=="other"&&(

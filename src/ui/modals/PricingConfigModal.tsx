@@ -186,13 +186,13 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
               style={{...inp(),width:"100%",boxSizing:"border-box",fontSize:13,opacity:_bcToken?1:0.5}}/>
             {bcSearching&&<div style={{fontSize:11,color:C.muted,marginTop:4}}>Searching…</div>}
             {bcResults.length>0&&(
-              <div style={{border:`1px solid ${C.accent}55`,borderRadius:8,marginTop:6,maxHeight:200,overflowY:"auto",background:"#2a4a6e"}}>
-                <div style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,fontSize:10,color:C.muted,fontWeight:600,padding:"5px 10px",borderBottom:`1px solid ${C.accent}44`,textTransform:"uppercase",letterSpacing:0.3,position:"sticky",top:0,background:"#2a4a6e"}}>
+              <div style={{border:`1px solid ${C.accent}55`,borderRadius:8,marginTop:6,maxHeight:200,overflowY:"auto",background:C.card}}>
+                <div style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,fontSize:10,color:C.muted,fontWeight:600,padding:"5px 10px",borderBottom:`1px solid ${C.accent}44`,textTransform:"uppercase",letterSpacing:0.3,position:"sticky",top:0,background:C.card}}>
                   <div>Part #</div><div>Description</div><div style={{textAlign:"right"}}>Unit Cost</div><div style={{textAlign:"right"}}>Modified</div>
                 </div>
                 {bcResults.map((item,i)=>(
                   <div key={i} onClick={()=>addBcItem(item)} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,padding:"7px 10px",cursor:"pointer",borderBottom:`1px solid ${C.border}33`,fontSize:12,transition:"background 0.1s"}}
-                    onMouseEnter={e=>e.currentTarget.style.background="#345880"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.number}</div>
                     <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:8}}>{item.displayName}</div>
                     <div style={{textAlign:"right",color:C.green}}>{item.unitCost!=null?"$"+item.unitCost.toFixed(2):"—"}</div>
@@ -225,7 +225,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
               {defaultItems.map((item,i)=>{
                 const zeroPrice=!item.unitPrice;
                 return(
-                  <div key={i} style={{display:"grid",gridTemplateColumns:"50px 100px 1fr 80px 32px",gap:0,padding:"4px 10px",fontSize:12,borderBottom:i<defaultItems.length-1?`1px solid ${C.border}22`:"none",background:zeroPrice?"#ff000011":"transparent",alignItems:"center"}}>
+                  <div key={i} style={{display:"grid",gridTemplateColumns:"50px 100px 1fr 80px 32px",gap:0,padding:"4px 10px",fontSize:12,borderBottom:i<defaultItems.length-1?`1px solid ${C.border}22`:"none",background:zeroPrice?C.redDim:"transparent",alignItems:"center"}}>
                     <input type="number" min="1" step="1" value={item.qty||1} onChange={e=>{const q=Math.max(1,+e.target.value||1);setDefaultItems(prev=>prev.map((it,j)=>j===i?{...it,qty:q}:it));}} onFocus={e=>e.target.select()} style={{...inp(),width:40,fontSize:12,textAlign:"center",padding:"3px 4px"}}/>
                     <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.partNumber||"—"}</div>
                     <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.description}</div>
