@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.449";
+const APP_VERSION="v1.19.450";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5878,6 +5878,55 @@ async function saveExtractionLearning(uid,projectId,panel,projectName,bcProjectN
   }catch(e){console.warn('[NIQ] Failed to save learning record:',e);}
 }
 
+// DECISION(v1.19.450): Scan all drawing pages for hazardous location indicators during extraction.
+// Flags panels that may require UL698/UL1203 certification — user must be notified to quote differently.
+async function scanForHazardousLocation(pages){
+  if(!_apiKey||!pages?.length)return null;
+  const allPages=pages.filter(p=>p.dataUrl||p.storageUrl);
+  if(!allPages.length)return null;
+  // Send up to 6 pages to Haiku for a quick keyword scan
+  const scanPages=allPages.slice(0,6);
+  const imageContents=[];
+  for(const pg of scanPages){
+    let dataUrl=pg.dataUrl;
+    if(!dataUrl&&pg.storageUrl){try{dataUrl=await ensureDataUrl(pg);}catch(e){continue;}}
+    if(!dataUrl)continue;
+    const small=await resizeForAnalysis(dataUrl,1200);
+    const b64=small?.split(",")[1];
+    if(b64)imageContents.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}});
+  }
+  if(!imageContents.length)return null;
+  try{
+    const resp=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({
+        model:"claude-haiku-4-5-20251001",
+        max_tokens:500,
+        messages:[{role:"user",content:[
+          ...imageContents,
+          {type:"text",text:`Scan these engineering drawings for ANY reference to hazardous locations, intrinsic safety, or explosion-proof requirements. Look for these terms or similar: "intrinsic", "intrinsically safe", "hazloc", "hazardous location", "hazardous area", "explosion-proof", "explosion proof", "Class I", "Class II", "Division 1", "Division 2", "Zone 0", "Zone 1", "Zone 2", "Group A", "Group B", "Group C", "Group D", "ATEX", "UL698", "UL1203", "XP", "IS barrier", "Zener barrier", "purge", "pressurized enclosure".
+
+Return ONLY valid JSON:
+{"found":true/false,"terms":["exact terms found"],"details":"brief description of what was found and where"}
+If NOTHING related to hazardous locations is found, return: {"found":false,"terms":[],"details":""}`}
+        ]}]
+      })
+    });
+    const d=await resp.json();
+    if(!resp.ok)return null;
+    const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
+    const cleaned=raw.replace(/```json|```/gi,"").trim();
+    const result=JSON.parse(cleaned);
+    if(result.found){
+      console.log("HAZLOC SCAN: FOUND hazardous location indicators:",result.terms?.join(", "));
+      return{found:true,terms:result.terms||[],details:result.details||"",scannedAt:Date.now()};
+    }
+    console.log("HAZLOC SCAN: no hazardous location indicators found");
+    return null;
+  }catch(e){console.warn("HAZLOC SCAN error:",e);return null;}
+}
+
 async function runExtractionTask(uid,projectId,panel,cbs={}){
   const {onDone,stampFn,projectName,bcProjectNumber}=cbs;
   let latestPanel=panel;
@@ -5972,6 +6021,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         return{bom:appendDefaultBomItems(Object.values(map)),questions:allQuestions.slice(0,10)};
       }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[]};});
     }
+    // Hazardous location scan (parallel with BOM — uses Haiku, fast)
+    const hazlocPromise=scanForHazardousLocation(latestPanel.pages);
     // Validation (parallel with BOM)
     let valPromise=Promise.resolve(null);
     if(hasVal){
@@ -5984,8 +6035,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const eqs=mergeEngineeringQuestions(latestPanel.engineeringQuestions,aiQuestions,null);
     // DECISION(v1.19.395): Refresh latestPanel after BOM save so compliance review sees the latest
     // engineering questions. Without this, the stale reference caused duplicate questions.
-    if(mergedBom.length>0){
-      const bomSave={...latestPanel,bom:mergedBom,...(aiQuestions.length?{aiQuestions}:{}),engineeringQuestions:eqs,status:"extracted",updatedAt:Date.now()};
+    // Await hazardous location scan result
+    const hazlocResult=await hazlocPromise.catch(()=>null);
+    if(mergedBom.length>0||hazlocResult){
+      const bomSave={...latestPanel,...(mergedBom.length>0?{bom:mergedBom}:{}),...(aiQuestions.length?{aiQuestions}:{}),engineeringQuestions:eqs,...(hazlocResult?{hazardousLocation:hazlocResult}:{}),status:mergedBom.length>0?"extracted":latestPanel.status,updatedAt:Date.now()};
       await save(bomSave);
       latestPanel={...bomSave};
     }
@@ -11955,6 +12008,27 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       })()}
 
       {/* Compliance Review */}
+      {/* Hazardous Location Warning — UL698 / UL1203 */}
+      {panel.hazardousLocation?.found&&(
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
+          <div style={{background:"rgba(239,68,68,0.12)",border:"2px solid #ef4444",borderRadius:10,padding:"14px 16px",animation:"fadeIn 0.3s ease-out"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              <span style={{fontSize:20}}>⚠️</span>
+              <span style={{fontSize:14,fontWeight:800,color:"#ef4444",letterSpacing:0.5}}>HAZARDOUS LOCATION DETECTED</span>
+            </div>
+            <div style={{fontSize:13,color:"#fca5a5",lineHeight:1.6,marginBottom:8}}>
+              This panel may require <strong style={{color:"#fff"}}>UL698</strong> (industrial control panels for hazardous locations) or <strong style={{color:"#fff"}}>UL1203</strong> (explosion-proof electrical equipment) certification. Quote accordingly.
+            </div>
+            {panel.hazardousLocation.terms?.length>0&&(
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>
+                {panel.hazardousLocation.terms.map((t,i)=><span key={i} style={{background:"rgba(239,68,68,0.2)",color:"#fca5a5",borderRadius:6,padding:"2px 8px",fontSize:11,fontWeight:700,border:"1px solid rgba(239,68,68,0.3)"}}>{t}</span>)}
+              </div>
+            )}
+            {panel.hazardousLocation.details&&<div style={{fontSize:12,color:"#94a3b8",fontStyle:"italic"}}>{panel.hazardousLocation.details}</div>}
+          </div>
+        </div>
+      )}
+
       {panel.complianceReview&&panel.complianceReview.concerns?.length>0&&(()=>{
         const cr=panel.complianceReview;
         const sevColors={critical:'#ef4444',warning:'#f59e0b',info:'#38bdf8'};
