@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.431";
+const APP_VERSION="v1.19.432";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1686,9 +1686,9 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
     lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
       Line_Type:"Budget",Type:"Item",No:row.partNumber,
       Description:desc,
-      // DECISION(v1.19.431): Do NOT push Unit_Price for BOM items — BC uses its own Item Card cost.
-      // ARC tracks prices locally; BC Planning Lines should only have Qty, not price.
-      Quantity:(row.qty||1)*lineQty,Location_Code:"MAIN",
+      // DECISION(v1.19.432): Push Unit_Price:0 for BOM items to clear any previously-set values.
+      // Only line 10000 (Progress Billing) should have a Unit_Price. BC uses Item Card cost for BOM items.
+      Quantity:(row.qty||1)*lineQty,Unit_Price:0,Location_Code:"MAIN",
       _row:row,
       _fallback:{[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
         Line_Type:"Budget",Type:"Text",
