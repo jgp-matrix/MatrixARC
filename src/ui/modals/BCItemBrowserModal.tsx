@@ -5,7 +5,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
-import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, setBcToken } from '@/core/globals';
+import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, setBcToken, useBgTasks } from '@/core/globals';
+import { getPageTypes } from '@/core/helpers';
+import { ensureDataUrl } from '@/scanning/pdfExtractor';
 import { useSmoothProgress } from '@/core/useSmoothProgress';
 import { bcLookupItem, searchItems as bcSearchItems, bcFuzzyLookup, createItem as bcCreateItem, patchItemOData as bcPatchItemOData, bcListItemCategories, bcListUnitsOfMeasure, bcListGenProdPostingGroups, bcListInventoryPostingGroups } from '@/services/businessCentral/items';
 import { getAllVendors as bcListVendors, getItemVendorNo as bcGetItemVendorNo, getVendorName as bcGetVendorName, getLastPurchase as bcGetLastPurchase, bcCreateVendor } from '@/services/businessCentral/vendors';

@@ -5,7 +5,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
-import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, setBcToken } from '@/core/globals';
+import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, setBcToken, useBgTasks, apiCall } from '@/core/globals';
+import { patchItemOData as bcPatchItemOData } from '@/services/businessCentral/items';
+import { discoverODataPages as bcDiscoverODataPages } from '@/services/businessCentral/client';
+import { bcDeleteProject, bcFetchCompanyInfo } from '@/services/businessCentral/projects';
 import VendorsPanel from '@/ui/vendors/VendorsPanel';
 import VendorPricingSyncPanel from '@/ui/vendors/VendorPricingSyncPanel';
 import VendorSyncFloater from '@/ui/vendors/VendorSyncFloater';

@@ -7,6 +7,16 @@ import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
 
+// Stub: copyProject is expected to be provided by the app's project management module
+async function copyProject(uid, projectData, onProgress) {
+  onProgress && onProgress({ step: 'copying', msg: 'Copying project...', pct: 50 });
+  const newId = fbDb.collection(`users/${uid}/projects`).doc().id;
+  const newProj = { ...projectData, id: newId, createdAt: Date.now() };
+  await fbDb.doc(`users/${uid}/projects/${newId}`).set(newProj);
+  onProgress && onProgress({ step: 'done', msg: 'Done!', pct: 100 });
+  return newProj;
+}
+
 function CopyProjectModal({project,uid,onCopied,onClose}){
   const [name,setName]=useState((project.name||"")+" (Copy)");
   const [copying,setCopying]=useState(false);

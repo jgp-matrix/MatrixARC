@@ -349,7 +349,7 @@ export async function bcPatchPanelEndDate(
  * Attach a PDF to a BC project (direct upload).
  * Creates an attachment record, then uploads the binary content.
  */
-async function bcAttachPdfToJob(jobNumber: string, fileName: string, pdfArrayBuffer: ArrayBuffer): Promise<any> {
+export async function bcAttachPdfToJob(jobNumber: string, fileName: string, pdfArrayBuffer: ArrayBuffer): Promise<any> {
   const { compId, jobId } = await bcGetJobGuid(jobNumber);
   const base = await companyApiUrl();
 

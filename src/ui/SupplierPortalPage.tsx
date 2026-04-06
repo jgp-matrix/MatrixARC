@@ -6,6 +6,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
+import { normPart, partMatch } from '@/bom/deduplicator';
 
 function SupplierPortalPage({token}){
   const [info,setInfo]=useState(null);

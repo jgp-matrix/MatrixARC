@@ -297,7 +297,7 @@ export function projectStatus(project: any): string {
 }
 
 // ─── Background Tasks ────────────────────────────────────────────────────────
-const _bgTasks: Record<string, any> = {};
+export const _bgTasks: Record<string, any> = {};
 const _bgListeners: (() => void)[] = [];
 function _notifyBg() { _bgListeners.forEach(fn => fn()); }
 

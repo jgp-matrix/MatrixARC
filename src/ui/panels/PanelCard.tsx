@@ -37,9 +37,14 @@ import CPDSearchModal from '@/ui/modals/CPDSearchModal';
 import UpdateBomInBCModal from '@/ui/modals/UpdateBomInBCModal';
 import EngineeringQuestionsModal from '@/ui/modals/EngineeringQuestionsModal';
 
-// ─── Monolith functions not yet extracted into services ──────────────────────
-import { loadPartLibrary, loadPartCorrections } from '@/services/firebase/firestore';
-async function bcAttachPdfToJob(...args: any[]) { console.warn('bcAttachPdfToJob stub'); }
+import { getAllVendors as bcListVendors, getItemVendorNo as bcGetItemVendorNo, getVendorName as bcGetVendorName, getLastPurchase as bcGetLastPurchase } from '@/services/businessCentral/vendors';
+import { pushPurchasePrice as bcPushPurchasePrice } from '@/services/businessCentral/prices';
+import { getCompanyId as bcGetCompanyId, discoverODataPages as bcDiscoverODataPages } from '@/services/businessCentral/client';
+import { bcAttachPdfQueued, bcPatchProgressBillingLine, bcSyncPanelTaskDescriptions, bcAttachPdfToJob } from '@/services/businessCentral/projects';
+import { loadCPD, logPanelToCPD, enrichProductDetails } from '@/services/cpd';
+import { buildCoverPage } from '@/core/arcDoc';
+import { getNextJoke, ensureJsPDF } from '@/core/helpers';
+import { loadPartLibrary, loadPartCorrections, savePartLibraryEntry, savePartCorrection } from '@/services/firebase/firestore';
 async function bcDeleteAttachmentByName(...args: any[]) { console.warn('bcDeleteAttachmentByName stub'); }
 import { useSmoothProgress } from '@/core/useSmoothProgress';
 

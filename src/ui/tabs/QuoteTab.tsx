@@ -5,7 +5,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
-import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
+import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, apiCall } from '@/core/globals';
+import { normPart } from '@/bom/deduplicator';
+import { ensureDataUrl } from '@/scanning/pdfExtractor';
+import { computeBomHash, isPanelBudgetary } from '@/core/helpers';
+import { computeLaborEstimate } from '@/bom/laborEstimator';
+import { computePanelSellPrice } from '@/bom/quoteBuilder';
+import { generateQuotePdf } from '@/core/arcDoc';
 
 function QuoteTab({project,onUpdate}){
   const [quoteTab,setQuoteTab]=useState("formal");

@@ -5,7 +5,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
-import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
+import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION, apiCall } from '@/core/globals';
+import { normPart } from '@/bom/deduplicator';
+import { searchItems as bcSearchItems, createItem as bcCreateItem, bcListItemCategories, bcListUnitsOfMeasure, bcListGenProdPostingGroups, bcListInventoryPostingGroups, bcUpdateItemCost, bcLookupItemForQuote } from '@/services/businessCentral/items';
+import { getAllVendors as bcListVendors } from '@/services/businessCentral/vendors';
+import { pushPurchasePrice as bcPushPurchasePrice } from '@/services/businessCentral/prices';
+import { bcAttachPdfQueued } from '@/services/businessCentral/projects';
+import { bcNormalizeMfrCode } from '@/core/helpers';
+import { sqValidateLineItems, saveSupplierQuoteToFirestore, sqGetAiPrior, sqRecordAiTime, sqGetCrossings, sqSaveCrossing, sqGetVendorMap, sqSaveVendorMapping, sqSavePushAudit, sqFuzzyMatchVendor } from '@/rfq/supplierQuote';
 
 function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,projectId,onBomUpdate}){
   const [phase,setPhase]=useState('upload'); // upload|parsing|review|pushing|done

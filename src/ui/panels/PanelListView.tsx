@@ -28,14 +28,16 @@ import CADLinkSendModal from '@/ui/modals/CADLinkSendModal';
 import EngineeringQuestionsModal from '@/ui/modals/EngineeringQuestionsModal';
 import useCustomerLogo from '@/ui/hooks/useCustomerLogo';
 
+import { bcAttachPdfQueued, bcAttachPdfToJob } from '@/services/businessCentral/projects';
+import { buildQuotePdfDoc } from '@/core/arcDoc';
+import { ensureJsPDF } from '@/core/helpers';
 // ─── Monolith functions not yet extracted into services ──────────────────────
-import { isReadOnly } from '@/core/globals';
-declare var _bgTasks: Record<string, any>;
+import { isReadOnly, _bgTasks } from '@/core/globals';
 function _bgNotify() {}
 
-// BC API base — referenced directly in fetch calls within PanelListView
-declare var BC_API_BASE: string;
-declare var BC_TENANT: string;
+// BC API base — replaces monolith global; computed at call time since _bcConfig may not be set at import time
+const BC_TENANT = 'd1f2c7f7-fab2-40b5-85c1-06a715e6a157';
+const _bcApiBase = () => _bcConfig ? `https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${_bcConfig.env}/api/v2.0` : '';
 
 function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
   const [sendMode,setSendMode]=useState("new");
@@ -300,7 +302,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,onPrintRfq,onSen
       try{
         const compId=await bcGetCompanyId();
         if(!compId)return;
-        const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${project.bcCustomerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const r=await fetch(`${_bcApiBase()}/companies(${compId})/customers?$filter=number eq '${project.bcCustomerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(!r.ok)return;
         const cust=((await r.json()).value||[])[0];
         if(cust&&cust.displayName&&cust.displayName!==project.bcCustomerName){

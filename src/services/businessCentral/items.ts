@@ -421,6 +421,9 @@ export async function bcReplaceAssemblyBOMLines(
   return result;
 }
 
+// Aliases for callers that use the bcLookupItem naming convention
+export const bcLookupItem = lookupItem;
+
 function mapItem(raw: any): BCItem {
   return {
     number: raw.number || '',

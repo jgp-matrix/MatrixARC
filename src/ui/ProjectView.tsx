@@ -33,6 +33,14 @@ import PurchasePriceCheckModal from '@/ui/modals/PurchasePriceCheckModal';
 import PortalSubmissionsModal from '@/ui/modals/PortalSubmissionsModal';
 import SupplierQuoteImportModal from '@/ui/modals/SupplierQuoteImportModal';
 
+import { patchItemOData as bcPatchItemOData, bcLookupItemForQuote } from '@/services/businessCentral/items';
+import { pushPurchasePrice as bcPushPurchasePrice } from '@/services/businessCentral/prices';
+import { getCompanyId as bcGetCompanyId, discoverODataPages as bcDiscoverODataPages } from '@/services/businessCentral/client';
+import { bcAttachPdfQueued, bcAttachPdfToJob } from '@/services/businessCentral/projects';
+import { acquireGraphToken, sendGraphEmail } from '@/services/graphEmail';
+import { buildQuotePdfDoc } from '@/core/arcDoc';
+import { ensureJsPDF } from '@/core/helpers';
+import { vendorCode } from '@/rfq/emailBuilder';
 // ─── Monolith functions not yet extracted ────────────────────────────────────
 import { isAdmin } from '@/core/globals';
 

@@ -6,6 +6,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
+import { getCompanyId as bcGetCompanyId, discoverODataPages as bcDiscoverODataPages } from '@/services/businessCentral/client';
 
 function PurchasingTab(){
   return(<div style={{padding:48,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400}}>

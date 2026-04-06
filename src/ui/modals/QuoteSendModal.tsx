@@ -6,6 +6,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
+import { bcAttachPdfQueued, bcAttachPdfToJob } from '@/services/businessCentral/projects';
+import { acquireGraphToken, sendGraphEmail } from '@/services/graphEmail';
+import { buildQuotePdfDoc } from '@/core/arcDoc';
+import { ensureJsPDF } from '@/core/helpers';
 
 function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
   const [sendMode,setSendMode]=useState("new");

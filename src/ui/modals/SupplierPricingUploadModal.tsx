@@ -6,6 +6,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
+import { patchItemOData as bcPatchItemOData, createItem as bcCreateItem } from '@/services/businessCentral/items';
+import { getCompanyId as bcGetCompanyId } from '@/services/businessCentral/client';
 
 function SupplierPricingUploadModal({uid,onClose}){
   const [phase,setPhase]=useState('upload'); // upload|mapping|review|processing|done

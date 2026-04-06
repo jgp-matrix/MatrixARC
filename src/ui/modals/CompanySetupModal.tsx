@@ -7,6 +7,13 @@ import ReactDOM from 'react-dom';
 import { C, btn, inp, card } from '@/core/constants';
 import { _appCtx, _apiKey, _bcToken, _bcConfig, _pricingConfig, _defaultBomItems, fbAuth, fbDb, fbFunctions, fbStorage, isAdmin, isReadOnly, saveProject, loadCompanyMembers, acquireBcToken, bcPatchJobOData, bcEnqueue, saveDefaultBomItems, APP_VERSION } from '@/core/globals';
 
+// Stub: createCompany is expected to be provided by the app's company management module
+async function createCompany(uid, email, companyName) {
+  const doc = await fbDb.collection('companies').add({ name: companyName, createdBy: uid, createdAt: Date.now() });
+  await fbDb.doc(`companies/${doc.id}/members/${uid}`).set({ email, role: 'admin', joinedAt: Date.now() });
+  return doc.id;
+}
+
 function CompanySetupModal({uid,email,onDone,onClose}){
   const [name,setName]=useState("");
   const [loading,setLoading]=useState(false);
