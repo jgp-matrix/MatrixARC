@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.411";
+const APP_VERSION="v1.19.412";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11028,7 +11028,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return;
     }
     const pn=(row?.partNumber||"").trim();
-    // Show confirmation popup
+    // DECISION(v1.19.412): Contingency items (BOM CONTINGENCY, WIRE & CONSUMABLES) are project-specific.
+    // Skip the price confirmation popup — save locally only, never push to BC Item Card.
+    // Previously, changing these updated the BC Item Card cost globally, affecting all other projects.
+    if(CONTINGENCY_PNS.has(pn.toUpperCase())||/^job.?buyoff$/i.test(pn)||/^crat(e|ing)$/i.test((row?.description||"").trim())){
+      const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:parsed,priceSource:"manual",priceDate:Date.now()}:r);
+      const updated={...panel,bom:updatedBom};onUpdate(updated);
+      try{onSaveImmediate(updated);}catch(e){}
+      return;
+    }
+    // Show confirmation popup for regular items
     setPriceConfirmPending({id,partNumber:pn,price:parsed,row});
     setPriceConfirmVendor(row?.bcVendorName||"");
     // Load BC vendors for dropdown if not already loaded
