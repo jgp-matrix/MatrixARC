@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.440";
+const APP_VERSION="v1.19.441";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11164,7 +11164,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
   function saveLaborOverride(field,value){
     const ld=panel.laborData||{};
-    const updated={...panel,laborData:{...ld,overrides:{...(ld.overrides||{}),[field]:value}}};
+    const withOverride={...panel,laborData:{...ld,overrides:{...(ld.overrides||{}),[field]:value}}};
+    const updated=syncLaborBomRows(withOverride);
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     // Save layout learning when user corrects panel holes
@@ -15237,7 +15238,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
     const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);
     if(!sp)return;
     const ld=sp.laborData||{};
-    const updated={...sp,laborData:{...ld,overrides:{...(ld.overrides||{}),[field]:value}}};
+    const withOverride={...sp,laborData:{...ld,overrides:{...(ld.overrides||{}),[field]:value}}};
+    const updated=syncLaborBomRows(withOverride);
     const updatedPanels=(project.panels||[]).map(p=>p.id===sp.id?updated:p);
     onUpdate({...project,panels:updatedPanels});
     saveImmediatePanel(sp.id,updated);
