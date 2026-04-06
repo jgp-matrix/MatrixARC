@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.420";
+const APP_VERSION="v1.19.421";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4307,8 +4307,9 @@ async function saveProject(uid,project){
     }))};
   }
   // Don't store page images in Firestore — strip dataUrls from panels
-  const stripped={...data,panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
-  // Firestore rejects undefined values — round-trip through JSON to remove them
+  // DECISION(v1.19.421): Include updatedBy (uid) so concurrent editing detection can
+  // distinguish own saves from other users' saves.
+  const stripped={...data,updatedBy:uid,updatedAt:Date.now(),panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
   const toSave=JSON.parse(JSON.stringify(stripped));
   await ref.set(toSave);
   return data; // return with dataUrls intact for in-memory use
@@ -15996,16 +15997,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     },err=>{console.error('PORTAL SUBS error:',err);setPendingRfqUploads(0);setPortalSubmissions([]);});
     return()=>unsub();
   },[uid,init.id]);
-  // Concurrent editing detection — listen for external updates
+  // DECISION(v1.19.421): Concurrent editing detection — only show warning for OTHER users' changes.
+  // Uses updatedBy field to distinguish own saves from external updates.
   useEffect(()=>{
     if(!init.id)return;
     const path=_appCtx.projectsPath||`users/${uid}/projects`;
+    let firstSnapshot=true;
     const unsub=fbDb.doc(`${path}/${init.id}`).onSnapshot(snap=>{
       if(!snap.exists)return;
+      if(firstSnapshot){firstSnapshot=false;return;} // Skip initial load
       const remote=snap.data();
-      const remoteAt=remote.updatedAt||0;
-      // If remote updatedAt is newer than our last save AND we didn't trigger it, show warning
-      if(lastSavedAt.current&&remoteAt>lastSavedAt.current+3000){
+      if(remote.updatedBy&&remote.updatedBy!==uid){
         setExternalUpdate(true);
       }
     });
