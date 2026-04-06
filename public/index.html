@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.451";
+const APP_VERSION="v1.19.452";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10758,6 +10758,25 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     bcAutoSyncTimer.current=setTimeout(()=>syncPlanningLinesToBC(),3000);
     return()=>{if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);};
   },[JSON.stringify((panel.bom||[]).map(r=>r.id+'|'+r.priceSource))]);
+
+  // DECISION(v1.19.452): Auto-sync sell price to BC line 10000 whenever material/labor costs change.
+  // Previously only updated on markup change or full sync — missed BOM price edits, BC poll updates,
+  // supplier quote application, and AI pricing.
+  const _sellPrice=computePanelSellPrice(panel);
+  const prevSellPrice=useRef(_sellPrice);
+  useEffect(()=>{
+    if(prevSellPrice.current===_sellPrice){return;}
+    prevSellPrice.current=_sellPrice;
+    if(!bcProjectNumber||!_bcToken)return;
+    const taskNo=String(20000+(idx+1)*100+10);
+    // Debounce 2s to avoid rapid-fire patches during bulk price updates
+    const t=setTimeout(()=>{
+      bcPatchProgressBillingLine(bcProjectNumber,taskNo,_sellPrice)
+        .then(()=>console.log("SELL PRICE AUTO-SYNC: line 10000 →",_sellPrice))
+        .catch(e=>console.warn("SELL PRICE AUTO-SYNC failed:",e.message));
+    },2000);
+    return()=>clearTimeout(t);
+  },[_sellPrice,bcProjectNumber]);
 
   async function syncPlanningLinesToBC(){
     if(!bcProjectNumber||bcSyncing)return;
