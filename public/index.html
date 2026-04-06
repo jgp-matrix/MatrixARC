@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.425";
+const APP_VERSION="v1.19.426";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -764,8 +764,11 @@ function computeLaborEstimate(panel){
 
   addLine("Crating Time",cratingUnits,LABOR_RATES.cratingMinPerUnit,"crates","cratingUnits");
 
+  // DECISION(v1.19.426): Round each line cost and total to nearest dollar.
+  // Prevents ARC vs BC mismatch from fractional cents in labor calculations.
+  lines.forEach(l=>{l.cost=Math.round(l.cost);});
   const totalHours=lines.reduce((s,l)=>s+l.hours,0);
-  const totalCost=totalHours*laborRate;
+  const totalCost=Math.round(totalHours*laborRate);
 
   return{
     lines,totalCost,totalHours,
