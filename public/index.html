@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.437";
+const APP_VERSION="v1.19.438";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -765,10 +765,18 @@ function computeLaborEstimate(panel){
   // DECISION(v1.19.426): Round each line cost and total to nearest dollar.
   // Prevents ARC vs BC mismatch from fractional cents in labor calculations.
   lines.forEach(l=>{l.cost=Math.round(l.cost);});
-  // DECISION(v1.19.436): Total cost = sum of ALL rounded line costs. Previously excluded Project Mgmt
-  // and Crating Time, causing labor summary to not match BOM total.
+  // DECISION(v1.19.438): Calculate totalCost the SAME way as BOM rows — group hours, round per group,
+  // then multiply by rate. This ensures the labor summary matches the BOM labor Ext $ exactly.
   const totalHours=lines.reduce((s,l)=>s+l.hours,0);
-  const totalCost=lines.reduce((s,l)=>s+l.cost,0);
+  const BOM_CATS=[
+    ["Panel Holes","Side-Mounted Components"],
+    ["Device Mounting","Duct & DIN Rail","Labels"],
+    ["Wire Time","Door Wiring"]
+  ];
+  const totalCost=BOM_CATS.reduce((s,cats)=>{
+    const hrs=lines.filter(l=>cats.includes(l.category)).reduce((ss,l)=>ss+l.hours,0);
+    return s+Math.round(hrs)*laborRate;
+  },0);
 
   return{
     lines,totalCost,totalHours,
