@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.419";
+const APP_VERSION="v1.19.420";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16335,20 +16335,40 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       const pr=await fetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];if(rec&&"Job_No"in rec&&!("Project_No"in rec))FP_NO="Job_No";}
       const allBom=(proj.panels||[]).flatMap(p=>(p.bom||[]).filter(r=>!r.isLaborRow));
-      // Check all panel tasks
-      let totalBcBom=0;const allMissing=[];
+      // DECISION(v1.19.420): Check both item count AND pricing between ARC and BC planning lines.
+      // Flags missing items AND price mismatches (including line 10000 sell price).
+      let totalBcBom=0;const allMissing=[];const priceMismatches=[];
       for(let i=0;i<(proj.panels||[]).length;i++){
+        const pan=proj.panels[i];
         const n=i+1,taskNo=String(20000+n*100+10);
-        const bcR=await fetch(`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${bcNum}' and ${FP_NO==="Project_No"?"Project_Task_No":"Job_Task_No"} eq '${taskNo}'&$select=Line_No,No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const taskNoField=FP_NO==="Project_No"?"Project_Task_No":"Job_Task_No";
+        const bcR=await fetch(`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${bcNum}' and ${taskNoField} eq '${taskNo}'&$select=Line_No,No,Quantity,Unit_Cost,Unit_Price,Description`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(!bcR.ok)continue;
         const bcLines=(await bcR.json()).value||[];
+        // Check line 10000 sell price matches ARC
+        const line10k=bcLines.find(l=>l.Line_No===10000);
+        if(line10k){
+          const arcSell=computePanelSellPrice(pan);
+          const bcSell=line10k.Unit_Price||0;
+          if(Math.abs(arcSell-bcSell)>0.50){
+            priceMismatches.push({panel:pan.drawingNo||pan.name||"Panel "+n,pn:"PROGRESS BILLING (Line 10000)",arcPrice:arcSell,bcPrice:bcSell,type:"sellPrice"});
+          }
+        }
+        // Check BOM items (Line_No >= 60000)
         const bcBomLines=bcLines.filter(l=>l.Line_No>=60000);
         totalBcBom+=bcBomLines.length;
-        const bcNos=new Set(bcBomLines.map(l=>(l.No||'').trim().toUpperCase()));
-        const panelBom=(proj.panels[i].bom||[]).filter(r=>!r.isLaborRow);
-        panelBom.forEach(r=>{if(!bcNos.has((r.partNumber||'').trim().toUpperCase()))allMissing.push({pn:r.partNumber,desc:r.description});});
+        const bcMap={};bcBomLines.forEach(l=>{bcMap[(l.No||'').trim().toUpperCase()]={cost:l.Unit_Cost||0,qty:l.Quantity||0};});
+        const panelBom=(pan.bom||[]).filter(r=>!r.isLaborRow);
+        panelBom.forEach(r=>{
+          const pn=(r.partNumber||'').trim().toUpperCase();
+          if(!bcMap[pn]){allMissing.push({pn:r.partNumber,desc:r.description});return;}
+          const arcCost=r.unitPrice||0;const bcCost=bcMap[pn].cost;
+          if(Math.abs(arcCost-bcCost)>0.01){
+            priceMismatches.push({panel:pan.drawingNo||pan.name||"Panel "+n,pn:r.partNumber,arcPrice:arcCost,bcPrice:bcCost,type:"itemCost"});
+          }
+        });
       }
-      if(allMissing.length>0){setBcCountMismatch({arcCount:allBom.length,bcCount:totalBcBom,missing:allMissing});return;}
+      if(allMissing.length>0||priceMismatches.length>0){setBcCountMismatch({arcCount:allBom.length,bcCount:totalBcBom,missing:allMissing,priceMismatches});return;}
     }catch(e){console.warn("BC line count check failed:",e);}
     // All checks passed — show BC upload prompt only if current revision hasn't been uploaded yet
     // Skip if no panels have drawing pages (nothing to upload)
@@ -16919,21 +16939,40 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           <div style={{background:"#0d0d1a",border:"1px solid #ef4444",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
               <span style={{fontSize:22}}>⚠️</span>
-              <div style={{fontSize:15,fontWeight:800,color:"#ef4444"}}>BC Planning Lines Mismatch</div>
+              <div style={{fontSize:15,fontWeight:800,color:"#ef4444"}}>BC Sync Verification</div>
             </div>
-            <div style={{fontSize:13,color:"#94a3b8",marginBottom:10,lineHeight:1.6}}>
-              ARC has <strong style={{color:"#f1f5f9"}}>{bcCountMismatch.arcCount} BOM items</strong> but BC only has <strong style={{color:"#f1f5f9"}}>{bcCountMismatch.bcCount} planning lines</strong>. The following items are missing from BC:
-            </div>
-            <div style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,maxHeight:180,overflowY:"auto",marginBottom:16}}>
-              {bcCountMismatch.missing.map((m,i)=>(
-                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:i<bcCountMismatch.missing.length-1?"1px solid #1a1a2e":"none",fontSize:12}}>
-                  <span style={{color:"#ef4444",fontWeight:700,fontSize:10,minWidth:34}}>MISSING</span>
-                  <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:120}}>{m.pn||"—"}</span>
-                  <span style={{color:"#94a3b8",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.desc||""}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Click <strong style={{color:"#f1f5f9"}}>Sync BC</strong> on the BOM toolbar to push missing items, or proceed anyway.</div>
+            {bcCountMismatch.missing.length>0&&(<>
+              <div style={{fontSize:13,color:"#94a3b8",marginBottom:10,lineHeight:1.6}}>
+                <strong style={{color:"#ef4444"}}>{bcCountMismatch.missing.length} item{bcCountMismatch.missing.length!==1?"s":""} missing</strong> from BC planning lines:
+              </div>
+              <div style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,maxHeight:140,overflowY:"auto",marginBottom:12}}>
+                {bcCountMismatch.missing.map((m,i)=>(
+                  <div key={"m"+i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 10px",borderBottom:"1px solid #1a1a2e",fontSize:12}}>
+                    <span style={{color:"#ef4444",fontWeight:700,fontSize:10,minWidth:44}}>MISSING</span>
+                    <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:120}}>{m.pn||"—"}</span>
+                    <span style={{color:"#94a3b8",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.desc||""}</span>
+                  </div>
+                ))}
+              </div>
+            </>)}
+            {(bcCountMismatch.priceMismatches||[]).length>0&&(<>
+              <div style={{fontSize:13,color:"#f59e0b",marginBottom:10,lineHeight:1.6}}>
+                <strong>{bcCountMismatch.priceMismatches.length} price mismatch{bcCountMismatch.priceMismatches.length!==1?"es":""}</strong> between ARC and BC:
+              </div>
+              <div style={{background:"#0a0a18",border:"1px solid #f59e0b44",borderRadius:6,maxHeight:160,overflowY:"auto",marginBottom:12}}>
+                {bcCountMismatch.priceMismatches.map((m,i)=>(
+                  <div key={"p"+i} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 10px",borderBottom:"1px solid #1a1a2e",fontSize:12}}>
+                    <span style={{color:"#f59e0b",fontWeight:700,fontSize:10,minWidth:44}}>{m.type==="sellPrice"?"SELL $":"COST $"}</span>
+                    <span style={{color:"#fde68a",fontWeight:600,fontFamily:"monospace",minWidth:110,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.pn}</span>
+                    <span style={{color:"#94a3b8",fontSize:11}}>{m.panel}</span>
+                    <span style={{color:"#ef4444",fontWeight:600,marginLeft:"auto"}}>${Number(m.bcPrice).toFixed(2)}</span>
+                    <span style={{color:"#94a3b8"}}>→</span>
+                    <span style={{color:"#4ade80",fontWeight:600}}>${Number(m.arcPrice).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </>)}
+            <div style={{fontSize:12,color:"#94a3b8",marginBottom:16}}>Click <strong style={{color:"#f1f5f9"}}>Sync BC</strong> on the BOM toolbar to update BC, or proceed anyway.</div>
             <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
               <button onClick={()=>setBcCountMismatch(null)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Go Back</button>
               <button onClick={()=>{setBcCountMismatch(null);setShowBcUploadPrompt(true);}} style={{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Proceed Anyway</button>
