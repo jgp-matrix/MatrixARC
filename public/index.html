@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.418";
+const APP_VERSION="v1.19.419";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15479,7 +15479,9 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
             const laborCost=hasAutoLabor?laborEst.totalCost:(pr.manualLaborCost||0);
             const bom=sp.bom||[];
             const pricedCount=bom.filter(r=>r.unitPrice!=null).length;
-            const matCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+            // DECISION(v1.19.419): Exclude labor rows from material cost — match computePanelSellPrice.
+            // Previously included labor rows in matCost, causing Panel Summary to diverge from BC line 10000.
+            const matCost=bom.filter(r=>!r.isLaborRow).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
             const grandTotal=matCost+laborCost;
             const sellPrice=markup>=100?grandTotal:grandTotal/(1-markup/100);
             const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
