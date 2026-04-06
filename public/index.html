@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.439";
+const APP_VERSION="v1.19.440";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -677,9 +677,6 @@ function notifyProjectListeners(projectId,liveProject){
 
 // ── LABOR RATE DEFAULTS ──
 const LABOR_RATE_DEFAULTS={
-  pmMinPerUnit:60,            // Project management: 60 min/session
-  buyoffMinPerUnit:60,        // Buyoff/QC: 60 min/session
-  cratingMinPerUnit:60,       // Crating: 60 min/crate
   wireMinPerPoint:10,         // Per wire point: 10 min
   doorDeviceMinPerDevice:11,  // Door-mounted device wiring: 11 min
   mountingMinPerDevice:4,     // Device mounting: 4 min
@@ -739,9 +736,6 @@ function computeLaborEstimate(panel){
   const squareCutoutCount=val("squareCutoutCount",0);
   const sideDeviceHours=val("sideDeviceHours",0);
   const sideDeviceCount=val("sideDeviceCount",0);
-  const pmUnits=val("pmUnits",2);
-  const buyoffUnits=val("buyoffUnits",2);
-  const cratingUnits=val("cratingUnits",1);
   const labelHours=val("labelHours",4);
 
   const lines=[];
@@ -782,7 +776,7 @@ function computeLaborEstimate(panel){
 
   return{
     lines,totalCost,totalHours,groups,
-    inputs:{wireCount,wireTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,sideDeviceHours,sideDeviceCount,pmUnits,buyoffUnits,cratingUnits,labelHours},
+    inputs:{wireCount,wireTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,sideDeviceHours,sideDeviceCount,labelHours},
     hasLayoutData:hasLayout,
     isLegacy:false,
     isOverride:false
@@ -5521,7 +5515,7 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
   const laborData={
     counts:{wireCount:totalWires,wireTerminations:totalTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount:layoutMerged?.sideTopSmallCount||0,sideTopLargeCount:layoutMerged?.sideTopLargeCount||0,squareCutoutCount:layoutMerged?.squareCutoutCount||0,sideDeviceHours:layoutMerged?.sideDeviceHours||0,sideDeviceCount:layoutMerged?.sideDeviceCount||0},
     overrides:{},
-    defaults:{pmUnits:2,buyoffUnits:2,cratingUnits:1,labelHours:4},
+    defaults:{labelHours:4},
     hasLayoutData,
     layoutAnalysis:layoutMerged,
     deviceClassification:allTags
