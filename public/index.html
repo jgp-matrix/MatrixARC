@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.412";
+const APP_VERSION="v1.19.413";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4602,11 +4602,14 @@ function applyPartCorrections(corrections,bom){
 }
 
 // ── DEFAULT BOM ITEMS (appended after extraction if not already present) ──
+// DECISION(v1.19.413): Combined "BOM CONTINGENCY" + "WIRE & CONSUMABLES" into single "Contingency" item.
+// Old items changed to Inventory type in BC and can't be retyped — new Non-Inventory item created.
+// Price is sum of both old defaults. Old part numbers kept in CONTINGENCY_PNS for backward compatibility
+// so existing projects with old items still get recognized as contingency rows.
 const CONTINGENCY_ITEMS=[
-  {partNumber:"BOM CONTINGENCY",description:"BOM CONTINGENCY",getPrice:()=>_pricingConfig.contingencyBOM||1500},
-  {partNumber:"WIRE & CONSUMABLES",description:"WIRE & CONSUMABLES",getPrice:()=>_pricingConfig.contingencyConsumables||400}
+  {partNumber:"Contingency",description:"Contingency",getPrice:()=>((_pricingConfig.contingencyBOM||1500)+(_pricingConfig.contingencyConsumables||400))}
 ];
-const CONTINGENCY_PNS=new Set(CONTINGENCY_ITEMS.map(c=>c.partNumber.toUpperCase()));
+const CONTINGENCY_PNS=new Set([...CONTINGENCY_ITEMS.map(c=>c.partNumber.toUpperCase()),"BOM CONTINGENCY","WIRE & CONSUMABLES"]);
 
 function appendDefaultBomItems(bom){
   console.log("APPEND DEFAULTS: _defaultBomItems=",_defaultBomItems.length,"items:",_defaultBomItems.map(d=>d.description));
