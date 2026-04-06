@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.438";
+const APP_VERSION="v1.19.439";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -767,19 +767,21 @@ function computeLaborEstimate(panel){
   lines.forEach(l=>{l.cost=Math.round(l.cost);});
   // DECISION(v1.19.438): Calculate totalCost the SAME way as BOM rows — group hours, round per group,
   // then multiply by rate. This ensures the labor summary matches the BOM labor Ext $ exactly.
-  const totalHours=lines.reduce((s,l)=>s+l.hours,0);
-  const BOM_CATS=[
-    ["Panel Holes","Side-Mounted Components"],
-    ["Device Mounting","Duct & DIN Rail","Labels"],
-    ["Wire Time","Door Wiring"]
-  ];
-  const totalCost=BOM_CATS.reduce((s,cats)=>{
-    const hrs=lines.filter(l=>cats.includes(l.category)).reduce((ss,l)=>ss+l.hours,0);
-    return s+Math.round(hrs)*laborRate;
-  },0);
+  // DECISION(v1.19.439): Calculate grouped labor ONCE — used by both Panel Summary and BOM rows.
+  // No separate calculation paths that can diverge.
+  const cutHrs=lines.filter(l=>["Panel Holes","Side-Mounted Components"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
+  const layoutHrs=lines.filter(l=>["Device Mounting","Duct & DIN Rail","Labels"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
+  const wireHrs=lines.filter(l=>["Wire Time","Door Wiring"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
+  const groups={
+    cut:{hours:Math.round(cutHrs),cost:Math.round(cutHrs)*laborRate},
+    layout:{hours:Math.round(layoutHrs),cost:Math.round(layoutHrs)*laborRate},
+    wire:{hours:Math.round(wireHrs),cost:Math.round(wireHrs)*laborRate}
+  };
+  const totalHours=groups.cut.hours+groups.layout.hours+groups.wire.hours;
+  const totalCost=groups.cut.cost+groups.layout.cost+groups.wire.cost;
 
   return{
-    lines,totalCost,totalHours,
+    lines,totalCost,totalHours,groups,
     inputs:{wireCount,wireTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,sideDeviceHours,sideDeviceCount,pmUnits,buyoffUnits,cratingUnits,labelHours},
     hasLayoutData:hasLayout,
     isLegacy:false,
@@ -821,13 +823,15 @@ const LABOR_BOM_GROUPS=[
 ];
 function buildLaborBomRows(panel){
   const est=computeLaborEstimate(panel);
-  if(!est.lines.length)return[];
-  // DECISION(v1.19.434): Labor BOM rows: qty = rounded hours, unitPrice = labor rate from panel pricing.
-  // qty × unitPrice = total labor cost per category, matching BC (R0020 rate × hours).
+  if(!est.lines.length||!est.groups)return[];
+  // DECISION(v1.19.439): Use groups from computeLaborEstimate — single source of truth.
+  // No separate calculation — BOM rows reference the same values as Panel Summary.
   const laborRate=panel.pricing?.laborRate??45;
+  const groupMap={cut:est.groups.cut,layout:est.groups.layout,wire:est.groups.wire};
   return LABOR_BOM_GROUPS.map(g=>{
-    const hrs=est.lines.filter(l=>g.cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
-    return{id:`labor-${g.partNumber}`,isLaborRow:true,partNumber:g.partNumber,description:g.description,qty:Math.round(hrs)||0,unitPrice:laborRate,priceSource:"bc",priceDate:Date.now(),manufacturer:"",notes:""};
+    const key=g.description.toLowerCase();
+    const grp=groupMap[key]||{hours:0};
+    return{id:`labor-${g.partNumber}`,isLaborRow:true,partNumber:g.partNumber,description:g.description,qty:grp.hours||0,unitPrice:laborRate,priceSource:"bc",priceDate:Date.now(),manufacturer:"",notes:""};
   });
 }
 function syncLaborBomRows(panel){
