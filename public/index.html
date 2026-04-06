@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.445";
+const APP_VERSION="v1.19.446";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2554,6 +2554,46 @@ async function bcPatchProgressBillingLine(projectNumber,taskNo,unitPrice){
   });
   if(!pr.ok){const t=await pr.text();console.warn("bcPatchProgressBilling: PATCH failed",pr.status,t);}
   else console.log("bcPatchProgressBilling: Unit_Price updated →",unitPrice,"for task",taskNo);
+}
+
+// DECISION(v1.19.446): Patch individual labor planning lines (CUT/LAYOUT/WIRE) in BC
+// when user changes labor overrides in Panel Summary. Avoids full sync round-trip.
+async function bcPatchLaborPlanningLines(projectNumber,panelIndex,panel){
+  if(!_bcToken||!projectNumber||!panelIndex)return;
+  const meta=await bcGetPlanPageMeta();
+  if(!meta)return;
+  const {planPage,FP_NO,FP_TASK_NO}=meta;
+  const taskNo=String(20000+panelIndex*100+10);
+  const lineQty=panel.lineQty??1;
+  const laborEst=computeLaborEstimate(panel);
+  const cutHrs=laborEst.lines.filter(l=>["Panel Holes","Side-Mounted Components"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
+  const layoutHrs=laborEst.lines.filter(l=>["Device Mounting","Duct & DIN Rail","Labels"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
+  const wireHrs=laborEst.lines.filter(l=>["Wire Time","Door Wiring"].includes(l.category)).reduce((s,l)=>s+l.hours,0);
+  const patches=[
+    {lineNo:30000,qty:Math.ceil(cutHrs)*lineQty,label:"CUT"},
+    {lineNo:40000,qty:Math.ceil(layoutHrs)*lineQty,label:"LAYOUT"},
+    {lineNo:50000,qty:Math.ceil(wireHrs)*lineQty,label:"WIRE"},
+  ];
+  for(const {lineNo,qty,label} of patches){
+    try{
+      const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${lineNo})`;
+      const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!gr.ok){console.warn(`bcPatchLabor ${label}: GET failed`,gr.status);continue;}
+      const rec=await gr.json();
+      if(rec.Quantity===qty){console.log(`bcPatchLabor ${label}: already ${qty}, skip`);continue;}
+      const etag=rec["@odata.etag"];
+      const pr=await fetch(lineUrl,{
+        method:"PATCH",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
+        body:JSON.stringify({Quantity:qty})
+      });
+      if(!pr.ok){const t=await pr.text();console.warn(`bcPatchLabor ${label}: PATCH failed`,pr.status,t);}
+      else console.log(`bcPatchLabor ${label}: Qty updated → ${qty} for task ${taskNo}`);
+    }catch(e){console.warn(`bcPatchLabor ${label}: error`,e.message);}
+  }
+  // Also update Progress Billing sell price (line 10000) since labor cost changed
+  const sellPrice=computePanelSellPrice(panel);
+  await bcPatchProgressBillingLine(projectNumber,taskNo,sellPrice).catch(()=>{});
 }
 
 async function bcPatchPanelEndDate(projectNumber,panelIndex,endDate){
@@ -15244,6 +15284,16 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
     const updatedPanels=(project.panels||[]).map(p=>p.id===sp.id?updated:p);
     onUpdate({...project,panels:updatedPanels});
     saveImmediatePanel(sp.id,updated);
+    // Auto-sync BC sell price when labor rate or markup changes
+    const bcNum=project.bcProjectNumber;
+    if(bcNum&&_bcToken&&("laborRate"in patch||"markup"in patch||"manualLaborCost"in patch)){
+      const panelIdx=(project.panels||[]).findIndex(p=>p.id===sp.id)+1;
+      if(panelIdx>0){
+        const sellPrice=computePanelSellPrice(updated);
+        const taskNo=String(20000+panelIdx*100+10);
+        bcPatchProgressBillingLine(bcNum,taskNo,sellPrice).catch(e=>console.warn("bcPatchPricing auto-sync:",e.message));
+      }
+    }
   }
   function saveSelectedLaborOverride(field,value){
     const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);
@@ -15254,6 +15304,12 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
     const updatedPanels=(project.panels||[]).map(p=>p.id===sp.id?updated:p);
     onUpdate({...project,panels:updatedPanels});
     saveImmediatePanel(sp.id,updated);
+    // Auto-sync labor planning lines to BC
+    const bcNum=project.bcProjectNumber;
+    if(bcNum&&_bcToken){
+      const panelIdx=(project.panels||[]).findIndex(p=>p.id===sp.id)+1;
+      if(panelIdx>0)bcPatchLaborPlanningLines(bcNum,panelIdx,updated).catch(e=>console.warn("bcPatchLabor auto-sync:",e.message));
+    }
   }
   function saveSelectedLaborAccepted(category,accepted){
     const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);
