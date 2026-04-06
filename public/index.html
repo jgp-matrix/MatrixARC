@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.410";
+const APP_VERSION="v1.19.411";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6779,11 +6779,11 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
           </div>
         )}
 
-        {/* ── LABOR RATES (admin only) ── */}
-        {isAdmin()&&(
-          <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:4}}>
-            <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Labor Category Rates <span style={{fontSize:9,color:C.red,fontWeight:700,background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>ADMIN ONLY</span></label>
-            <div style={{fontSize:11,color:C.muted,marginBottom:12}}>Minutes per unit for each labor category. Changes apply to all future estimates.</div>
+        {/* DECISION(v1.19.411): Labor rates viewable by all users, editable by admins only.
+            Previously hidden entirely from non-admins. Users need to see the rates used in estimates. */}
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:4}}>
+            <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Labor Category Rates {isAdmin()&&<span style={{fontSize:9,color:C.accent,fontWeight:700,background:C.accentDim,border:`1px solid ${C.accent}44`,borderRadius:4,padding:"1px 5px",marginLeft:6,verticalAlign:"middle"}}>EDITABLE</span>}</label>
+            <div style={{fontSize:11,color:C.muted,marginBottom:12}}>Minutes per unit for each labor category.{isAdmin()?" Changes apply to all future estimates.":" Contact an admin to modify rates."}</div>
             {[
               ["wireMinPerPoint","Wire Time","min / wire point"],
               ["doorDeviceMinPerDevice","Door Wiring","min / device"],
@@ -6798,16 +6798,17 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
               <div key={key} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                 <div style={{flex:1,fontSize:12,color:C.text,fontWeight:500}}>{label}</div>
                 <input type="number" min="0" step="1" value={laborRates[key]??LABOR_RATE_DEFAULTS[key]}
-                  onChange={e=>setLaborRates(prev=>({...prev,[key]:Math.max(0,+e.target.value||0)}))}
+                  onChange={e=>{if(isAdmin())setLaborRates(prev=>({...prev,[key]:Math.max(0,+e.target.value||0)}));}}
+                  readOnly={!isAdmin()}
                   onFocus={e=>e.target.select()}
-                  style={{...inp(),width:70,textAlign:"right",fontSize:12,padding:"4px 6px"}}/>
+                  style={{...inp(),width:70,textAlign:"right",fontSize:12,padding:"4px 6px",opacity:isAdmin()?1:0.7,cursor:isAdmin()?"text":"default"}}/>
                 <div style={{fontSize:11,color:C.muted,width:120}}>{unit}</div>
               </div>
             ))}
-            <button onClick={()=>setLaborRates({...LABOR_RATE_DEFAULTS})}
+            {isAdmin()&&<button onClick={()=>setLaborRates({...LABOR_RATE_DEFAULTS})}
               style={{...btn(C.border,C.muted,{fontSize:11,padding:"4px 10px",marginTop:4})}}>
               Reset to Defaults
-            </button>
+            </button>}
           </div>
         )}
 
@@ -15341,7 +15342,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
               )}
               <div style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",marginTop:4}}>
                 {["Sales","PM","Designer"].map(function(label,li){
-                  var keys=[["bcSalesperson","bcSalespersonCode","CCS_Salesperson_Code"],["bcProjectManager","bcProjectManagerCode","Person_Responsible"],["bcDesigner","bcDesignerCode",null]][li];
+                  // DECISION(v1.19.411): Designer now mapped to CCS_Designer BC field (was null).
+                  var keys=[["bcSalesperson","bcSalespersonCode","CCS_Salesperson_Code"],["bcProjectManager","bcProjectManagerCode","Person_Responsible"],["bcDesigner","bcDesignerCode","CCS_Designer"]][li];
                   var nm=project[keys[0]]||"";
                   var codeKey=keys[1];var bcField=keys[2];
                   if(readOnly)return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),React.createElement("span",{style:{color:C.sub}},nm||"—"));
@@ -18782,11 +18784,13 @@ function NewProjectModal({uid,onCreated,onClose}){
         taskWarn=te.message;
       }
       setBcStatus(taskWarn?"taskwarn":"ok");
-      // Write salesperson/PM/designer/contact to BC project card
+      // DECISION(v1.19.411): Write salesperson/PM/designer/contact to BC project card.
+      // Designer was missing from the patch — added CCS_Designer field.
       if(selectedSalesperson||selectedPM||selectedDesigner||selectedContact){
         const spFields={};
         if(selectedSalesperson)spFields.CCS_Salesperson_Code=selectedSalesperson;
         if(selectedPM)spFields.Person_Responsible=selectedPM;
+        if(selectedDesigner)spFields.CCS_Designer=selectedDesigner;
         if(selectedContact)spFields.Sell_to_Contact_No=selectedContact;
         bcPatchJobOData(bc.number,spFields).catch(e=>console.warn("BC role assignment failed:",e));
       }
