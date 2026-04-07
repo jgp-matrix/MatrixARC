@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.477";
+const APP_VERSION="v1.19.478";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15693,13 +15693,14 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                   var nm=project[keys[0]]||"";
                   var codeKey=keys[1];var bcField=keys[2];
                   if(readOnly)return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),React.createElement("span",{style:{color:C.sub}},nm||"—"));
+                  // DECISION(v1.19.478): PM and Designer use User Setup list, Salesperson uses Salesperson list
+                  var listSource=li===0?(window._arcSalespersonCache||[]):(window._arcUserSetupCache||window._arcSalespersonCache||[]);
                   var opts=[React.createElement("option",{key:"_",value:""},"—")];
-                  (window._arcSalespersonCache||[]).forEach(function(s){opts.push(React.createElement("option",{key:s.Code,value:s.Code},s.Name));});
+                  listSource.forEach(function(s){opts.push(React.createElement("option",{key:s.Code,value:s.Code},s.Name));});
                   return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},
                     React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),
                     React.createElement("select",{value:project[codeKey]||"",onChange:function(e){
-                      var code=e.target.value;var cache=window._arcSalespersonCache||[];
-                      var cached=cache.find(function(s){return s.Code===code;});
+                      var code=e.target.value;var cache=listSource;
                       // DECISION(v1.19.367): Must saveProject after updating Sales/PM/Designer so changes persist.
                       // Previously only called onUpdate (React state) — changes were lost on navigation.
                       var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;onUpdate(upd);safeSave(uid,upd);
@@ -19177,6 +19178,7 @@ function NewProjectModal({uid,onCreated,onClose}){
   const [creatingCust,setCreatingCust]=useState(false);
   const [newCustErr,setNewCustErr]=useState("");
   const [salespersons,setSalespersons]=useState([]);
+  const [userSetupList,setUserSetupList]=useState([]);
   const [selectedSalesperson,setSelectedSalesperson]=useState("");
   const [selectedPM,setSelectedPM]=useState("");
   const [selectedDesigner,setSelectedDesigner]=useState("");
@@ -19191,13 +19193,14 @@ function NewProjectModal({uid,onCreated,onClose}){
   const [newContactErr,setNewContactErr]=useState("");
 
   useEffect(()=>{
-    // Use cached salespersons immediately if available
+    // Use cached lists immediately if available
     if(window._arcSalespersonCache?.length){
       setSalespersons(window._arcSalespersonCache);
       const userEmail=fbAuth.currentUser?.email||"";
       const match=window._arcSalespersonCache.find(s=>(s.E_Mail||"").toLowerCase()===userEmail.toLowerCase());
       if(match)setSelectedSalesperson(match.Code);
     }
+    if(window._arcUserSetupCache?.length)setUserSetupList(window._arcUserSetupCache);
     if(_bcToken){setBcConnected(true);loadCustomers();return;}
     acquireBcToken(false).then(t=>{
       if(t){setBcConnected(true);loadCustomers();}
@@ -19230,6 +19233,22 @@ function NewProjectModal({uid,onCreated,onClose}){
         if(match)setSelectedSalesperson(match.Code);
       }
     }catch(e){console.warn("Load salespersons failed:",e);}
+    // DECISION(v1.19.478): Load User Setup list for PM and Designer dropdowns.
+    // PM (Person_Responsible) and Designer (CCS_Designer) come from User Setup, not Salesperson.
+    try{
+      const allPages=await bcDiscoverODataPages();
+      const usPage=allPages.find(p=>/user.?setup/i.test(p));
+      if(usPage){
+        const usR=await fetch(`${BC_ODATA_BASE}/${usPage}?$select=User_ID&$top=200`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(usR.ok){
+          const usData=(await usR.json()).value||[];
+          const list=usData.filter(u=>u.User_ID).map(u=>({Code:u.User_ID,Name:u.User_ID}));
+          setUserSetupList(list);
+          window._arcUserSetupCache=list;
+          console.log("User Setup loaded:",list.length,"users");
+        }
+      }else{console.warn("No User Setup OData page found — PM/Designer will use Salesperson list as fallback");}
+    }catch(e){console.warn("Load User Setup failed:",e);}
   }
 
   async function connectBC(){
@@ -19445,14 +19464,14 @@ function NewProjectModal({uid,onCreated,onClose}){
             </div>
           )}
           {/* Salesperson / PM / Designer dropdowns */}
-          {bcConnected&&salespersons.length>0&&(
+          {bcConnected&&(salespersons.length>0||userSetupList.length>0)&&(
             <div style={{display:"flex",gap:10,marginBottom:16}}>
-              {[["Salesperson",selectedSalesperson,setSelectedSalesperson],["Project Manager",selectedPM,setSelectedPM],["Designer",selectedDesigner,setSelectedDesigner]].map(([label,val,setter])=>(
+              {[["Salesperson",selectedSalesperson,setSelectedSalesperson,salespersons],["Project Manager",selectedPM,setSelectedPM,userSetupList.length>0?userSetupList:salespersons],["Designer",selectedDesigner,setSelectedDesigner,userSetupList.length>0?userSetupList:salespersons]].map(([label,val,setter,list])=>(
                 <div key={label} style={{flex:1}}>
                   <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>{label}</div>
                   <select value={val} onChange={e=>setter(e.target.value)} style={{...inp({fontSize:12,padding:"8px 10px"})}}>
                     <option value="">— Select —</option>
-                    {salespersons.map(s=><option key={s.Code} value={s.Code}>{s.Name}{s.Job_Title?` (${s.Job_Title})`:""}</option>)}
+                    {list.map(s=><option key={s.Code} value={s.Code}>{s.Name}{s.Job_Title?` (${s.Job_Title})`:""}</option>)}
                   </select>
                 </div>
               ))}
