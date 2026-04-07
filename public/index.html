@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.484";
+const APP_VERSION="v1.19.485";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8177,9 +8177,21 @@ function RfqHistoryModal({uid,onClose}){
     fbDb.collection(`users/${uid}/rfq_history`).orderBy("sentAt","desc").limit(100).get()
       .then(snap=>{setHistory(snap.docs.map(d=>({id:d.id,...d.data()})));})
       .catch(()=>setHistory([]));
+    // DECISION(v1.19.485): Query rfqUploads with fallback — composite index may not exist.
+    // Also include "pending" status and don't require specific statuses to capture all history.
     fbDb.collection('rfqUploads').where('uid','==',uid).orderBy('sentAt','desc').limit(100).get()
-      .then(snap=>{setSubmissions(snap.docs.map(d=>({id:d.id,...d.data()})).filter(s=>s.status==='submitted'||s.status==='imported'||s.status==='dismissed'));})
-      .catch(()=>setSubmissions([]));
+      .then(snap=>{setSubmissions(snap.docs.map(d=>({id:d.id,...d.data()})));})
+      .catch(e=>{
+        console.warn("rfqUploads ordered query failed (index may be missing):",e.message);
+        // Fallback: query without ordering
+        fbDb.collection('rfqUploads').where('uid','==',uid).limit(100).get()
+          .then(snap=>{
+            const docs=snap.docs.map(d=>({id:d.id,...d.data()}));
+            docs.sort((a,b)=>(b.sentAt||0)-(a.sentAt||0));
+            setSubmissions(docs);
+          })
+          .catch(()=>setSubmissions([]));
+      });
   },[uid]);
   const fmtDate=ts=>ts?new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—";
   const fmtPrice=p=>p!=null?"$"+Number(p).toFixed(2):"—";
@@ -8237,9 +8249,9 @@ function RfqHistoryModal({uid,onClose}){
               <div key={sub.id} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:8,padding:"12px 14px",marginBottom:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
                   <span style={{fontWeight:700,color:"#818cf8",fontSize:13}}>{sub.vendorName||"—"}</span>
-                  <span style={{fontSize:11,color:sub.status==="imported"?"#4ade80":sub.status==="dismissed"?"#64748b":"#fbbf24",fontWeight:600}}>{sub.status==="imported"?"✓ Applied":sub.status==="dismissed"?"Dismissed":"Pending"}</span>
+                  <span style={{fontSize:11,color:sub.status==="imported"?"#4ade80":sub.status==="submitted"?"#38bdf8":sub.status==="dismissed"?"#64748b":sub.status==="pending"?"#f59e0b":"#94a3b8",fontWeight:600}}>{sub.status==="imported"?"✓ Applied":sub.status==="submitted"?"📬 Received":sub.status==="dismissed"?"Dismissed":sub.status==="pending"?"⏳ Awaiting":sub.status||"—"}</span>
                   <span style={{fontSize:11,color:"#94a3b8"}}>{sub.rfqNum||""}</span>
-                  <span style={{fontSize:11,color:"#94a3b8",marginLeft:"auto"}}>{fmtDate(sub.submittedAt)}</span>
+                  <span style={{fontSize:11,color:"#94a3b8",marginLeft:"auto"}}>{fmtDate(sub.submittedAt||sub.sentAt)}</span>
                 </div>
                 {sub.leadTimeDays!=null&&<div style={{fontSize:11,color:"#94a3b8",marginBottom:4}}>Lead time: {sub.leadTimeDays} days</div>}
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginBottom:6}}>
