@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.491";
+const APP_VERSION="v1.19.492";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7149,7 +7149,16 @@ function TeamModal({uid,companyId,userRole,onClose}){
           fbDb.doc(`companies/${companyId}/members/${uid}`).set(self,{merge:true}).catch(()=>{});
           m=[self,...m];
         }
-        setMembers(m);setPendingInvites(invites);setLoading(false);
+        // DECISION(v1.19.492): Auto-clean stale pending invites where email already has an active member.
+        // This happens when acceptTeamInvite only deletes one of two duplicate invite docs.
+        const memberEmails=new Set(m.map(x=>(x.email||"").toLowerCase()));
+        const stale=invites.filter(inv=>memberEmails.has((inv.email||"").toLowerCase()));
+        if(stale.length>0){
+          stale.forEach(inv=>fbDb.doc(`companies/${companyId}/pendingInvites/${inv.token}`).delete().catch(()=>{}));
+          console.log("TEAM: cleaned",stale.length,"stale pending invites for already-joined members");
+        }
+        const activeInvites=invites.filter(inv=>!memberEmails.has((inv.email||"").toLowerCase()));
+        setMembers(m);setPendingInvites(activeInvites);setLoading(false);
       })
       .catch(e=>{setErr("Failed to load members: "+e.message);setLoading(false);});
   },[companyId]);
