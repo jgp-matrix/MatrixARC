@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.481";
+const APP_VERSION="v1.19.482";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11524,25 +11524,39 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
 
     // Phase 1b: Codale auto-pricing for ALL items with Codale vendor (refresh all prices)
+    // DECISION(v1.19.482): Process in batches of 30, show per-batch progress with part numbers
     const codaleItems=updatedBom.filter(r=>!r.isLaborRow&&/codale/i.test(r.bcVendorName||""));
     if(codaleItems.length>0){
-      _pp({msg:`Codale: Fetching live prices for ${codaleItems.length} items…`,pct:45});
-      try{
-        const pns=codaleItems.map(r=>(r.partNumber||"").trim()).filter(Boolean);
-        const fn=firebase.functions().httpsCallable("codaleTestScrape",{timeout:300000});
-        const cr=await fn({partNumbers:pns});
-        const codaleResults=(cr.data.results||[]);
-        const codaleMap={};
-        codaleResults.forEach(function(r){if(r.price>0)codaleMap[(r.partNumber||"").toUpperCase()]={price:r.price};});
-        let codaleCount=0;
-        updatedBom=updatedBom.map(r=>{
+      const CODALE_BATCH=30;
+      const codaleMap={};
+      const fn=firebase.functions().httpsCallable("codaleTestScrape",{timeout:300000});
+      for(let ci=0;ci<codaleItems.length;ci+=CODALE_BATCH){
+        const batch=codaleItems.slice(ci,ci+CODALE_BATCH);
+        const batchNum=Math.floor(ci/CODALE_BATCH)+1;
+        const totalBatches=Math.ceil(codaleItems.length/CODALE_BATCH);
+        _pp({msg:`Codale: Obtaining pricing ${ci+1}-${ci+batch.length} of ${codaleItems.length}${totalBatches>1?` (batch ${batchNum}/${totalBatches})`:""} …`,pct:45+Math.round((ci/codaleItems.length)*3)});
+        try{
+          const pns=batch.map(r=>(r.partNumber||"").trim()).filter(Boolean);
+          const cr=await fn({partNumbers:pns});
+          (cr.data.results||[]).forEach(function(r){
+            if(r.price>0)codaleMap[(r.partNumber||"").toUpperCase()]={price:r.price};
+            else console.warn("Codale: no price for",r.partNumber,r.error||"");
+          });
+        }catch(e){console.warn("Codale batch",batchNum,"failed:",e);_pp({msg:`Codale: batch ${batchNum} failed — ${e.message}`,pct:48});}
+      }
+      let codaleCount=0;const codaleMissed=[];
+      updatedBom=updatedBom.map(r=>{
+        if(!r.isLaborRow&&/codale/i.test(r.bcVendorName||"")){
           const pn=(r.partNumber||"").trim().toUpperCase();
           if(codaleMap[pn]){codaleCount++;const hasActiveRfq=r.rfqSentDate&&(!r.unitPrice||r.unitPrice===0);return{...r,unitPrice:codaleMap[pn].price,priceSource:"bc",...(hasActiveRfq?{}:{priceDate:Date.now(),bcPoDate:Date.now()})};}
-          return r;
-        });
-        if(codaleCount>0){bcCount+=codaleCount;_pp({msg:`Codale: ${codaleCount} prices obtained`,pct:48});}
-        else{_pp({msg:"Codale: no prices found",pct:48});}
-      }catch(e){console.warn("Codale pricing failed:",e);_pp({msg:"Codale: failed — "+e.message,pct:48});}
+          else{codaleMissed.push(r.partNumber);}
+        }
+        return r;
+      });
+      if(codaleCount>0)_pp({msg:`Codale: ${codaleCount} of ${codaleItems.length} prices obtained${codaleMissed.length>0?` (${codaleMissed.length} missed)`:""}`,pct:48});
+      else _pp({msg:`Codale: 0 of ${codaleItems.length} prices found`,pct:48});
+      if(codaleMissed.length>0)console.warn("Codale missed parts:",codaleMissed.join(", "));
+      bcCount+=codaleCount;
     }
 
     // Phase 1c: Custom scraper auto-pricing (Royal, etc.) — scrape portal for vendor-matched items
