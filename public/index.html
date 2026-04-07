@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.480";
+const APP_VERSION="v1.19.481";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11502,8 +11502,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const key=String(r.id);
             if(key in bcMap){
               const hasActiveRfq=r.rfqSentDate&&(!r.unitPrice||r.unitPrice===0);
+              const hasPrice=bcMap[key].unitPrice>0;
+              // DECISION(v1.19.481): Only set priceDate when price is actually > 0.
+              // Previously, items with $0 BC price got a priceDate, making them appear "priced".
               return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,unitPrice:bcMap[key].unitPrice,priceSource:"bc",
-                ...(hasActiveRfq?{}:{priceDate:Date.now(),bcPoDate:bcMap[key].bcPoDate}),
+                ...(hasActiveRfq||!hasPrice?{}:{priceDate:Date.now(),bcPoDate:bcMap[key].bcPoDate}),
                 bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||""};
             }
             return r;
