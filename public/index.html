@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.493";
+const APP_VERSION="v1.19.494";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -19453,7 +19453,8 @@ function NewProjectModal({uid,onCreated,onClose}){
       }
     }catch(e){console.warn("Load salespersons failed:",e);}
     // DECISION(v1.19.478): Load User Setup list for PM and Designer dropdowns.
-    // PM (Person_Responsible) and Designer (CCS_Designer) come from User Setup, not Salesperson.
+    // DECISION(v1.19.494): PM (Person_Responsible) and Designer (CCS_Designer) come from User Setup.
+    // If User Setup OData page isn't published, extract unique values from existing BC project cards.
     try{
       const allPages=await bcDiscoverODataPages();
       const usPage=allPages.find(p=>/user.?setup/i.test(p));
@@ -19466,8 +19467,30 @@ function NewProjectModal({uid,onCreated,onClose}){
           window._arcUserSetupCache=list;
           console.log("User Setup loaded:",list.length,"users");
         }
-      }else{console.warn("No User Setup OData page found — PM/Designer will use Salesperson list as fallback");}
-    }catch(e){console.warn("Load User Setup failed:",e);}
+      }else{
+        // Fallback: scan existing project cards for unique Designer/PM values
+        const projPage=allPages.find(n=>/^(project(card)?|job(card)?)$/i.test(n));
+        if(projPage){
+          const pjR=await fetch(`${BC_ODATA_BASE}/${projPage}?$select=CCS_Designer,Person_Responsible&$top=200`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          if(pjR.ok){
+            const pjData=(await pjR.json()).value||[];
+            const seen=new Set();
+            const list=[];
+            pjData.forEach(p=>{
+              [p.CCS_Designer,p.Person_Responsible].forEach(v=>{
+                if(v&&!seen.has(v)){seen.add(v);list.push({Code:v,Name:v});}
+              });
+            });
+            list.sort((a,b)=>a.Name.localeCompare(b.Name));
+            if(list.length>0){
+              setUserSetupList(list);
+              window._arcUserSetupCache=list;
+              console.log("PM/Designer list from project cards:",list.length,"entries:",list.map(l=>l.Code).join(", "));
+            }
+          }
+        }
+      }
+    }catch(e){console.warn("Load User Setup / PM/Designer list failed:",e);}
   }
 
   async function connectBC(){
@@ -22337,7 +22360,9 @@ INSTRUCTIONS:
       setProjects(await loadProjects(user.uid));
       setLoading(false);
       // Auto-connect BC silently in background
-      if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();setProjects(ps=>[...ps]);fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});}}).catch(()=>{});}
+      if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();setProjects(ps=>[...ps]);fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
+        // Load PM/Designer list from project cards (User Setup not published as OData)
+        bcDiscoverODataPages().then(function(pages){var pj=pages.find(function(n){return/^(project(card)?|job(card)?)$/i.test(n);});if(!pj)return;fetch(BC_ODATA_BASE+"/"+pj+"?$select=CCS_Designer,Person_Responsible&$top=200",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(!d)return;var seen={};var list=[];(d.value||[]).forEach(function(p){[p.CCS_Designer,p.Person_Responsible].forEach(function(v){if(v&&!seen[v]){seen[v]=1;list.push({Code:v,Name:v});}});});list.sort(function(a,b){return a.Name.localeCompare(b.Name);});if(list.length)window._arcUserSetupCache=list;}).catch(function(){});}).catch(function(){});}}).catch(()=>{});}
     })();
   },[user.uid]);
 
