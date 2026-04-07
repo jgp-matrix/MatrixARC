@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.475";
+const APP_VERSION="v1.19.476";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10923,7 +10923,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const remaining=pages.filter(p=>p.id!==id);
     let updated={...panel,pages:remaining};
     if(remaining.length===0){
-      updated={...updated,drawingNo:"",drawingDesc:"",drawingRev:"",bom:[],validation:null,pricing:null,budgetaryQuote:null,status:"draft"};
+      updated={...updated,drawingNo:"",drawingDesc:"",drawingRev:"",bom:[],validation:null,pricing:null,budgetaryQuote:null,hazardousLocation:null,status:"draft"};
       setDraftNo("");setDraftDesc("");setDraftRev("");ep.stop();setErr("");
     }
     onUpdate(updated);
