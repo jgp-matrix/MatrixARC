@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.494";
+const APP_VERSION="v1.19.495";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15761,8 +15761,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                   var nm=project[keys[0]]||"";
                   var codeKey=keys[1];var bcField=keys[2];
                   if(readOnly)return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),React.createElement("span",{style:{color:C.sub}},nm||"—"));
-                  // DECISION(v1.19.478): PM and Designer use User Setup list, Salesperson uses Salesperson list
-                  var listSource=li===0?(window._arcSalespersonCache||[]):(window._arcUserSetupCache||window._arcSalespersonCache||[]);
+                  // DECISION(v1.19.495): Salesperson=Salesperson table, PM=Resource table, Designer=User Setup/project cards
+                  var listSource=li===0?(window._arcSalespersonCache||[]):li===1?(window._arcResourceCache||window._arcSalespersonCache||[]):(window._arcDesignerCache||window._arcSalespersonCache||[]);
                   var opts=[React.createElement("option",{key:"_",value:""},"—")];
                   listSource.forEach(function(s){opts.push(React.createElement("option",{key:s.Code,value:s.Code},s.Name));});
                   return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},
@@ -19397,7 +19397,8 @@ function NewProjectModal({uid,onCreated,onClose}){
   const [creatingCust,setCreatingCust]=useState(false);
   const [newCustErr,setNewCustErr]=useState("");
   const [salespersons,setSalespersons]=useState([]);
-  const [userSetupList,setUserSetupList]=useState([]);
+  const [resourceList,setResourceList]=useState([]);  // PM (Person_Responsible) — from Resource table
+  const [designerList,setDesignerList]=useState([]);   // Designer (CCS_Designer) — from User Setup or project cards
   const [selectedSalesperson,setSelectedSalesperson]=useState("");
   const [selectedPM,setSelectedPM]=useState("");
   const [selectedDesigner,setSelectedDesigner]=useState("");
@@ -19419,7 +19420,8 @@ function NewProjectModal({uid,onCreated,onClose}){
       const match=window._arcSalespersonCache.find(s=>(s.E_Mail||"").toLowerCase()===userEmail.toLowerCase());
       if(match)setSelectedSalesperson(match.Code);
     }
-    if(window._arcUserSetupCache?.length)setUserSetupList(window._arcUserSetupCache);
+    if(window._arcResourceCache?.length)setResourceList(window._arcResourceCache);
+    if(window._arcDesignerCache?.length)setDesignerList(window._arcDesignerCache);
     if(_bcToken){setBcConnected(true);loadCustomers();return;}
     acquireBcToken(false).then(t=>{
       if(t){setBcConnected(true);loadCustomers();}
@@ -19453,44 +19455,46 @@ function NewProjectModal({uid,onCreated,onClose}){
       }
     }catch(e){console.warn("Load salespersons failed:",e);}
     // DECISION(v1.19.478): Load User Setup list for PM and Designer dropdowns.
-    // DECISION(v1.19.494): PM (Person_Responsible) and Designer (CCS_Designer) come from User Setup.
-    // If User Setup OData page isn't published, extract unique values from existing BC project cards.
+    // DECISION(v1.19.495): Three separate lists for three BC fields:
+    // Salesperson (CCS_Salesperson_Code) → Salesperson table (already loaded above)
+    // PM (Person_Responsible) → Resource table (Type=Person)
+    // Designer (CCS_Designer) → User Setup table, or unique values from project cards
     try{
       const allPages=await bcDiscoverODataPages();
+      // Load Resources for PM dropdown
+      const resPage=allPages.find(p=>/resource/i.test(p));
+      if(resPage){
+        const resR=await fetch(`${BC_ODATA_BASE}/${resPage}?$select=No,Name,Type&$filter=Type eq 'Person'&$top=100`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(resR.ok){
+          const resList=(await resR.json()).value||[];
+          const rList=resList.map(r=>({Code:r.No,Name:r.Name||r.No}));
+          setResourceList(rList);
+          window._arcResourceCache=rList;
+          console.log("Resource list loaded:",rList.length,"persons");
+        }
+      }
+      // Load Designers — try User Setup first, fallback to project cards
       const usPage=allPages.find(p=>/user.?setup/i.test(p));
       if(usPage){
         const usR=await fetch(`${BC_ODATA_BASE}/${usPage}?$select=User_ID&$top=200`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(usR.ok){
-          const usData=(await usR.json()).value||[];
-          const list=usData.filter(u=>u.User_ID).map(u=>({Code:u.User_ID,Name:u.User_ID}));
-          setUserSetupList(list);
-          window._arcUserSetupCache=list;
-          console.log("User Setup loaded:",list.length,"users");
+          const dList=(await usR.json()).value.filter(u=>u.User_ID).map(u=>({Code:u.User_ID,Name:u.User_ID}));
+          setDesignerList(dList);window._arcDesignerCache=dList;
+          console.log("Designer list from User Setup:",dList.length);
         }
       }else{
-        // Fallback: scan existing project cards for unique Designer/PM values
         const projPage=allPages.find(n=>/^(project(card)?|job(card)?)$/i.test(n));
         if(projPage){
-          const pjR=await fetch(`${BC_ODATA_BASE}/${projPage}?$select=CCS_Designer,Person_Responsible&$top=200`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          const pjR=await fetch(`${BC_ODATA_BASE}/${projPage}?$select=CCS_Designer&$top=200`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
           if(pjR.ok){
-            const pjData=(await pjR.json()).value||[];
-            const seen=new Set();
-            const list=[];
-            pjData.forEach(p=>{
-              [p.CCS_Designer,p.Person_Responsible].forEach(v=>{
-                if(v&&!seen.has(v)){seen.add(v);list.push({Code:v,Name:v});}
-              });
-            });
-            list.sort((a,b)=>a.Name.localeCompare(b.Name));
-            if(list.length>0){
-              setUserSetupList(list);
-              window._arcUserSetupCache=list;
-              console.log("PM/Designer list from project cards:",list.length,"entries:",list.map(l=>l.Code).join(", "));
-            }
+            const seen=new Set();const dList=[];
+            (await pjR.json()).value.forEach(p=>{if(p.CCS_Designer&&!seen.has(p.CCS_Designer)){seen.add(p.CCS_Designer);dList.push({Code:p.CCS_Designer,Name:p.CCS_Designer});}});
+            dList.sort((a,b)=>a.Name.localeCompare(b.Name));
+            if(dList.length){setDesignerList(dList);window._arcDesignerCache=dList;console.log("Designer list from projects:",dList.map(d=>d.Code).join(", "));}
           }
         }
       }
-    }catch(e){console.warn("Load User Setup / PM/Designer list failed:",e);}
+    }catch(e){console.warn("Load Resource/Designer lists failed:",e);}
   }
 
   async function connectBC(){
@@ -19570,9 +19574,8 @@ function NewProjectModal({uid,onCreated,onClose}){
         }
       }
       const spName=salespersons.find(s=>s.Code===selectedSalesperson)?.Name||selectedSalesperson||"";
-      const pmList=userSetupList.length>0?userSetupList:salespersons;
-      const pmName=pmList.find(s=>s.Code===selectedPM)?.Name||selectedPM||"";
-      const designerName=pmList.find(s=>s.Code===selectedDesigner)?.Name||selectedDesigner||"";
+      const pmName=(resourceList.length>0?resourceList:salespersons).find(s=>s.Code===selectedPM)?.Name||selectedPM||"";
+      const designerName=(designerList.length>0?designerList:salespersons).find(s=>s.Code===selectedDesigner)?.Name||selectedDesigner||"";
       const p=await saveProject(uid,{
         name:trimmed,
         bcProjectId:bc.id,
@@ -19716,9 +19719,9 @@ function NewProjectModal({uid,onCreated,onClose}){
             </div>
           )}
           {/* Salesperson / PM / Designer dropdowns */}
-          {bcConnected&&(salespersons.length>0||userSetupList.length>0)&&(
+          {bcConnected&&(salespersons.length>0||resourceList.length>0||designerList.length>0)&&(
             <div style={{display:"flex",gap:10,marginBottom:16}}>
-              {[["Salesperson",selectedSalesperson,setSelectedSalesperson,salespersons],["Project Manager",selectedPM,setSelectedPM,userSetupList.length>0?userSetupList:salespersons],["Designer",selectedDesigner,setSelectedDesigner,userSetupList.length>0?userSetupList:salespersons]].map(([label,val,setter,list])=>(
+              {[["Salesperson",selectedSalesperson,setSelectedSalesperson,salespersons],["Project Manager",selectedPM,setSelectedPM,resourceList.length>0?resourceList:salespersons],["Designer",selectedDesigner,setSelectedDesigner,designerList.length>0?designerList:salespersons]].map(([label,val,setter,list])=>(
                 <div key={label} style={{flex:1}}>
                   <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>{label}</div>
                   <select value={val} onChange={e=>setter(e.target.value)} style={{...inp({fontSize:12,padding:"8px 10px"})}}>
@@ -22361,8 +22364,16 @@ INSTRUCTIONS:
       setLoading(false);
       // Auto-connect BC silently in background
       if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();setProjects(ps=>[...ps]);fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
-        // Load PM/Designer list from project cards (User Setup not published as OData)
-        bcDiscoverODataPages().then(function(pages){var pj=pages.find(function(n){return/^(project(card)?|job(card)?)$/i.test(n);});if(!pj)return;fetch(BC_ODATA_BASE+"/"+pj+"?$select=CCS_Designer,Person_Responsible&$top=200",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(!d)return;var seen={};var list=[];(d.value||[]).forEach(function(p){[p.CCS_Designer,p.Person_Responsible].forEach(function(v){if(v&&!seen[v]){seen[v]=1;list.push({Code:v,Name:v});}});});list.sort(function(a,b){return a.Name.localeCompare(b.Name);});if(list.length)window._arcUserSetupCache=list;}).catch(function(){});}).catch(function(){});}}).catch(()=>{});}
+        // DECISION(v1.19.495): Load Resource list (PM) and Designer list on app init
+        bcDiscoverODataPages().then(function(pages){
+          // Resources for PM
+          var resPage=pages.find(function(p){return/resource/i.test(p);});
+          if(resPage)fetch(BC_ODATA_BASE+"/"+resPage+"?$select=No,Name,Type&$filter=Type eq 'Person'&$top=100",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcResourceCache=(d.value||[]).map(function(r){return{Code:r.No,Name:r.Name||r.No};});}).catch(function(){});
+          // Designers from User Setup or project cards
+          var usPage=pages.find(function(p){return/user.?setup/i.test(p);});
+          if(usPage){fetch(BC_ODATA_BASE+"/"+usPage+"?$select=User_ID&$top=200",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcDesignerCache=(d.value||[]).filter(function(u){return u.User_ID;}).map(function(u){return{Code:u.User_ID,Name:u.User_ID};});}).catch(function(){});}
+          else{var pj=pages.find(function(n){return/^(project(card)?|job(card)?)$/i.test(n);});if(pj)fetch(BC_ODATA_BASE+"/"+pj+"?$select=CCS_Designer&$top=200",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(!d)return;var seen={};var list=[];(d.value||[]).forEach(function(p){if(p.CCS_Designer&&!seen[p.CCS_Designer]){seen[p.CCS_Designer]=1;list.push({Code:p.CCS_Designer,Name:p.CCS_Designer});}});list.sort(function(a,b){return a.Name.localeCompare(b.Name);});if(list.length)window._arcDesignerCache=list;}).catch(function(){});}
+        }).catch(function(){});}}).catch(()=>{});}
     })();
   },[user.uid]);
 
