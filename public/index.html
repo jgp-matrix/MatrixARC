@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.469";
+const APP_VERSION="v1.19.470";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9175,6 +9175,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [skip,setSkip]=useState(0);
   const [searched,setSearched]=useState(false);
   const debounceRef=useRef(null);
+  const searchIdRef=useRef(0);
   const PAGE=25;
   const [showCreate,setShowCreate]=useState(false);
   const [createNumber,setCreateNumber]=useState(initialQuery||"");
@@ -9347,13 +9348,15 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     const q=overrideQuery!==undefined?overrideQuery:query;
     const s=append?skip:0;
     if(!q.trim()||q.trim().length<3){
-      if(!append){setResults([]);setSearched(false);setHasMore(false);}
+      if(!append){setResults([]);setSearched(false);setHasMore(false);setSkip(0);}
       return;
     }
+    // DECISION(v1.19.469): Track search ID to prevent race conditions when user types fast.
+    // If a newer search started while this one was in-flight, discard stale results.
+    const myId=append?searchIdRef.current:++searchIdRef.current;
     setLoading(true);
-    console.log("BC_BROWSER doSearch:",q,"field:",field,"skip:",s,"append:",append);
     const r=await bcSearchItems(q,{field,top:PAGE,skip:s});
-    console.log("BC_BROWSER results:",r.items.length,"hasMore:",r.hasMore);
+    if(searchIdRef.current!==myId){console.log("BC_BROWSER: discarding stale results for",q);return;}
     if(append){setResults(prev=>[...prev,...r.items]);}
     else{setResults(r.items);setSkip(0);}
     setHasMore(r.hasMore);
@@ -9390,10 +9393,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
 
   function onQueryChange(val){
     setQuery(val);
+    setSkip(0);
     if(debounceRef.current)clearTimeout(debounceRef.current);
     if(val.trim().length>=3){
-      debounceRef.current=setTimeout(()=>doSearch(false,val),350);
+      debounceRef.current=setTimeout(()=>doSearch(false,val),400);
     } else {
+      searchIdRef.current++;
       setResults([]);setSearched(false);setHasMore(false);
     }
   }
