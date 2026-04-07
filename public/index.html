@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.487";
+const APP_VERSION="v1.19.488";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10547,11 +10547,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Pause for user to review detected page types before extraction begins
     pendingNewItemsRef.current=newItems;
     if(!_apiKey){
-      // No extraction possible — just save
+      // No extraction possible — just save. Show clear message.
       updated={...panel,pages:livePages};
       onUpdate(updated);setPendingPages([]);
       try{await onSaveImmediate(updated);}catch(e){}
-      bgDone(panel.id,"Complete");
+      bgDone(panel.id,"⚠ No API key — set in Settings to enable extraction");
+      console.warn("ADDFILES: _apiKey is null — extraction skipped. Set API key in Settings.");
     }else if(newItems.length>0){
       bgUpdate(panel.id,"Awaiting confirmation…");
       setAwaitingConfirm(true);
