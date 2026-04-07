@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.474";
+const APP_VERSION="v1.19.475";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8711,16 +8711,20 @@ async function extractTitleBlock(dataUrl){
         max_tokens:300,
         messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`Carefully examine this engineering drawing for the title block. Title blocks are typically in the bottom-right corner but can also be along the bottom edge, right side, or in a border frame. They contain key drawing metadata.
+          {type:"text",text:`Carefully examine this engineering drawing page. Read ALL text on the page — both the large centered text (project name, location, panel description) AND the title block (typically bottom-right corner, bottom edge, or border frame).
 
 Extract these fields:
-- **Drawing number**: Look for labels like DWG NO., DRAWING NO., DWG #, DRAWING NUMBER, JOB NO., SHEET NO., DOCUMENT NO., or similar. This is usually an alphanumeric code like "CSW1931-121" or "E-001".
-- **Drawing description/title**: The main name describing what the drawing shows (e.g. "PLC Control Panel", "Motor Starter Schematic", "Lebanon Clarifier"). Look near the drawing number.
-- **Revision**: Look for REV, REVISION, REV NO., or a revision table/block. Typically a letter (A, B, C) or number. Return empty string "" if not visible.
 
-Also extract voltages if visible anywhere on the drawing:
-- **Line/supply voltage**: e.g. "480V 3PH", "208V"
-- **Control voltage**: e.g. "120VAC", "24VDC"
+1. **Drawing number** (drawingNo): Look in the title block for DWG NO., DRAWING NO., DWG #, DOCUMENT NO., or similar. Usually an alphanumeric code like "CSW1881-221" or "E-001". Do NOT include sheet numbers (SHT1, SHT2) — just the base drawing number.
+
+2. **Description** (drawingDesc): Build a descriptive name by combining the LOCATION/FACILITY name with the PANEL TYPE from the drawing. Read the large centered text AND the title block text. Examples:
+   - If page says "BRUSH CREEK WPC" and "LM16 MIXER CONTROL PANEL" → "Brush Creek WPC - LM16 Mixer Control Panel"
+   - If page says "LEBANON CLARIFIER" and title block says "PLC CONTROL PANEL" → "Lebanon Clarifier - PLC Control Panel"
+   - Format: "[Location/Facility] - [Panel Type/Name]"
+
+3. **Revision** (drawingRev): Look for REV, REVISION, or a revision block. Typically a letter (A, B, C) or number. Return "" if not visible.
+
+4. **Voltages**: Look anywhere on the page for supply/line voltage (e.g. "480V 3PH") and control voltage (e.g. "120VAC", "24VDC").
 
 Return ONLY valid JSON: {"drawingNo":"...","drawingDesc":"...","drawingRev":"...","voltages":{"lineVoltage":"...or unknown","controlVoltage":"...or unknown"}}`}
         ]}]
