@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.492";
+const APP_VERSION="v1.19.493";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -19527,19 +19527,29 @@ function NewProjectModal({uid,onCreated,onClose}){
         taskWarn=te.message;
       }
       setBcStatus(taskWarn?"taskwarn":"ok");
-      // DECISION(v1.19.411): Write salesperson/PM/designer/contact to BC project card.
-      // Designer was missing from the patch — added CCS_Designer field.
+      // DECISION(v1.19.493): Write salesperson/PM/designer/contact to BC project card.
+      // Try each field individually — if one CCS_ field doesn't exist, others still get set.
       if(selectedSalesperson||selectedPM||selectedDesigner||selectedContact){
-        const spFields={};
-        if(selectedSalesperson)spFields.CCS_Salesperson_Code=selectedSalesperson;
-        if(selectedPM)spFields.Person_Responsible=selectedPM;
-        if(selectedDesigner)spFields.CCS_Designer=selectedDesigner;
-        if(selectedContact)spFields.Sell_to_Contact_No=selectedContact;
-        bcPatchJobOData(bc.number,spFields).catch(e=>console.warn("BC role assignment failed:",e));
+        const fieldPairs=[];
+        if(selectedSalesperson)fieldPairs.push({CCS_Salesperson_Code:selectedSalesperson});
+        if(selectedPM)fieldPairs.push({Person_Responsible:selectedPM});
+        if(selectedDesigner)fieldPairs.push({CCS_Designer:selectedDesigner});
+        if(selectedContact)fieldPairs.push({Sell_to_Contact_No:selectedContact});
+        // Try all fields at once first
+        const allFields=Object.assign({},...fieldPairs);
+        try{await bcPatchJobOData(bc.number,allFields);}
+        catch(e){
+          console.warn("BC role assignment (all fields) failed:",e.message,"— trying individually");
+          // Fallback: try each field individually so one bad field doesn't block others
+          for(const f of fieldPairs){
+            try{await bcPatchJobOData(bc.number,f);}catch(e2){console.warn("BC field",Object.keys(f)[0],"failed:",e2.message);}
+          }
+        }
       }
-      const spName=salespersons.find(s=>s.Code===selectedSalesperson)?.Name||"";
-      const pmName=salespersons.find(s=>s.Code===selectedPM)?.Name||"";
-      const designerName=salespersons.find(s=>s.Code===selectedDesigner)?.Name||"";
+      const spName=salespersons.find(s=>s.Code===selectedSalesperson)?.Name||selectedSalesperson||"";
+      const pmList=userSetupList.length>0?userSetupList:salespersons;
+      const pmName=pmList.find(s=>s.Code===selectedPM)?.Name||selectedPM||"";
+      const designerName=pmList.find(s=>s.Code===selectedDesigner)?.Name||selectedDesigner||"";
       const p=await saveProject(uid,{
         name:trimmed,
         bcProjectId:bc.id,
