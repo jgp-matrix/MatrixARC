@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.486";
+const APP_VERSION="v1.19.487";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4333,6 +4333,14 @@ function resizeForAnalysis(dataUrl,maxW=1568){return resizeImage(dataUrl,maxW);}
 // ── QUOTE REVISION — hash BOM state to detect changes after printing ──
 function computeBomHash(panels){
   const data=(panels||[]).map(p=>(p.bom||[]).filter(r=>!r.isLaborRow).map(r=>({pn:(r.partNumber||'').trim(),q:r.qty||0,up:r.unitPrice||0})));
+  const str=JSON.stringify(data);
+  let h=5381;
+  for(let i=0;i<str.length;i++){h=((h<<5)+h)+str.charCodeAt(i);h=h&h;}
+  return String(h);
+}
+// DECISION(v1.19.487): Per-panel BOM hash — tracks whether BC sync is needed.
+function computePanelBomHash(panel){
+  const data=(panel.bom||[]).filter(r=>!r.isLaborRow).map(r=>({pn:(r.partNumber||'').trim(),q:r.qty||0,up:r.unitPrice||0}));
   const str=JSON.stringify(data);
   let h=5381;
   for(let i=0;i<str.length;i++){h=((h<<5)+h)+str.charCodeAt(i);h=h&h;}
@@ -10860,6 +10868,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   async function syncPlanningLinesToBC(){
     if(!bcProjectNumber||bcSyncing)return;
+    // DECISION(v1.19.487): Skip sync if BOM hasn't changed since last sync
+    const curHash=computePanelBomHash(panel);
+    if(curHash===(panel.bomSyncHash||"")&&!bcSyncErrors.length){
+      setBcSyncStatus("ok");setTimeout(()=>setBcSyncStatus(null),2000);
+      console.log("syncPlanningLinesToBC: hash unchanged, skipping sync");
+      return;
+    }
     // Guard: all non-labor BOM rows (including auto-replaced) must have a BC or manual price
     const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&r.priceSource!=="bc"&&r.priceSource!=="manual");
     if(unpriced.length){setUnpricedAlert(unpriced);return;}
@@ -10879,6 +10894,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }else{
         setBcSyncStatus("ok");
         setBcSyncErrors({});
+        // DECISION(v1.19.487): Set bomSyncHash after successful sync
+        const syncHash=computePanelBomHash(panel);
+        const updated={...panel,bomSyncHash:syncHash};
+        onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
         setTimeout(()=>setBcSyncStatus(null),4000);
       }
     }catch(e){
@@ -16293,6 +16312,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [eqWarnPriceRows,setEqWarnPriceRows]=useState(null); // stacked price warnings after eq warning
   const [bcCountMismatch,setBcCountMismatch]=useState(null); // null=hidden, {arcCount,bcCount,missing:[]}
   const [showBcUploadPrompt,setShowBcUploadPrompt]=useState(false);
+  // DECISION(v1.19.487): Unified pre-print checklist
+  const [prePrintChecklist,setPrePrintChecklist]=useState(null); // null=hidden, {issues:[...]}
+  const [prePrintProcessing,setPrePrintProcessing]=useState(false);
   const [bcUploading,setBcUploading]=useState(false);
   const [showProductionUpload,setShowProductionUpload]=useState(null); // null=hidden, {poNumber,dueDate}
   const bcUploadRef=useRef(null); // ref to selected PanelCard's buildAndAttachPdf — shared with PanelListView
@@ -16439,10 +16461,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(bcOpenSyncRan.current||!_bcToken)return;
       bcOpenSyncRan.current=true;
       (async()=>{
+        let synced=0;
         for(let i=0;i<(init.panels||[]).length;i++){
-          try{await bcSyncPanelPlanningLines(bcNum,i+1,init.panels[i],init.name);}catch(e){console.warn("Open BC sync panel",i+1,"failed:",e);}
+          const p=init.panels[i];
+          const curHash=computePanelBomHash(p);
+          if(curHash===(p.bomSyncHash||"")){continue;} // Already synced
+          try{await bcSyncPanelPlanningLines(bcNum,i+1,p,init.name);synced++;}catch(e){console.warn("Open BC sync panel",i+1,"failed:",e);}
         }
-        console.log("OPEN BC SYNC: planning lines synced for",bcNum);
+        if(synced>0)console.log("OPEN BC SYNC:",synced,"panels synced for",bcNum);
+        else console.log("OPEN BC SYNC: all panels already in sync for",bcNum);
       })();
     },3000);
     return()=>clearTimeout(t);
@@ -16703,10 +16730,24 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       proj={...proj,quote:{...q,...autoFields}};
       setProject(proj);projectRef.current=proj;onChange(proj);saveProject(uid,proj);
     }
+    // DECISION(v1.19.487): Unified pre-print checklist — gather ALL checks at once, show single modal.
     const now=Date.now();
     const staleMs=60*24*60*60*1000;
+    const issues=[];
+
+    // Check 1: BC Sync needed?
+    const bcNum=projectRef.current.bcProjectNumber;
+    const panelsNeedSync=(projectRef.current.panels||[]).filter(p=>{
+      const curHash=computePanelBomHash(p);
+      return curHash!==(p.bomSyncHash||"")&&(p.bom||[]).some(r=>!r.isLaborRow);
+    });
+    if(bcNum&&_bcToken&&panelsNeedSync.length>0){
+      issues.push({type:"sync",label:"Sync BOM to BC",detail:`${panelsNeedSync.length} panel${panelsNeedSync.length>1?"s":""} changed since last sync`,checked:true});
+    }
+
+    // Check 2: Pricing issues
     const allBom=(projectRef.current.panels||[]).flatMap(p=>p.bom||[]);
-    const warn=[];
+    const priceWarn=[];
     allBom.forEach(r=>{
       if(r.isLaborRow||r.customerSupplied)return;
       if(/matrix\s*systems/i.test(r.bcVendorName||"")||/^job.?buyoff$/i.test(r.partNumber||"")||/crate/i.test(r.description||"")||r.isContingency)return;
@@ -16717,13 +16758,36 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       const dt=isBC?r.bcPoDate:r.priceDate;
       const stale=dt&&dt<now-staleMs&&!zeroCost&&!aiPrice&&!noPo;
       const reason=zeroCost?"ZERO":aiPrice?"AI":noPo?"NoPO":stale?"OLD":null;
-      if(reason)warn.push({...r,_warnReason:reason});
+      if(reason)priceWarn.push({...r,_warnReason:reason});
     });
-    // Check for unanswered engineering questions
+    if(priceWarn.length>0){
+      const zero=priceWarn.filter(r=>r._warnReason==="ZERO").length;
+      const ai=priceWarn.filter(r=>r._warnReason==="AI").length;
+      const old=priceWarn.filter(r=>r._warnReason==="OLD").length;
+      const nopo=priceWarn.filter(r=>r._warnReason==="NoPO").length;
+      const parts=[zero&&`${zero} zero-cost`,ai&&`${ai} AI est.`,old&&`${old} stale`,nopo&&`${nopo} no PO`].filter(Boolean).join(", ");
+      issues.push({type:"pricing",label:`${priceWarn.length} Pricing Issues`,detail:parts,checked:true,items:priceWarn});
+    }
+
+    // Check 3: Open engineering questions
     const openEqs=(projectRef.current.panels||[]).flatMap(p=>(p.engineeringQuestions||[]).filter(q=>q.status==="open"));
-    if(openEqs.length>0){setEqWarnOpen(openEqs);if(warn.length>0)setEqWarnPriceRows(warn);return;}
-    if(warn.length>0){setQuoteWarnRows(warn);}
-    else{await verifyBcLineCount();}
+    if(openEqs.length>0){
+      issues.push({type:"eqs",label:`${openEqs.length} Engineering Question${openEqs.length>1?"s":""}`,detail:"Open questions not yet answered or skipped",checked:true,items:openEqs});
+    }
+
+    // Check 4: Upload drawings to BC
+    const currentRev=projectRef.current.quoteRev||0;
+    const needsUpload=bcNum&&!(projectRef.current.panels||[]).every(p=>(p.bcUploadQuoteRev||0)>=currentRev)&&(projectRef.current.panels||[]).some(p=>(p.pages||[]).length>0);
+    if(needsUpload){
+      issues.push({type:"upload",label:"Upload Drawings to BC",detail:`Rev ${String(currentRev).padStart(2,"0")} not yet uploaded`,checked:true});
+    }
+
+    // If no issues at all — go straight to print
+    if(issues.length===0){
+      setAutoPrint(true);setView("quote");
+    }else{
+      setPrePrintChecklist({issues});
+    }
     }finally{setQuotePrinting(false);}
   }
 
@@ -17324,6 +17388,89 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     setQuoteReview(null);
                   }} style={{background:varianceProcessing?"#334155":C.accent,color:"#fff",border:"none",padding:"7px 18px",borderRadius:6,cursor:varianceProcessing?"wait":"pointer",fontSize:13,fontWeight:700}}>
                     {varianceProcessing?"Applying…":`Apply ${quoteReview.matches.filter(m=>m.action==="apply").length} Items to BOM`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ,document.body)}
+          {/* DECISION(v1.19.487): Unified Pre-Print Checklist Modal */}
+          {prePrintChecklist&&ReactDOM.createPortal(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+              <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                  <span style={{fontSize:20}}>📋</span>
+                  <div style={{fontSize:16,fontWeight:800,color:C.text}}>Pre-Print Checklist</div>
+                  <button onClick={()=>setPrePrintChecklist(null)} style={{marginLeft:"auto",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+                  {prePrintChecklist.issues.map((issue,i)=>(
+                    <label key={i} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 12px",background:issue.checked?"rgba(56,189,248,0.04)":"transparent",border:`1px solid ${issue.checked?C.accent+"44":C.border}`,borderRadius:8,cursor:"pointer",userSelect:"none"}}>
+                      <input type="checkbox" checked={issue.checked} onChange={()=>{
+                        setPrePrintChecklist(prev=>({...prev,issues:prev.issues.map((is,j)=>j===i?{...is,checked:!is.checked}:is)}));
+                      }} style={{accentColor:C.accent,marginTop:2,flexShrink:0,width:16,height:16,cursor:"pointer"}}/>
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:700,color:issue.type==="pricing"?"#f59e0b":issue.type==="eqs"?"#818cf8":C.text}}>{issue.label}</div>
+                        <div style={{fontSize:11,color:C.muted,marginTop:2}}>{issue.detail}</div>
+                      </div>
+                      {issue.type==="sync"&&<span style={{fontSize:16,flexShrink:0}}>⇅</span>}
+                      {issue.type==="pricing"&&<span style={{fontSize:16,flexShrink:0}}>💲</span>}
+                      {issue.type==="eqs"&&<span style={{fontSize:16,flexShrink:0}}>❓</span>}
+                      {issue.type==="upload"&&<span style={{fontSize:16,flexShrink:0}}>📤</span>}
+                    </label>
+                  ))}
+                </div>
+                <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                  <button onClick={()=>{setPrePrintChecklist(null);}} style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.muted,padding:"8px 16px",borderRadius:6,cursor:"pointer",fontSize:13}}>Cancel</button>
+                  <button onClick={()=>{
+                    setPrePrintChecklist(null);
+                    // Reset BOM hash so "changed" warning doesn't re-trigger
+                    const hash=computeBomHash(projectRef.current.panels);
+                    const upd={...projectRef.current,lastPrintedBomHash:hash};
+                    setProject(upd);projectRef.current=upd;onChange(upd);
+                    setAutoPrint(true);setView("quote");
+                  }} style={{background:"#1a1a2a",border:"1px solid #f59e0b44",color:"#f59e0b",padding:"8px 16px",borderRadius:6,cursor:"pointer",fontSize:13,fontWeight:600}}>Print Now — Skip All</button>
+                  <button disabled={prePrintProcessing} onClick={async()=>{
+                    setPrePrintProcessing(true);
+                    const checked=prePrintChecklist.issues.filter(is=>is.checked);
+                    const proj=projectRef.current;
+                    const bcNum=proj.bcProjectNumber;
+                    // Process checked items
+                    for(const issue of checked){
+                      if(issue.type==="sync"&&bcNum&&_bcToken){
+                        for(let i=0;i<(proj.panels||[]).length;i++){
+                          const curHash=computePanelBomHash(proj.panels[i]);
+                          if(curHash!==(proj.panels[i].bomSyncHash||"")){
+                            try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);
+                              // Set bomSyncHash after successful sync
+                              const updPanels=(projectRef.current.panels||[]).map((p,j)=>j===i?{...p,bomSyncHash:curHash}:p);
+                              const upd={...projectRef.current,panels:updPanels};
+                              setProject(upd);projectRef.current=upd;onChange(upd);
+                              saveProjectPanel(uid,proj.id,proj.panels[i].id,{...proj.panels[i],bomSyncHash:curHash},true).catch(()=>{});
+                            }catch(e){console.warn("Pre-print sync panel",i+1,"failed:",e);}
+                          }
+                        }
+                      }
+                      if(issue.type==="eqs"){
+                        const updPanels=(projectRef.current.panels||[]).map(p=>{
+                          const eqs=(p.engineeringQuestions||[]);
+                          if(!eqs.some(q=>q.status==="open"))return p;
+                          return{...p,engineeringQuestions:eqs.map(q=>q.status==="open"?{...q,status:"skipped",skippedAt:Date.now()}:q)};
+                        });
+                        const upd={...projectRef.current,panels:updPanels};
+                        setProject(upd);projectRef.current=upd;onChange(upd);safeSave(uid,upd);
+                      }
+                      if(issue.type==="upload"&&bcNum&&_bcToken){
+                        try{if(bcUploadRef.current)await bcUploadRef.current();}catch(e){console.warn("Pre-print upload failed:",e);}
+                      }
+                    }
+                    setPrePrintProcessing(false);
+                    setPrePrintChecklist(null);
+                    const hash=computeBomHash(projectRef.current.panels);
+                    const upd={...projectRef.current,lastPrintedBomHash:hash};
+                    setProject(upd);projectRef.current=upd;onChange(upd);
+                    setAutoPrint(true);setView("quote");
+                  }} style={{background:prePrintProcessing?"#334155":C.accent,color:"#fff",border:"none",padding:"8px 18px",borderRadius:6,cursor:prePrintProcessing?"wait":"pointer",fontSize:13,fontWeight:700}}>
+                    {prePrintProcessing?"Processing…":"Apply & Print"}
                   </button>
                 </div>
               </div>
