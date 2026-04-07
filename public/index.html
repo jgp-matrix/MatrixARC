@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.472";
+const APP_VERSION="v1.19.473";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5995,13 +5995,13 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const hasVerify=_apiKey;
     const hasCompliance=_apiKey;
     const hasUpload=(panel.pages||[]).some(pg=>pg.dataUrl&&!pg.storageUrl);
-    // Weighted phases: Upload=10 (first), BOM=40, Validation=25, Verify=10, Compliance=15
+    // Weighted phases: BOM=40, Validation=25, Verify=10, Compliance=15, Upload=10 (last — stamp needs hazloc)
     let phases=[];
-    if(hasUpload)phases.push({name:"upload",weight:10});
     if(hasBom)phases.push({name:"bom",weight:40});
     if(hasVal)phases.push({name:"val",weight:25});
     if(hasVerify)phases.push({name:"verify",weight:10});
     if(hasCompliance)phases.push({name:"compliance",weight:15});
+    if(hasUpload)phases.push({name:"upload",weight:10});
     if(!phases.length)phases.push({name:"done",weight:100});
     const totalWeight=phases.reduce((s,p)=>s+p.weight,0);
     let cumWeight=0;
@@ -6009,37 +6009,6 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     for(const p of phases){const start=Math.round((cumWeight/totalWeight)*100);cumWeight+=p.weight;phaseRange[p.name]={start,end:Math.round((cumWeight/totalWeight)*100)};};
     function phasePct(name,frac){const r=phaseRange[name];if(!r)return;const pct=r.start+Math.round(frac*(r.end-r.start));bgSetPct(panel.id,Math.min(pct,99));}
 
-    bgSetPct(panel.id,0,"Uploading drawings…");
-    // Upload page images FIRST — ensures storageUrl exists before any save strips dataUrl
-    const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
-    console.log('[UPLOAD DEBUG] pages:',latestPanel.pages.length,'needUpload:',pagesNeedingUpload.length,
-      'withDataUrl:',latestPanel.pages.filter(p=>p.dataUrl).length,
-      'withStorageUrl:',latestPanel.pages.filter(p=>p.storageUrl).length,
-      'stampFn:',!!stampFn,'projectId:',!!projectId);
-    if(pagesNeedingUpload.length>0&&projectId){
-      phasePct("upload",0);bgUpdate(panel.id,"Uploading drawings…");
-      try{
-        const urlMap={};
-        const totalPages=latestPanel.pages.length;
-        let upDone=0;
-        await parallelMap(pagesNeedingUpload,async pg=>{
-          let dataUrl=pg.dataUrl;
-          if(stampFn){
-            const pgIdx=latestPanel.pages.findIndex(p=>p.id===pg.id);
-            try{
-              const stamped=await stampFn(dataUrl,pgIdx,totalPages);
-              if(stamped&&stamped!==dataUrl){dataUrl=stamped;console.log('STAMP OK page',pgIdx+1);}
-              else console.warn('STAMP returned same/null for page',pgIdx+1);
-            }catch(e){console.warn('Stamp failed:',e);}
-          }else{console.warn('STAMP: no stampFn provided');}
-          urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,dataUrl);
-          upDone++;phasePct("upload",upDone/pagesNeedingUpload.length);
-        },4);
-        const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
-        latestPanel={...latestPanel,pages:pagesWithUrls};
-        await save(latestPanel);
-      }catch(e){console.warn("Storage upload failed:",e);}
-    }
     bgSetPct(panel.id,0,hasBom?"Extracting BOM…":hasVal?"Validating…":"Processing…");
     // BOM extraction — use cropped regions if available
     let bomMergePromise=Promise.resolve([]);
@@ -6121,6 +6090,33 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           await save({...latestPanel,complianceReview:cr,engineeringQuestions:eqs,updatedAt:Date.now()});
         }
       }catch(e){console.warn("Compliance review failed:",e);}
+    }
+    // DECISION(v1.19.473): Stamp + upload LAST — after all scans complete (including hazloc).
+    // This ensures the stamp has the UL698/1203 flag if hazardous location was detected.
+    const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
+    if(pagesNeedingUpload.length>0&&projectId){
+      bgUpdate(panel.id,"Stamping & uploading drawings…");bgSetPct(panel.id,92);
+      try{
+        const urlMap={};
+        const totalPages=latestPanel.pages.length;
+        let upDone=0;
+        await parallelMap(pagesNeedingUpload,async pg=>{
+          let dataUrl=pg.dataUrl;
+          if(stampFn){
+            const pgIdx=latestPanel.pages.findIndex(p=>p.id===pg.id);
+            try{
+              const stamped=await stampFn(dataUrl,pgIdx,totalPages);
+              if(stamped&&stamped!==dataUrl){dataUrl=stamped;console.log('STAMP OK page',pgIdx+1);}
+              else console.warn('STAMP returned same/null for page',pgIdx+1);
+            }catch(e){console.warn('Stamp failed:',e);}
+          }
+          urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,dataUrl);
+          upDone++;
+        },4);
+        const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
+        latestPanel={...latestPanel,pages:pagesWithUrls};
+        await save(latestPanel);
+      }catch(e){console.warn("Storage upload failed:",e);}
     }
     const itemCount=(latestPanel.bom||[]).length;
     bgUpdate(panel.id,itemCount>0?`${itemCount} items extracted — pricing…`:"Extracted");bgSetPct(panel.id,95);
@@ -10597,8 +10593,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const scanned=`Scanned ${String(d.getDate()).padStart(2,'0')}-${mon}-${String(d.getFullYear()).slice(2)}`;
         const rev=quoteRev||0;
         const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
-        // Check both current extraction panel AND previously saved panel for hazloc flag
-        const hazloc=_stampPanel.hazardousLocation?.found||latestPanelRef.current?.hazardousLocation?.found;
+        // Stamp runs AFTER all scans — latestPanelRef has the hazloc result
+        const hazloc=latestPanelRef.current?.hazardousLocation?.found||_stampPanel.hazardousLocation?.found;
         const rightParts=[hazloc?'UL698/1203':null,_stampBcProjNo?`${_stampBcProjNo} - ${String((idx+1)*100)}`:null,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ');
         return burnStampCanvas(dataUrl,{
           left:stampLabel,
