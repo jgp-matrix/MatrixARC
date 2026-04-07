@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.483";
+const APP_VERSION="v1.19.484";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17231,7 +17231,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                               <option value="">— No match —</option>
                               {bomRows.map(r=><option key={r.id} value={r.id}>{r.partNumber} — {(r.description||"").slice(0,30)}</option>)}
                             </select>
-                            {m.isVariance&&<div style={{fontSize:9,color:C.yellow,marginTop:2}}>⚠ Cross: {m.bomPartNumber} → {si.partNumber||si.supplierPartNumber}</div>}
+                            {m.isVariance&&<div style={{fontSize:9,color:C.yellow,marginTop:2}}>⚠ Cross: {m.bomPartNumber} → {si.supplierPartNumber||si.partNumber}</div>}
                           </td>
                           <td style={{padding:"6px 8px"}}>
                             {si.cannotSupply?<span style={{fontSize:10,fontWeight:700,color:C.red}}>Cannot Supply</span>
@@ -17288,7 +17288,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     if(crosses.length>0){
                       const updatedPanels=(projectRef.current.panels||[]).map(p=>({...p,bom:(p.bom||[]).map(r=>{
                         const cross=crosses.find(c=>c.bomRowId===r.id);
-                        if(cross)return{...r,partNumber:cross.supplierItem.partNumber||cross.supplierItem.supplierPartNumber,crossedFrom:cross.bomPartNumber,isCrossed:true};
+                        if(cross)return{...r,partNumber:cross.supplierItem.supplierPartNumber||cross.supplierItem.partNumber,crossedFrom:cross.bomPartNumber,isCrossed:true};
                         return r;
                       })}));
                       update({...projectRef.current,panels:updatedPanels});
