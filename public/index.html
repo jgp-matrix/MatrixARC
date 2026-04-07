@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.488";
+const APP_VERSION="v1.19.489";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -534,10 +534,11 @@ let _apiKey=null;
 // DECISION(v1.19.410): Load API key from user config first, then fall back to company config.
 // This ensures new team members get the shared API key without needing admin to set it per-user.
 async function loadApiKey(uid){
-  try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists&&d.data().key)_apiKey=d.data().key;}catch(e){}
+  try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists&&d.data().key){_apiKey=d.data().key;console.log("API key loaded from user config");}}catch(e){console.warn("loadApiKey user config failed:",e.message);}
   if(!_apiKey&&_appCtx.configPath){
-    try{const cd=await fbDb.doc(`${_appCtx.configPath}/api`).get();if(cd.exists&&cd.data().key)_apiKey=cd.data().key;}catch(e){}
+    try{const cd=await fbDb.doc(`${_appCtx.configPath}/api`).get();if(cd.exists&&cd.data().key){_apiKey=cd.data().key;console.log("API key loaded from company config");}}catch(e){console.warn("loadApiKey company config failed:",e.message);}
   }
+  if(!_apiKey)console.warn("API key not found — extraction, pricing, and AI features will be disabled. Set the key in Settings.");
 }
 
 // ── ARC NEURAL IQ (NIQ) — AI learning & standards knowledge engine ──
