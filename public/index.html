@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.468";
+const APP_VERSION="v1.19.469";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5822,16 +5822,8 @@ async function burnStampCanvas(dataUrl,overlay){
       ctx.font=`bold ${fontSize}px Arial,sans-serif`;ctx.fillStyle='#cc0000';ctx.textBaseline='middle';
       const y=barH/2;const pad=Math.max(10,Math.round(img.width*0.012));
       ctx.textAlign='left';ctx.fillText((overlay.left||'').slice(0,55),pad,y);
-      if(overlay.hazloc){
-        // DECISION(v1.19.468): Hazardous location panels get bold red "UL698/1203 PANEL" in center
-        const hlFontSize=Math.max(14,Math.round(barH*0.7));
-        ctx.font=`bold ${hlFontSize}px Arial,sans-serif`;ctx.fillStyle='#cc0000';
-        ctx.textAlign='center';ctx.fillText('UL698/1203 PANEL',img.width/2,y);
-      }else{
-        ctx.textAlign='center';ctx.fillText(overlay.center||'',img.width/2,y);
-      }
-      ctx.font=`bold ${fontSize}px Arial,sans-serif`;ctx.fillStyle='#cc0000';
-      ctx.textAlign='right';ctx.fillText((overlay.right||'').slice(0,65),img.width-pad,y);
+      ctx.textAlign='center';ctx.fillText(overlay.center||'',img.width/2,y);
+      ctx.textAlign='right';ctx.fillText((overlay.right||'').slice(0,80),img.width-pad,y);
       resolve(canvas.toDataURL('image/jpeg',0.93));
     };
     img.onerror=()=>resolve(dataUrl);
@@ -10601,10 +10593,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const rev=quoteRev||0;
         const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
         const hazloc=_stampPanel.hazardousLocation?.found;
+        const rightParts=[hazloc?'UL698/1203':null,_stampBcProjNo?`${_stampBcProjNo} - ${String((idx+1)*100)}`:null,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ');
         return burnStampCanvas(dataUrl,{
           left:stampLabel,
-          center:hazloc?'UL698/1203 PANEL':`${pgIdx+1} of ${total}`,
-          right:[_stampBcProjNo?`${_stampBcProjNo} - ${String((idx+1)*100)}`:null,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · '),
+          center:`${pgIdx+1} of ${total}`,
+          right:rightParts,
           hazloc
         });
       }
