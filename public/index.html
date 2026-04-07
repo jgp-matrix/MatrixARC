@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.478";
+const APP_VERSION="v1.19.479";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11257,9 +11257,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
     // Clear any BC sync error for this row — item has been fixed via Item Browser
     setBcSyncErrors(prev=>{const next={...prev};delete next[bomRowId];return next;});
-    // Prompt user to sync BC planning lines after item browser selection
+    // DECISION(v1.19.479): Only show "Push Update to BC" when ALL non-labor items are priced.
+    // Previously flashed after every single item match — distracting when user is still working through BOM.
     if(bcProjectNumber&&_bcToken){
-      setBcSyncStatus("pending");
+      const allPriced=(updated.bom||[]).filter(r=>!r.isLaborRow).every(r=>r.priceSource==="bc"||r.priceSource==="manual"||r.customerSupplied);
+      if(allPriced)setBcSyncStatus("pending");
     }
   }
   function applyBcItem(bomRowId,bcItem){
