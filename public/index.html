@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.470";
+const APP_VERSION="v1.19.471";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17239,7 +17239,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 ),
                 React.createElement("div",{style:{display:"flex",gap:8,justifyContent:"flex-end"}},
                   React.createElement("button",{onClick:()=>{setEqWarnOpen(null);setEqWarnPriceRows(null);},style:{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}},"Go Back"),
-                  React.createElement("button",{onClick:()=>{setEqWarnOpen(null);if(eqWarnPriceRows){setQuoteWarnRows(eqWarnPriceRows);setEqWarnPriceRows(null);}else{verifyBcLineCount();}},style:{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}},"Acknowledge & Proceed")
+                  React.createElement("button",{onClick:()=>{
+                    // DECISION(v1.19.471): Mark acknowledged EQs as "skipped" so they don't re-trigger on next print
+                    const proj=projectRef.current;
+                    const updatedPanels=(proj.panels||[]).map(p=>{
+                      const eqs=(p.engineeringQuestions||[]);
+                      if(!eqs.some(q=>q.status==="open"))return p;
+                      return{...p,engineeringQuestions:eqs.map(q=>q.status==="open"?{...q,status:"skipped",skippedAt:Date.now()}:q)};
+                    });
+                    const upd={...proj,panels:updatedPanels};
+                    setProject(upd);projectRef.current=upd;onChange(upd);safeSave(uid,upd);
+                    setEqWarnOpen(null);if(eqWarnPriceRows){setQuoteWarnRows(eqWarnPriceRows);setEqWarnPriceRows(null);}else{verifyBcLineCount();}
+                  },style:{background:"#7c2d12",border:"1px solid #b45309",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}},"Acknowledge & Proceed")
                 )
               )
             ),document.body
