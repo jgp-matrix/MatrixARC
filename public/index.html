@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.485";
+const APP_VERSION="v1.19.486";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16555,8 +16555,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!q.description&&firstPanel.drawingDesc)autoFields.description=firstPanel.drawingDesc;
     if(!q.drawingRev&&firstPanel.drawingRev)autoFields.drawingRev=firstPanel.drawingRev;
     if(!q.projectNumber&&proj.bcProjectNumber)autoFields.projectNumber=proj.bcProjectNumber;
-    // Fetch contact and salesperson from BC project card
-    if(proj.bcProjectNumber&&_bcToken){
+    // Fetch contact and salesperson from BC project card — skip if quote already has key fields
+    const needsBcFetch=!q.company||!q.address||!q.salesperson;
+    if(proj.bcProjectNumber&&_bcToken&&needsBcFetch){
       try{
         const allPages=await bcDiscoverODataPages();
         const projectPage=allPages.find(n=>/^project(card)?$/i.test(n));
@@ -16737,12 +16738,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(hasUpload||bcNum){setShowBcUploadPrompt(true);return;}
       setAutoPrint(true);setView("quote");return;
     }
-    // DECISION(v1.19.460): Full BC sync before verification — ensures planning lines are current.
-    // Skip if quote is locked (no changes should be pushed).
+    // DECISION(v1.19.486): BC sync runs in background — don't block the print flow.
+    // Previously awaited full sync (30-45s for 50+ items) before showing any UI.
     if(!proj.quoteLocked&&(proj.panels||[]).some(p=>(p.bom||[]).some(r=>!r.isLaborRow))){
-      for(let i=0;i<(proj.panels||[]).length;i++){
-        try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);}catch(e){console.warn("Pre-print BC sync panel",i+1,"failed:",e);}
-      }
+      (async()=>{
+        for(let i=0;i<(proj.panels||[]).length;i++){
+          try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);}catch(e){console.warn("Pre-print BC sync panel",i+1,"failed:",e);}
+        }
+        console.log("Pre-print BC sync complete (background)");
+      })();
     }
     try{
       const allPages=await bcDiscoverODataPages();
