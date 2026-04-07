@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.482";
+const APP_VERSION="v1.19.483";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16876,6 +16876,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         bomPartNumber:bomRow?.partNumber||null,
         bomDescription:bomRow?.description||null,
         isVariance:isVariance||false,
+        crossMode:isVariance?"cross":"none", // "cross" = change BOM PN, "price_only" = keep BOM PN
         action:bomRow&&si.unitPrice!=null?"apply":"skip", // default action
       });
     }
@@ -17188,7 +17189,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                   <button onClick={()=>setQuoteReview(null)} style={{marginLeft:"auto",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
                 </div>
                 <div style={{fontSize:12,color:C.sub,marginBottom:10,lineHeight:1.6,flexShrink:0}}>
-                  Review each line. Toggle "Apply" to include/exclude. For mismatched items, select the correct BOM row from the dropdown.
+                  Review each line. Uncheck to exclude. For crossed items, toggle between "Cross & Apply" (changes BOM part#) or "Price Only" (keeps your BOM part#, updates price).
                 </div>
                 <div style={{flex:1,overflowY:"auto",marginBottom:12}}>
                   <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
@@ -17234,7 +17235,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                           </td>
                           <td style={{padding:"6px 8px"}}>
                             {si.cannotSupply?<span style={{fontSize:10,fontWeight:700,color:C.red}}>Cannot Supply</span>
-                            :isApply?<span style={{fontSize:10,fontWeight:700,color:m.isVariance?C.yellow:C.green}}>{m.isVariance?"Cross & Apply":"Apply"}</span>
+                            :isApply&&m.isVariance?(
+                              <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                                <button onClick={()=>{
+                                  setQuoteReview(prev=>({...prev,matches:prev.matches.map((mm,j)=>j===i?{...mm,crossMode:mm.crossMode==="price_only"?"cross":"price_only"}:mm)}));
+                                }} style={{background:m.crossMode==="price_only"?"rgba(74,222,128,0.1)":"rgba(245,158,11,0.1)",border:`1px solid ${m.crossMode==="price_only"?"#4ade8044":"#f59e0b44"}`,borderRadius:4,padding:"2px 6px",fontSize:9,fontWeight:700,cursor:"pointer",color:m.crossMode==="price_only"?C.green:C.yellow,whiteSpace:"nowrap"}}>
+                                  {m.crossMode==="price_only"?"Price Only":"Cross & Apply"}
+                                </button>
+                                <span style={{fontSize:8,color:C.muted}}>{m.crossMode==="price_only"?"Keep BOM PN, update price":"Change BOM PN to supplier's"}</span>
+                              </div>
+                            )
+                            :isApply?<span style={{fontSize:10,fontWeight:700,color:C.green}}>Apply</span>
                             :!m.bomRowId&&si.unitPrice!=null?<button onClick={async()=>{
                               // Close review, add placeholder to BOM — strip MFR prefix
                               const pn=stripMfrPrefix(si.supplierPartNumber||si.partNumber||"");
@@ -17272,8 +17283,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     setVarianceProcessing(true);
                     // Build updated submission with only the "apply" matches
                     const toApply=quoteReview.matches.filter(m=>m.action==="apply"&&m.bomRowId);
-                    // For crosses, update BOM part numbers first
-                    const crosses=toApply.filter(m=>m.isVariance);
+                    // For crosses (crossMode !== "price_only"), update BOM part numbers first
+                    const crosses=toApply.filter(m=>m.isVariance&&m.crossMode!=="price_only");
                     if(crosses.length>0){
                       const updatedPanels=(projectRef.current.panels||[]).map(p=>({...p,bom:(p.bom||[]).map(r=>{
                         const cross=crosses.find(c=>c.bomRowId===r.id);
@@ -17282,8 +17293,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       })}));
                       update({...projectRef.current,panels:updatedPanels});
                     }
-                    // Remap submission lineItems: replace partNumber with the matched BOM partNumber for proper apply
-                    const remapped={...quoteReview.submission,lineItems:toApply.map(m=>({...m.supplierItem,partNumber:m.bomPartNumber||m.supplierItem.partNumber}))};
+                    // For "price_only" variance items — push supplier price to BC Item Card for the supplier's PN,
+                    // but update the BOM row's price (keep BOM PN unchanged)
+                    // Remap: for crosses use supplier PN, for price_only use the BOM PN so doApplyPortalPrices matches correctly
+                    const remapped={...quoteReview.submission,lineItems:toApply.map(m=>{
+                      if(m.isVariance&&m.crossMode==="price_only"){
+                        // Keep BOM part number for price matching, but also push supplier price to supplier's BC item
+                        return{...m.supplierItem,partNumber:m.bomPartNumber||m.supplierItem.partNumber};
+                      }
+                      return{...m.supplierItem,partNumber:m.bomPartNumber||m.supplierItem.partNumber};
+                    })};
                     await doApplyPortalPrices(remapped);
                     setVarianceProcessing(false);
                     setQuoteReview(null);
