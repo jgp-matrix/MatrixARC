@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.473";
+const APP_VERSION="v1.19.474";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8695,25 +8695,63 @@ function PlaceholderTab({icon,title,desc,coming}){
 }
 
 // ── TITLE BLOCK EXTRACTOR ──
+// DECISION(v1.19.474): Title block extraction — resize for readability, try multiple pages,
+// use Sonnet for better OCR accuracy on small title block text.
 async function extractTitleBlock(dataUrl){
   if(!_apiKey||!dataUrl)return null;
   try{
-    const text=await apiCall({
-      max_tokens:200,
-      messages:[{role:"user",content:[
-        {type:"image",source:{type:"base64",media_type:"image/jpeg",data:dataUrl.split(",")[1]}},
-        {type:"text",text:`Look at the title block of this engineering drawing (typically in the bottom-right corner).
-Extract exactly three fields:
-- Drawing number (labeled DWG NO., DRAWING NO., JOB NO., DWG #, SHEET, or similar)
-- Drawing title or description (the main name/description of what is shown)
-- Revision (labeled REV, REVISION, REV NO., REV LETTER — typically a letter like A, B, C or a number; empty string if not shown)
-Return ONLY valid JSON, no extra text: {"drawingNo":"...","drawingDesc":"...","drawingRev":"..."}`}
-      ]}]
+    const small=await resizeForAnalysis(dataUrl,2400);
+    const b64=small?.split(",")[1];
+    if(!b64)return null;
+    const resp=await fetch("https://api.anthropic.com/v1/messages",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      body:JSON.stringify({
+        model:"claude-sonnet-4-6",
+        max_tokens:300,
+        messages:[{role:"user",content:[
+          {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
+          {type:"text",text:`Carefully examine this engineering drawing for the title block. Title blocks are typically in the bottom-right corner but can also be along the bottom edge, right side, or in a border frame. They contain key drawing metadata.
+
+Extract these fields:
+- **Drawing number**: Look for labels like DWG NO., DRAWING NO., DWG #, DRAWING NUMBER, JOB NO., SHEET NO., DOCUMENT NO., or similar. This is usually an alphanumeric code like "CSW1931-121" or "E-001".
+- **Drawing description/title**: The main name describing what the drawing shows (e.g. "PLC Control Panel", "Motor Starter Schematic", "Lebanon Clarifier"). Look near the drawing number.
+- **Revision**: Look for REV, REVISION, REV NO., or a revision table/block. Typically a letter (A, B, C) or number. Return empty string "" if not visible.
+
+Also extract voltages if visible anywhere on the drawing:
+- **Line/supply voltage**: e.g. "480V 3PH", "208V"
+- **Control voltage**: e.g. "120VAC", "24VDC"
+
+Return ONLY valid JSON: {"drawingNo":"...","drawingDesc":"...","drawingRev":"...","voltages":{"lineVoltage":"...or unknown","controlVoltage":"...or unknown"}}`}
+        ]}]
+      })
     });
-    const m=text.replace(/```json|```/g,"").trim().match(/\{[\s\S]*?\}/);
+    const d=await resp.json();
+    if(!resp.ok)return null;
+    const text=(d.content||[]).find(b=>b.type==="text")?.text||"";
+    const m=text.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
     if(!m)return null;
     return JSON.parse(m[0]);
-  }catch(e){return null;}
+  }catch(e){console.warn("extractTitleBlock error:",e);return null;}
+}
+
+// Try multiple pages to find the title block — first page, last page, then others
+async function extractTitleBlockMulti(pages){
+  if(!_apiKey||!pages?.length)return null;
+  // Priority order: first page (most common), last page, then page 2
+  const candidates=[pages[0],pages.length>1?pages[pages.length-1]:null,pages.length>2?pages[1]:null].filter(Boolean);
+  for(const pg of candidates){
+    let dataUrl=pg.dataUrl;
+    if(!dataUrl&&pg.storageUrl){try{const loaded=await ensureDataUrl(pg);dataUrl=loaded.dataUrl;}catch(e){continue;}}
+    if(!dataUrl)continue;
+    const tb=await extractTitleBlock(dataUrl);
+    if(tb&&(tb.drawingNo||tb.drawingDesc)){
+      console.log("TITLE BLOCK: found on page",pages.indexOf(pg)+1,"→",tb.drawingNo,tb.drawingDesc,tb.drawingRev);
+      return tb;
+    }
+  }
+  console.log("TITLE BLOCK: not found on any page");
+  return null;
 }
 
 // ── CPD PANEL METADATA EXTRACTION ──
@@ -10534,20 +10572,27 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     onUpdate(updated);
     setPendingPages([]);
     onSaveImmediate(updated).catch(()=>{});
-    // Fire title block extraction in background — don't block extraction start
-    if(_apiKey&&newItems.length>0){
-      const firstWithData=newItems.find(i=>i.dataUrl);
-      if(firstWithData){
-        extractTitleBlock(firstWithData.dataUrl).then(tb=>{
-          if(!tb)return;
-          const fresh=latestPanelRef.current;
-          const v=tb.voltages||{};
-          const patched={...fresh,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||"",...(v.lineVoltage&&v.lineVoltage!=="unknown"?{supplyVoltage:v.lineVoltage}:{}),...(v.controlVoltage&&v.controlVoltage!=="unknown"?{controlVoltage:v.controlVoltage}:{})};
-          onUpdate(patched);
-          setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
-          onSaveImmediate(patched).catch(()=>{});
-        }).catch(()=>{});
-      }
+    // DECISION(v1.19.474): Title block extraction — try multiple pages, use Sonnet for accuracy.
+    // Only auto-populate fields that are currently empty (don't overwrite user edits).
+    if(_apiKey&&livePages.length>0){
+      extractTitleBlockMulti(livePages).then(tb=>{
+        if(!tb)return;
+        const fresh=latestPanelRef.current;
+        const v=tb.voltages||{};
+        const patched={...fresh,
+          ...(!fresh.drawingNo&&tb.drawingNo?{drawingNo:(tb.drawingNo||"").slice(0,25)}:{}),
+          ...(!fresh.drawingDesc&&tb.drawingDesc?{drawingDesc:tb.drawingDesc}:{}),
+          ...(!fresh.drawingRev&&tb.drawingRev?{drawingRev:tb.drawingRev}:{}),
+          ...(v.lineVoltage&&v.lineVoltage!=="unknown"&&!fresh.supplyVoltage?{supplyVoltage:v.lineVoltage}:{}),
+          ...(v.controlVoltage&&v.controlVoltage!=="unknown"&&!fresh.controlVoltage?{controlVoltage:v.controlVoltage}:{})
+        };
+        if(JSON.stringify(patched)===JSON.stringify(fresh))return;
+        onUpdate(patched);
+        if(tb.drawingNo&&!fresh.drawingNo)setDraftNo((tb.drawingNo||"").slice(0,25));
+        if(tb.drawingDesc&&!fresh.drawingDesc)setDraftDesc(tb.drawingDesc);
+        if(tb.drawingRev&&!fresh.drawingRev)setDraftRev(tb.drawingRev);
+        onSaveImmediate(patched).catch(()=>{});
+      }).catch(()=>{});
     }
     // Start background extraction
     const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
