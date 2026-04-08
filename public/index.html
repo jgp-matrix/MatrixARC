@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.500";
+const APP_VERSION="v1.19.501";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20853,15 +20853,76 @@ function LeftNav({tab,onTabChange,pinned,onPinChange}){
   </>);
 }
 
-// ── PURCHASING TAB (placeholder) ──
+// ── PURCHASING TAB (module iframe loader) ──
 function PurchasingTab(){
-  return(<div style={{padding:48,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400}}>
-    <div style={{fontSize:48,marginBottom:16,opacity:0.3}}>⬡</div>
-    <div style={{fontSize:20,fontWeight:700,color:"#94a3b8",marginBottom:8}}>Purchasing</div>
-    <div style={{fontSize:14,color:"#94a3b8",textAlign:"center",maxWidth:360,lineHeight:1.7}}>
-      Purchase order management, RFQ workflow, and BC purchase quote integration coming soon.
-    </div>
-  </div>);
+  const [moduleEnabled,setModuleEnabled]=useState(null); // null=loading, true/false
+  const iframeRef=useRef(null);
+
+  // Check if purchasing module is enabled for this company
+  useEffect(()=>{
+    if(!_appCtx.companyId){setModuleEnabled(false);return;}
+    fbDb.doc(`companies/${_appCtx.companyId}/config/modules`).get().then(doc=>{
+      const data=doc.exists?doc.data():{};
+      setModuleEnabled(!!(data.purchasing?.enabled));
+    }).catch(()=>setModuleEnabled(false));
+  },[]);
+
+  // Listen for messages from the iframe module
+  useEffect(()=>{
+    function onMsg(e){
+      if(e.data?.type==='arc-module-request-context'){
+        // Send context to the iframe
+        iframeRef.current?.contentWindow?.postMessage({
+          type:'arc-module-context',
+          ctx:{
+            uid:_appCtx.uid,
+            companyId:_appCtx.companyId,
+            role:_appCtx.role,
+            userEmail:fbAuth.currentUser?.email||'',
+            userName:fbAuth.currentUser?.displayName||'',
+            bcToken:_bcToken||null,
+            bcODataBase:typeof BC_ODATA_BASE!=='undefined'?BC_ODATA_BASE:null,
+            bcApiBase:typeof BC_API_BASE!=='undefined'?BC_API_BASE:null,
+            bcEnv:_bcConfig?.env||null,
+            company:_appCtx.company||{},
+          }
+        },'*');
+      }
+      if(e.data?.type==='arc-module-navigate-back'){
+        // Module requested navigation back to main app
+        // This is handled by the parent — no action needed since we're in a tab
+      }
+    }
+    window.addEventListener('message',onMsg);
+    return()=>window.removeEventListener('message',onMsg);
+  },[]);
+
+  if(moduleEnabled===null)return(<div style={{padding:48,textAlign:"center",color:C.muted}}>Loading module...</div>);
+
+  if(!moduleEnabled){
+    return(<div style={{padding:48,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400}}>
+      <div style={{fontSize:48,marginBottom:16,opacity:0.3}}>⬡</div>
+      <div style={{fontSize:20,fontWeight:700,color:"#94a3b8",marginBottom:8}}>Purchasing Module</div>
+      <div style={{fontSize:14,color:"#94a3b8",textAlign:"center",maxWidth:360,lineHeight:1.7,marginBottom:20}}>
+        The Purchasing module is not enabled for your company. Contact an administrator to enable it.
+      </div>
+      {_appCtx.role==='admin'&&(
+        <button onClick={async()=>{
+          await fbDb.doc(`companies/${_appCtx.companyId}/config/modules`).set({purchasing:{enabled:true,enabledAt:Date.now(),enabledBy:_appCtx.uid}},{merge:true});
+          setModuleEnabled(true);
+        }} style={{background:C.accent,color:'#fff',border:'none',padding:'10px 24px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:700}}>
+          Enable Purchasing Module
+        </button>
+      )}
+    </div>);
+  }
+
+  return(<iframe
+    ref={iframeRef}
+    src="/purchasing/"
+    style={{width:'100%',height:'calc(100vh - 56px)',border:'none',background:'#0d0d1a'}}
+    title="ARC Purchasing Module"
+  />);
 }
 
 // ── VENDOR CLASSIFIER — used by migration tool and sync panel ──
