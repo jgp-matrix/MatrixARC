@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.505";
+const APP_VERSION="v1.19.506";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11530,12 +11530,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             }
             updatedBom=updatedBom.map(r=>{const key=String(r.id);return key in poMap?{...r,bcPoDate:poMap[key]}:r;});
           }
-          // DECISION(v1.19.503): Skip BC items priced within configurable threshold (default 60 days).
+          // DECISION(v1.19.506): Skip BC items priced within threshold, BUT always re-check "No PO" items
+          // (items with priceSource=bc but no bcPoDate — they have BC item card price but no vendor quote).
           const _bcStaleMs=(_pricingConfig.bcStaleDays||60)*24*60*60*1000;
           const eligible=bom.filter(r=>{
             if(r.isLaborRow)return false;
             const ps=r.priceSource;
             if(ps==="manual")return false;
+            // Always re-check "No PO" items — they need vendor pricing confirmation
+            const noPo=ps==="bc"&&r.unitPrice>0&&!r.bcPoDate;
+            if(noPo)return true;
             if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_bcStaleMs&&ps==="bc")return false;
             return true;
           });
@@ -11604,6 +11608,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const _codaleStaleDays=(_pricingConfig.codaleStaleDays||30)*24*60*60*1000;
     const codaleItems=updatedBom.filter(r=>{
       if(r.isLaborRow||!/codale/i.test(r.bcVendorName||""))return false;
+      // Always re-price "No PO" items
+      if(r.priceSource==="bc"&&r.unitPrice>0&&!r.bcPoDate)return true;
       if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_codaleStaleDays&&r.priceSource==="bc")return false;
       return true;
     });
@@ -11660,9 +11666,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const _scraperStaleMs=(scraper.staleDays||_pricingConfig.defaultStaleDays||60)*24*60*60*1000;
         const scraperItems=updatedBom.filter(r=>{
           if(r.isLaborRow||r.priceSource==="manual")return false;
-          if(r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_scraperStaleMs)return false;
           const vn=(r.bcVendorName||"").toLowerCase();
-          return matchTerms.some(t=>vn.includes(t.toLowerCase()));
+          if(!matchTerms.some(t=>vn.includes(t.toLowerCase())))return false;
+          // Always re-price "No PO" items
+          if(r.priceSource==="bc"&&r.unitPrice>0&&!r.bcPoDate)return true;
+          if(r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_scraperStaleMs)return false;
+          return true;
         });
         if(!scraperItems.length)continue;
         _pp({msg:`${scraper.name}: Fetching prices for ${scraperItems.length} items…`,pct:49});
