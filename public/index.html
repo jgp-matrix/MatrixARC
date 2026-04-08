@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.499";
+const APP_VERSION="v1.19.500";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15716,9 +15716,12 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                       <input value={newContactPhone} onChange={e=>setNewContactPhone(e.target.value)} placeholder="Phone" style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",width:100}}/>
                       {newContactErr&&<span style={{fontSize:10,color:C.red}}>{newContactErr}</span>}
                       <button onClick={async()=>{
-                        if(!newContactName.trim())return;setCreatingContact(true);setNewContactErr("");
+                        if(!newContactName.trim())return;
+                        const _ce=newContactEmail.trim().replace(/@+$/,"").replace(/\.+$/,"");
+                        if(_ce&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(_ce)){setNewContactErr("Check email formatting");return;}
+                        setCreatingContact(true);setNewContactErr("");
                         try{
-                          const c=await bcCreateContact(newContactName.trim(),project.bcCustomerNumber,newContactEmail.trim(),newContactPhone.trim());
+                          const c=await bcCreateContact(newContactName.trim(),project.bcCustomerNumber,_ce,newContactPhone.trim());
                           const fresh=await bcFetchCustomerContacts(project.bcCustomerNumber);setContactPersons(fresh);
                           // Auto-select the new contact
                           const upd={...project,bcContactNo:c.number,bcContactName:c.displayName,bcContactEmail:c.email,bcContactPhone:c.phone,
@@ -19698,9 +19701,12 @@ function NewProjectModal({uid,onCreated,onClose}){
                   <div style={{display:"flex",gap:8}}>
                     <button type="button" onClick={()=>{setShowNewContact(false);setNewContactErr("");}} style={btn(C.border,C.sub,{flex:1,fontSize:12})}>Cancel</button>
                     <button type="button" onClick={async()=>{
-                      if(!newContactName.trim())return;setCreatingContact(true);setNewContactErr("");
+                      if(!newContactName.trim())return;
+                      const _ce2=newContactEmail.trim().replace(/@+$/,"").replace(/\.+$/,"");
+                      if(_ce2&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(_ce2)){setNewContactErr("Check email formatting");return;}
+                      setCreatingContact(true);setNewContactErr("");
                       try{
-                        const c=await bcCreateContact(newContactName.trim(),selectedCustomer.number,newContactEmail.trim(),newContactPhone.trim());
+                        const c=await bcCreateContact(newContactName.trim(),selectedCustomer.number,_ce2,newContactPhone.trim());
                         const fresh=await bcFetchCustomerContacts(selectedCustomer.number);setContactPersons(fresh);
                         setSelectedContact(c.number);setShowNewContact(false);setNewContactName("");setNewContactEmail("");setNewContactPhone("");
                       }catch(e){setNewContactErr(e.message||"Failed to create contact");}
