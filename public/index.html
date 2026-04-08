@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.498";
+const APP_VERSION="v1.19.499";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2006,7 +2006,10 @@ async function bcCreateContact(displayName,customerNumber,email,phone){
   if(!companyContactNo)console.warn("bcCreateContact: could not resolve company contact number for customer",customerNumber);
   const body={displayName,type:"Person"};
   if(companyContactNo)body.companyNumber=companyContactNo;
-  if(email)body.email=email;
+  // Sanitize email — trim whitespace, remove trailing @/dots, validate format
+  const cleanEmail=(email||"").trim().replace(/@+$/,"").replace(/\.+$/,"");
+  if(cleanEmail&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail))body.email=cleanEmail;
+  else if(cleanEmail)console.warn("bcCreateContact: invalid email skipped:",cleanEmail);
   if(phone)body.phoneNumber=phone;
   const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts`,{
     method:"POST",
