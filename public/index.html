@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.503";
+const APP_VERSION="v1.19.504";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10180,6 +10180,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [partCorrections,setPartCorrections]=useState([]);
   const [aiPricing,setAiPricing]=useState(false);
   const [pricingProgress,setPricingProgress]=useState(null);
+  const [pricingReport,setPricingReport]=useState(null); // null=hidden, {sections:[{source,obtained,skipped,failed,items}]}
   const [bcConnecting,setBcConnecting]=useState(false);
   const [bcError,setBcError]=useState("");
   const [validatingPanel,setValidatingPanel]=useState(false);
@@ -11498,6 +11499,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
     const _pp=(o)=>{setPricingProgress(o);if(onEpProgress)onEpProgress(o.pct);};
     setAiPricing(true);_pp({msg:"Getting prices…",pct:5});
+    // DECISION(v1.19.504): Collect pricing report for summary modal
+    const _report=[];
     let updatedBom=[...bom];
     let bcCount=0;
 
@@ -11583,10 +11586,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             setBcFuzzySuggestions(prev=>({...prev,...fuzzySugg}));
           }
           const fuzzyCount=Object.keys(fuzzySugg).length;
+          const bcSkipped=bom.filter(r=>!r.isLaborRow&&r.priceSource!=="manual"&&!eligible.includes(r)).length;
+          _report.push({source:"Business Central",obtained:bcCount,skipped:bcSkipped,failed:fuzzyCount,total:eligible.length,
+            items:eligible.filter(r=>!Object.keys(bcMap).includes(String(r.id))).map(r=>({pn:r.partNumber,reason:"Not found in BC"})).slice(0,10)});
           _pp({msg:`BC: ${bcCount} matched${fuzzyCount>0?`, ${fuzzyCount} need review`:""} of ${eligible.length}. AI for the rest…`,pct:40});
         }
       }catch(ex){
         console.warn("BC pricing phase failed:",ex);
+        _report.push({source:"Business Central",obtained:0,skipped:0,failed:0,total:0,error:ex.message});
         _pp({msg:`BC failed: ${ex.message||ex} — falling back to AI…`,pct:10});
       }
     }
@@ -11629,6 +11636,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(codaleCount>0)_pp({msg:`Codale: ${codaleCount} of ${codaleItems.length} prices obtained${codaleMissed.length>0?` (${codaleMissed.length} missed)`:""}`,pct:48});
       else _pp({msg:`Codale: 0 of ${codaleItems.length} prices found`,pct:48});
       if(codaleMissed.length>0)console.warn("Codale missed parts:",codaleMissed.join(", "));
+      _report.push({source:"Codale",obtained:codaleCount,skipped:0,failed:codaleMissed.length,total:codaleItems.length,
+        items:codaleMissed.map(pn=>({pn,reason:"Price not found on Codale"}))});
       bcCount+=codaleCount;
     }
 
@@ -11671,9 +11680,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             }
             return r;
           });
+          const scraperMissed=scraperItems.filter(r=>{const pn=(r.partNumber||"").trim().toUpperCase();const pr=results[pn]||results[(r.partNumber||"").trim()];return!pr||!pr.price;});
+          _report.push({source:scraper.name,obtained:scraperCount,skipped:0,failed:scraperMissed.length,total:scraperItems.length,
+            items:scraperMissed.map(r=>({pn:r.partNumber,reason:"Price not found"}))});
           if(scraperCount>0){bcCount+=scraperCount;_pp({msg:`${scraper.name}: ${scraperCount} prices obtained`,pct:52});}
           else _pp({msg:`${scraper.name}: no prices found`,pct:52});
-        }catch(e){console.warn(scraper.name+" pricing failed:",e);_pp({msg:`${scraper.name}: failed — ${e.message}`,pct:52});}
+        }catch(e){console.warn(scraper.name+" pricing failed:",e);
+          _report.push({source:scraper.name,obtained:0,skipped:0,failed:scraperItems.length,total:scraperItems.length,error:e.message,
+            items:scraperItems.map(r=>({pn:r.partNumber,reason:"Scraper error: "+e.message}))});
+          _pp({msg:`${scraper.name}: failed — ${e.message}`,pct:52});}
       }
     }catch(e){console.warn("Custom scraper pricing phase failed:",e);}
 
@@ -11710,8 +11725,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{await onSaveImmediate(updated);}catch(e){}
     const aiCount=updatedBom.filter(r=>r.priceSource==="ai").length;
     const totalPriced=updatedBom.filter(r=>r.unitPrice!=null).length;
+    // AI fallback report
+    if(unpricedBom.length>0){
+      const aiObtained=updatedBom.filter(r=>r.priceSource==="ai"&&r.unitPrice>0).length;
+      const aiMissed=unpricedBom.filter(r=>{const u=updatedBom.find(b=>b.id===r.id);return!u||!(u.unitPrice>0);});
+      _report.push({source:"AI Estimate",obtained:aiObtained,skipped:0,failed:aiMissed.length,total:unpricedBom.length,
+        items:aiMissed.map(r=>({pn:r.partNumber,reason:"AI could not estimate"})).slice(0,10)});
+    }
     _pp({msg:`✓ ${totalPriced} of ${bom.length} priced${bcCount>0?` (${bcCount} BC, ${aiCount} AI est.)`:""}.`,pct:100});
     setAiPricing(false);
+    // Show pricing report if there were any issues
+    if(_report.length>0)setPricingReport({sections:_report,totalPriced,totalItems:bom.length,bcCount,aiCount});
     pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
     // Auto-sync to BC after pricing is complete (not during extraction)
     if(bcProjectNumber&&_bcToken&&updatedBom.length>0){
@@ -12336,6 +12360,56 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {(panel.bom||[]).length>0&&<button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>}
             {(panel.bom||[]).length>0&&<button onClick={exportCADLinkBOM} style={btn("#0d1a2a","#38bdf8",{fontSize:12,padding:"4px 12px",border:"1px solid #38bdf844"})}>⬇ CADLink BOM</button>}
           </div>
+          {/* Pricing Report Modal */}
+          {pricingReport&&ReactDOM.createPortal(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onMouseDown={e=>{if(e.target===e.currentTarget)setPricingReport(null);}}>
+              <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:600,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexShrink:0}}>
+                  <span style={{fontSize:20}}>📊</span>
+                  <div>
+                    <div style={{fontSize:16,fontWeight:800,color:C.text}}>Pricing Report</div>
+                    <div style={{fontSize:12,color:C.muted}}>{pricingReport.totalPriced} of {pricingReport.totalItems} items priced — {pricingReport.bcCount} BC, {pricingReport.aiCount} AI</div>
+                  </div>
+                  <button onClick={()=>setPricingReport(null)} style={{marginLeft:"auto",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
+                </div>
+                <div style={{flex:1,overflowY:"auto"}}>
+                  {pricingReport.sections.map((sec,si)=>{
+                    const hasIssues=sec.failed>0||sec.error;
+                    const allGood=sec.obtained>0&&!sec.failed&&!sec.error;
+                    return(
+                      <div key={si} style={{marginBottom:12,padding:"10px 14px",background:sec.error?"rgba(239,68,68,0.06)":hasIssues?"rgba(245,158,11,0.06)":"rgba(74,222,128,0.06)",border:`1px solid ${sec.error?C.red+"44":hasIssues?"#f59e0b44":C.green+"44"}`,borderRadius:8}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                          <span style={{fontSize:14}}>{sec.error?"❌":allGood?"✅":"⚠️"}</span>
+                          <span style={{fontSize:13,fontWeight:700,color:C.text}}>{sec.source}</span>
+                          <span style={{fontSize:11,color:C.muted,marginLeft:"auto"}}>
+                            {sec.obtained>0&&<span style={{color:C.green,fontWeight:600}}>{sec.obtained} obtained</span>}
+                            {sec.skipped>0&&<span style={{color:C.muted,marginLeft:8}}>{sec.skipped} skipped</span>}
+                            {sec.failed>0&&<span style={{color:"#f59e0b",fontWeight:600,marginLeft:8}}>{sec.failed} missed</span>}
+                            {sec.total>0&&<span style={{color:C.muted,marginLeft:8}}>of {sec.total}</span>}
+                          </span>
+                        </div>
+                        {sec.error&&<div style={{fontSize:12,color:C.red,marginBottom:4}}>Error: {sec.error}</div>}
+                        {sec.items?.length>0&&(
+                          <div style={{maxHeight:120,overflowY:"auto",background:"#0a0a14",borderRadius:4,border:`1px solid ${C.border}33`,padding:"4px 0"}}>
+                            {sec.items.map((it,ii)=>(
+                              <div key={ii} style={{display:"flex",alignItems:"center",gap:8,padding:"3px 10px",fontSize:11,borderBottom:ii<sec.items.length-1?`1px solid ${C.border}22`:"none"}}>
+                                <span style={{color:"#f59e0b",fontWeight:700,fontSize:10,minWidth:10}}>!</span>
+                                <span style={{color:C.text,fontFamily:"monospace",fontWeight:600,minWidth:120}}>{it.pn||"—"}</span>
+                                <span style={{color:C.muted,flex:1}}>{it.reason||""}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{paddingTop:12,display:"flex",justifyContent:"flex-end",flexShrink:0}}>
+                  <button onClick={()=>setPricingReport(null)} style={{background:C.accent,color:"#fff",border:"none",padding:"8px 20px",borderRadius:6,cursor:"pointer",fontSize:13,fontWeight:700}}>Close</button>
+                </div>
+              </div>
+            </div>
+          ,document.body)}
           {showSnapshots&&(
             <div style={{marginBottom:12,background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px"}}>
               <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Restore Previous State</div>
