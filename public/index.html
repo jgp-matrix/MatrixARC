@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.502";
+const APP_VERSION="v1.19.503";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -939,12 +939,12 @@ function setTooltipsEnabled(v){
 }
 
 // ── PRICING CONFIG (loaded from Firestore) ──
-let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20};
+let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60};
 async function loadPricingConfig(uid){
   try{
     const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
     const d=await fbDb.doc(path).get();
-    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20};}
+    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60};}
   }catch(e){}
 }
 async function savePricingConfig(uid,cfg){
@@ -6694,6 +6694,9 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   const [bomVal,setBomVal]=useState(_pricingConfig.contingencyBOM);
   const [consVal,setConsVal]=useState(_pricingConfig.contingencyConsumables);
   const [budgPct,setBudgPct]=useState(_pricingConfig.budgetaryContingencyPct??20);
+  const [codaleStaleDays,setCodaleStaleDays]=useState(_pricingConfig.codaleStaleDays??30);
+  const [bcStaleDays,setBcStaleDays]=useState(_pricingConfig.bcStaleDays??60);
+  const [defaultStaleDays,setDefaultStaleDays]=useState(_pricingConfig.defaultStaleDays??60);
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
 
@@ -6813,7 +6816,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   async function save(){
     setSaving(true);
     await Promise.all([
-      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct}),
+      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays}),
       saveDefaultBomItems(uid,defaultItems),
       isAdmin()?saveLaborRates(uid,laborRates):Promise.resolve()
     ]);
@@ -6850,6 +6853,28 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             <span style={{color:C.muted,fontSize:14}}>%</span>
           </div>
           <div style={{fontSize:11,color:C.muted,marginTop:4}}>Hidden buffer added to budgetary sell price (default 20%)</div>
+        </div>
+
+        {/* ── PRICING REFRESH THRESHOLDS ── */}
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:6,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Price Refresh Thresholds</label>
+          <div style={{fontSize:11,color:C.muted,marginBottom:12}}>When "Get New Pricing" runs, items with prices newer than these thresholds are skipped. Scraper-specific thresholds can be set per scraper config below.</div>
+          <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:8}}>
+            {[
+              ["Codale",codaleStaleDays,setCodaleStaleDays,"Codale supplier portal"],
+              ["BC Items",bcStaleDays,setBcStaleDays,"Business Central item lookup"],
+              ["Default",defaultStaleDays,setDefaultStaleDays,"All other scrapers/APIs"],
+            ].map(([label,val,setter,desc])=>(
+              <div key={label} style={{flex:1,minWidth:120}}>
+                <div style={{fontSize:11,color:C.accent,fontWeight:700,marginBottom:3}}>{label}</div>
+                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                  <input type="number" min="1" max="365" value={val} onChange={e=>setter(Math.max(1,parseInt(e.target.value)||30))} style={{...inp(),width:60,textAlign:"right"}}/>
+                  <span style={{color:C.muted,fontSize:11}}>days</span>
+                </div>
+                <div style={{fontSize:10,color:C.muted,marginTop:2}}>{desc}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* ── AUTO-ADD BOM ITEMS ── */}
@@ -11502,15 +11527,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             }
             updatedBom=updatedBom.map(r=>{const key=String(r.id);return key in poMap?{...r,bcPoDate:poMap[key]}:r;});
           }
-          // DECISION(v1.19.397): When refreshing prices, skip items that already have BOTH a price AND a priceDate.
-          // Previously, all items were re-processed and BC lookups returning null/0 would wipe out existing dates.
-          // Only re-check items that are unpriced, undated, or explicitly overridden.
+          // DECISION(v1.19.503): Skip BC items priced within configurable threshold (default 60 days).
+          const _bcStaleMs=(_pricingConfig.bcStaleDays||60)*24*60*60*1000;
           const eligible=bom.filter(r=>{
             if(r.isLaborRow)return false;
             const ps=r.priceSource;
-            if(ps==="manual")return false; // Never touch manual prices
-            // If item already has a confirmed price with a date, skip it during refresh
-            if(!bomOverride&&r.unitPrice>0&&r.priceDate&&ps==="bc")return false;
+            if(ps==="manual")return false;
+            if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_bcStaleMs&&ps==="bc")return false;
             return true;
           });
           _pp({msg:`BC: Fuzzy-matching ${eligible.length} items…`,pct:27});
@@ -11569,11 +11592,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
 
     // Phase 1b: Codale auto-pricing for Codale-vendor items that need pricing
-    // DECISION(v1.19.502): Skip items with recent confirmed prices (within 90 days) unless forced via bomOverride
-    const _90days=90*24*60*60*1000;
+    // DECISION(v1.19.503): Use configurable stale days per supplier (Settings → Price Refresh Thresholds)
+    const _codaleStaleDays=(_pricingConfig.codaleStaleDays||30)*24*60*60*1000;
     const codaleItems=updatedBom.filter(r=>{
       if(r.isLaborRow||!/codale/i.test(r.bcVendorName||""))return false;
-      if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_90days&&r.priceSource==="bc")return false;
+      if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_codaleStaleDays&&r.priceSource==="bc")return false;
       return true;
     });
     if(codaleItems.length>0){
@@ -11623,9 +11646,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const matchTerms=(scraper.vendorMatch||scraper.name||"").split(",").map(s=>s.trim()).filter(Boolean);
         // DECISION(v1.19.393): Only scrape items that have NO price or NO priceDate.
         // Don't re-scrape items that already have confirmed pricing — saves time and API calls.
+        // DECISION(v1.19.503): Per-scraper staleDays — skip items priced within threshold
+        const _scraperStaleMs=(scraper.staleDays||_pricingConfig.defaultStaleDays||60)*24*60*60*1000;
         const scraperItems=updatedBom.filter(r=>{
           if(r.isLaborRow||r.priceSource==="manual")return false;
-          if(r.unitPrice>0&&r.priceDate)return false; // Already has confirmed price — skip
+          if(r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_scraperStaleMs)return false;
           const vn=(r.bcVendorName||"").toLowerCase();
           return matchTerms.some(t=>vn.includes(t.toLowerCase()));
         });
@@ -18971,8 +18996,12 @@ function APISetupModal({uid,onClose}){
                 <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Password</label>
                 <input value={editScraper.password||""} onChange={e=>setEditScraper(p=>({...p,password:e.target.value}))} placeholder="Portal password" type="password" style={inp()}/></div>
               </div>
-              <div><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Customer Account ID (verified after login)</label>
-              <input value={editScraper.accountId||""} onChange={e=>setEditScraper(p=>({...p,accountId:e.target.value}))} placeholder="e.g. 62103 or 71119" style={inp()}/></div>
+              <div style={{display:"flex",gap:8}}>
+                <div style={{flex:2}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Customer Account ID (verified after login)</label>
+                <input value={editScraper.accountId||""} onChange={e=>setEditScraper(p=>({...p,accountId:e.target.value}))} placeholder="e.g. 62103 or 71119" style={inp()}/></div>
+                <div style={{flex:1}}><label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Re-price After (days)</label>
+                <input type="number" min="1" max="365" value={editScraper.staleDays||60} onChange={e=>setEditScraper(p=>({...p,staleDays:Math.max(1,parseInt(e.target.value)||60)}))} style={inp()}/></div>
+              </div>
             </div>
             {/* Steps builder */}
             <div style={{marginBottom:12}}>
