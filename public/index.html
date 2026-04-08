@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.501";
+const APP_VERSION="v1.19.502";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11568,9 +11568,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }
 
-    // Phase 1b: Codale auto-pricing for ALL items with Codale vendor (refresh all prices)
-    // DECISION(v1.19.482): Process in batches of 30, show per-batch progress with part numbers
-    const codaleItems=updatedBom.filter(r=>!r.isLaborRow&&/codale/i.test(r.bcVendorName||""));
+    // Phase 1b: Codale auto-pricing for Codale-vendor items that need pricing
+    // DECISION(v1.19.502): Skip items with recent confirmed prices (within 90 days) unless forced via bomOverride
+    const _90days=90*24*60*60*1000;
+    const codaleItems=updatedBom.filter(r=>{
+      if(r.isLaborRow||!/codale/i.test(r.bcVendorName||""))return false;
+      if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_90days&&r.priceSource==="bc")return false;
+      return true;
+    });
     if(codaleItems.length>0){
       const CODALE_BATCH=30;
       const codaleMap={};
