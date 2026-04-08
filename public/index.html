@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.506";
+const APP_VERSION="v1.19.507";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11498,7 +11498,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(!bomOverride)saveSnapshot(uid,projectId,panel,"Before Get New Pricing").catch(()=>{});
     if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
     const _pp=(o)=>{setPricingProgress(o);if(onEpProgress)onEpProgress(o.pct);};
-    setAiPricing(true);_pp({msg:"Getting prices…",pct:5});
+    setAiPricing(true);
+    let _fetched=0,_totalEligible=0;
+    const _ppCount=(o)=>{_pp({...o,msg:o.msg+(_fetched>0?` (${_fetched} priced so far)`:"")});};
+    _pp({msg:"Getting prices…",pct:5});
     // DECISION(v1.19.504): Collect pricing report for summary modal
     const _report=[];
     let updatedBom=[...bom];
@@ -11543,7 +11546,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_bcStaleMs&&ps==="bc")return false;
             return true;
           });
-          _pp({msg:`BC: Fuzzy-matching ${eligible.length} items…`,pct:27});
+          _totalEligible=eligible.length;
+          _pp({msg:`BC: Matching ${eligible.length} items…`,pct:27});
           await bcGetVendorMap();
           const bcMap={};
           const fuzzySugg={};
@@ -11551,7 +11555,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const row=eligible[i];
             const pn=(row.partNumber||"").trim();
             if(!pn)continue;
-            _pp({msg:`BC: ${row.priceSource==="bc"?"Refreshing":"Fuzzy lookup"} ${i+1}/${eligible.length}: ${pn}`,pct:27+Math.round((i/eligible.length)*20)});
+            _pp({msg:`BC: ${i+1} of ${eligible.length} — ${pn}`,pct:27+Math.round((i/eligible.length)*20)});
             // Already bc-priced: exact lookup to get current cost (don't fuzzy-match, avoid changing part number)
             if(row.priceSource==="bc"){
               const exact=await bcLookupItem(pn);
@@ -11621,7 +11625,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const batch=codaleItems.slice(ci,ci+CODALE_BATCH);
         const batchNum=Math.floor(ci/CODALE_BATCH)+1;
         const totalBatches=Math.ceil(codaleItems.length/CODALE_BATCH);
-        _pp({msg:`Codale: Obtaining pricing ${ci+1}-${ci+batch.length} of ${codaleItems.length}${totalBatches>1?` (batch ${batchNum}/${totalBatches})`:""} …`,pct:45+Math.round((ci/codaleItems.length)*3)});
+        _pp({msg:`Codale: ${ci+1} of ${codaleItems.length} items${totalBatches>1?` (batch ${batchNum}/${totalBatches})`:""} …`,pct:45+Math.round((ci/codaleItems.length)*3)});
         try{
           const pns=batch.map(r=>(r.partNumber||"").trim()).filter(Boolean);
           const cr=await fn({partNumbers:pns});
@@ -11674,7 +11678,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           return true;
         });
         if(!scraperItems.length)continue;
-        _pp({msg:`${scraper.name}: Fetching prices for ${scraperItems.length} items…`,pct:49});
+        _pp({msg:`${scraper.name}: 1 of ${scraperItems.length} items…`,pct:49});
         const fn=firebase.functions().httpsCallable("customScraperBatch",{timeout:300000});
         try{
           const pns=scraperItems.map(r=>(r.partNumber||"").trim()).filter(Boolean);
@@ -11712,7 +11716,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const batchIdx=Math.floor(i/BATCH);
         const basePct=_bcToken?45:5;
         const pctRange=_bcToken?45:90;
-        _pp({msg:`AI pricing ${i+1}–${Math.min(i+BATCH,unpricedBom.length)} of ${unpricedBom.length} remaining items…`,pct:basePct+Math.round((batchIdx/total)*pctRange)});
+        _pp({msg:`AI estimate: ${i+1} of ${unpricedBom.length} remaining…`,pct:basePct+Math.round((batchIdx/total)*pctRange)});
         const batch=unpricedBom.slice(i,i+BATCH);
         try{
           const map=await estimatePrices(batch);
