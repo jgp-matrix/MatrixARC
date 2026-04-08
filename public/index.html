@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.504";
+const APP_VERSION="v1.19.505";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11586,9 +11586,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             setBcFuzzySuggestions(prev=>({...prev,...fuzzySugg}));
           }
           const fuzzyCount=Object.keys(fuzzySugg).length;
-          const bcSkipped=bom.filter(r=>!r.isLaborRow&&r.priceSource!=="manual"&&!eligible.includes(r)).length;
-          _report.push({source:"Business Central",obtained:bcCount,skipped:bcSkipped,failed:fuzzyCount,total:eligible.length,
-            items:eligible.filter(r=>!Object.keys(bcMap).includes(String(r.id))).map(r=>({pn:r.partNumber,reason:"Not found in BC"})).slice(0,10)});
+          const bcSkipped=bom.filter(r=>!r.isLaborRow&&r.priceSource!=="manual"&&!eligible.includes(r)&&r.unitPrice>0).length;
+          const bcMissed=eligible.filter(r=>!Object.keys(bcMap).includes(String(r.id)));
+          _report.push({source:"Business Central",obtained:bcCount,skipped:bcSkipped,failed:bcMissed.length,total:eligible.length+bcSkipped,
+            items:bcMissed.map(r=>({pn:r.partNumber,reason:"Not matched in BC"})).slice(0,15)});
           _pp({msg:`BC: ${bcCount} matched${fuzzyCount>0?`, ${fuzzyCount} need review`:""} of ${eligible.length}. AI for the rest…`,pct:40});
         }
       }catch(ex){
@@ -12337,10 +12338,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               BILL OF MATERIALS — {(panel.bom||[]).length} items
             </div>
             {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
-              <button data-tip="Re-run AI pricing on all BOM rows to fetch current prices from Business Central" onClick={()=>runPricingOnPanel()} disabled={aiPricing}
-                style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,cursor:aiPricing?"default":"pointer"})}>
-                {aiPricing?"Refreshing…":"↻ Get New Pricing"}
-              </button>
+              <div style={{position:"relative",display:"inline-flex"}}>
+                <button data-tip="Refresh pricing — skips items priced within threshold" onClick={()=>runPricingOnPanel()} disabled={aiPricing}
+                  style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,cursor:aiPricing?"default":"pointer",borderRadius:"6px 0 0 6px"})}>
+                  {aiPricing?"Refreshing…":"↻ Get New Pricing"}
+                </button>
+                <button disabled={aiPricing} onClick={()=>{if(confirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item."))runPricingOnPanel(panel.bom,panel);}}
+                  style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 6px",opacity:aiPricing?0.5:1,cursor:aiPricing?"default":"pointer",borderRadius:"0 6px 6px 0",borderLeft:`1px solid ${C.accent}33`})}
+                  title="Force refresh all prices — ignores stale thresholds">▾</button>
+              </div>
             )}
             {!readOnly&&(
               <button onClick={async()=>{
