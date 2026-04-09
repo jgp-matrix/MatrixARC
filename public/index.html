@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>ARC by Parallax Software</title>
+<title>ARC by CoreVega Software</title>
 <link rel="manifest" href="/manifest.json"/>
 <meta name="theme-color" content="#1a1a2e"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.517";
+const APP_VERSION="v1.19.518";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7417,7 +7417,7 @@ function LoginScreen({invite}){
       <div style={{textAlign:"center",marginBottom:32}}>
         <div style={{fontSize:104,marginBottom:10}}>⬡</div>
         <div style={{fontFamily:"'Orbitron',sans-serif",fontSize:64,fontWeight:900,letterSpacing:8,color:C.accent,lineHeight:1}}>ARC</div>
-        <div style={{fontSize:14,color:C.muted,fontWeight:500,marginTop:6,letterSpacing:2}}>by <span style={{color:"#38bdf8",fontWeight:700,letterSpacing:1}}>Parallax</span> Software</div>
+        <div style={{fontSize:14,color:C.muted,fontWeight:500,marginTop:6,letterSpacing:2}}>by <span style={{color:"#38bdf8",fontWeight:700,letterSpacing:1}}>CoreVega</span> Software</div>
         <div style={{fontSize:13,color:C.muted,marginTop:4,opacity:0.6}}>{APP_VERSION}</div>
       </div>
       {invite&&(
@@ -22318,7 +22318,7 @@ function App({user}){
       const niqDocs=await loadNIQ();
       const niqContext=searchNIQ(niqDocs,q.toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w.length>=3));
 
-      const systemPrompt=`You are ARC AI — the expert assistant built into the ARC (Automated Review & Costing) platform by RedPill Software, powered by ARC Neural IQ (NIQ).
+      const systemPrompt=`You are ARC AI — the expert assistant built into the ARC (Automated Review & Costing) platform by CoreVega Software, powered by ARC Neural IQ (NIQ).
 
 ABOUT MATRIX SYSTEMS:
 Matrix Systems (Matrix Panel & Control Inc.) is a UL508A and CSA C22.2 No. 286 certified industrial control panel shop. They design, build, wire, and certify custom industrial control panels for clients across manufacturing, water/wastewater, HVAC, and industrial automation. Their work includes:
@@ -22750,7 +22750,7 @@ INSTRUCTIONS:
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",
             transition:"all 0.7s cubic-bezier(0.4,0,0.2,1)",
             transform:splash==="shrinking"?"translateY(-44vh) scale(0.38)":"translateY(0) scale(1)"}}>
-            <img src="/parallax_logo.svg" alt="Parallax Software" style={{height:200,objectFit:"contain",marginBottom:16}}/>
+            <img src="/corevega_logo_stacked.png" alt="CoreVega Software" style={{height:200,objectFit:"contain",marginBottom:16}}/>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:80,fontWeight:900,letterSpacing:8,marginBottom:4,lineHeight:1,color:C.accent}}>ARC</span>
             <span style={{fontSize:15,color:C.muted,letterSpacing:2,marginBottom:32}}>Powered by <span style={{color:C.accent,fontWeight:700}}>ARC Neural IQ</span></span>
           </div>
@@ -22765,8 +22765,8 @@ INSTRUCTIONS:
       <div style={{position:"fixed",top:0,left:0,right:0,zIndex:500,pointerEvents:"none"}}>
         {/* Main toolbar row */}
         <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",height:78,gap:6,position:"relative",pointerEvents:"auto"}}>
-          {/* RedPill logo — left side */}
-          <img src="/parallax_logo.svg" alt="Parallax Software" style={{width:220,maxHeight:60,objectFit:"contain",cursor:"pointer",flexShrink:0}} onClick={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);})}/>
+          {/* CoreVega logo — left side */}
+          <img src="/corevega_logo.png" alt="CoreVega Software" style={{width:220,maxHeight:60,objectFit:"contain",cursor:"pointer",flexShrink:0}} onClick={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);})}/>
           {/* ARC branding — centered */}
           <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1,pointerEvents:"none"}}>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:28,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
