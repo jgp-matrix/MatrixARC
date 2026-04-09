@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.511";
+const APP_VERSION="v1.19.512";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -22907,7 +22907,7 @@ INSTRUCTIONS:
       <div style={{flex:1,minWidth:0,overflowY:"auto"}}>
       <VendorSyncFloater onSwitchToItems={()=>{setNavTab("items");}}/>
       {navTab==="production"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
-      {navTab==="purchasing"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="purchasing"/>}
+      {navTab==="purchasing"&&<PurchasingTab/>}
       {navTab==="items"&&<ItemsTab uid={user.uid}/>}
       {navTab==="projects"&&<>
       {/* BC Connection Lost popup */}
