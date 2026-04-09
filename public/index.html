@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.507";
+const APP_VERSION="v1.19.508";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6527,10 +6527,12 @@ function Badge({status,project}){
     const quoteSent=!!project.quoteSentAt;
     const allPanels=project.panels||[];
     const hasBom=allPanels.some(pan=>(pan.bom||[]).length>0);
-    const hasUnpriced=hasBom&&allPanels.some(pan=>(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.customerSupplied).some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate));
+    // DECISION(v1.19.508): "No PO" items (priced but no bcPoDate) count as needing RFQ — they lack vendor confirmation
+    const hasUnpriced=hasBom&&allPanels.some(pan=>(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.customerSupplied&&!r.isContingency&&!/matrix\s*systems/i.test(r.bcVendorName||"")&&!/^job.?buyoff$/i.test(r.partNumber||"")&&!/crate/i.test(r.description||"")).some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate));
+    const hasNoPo=hasBom&&allPanels.some(pan=>(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.customerSupplied&&!r.isContingency&&!/matrix\s*systems/i.test(r.bcVendorName||"")&&!/^job.?buyoff$/i.test(r.partNumber||"")&&!/crate/i.test(r.description||"")).some(r=>r.priceSource==="bc"&&r.unitPrice>0&&!r.bcPoDate));
     if(quoteSent)effectiveStatus=isBudgetary?"budgetary_sent":"firm_sent";
-    else if(hasUnpriced&&hasBom)effectiveStatus="rfqs";
-    else if(hasBom&&!hasUnpriced)effectiveStatus="extracted";
+    else if((hasUnpriced||hasNoPo)&&hasBom)effectiveStatus="rfqs";
+    else if(hasBom&&!hasUnpriced&&!hasNoPo)effectiveStatus="extracted";
   }
   const map={
     draft:["#3d1a00","#f97316","Draft"],
