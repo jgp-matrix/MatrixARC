@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.509";
+const APP_VERSION="v1.19.510";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6508,36 +6508,43 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
   );
 }
 
-function projectStatus(project){
+// DECISION(v1.19.510): Single source of truth for project effective status.
+// ALL status displays (Badge, Dashboard columns, Quote Summary, PanelCard) use this function.
+function _isExcludedFromPriceCheck(r){
+  return r.isLaborRow||r.customerSupplied||r.isContingency||/matrix\s*systems/i.test(r.bcVendorName||"")||/^job.?buyoff$/i.test(r.partNumber||"")||/crate/i.test(r.description||"");
+}
+function computeProjectEffectiveStatus(project){
+  if(!project)return"draft";
   const panels=project.panels||[];
   if(!panels.length)return project.status||"draft";
+  const isBudgetary=panels.some(pan=>(pan.pricing||{}).isBudgetary);
+  const quoteSent=!!project.quoteSentAt;
+  const hasBom=panels.some(pan=>(pan.bom||[]).some(r=>!r.isLaborRow));
+  // Check pricing completeness across all panels
+  const priceable=panels.flatMap(pan=>(pan.bom||[]).filter(r=>!_isExcludedFromPriceCheck(r)));
+  const hasUnpriced=hasBom&&priceable.some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate);
+  const hasNoPo=hasBom&&priceable.some(r=>r.priceSource==="bc"&&r.unitPrice>0&&!r.bcPoDate);
+  // Pipeline status from panel statuses
   const readySet=new Set(["extracted","validated","costed","quoted","pushed_to_bc"]);
   const statuses=panels.map(p=>p.status||"draft");
-  if(statuses.some(s=>!readySet.has(s)))return "in_progress";
-  const rank={extracted:1,validated:2,costed:3,quoted:4,pushed_to_bc:5};
-  const rankToStatus=["extracted","validated","costed","quoted","pushed_to_bc"];
-  const maxRank=Math.max(...statuses.map(s=>rank[s]||1));
-  return rankToStatus[maxRank-1]||"extracted";
+  let pipelineStatus;
+  if(statuses.some(s=>!readySet.has(s)))pipelineStatus="in_progress";
+  else{const rank={extracted:1,validated:2,costed:3,quoted:4,pushed_to_bc:5};const maxR=Math.max(...statuses.map(s=>rank[s]||1));pipelineStatus=["extracted","validated","costed","quoted","pushed_to_bc"][maxR-1]||"extracted";}
+  // Effective status: quote sent > RFQ needed > pipeline status
+  if(quoteSent)return isBudgetary?"budgetary_sent":"firm_sent";
+  if((hasUnpriced||hasNoPo)&&hasBom)return"rfqs";
+  if(hasBom&&!hasUnpriced&&!hasNoPo)return"evc"; // Ready to review/send
+  return pipelineStatus;
 }
+// Legacy wrapper — used by dashboard grouping and other callers
+function projectStatus(project){return computeProjectEffectiveStatus(project);}
 function Badge({status,project}){
-  // Dynamic status based on project state
-  let effectiveStatus=status;
-  if(project){
-    const isBudgetary=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
-    const quoteSent=!!project.quoteSentAt;
-    const allPanels=project.panels||[];
-    const hasBom=allPanels.some(pan=>(pan.bom||[]).length>0);
-    // DECISION(v1.19.508): "No PO" items (priced but no bcPoDate) count as needing RFQ — they lack vendor confirmation
-    const hasUnpriced=hasBom&&allPanels.some(pan=>(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.customerSupplied&&!r.isContingency&&!/matrix\s*systems/i.test(r.bcVendorName||"")&&!/^job.?buyoff$/i.test(r.partNumber||"")&&!/crate/i.test(r.description||"")).some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate));
-    const hasNoPo=hasBom&&allPanels.some(pan=>(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.customerSupplied&&!r.isContingency&&!/matrix\s*systems/i.test(r.bcVendorName||"")&&!/^job.?buyoff$/i.test(r.partNumber||"")&&!/crate/i.test(r.description||"")).some(r=>r.priceSource==="bc"&&r.unitPrice>0&&!r.bcPoDate));
-    if(quoteSent)effectiveStatus=isBudgetary?"budgetary_sent":"firm_sent";
-    else if((hasUnpriced||hasNoPo)&&hasBom)effectiveStatus="rfqs";
-    else if(hasBom&&!hasUnpriced&&!hasNoPo)effectiveStatus="extracted";
-  }
+  const effectiveStatus=project?computeProjectEffectiveStatus(project):status;
   const map={
     draft:["#3d1a00","#f97316","Draft"],
     in_progress:[C.yellowDim,C.yellow,"In Process"],
     rfqs:[C.redDim,C.red,"RFQ's"],
+    evc:[C.greenDim,C.green,"Ready"],
     extracted:[C.greenDim,C.green,"Ready"],
     validated:[C.greenDim,C.green,"Ready"],
     costed:[C.greenDim,C.green,"Ready"],
@@ -16188,11 +16195,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                           even if the pricing didn't go through runPricingOnPanel. */}
                       {(()=>{const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;
                         if(openEqs>0)return React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:"1px solid #fde04766",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:"#fde047",animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?");
-                        const bomRows=(p.bom||[]).filter(r=>!r.isLaborRow);
-                        const hasBom=bomRows.length>0;
-                        const allPriced=hasBom&&bomRows.every(r=>r.unitPrice>0||r.customerSupplied||/^job.?buyoff$/i.test(r.partNumber||"")||/crat(e|ing)/i.test(r.description||""));
-                        const computedStatus=allPriced?"costed":hasBom?(p.status==="draft"?"extracted":p.status||"extracted"):(p.status||"draft");
-                        return React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer"}},React.createElement(Badge,{status:computedStatus}));})()}
+                        // DECISION(v1.19.510): Use project-level effective status — single source of truth
+                        return React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer"}},React.createElement(Badge,{status:computeProjectEffectiveStatus(project)}));})()}
                       {ppr.isBudgetary&&<span style={{fontSize:9,fontWeight:700,color:"#f59e0b",background:"#3a1f00",borderRadius:4,padding:"1px 5px",flexShrink:0}}>BUDGETARY</span>}
                       <span style={{fontSize:13,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{pfmt(psp*pqty)}</span>
                     </div>
@@ -20573,21 +20577,17 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="status"){
+      // DECISION(v1.19.510): Use computeProjectEffectiveStatus for column routing — single source of truth
       const order=["draft","in_progress","process_rfq","evc","quotes_sent"];
       const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQ's Send/Receive",evc:"Ready To Review/Send",quotes_sent:"Quotes Sent"};
+      const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc:"evc",extracted:"evc",validated:"evc",costed:"evc",quoted:"evc",pushed_to_bc:"evc",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
       const map={};
       list.forEach(p=>{
-        if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")return; // skip — shown in PURCHASING/PRODUCTION tabs
-        // Quotes Sent = user explicitly marked quote as sent to client
-        if(p.quoteSentAt){if(!map.quotes_sent)map.quotes_sent=[];map.quotes_sent.push(p);return;}
-        // Process RFQs = has BOM items that are unpriced (unitPrice 0/null or no priceDate)
-        const allPanels=p.panels||[];
-        const hasBom=allPanels.some(pan=>(pan.bom||[]).length>0);
-        const hasUnpriced=hasBom&&allPanels.some(pan=>(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.customerSupplied).some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate));
-        if(hasUnpriced){if(!map.process_rfq)map.process_rfq=[];map.process_rfq.push(p);return;}
-        // If has BOM and all items are priced → Ready To Review/Send
-        if(hasBom&&!hasUnpriced){if(!map.evc)map.evc=[];map.evc.push(p);return;}
-        let st=projectStatus(p);if(st==="extracted"||st==="validated"||st==="costed"||st==="quoted"||st==="pushed_to_bc")st="evc";if(!map[st])map[st]=[];map[st].push(p);
+        if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")return;
+        const st=computeProjectEffectiveStatus(p);
+        const col=statusToCol[st]||"draft";
+        if(!map[col])map[col]=[];
+        map[col].push(p);
       });
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
@@ -20734,9 +20734,9 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
               <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                 {transferred.map(p=>{
                   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
-                  const st=projectStatus(p);
-                  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8"};
-                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC"};
+                  const st=computeProjectEffectiveStatus(p);
+                  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8",budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
+                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC",budgetary_sent:"SENT",firm_sent:"SENT"};
                   return(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
                     style={{...card({padding:"10px 14px"}),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s",display:"flex",flexDirection:"column"}}
@@ -20907,10 +20907,10 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
-  const st=projectStatus(p);
+  const st=computeProjectEffectiveStatus(p);
   const bcDisconnected=p.bcEnv&&p.bcEnv!==_bcConfig.env;
-  const statusColors={draft:C.muted,in_progress:C.yellow,extracted:C.green,validated:C.green,costed:C.green};
-  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",extracted:"READY",validated:"READY",costed:"READY"};
+  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
+  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",budgetary_sent:"SENT",firm_sent:"SENT"};
   return(
   <div className="fade-in" onClick={()=>onOpen(p)}
     draggable={isDraggable||false}
