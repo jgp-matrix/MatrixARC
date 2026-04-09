@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.516";
+const APP_VERSION="v1.19.517";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20673,14 +20673,23 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           myProjects=myProjects.filter(p=>p.createdBy===uid||p.bcSalespersonCode===(_appCtx.role&&window._arcSalespersonCache?.find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Code));
         }
         // Apply search filter
+        // DECISION(v1.19.517): Deep search ALL string fields in the project object
         if(projectSearch.trim()){
           const q=projectSearch.trim().toLowerCase();
-          myProjects=myProjects.filter(p=>{
-            const fields=[p.name,p.bcProjectNumber,p.customerName,p.drawingNo,
-              ...(p.panels||[]).flatMap(pan=>[pan.name,pan.drawingNo,pan.drawingDesc,
-                ...(pan.bom||[]).map(r=>r.partNumber),...(pan.bom||[]).map(r=>r.description),...(pan.bom||[]).map(r=>r.bcVendorName)])];
-            return fields.some(f=>(f||"").toLowerCase().includes(q));
-          });
+          function deepSearch(obj,q,depth){
+            if(depth>3||!obj)return false;
+            if(typeof obj==="string")return obj.toLowerCase().includes(q);
+            if(typeof obj==="number")return String(obj).includes(q);
+            if(Array.isArray(obj))return obj.some(v=>deepSearch(v,q,depth+1));
+            if(typeof obj==="object"){
+              for(const k in obj){
+                if(k==="dataUrl"||k==="storageUrl"||k==="extractionFeedbackLog")continue; // skip large/binary fields
+                if(deepSearch(obj[k],q,depth+1))return true;
+              }
+            }
+            return false;
+          }
+          myProjects=myProjects.filter(p=>deepSearch(p,q,0));
         }
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
