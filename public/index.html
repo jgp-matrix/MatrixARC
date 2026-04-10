@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.520";
+const APP_VERSION="v1.19.521";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6523,18 +6523,20 @@ function computeProjectEffectiveStatus(project){
   // Check pricing completeness across all panels
   const priceable=panels.flatMap(pan=>(pan.bom||[]).filter(r=>!_isExcludedFromPriceCheck(r)));
   const hasUnpriced=hasBom&&priceable.some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate);
-  // "No PO" only matters if the item also has no priceDate — if priceDate is set, price is confirmed
-  const hasNoPo=hasBom&&priceable.some(r=>r.priceSource==="bc"&&r.unitPrice>0&&!r.bcPoDate&&!r.priceDate);
+  // DECISION(v1.19.521): RFQ status = has items with RFQs sent but no vendor-confirmed price yet.
+  // "No PO" alone doesn't trigger RFQ — items can have BC Item Card prices without Purchase Price records.
+  // What matters is whether there are outstanding RFQs awaiting supplier response.
+  const hasActiveRfqs=hasBom&&priceable.some(r=>r.rfqSentDate&&!r.bcPoDate);
   // Pipeline status from panel statuses
   const readySet=new Set(["extracted","validated","costed","quoted","pushed_to_bc"]);
   const statuses=panels.map(p=>p.status||"draft");
   let pipelineStatus;
   if(statuses.some(s=>!readySet.has(s)))pipelineStatus="in_progress";
   else{const rank={extracted:1,validated:2,costed:3,quoted:4,pushed_to_bc:5};const maxR=Math.max(...statuses.map(s=>rank[s]||1));pipelineStatus=["extracted","validated","costed","quoted","pushed_to_bc"][maxR-1]||"extracted";}
-  // Effective status: quote sent > RFQ needed > pipeline status
+  // Effective status: quote sent > unpriced/active RFQs > ready
   if(quoteSent)return isBudgetary?"budgetary_sent":"firm_sent";
-  if((hasUnpriced||hasNoPo)&&hasBom)return"rfqs";
-  if(hasBom&&!hasUnpriced&&!hasNoPo)return"evc"; // Ready to review/send
+  if((hasUnpriced||hasActiveRfqs)&&hasBom)return"rfqs";
+  if(hasBom&&!hasUnpriced&&!hasActiveRfqs)return"evc"; // Ready to review/send
   return pipelineStatus;
 }
 // Legacy wrapper — used by dashboard grouping and other callers
