@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.551";
+const APP_VERSION="v1.19.552";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10243,6 +10243,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [attachingPdf,setAttachingPdf]=useState(false);
   const [showDrawingReview,setShowDrawingReview]=useState(false);
   const [reviewPageIdx,setReviewPageIdx]=useState(0);
+  const [newNotePos,setNewNotePos]=useState(null); // {x,y} — shows inline input at click position
+  const [newNoteText,setNewNoteText]=useState("");
+  const [draggingNote,setDraggingNote]=useState(null); // {id,startX,startY,origX,origY}
   const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [bcPdfMissing,setBcPdfMissing]=useState(false);
   useEffect(()=>{
@@ -12963,39 +12966,56 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const existingNotes=(pg.reviewNotes||[]);
               return <div style={{position:"relative",display:"inline-block",maxWidth:"calc(100vw - 340px)",maxHeight:"calc(100vh - 80px)"}}>
                 <img src={imgSrc} alt={"Page "+(reviewPageIdx+1)} style={{display:"block",maxWidth:"calc(100vw - 340px)",maxHeight:"calc(100vh - 120px)",width:"auto",height:"auto",objectFit:"contain"}}/>
-                {/* Note overlays */}
-                {existingNotes.map((note,ni)=>{
-                  const isExt=note.visibility==="external";
+                {/* Note overlays — draggable */}
+                {(()=>{
                   const saveNotes=(newNotes)=>{const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewNotes:newNotes}:p);const updatedPanel={...panel,pages:updatedPages};onUpdate(updatedPanel);try{onSaveImmediate(updatedPanel);}catch(e){}};
-                  return <div key={note.id||ni} style={{position:"absolute",left:note.x+"%",top:note.y+"%",background:isExt?"rgba(239,68,68,0.15)":"rgba(250,204,21,0.15)",border:isExt?"2px solid #ef4444":"2px dashed #ef4444",borderRadius:4,padding:"2px 6px 2px 8px",fontFamily:"-apple-system,sans-serif",zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:4}} title={note.author+" — "+note.date}>
-                    <span style={{fontSize:10,fontWeight:800,color:"#ef4444",flexShrink:0}}>#{note.number}</span>
-                    <span style={{fontSize:11,color:"#1e293b",whiteSpace:"nowrap"}}>{(note.text||"(empty)").slice(0,50)}</span>
-                    {!readOnly&&<>
-                      <button onClick={e=>{e.stopPropagation();const t=window.prompt("Edit note:",note.text||"");if(t===null)return;const updated=existingNotes.map(n=>n.id===note.id?{...n,text:t}:n);saveNotes(updated);}} style={{background:"none",border:"none",color:"#ef4444",fontSize:11,cursor:"pointer",padding:"0 2px",flexShrink:0}} title="Edit">✏</button>
-                      <button onClick={e=>{e.stopPropagation();const updated=existingNotes.map(n=>n.id===note.id?{...n,visibility:isExt?"internal":"external"}:n);saveNotes(updated);}} style={{background:"none",border:"1px solid #ef444444",borderRadius:3,color:"#ef4444",fontSize:9,cursor:"pointer",padding:"0 4px",flexShrink:0}} title={isExt?"Make Internal":"Make External"}>{isExt?"INT":"EXT"}</button>
-                      <button onClick={e=>{e.stopPropagation();saveNotes(existingNotes.filter(n=>n.id!==note.id));}} style={{background:"none",border:"none",color:"#ef4444",fontSize:11,cursor:"pointer",padding:"0 2px",flexShrink:0}} title="Delete">✕</button>
-                    </>}
-                  </div>;
-                })}
-                {/* Click to add note */}
-                {!readOnly&&<div style={{position:"absolute",inset:0,cursor:"crosshair"}} onClick={e=>{
+                  return existingNotes.map((note,ni)=>{
+                    const isExt=note.visibility==="external";
+                    return <div key={note.id||ni}
+                      style={{position:"absolute",left:note.x+"%",top:note.y+"%",background:isExt?"rgba(239,68,68,0.15)":"rgba(250,204,21,0.15)",border:isExt?"2px solid #ef4444":"2px dashed #ef4444",borderRadius:4,padding:"2px 6px 2px 8px",fontFamily:"-apple-system,sans-serif",zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:4,cursor:readOnly?"default":"grab",userSelect:"none"}}
+                      title={note.author+" — "+note.date}
+                      onMouseDown={!readOnly?e=>{if(e.target.closest("button"))return;e.preventDefault();
+                        const containerRect=e.currentTarget.parentElement.getBoundingClientRect();
+                        const startX=e.clientX,startY=e.clientY,origX=note.x,origY=note.y;
+                        const onMove=ev=>{const dx=(ev.clientX-startX)/containerRect.width*100;const dy=(ev.clientY-startY)/containerRect.height*100;note.x=Math.max(0,Math.min(90,origX+dx));note.y=Math.max(0,Math.min(90,origY+dy));e.currentTarget.style.left=note.x+"%";e.currentTarget.style.top=note.y+"%";};
+                        const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);saveNotes([...existingNotes]);};
+                        document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
+                      }:undefined}>
+                      <span style={{fontSize:10,fontWeight:800,color:"#ef4444",flexShrink:0}}>#{note.number}</span>
+                      <span style={{fontSize:11,color:"#1e293b",whiteSpace:"nowrap"}}>{(note.text||"(empty)").slice(0,50)}</span>
+                      {!readOnly&&<>
+                        <button onClick={e=>{e.stopPropagation();const t=window.prompt("Edit note:",note.text||"");if(t===null)return;saveNotes(existingNotes.map(n=>n.id===note.id?{...n,text:t}:n));}} style={{background:"none",border:"none",color:"#ef4444",fontSize:11,cursor:"pointer",padding:"0 2px",flexShrink:0}} title="Edit">✏</button>
+                        <button onClick={e=>{e.stopPropagation();saveNotes(existingNotes.map(n=>n.id===note.id?{...n,visibility:isExt?"internal":"external"}:n));}} style={{background:"none",border:"1px solid #ef444444",borderRadius:3,color:"#ef4444",fontSize:9,cursor:"pointer",padding:"0 4px",flexShrink:0}} title={isExt?"Make Internal":"Make External"}>{isExt?"INT":"EXT"}</button>
+                        <button onClick={e=>{e.stopPropagation();saveNotes(existingNotes.filter(n=>n.id!==note.id));}} style={{background:"none",border:"none",color:"#ef4444",fontSize:11,cursor:"pointer",padding:"0 2px",flexShrink:0}} title="Delete">✕</button>
+                      </>}
+                    </div>;
+                  });
+                })()}
+                {/* Ghost box + inline input for new note */}
+                {newNotePos&&<div style={{position:"absolute",left:newNotePos.x+"%",top:newNotePos.y+"%",background:"rgba(250,204,21,0.2)",border:"2px dashed #ef4444",borderRadius:4,padding:"4px 8px",zIndex:20,minWidth:180,boxShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>
+                  <input autoFocus value={newNoteText} onChange={e=>setNewNoteText(e.target.value)} placeholder="Type note..." onKeyDown={e=>{
+                    if(e.key==="Enter"&&newNoteText.trim()){
+                      const now=new Date();const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][now.getMonth()];
+                      const dateStr=String(now.getDate()).padStart(2,'0')+'-'+mon+'-'+String(now.getFullYear()).slice(2);
+                      const _dn=panel._projectDesigner||fbAuth.currentUser?.displayName||"";
+                      const _np=_dn.trim().split(/\s+/).filter(Boolean);
+                      const ini=_np.length>=2?(_np[0][0]+_np[_np.length-1][0]).toUpperCase():_np.length===1?_np[0].slice(0,2).toUpperCase():"??";
+                      const newNote={id:'note_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),number:(existingNotes.length+1),x:newNotePos.x,y:newNotePos.y,text:newNoteText.trim(),author:_dn||"Designer",initials:ini,date:dateStr,createdAt:Date.now(),reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review",visibility:"internal",status:"open",responses:[]};
+                      const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewNotes:[...(p.reviewNotes||[]),newNote]}:p);
+                      onUpdate({...panel,pages:updatedPages});try{onSaveImmediate({...panel,pages:updatedPages});}catch(e){}
+                      setNewNotePos(null);setNewNoteText("");
+                    }
+                    if(e.key==="Escape"){setNewNotePos(null);setNewNoteText("");}
+                  }} style={{background:"rgba(0,0,0,0.4)",border:"1px solid #ef444466",borderRadius:3,color:"#1e293b",fontSize:11,padding:"3px 6px",width:"100%",outline:"none",fontFamily:"inherit"}}/>
+                  <div style={{fontSize:9,color:"#ef4444",marginTop:2}}>Enter to save · Esc to cancel</div>
+                </div>}
+                {/* Click to add note — crosshair overlay */}
+                {!readOnly&&!newNotePos&&<div style={{position:"absolute",inset:0,cursor:"crosshair"}} onClick={e=>{
+                  if(e.target.closest("[data-note-drag]"))return;
                   const rect=e.currentTarget.getBoundingClientRect();
-                  const x=((e.clientX-rect.left)/rect.width*100).toFixed(1);
-                  const y=((e.clientY-rect.top)/rect.height*100).toFixed(1);
-                  const now=new Date();
-                  const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][now.getMonth()];
-                  const dateStr=String(now.getDate()).padStart(2,'0')+'-'+mon+'-'+String(now.getFullYear()).slice(2);
-                  // Use designer name from project for initials, fallback to current user
-                  const _designerName=panel._projectDesigner||fbAuth.currentUser?.displayName||"";
-                  const _nameParts=_designerName.trim().split(/\s+/).filter(Boolean);
-                  const initials=_nameParts.length>=2?(_nameParts[0][0]+_nameParts[_nameParts.length-1][0]).toUpperCase():_nameParts.length===1?_nameParts[0].slice(0,2).toUpperCase():"??";
-                  const noteText=window.prompt("Enter note:");
-                  if(!noteText||!noteText.trim())return;
-                  const newNote={id:'note_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),number:(existingNotes.length+1),x:parseFloat(x),y:parseFloat(y),text:noteText.trim(),author:_designerName||"Designer",initials,date:dateStr,createdAt:Date.now(),reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review",visibility:"internal",status:"open",responses:[]};
-                  const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewNotes:[...(p.reviewNotes||[]),newNote]}:p);
-                  const updatedPanel={...panel,pages:updatedPages};
-                  onUpdate(updatedPanel);
-                  try{onSaveImmediate(updatedPanel);}catch(e){}
+                  const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
+                  const y=parseFloat(((e.clientY-rect.top)/rect.height*100).toFixed(1));
+                  setNewNotePos({x,y});setNewNoteText("");
                 }}/>}
               </div>;
             })()}
