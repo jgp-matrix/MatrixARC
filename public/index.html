@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.564";
+const APP_VERSION="v1.19.565";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3069,6 +3069,43 @@ function vendorCode(vendorName){
   if(words.length===1)return words[0].slice(0,3).toUpperCase().padEnd(3,'X');
   if(words.length===2)return(words[0].slice(0,2)+words[1].slice(0,1)).toUpperCase().padEnd(3,'X');
   return words.slice(0,3).map(w=>w[0]).join('').toUpperCase();
+}
+
+function buildReviewEmailHtml(projectName,bcProjectNumber,designerName,notes,reviewUrl,companyInfo=null){
+  const ci=companyInfo||{};
+  const logoHtml=ci.logoUrl?`<img src="${ci.logoUrl}" alt="${ci.name||'ARC'}" style="height:40px;max-width:200px"/>`:`<span style="font-size:20px;font-weight:800;color:#1e293b">${ci.name||'ARC'}</span>`;
+  const noteRows=notes.map((n,i)=>`
+    <tr>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#2563eb;vertical-align:top;width:50px">#${n.number}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;vertical-align:top;width:50px;color:#64748b;font-size:12px">Page ${n.pageNum||"?"}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0">${(n.text||"").replace(/</g,"&lt;")}${n.detail?'<div style="color:#64748b;font-size:12px;margin-top:4px">'+n.detail.replace(/</g,"&lt;").replace(/\n/g,"<br>")+'</div>':''}</td>
+    </tr>
+  `).join("");
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc">
+<div style="max-width:640px;margin:0 auto;padding:24px">
+  <div style="margin-bottom:20px">${logoHtml}</div>
+  <h2 style="color:#1e293b;margin-bottom:4px">Engineering Review</h2>
+  <p style="color:#64748b;font-size:14px;margin-bottom:16px">${bcProjectNumber?bcProjectNumber+" — ":""}${projectName||"Project"}</p>
+  <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 20px;margin-bottom:20px">
+    <p style="color:#1e40af;font-size:14px;margin:0"><strong>${designerName||"The engineering team"}</strong> has sent drawings for your review with ${notes.length} note${notes.length!==1?"s":""}.</p>
+    <p style="color:#3b82f6;font-size:13px;margin:8px 0 0">Please review the notes below and provide your responses using the link.</p>
+  </div>
+  <div style="text-align:center;margin:24px 0">
+    <a href="${reviewUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:700;text-decoration:none">Review Drawings &#x2192;</a>
+  </div>
+  <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px">
+    <thead><tr style="background:#f1f5f9">
+      <th style="padding:8px 10px;text-align:left;font-size:12px;color:#64748b;border-bottom:2px solid #e2e8f0">Note</th>
+      <th style="padding:8px 10px;text-align:left;font-size:12px;color:#64748b;border-bottom:2px solid #e2e8f0">Page</th>
+      <th style="padding:8px 10px;text-align:left;font-size:12px;color:#64748b;border-bottom:2px solid #e2e8f0">Description</th>
+    </tr></thead>
+    <tbody>${noteRows}</tbody>
+  </table>
+  <div style="text-align:center;margin:24px 0">
+    <a href="${reviewUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:700;text-decoration:none">Review Drawings &#x2192;</a>
+  </div>
+  <p style="color:#94a3b8;font-size:12px;text-align:center;margin-top:24px">This link is valid for 30 days. If you have questions, reply to this email.</p>
+</div></body></html>`;
 }
 
 function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl=null,companyInfo=null){
@@ -10132,7 +10169,7 @@ function StampedDrawing({src,overlay,width,height,onClick}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -10253,6 +10290,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [sidebarDetailOpenId,setSidebarDetailOpenId]=useState(null);
   const [sidebarEditDetailId,setSidebarEditDetailId]=useState(null);
   const [sidebarEditDetailText,setSidebarEditDetailText]=useState("");
+  const [sendReviewModal,setSendReviewModal]=useState(false);
+  const [sendReviewEmail,setSendReviewEmail]=useState("");
+  const [sendReviewName,setSendReviewName]=useState("");
+  const [sendReviewCcSales,setSendReviewCcSales]=useState(true);
+  const [sendReviewBusy,setSendReviewBusy]=useState(false);
   const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [bcPdfMissing,setBcPdfMissing]=useState(false);
   useEffect(()=>{
@@ -12962,6 +13004,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               <button onClick={()=>setReviewPageIdx(i=>Math.min(pages.length-1,i+1))} disabled={reviewPageIdx>=pages.length-1} style={{background:"none",border:"1px solid "+C.border,color:C.muted,borderRadius:4,padding:"4px 10px",cursor:"pointer",fontSize:12,opacity:reviewPageIdx>=pages.length-1?0.3:1}}>Next →</button>
             </div>
             <div style={{fontSize:11,color:"#a78bfa",background:"#1a1040",borderRadius:6,padding:"3px 10px"}}>Click on drawing to add note</div>
+            {!readOnly&&<button onClick={()=>{
+              const extNotes=pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).filter(n=>n.visibility==="external").map(n=>({...n,pageNum:pi+1})));
+              if(extNotes.length===0){alert("Mark at least one note as External (EXT) before sending to the customer.");return;}
+              setSendReviewEmail(project.quote?.customerEmail||project.bcCustomerEmail||"");
+              setSendReviewName(project.quote?.customer||project.bcCustomerName||"");
+              setSendReviewModal(true);
+            }} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>📧 Send to Customer</button>}
             <button onClick={()=>setShowDrawingReview(false)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22,padding:"0 8px"}}>✕</button>
           </div>
           <div style={{flex:1,overflow:"auto",display:"flex",alignItems:"center",justifyContent:"center",padding:16,paddingRight:316}}>
@@ -13111,6 +13160,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   )}
                   {sidebarEditDetailId===n.id&&<div style={{fontSize:9,color:C.muted,marginTop:2}}>Ctrl+Enter to save · Esc to cancel</div>}
                 </div>
+                {/* Customer response (if review submitted) */}
+                {(()=>{
+                  if(!customerReviewData||customerReviewData.status!=="submitted")return null;
+                  const resp=(customerReviewData.responses||[]).find(r=>r.noteId===n.id);
+                  if(!resp||!resp.response)return null;
+                  return <div style={{marginTop:4,borderTop:"1px solid #2563eb44",paddingTop:4}}>
+                    <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",marginBottom:2}}>💬 Customer</div>
+                    <div style={{fontSize:12,color:"#93c5fd",lineHeight:1.4}}>{resp.response}</div>
+                  </div>;
+                })()}
               </div>
             ))}
           </div>
@@ -13123,6 +13182,70 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 {(pg.reviewNotes||[]).length>0&&<span style={{position:"absolute",top:-3,right:-3,background:"#ef4444",color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.5)"}}>{(pg.reviewNotes||[]).length}</span>}
               </div>
             ))}
+          </div>
+        </div>
+      ,document.body)}
+      {/* Send to Customer Review Modal */}
+      {sendReviewModal&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center"}} onMouseDown={e=>{if(e.target===e.currentTarget)setSendReviewModal(false);}}>
+          <div style={{background:"#12121f",border:"1px solid "+C.border,borderRadius:12,padding:"24px 28px",maxWidth:460,width:"90%",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}} onMouseDown={e=>e.stopPropagation()}>
+            <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:4}}>📧 Send Drawing Review to Customer</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:16}}>
+              {(()=>{const extCount=pages.flatMap(pg=>(pg.reviewNotes||[]).filter(n=>n.visibility==="external")).length;return `${extCount} external note${extCount!==1?"s":""} will be included`;})()}
+            </div>
+            <label style={{fontSize:11,fontWeight:700,color:C.sub,letterSpacing:0.5,display:"block",marginBottom:4}}>CUSTOMER EMAIL *</label>
+            <input value={sendReviewEmail} onChange={e=>setSendReviewEmail(e.target.value)} placeholder="customer@company.com"
+              style={{width:"100%",background:"#0d0d14",border:"1px solid "+C.border,color:C.text,borderRadius:6,padding:"8px 12px",fontSize:13,outline:"none",marginBottom:12,boxSizing:"border-box"}}/>
+            <label style={{fontSize:11,fontWeight:700,color:C.sub,letterSpacing:0.5,display:"block",marginBottom:4}}>CUSTOMER NAME</label>
+            <input value={sendReviewName} onChange={e=>setSendReviewName(e.target.value)} placeholder="Customer name"
+              style={{width:"100%",background:"#0d0d14",border:"1px solid "+C.border,color:C.text,borderRadius:6,padding:"8px 12px",fontSize:13,outline:"none",marginBottom:12,boxSizing:"border-box"}}/>
+            <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",marginBottom:16}}>
+              <input type="checkbox" checked={sendReviewCcSales} onChange={e=>setSendReviewCcSales(e.target.checked)}/>
+              <span style={{fontSize:12,color:C.sub}}>CC Salesperson ({project.quote?.salespersonEmail||project.bcSalespersonEmail||"not set"})</span>
+            </label>
+            <div style={{display:"flex",gap:10}}>
+              <button disabled={sendReviewBusy||!sendReviewEmail.trim()} onClick={async()=>{
+                setSendReviewBusy(true);
+                try{
+                  if(!_graphToken){throw new Error("Microsoft Graph not connected. Sign into Microsoft first.");}
+                  const extNotes=pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).filter(n=>n.visibility==="external").map(n=>({...n,pageNum:pi+1})));
+                  if(extNotes.length===0){alert("No external notes to send.");setSendReviewBusy(false);return;}
+                  // Generate token
+                  const tok=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
+                  // Gather page URLs
+                  const pageUrls=pages.map(pg=>pg.storageUrl||pg.dataUrl||"").filter(Boolean);
+                  // Create reviewUploads doc
+                  const reviewDoc={
+                    uid:_appCtx.uid,projectId:project.id,projectName:project.name||"",bcProjectNumber:project.bcProjectNumber||"",
+                    customerName:sendReviewName.trim(),customerEmail:sendReviewEmail.trim(),
+                    designerName:fbAuth.currentUser?.displayName||"Designer",
+                    salespersonEmail:project.quote?.salespersonEmail||project.bcSalespersonEmail||"",
+                    notes:extNotes.map(n=>({id:n.id,number:n.number,text:n.text||"",detail:n.detail||"",pageNum:n.pageNum,initials:n.initials||"",date:n.date||"",visibility:"external"})),
+                    drawingPages:pageUrls,
+                    status:"pending",sentAt:Date.now(),expiresAt:Date.now()+30*24*60*60*1000,token:tok
+                  };
+                  await fbDb.collection("reviewUploads").doc(tok).set(reviewDoc);
+                  // Build + send email
+                  const reviewUrl="https://matrix-arc.web.app/review?reviewUpload="+tok;
+                  const ci=_appCtx.company||{};
+                  const html=buildReviewEmailHtml(project.name||"",project.bcProjectNumber||"",fbAuth.currentUser?.displayName||"Engineering",extNotes,reviewUrl,ci);
+                  const subject="Engineering Review — "+(project.bcProjectNumber||project.name||"Project");
+                  await sendGraphEmail(_graphToken,sendReviewEmail.trim(),subject,html);
+                  // Save to project (direct Firestore update — project-level fields)
+                  const projPath=_appCtx.projectsPath||`users/${uid}/projects`;
+                  await fbDb.doc(`${projPath}/${project.id}`).update({customerReviewToken:tok,customerReviewSentAt:Date.now(),customerReviewEmail:sendReviewEmail.trim()});
+                  setSendReviewModal(false);
+                  alert("✓ Review sent to "+sendReviewEmail.trim());
+                }catch(e){
+                  console.error("Send review error:",e);
+                  alert("Failed to send: "+(e.message||e));
+                }
+                setSendReviewBusy(false);
+              }} style={{flex:1,background:"#2563eb",color:"#fff",border:"none",borderRadius:7,padding:"10px 16px",fontSize:13,fontWeight:700,cursor:"pointer",opacity:sendReviewBusy||!sendReviewEmail.trim()?0.5:1}}>
+                {sendReviewBusy?"Sending…":"Send Review Email"}
+              </button>
+              <button onClick={()=>setSendReviewModal(false)} style={{background:"transparent",color:C.muted,border:"1px solid "+C.border,borderRadius:7,padding:"10px 16px",fontSize:13,cursor:"pointer"}}>Cancel</button>
+            </div>
           </div>
         </div>
       ,document.body)}
@@ -15936,6 +16059,17 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
   const [newContactPhone,setNewContactPhone]=useState("");
   const [creatingContact,setCreatingContact]=useState(false);
   const [newContactErr,setNewContactErr]=useState("");
+  // Customer review state
+  const [customerReviewData,setCustomerReviewData]=useState(null);
+  const [showCustomerResponses,setShowCustomerResponses]=useState(false);
+  // Load customer review upload doc if project has a token
+  useEffect(()=>{
+    if(!project.customerReviewToken)return;
+    const unsub=fbDb.collection("reviewUploads").doc(project.customerReviewToken).onSnapshot(doc=>{
+      if(doc.exists)setCustomerReviewData(doc.data());
+    },err=>console.warn("reviewUpload listen error:",err));
+    return()=>unsub();
+  },[project.customerReviewToken]);
   // Fetch contacts when project has a customer number
   useEffect(()=>{
     if(!project.bcCustomerNumber||!_bcToken)return;
@@ -16160,6 +16294,26 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
             )}
           </div>
         )}
+        {/* Customer Review Submitted Banner */}
+        {project.customerReviewToken&&customerReviewData&&customerReviewData.status==="submitted"&&!project.customerReviewDismissed&&(
+          <div style={{marginBottom:12,background:"#052e16",border:"2px solid #4ade80",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <span style={{fontSize:20}}>✅</span>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{fontSize:14,fontWeight:800,color:"#4ade80"}}>CUSTOMER REVIEW SUBMITTED</div>
+              <div style={{fontSize:12,color:"#86efac"}}>{customerReviewData.customerName||"Customer"} responded on {customerReviewData.submittedAt?new Date(customerReviewData.submittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+            </div>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>setShowCustomerResponses(true)} style={btn("#0a2540","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8",padding:"6px 16px"})}>View Responses</button>
+              <button onClick={()=>{const upd={...project,customerReviewDismissed:true};onUpdate(upd);safeSave(uid,upd);}} style={btn("#1a1020","#94a3b8",{fontSize:12,fontWeight:600,border:"1px solid #334155",padding:"6px 12px"})}>Dismiss</button>
+            </div>
+          </div>
+        )}
+        {project.customerReviewToken&&customerReviewData&&customerReviewData.status==="pending"&&(
+          <div style={{marginBottom:12,background:"#172554",border:"1px solid #3b82f6",borderRadius:10,padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:16}}>📧</span>
+            <div style={{fontSize:12,color:"#93c5fd"}}>Customer review sent to <strong>{project.customerReviewEmail||"customer"}</strong> on {project.customerReviewSentAt?new Date(project.customerReviewSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—"} — awaiting response</div>
+          </div>
+        )}
         <div style={{maxWidth:1400,margin:"0 auto"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
             <div>
@@ -16370,6 +16524,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                   rfqLoading={rfqLoading}
                   onOpenSupplierQuote={onOpenSupplierQuote}
                   bcUploadRef={bcUploadRef}
+                  customerReviewData={customerReviewData}
+                  project={project}
                 />
               ))}
             </div>
@@ -16781,6 +16937,55 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
               onUpdate(upd);safeSave(uid,upd);
               setShowUnlockConfirm(false);
             }} style={{background:"#7c2d12",border:"1px solid #f59e0b",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Unlock &amp; Edit</button>
+          </div>
+        </div>
+      </div>
+    ,document.body)}
+    {/* Customer Responses Modal */}
+    {showCustomerResponses&&customerReviewData&&ReactDOM.createPortal(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}} onMouseDown={e=>{if(e.target===e.currentTarget)setShowCustomerResponses(false);}}>
+        <div style={{background:"#12121f",border:"1px solid "+C.border,borderRadius:12,padding:"24px 28px",maxWidth:640,width:"95%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}} onMouseDown={e=>e.stopPropagation()}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+            <div style={{flex:1}}>
+              <div style={{fontSize:16,fontWeight:700,color:C.text}}>Customer Review Responses</div>
+              <div style={{fontSize:12,color:C.muted}}>{customerReviewData.customerName||"Customer"} — submitted {customerReviewData.submittedAt?new Date(customerReviewData.submittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+            </div>
+            <button onClick={()=>setShowCustomerResponses(false)} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>✕</button>
+          </div>
+          {(customerReviewData.notes||[]).map((note,ni)=>{
+            const response=(customerReviewData.responses||[]).find(r=>r.noteId===note.id);
+            return <div key={note.id||ni} style={{background:"#1a1a2e",border:"1px solid "+C.border,borderRadius:8,padding:"12px 16px",marginBottom:10}}>
+              <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:6}}>
+                <span style={{fontWeight:700,color:"#2563eb",fontSize:13}}>Note #{note.number}</span>
+                <span style={{fontSize:11,color:C.muted}}>Page {note.pageNum||"?"}</span>
+              </div>
+              <div style={{fontSize:13,color:C.text,lineHeight:1.5,marginBottom:8}}>{note.text}</div>
+              {note.detail&&<div style={{fontSize:12,color:C.sub,marginBottom:8,fontStyle:"italic"}}>{note.detail}</div>}
+              <div style={{borderTop:"1px solid #2563eb44",paddingTop:8}}>
+                {response&&response.response?(
+                  <div>
+                    <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",marginBottom:3}}>💬 CUSTOMER RESPONSE</div>
+                    <div style={{fontSize:13,color:"#93c5fd",lineHeight:1.5}}>{response.response}</div>
+                  </div>
+                ):(
+                  <div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>No response provided</div>
+                )}
+              </div>
+            </div>;
+          })}
+          {customerReviewData.additionalComments&&(
+            <div style={{background:"#172554",border:"1px solid #3b82f6",borderRadius:8,padding:"12px 16px",marginTop:8}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",marginBottom:3}}>💬 ADDITIONAL COMMENTS</div>
+              <div style={{fontSize:13,color:"#93c5fd",lineHeight:1.5}}>{customerReviewData.additionalComments}</div>
+            </div>
+          )}
+          <div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}>
+            <button onClick={()=>{
+              const upd={...project,customerReviewReviewed:true,customerReviewReviewedAt:Date.now()};
+              onUpdate(upd);safeSave(uid,upd);
+              setShowCustomerResponses(false);
+            }} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Mark as Reviewed</button>
+            <button onClick={()=>setShowCustomerResponses(false)} style={{background:"transparent",color:C.muted,border:"1px solid "+C.border,borderRadius:7,padding:"8px 16px",fontSize:13,cursor:"pointer"}}>Close</button>
           </div>
         </div>
       </div>
