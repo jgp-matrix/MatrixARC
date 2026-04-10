@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.549";
+const APP_VERSION="v1.19.550";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11738,6 +11738,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(codaleMissed.length>0)console.warn("Codale missed parts:",codaleMissed.join(", "));
       _report.push({source:"Codale",obtained:codaleCount,skipped:0,failed:codaleMissed.length,total:codaleItems.length,
         items:codaleMissed.map(pn=>({pn,reason:"Price not found on Codale"}))});
+      // DECISION(v1.19.550): Push Codale prices to BC Purchase Prices + Item Card
+      if(codaleCount>0&&_bcToken){
+        const codaleVendorNo=await (async()=>{try{const vs=await bcListVendors();const m=vs.find(v=>/codale/i.test(v.displayName||""));return m?.number||null;}catch(e){return null;}})();
+        if(codaleVendorNo){
+          for(const[pn,{price}]of Object.entries(codaleMap)){
+            const origPN=codaleItems.find(r=>(r.partNumber||"").trim().toUpperCase()===pn)?.partNumber||pn;
+            bcPatchItemOData(origPN,{Unit_Cost:price}).catch(e=>console.warn("Codale BC item update failed:",origPN,e));
+            bcPushPurchasePrice(origPN,codaleVendorNo,price,Date.now()).catch(e=>console.warn("Codale BC purchase price failed:",origPN,e));
+          }
+          console.log("Codale: pushed",Object.keys(codaleMap).length,"prices to BC Item Cards + Purchase Prices");
+        }
+      }
       bcCount+=codaleCount;
     }
 
@@ -11786,6 +11798,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const scraperMissed=scraperItems.filter(r=>{const pn=(r.partNumber||"").trim().toUpperCase();const pr=results[pn]||results[(r.partNumber||"").trim()];return!pr||!pr.price;});
           _report.push({source:scraper.name,obtained:scraperCount,skipped:0,failed:scraperMissed.length,total:scraperItems.length,
             items:scraperMissed.map(r=>({pn:r.partNumber,reason:"Price not found"}))});
+          // DECISION(v1.19.550): Push scraper prices to BC Purchase Prices + Item Card
+          if(scraperCount>0&&_bcToken){
+            const scraperVendorNo=await (async()=>{try{const vs=await bcListVendors();const m=vs.find(v=>matchTerms.some(t=>(v.displayName||"").toLowerCase().includes(t.toLowerCase())));return m?.number||null;}catch(e){return null;}})();
+            if(scraperVendorNo){
+              for(const r of scraperItems){
+                const pn=(r.partNumber||"").trim().toUpperCase();
+                const pr=results[pn]||results[(r.partNumber||"").trim()];
+                if(pr?.price){
+                  const numPrice=parseFloat(String(pr.price).replace(/[$,]/g,""));
+                  if(!isNaN(numPrice)&&numPrice>0){
+                    bcPatchItemOData(r.partNumber,{Unit_Cost:numPrice}).catch(e=>console.warn(scraper.name+" BC item update failed:",r.partNumber,e));
+                    bcPushPurchasePrice(r.partNumber,scraperVendorNo,numPrice,Date.now()).catch(e=>console.warn(scraper.name+" BC purchase price failed:",r.partNumber,e));
+                  }
+                }
+              }
+              console.log(scraper.name+": pushed prices to BC Item Cards + Purchase Prices");
+            }
+          }
           if(scraperCount>0){bcCount+=scraperCount;_pp({msg:`${scraper.name}: ${scraperCount} prices obtained`,pct:52});}
           else _pp({msg:`${scraper.name}: no prices found`,pct:52});
         }catch(e){console.warn(scraper.name+" pricing failed:",e);
