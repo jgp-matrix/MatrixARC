@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.538";
+const APP_VERSION="v1.19.539";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5849,6 +5849,58 @@ async function burnStampCanvas(dataUrl,overlay){
   });
 }
 
+// DECISION(v1.19.539): Burn engineering review notes into a drawing image via canvas
+async function burnNotesCanvas(dataUrl,notes){
+  if(!notes||!notes.length)return dataUrl;
+  return new Promise(resolve=>{
+    const canvas=document.createElement('canvas');
+    const ctx=canvas.getContext('2d');
+    const img=new Image();img.crossOrigin='anonymous';
+    img.onload=()=>{
+      canvas.width=img.width;canvas.height=img.height;
+      ctx.drawImage(img,0,0);
+      notes.forEach(note=>{
+        const x=note.x/100*img.width;
+        const y=note.y/100*img.height;
+        const w=Math.min(note.width||200,img.width*0.25);
+        const isExt=note.visibility==='external';
+        const fontSize=Math.max(10,Math.round(img.height*0.012));
+        const padX=6,padY=4;
+        // Wrap text
+        ctx.font=`${fontSize}px Arial,sans-serif`;
+        const maxTextW=w-padX*2;
+        const words=(note.text||'').split(' ');
+        const lines=[];let line='';
+        words.forEach(word=>{const test=line?line+' '+word:word;if(ctx.measureText(test).width>maxTextW&&line){lines.push(line);line=word;}else{line=test;}});
+        if(line)lines.push(line);
+        // Add signature line
+        lines.push('— '+note.initials+' '+note.date);
+        const lineH=fontSize*1.3;
+        const boxH=lines.length*lineH+padY*2+fontSize+4;
+        // Background
+        ctx.fillStyle=isExt?'rgba(239,68,68,0.15)':'rgba(250,204,21,0.15)';
+        ctx.fillRect(x,y,w,boxH);
+        // Border
+        ctx.strokeStyle='#cc0000';ctx.lineWidth=2;
+        if(isExt){ctx.setLineDash([]);ctx.strokeRect(x,y,w,boxH);}
+        else{ctx.setLineDash([6,3]);ctx.strokeRect(x,y,w,boxH);ctx.setLineDash([]);}
+        // Header
+        ctx.fillStyle='#cc0000';ctx.font=`bold ${Math.round(fontSize*0.8)}px Arial,sans-serif`;
+        ctx.fillText('#'+note.number+(isExt?' EXT':' INT'),x+padX,y+padY+fontSize*0.7);
+        // Text
+        ctx.fillStyle='#1e293b';ctx.font=`${fontSize}px Arial,sans-serif`;
+        lines.forEach((ln,i)=>{
+          const ty=y+padY+fontSize+4+i*lineH;
+          ctx.fillText(ln,x+padX,ty+fontSize*0.8);
+        });
+      });
+      resolve(canvas.toDataURL('image/jpeg',0.93));
+    };
+    img.onerror=()=>resolve(dataUrl);
+    img.src=dataUrl;
+  });
+}
+
 // ── BACKGROUND EXTRACTION TASK (module-level — survives React component unmount / navigation) ──
 async function saveExtractionLearning(uid,projectId,panel,projectName,bcProjectNumber){
   if(!_appCtx.companyId)return;
@@ -10830,6 +10882,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             stampMode:sMode
           });
         }
+        // DECISION(v1.19.539): Burn engineering notes into the image for approved uploads
+        const pageNotes=pg.reviewNotes||[];
+        if(pageNotes.length>0&&(sMode==='quote_ready'||sMode==='ready_to_produce')){
+          imgData=await burnNotesCanvas(imgData,pageNotes);
+        }
         doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
       if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
@@ -12128,6 +12185,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
                   <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
                   {!readOnly&&<button data-tip="Remove this drawing page" onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
+                  {/* Engineering note indicators on thumbnail */}
+                  {(pg.reviewNotes||[]).length>0&&(
+                    <div style={{position:"absolute",top:4,left:4,display:"flex",gap:3,flexWrap:"wrap",maxWidth:200}}>
+                      <span style={{background:"#a78bfa",color:"#fff",borderRadius:10,padding:"2px 8px",fontSize:10,fontWeight:700,boxShadow:"0 1px 4px rgba(0,0,0,0.5)"}}>📐 {(pg.reviewNotes||[]).length} note{(pg.reviewNotes||[]).length!==1?"s":""}</span>
+                    </div>
+                  )}
                 </div>
                 <div style={{lineHeight:1.4}}>
                   {(panel.drawingNo||panel.drawingDesc)?(
