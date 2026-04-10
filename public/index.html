@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.543";
+const APP_VERSION="v1.19.544";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12936,9 +12936,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 {/* Note overlays */}
                 {existingNotes.map((note,ni)=>{
                   const isExt=note.visibility==="external";
-                  return <div key={note.id||ni} style={{position:"absolute",left:note.x+"%",top:note.y+"%",maxWidth:280,background:isExt?"rgba(239,68,68,0.15)":"rgba(250,204,21,0.15)",border:isExt?"2px solid #ef4444":"2px dashed #ef4444",borderRadius:4,padding:"3px 8px",cursor:readOnly?"default":"move",fontFamily:"-apple-system,sans-serif",zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}} title={note.author+" — "+note.date}>
-                    <span style={{fontSize:9,fontWeight:800,color:isExt?"#ef4444":"#fbbf24",flexShrink:0}}>#{note.number}</span>
-                    <span style={{fontSize:11,color:"#f1f5f9",overflow:"hidden",textOverflow:"ellipsis"}}>{(note.text||"(empty)").slice(0,40)}</span>
+                  return <div key={note.id||ni} style={{position:"absolute",left:note.x+"%",top:note.y+"%",background:isExt?"rgba(239,68,68,0.15)":"rgba(250,204,21,0.15)",border:isExt?"2px solid #ef4444":"2px dashed #ef4444",borderRadius:4,padding:"2px 6px",cursor:readOnly?"default":"move",fontFamily:"-apple-system,sans-serif",zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.4)"}} title={note.author+" — "+note.date}>
+                    <span style={{fontSize:9,fontWeight:800,color:isExt?"#ef4444":"#fbbf24",marginRight:4}}>#{note.number}</span>
+                    <span style={{fontSize:10,color:"#f1f5f9"}}>{(note.text||"(empty)").slice(0,50)}</span>
                   </div>;
                 })}
                 {/* Click to add note */}
