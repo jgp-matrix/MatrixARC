@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.521";
+const APP_VERSION="v1.19.522";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15551,6 +15551,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
         </div>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,flexShrink:0}}>
           <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
+          <button onClick={()=>{onClose();setTimeout(()=>{const evt=new CustomEvent("arc-just-print");window.dispatchEvent(evt);},100);}} style={btn(C.greenDim,C.green,{fontSize:13,fontWeight:700,border:`1px solid ${C.green}44`})}>🖨 Just Print</button>
           <button onClick={handleSend} disabled={sending}
             style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:sending?0.5:1})}>
             {sending?"Sending…":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
@@ -16245,17 +16246,13 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                   const pendingVendors=new Set(pending.map(r=>r.bcVendorName||"Unknown"));
                   const expiredVendors=new Set(expired.map(r=>r.bcVendorName||"Unknown"));
                   const badge=expired.length>0?`⚠ ${expiredVendors.size} Expired RFQ${expiredVendors.size!==1?"s":""}`:awaitingCount>0?`${pendingVendors.size} RFQ${pendingVendors.size!==1?"s":""} Awaiting Response`:null;
-                  return <div>
-                    <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:13,padding:"6px 18px",width:"100%",opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
-                    {badge&&<div style={{fontSize:10,fontWeight:700,textAlign:"center",marginTop:3,color:expired.length>0?"#f59e0b":"#38bdf8"}}>{badge}</div>}
+                  return <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
+                    <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:12,padding:"6px 12px",flex:2,opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
+                    <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:12,padding:"6px 12px",flex:2,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
+                    <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"6px 6px",flex:0,whiteSpace:"nowrap",minWidth:28})}>📜</button>
                   </div>;
                 })()}
-                <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
-                  <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:14,padding:"8px 12px",flex:3,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Supplier Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
-                  <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:11,padding:"6px 8px",flex:1,whiteSpace:"nowrap"})}>📜 History</button>
-                </div>
-                <button data-tour="print-quote-btn" onClick={onViewQuote} disabled={quotePrinting} style={btn(C.greenDim,C.green,{fontSize:13,padding:"6px 18px",width:"100%",opacity:quotePrinting?0.5:1})}>{quotePrinting?"Preparing Quote…":"🖨 Print Client Quote"}{!quotePrinting&&((project.quoteRev||0)>(project.quoteRevAtPrint||0)?` (Rev ${project.quoteRev} ⚠ unsent)`:project.quoteRev>0?` (Rev ${project.quoteRev})`:"")||""}</button>
-                {!readOnly&&<button onClick={async()=>{
+                {!readOnly&&<button data-tour="print-quote-btn" onClick={async()=>{
                   const q=project.quote||{};
                   const rev=project.quoteRev||0;
                   const isBudg=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
@@ -16291,7 +16288,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                     message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
-                }} style={btn("#0c2233","#38bdf8",{fontSize:13,padding:"6px 18px",width:"100%",border:"1px solid #38bdf844"})}>✉ Send Quote{project.quoteSentAt?" (Resend)":""}</button>}
+                }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700})}>✉ {project.quoteSentAt?"Resend":"Send"} Quote{(project.quoteRev||0)>0?` — Rev ${String(project.quoteRev).padStart(2,"0")}`:""}</button>}
                 {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
                 {project.quoteLocked&&(
                   <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:4}}>
@@ -16715,6 +16712,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     setRfqLoading(false);
   }
 
+  // DECISION(v1.19.522): "Just Print" from Send Quote modal — triggers print without sending
+  useEffect(()=>{
+    function onJustPrint(){handlePrintQuote();}
+    window.addEventListener("arc-just-print",onJustPrint);
+    return()=>window.removeEventListener("arc-just-print",onJustPrint);
+  },[]);
   // DECISION(v1.19.405): Debounce guard — prevents double-click triggering parallel quote generation.
   const [quotePrinting,setQuotePrinting]=useState(false);
   async function handlePrintQuote(){
