@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.527";
+const APP_VERSION="v1.19.528";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10515,6 +10515,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   async function addFiles(files){
     console.log("ADDFILES: start, files="+files.length+", apiKey="+(!!_apiKey));
+    // DECISION(v1.19.529): Warn if uploading to another user's project — storage rules block cross-user writes
+    const existingPages=panel.pages||[];
+    if(existingPages.length>0&&existingPages[0]?.storageUrl){
+      const urlMatch=existingPages[0].storageUrl.match(/pageImages%2F([^%/]+)/);
+      const ownerUid=urlMatch?urlMatch[1]:null;
+      if(ownerUid&&ownerUid!==uid){
+        // Find owner name from salesperson cache or member map
+        const ownerName=(window._arcSalespersonCache||[]).find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Name||"another user";
+        // Look up the actual owner's name
+        let actualOwner="the project owner";
+        try{const uDoc=await fbDb.doc(`users/${ownerUid}/config/profile`).get();if(uDoc.exists){const p=uDoc.data();actualOwner=p.firstName||p.displayName||"the project owner";}}catch(e){}
+        alert(`These drawings are owned by ${actualOwner}. Only they can upload new versions.\n\nTo upload, ask ${actualOwner} to do it from their account, or re-extract the drawings from your own account.`);
+        return;
+      }
+    }
     setProcessing(true);setErr("");
     bgStart(panel.id, panel.name||("Panel "+(idx+1)), projectId);
     let updated;
@@ -10753,6 +10768,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   useEffect(()=>{if(bcUploadRef)bcUploadRef.current=buildAndAttachPdf;});
   async function buildAndAttachPdf(uploadOpts={}){
     if(!pages.length||!bcProjectNumber)return;
+    // Check ownership — storage rules block cross-user writes
+    const firstWithStorage=pages.find(p=>p.storageUrl);
+    if(firstWithStorage){
+      const urlMatch=firstWithStorage.storageUrl.match(/pageImages%2F([^%/]+)/);
+      const ownerUid=urlMatch?urlMatch[1]:null;
+      if(ownerUid&&ownerUid!==uid){
+        let actualOwner="the project owner";
+        try{const uDoc=await fbDb.doc(`users/${ownerUid}/config/profile`).get();if(uDoc.exists)actualOwner=uDoc.data().firstName||"the project owner";}catch(e){}
+        alert(`These drawings are owned by ${actualOwner}. Only they can upload new versions.`);
+        return;
+      }
+    }
     setAttachingPdf(true);
     setAttachPdfMsg("Building PDF…");
     try{
