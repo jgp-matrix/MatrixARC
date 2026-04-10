@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.541";
+const APP_VERSION="v1.19.542";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12937,7 +12937,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 el.innerHTML='';
                 // Load annotation script if not already loaded
                 if(!window.DrawingAnnotator){
-                  const s=document.createElement('script');s.src='/modules/engineering/annotations.js?v=0.1.0';
+                  const s=document.createElement('script');s.src='/modules/engineering/annotations.js?v=0.1.2';
                   s.onload=()=>initAnnotator(el,imgSrc,existingNotes);
                   document.head.appendChild(s);
                 }else{initAnnotator(el,imgSrc,existingNotes);}
