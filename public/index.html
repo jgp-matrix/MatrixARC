@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.530";
+const APP_VERSION="v1.19.531";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3381,7 +3381,12 @@ async function buildQuotePdfDoc(doc,project){
   // name may not get auto-populated if the BC resolution fails. Use cached salesperson list as fallback.
   const companyName=q.company||project.bcCustomerName||"—";
   const addrLines=[companyName,q.address,q.phone?"Phone: "+q.phone:"",q.email].filter(Boolean).join("\n");
-  let salesName=q.salesperson||"";
+  let salesName=q.salesperson||project.bcSalesperson||"";
+  // If salesName looks like a code (S-JP), resolve from cache
+  if(salesName&&/^[SP]-/i.test(salesName)&&window._arcSalespersonCache){
+    const spMatch=window._arcSalespersonCache.find(s=>s.Code===salesName);
+    if(spMatch?.Name)salesName=spMatch.Name;
+  }
   if(!salesName&&project.bcSalespersonCode){
     // Try cached list first, then direct BC lookup
     if(window._arcSalespersonCache){
@@ -15923,7 +15928,15 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                     React.createElement("select",{value:project[codeKey]||"",onChange:function(e){
                       var code=e.target.value;
                       var cached=listSource.find(function(s){return s.Code===code;});
-                      var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;onUpdate(upd);safeSave(uid,upd);
+                      var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;
+                      // For salesperson, also update quote fields so the quote form shows the name
+                      if(li===0&&cached){
+                        upd.quote=Object.assign({},upd.quote||{});
+                        upd.quote.salesperson=cached.Name||code;
+                        if(cached.E_Mail)upd.quote.salesEmail=cached.E_Mail;
+                        if(cached.Phone_No)upd.quote.salesPhone=cached.Phone_No;
+                      }
+                      onUpdate(upd);safeSave(uid,upd);
                       if(bcField&&project.bcProjectNumber&&_bcToken){var patch={};patch[bcField]=code;bcPatchJobOData(project.bcProjectNumber,patch).catch(function(){});}
                     },style:{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:150}},opts)
                   );
@@ -16746,7 +16759,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!q.drawingRev&&firstPanel.drawingRev)autoFields.drawingRev=firstPanel.drawingRev;
     if(!q.projectNumber&&proj.bcProjectNumber)autoFields.projectNumber=proj.bcProjectNumber;
     // Fetch contact and salesperson from BC project card — skip if quote already has key fields
-    const needsBcFetch=!q.company||!q.address||!q.salesperson;
+    const spLooksLikeCode=q.salesperson&&/^[SP]-/i.test(q.salesperson);
+    const needsBcFetch=!q.company||!q.address||!q.salesperson||spLooksLikeCode;
     if(proj.bcProjectNumber&&_bcToken&&needsBcFetch){
       try{
         const allPages=await bcDiscoverODataPages();
