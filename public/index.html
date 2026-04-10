@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.535";
+const APP_VERSION="v1.19.536";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10189,6 +10189,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [err,setErr]=useState("");
   const [reExtractWarn,setReExtractWarn]=useState(false);
   const [attachingPdf,setAttachingPdf]=useState(false);
+  const [showDrawingReview,setShowDrawingReview]=useState(false);
+  const [reviewPageIdx,setReviewPageIdx]=useState(0);
   const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [bcPdfMissing,setBcPdfMissing]=useState(false);
   useEffect(()=>{
@@ -12081,6 +12083,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               {extracting?"Extracting…":"Re-Extract Drawings"}
             </button>
           )}
+          {pages.length>0&&<button onClick={()=>setShowDrawingReview(true)} style={{background:"none",border:"1px solid #a78bfa88",color:"#a78bfa",cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>📐 Review Drawings</button>}
           {(()=>{const eqOpen=(panel.engineeringQuestions||[]).filter(q=>q.status==="open").length;const eqTotal=(panel.engineeringQuestions||[]).length;
             return eqTotal>0?React.createElement("button",{onClick:()=>setShowEqModal(true),
               style:{background:eqOpen>0?"#451a03":"none",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,color:eqOpen>0?"#f59e0b":C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
@@ -12845,6 +12848,71 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         />
       )}
       {showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
+      {/* Drawing Review Modal — full-screen annotation view */}
+      {showDrawingReview&&pages.length>0&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.95)",zIndex:9999,display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 20px",background:"#111128",borderBottom:"1px solid #a78bfa44",flexShrink:0}}>
+            <span style={{fontSize:16,fontWeight:800,color:"#a78bfa"}}>📐 Drawing Review</span>
+            <span style={{fontSize:12,color:C.muted}}>{panel.drawingNo||panel.name||"Panel"} — Page {reviewPageIdx+1} of {pages.length}</span>
+            <div style={{display:"flex",gap:4,marginLeft:"auto"}}>
+              <button onClick={()=>setReviewPageIdx(i=>Math.max(0,i-1))} disabled={reviewPageIdx===0} style={{background:"none",border:"1px solid "+C.border,color:C.muted,borderRadius:4,padding:"4px 10px",cursor:"pointer",fontSize:12,opacity:reviewPageIdx===0?0.3:1}}>← Prev</button>
+              <button onClick={()=>setReviewPageIdx(i=>Math.min(pages.length-1,i+1))} disabled={reviewPageIdx>=pages.length-1} style={{background:"none",border:"1px solid "+C.border,color:C.muted,borderRadius:4,padding:"4px 10px",cursor:"pointer",fontSize:12,opacity:reviewPageIdx>=pages.length-1?0.3:1}}>Next →</button>
+            </div>
+            <div style={{fontSize:11,color:"#a78bfa",background:"#1a1040",borderRadius:6,padding:"3px 10px"}}>Click on drawing to add note</div>
+            <button onClick={()=>setShowDrawingReview(false)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22,padding:"0 8px"}}>✕</button>
+          </div>
+          <div style={{flex:1,overflow:"auto",display:"flex",alignItems:"flex-start",justifyContent:"center",padding:16}}>
+            {(()=>{
+              const pg=pages[reviewPageIdx];
+              if(!pg)return null;
+              const imgSrc=pg.dataUrl||pg.storageUrl;
+              if(!imgSrc)return <div style={{color:C.muted,padding:40}}>No image available for this page</div>;
+              const existingNotes=(pg.reviewNotes||[]);
+              return <div id="review-annotator-container" ref={el=>{
+                if(!el||el.dataset.rendered===String(reviewPageIdx))return;
+                el.dataset.rendered=String(reviewPageIdx);
+                el.innerHTML='';
+                // Load annotation script if not already loaded
+                if(!window.DrawingAnnotator){
+                  const s=document.createElement('script');s.src='/modules/engineering/annotations.js?v=0.1.0';
+                  s.onload=()=>initAnnotator(el,imgSrc,existingNotes);
+                  document.head.appendChild(s);
+                }else{initAnnotator(el,imgSrc,existingNotes);}
+                function initAnnotator(container,src,notes){
+                  const ann=new window.DrawingAnnotator(container,src,notes,{
+                    authorName:fbAuth.currentUser?.displayName||"Designer",
+                    authorInitials:(fbAuth.currentUser?.displayName||"XX").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(),
+                    readOnly:readOnly,
+                    reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review"
+                  });
+                  ann.onNotesChanged=(updatedNotes)=>{
+                    const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewNotes:updatedNotes}:p);
+                    const updatedPanel={...panel,pages:updatedPages};
+                    onUpdate(updatedPanel);
+                    try{onSaveImmediate(updatedPanel);}catch(e){}
+                  };
+                }
+              }} style={{maxWidth:"90vw",maxHeight:"calc(100vh - 80px)"}}/>;
+            })()}
+          </div>
+          {/* Notes list sidebar */}
+          <div style={{position:"fixed",right:0,top:50,bottom:0,width:300,background:"#111128",borderLeft:"1px solid #a78bfa44",overflowY:"auto",padding:12}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",letterSpacing:0.5,marginBottom:8}}>NOTES — ALL PAGES</div>
+            {pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).map(n=>({...n,pageNum:pi+1}))).length===0&&<div style={{fontSize:11,color:C.muted}}>No notes yet. Click on a drawing to add one.</div>}
+            {pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).map(n=>({...n,pageNum:pi+1}))).map((n,i)=>(
+              <div key={n.id||i} onClick={()=>setReviewPageIdx(n.pageNum-1)} style={{background:n.visibility==="external"?"rgba(56,189,248,0.08)":"rgba(239,68,68,0.08)",border:"1px solid "+(n.visibility==="external"?"#38bdf844":"#ef444444"),borderRadius:6,padding:"8px 10px",marginBottom:6,cursor:"pointer",fontSize:11}}>
+                <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:3}}>
+                  <span style={{fontWeight:700,color:n.visibility==="external"?"#38bdf8":"#ef4444"}}>#{n.number}</span>
+                  <span style={{color:C.muted}}>p.{n.pageNum}</span>
+                  <span style={{fontSize:9,color:n.visibility==="external"?"#38bdf8":"#ef4444",background:n.visibility==="external"?"#38bdf811":"#ef444411",borderRadius:3,padding:"0 4px"}}>{n.visibility==="external"?"EXT":"INT"}</span>
+                </div>
+                <div style={{color:C.text,lineHeight:1.4}}>{(n.text||"").slice(0,80)}{(n.text||"").length>80?"…":""}</div>
+                <div style={{color:C.muted,fontSize:9,marginTop:3}}>— {n.initials} {n.date}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ,document.body)}
       {showAiQuestions&&(panel.aiQuestions||[]).length>0&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",background:"rgba(0,0,0,0.85)"}}>
           <div style={{background:"#12121f",border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",maxWidth:560,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 12px 48px rgba(0,0,0,0.6)"}}>
@@ -21257,6 +21325,9 @@ function EngineeringTab(){
   },[]);
   useEffect(()=>{
     function onMsg(e){
+      if(e.data?.type==='arc-module-open-project'){
+        window.dispatchEvent(new CustomEvent('arc-open-project',{detail:{projectId:e.data.projectId}}));
+      }
       if(e.data?.type==='arc-module-request-context'){
         iframeRef.current?.contentWindow?.postMessage({type:'arc-module-context',ctx:{
           uid:_appCtx.uid,companyId:_appCtx.companyId,role:_appCtx.role,
@@ -22904,6 +22975,17 @@ INSTRUCTIONS:
   function handleOpen(p){
     checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setOpenProject(p);setView("project");setNavTab("projects");});
   }
+  // Listen for engineering module open-project events
+  useEffect(()=>{
+    function onOpenProject(e){
+      const pid=e.detail?.projectId;
+      if(!pid)return;
+      const proj=projects.find(p=>p.id===pid);
+      if(proj)handleOpen(proj);
+    }
+    window.addEventListener('arc-open-project',onOpenProject);
+    return()=>window.removeEventListener('arc-open-project',onOpenProject);
+  },[projects]);
   function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");setNavTab("projects");}
   function handleChange(p){setProjects(ps=>ps.map(x=>x.id===p.id?p:x));setOpenProject(p);}
   function handleDelete(id,name,bcProjectId,bcProjectNumber,project){setDeleteConfirm({id,name,bcProjectId,bcProjectNumber,project});}
