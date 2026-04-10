@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.542";
+const APP_VERSION="v1.19.543";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12931,31 +12931,34 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const imgSrc=pg.dataUrl||pg.storageUrl;
               if(!imgSrc)return <div style={{color:C.muted,padding:40}}>No image available for this page</div>;
               const existingNotes=(pg.reviewNotes||[]);
-              return <div id="review-annotator-container" ref={el=>{
-                if(!el||el.dataset.rendered===String(reviewPageIdx))return;
-                el.dataset.rendered=String(reviewPageIdx);
-                el.innerHTML='';
-                // Load annotation script if not already loaded
-                if(!window.DrawingAnnotator){
-                  const s=document.createElement('script');s.src='/modules/engineering/annotations.js?v=0.1.2';
-                  s.onload=()=>initAnnotator(el,imgSrc,existingNotes);
-                  document.head.appendChild(s);
-                }else{initAnnotator(el,imgSrc,existingNotes);}
-                function initAnnotator(container,src,notes){
-                  const ann=new window.DrawingAnnotator(container,src,notes,{
-                    authorName:fbAuth.currentUser?.displayName||"Designer",
-                    authorInitials:(fbAuth.currentUser?.displayName||"XX").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase(),
-                    readOnly:readOnly,
-                    reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review"
-                  });
-                  ann.onNotesChanged=(updatedNotes)=>{
-                    const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewNotes:updatedNotes}:p);
-                    const updatedPanel={...panel,pages:updatedPages};
-                    onUpdate(updatedPanel);
-                    try{onSaveImmediate(updatedPanel);}catch(e){}
-                  };
-                }
-              }} style={{maxWidth:"calc(100vw - 340px)",maxHeight:"calc(100vh - 80px)"}}/>;
+              return <div style={{position:"relative",display:"inline-block",maxWidth:"calc(100vw - 340px)",maxHeight:"calc(100vh - 80px)"}}>
+                <img src={imgSrc} alt={"Page "+(reviewPageIdx+1)} style={{display:"block",maxWidth:"calc(100vw - 340px)",maxHeight:"calc(100vh - 120px)",width:"auto",height:"auto",objectFit:"contain"}}/>
+                {/* Note overlays */}
+                {existingNotes.map((note,ni)=>{
+                  const isExt=note.visibility==="external";
+                  return <div key={note.id||ni} style={{position:"absolute",left:note.x+"%",top:note.y+"%",maxWidth:280,background:isExt?"rgba(239,68,68,0.15)":"rgba(250,204,21,0.15)",border:isExt?"2px solid #ef4444":"2px dashed #ef4444",borderRadius:4,padding:"3px 8px",cursor:readOnly?"default":"move",fontFamily:"-apple-system,sans-serif",zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}} title={note.author+" — "+note.date}>
+                    <span style={{fontSize:9,fontWeight:800,color:isExt?"#ef4444":"#fbbf24",flexShrink:0}}>#{note.number}</span>
+                    <span style={{fontSize:11,color:"#f1f5f9",overflow:"hidden",textOverflow:"ellipsis"}}>{(note.text||"(empty)").slice(0,40)}</span>
+                  </div>;
+                })}
+                {/* Click to add note */}
+                {!readOnly&&<div style={{position:"absolute",inset:0,cursor:"crosshair"}} onClick={e=>{
+                  const rect=e.currentTarget.getBoundingClientRect();
+                  const x=((e.clientX-rect.left)/rect.width*100).toFixed(1);
+                  const y=((e.clientY-rect.top)/rect.height*100).toFixed(1);
+                  const now=new Date();
+                  const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][now.getMonth()];
+                  const dateStr=String(now.getDate()).padStart(2,'0')+'-'+mon+'-'+String(now.getFullYear()).slice(2);
+                  const initials=(fbAuth.currentUser?.displayName||"XX").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+                  const noteText=window.prompt("Enter note:");
+                  if(!noteText||!noteText.trim())return;
+                  const newNote={id:'note_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),number:(existingNotes.length+1),x:parseFloat(x),y:parseFloat(y),text:noteText.trim(),author:fbAuth.currentUser?.displayName||"Designer",initials,date:dateStr,createdAt:Date.now(),reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review",visibility:"internal",status:"open",responses:[]};
+                  const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewNotes:[...(p.reviewNotes||[]),newNote]}:p);
+                  const updatedPanel={...panel,pages:updatedPages};
+                  onUpdate(updatedPanel);
+                  try{onSaveImmediate(updatedPanel);}catch(e){}
+                }}/>}
+              </div>;
             })()}
           </div>
           {/* Notes list sidebar */}
