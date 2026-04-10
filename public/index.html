@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.565";
+const APP_VERSION="v1.19.566";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13220,7 +13220,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     customerName:sendReviewName.trim(),customerEmail:sendReviewEmail.trim(),
                     designerName:fbAuth.currentUser?.displayName||"Designer",
                     salespersonEmail:project.quote?.salespersonEmail||project.bcSalespersonEmail||"",
-                    notes:extNotes.map(n=>({id:n.id,number:n.number,text:n.text||"",detail:n.detail||"",pageNum:n.pageNum,initials:n.initials||"",date:n.date||"",visibility:"external"})),
+                    notes:extNotes.map(n=>({id:n.id,number:n.number,text:n.text||"",detail:n.detail||"",x:n.x||5,y:n.y||5,pageNum:n.pageNum,initials:n.initials||"",date:n.date||"",visibility:"external"})),
                     drawingPages:pageUrls,
                     status:"pending",sentAt:Date.now(),expiresAt:Date.now()+30*24*60*60*1000,token:tok
                   };
