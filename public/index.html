@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.555";
+const APP_VERSION="v1.19.556";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12991,16 +12991,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       }:undefined}>
                       <span style={{fontSize:10,fontWeight:800,color:"#ef4444",flexShrink:0}}>#{note.number}</span>
                       {editingNoteId===note.id?(
-                        <input autoFocus value={editingNoteText} onChange={e=>setEditingNoteText(e.target.value)} onKeyDown={e=>{
-                          if(e.key==="Enter"&&editingNoteText.trim()){saveNotes(existingNotes.map(n=>n.id===note.id?{...n,text:editingNoteText.trim()}:n));setEditingNoteId(null);}
-                          if(e.key==="Escape")setEditingNoteId(null);
-                        }} onBlur={()=>{if(editingNoteText.trim())saveNotes(existingNotes.map(n=>n.id===note.id?{...n,text:editingNoteText.trim()}:n));setEditingNoteId(null);}}
+                        <input autoFocus value={editingNoteText} onChange={e=>setEditingNoteText(e.target.value)}
+                          onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}
+                          onKeyDown={e=>{
+                            if(e.key==="Enter"&&editingNoteText.trim()){saveNotes(existingNotes.map(n=>n.id===note.id?{...n,text:editingNoteText.trim()}:n));setEditingNoteId(null);}
+                            if(e.key==="Escape")setEditingNoteId(null);
+                          }} onBlur={()=>{if(editingNoteText.trim())saveNotes(existingNotes.map(n=>n.id===note.id?{...n,text:editingNoteText.trim()}:n));setEditingNoteId(null);}}
                         style={{background:"#fff",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:11,padding:"2px 6px",width:140,outline:"none",fontFamily:"inherit"}}/>
                       ):(
-                        <span onDoubleClick={!readOnly?e=>{e.stopPropagation();setEditingNoteId(note.id);setEditingNoteText(note.text||"");}:undefined} style={{fontSize:11,color:"#1e293b",whiteSpace:"nowrap",cursor:readOnly?"default":"text"}} title={readOnly?"":"Double-click to edit"}>{(note.text||"(empty)").slice(0,50)}</span>
+                        <span onClick={!readOnly?e=>{e.stopPropagation();e.preventDefault();setEditingNoteId(note.id);setEditingNoteText(note.text||"");}:undefined} onMouseDown={e=>e.stopPropagation()} style={{fontSize:11,color:"#1e293b",whiteSpace:"nowrap",cursor:readOnly?"default":"text"}} title={readOnly?"":"Click to edit"}>{(note.text||"(empty)").slice(0,50)}</span>
                       )}
                       {!readOnly&&editingNoteId!==note.id&&<>
-                        <button onClick={e=>{e.stopPropagation();saveNotes(existingNotes.map(n=>n.id===note.id?{...n,visibility:isExt?"internal":"external"}:n));}} style={{background:"none",border:"1px solid #ef444444",borderRadius:3,color:"#ef4444",fontSize:9,cursor:"pointer",padding:"0 4px",flexShrink:0}} title={isExt?"Make Internal":"Make External"}>{isExt?"INT":"EXT"}</button>
+                        <button onClick={e=>{e.stopPropagation();saveNotes(existingNotes.map(n=>n.id===note.id?{...n,visibility:isExt?"internal":"external"}:n));}} style={{background:"none",border:"1px solid #ef444444",borderRadius:3,color:"#ef4444",fontSize:9,cursor:"pointer",padding:"0 4px",flexShrink:0}} title={isExt?"Switch to Internal":"Switch to External"}>{isExt?"EXT":"INT"}</button>
                         <button onClick={e=>{e.stopPropagation();saveNotes(existingNotes.filter(n=>n.id!==note.id));}} style={{background:"none",border:"none",color:"#ef4444",fontSize:11,cursor:"pointer",padding:"0 2px",flexShrink:0}} title="Delete">✕</button>
                       </>}
                     </div>;
@@ -13062,7 +13064,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     setEditingNoteId(null);
                   }} style={{background:"#fff",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:11,padding:"3px 6px",width:"100%",outline:"none",fontFamily:"inherit"}}/>
                 ):(
-                  <div onDoubleClick={!readOnly?()=>{setEditingNoteId(n.id);setEditingNoteText(n.text||"");}:undefined} style={{color:C.text,lineHeight:1.4,cursor:readOnly?"default":"text"}} title={readOnly?"":"Double-click to edit"}>{(n.text||"(empty)").slice(0,80)}{(n.text||"").length>80?"…":""}</div>
+                  <div onClick={!readOnly?()=>{setEditingNoteId(n.id);setEditingNoteText(n.text||"");}:undefined} style={{color:C.text,lineHeight:1.4,cursor:readOnly?"default":"text"}} title={readOnly?"":"Click to edit"}>{(n.text||"(empty)").slice(0,80)}{(n.text||"").length>80?"…":""}</div>
                 )}
                 <div style={{color:C.muted,fontSize:9,marginTop:3}}>— {n.initials} {n.date}</div>
               </div>
