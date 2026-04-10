@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.532";
+const APP_VERSION="v1.19.533";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6538,8 +6538,10 @@ function computeProjectEffectiveStatus(project){
   let pipelineStatus;
   if(statuses.some(s=>!readySet.has(s)))pipelineStatus="in_progress";
   else{const rank={extracted:1,validated:2,costed:3,quoted:4,pushed_to_bc:5};const maxR=Math.max(...statuses.map(s=>rank[s]||1));pipelineStatus=["extracted","validated","costed","quoted","pushed_to_bc"][maxR-1]||"extracted";}
-  // Effective status: quote sent > unpriced/active RFQs > ready
+  // Effective status: quote sent > reviews > unpriced/active RFQs > ready
   if(quoteSent)return isBudgetary?"budgetary_sent":"firm_sent";
+  if(project.postReviewStatus==="pending")return"post_review";
+  if(project.preReviewStatus==="pending")return"pre_review";
   if((hasUnpriced||hasActiveRfqs)&&hasBom)return"rfqs";
   if(hasBom&&!hasUnpriced&&!hasActiveRfqs)return"evc"; // Ready to review/send
   return pipelineStatus;
@@ -6552,6 +6554,8 @@ function Badge({status,project}){
     draft:["#3d1a00","#f97316","Draft"],
     in_progress:[C.yellowDim,C.yellow,"In Process"],
     rfqs:[C.redDim,C.red,"RFQ's"],
+    pre_review:["#1a1040","#a78bfa","In Pre-Review"],
+    post_review:["#1a1040","#a78bfa","In Post-Review"],
     evc:[C.greenDim,C.green,"Ready"],
     extracted:[C.greenDim,C.green,"Ready"],
     validated:[C.greenDim,C.green,"Ready"],
@@ -15804,6 +15808,60 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
     <div style={{height:"calc(100vh - 130px)",display:"flex",background:C.bg,overflow:"hidden"}}>
         <div style={{flex:1,overflowY:"auto",padding:24,minWidth:0}}>
         {readOnly&&<div style={{marginBottom:12}}><span style={{background:C.border,color:C.muted,borderRadius:20,padding:"2px 10px",fontSize:13,fontWeight:700}}>VIEW ONLY</span></div>}
+        {/* Engineering Review Banners */}
+        {project.preReviewStatus==="pending"&&(
+          <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <span style={{fontSize:20}}>📐</span>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>PRE-QUOTE REVIEW REQUESTED</div>
+              <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Designer: {project.bcDesigner||"—"}</div>
+            </div>
+            {!readOnly&&(project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin")&&(
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={async()=>{
+                  const upd={...project,preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
+                  onUpdate(upd);safeSave(uid,upd);
+                }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px"})}>✓ Approve</button>
+                <button onClick={async()=>{
+                  const notes=prompt("Notes for the salesperson (reason for return):");
+                  if(notes===null)return;
+                  const upd={...project,preReviewStatus:"rejected",preReviewNotes:notes};
+                  onUpdate(upd);safeSave(uid,upd);
+                }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px"})}>✗ Return</button>
+              </div>
+            )}
+          </div>
+        )}
+        {project.preReviewStatus==="rejected"&&(
+          <div style={{marginBottom:12,background:"#2a0a0a",border:"2px solid #ef4444",borderRadius:10,padding:"14px 18px"}}>
+            <div style={{fontSize:14,fontWeight:800,color:"#ef4444"}}>⚠ PRE-REVIEW RETURNED FOR CHANGES</div>
+            {project.preReviewNotes&&<div style={{fontSize:12,color:"#fca5a5",marginTop:4}}>{project.preReviewNotes}</div>}
+            <button onClick={()=>{const upd={...project,preReviewStatus:null,preReviewNotes:null};onUpdate(upd);safeSave(uid,upd);}} style={btn("#1a1020","#a78bfa",{fontSize:12,fontWeight:700,marginTop:8,padding:"4px 14px"})}>Re-submit for Review</button>
+          </div>
+        )}
+        {project.postReviewStatus==="pending"&&(
+          <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <span style={{fontSize:20}}>🔧</span>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>POST-PO REVIEW IN PROGRESS</div>
+              <div style={{fontSize:12,color:"#94a3b8"}}>PO #{project.bcPoNumber||"—"} received. Awaiting production readiness approval.</div>
+            </div>
+            {!readOnly&&_appCtx.role==="admin"&&(
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={async()=>{
+                  const upd={...project,postReviewStatus:"approved",postReviewApprovedAt:Date.now(),postReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
+                  onUpdate(upd);safeSave(uid,upd);
+                }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px"})}>✓ Approved for Production</button>
+                <button onClick={async()=>{
+                  const notes=prompt("Notes (reason for return):");
+                  if(notes===null)return;
+                  const upd={...project,postReviewStatus:"rejected",postReviewNotes:notes};
+                  onUpdate(upd);safeSave(uid,upd);
+                }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px"})}>✗ Return</button>
+              </div>
+            )}
+          </div>
+        )}
         <div style={{maxWidth:1400,margin:"0 auto"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
             <div>
@@ -16264,8 +16322,44 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                     <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"8px 6px",flex:0,whiteSpace:"nowrap",minWidth:28})}>📜</button>
                   </div>;
                 })()}
-                {!readOnly&&<button onClick={()=>alert("Technical Review feature coming soon.")} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>}
+                {!readOnly&&(()=>{
+                  const reviewStatus=project.preReviewStatus;
+                  if(reviewStatus==="approved")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:C.green,padding:"4px 0"}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</div>;
+                  if(reviewStatus==="pending")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#a78bfa",padding:"4px 0",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting designer approval</div>;
+                  return <button onClick={async()=>{
+                    const designerCode=project.bcDesignerCode;
+                    if(!designerCode){alert("No Designer assigned to this project. Assign a Designer first.");return;}
+                    const hasDrawings=(project.panels||[]).some(p=>(p.pages||[]).length>0);
+                    if(!hasDrawings){alert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
+                    // Set review status
+                    const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid};
+                    onUpdate(upd);safeSave(uid,upd);
+                    // Create notification for designer — look up their UID from Firestore
+                    try{
+                      const membersSnap=await fbDb.collection(`companies/${_appCtx.companyId}/members`).get();
+                      const designerEmail=(window._arcDesignerCache||[]).find(d=>d.Code===designerCode)?.Email||null;
+                      // Notify via in-app notification (find designer's UID from members by matching name)
+                      const designerName=project.bcDesigner||designerCode;
+                      // Send email notification if Graph token available
+                      if(_msalToken||window._graphToken){
+                        try{
+                          const graphToken=await acquireGraphToken();
+                          if(graphToken){
+                            const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested. Please review the drawings and BOM in ARC.</p><a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
+                            await sendGraphEmail(graphToken,designerEmail||"",`Pre-Quote Review: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
+                          }
+                        }catch(e){console.warn("Review email failed:",e);}
+                      }
+                      alert("Submitted for pre-quote review. "+designerName+" has been notified.");
+                    }catch(e){console.warn("Review notification failed:",e);alert("Review submitted. Notification may not have been sent.");}
+                  }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>;
+                })()}
                 {!readOnly&&<button data-tour="print-quote-btn" onClick={async()=>{
+                  // Gate: require pre-review approval before sending quote
+                  if(project.preReviewStatus&&project.preReviewStatus!=="approved"){
+                    alert("Engineering approval required before sending quote.\n\nCurrent status: "+(project.preReviewStatus==="pending"?"Awaiting designer review":"Returned for changes")+"\n\nClick 'Send for Technical Review' to submit for review, or wait for the designer to approve.");
+                    return;
+                  }
                   const q=project.quote||{};
                   const rev=project.quoteRev||0;
                   const isBudg=(project.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary);
@@ -17426,7 +17520,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             setShowPoModal(false);
             const firstPanel=(projectRef.current.panels||[])[0];
             const dueDate=firstPanel?.requestedShipDate||"";
-            const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,updatedAt:Date.now()};
+            const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,postReviewStatus:"pending",postReviewSubmittedAt:Date.now(),updatedAt:Date.now()};
             setProject(updated);projectRef.current=updated;onChange&&onChange(updated);
             try{await saveProject(uid,updated);}catch(e){console.warn("PO save failed:",e);}
             // Prompt to upload production drawings
@@ -20588,10 +20682,12 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="production"){
-      const order=["partsopen","inproduction"];
-      const labels={partsopen:"Parts Orders Open",inproduction:"In Production"};
+      const order=["post_review","partsopen","inproduction"];
+      const labels={post_review:"In Post-Review",partsopen:"Parts Orders Open",inproduction:"In Production"};
       const map={};
       list.forEach(p=>{
+        const eff=computeProjectEffectiveStatus(p);
+        if(eff==="post_review"){if(!map.post_review)map.post_review=[];map.post_review.push(p);return;}
         if(p.bcPoStatus==="purchasing"){if(!map.partsopen)map.partsopen=[];map.partsopen.push(p);}
         if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open"){if(!map.inproduction)map.inproduction=[];map.inproduction.push(p);}
       });
@@ -20599,9 +20695,9 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
     }
     if(groupBy==="status"){
       // DECISION(v1.19.510): Use computeProjectEffectiveStatus for column routing — single source of truth
-      const order=["draft","in_progress","process_rfq","evc","quotes_sent"];
-      const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQ's Send/Receive",evc:"Ready To Review/Send",quotes_sent:"Quotes Sent"};
-      const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc:"evc",extracted:"evc",validated:"evc",costed:"evc",quoted:"evc",pushed_to_bc:"evc",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
+      const order=["draft","in_progress","process_rfq","evc","pre_review","quotes_sent"];
+      const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQ's Send/Receive",evc:"Ready To Review/Send",pre_review:"In Pre-Review",quotes_sent:"Quotes Sent"};
+      const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc:"evc",pre_review:"pre_review",extracted:"evc",validated:"evc",costed:"evc",quoted:"evc",pushed_to_bc:"evc",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
       const map={};
       list.forEach(p=>{
         if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")return;
@@ -20725,7 +20821,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQ's Send/Receive":C.red,"Ready To Review/Send":C.green,"Quotes Sent":"#38bdf8","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa"};
+                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQ's Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa"};
                 const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQ's Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033"};
                 const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColBg[g.label]||C.border):"#3d6090";
@@ -20774,8 +20870,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                 {transferred.map(p=>{
                   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
                   const st=computeProjectEffectiveStatus(p);
-                  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8",budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
-                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC",budgetary_sent:"SENT",firm_sent:"SENT"};
+                  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,pre_review:"#a78bfa",post_review:"#a78bfa",evc:C.green,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8",budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
+                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",pre_review:"PRE-REVIEW",post_review:"POST-REVIEW",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC",budgetary_sent:"SENT",firm_sent:"SENT"};
                   return(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
                     style={{...card({padding:"10px 14px"}),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s",display:"flex",flexDirection:"column"}}
@@ -20987,6 +21083,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
 const NAV_TABS=[
   {id:"projects",  label:"SALES",       icon:"◫"},
   {id:"purchasing",label:"PURCHASING",  icon:"⬡"},
+  {id:"engineering",label:"ENGINEERING",icon:"📐"},
   {id:"production",label:"PRODUCTION",  icon:"⚙"},
   {id:"items",     label:"ITEMS/VENDORS",icon:"⬢"},
 ];
@@ -21101,6 +21198,53 @@ function PurchasingTab(){
     style={{width:'100%',height:'calc(100vh - 56px)',border:'none',background:'#0d0d1a'}}
     title="ARC Purchasing Module"
   />);
+}
+
+// ── ENGINEERING TAB (module iframe loader) ──
+function EngineeringTab(){
+  const [moduleEnabled,setModuleEnabled]=useState(null);
+  const iframeRef=useRef(null);
+  useEffect(()=>{
+    if(!_appCtx.companyId){setModuleEnabled(false);return;}
+    fbDb.doc(`companies/${_appCtx.companyId}/config/modules`).get().then(doc=>{
+      const data=doc.exists?doc.data():{};
+      setModuleEnabled(!!(data.engineering?.enabled));
+    }).catch(()=>setModuleEnabled(false));
+  },[]);
+  useEffect(()=>{
+    function onMsg(e){
+      if(e.data?.type==='arc-module-request-context'){
+        iframeRef.current?.contentWindow?.postMessage({type:'arc-module-context',ctx:{
+          uid:_appCtx.uid,companyId:_appCtx.companyId,role:_appCtx.role,
+          userEmail:fbAuth.currentUser?.email||'',userName:fbAuth.currentUser?.displayName||'',
+          bcToken:_bcToken||null,bcODataBase:typeof BC_ODATA_BASE!=='undefined'?BC_ODATA_BASE:null,
+          bcApiBase:typeof BC_API_BASE!=='undefined'?BC_API_BASE:null,bcEnv:_bcConfig?.env||null,
+          company:_appCtx.company||{},
+        }},'*');
+      }
+    }
+    window.addEventListener('message',onMsg);
+    return()=>window.removeEventListener('message',onMsg);
+  },[]);
+  if(moduleEnabled===null)return(<div style={{padding:48,textAlign:"center",color:C.muted}}>Loading module...</div>);
+  if(!moduleEnabled){
+    return(<div style={{padding:48,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:400}}>
+      <div style={{fontSize:48,marginBottom:16,opacity:0.3}}>📐</div>
+      <div style={{fontSize:20,fontWeight:700,color:"#94a3b8",marginBottom:8}}>Engineering Module</div>
+      <div style={{fontSize:14,color:"#94a3b8",textAlign:"center",maxWidth:360,lineHeight:1.7,marginBottom:20}}>
+        The Engineering Review module is not enabled for your company. Contact an administrator to enable it.
+      </div>
+      {_appCtx.role==='admin'&&(
+        <button onClick={async()=>{
+          await fbDb.doc(`companies/${_appCtx.companyId}/config/modules`).set({engineering:{enabled:true,enabledAt:Date.now(),enabledBy:_appCtx.uid}},{merge:true});
+          setModuleEnabled(true);
+        }} style={{background:"#a78bfa",color:'#fff',border:'none',padding:'10px 24px',borderRadius:8,cursor:'pointer',fontSize:14,fontWeight:700}}>
+          Enable Engineering Module
+        </button>
+      )}
+    </div>);
+  }
+  return(<iframe ref={iframeRef} src="/engineering/" style={{width:'100%',height:'calc(100vh - 56px)',border:'none',background:'#0d0d1a'}} title="ARC Engineering Module"/>);
 }
 
 // ── VENDOR CLASSIFIER — used by migration tool and sync panel ──
@@ -22947,6 +23091,7 @@ INSTRUCTIONS:
       <VendorSyncFloater onSwitchToItems={()=>{setNavTab("items");}}/>
       {navTab==="production"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
       {navTab==="purchasing"&&<PurchasingTab/>}
+      {navTab==="engineering"&&<EngineeringTab/>}
       {navTab==="items"&&<ItemsTab uid={user.uid}/>}
       {navTab==="projects"&&<>
       {/* BC Connection Lost popup */}
