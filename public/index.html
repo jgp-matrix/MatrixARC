@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.525";
+const APP_VERSION="v1.19.526";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16252,6 +16252,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                     <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"8px 6px",flex:0,whiteSpace:"nowrap",minWidth:28})}>📜</button>
                   </div>;
                 })()}
+                {!readOnly&&<button onClick={()=>alert("Technical Review feature coming soon.")} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>}
                 {!readOnly&&<button data-tour="print-quote-btn" onClick={async()=>{
                   const q=project.quote||{};
                   const rev=project.quoteRev||0;
@@ -16289,7 +16290,6 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
                 }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700})}>✉ {project.quoteSentAt?"Resend":"Send"} / Print Quote{(project.quoteRev||0)>0?` — Rev ${String(project.quoteRev).padStart(2,"0")}`:""}</button>}
-                {!readOnly&&<button onClick={()=>alert("Technical Review feature coming soon.")} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>}
                 {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
                 {project.quoteLocked&&(
                   <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:4}}>
