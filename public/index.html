@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.534";
+const APP_VERSION="v1.19.535";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16351,23 +16351,50 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                     // Set review status
                     const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid};
                     onUpdate(upd);safeSave(uid,upd);
-                    // Create notification for designer — look up their UID from Firestore
+                    // Look up designer email — check Salesperson cache first (has E_Mail), then BC User page
                     try{
-                      const membersSnap=await fbDb.collection(`companies/${_appCtx.companyId}/members`).get();
-                      const designerEmail=(window._arcDesignerCache||[]).find(d=>d.Code===designerCode)?.Email||null;
-                      // Notify via in-app notification (find designer's UID from members by matching name)
                       const designerName=project.bcDesigner||designerCode;
-                      // Send email notification if Graph token available
-                      if(_msalToken||window._graphToken){
+                      let designerEmail=null;
+                      // Check salesperson cache (salespersons have E_Mail)
+                      const spMatch=(window._arcSalespersonCache||[]).find(s=>s.Name===designerName||s.Code===designerCode);
+                      if(spMatch?.E_Mail)designerEmail=spMatch.E_Mail;
+                      // Fallback: fetch from BC User page
+                      if(!designerEmail&&_bcToken){
+                        try{
+                          const uR=await fetch(`${BC_ODATA_BASE}/User?$filter=User_Name eq '${designerCode}'&$select=User_Name,Contact_Email&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                          if(uR.ok){const uD=((await uR.json()).value||[])[0];if(uD?.Contact_Email)designerEmail=uD.Contact_Email;}
+                        }catch(e){}
+                      }
+                      // Fallback: look up member email from Firestore
+                      if(!designerEmail){
+                        const membersSnap=await fbDb.collection(`companies/${_appCtx.companyId}/members`).get();
+                        const memberMatch=membersSnap.docs.find(d=>{const m=d.data();return(m.email||"").toLowerCase().includes(designerName.toLowerCase().split(" ")[0]);});
+                        if(memberMatch)designerEmail=memberMatch.data().email;
+                      }
+                      // Create in-app notification for designer
+                      if(designerEmail){
+                        // Find designer UID from members
+                        const membersSnap2=await fbDb.collection(`companies/${_appCtx.companyId}/members`).get();
+                        const designerMember=membersSnap2.docs.find(d=>d.data().email===designerEmail);
+                        if(designerMember){
+                          await fbDb.collection(`users/${designerMember.id}/notifications`).add({
+                            type:"pre_review",title:"Pre-Quote Review Requested",
+                            body:`${project.bcProjectNumber||""} — ${project.name||""} needs engineering review`,
+                            projectId:project.id,projectName:project.name||"",createdAt:Date.now(),read:false
+                          });
+                        }
+                      }
+                      // Send email notification via Graph
+                      if(designerEmail){
                         try{
                           const graphToken=await acquireGraphToken();
                           if(graphToken){
-                            const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested. Please review the drawings and BOM in ARC.</p><a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
-                            await sendGraphEmail(graphToken,designerEmail||"",`Pre-Quote Review: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
-                          }
-                        }catch(e){console.warn("Review email failed:",e);}
-                      }
-                      alert("Submitted for pre-quote review. "+designerName+" has been notified.");
+                            const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p><a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
+                            await sendGraphEmail(graphToken,designerEmail,`Pre-Quote Review: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
+                            alert("Submitted for pre-quote review. "+designerName+" has been notified at "+designerEmail);
+                          }else{alert("Submitted for review. Email notification requires Microsoft 365 sign-in.");}
+                        }catch(e){console.warn("Review email failed:",e);alert("Submitted for review. Email failed: "+e.message);}
+                      }else{alert("Submitted for review. Could not find designer email — please notify "+designerName+" manually.");}
                     }catch(e){console.warn("Review notification failed:",e);alert("Review submitted. Notification may not have been sent.");}
                   }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>;
                 })()}
