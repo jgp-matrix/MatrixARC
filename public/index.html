@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.560";
+const APP_VERSION="v1.19.561";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13044,11 +13044,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",letterSpacing:0.5,marginBottom:8}}>NOTES — ALL PAGES</div>
             {pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).map(n=>({...n,pageNum:pi+1}))).length===0&&<div style={{fontSize:11,color:C.muted}}>No notes yet. Click on a drawing to add one.</div>}
             {pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).map(n=>({...n,pageNum:pi+1}))).map((n,i)=>(
-              <div key={n.id||i} style={{background:n.visibility==="external"?"#2a0a0a":"#2a2200",border:n.visibility==="external"?"1px solid #ef4444":"1px dashed #ef4444",borderRadius:6,padding:"8px 10px",marginBottom:6,fontSize:11}}>
-                <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:3,cursor:"pointer"}} onClick={()=>setReviewPageIdx(n.pageNum-1)}>
-                  <span style={{fontWeight:700,color:"#ef4444"}}>#{n.number}</span>
-                  <span style={{color:C.muted}}>p.{n.pageNum}</span>
-                  <span style={{fontSize:9,color:"#ef4444",background:"#ef444411",borderRadius:3,padding:"0 4px"}}>{n.visibility==="external"?"EXT":"INT"}</span>
+              <div key={n.id||i} style={{background:n.visibility==="external"?"#2a0a0a":"#2a2200",border:n.visibility==="external"?"1px solid #ef4444":"1px dashed #ef4444",borderRadius:6,padding:"8px 10px",marginBottom:6,fontSize:14}}>
+                <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:3}}>
+                  <span style={{fontWeight:700,color:"#ef4444",cursor:"pointer"}} onClick={()=>setReviewPageIdx(n.pageNum-1)}>#{n.number}</span>
+                  <span style={{color:C.muted,cursor:"pointer"}} onClick={()=>setReviewPageIdx(n.pageNum-1)}>p.{n.pageNum}</span>
+                  {!readOnly?<button onClick={()=>{
+                    const sidebarSave=(newNotes)=>{const updatedPages=pages.map((p,pi)=>pi===n.pageNum-1?{...p,reviewNotes:newNotes}:p);const updatedPanel={...panel,pages:updatedPages};onUpdate(updatedPanel);try{onSaveImmediate(updatedPanel);}catch(e){}};
+                    sidebarSave((pages[n.pageNum-1]?.reviewNotes||[]).map(rn=>rn.id===n.id?{...rn,visibility:rn.visibility==="external"?"internal":"external"}:rn));
+                  }} style={{fontSize:10,color:"#ef4444",background:n.visibility==="external"?"#ef444422":"#ef444411",border:"1px solid #ef444444",borderRadius:3,padding:"0 6px",cursor:"pointer"}} title={n.visibility==="external"?"Switch to Internal":"Switch to External"}>{n.visibility==="external"?"EXT":"INT"}</button>
+                  :<span style={{fontSize:10,color:"#ef4444",background:"#ef444411",borderRadius:3,padding:"0 4px"}}>{n.visibility==="external"?"EXT":"INT"}</span>}
                 </div>
                 {sidebarEditNoteId===n.id?(
                   <input autoFocus value={sidebarEditNoteText} onChange={e=>setSidebarEditNoteText(e.target.value)} onKeyDown={e=>{
@@ -13064,11 +13068,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       sidebarSave((pages[n.pageNum-1]?.reviewNotes||[]).map(rn=>rn.id===n.id?{...rn,text:sidebarEditNoteText.trim()}:rn));
                     }
                     setSidebarEditNoteId(null);
-                  }} style={{background:"#fff",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:11,padding:"3px 6px",width:"100%",outline:"none",fontFamily:"inherit"}}/>
+                  }} style={{background:"#fff",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:14,padding:"3px 6px",width:"100%",outline:"none",fontFamily:"inherit"}}/>
                 ):(
                   <div onClick={!readOnly?()=>{setSidebarEditNoteId(n.id);setSidebarEditNoteText(n.text||"");}:undefined} style={{color:C.text,lineHeight:1.4,cursor:readOnly?"default":"text"}} title={readOnly?"":"Click to edit"}>{(n.text||"(empty)").slice(0,80)}{(n.text||"").length>80?"…":""}</div>
                 )}
-                <div style={{color:C.muted,fontSize:9,marginTop:3}}>— {n.initials} {n.date}</div>
+                <div style={{color:C.muted,fontSize:10,marginTop:3}}>— {n.initials} {n.date}</div>
               </div>
             ))}
           </div>
