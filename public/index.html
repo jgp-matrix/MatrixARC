@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.529";
+const APP_VERSION="v1.19.530";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6005,7 +6005,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const hasBom=_apiKey&&bomPages.length>0;
     const hasVal=willValidate;
     const hasVerify=_apiKey;
-    const hasCompliance=_apiKey;
+    const hasCompliance=false; // DECISION(v1.19.530): Disabled — engineering questions feature needs attention before re-enabling
     const hasUpload=(panel.pages||[]).some(pg=>pg.dataUrl&&!pg.storageUrl);
     // Weighted phases: BOM=40, Validation=25, Verify=10, Compliance=15, Upload=10 (last — stamp needs hazloc)
     let phases=[];
@@ -6062,8 +6062,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // Await BOM and save
     const bomResult=await bomMergePromise;
     const mergedBom=bomResult.bom||bomResult;
-    const aiQuestions=(bomResult.questions||[]).slice(0,10);
-    const eqs=mergeEngineeringQuestions(latestPanel.engineeringQuestions,aiQuestions,null);
+    const aiQuestions=[]; // DECISION(v1.19.530): Disabled — engineering questions feature needs attention
+    const eqs=[];
     // DECISION(v1.19.395): Refresh latestPanel after BOM save so compliance review sees the latest
     // engineering questions. Without this, the stale reference caused duplicate questions.
     // Await hazardous location scan result
