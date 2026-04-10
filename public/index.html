@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.552";
+const APP_VERSION="v1.19.553";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12975,10 +12975,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       style={{position:"absolute",left:note.x+"%",top:note.y+"%",background:isExt?"rgba(239,68,68,0.15)":"rgba(250,204,21,0.15)",border:isExt?"2px solid #ef4444":"2px dashed #ef4444",borderRadius:4,padding:"2px 6px 2px 8px",fontFamily:"-apple-system,sans-serif",zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:4,cursor:readOnly?"default":"grab",userSelect:"none"}}
                       title={note.author+" — "+note.date}
                       onMouseDown={!readOnly?e=>{if(e.target.closest("button"))return;e.preventDefault();
-                        const containerRect=e.currentTarget.parentElement.getBoundingClientRect();
+                        const el=e.currentTarget;const containerRect=el.parentElement.getBoundingClientRect();
                         const startX=e.clientX,startY=e.clientY,origX=note.x,origY=note.y;
-                        const onMove=ev=>{const dx=(ev.clientX-startX)/containerRect.width*100;const dy=(ev.clientY-startY)/containerRect.height*100;note.x=Math.max(0,Math.min(90,origX+dx));note.y=Math.max(0,Math.min(90,origY+dy));e.currentTarget.style.left=note.x+"%";e.currentTarget.style.top=note.y+"%";};
-                        const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);saveNotes([...existingNotes]);};
+                        el.style.opacity="0.8";el.style.zIndex="50";el.style.cursor="grabbing";
+                        const onMove=ev=>{const dx=(ev.clientX-startX)/containerRect.width*100;const dy=(ev.clientY-startY)/containerRect.height*100;el.style.left=Math.max(0,Math.min(90,origX+dx))+"%";el.style.top=Math.max(0,Math.min(90,origY+dy))+"%";};
+                        const onUp=ev=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);
+                          el.style.opacity="1";el.style.zIndex="10";el.style.cursor="grab";
+                          const dx=(ev.clientX-startX)/containerRect.width*100;const dy=(ev.clientY-startY)/containerRect.height*100;
+                          const newX=Math.max(0,Math.min(90,origX+dx));const newY=Math.max(0,Math.min(90,origY+dy));
+                          saveNotes(existingNotes.map(n=>n.id===note.id?{...n,x:newX,y:newY}:n));
+                        };
                         document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
                       }:undefined}>
                       <span style={{fontSize:10,fontWeight:800,color:"#ef4444",flexShrink:0}}>#{note.number}</span>
