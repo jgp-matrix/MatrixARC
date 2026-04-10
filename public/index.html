@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.554";
+const APP_VERSION="v1.19.555";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12974,7 +12974,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   return existingNotes.map((note,ni)=>{
                     const isExt=note.visibility==="external";
                     return <div key={note.id||ni}
-                      style={{position:"absolute",left:note.x+"%",top:note.y+"%",background:isExt?"rgba(239,68,68,0.15)":"rgba(250,204,21,0.15)",border:isExt?"2px solid #ef4444":"2px dashed #ef4444",borderRadius:4,padding:"2px 6px 2px 8px",fontFamily:"-apple-system,sans-serif",zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:4,cursor:readOnly?"default":"grab",userSelect:"none"}}
+                      style={{position:"absolute",left:note.x+"%",top:note.y+"%",background:isExt?"#fecaca":"#fef9c3",border:isExt?"2px solid #ef4444":"2px dashed #ef4444",borderRadius:4,padding:"2px 6px 2px 8px",fontFamily:"-apple-system,sans-serif",zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.4)",display:"flex",alignItems:"center",gap:4,cursor:readOnly?"default":"grab",userSelect:"none"}}
                       title={note.author+" — "+note.date}
                       onMouseDown={!readOnly?e=>{if(e.target.closest("button"))return;e.preventDefault();
                         const el=e.currentTarget;const containerRect=el.parentElement.getBoundingClientRect();
@@ -13040,7 +13040,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",letterSpacing:0.5,marginBottom:8}}>NOTES — ALL PAGES</div>
             {pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).map(n=>({...n,pageNum:pi+1}))).length===0&&<div style={{fontSize:11,color:C.muted}}>No notes yet. Click on a drawing to add one.</div>}
             {pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).map(n=>({...n,pageNum:pi+1}))).map((n,i)=>(
-              <div key={n.id||i} style={{background:n.visibility==="external"?"rgba(239,68,68,0.12)":"rgba(250,204,21,0.12)",border:n.visibility==="external"?"1px solid #ef4444":"1px dashed #ef4444",borderRadius:6,padding:"8px 10px",marginBottom:6,fontSize:11}}>
+              <div key={n.id||i} style={{background:n.visibility==="external"?"#2a0a0a":"#2a2200",border:n.visibility==="external"?"1px solid #ef4444":"1px dashed #ef4444",borderRadius:6,padding:"8px 10px",marginBottom:6,fontSize:11}}>
                 <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:3,cursor:"pointer"}} onClick={()=>setReviewPageIdx(n.pageNum-1)}>
                   <span style={{fontWeight:700,color:"#ef4444"}}>#{n.number}</span>
                   <span style={{color:C.muted}}>p.{n.pageNum}</span>
