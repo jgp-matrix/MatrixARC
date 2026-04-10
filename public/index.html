@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.550";
+const APP_VERSION="v1.19.551";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12985,10 +12985,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   const now=new Date();
                   const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][now.getMonth()];
                   const dateStr=String(now.getDate()).padStart(2,'0')+'-'+mon+'-'+String(now.getFullYear()).slice(2);
-                  const initials=(fbAuth.currentUser?.displayName||"XX").split(" ").map(w=>w[0]).join("").slice(0,2).toUpperCase();
+                  // Use designer name from project for initials, fallback to current user
+                  const _designerName=panel._projectDesigner||fbAuth.currentUser?.displayName||"";
+                  const _nameParts=_designerName.trim().split(/\s+/).filter(Boolean);
+                  const initials=_nameParts.length>=2?(_nameParts[0][0]+_nameParts[_nameParts.length-1][0]).toUpperCase():_nameParts.length===1?_nameParts[0].slice(0,2).toUpperCase():"??";
                   const noteText=window.prompt("Enter note:");
                   if(!noteText||!noteText.trim())return;
-                  const newNote={id:'note_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),number:(existingNotes.length+1),x:parseFloat(x),y:parseFloat(y),text:noteText.trim(),author:fbAuth.currentUser?.displayName||"Designer",initials,date:dateStr,createdAt:Date.now(),reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review",visibility:"internal",status:"open",responses:[]};
+                  const newNote={id:'note_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),number:(existingNotes.length+1),x:parseFloat(x),y:parseFloat(y),text:noteText.trim(),author:_designerName||"Designer",initials,date:dateStr,createdAt:Date.now(),reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review",visibility:"internal",status:"open",responses:[]};
                   const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewNotes:[...(p.reviewNotes||[]),newNote]}:p);
                   const updatedPanel={...panel,pages:updatedPages};
                   onUpdate(updatedPanel);
@@ -13002,11 +13005,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <div style={{fontSize:12,fontWeight:700,color:"#a78bfa",letterSpacing:0.5,marginBottom:8}}>NOTES — ALL PAGES</div>
             {pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).map(n=>({...n,pageNum:pi+1}))).length===0&&<div style={{fontSize:11,color:C.muted}}>No notes yet. Click on a drawing to add one.</div>}
             {pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).map(n=>({...n,pageNum:pi+1}))).map((n,i)=>(
-              <div key={n.id||i} onClick={()=>setReviewPageIdx(n.pageNum-1)} style={{background:n.visibility==="external"?"rgba(56,189,248,0.08)":"rgba(239,68,68,0.08)",border:"1px solid "+(n.visibility==="external"?"#38bdf844":"#ef444444"),borderRadius:6,padding:"8px 10px",marginBottom:6,cursor:"pointer",fontSize:11}}>
+              <div key={n.id||i} onClick={()=>setReviewPageIdx(n.pageNum-1)} style={{background:n.visibility==="external"?"rgba(239,68,68,0.12)":"rgba(250,204,21,0.12)",border:n.visibility==="external"?"1px solid #ef4444":"1px dashed #ef4444",borderRadius:6,padding:"8px 10px",marginBottom:6,cursor:"pointer",fontSize:11}}>
                 <div style={{display:"flex",gap:4,alignItems:"center",marginBottom:3}}>
-                  <span style={{fontWeight:700,color:n.visibility==="external"?"#38bdf8":"#ef4444"}}>#{n.number}</span>
+                  <span style={{fontWeight:700,color:"#ef4444"}}>#{n.number}</span>
                   <span style={{color:C.muted}}>p.{n.pageNum}</span>
-                  <span style={{fontSize:9,color:n.visibility==="external"?"#38bdf8":"#ef4444",background:n.visibility==="external"?"#38bdf811":"#ef444411",borderRadius:3,padding:"0 4px"}}>{n.visibility==="external"?"EXT":"INT"}</span>
+                  <span style={{fontSize:9,color:"#ef4444",background:"#ef444411",borderRadius:3,padding:"0 4px"}}>{n.visibility==="external"?"EXT":"INT"}</span>
                 </div>
                 <div style={{color:C.text,lineHeight:1.4}}>{(n.text||"").slice(0,80)}{(n.text||"").length>80?"…":""}</div>
                 <div style={{color:C.muted,fontSize:9,marginTop:3}}>— {n.initials} {n.date}</div>
@@ -16246,7 +16249,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
               {panels.map((panel,idx)=>(
                 <PanelCard
                   key={panel.id}
-                  panel={panel}
+                  panel={{...panel,_projectDesigner:project.bcDesigner||""}}
                   idx={idx}
                   uid={uid}
                   projectId={project.id}
