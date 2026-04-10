@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.537";
+const APP_VERSION="v1.19.538";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12909,6 +12909,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <div style={{color:C.text,lineHeight:1.4}}>{(n.text||"").slice(0,80)}{(n.text||"").length>80?"…":""}</div>
                 <div style={{color:C.muted,fontSize:9,marginTop:3}}>— {n.initials} {n.date}</div>
               </div>
+            ))}
+          </div>
+          {/* Quick page navigation row */}
+          <div style={{position:"fixed",bottom:0,left:0,right:300,background:"#111128",borderTop:"1px solid #a78bfa44",padding:"8px 16px",display:"flex",gap:4,alignItems:"center",justifyContent:"center",flexWrap:"wrap",zIndex:10}}>
+            <span style={{fontSize:11,color:C.muted,marginRight:8}}>Pages:</span>
+            {pages.map((pg,i)=>(
+              <button key={pg.id||i} onClick={()=>setReviewPageIdx(i)}
+                style={{background:i===reviewPageIdx?"#a78bfa":"#1a1a2e",color:i===reviewPageIdx?"#fff":"#94a3b8",border:i===reviewPageIdx?"1px solid #a78bfa":"1px solid #3a3a54",borderRadius:4,padding:"4px 10px",fontSize:11,fontWeight:i===reviewPageIdx?700:400,cursor:"pointer",minWidth:32,textAlign:"center",position:"relative"}}>
+                {i+1}
+                {(pg.reviewNotes||[]).length>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#ef4444",color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{(pg.reviewNotes||[]).length}</span>}
+              </button>
             ))}
           </div>
         </div>
