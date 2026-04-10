@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.561";
+const APP_VERSION="v1.19.562";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10250,6 +10250,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [editingNoteText,setEditingNoteText]=useState("");
   const [sidebarEditNoteId,setSidebarEditNoteId]=useState(null);
   const [sidebarEditNoteText,setSidebarEditNoteText]=useState("");
+  const [sidebarDetailOpenId,setSidebarDetailOpenId]=useState(null);
+  const [sidebarEditDetailId,setSidebarEditDetailId]=useState(null);
+  const [sidebarEditDetailText,setSidebarEditDetailText]=useState("");
   const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [bcPdfMissing,setBcPdfMissing]=useState(false);
   useEffect(()=>{
@@ -13073,6 +13076,33 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   <div onClick={!readOnly?()=>{setSidebarEditNoteId(n.id);setSidebarEditNoteText(n.text||"");}:undefined} style={{color:C.text,lineHeight:1.4,cursor:readOnly?"default":"text"}} title={readOnly?"":"Click to edit"}>{(n.text||"(empty)").slice(0,80)}{(n.text||"").length>80?"…":""}</div>
                 )}
                 <div style={{color:C.muted,fontSize:10,marginTop:3}}>— {n.initials} {n.date}</div>
+                {/* Extended detail field */}
+                <div style={{marginTop:4,borderTop:"1px solid #ef444422",paddingTop:4}}>
+                  {sidebarEditDetailId===n.id?(
+                    <textarea autoFocus value={sidebarEditDetailText} onChange={e=>setSidebarEditDetailText(e.target.value)} placeholder="Add extended details..." rows={3}
+                      onKeyDown={e=>{
+                        if(e.key==="Escape"){setSidebarEditDetailId(null);}
+                        if(e.key==="Enter"&&e.ctrlKey){
+                          const sidebarSave=(newNotes)=>{const updatedPages=pages.map((p,pi)=>pi===n.pageNum-1?{...p,reviewNotes:newNotes}:p);const updatedPanel={...panel,pages:updatedPages};onUpdate(updatedPanel);try{onSaveImmediate(updatedPanel);}catch(e){}};
+                          sidebarSave((pages[n.pageNum-1]?.reviewNotes||[]).map(rn=>rn.id===n.id?{...rn,detail:sidebarEditDetailText.trim()}:rn));
+                          setSidebarEditDetailId(null);
+                        }
+                      }}
+                      onBlur={()=>{
+                        const sidebarSave=(newNotes)=>{const updatedPages=pages.map((p,pi)=>pi===n.pageNum-1?{...p,reviewNotes:newNotes}:p);const updatedPanel={...panel,pages:updatedPages};onUpdate(updatedPanel);try{onSaveImmediate(updatedPanel);}catch(e){}};
+                        sidebarSave((pages[n.pageNum-1]?.reviewNotes||[]).map(rn=>rn.id===n.id?{...rn,detail:sidebarEditDetailText.trim()}:rn));
+                        setSidebarEditDetailId(null);
+                      }}
+                      style={{width:"100%",background:"#fff",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:12,padding:"4px 6px",outline:"none",fontFamily:"inherit",resize:"vertical",minHeight:48}}/>
+                  ):(
+                    <div onClick={!readOnly?()=>{setSidebarEditDetailId(n.id);setSidebarEditDetailText(n.detail||"");}:undefined}
+                      style={{fontSize:12,color:n.detail?C.sub:C.muted,lineHeight:1.4,cursor:readOnly?"default":"text",fontStyle:n.detail?"normal":"italic",whiteSpace:"pre-wrap",wordBreak:"break-word"}}
+                      title={readOnly?"":"Click to add details"}>
+                      {n.detail||"+ Add details..."}
+                    </div>
+                  )}
+                  {sidebarEditDetailId===n.id&&<div style={{fontSize:9,color:C.muted,marginTop:2}}>Ctrl+Enter to save · Esc to cancel</div>}
+                </div>
               </div>
             ))}
           </div>
