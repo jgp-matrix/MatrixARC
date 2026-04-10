@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.526";
+const APP_VERSION="v1.19.527";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15921,9 +15921,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                   return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},
                     React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),
                     React.createElement("select",{value:project[codeKey]||"",onChange:function(e){
-                      var code=e.target.value;var cache=listSource;
-                      // DECISION(v1.19.367): Must saveProject after updating Sales/PM/Designer so changes persist.
-                      // Previously only called onUpdate (React state) — changes were lost on navigation.
+                      var code=e.target.value;
+                      var cached=listSource.find(function(s){return s.Code===code;});
                       var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;onUpdate(upd);safeSave(uid,upd);
                       if(bcField&&project.bcProjectNumber&&_bcToken){var patch={};patch[bcField]=code;bcPatchJobOData(project.bcProjectNumber,patch).catch(function(){});}
                     },style:{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:150}},opts)
