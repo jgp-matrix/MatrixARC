@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.559";
+const APP_VERSION="v1.19.560";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10248,6 +10248,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [draggingNote,setDraggingNote]=useState(null); // {id,startX,startY,origX,origY}
   const [editingNoteId,setEditingNoteId]=useState(null);
   const [editingNoteText,setEditingNoteText]=useState("");
+  const [sidebarEditNoteId,setSidebarEditNoteId]=useState(null);
+  const [sidebarEditNoteText,setSidebarEditNoteText]=useState("");
   const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [bcPdfMissing,setBcPdfMissing]=useState(false);
   useEffect(()=>{
@@ -13027,7 +13029,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   <div style={{fontSize:9,color:"#ef4444",marginTop:2}}>Enter to save · Esc to cancel</div>
                 </div>}
                 {/* Click to add note — crosshair overlay */}
-                {!readOnly&&!newNotePos&&<div style={{position:"absolute",inset:0,cursor:"crosshair"}} onClick={e=>{
+                {!readOnly&&!newNotePos&&<div style={{position:"absolute",inset:0,cursor:"crosshair",zIndex:5}} onClick={e=>{
                   if(e.target.closest("[data-note-drag]"))return;
                   const rect=e.currentTarget.getBoundingClientRect();
                   const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
@@ -13048,23 +13050,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   <span style={{color:C.muted}}>p.{n.pageNum}</span>
                   <span style={{fontSize:9,color:"#ef4444",background:"#ef444411",borderRadius:3,padding:"0 4px"}}>{n.visibility==="external"?"EXT":"INT"}</span>
                 </div>
-                {editingNoteId===n.id?(
-                  <input autoFocus value={editingNoteText} onChange={e=>setEditingNoteText(e.target.value)} onKeyDown={e=>{
-                    if(e.key==="Enter"&&editingNoteText.trim()){
+                {sidebarEditNoteId===n.id?(
+                  <input autoFocus value={sidebarEditNoteText} onChange={e=>setSidebarEditNoteText(e.target.value)} onKeyDown={e=>{
+                    if(e.key==="Enter"&&sidebarEditNoteText.trim()){
                       const sidebarSave=(newNotes)=>{const updatedPages=pages.map((p,pi)=>pi===n.pageNum-1?{...p,reviewNotes:newNotes}:p);const updatedPanel={...panel,pages:updatedPages};onUpdate(updatedPanel);try{onSaveImmediate(updatedPanel);}catch(e){}};
-                      sidebarSave((pages[n.pageNum-1]?.reviewNotes||[]).map(rn=>rn.id===n.id?{...rn,text:editingNoteText.trim()}:rn));
-                      setEditingNoteId(null);
+                      sidebarSave((pages[n.pageNum-1]?.reviewNotes||[]).map(rn=>rn.id===n.id?{...rn,text:sidebarEditNoteText.trim()}:rn));
+                      setSidebarEditNoteId(null);
                     }
-                    if(e.key==="Escape")setEditingNoteId(null);
+                    if(e.key==="Escape")setSidebarEditNoteId(null);
                   }} onBlur={()=>{
-                    if(editingNoteText.trim()){
+                    if(sidebarEditNoteText.trim()){
                       const sidebarSave=(newNotes)=>{const updatedPages=pages.map((p,pi)=>pi===n.pageNum-1?{...p,reviewNotes:newNotes}:p);const updatedPanel={...panel,pages:updatedPages};onUpdate(updatedPanel);try{onSaveImmediate(updatedPanel);}catch(e){}};
-                      sidebarSave((pages[n.pageNum-1]?.reviewNotes||[]).map(rn=>rn.id===n.id?{...rn,text:editingNoteText.trim()}:rn));
+                      sidebarSave((pages[n.pageNum-1]?.reviewNotes||[]).map(rn=>rn.id===n.id?{...rn,text:sidebarEditNoteText.trim()}:rn));
                     }
-                    setEditingNoteId(null);
+                    setSidebarEditNoteId(null);
                   }} style={{background:"#fff",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:11,padding:"3px 6px",width:"100%",outline:"none",fontFamily:"inherit"}}/>
                 ):(
-                  <div onClick={!readOnly?()=>{setEditingNoteId(n.id);setEditingNoteText(n.text||"");}:undefined} style={{color:C.text,lineHeight:1.4,cursor:readOnly?"default":"text"}} title={readOnly?"":"Click to edit"}>{(n.text||"(empty)").slice(0,80)}{(n.text||"").length>80?"…":""}</div>
+                  <div onClick={!readOnly?()=>{setSidebarEditNoteId(n.id);setSidebarEditNoteText(n.text||"");}:undefined} style={{color:C.text,lineHeight:1.4,cursor:readOnly?"default":"text"}} title={readOnly?"":"Click to edit"}>{(n.text||"(empty)").slice(0,80)}{(n.text||"").length>80?"…":""}</div>
                 )}
                 <div style={{color:C.muted,fontSize:9,marginTop:3}}>— {n.initials} {n.date}</div>
               </div>
@@ -13073,7 +13075,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           {/* Page thumbnail filmstrip */}
           <div style={{position:"fixed",bottom:0,left:0,right:300,background:"#0d0d14",borderTop:"1px solid #a78bfa44",padding:"8px 12px",display:"flex",gap:6,alignItems:"center",overflowX:"auto",zIndex:10}}>
             {pages.map((pg,i)=>(
-              <div key={pg.id||i} onClick={()=>{setReviewPageIdx(i);setNewNotePos(null);setEditingNoteId(null);}} style={{position:"relative",flexShrink:0,cursor:"pointer"}}>
+              <div key={pg.id||i} onClick={()=>{setReviewPageIdx(i);setNewNotePos(null);setEditingNoteId(null);setSidebarEditNoteId(null);}} style={{position:"relative",flexShrink:0,cursor:"pointer"}}>
                 <img src={pg.dataUrl||pg.storageUrl} alt={"Page "+(i+1)} style={{height:56,width:90,objectFit:"contain",borderRadius:4,border:i===reviewPageIdx?"2px solid #a78bfa":"2px solid #2a2a3e",background:"#080810",opacity:i===reviewPageIdx?1:0.5,transition:"all 0.15s"}}/>
                 <div style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:700,color:i===reviewPageIdx?"#a78bfa":"#94a3b8",background:"rgba(0,0,0,0.7)",borderRadius:2,padding:"0 3px"}}>{i+1}</div>
                 {(pg.reviewNotes||[]).length>0&&<span style={{position:"absolute",top:-3,right:-3,background:"#ef4444",color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.5)"}}>{(pg.reviewNotes||[]).length}</span>}
