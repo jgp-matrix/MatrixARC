@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.562";
+const APP_VERSION="v1.19.563";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13022,7 +13022,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       const _dn=panel._projectDesigner||fbAuth.currentUser?.displayName||"";
                       const _np=_dn.trim().split(/\s+/).filter(Boolean);
                       const ini=_np.length>=2?(_np[0][0]+_np[_np.length-1][0]).toUpperCase():_np.length===1?_np[0].slice(0,2).toUpperCase():"??";
-                      const newNote={id:'note_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),number:(existingNotes.length+1),x:newNotePos.x,y:newNotePos.y,text:newNoteText.trim(),author:_dn||"Designer",initials:ini,date:dateStr,createdAt:Date.now(),reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review",visibility:"internal",status:"open",responses:[]};
+                      const totalNotesAllPages=pages.reduce((sum,p)=>(sum+(p.reviewNotes||[]).length),0);
+                      const newNote={id:'note_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),number:(totalNotesAllPages+1),x:newNotePos.x,y:newNotePos.y,text:newNoteText.trim(),author:_dn||"Designer",initials:ini,date:dateStr,createdAt:Date.now(),reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review",visibility:"internal",status:"open",responses:[]};
                       const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewNotes:[...(p.reviewNotes||[]),newNote]}:p);
                       onUpdate({...panel,pages:updatedPages});try{onSaveImmediate({...panel,pages:updatedPages});}catch(e){}
                       setNewNotePos(null);setNewNoteText("");
