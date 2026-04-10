@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.566";
+const APP_VERSION="v1.19.567";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16832,7 +16832,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                           }else{alert("Submitted for review. Email notification requires Microsoft 365 sign-in.");}
                         }catch(e){console.warn("Review email failed:",e);alert("Submitted for review. Email failed: "+e.message);}
                       }else{alert("Submitted for review. Could not find designer email — please notify "+designerName+" manually.");}
-                    }catch(e){console.warn("Review notification failed:",e);alert("Review submitted. Notification may not have been sent.");}
+                    }catch(e){console.warn("Review notification failed:",e);alert("Review submitted but notification failed: "+(e.message||e)+"\n\nThe project status has been updated. Please notify the designer manually.");}
                   }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>;
                 })()}
                 {!readOnly&&<button data-tour="print-quote-btn" onClick={async()=>{
