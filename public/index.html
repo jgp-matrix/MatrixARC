@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.556";
+const APP_VERSION="v1.19.557";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13070,15 +13070,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               </div>
             ))}
           </div>
-          {/* Quick page navigation row */}
-          <div style={{position:"fixed",bottom:0,left:0,right:300,background:"#111128",borderTop:"1px solid #a78bfa44",padding:"8px 16px",display:"flex",gap:4,alignItems:"center",justifyContent:"center",flexWrap:"wrap",zIndex:10}}>
-            <span style={{fontSize:11,color:C.muted,marginRight:8}}>Pages:</span>
+          {/* Page thumbnail filmstrip */}
+          <div style={{position:"fixed",bottom:0,left:0,right:300,background:"#0d0d14",borderTop:"1px solid #a78bfa44",padding:"8px 12px",display:"flex",gap:6,alignItems:"center",overflowX:"auto",zIndex:10}}>
             {pages.map((pg,i)=>(
-              <button key={pg.id||i} onClick={()=>setReviewPageIdx(i)}
-                style={{background:i===reviewPageIdx?"#a78bfa":"#1a1a2e",color:i===reviewPageIdx?"#fff":"#94a3b8",border:i===reviewPageIdx?"1px solid #a78bfa":"1px solid #3a3a54",borderRadius:4,padding:"4px 10px",fontSize:11,fontWeight:i===reviewPageIdx?700:400,cursor:"pointer",minWidth:32,textAlign:"center",position:"relative"}}>
-                {i+1}
-                {(pg.reviewNotes||[]).length>0&&<span style={{position:"absolute",top:-4,right:-4,background:"#ef4444",color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{(pg.reviewNotes||[]).length}</span>}
-              </button>
+              <div key={pg.id||i} onClick={()=>{setReviewPageIdx(i);setNewNotePos(null);setEditingNoteId(null);}} style={{position:"relative",flexShrink:0,cursor:"pointer"}}>
+                <img src={pg.dataUrl||pg.storageUrl} alt={"Page "+(i+1)} style={{height:56,width:90,objectFit:"contain",borderRadius:4,border:i===reviewPageIdx?"2px solid #a78bfa":"2px solid #2a2a3e",background:"#080810",opacity:i===reviewPageIdx?1:0.5,transition:"all 0.15s"}}/>
+                <div style={{position:"absolute",bottom:2,left:2,fontSize:8,fontWeight:700,color:i===reviewPageIdx?"#a78bfa":"#94a3b8",background:"rgba(0,0,0,0.7)",borderRadius:2,padding:"0 3px"}}>{i+1}</div>
+                {(pg.reviewNotes||[]).length>0&&<span style={{position:"absolute",top:-3,right:-3,background:"#ef4444",color:"#fff",borderRadius:"50%",width:14,height:14,fontSize:8,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.5)"}}>{(pg.reviewNotes||[]).length}</span>}
+              </div>
             ))}
           </div>
         </div>
