@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.533";
+const APP_VERSION="v1.19.534";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5834,9 +5834,10 @@ async function burnStampCanvas(dataUrl,overlay){
       const fontSize=Math.max(12,Math.round(barH*0.58));
       // White semi-transparent background strip — matches drawing paper look
       ctx.fillStyle='rgba(255,255,255,0.88)';ctx.fillRect(0,0,img.width,barH);
-      // Red border line at bottom of strip
-      ctx.fillStyle='#cc0000';ctx.fillRect(0,barH-1,img.width,1);
-      ctx.font=`bold ${fontSize}px Arial,sans-serif`;ctx.fillStyle='#cc0000';ctx.textBaseline='middle';
+      // DECISION(v1.19.533): Stamp color based on mode — AS-QUOTED=red, QUOTE READY=green, READY TO PRODUCE=blue
+      const stampColor=overlay.stampMode==='quote_ready'?'#16a34a':overlay.stampMode==='ready_to_produce'?'#2563eb':'#cc0000';
+      ctx.fillStyle=stampColor;ctx.fillRect(0,barH-1,img.width,1);
+      ctx.font=`bold ${fontSize}px Arial,sans-serif`;ctx.fillStyle=stampColor;ctx.textBaseline='middle';
       const y=barH/2;const pad=Math.max(10,Math.round(img.width*0.012));
       ctx.textAlign='left';ctx.fillText((overlay.left||'').slice(0,55),pad,y);
       ctx.textAlign='center';ctx.fillText(overlay.center||'',img.width/2,y);
@@ -10815,12 +10816,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           // As-Quoted mode — burn AS-QUOTED stamp
           const d=new Date();
           const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
-          const scanned=`Scanned ${String(d.getFullYear()).slice(2)}-${mon}-${String(d.getDate()).padStart(2,'0')}`;
-          const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
+          const scanned=`Scanned ${String(d.getDate()).padStart(2,'0')}-${mon}-${String(d.getFullYear()).slice(2)}`;
+          // DECISION(v1.19.533): Stamp mode determines label and color
+          const sMode=uploadOpts.stampMode||'as_quoted';
+          const stampPrefix=sMode==='quote_ready'?'QUOTE READY':sMode==='ready_to_produce'?'READY TO PRODUCE':'AS-QUOTED';
+          const stampLabel=rev===0?`${stampPrefix} · ${scanned}`:`${stampPrefix} REV ${String(rev).padStart(2,'0')} · ${scanned}`;
           imgData=await burnStampCanvas(pg.dataUrl,{
             left:stampLabel,
             center:`${i+1} of ${totalPg}`,
-            right:[bcProjectNumber?`${bcProjectNumber} - ${lineSuffix}`:null,panel.drawingNo,panel.requestedShipDate].filter(Boolean).join(' · ')
+            right:[bcProjectNumber?`${bcProjectNumber} - ${lineSuffix}`:null,panel.drawingNo,panel.requestedShipDate].filter(Boolean).join(' · '),
+            stampMode:sMode
           });
         }
         doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
@@ -10828,9 +10833,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(loaded.filter(p=>p.dataUrl).length===0)throw new Error("No pages with images");
       // DECISION(v1.19.375): BC file naming convention — DWG- prefix for all drawings.
       // Sorts drawings together in BC Attached Documents list.
-      const fileName=isProduction
-        ?`DWG-[APPROVED TO PRODUCE${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`
-        :`DWG-[AS-QUOTED${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+      // DECISION(v1.19.533): Filename based on stamp mode — archive old versions (don't delete)
+      const sMode=uploadOpts.stampMode||'as_quoted';
+      const fileLabel=isProduction?'APPROVED TO PRODUCE':sMode==='quote_ready'?'QUOTE READY':sMode==='ready_to_produce'?'READY TO PRODUCE':'AS-QUOTED';
+      const fileName=`DWG-[${fileLabel}${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       // Clean up old bad-formatted files from previous code bugs
@@ -10847,7 +10853,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         oldBadNames.push(`[AS-QUOTED${revTag}] ${rawDwg} - ${bcProjectNumber||"NoProject"}`);
       }
       if(panel.bcPdfFileName){const old=panel.bcPdfFileName.replace(/\.pdf$/i,"");if(!oldBadNames.includes(old))oldBadNames.push(old);}
-      for(const badName of oldBadNames){try{await bcDeleteAttachmentByName(bcProjectNumber,badName);}catch(e){}}
+      // DECISION(v1.19.533): archiveOld=true skips cleanup — keeps previous versions in BC as archive
+      if(!uploadOpts.archiveOld){
+        for(const badName of oldBadNames){try{await bcDeleteAttachmentByName(bcProjectNumber,badName);}catch(e){}}
+      }else{console.log("ARCHIVE: keeping old files in BC — archiveOld=true");}
       // Build previous rev filename to delete — check both DWG- prefixed and old non-prefixed formats
       const prevRev=rev-1;
       let previousFile=null;
@@ -15821,6 +15830,10 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                 <button onClick={async()=>{
                   const upd={...project,preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
                   onUpdate(upd);safeSave(uid,upd);
+                  // Re-stamp drawings as QUOTE READY and upload to BC (archive old AS-QUOTED)
+                  if(bcUploadRef?.current){
+                    try{await bcUploadRef.current({stampMode:"quote_ready",archiveOld:true});}catch(e){console.warn("QUOTE READY stamp upload failed:",e);}
+                  }
                 }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px"})}>✓ Approve</button>
                 <button onClick={async()=>{
                   const notes=prompt("Notes for the salesperson (reason for return):");
@@ -15851,6 +15864,10 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                 <button onClick={async()=>{
                   const upd={...project,postReviewStatus:"approved",postReviewApprovedAt:Date.now(),postReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
                   onUpdate(upd);safeSave(uid,upd);
+                  // Re-stamp drawings as READY TO PRODUCE and upload to BC (archive QUOTE READY)
+                  if(bcUploadRef?.current){
+                    try{await bcUploadRef.current({stampMode:"ready_to_produce",archiveOld:true});}catch(e){console.warn("READY TO PRODUCE stamp upload failed:",e);}
+                  }
                 }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px"})}>✓ Approved for Production</button>
                 <button onClick={async()=>{
                   const notes=prompt("Notes (reason for return):");
