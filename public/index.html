@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.568";
+const APP_VERSION="v1.19.569";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3104,7 +3104,7 @@ function buildReviewEmailHtml(projectName,bcProjectNumber,designerName,notes,rev
   <div style="text-align:center;margin:24px 0">
     <a href="${reviewUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:700;text-decoration:none">Review Drawings &#x2192;</a>
   </div>
-  <p style="color:#94a3b8;font-size:12px;text-align:center;margin-top:24px">This link is valid for 30 days. If you have questions, reply to this email.</p>
+  <p style="color:#94a3b8;font-size:12px;text-align:center;margin-top:24px">This link expires in 24 hours. If you have questions, reply to this email.</p>
 </div></body></html>`;
 }
 
@@ -13222,7 +13222,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     salespersonEmail:project.quote?.salespersonEmail||project.bcSalespersonEmail||"",
                     notes:extNotes.map(n=>({id:n.id,number:n.number,text:n.text||"",detail:n.detail||"",x:n.x||5,y:n.y||5,pageNum:n.pageNum,initials:n.initials||"",date:n.date||"",visibility:"external"})),
                     drawingPages:pageUrls,
-                    status:"pending",sentAt:Date.now(),expiresAt:Date.now()+30*24*60*60*1000,token:tok
+                    status:"pending",sentAt:Date.now(),expiresAt:Date.now()+24*60*60*1000,token:tok
                   };
                   await fbDb.collection("reviewUploads").doc(tok).set(reviewDoc);
                   // Build + send email
