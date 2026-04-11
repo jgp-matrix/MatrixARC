@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.576";
+const APP_VERSION="v1.19.577";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12271,12 +12271,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
                   <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
                   {!readOnly&&<button data-tip="Remove this drawing page" onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
-                  {/* Engineering note indicators on thumbnail */}
-                  {(pg.reviewNotes||[]).length>0&&(
-                    <div style={{position:"absolute",top:4,left:4,display:"flex",gap:3,flexWrap:"wrap",maxWidth:200}}>
-                      <span style={{background:"#a78bfa",color:"#fff",borderRadius:10,padding:"2px 8px",fontSize:10,fontWeight:700,boxShadow:"0 1px 4px rgba(0,0,0,0.5)"}}>📐 {(pg.reviewNotes||[]).length} note{(pg.reviewNotes||[]).length!==1?"s":""}</span>
+                  {/* Engineering note + shape indicators on thumbnail */}
+                  {((pg.reviewNotes||[]).length>0||(pg.reviewShapes||[]).length>0)&&(
+                    <div style={{position:"absolute",top:4,left:4,display:"flex",gap:3,flexWrap:"wrap",maxWidth:260}}>
+                      {(pg.reviewNotes||[]).length>0&&<span style={{background:"#a78bfa",color:"#fff",borderRadius:10,padding:"2px 8px",fontSize:10,fontWeight:700,boxShadow:"0 1px 4px rgba(0,0,0,0.5)"}}>📐 {(pg.reviewNotes||[]).length} note{(pg.reviewNotes||[]).length!==1?"s":""}</span>}
+                      {(pg.reviewShapes||[]).length>0&&<span style={{background:"#ef4444",color:"#fff",borderRadius:10,padding:"2px 8px",fontSize:10,fontWeight:700,boxShadow:"0 1px 4px rgba(0,0,0,0.5)"}}>✏ {(pg.reviewShapes||[]).length} markup</span>}
                     </div>
                   )}
+                  {/* Mini note overlays on thumbnail */}
+                  {(pg.reviewNotes||[]).map(n=>(
+                    <div key={n.id} style={{position:"absolute",left:n.x+"%",top:n.y+"%",background:n.visibility==="external"?"rgba(239,68,68,0.8)":"rgba(250,204,21,0.8)",color:n.visibility==="external"?"#fff":"#1e293b",borderRadius:3,padding:"1px 4px",fontSize:8,fontWeight:700,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",pointerEvents:"none"}}>#{n.number}</div>
+                  ))}
                 </div>
                 <div style={{lineHeight:1.4}}>
                   {(panel.drawingNo||panel.drawingDesc)?(
@@ -16401,7 +16406,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
             <span style={{fontSize:20}}>✅</span>
             <div style={{flex:1,minWidth:200}}>
               <div style={{fontSize:14,fontWeight:800,color:"#4ade80"}}>CUSTOMER REVIEW SUBMITTED</div>
-              <div style={{fontSize:12,color:"#86efac"}}>{customerReviewData.customerName||"Customer"} responded on {customerReviewData.submittedAt?new Date(customerReviewData.submittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+              <div style={{fontSize:12,color:"#86efac"}}>{customerReviewData.customerName||"Customer"} responded on {customerReviewData.submittedAt?new Date(customerReviewData.submittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—"}</div>
             </div>
             <div style={{display:"flex",gap:6}}>
               <button onClick={()=>setShowCustomerResponses(true)} style={btn("#0a2540","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8",padding:"6px 16px"})}>View Responses</button>
@@ -16412,7 +16417,7 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
         {project.customerReviewToken&&customerReviewData&&customerReviewData.status==="pending"&&(
           <div style={{marginBottom:12,background:"#172554",border:"1px solid #3b82f6",borderRadius:10,padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
             <span style={{fontSize:16}}>📧</span>
-            <div style={{fontSize:12,color:"#93c5fd"}}>Customer review sent to <strong>{project.customerReviewEmail||"customer"}</strong> on {project.customerReviewSentAt?new Date(project.customerReviewSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—"} — awaiting response</div>
+            <div style={{fontSize:12,color:"#93c5fd"}}>Customer review sent to <strong>{project.customerReviewEmail||"customer"}</strong> on {project.customerReviewSentAt?new Date(project.customerReviewSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—"} — awaiting response</div>
           </div>
         )}
         <div style={{maxWidth:1400,margin:"0 auto"}}>
@@ -17045,47 +17050,76 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
     {/* Customer Responses Modal */}
     {showCustomerResponses&&customerReviewData&&ReactDOM.createPortal(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}} onMouseDown={e=>{if(e.target===e.currentTarget)setShowCustomerResponses(false);}}>
-        <div style={{background:"#12121f",border:"1px solid "+C.border,borderRadius:12,padding:"24px 28px",maxWidth:640,width:"95%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}} onMouseDown={e=>e.stopPropagation()}>
+        <div style={{background:"#12121f",border:"1px solid "+C.border,borderRadius:12,padding:"24px 28px",maxWidth:720,width:"95%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}} onMouseDown={e=>e.stopPropagation()}>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
             <div style={{flex:1}}>
               <div style={{fontSize:16,fontWeight:700,color:C.text}}>Customer Review Responses</div>
-              <div style={{fontSize:12,color:C.muted}}>{customerReviewData.customerName||"Customer"} — submitted {customerReviewData.submittedAt?new Date(customerReviewData.submittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+              <div style={{fontSize:12,color:C.muted}}>{customerReviewData.customerName||"Customer"} — submitted {customerReviewData.submittedAt?new Date(customerReviewData.submittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—"}</div>
+              <div style={{fontSize:11,color:C.muted,marginTop:2}}>Sent: {customerReviewData.sentAt?new Date(customerReviewData.sentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—"}</div>
             </div>
+            <button onClick={()=>{setShowCustomerResponses(false);setShowDrawingReview(true);setReviewPageIdx(0);}} style={{background:"#a78bfa22",color:"#a78bfa",border:"1px solid #a78bfa44",borderRadius:6,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>📐 Open Drawing Review</button>
             <button onClick={()=>setShowCustomerResponses(false)} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>✕</button>
           </div>
+          {/* Engineering notes + customer responses */}
+          <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",letterSpacing:0.5,marginBottom:6}}>ENGINEERING NOTES &amp; RESPONSES</div>
           {(customerReviewData.notes||[]).map((note,ni)=>{
             const response=(customerReviewData.responses||[]).find(r=>r.noteId===note.id);
             return <div key={note.id||ni} style={{background:"#1a1a2e",border:"1px solid "+C.border,borderRadius:8,padding:"12px 16px",marginBottom:10}}>
               <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:6}}>
-                <span style={{fontWeight:700,color:"#2563eb",fontSize:13}}>Note #{note.number}</span>
+                <span style={{fontWeight:700,color:"#ef4444",fontSize:13}}>Note #{note.number}</span>
                 <span style={{fontSize:11,color:C.muted}}>Page {note.pageNum||"?"}</span>
+                <span style={{fontSize:9,color:"#ef4444",background:"#ef444411",borderRadius:3,padding:"0 4px"}}>ENGINEER</span>
               </div>
-              <div style={{fontSize:13,color:C.text,lineHeight:1.5,marginBottom:8}}>{note.text}</div>
-              {note.detail&&<div style={{fontSize:12,color:C.sub,marginBottom:8,fontStyle:"italic"}}>{note.detail}</div>}
+              <div style={{fontSize:13,color:C.text,lineHeight:1.5,marginBottom:4}}>{note.text}</div>
+              {note.detail&&<div style={{fontSize:12,color:C.sub,marginBottom:6,fontStyle:"italic"}}>{note.detail}</div>}
               <div style={{borderTop:"1px solid #2563eb44",paddingTop:8}}>
                 {response&&response.response?(
-                  <div>
-                    <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",marginBottom:3}}>💬 CUSTOMER RESPONSE</div>
-                    <div style={{fontSize:13,color:"#93c5fd",lineHeight:1.5}}>{response.response}</div>
-                  </div>
-                ):(
-                  <div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>No response provided</div>
-                )}
+                  <div><div style={{fontSize:10,fontWeight:700,color:"#38bdf8",marginBottom:3}}>💬 CUSTOMER RESPONSE</div><div style={{fontSize:13,color:"#93c5fd",lineHeight:1.5}}>{response.response}</div></div>
+                ):(<div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>No response provided</div>)}
               </div>
             </div>;
           })}
+          {/* Customer-created notes */}
+          {(customerReviewData.customerNotes||[]).length>0&&<>
+            <div style={{fontSize:11,fontWeight:700,color:"#2563eb",letterSpacing:0.5,marginTop:12,marginBottom:6,paddingTop:8,borderTop:"1px solid #2563eb33"}}>CUSTOMER NOTES ({(customerReviewData.customerNotes||[]).length})</div>
+            {(customerReviewData.customerNotes||[]).map((cn,ci)=>(
+              <div key={cn.id||ci} style={{background:"#172554",border:"1px solid #3b82f6",borderRadius:8,padding:"12px 16px",marginBottom:8}}>
+                <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:4}}>
+                  <span style={{fontWeight:700,color:"#2563eb",fontSize:13}}>#{cn.number}</span>
+                  <span style={{fontSize:11,color:C.muted}}>Page {cn.pageNum||"?"}</span>
+                  <span style={{fontSize:9,color:"#2563eb",background:"#2563eb22",borderRadius:3,padding:"0 4px"}}>CUSTOMER</span>
+                </div>
+                <div style={{fontSize:13,color:"#93c5fd",lineHeight:1.5}}>{cn.text}</div>
+                {cn.detail&&<div style={{fontSize:12,color:"#64748b",marginTop:4,fontStyle:"italic",whiteSpace:"pre-wrap"}}>{cn.detail}</div>}
+              </div>
+            ))}
+          </>}
+          {/* Customer-drawn shapes */}
+          {(customerReviewData.customerShapes||[]).length>0&&<>
+            <div style={{fontSize:11,fontWeight:700,color:"#ef4444",letterSpacing:0.5,marginTop:12,marginBottom:6,paddingTop:8,borderTop:"1px solid #ef444433"}}>CUSTOMER MARKUP ({(customerReviewData.customerShapes||[]).length})</div>
+            {(customerReviewData.customerShapes||[]).map((cs,ci)=>{
+              const icons={line:"─",circle:"○",rect:"□",triangle:"△"};
+              return <div key={cs.id||ci} style={{background:"#2a0a0a",border:"1px solid #ef444444",borderRadius:6,padding:"8px 12px",marginBottom:6,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:18,color:"#ef4444"}}>{icons[cs.type]||"?"}</span>
+                <div style={{flex:1}}><span style={{fontSize:12,fontWeight:600,color:C.text}}>{cs.type.charAt(0).toUpperCase()+cs.type.slice(1)} — Page {cs.pageNum||"?"}</span>
+                  {cs.note&&<div style={{fontSize:11,color:C.sub,marginTop:1}}>{cs.note}</div>}
+                </div>
+              </div>;
+            })}
+          </>}
           {customerReviewData.additionalComments&&(
-            <div style={{background:"#172554",border:"1px solid #3b82f6",borderRadius:8,padding:"12px 16px",marginTop:8}}>
+            <div style={{background:"#172554",border:"1px solid #3b82f6",borderRadius:8,padding:"12px 16px",marginTop:12}}>
               <div style={{fontSize:10,fontWeight:700,color:"#38bdf8",marginBottom:3}}>💬 ADDITIONAL COMMENTS</div>
               <div style={{fontSize:13,color:"#93c5fd",lineHeight:1.5}}>{customerReviewData.additionalComments}</div>
             </div>
           )}
           <div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}>
+            <button onClick={()=>{setShowCustomerResponses(false);setShowDrawingReview(true);setReviewPageIdx(0);}} style={{background:"#a78bfa",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📐 Open Drawing Review</button>
             <button onClick={()=>{
               const upd={...project,customerReviewReviewed:true,customerReviewReviewedAt:Date.now()};
               onUpdate(upd);safeSave(uid,upd);
               setShowCustomerResponses(false);
-            }} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Mark as Reviewed</button>
+            }} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>✓ Mark as Reviewed</button>
             <button onClick={()=>setShowCustomerResponses(false)} style={{background:"transparent",color:C.muted,border:"1px solid "+C.border,borderRadius:7,padding:"8px 16px",fontSize:13,cursor:"pointer"}}>Close</button>
           </div>
         </div>
