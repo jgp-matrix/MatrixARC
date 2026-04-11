@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.575";
+const APP_VERSION="v1.19.576";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10295,6 +10295,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [sendReviewName,setSendReviewName]=useState("");
   const [sendReviewCcSales,setSendReviewCcSales]=useState(true);
   const [sendReviewBusy,setSendReviewBusy]=useState(false);
+  const [markupTool,setMarkupTool]=useState(null); // null|"line"|"circle"|"rect"|"triangle"
+  const [drawingShape,setDrawingShape]=useState(null); // {type,x1,y1,x2,y2} rubber-band
+  const [newShapeData,setNewShapeData]=useState(null); // completed shape awaiting note
+  const [newShapeNote,setNewShapeNote]=useState("");
   const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [bcPdfMissing,setBcPdfMissing]=useState(false);
   useEffect(()=>{
@@ -13003,7 +13007,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               <button onClick={()=>setReviewPageIdx(i=>Math.max(0,i-1))} disabled={reviewPageIdx===0} style={{background:"none",border:"1px solid "+C.border,color:C.muted,borderRadius:4,padding:"4px 10px",cursor:"pointer",fontSize:12,opacity:reviewPageIdx===0?0.3:1}}>← Prev</button>
               <button onClick={()=>setReviewPageIdx(i=>Math.min(pages.length-1,i+1))} disabled={reviewPageIdx>=pages.length-1} style={{background:"none",border:"1px solid "+C.border,color:C.muted,borderRadius:4,padding:"4px 10px",cursor:"pointer",fontSize:12,opacity:reviewPageIdx>=pages.length-1?0.3:1}}>Next →</button>
             </div>
-            <div style={{fontSize:11,color:"#a78bfa",background:"#1a1040",borderRadius:6,padding:"3px 10px"}}>Click on drawing to add note</div>
+            {/* Markup toolbar */}
+            {!readOnly&&<div style={{display:"flex",gap:2,background:"#1a1040",borderRadius:6,padding:"2px 4px",alignItems:"center"}}>
+              {[{id:null,label:"📌",tip:"Note (click to place)"},{id:"line",label:"─",tip:"Line"},{id:"circle",label:"○",tip:"Circle"},{id:"rect",label:"□",tip:"Rectangle"},{id:"triangle",label:"△",tip:"Triangle"}].map(t=>(
+                <button key={t.id||"note"} onClick={()=>{setMarkupTool(t.id);setDrawingShape(null);setNewShapeData(null);}} title={t.tip}
+                  style={{background:markupTool===t.id?"#a78bfa33":"transparent",color:markupTool===t.id?"#a78bfa":"#64748b",border:markupTool===t.id?"1px solid #a78bfa":"1px solid transparent",borderRadius:4,padding:"3px 8px",fontSize:14,cursor:"pointer",fontWeight:700,fontFamily:"inherit",lineHeight:1}}>{t.label}</button>
+              ))}
+            </div>}
             {!readOnly&&<button onClick={()=>{
               const extNotes=pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).filter(n=>n.visibility==="external").map(n=>({...n,pageNum:pi+1})));
               if(extNotes.length===0){alert("Mark at least one note as External (EXT) before sending to the customer.");return;}
@@ -13081,14 +13091,83 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   }} style={{background:"#ffffff",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:11,padding:"4px 8px",width:"100%",outline:"none",fontFamily:"inherit"}}/>
                   <div style={{fontSize:9,color:"#ef4444",marginTop:2}}>Enter to save · Esc to cancel</div>
                 </div>}
-                {/* Click to add note — crosshair overlay */}
-                {!readOnly&&!newNotePos&&<div style={{position:"absolute",inset:0,cursor:"crosshair",zIndex:5}} onClick={e=>{
-                  if(e.target.closest("[data-note-drag]"))return;
-                  const rect=e.currentTarget.getBoundingClientRect();
-                  const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
-                  const y=parseFloat(((e.clientY-rect.top)/rect.height*100).toFixed(1));
-                  setNewNotePos({x,y});setNewNoteText("");
-                }}/>}
+                {/* SVG overlay for shapes */}
+                <svg style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",zIndex:6}}>
+                  {(pg.reviewShapes||[]).map((shp,si)=>{
+                    const stroke=shp.color||"#ef4444";const sw=shp.strokeWidth||2;
+                    if(shp.type==="line")return <line key={shp.id||si} x1={shp.x1+"%"} y1={shp.y1+"%"} x2={shp.x2+"%"} y2={shp.y2+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;
+                    if(shp.type==="circle")return <circle key={shp.id||si} cx={shp.cx+"%"} cy={shp.cy+"%"} r={shp.r+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;
+                    if(shp.type==="rect"){const x=Math.min(shp.x1,shp.x2),y=Math.min(shp.y1,shp.y2),w=Math.abs(shp.x2-shp.x1),h=Math.abs(shp.y2-shp.y1);return <rect key={shp.id||si} x={x+"%"} y={y+"%"} width={w+"%"} height={h+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;}
+                    if(shp.type==="triangle"){const cx=(shp.x1+shp.x2)/2,cy=shp.y1,bx1=shp.x1,by=shp.y2,bx2=shp.x2;return <polygon key={shp.id||si} points={`${cx}%,${cy}% ${bx1}%,${by}% ${bx2}%,${by}%`} stroke={stroke} strokeWidth={sw} fill="none"/>;}
+                    return null;
+                  })}
+                  {drawingShape&&(()=>{
+                    const s=drawingShape;const stroke="#ef4444";const sw=2;
+                    if(s.type==="line")return <line x1={s.x1+"%"} y1={s.y1+"%"} x2={s.x2+"%"} y2={s.y2+"%"} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;
+                    if(s.type==="circle"){const r=Math.sqrt((s.x2-s.x1)**2+(s.y2-s.y1)**2);return <circle cx={s.x1+"%"} cy={s.y1+"%"} r={r+"%"} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;}
+                    if(s.type==="rect"){const x=Math.min(s.x1,s.x2),y=Math.min(s.y1,s.y2),w=Math.abs(s.x2-s.x1),h=Math.abs(s.y2-s.y1);return <rect x={x+"%"} y={y+"%"} width={w+"%"} height={h+"%"} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;}
+                    if(s.type==="triangle"){const cx=(s.x1+s.x2)/2,cy=s.y1,bx1=s.x1,by=s.y2,bx2=s.x2;return <polygon points={`${cx}%,${cy}% ${bx1}%,${by}% ${bx2}%,${by}%`} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;}
+                    return null;
+                  })()}
+                </svg>
+                {/* Shape note popup */}
+                {newShapeData&&<div style={{position:"absolute",left:Math.min(newShapeData.x1||newShapeData.cx||50,80)+"%",top:Math.min(newShapeData.y1||newShapeData.cy||50,80)+"%",background:"#fff",border:"2px solid #ef4444",borderRadius:6,padding:"6px 8px",zIndex:25,minWidth:180,boxShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>
+                  <div style={{fontSize:10,fontWeight:700,color:"#ef4444",marginBottom:4}}>{newShapeData.type.toUpperCase()} — add note (optional)</div>
+                  <input autoFocus value={newShapeNote} onChange={e=>setNewShapeNote(e.target.value)} placeholder="Note for this shape..." onKeyDown={e=>{
+                    if(e.key==="Enter"){
+                      const shape={...newShapeData,id:"shp_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),note:newShapeNote.trim(),color:"#ef4444",strokeWidth:2,author:panel._projectDesigner||fbAuth.currentUser?.displayName||"Designer",isCustomer:false,createdAt:Date.now()};
+                      const updatedShapes=[...(pg.reviewShapes||[]),shape];
+                      const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewShapes:updatedShapes}:p);
+                      onUpdate({...panel,pages:updatedPages});try{onSaveImmediate({...panel,pages:updatedPages});}catch(e){}
+                      setNewShapeData(null);setNewShapeNote("");
+                    }
+                    if(e.key==="Escape"){setNewShapeData(null);setNewShapeNote("");}
+                  }} style={{width:"100%",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:11,padding:"4px 8px",outline:"none",fontFamily:"inherit"}}/>
+                  <div style={{fontSize:9,color:"#94a3b8",marginTop:2}}>Enter to save · Esc to skip note</div>
+                </div>}
+                {/* Click/drag overlay — note placement or shape drawing */}
+                {!readOnly&&!newNotePos&&!newShapeData&&<div style={{position:"absolute",inset:0,cursor:markupTool?"crosshair":"crosshair",zIndex:5}}
+                  onClick={e=>{
+                    if(markupTool)return; // shapes use mousedown/up
+                    const rect=e.currentTarget.getBoundingClientRect();
+                    const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
+                    const y=parseFloat(((e.clientY-rect.top)/rect.height*100).toFixed(1));
+                    setNewNotePos({x,y});setNewNoteText("");
+                  }}
+                  onMouseDown={e=>{
+                    if(!markupTool)return;
+                    e.preventDefault();
+                    const rect=e.currentTarget.getBoundingClientRect();
+                    const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
+                    const y=parseFloat(((e.clientY-rect.top)/rect.height*100).toFixed(1));
+                    setDrawingShape({type:markupTool,x1:x,y1:y,x2:x,y2:y});
+                  }}
+                  onMouseMove={e=>{
+                    if(!drawingShape)return;
+                    const rect=e.currentTarget.getBoundingClientRect();
+                    const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
+                    const y=parseFloat(((e.clientY-rect.top)/rect.height*100).toFixed(1));
+                    setDrawingShape(s=>({...s,x2:x,y2:y}));
+                  }}
+                  onMouseUp={e=>{
+                    if(!drawingShape)return;
+                    const rect=e.currentTarget.getBoundingClientRect();
+                    const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
+                    const y=parseFloat(((e.clientY-rect.top)/rect.height*100).toFixed(1));
+                    const s={...drawingShape,x2:x,y2:y};
+                    // Check minimum size
+                    const dist=Math.sqrt((s.x2-s.x1)**2+(s.y2-s.y1)**2);
+                    if(dist<1){setDrawingShape(null);return;}
+                    // Finalize shape data
+                    let shapeData;
+                    if(s.type==="line")shapeData={type:"line",x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2};
+                    else if(s.type==="circle")shapeData={type:"circle",cx:s.x1,cy:s.y1,r:dist};
+                    else if(s.type==="rect")shapeData={type:"rect",x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2};
+                    else if(s.type==="triangle")shapeData={type:"triangle",x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2};
+                    setDrawingShape(null);
+                    setNewShapeData(shapeData);setNewShapeNote("");
+                  }}
+                />}
               </div>;
             })()}
           </div>
@@ -13172,6 +13251,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 })()}
               </div>
             ))}
+            {/* Shapes section */}
+            {(()=>{
+              const allShapes=pages.flatMap((pg,pi)=>(pg.reviewShapes||[]).map(s=>({...s,pageNum:pi+1})));
+              if(allShapes.length===0)return null;
+              const icons={line:"─",circle:"○",rect:"□",triangle:"△"};
+              return <><div style={{fontSize:12,fontWeight:700,color:"#ef4444",letterSpacing:0.5,marginTop:12,marginBottom:6,paddingTop:8,borderTop:"1px solid #ef444433"}}>MARKUP — ALL PAGES ({allShapes.length})</div>
+                {allShapes.map((s,si)=>(
+                  <div key={s.id||si} style={{background:"#2a0a0a",border:"1px solid #ef444444",borderRadius:6,padding:"6px 10px",marginBottom:4,fontSize:12,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}} onClick={()=>{setReviewPageIdx(s.pageNum-1);}}>
+                    <span style={{fontSize:16,color:"#ef4444"}}>{icons[s.type]||"?"}</span>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{color:C.text,fontWeight:600}}>{s.type.charAt(0).toUpperCase()+s.type.slice(1)} — Page {s.pageNum}</div>
+                      {s.note&&<div style={{color:C.sub,fontSize:11,marginTop:1}}>{s.note.slice(0,60)}{s.note.length>60?"…":""}</div>}
+                    </div>
+                    {!readOnly&&<span onClick={e=>{e.stopPropagation();
+                      const updatedShapes=(pages[s.pageNum-1]?.reviewShapes||[]).filter(sh=>sh.id!==s.id);
+                      const updatedPages=pages.map((p,i)=>i===s.pageNum-1?{...p,reviewShapes:updatedShapes}:p);
+                      onUpdate({...panel,pages:updatedPages});try{onSaveImmediate({...panel,pages:updatedPages});}catch(e){}
+                    }} style={{cursor:"pointer",color:"#ef4444",fontSize:13,flexShrink:0}} title="Delete">✕</span>}
+                  </div>
+                ))}
+              </>;
+            })()}
           </div>
           {/* Page thumbnail filmstrip */}
           <div style={{position:"fixed",bottom:0,left:0,right:300,background:"#0d0d14",borderTop:"1px solid #a78bfa44",padding:"8px 12px",display:"flex",gap:6,alignItems:"center",overflowX:"auto",zIndex:10}}>
