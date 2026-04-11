@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.577";
+const APP_VERSION="v1.19.578";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10299,6 +10299,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [drawingShape,setDrawingShape]=useState(null); // {type,x1,y1,x2,y2} rubber-band
   const [newShapeData,setNewShapeData]=useState(null); // completed shape awaiting note
   const [newShapeNote,setNewShapeNote]=useState("");
+  const [polylinePoints,setPolylinePoints]=useState([]); // [{x,y},...] for multi-segment line
+  const [polylinePreview,setPolylinePreview]=useState(null); // {x,y} mouse position for rubber-band
   const [attachPdfMsg,setAttachPdfMsg]=useState("");
   const [bcPdfMissing,setBcPdfMissing]=useState(false);
   useEffect(()=>{
@@ -13015,7 +13017,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {/* Markup toolbar */}
             {!readOnly&&<div style={{display:"flex",gap:2,background:"#1a1040",borderRadius:6,padding:"2px 4px",alignItems:"center"}}>
               {[{id:null,label:"📌",tip:"Note (click to place)"},{id:"line",label:"─",tip:"Line"},{id:"circle",label:"○",tip:"Circle"},{id:"rect",label:"□",tip:"Rectangle"},{id:"triangle",label:"△",tip:"Triangle"}].map(t=>(
-                <button key={t.id||"note"} onClick={()=>{setMarkupTool(t.id);setDrawingShape(null);setNewShapeData(null);}} title={t.tip}
+                <button key={t.id||"note"} onClick={()=>{setMarkupTool(t.id);setDrawingShape(null);setNewShapeData(null);setPolylinePoints([]);setPolylinePreview(null);}} title={t.tip}
                   style={{background:markupTool===t.id?"#a78bfa33":"transparent",color:markupTool===t.id?"#a78bfa":"#64748b",border:markupTool===t.id?"1px solid #a78bfa":"1px solid transparent",borderRadius:4,padding:"3px 8px",fontSize:14,cursor:"pointer",fontWeight:700,fontFamily:"inherit",lineHeight:1}}>{t.label}</button>
               ))}
             </div>}
@@ -13100,47 +13102,85 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <svg style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",zIndex:6}}>
                   {(pg.reviewShapes||[]).map((shp,si)=>{
                     const stroke=shp.color||"#ef4444";const sw=shp.strokeWidth||2;
+                    if(shp.type==="line"&&shp.points){const pts=shp.points.map(p=>p.x+"%,"+p.y+"%").join(" ");return <polyline key={shp.id||si} points={pts} stroke={stroke} strokeWidth={sw} fill="none" strokeLinejoin="round" strokeLinecap="round"/>;}
                     if(shp.type==="line")return <line key={shp.id||si} x1={shp.x1+"%"} y1={shp.y1+"%"} x2={shp.x2+"%"} y2={shp.y2+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;
                     if(shp.type==="circle")return <circle key={shp.id||si} cx={shp.cx+"%"} cy={shp.cy+"%"} r={shp.r+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;
                     if(shp.type==="rect"){const x=Math.min(shp.x1,shp.x2),y=Math.min(shp.y1,shp.y2),w=Math.abs(shp.x2-shp.x1),h=Math.abs(shp.y2-shp.y1);return <rect key={shp.id||si} x={x+"%"} y={y+"%"} width={w+"%"} height={h+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;}
                     if(shp.type==="triangle"){const cx=(shp.x1+shp.x2)/2,cy=shp.y1,bx1=shp.x1,by=shp.y2,bx2=shp.x2;return <polygon key={shp.id||si} points={`${cx}%,${cy}% ${bx1}%,${by}% ${bx2}%,${by}%`} stroke={stroke} strokeWidth={sw} fill="none"/>;}
                     return null;
                   })}
+                  {/* In-progress polyline */}
+                  {polylinePoints.length>0&&(()=>{
+                    const allPts=[...polylinePoints,...(polylinePreview?[polylinePreview]:[])];
+                    const pts=allPts.map(p=>p.x+"%,"+p.y+"%").join(" ");
+                    return <><polyline points={pts} stroke="#ef4444" strokeWidth={2} fill="none" strokeDasharray="6 3" strokeLinejoin="round" strokeLinecap="round"/>
+                      {polylinePoints.map((p,i)=><circle key={i} cx={p.x+"%"} cy={p.y+"%"} r="3" fill="#ef4444"/>)}</>;
+                  })()}
+                  {/* Rubber-band for non-line shapes */}
                   {drawingShape&&(()=>{
                     const s=drawingShape;const stroke="#ef4444";const sw=2;
-                    if(s.type==="line")return <line x1={s.x1+"%"} y1={s.y1+"%"} x2={s.x2+"%"} y2={s.y2+"%"} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;
                     if(s.type==="circle"){const r=Math.sqrt((s.x2-s.x1)**2+(s.y2-s.y1)**2);return <circle cx={s.x1+"%"} cy={s.y1+"%"} r={r+"%"} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;}
                     if(s.type==="rect"){const x=Math.min(s.x1,s.x2),y=Math.min(s.y1,s.y2),w=Math.abs(s.x2-s.x1),h=Math.abs(s.y2-s.y1);return <rect x={x+"%"} y={y+"%"} width={w+"%"} height={h+"%"} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;}
                     if(s.type==="triangle"){const cx=(s.x1+s.x2)/2,cy=s.y1,bx1=s.x1,by=s.y2,bx2=s.x2;return <polygon points={`${cx}%,${cy}% ${bx1}%,${by}% ${bx2}%,${by}%`} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;}
                     return null;
                   })()}
                 </svg>
-                {/* Shape note popup */}
-                {newShapeData&&<div style={{position:"absolute",left:Math.min(newShapeData.x1||newShapeData.cx||50,80)+"%",top:Math.min(newShapeData.y1||newShapeData.cy||50,80)+"%",background:"#fff",border:"2px solid #ef4444",borderRadius:6,padding:"6px 8px",zIndex:25,minWidth:180,boxShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>
-                  <div style={{fontSize:10,fontWeight:700,color:"#ef4444",marginBottom:4}}>{newShapeData.type.toUpperCase()} — add note (optional)</div>
-                  <input autoFocus value={newShapeNote} onChange={e=>setNewShapeNote(e.target.value)} placeholder="Note for this shape..." onKeyDown={e=>{
-                    if(e.key==="Enter"){
-                      const shape={...newShapeData,id:"shp_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),note:newShapeNote.trim(),color:"#ef4444",strokeWidth:2,author:panel._projectDesigner||fbAuth.currentUser?.displayName||"Designer",isCustomer:false,createdAt:Date.now()};
-                      const updatedShapes=[...(pg.reviewShapes||[]),shape];
-                      const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewShapes:updatedShapes}:p);
-                      onUpdate({...panel,pages:updatedPages});try{onSaveImmediate({...panel,pages:updatedPages});}catch(e){}
-                      setNewShapeData(null);setNewShapeNote("");
-                    }
-                    if(e.key==="Escape"){setNewShapeData(null);setNewShapeNote("");}
-                  }} style={{width:"100%",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:11,padding:"4px 8px",outline:"none",fontFamily:"inherit"}}/>
-                  <div style={{fontSize:9,color:"#94a3b8",marginTop:2}}>Enter to save · Esc to skip note</div>
+                {/* End Line button when polyline in progress */}
+                {polylinePoints.length>=2&&<div style={{position:"absolute",top:8,left:"50%",transform:"translateX(-50%)",zIndex:25,display:"flex",gap:6}}>
+                  <button onClick={()=>{
+                    setNewShapeData({type:"line",points:[...polylinePoints]});setNewShapeNote("");
+                    setPolylinePoints([]);setPolylinePreview(null);
+                  }} style={{background:"#ef4444",color:"#fff",border:"none",borderRadius:6,padding:"6px 16px",fontSize:12,fontWeight:700,cursor:"pointer",boxShadow:"0 2px 8px rgba(0,0,0,0.4)"}}>✓ End Line ({polylinePoints.length} points)</button>
+                  <button onClick={()=>{setPolylinePoints([]);setPolylinePreview(null);}} style={{background:"#1a1a2e",color:C.muted,border:"1px solid "+C.border,borderRadius:6,padding:"6px 12px",fontSize:12,cursor:"pointer"}}>✕ Cancel</button>
                 </div>}
-                {/* Click/drag overlay — note placement or shape drawing */}
+                {/* Shape note popup */}
+                {newShapeData&&(()=>{
+                  const px=newShapeData.points?newShapeData.points[0]?.x||50:newShapeData.x1||newShapeData.cx||50;
+                  const py=newShapeData.points?newShapeData.points[0]?.y||50:newShapeData.y1||newShapeData.cy||50;
+                  const saveShape=(withNote)=>{
+                    const shape={...newShapeData,id:"shp_"+Date.now()+"_"+Math.random().toString(36).slice(2,6),note:withNote?newShapeNote.trim():"",color:"#ef4444",strokeWidth:2,author:panel._projectDesigner||fbAuth.currentUser?.displayName||"Designer",isCustomer:false,createdAt:Date.now()};
+                    const updatedShapes=[...(pg.reviewShapes||[]),shape];
+                    const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewShapes:updatedShapes}:p);
+                    onUpdate({...panel,pages:updatedPages});try{onSaveImmediate({...panel,pages:updatedPages});}catch(e){}
+                    setNewShapeData(null);setNewShapeNote("");
+                  };
+                  const label=newShapeData.type==="line"&&newShapeData.points?`LINE (${newShapeData.points.length} points)`:newShapeData.type.toUpperCase();
+                  return <div style={{position:"absolute",left:Math.min(px,75)+"%",top:Math.min(py,75)+"%",background:"#fff",border:"2px solid #ef4444",borderRadius:6,padding:"6px 8px",zIndex:25,minWidth:200,boxShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>
+                    <div style={{fontSize:10,fontWeight:700,color:"#ef4444",marginBottom:4}}>{label} — add note</div>
+                    <input autoFocus value={newShapeNote} onChange={e=>setNewShapeNote(e.target.value)} placeholder="Note for this markup..." onKeyDown={e=>{
+                      if(e.key==="Enter")saveShape(true);
+                      if(e.key==="Escape")saveShape(false);
+                    }} style={{width:"100%",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:11,padding:"4px 8px",outline:"none",fontFamily:"inherit"}}/>
+                    <div style={{display:"flex",gap:4,marginTop:4}}>
+                      <button onClick={()=>saveShape(true)} style={{background:"#ef4444",color:"#fff",border:"none",borderRadius:3,padding:"3px 10px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Save with Note</button>
+                      <button onClick={()=>saveShape(false)} style={{background:"#f1f5f9",color:"#64748b",border:"1px solid #e2e8f0",borderRadius:3,padding:"3px 10px",fontSize:10,cursor:"pointer"}}>Save without Note</button>
+                    </div>
+                  </div>;
+                })()}
+                {/* Click/drag overlay — note placement, polyline clicks, or shape drawing */}
                 {!readOnly&&!newNotePos&&!newShapeData&&<div style={{position:"absolute",inset:0,cursor:markupTool?"crosshair":"crosshair",zIndex:5}}
                   onClick={e=>{
-                    if(markupTool)return; // shapes use mousedown/up
                     const rect=e.currentTarget.getBoundingClientRect();
                     const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
                     const y=parseFloat(((e.clientY-rect.top)/rect.height*100).toFixed(1));
+                    if(markupTool==="line"){
+                      // Polyline mode: each click adds a point
+                      setPolylinePoints(pts=>[...pts,{x,y}]);
+                      return;
+                    }
+                    if(markupTool)return; // other shapes use mousedown/up
                     setNewNotePos({x,y});setNewNoteText("");
                   }}
+                  onDoubleClick={e=>{
+                    // Double-click ends polyline
+                    if(markupTool==="line"&&polylinePoints.length>=2){
+                      e.stopPropagation();
+                      setNewShapeData({type:"line",points:[...polylinePoints]});setNewShapeNote("");
+                      setPolylinePoints([]);setPolylinePreview(null);
+                    }
+                  }}
                   onMouseDown={e=>{
-                    if(!markupTool)return;
+                    if(!markupTool||markupTool==="line")return;
                     e.preventDefault();
                     const rect=e.currentTarget.getBoundingClientRect();
                     const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
@@ -13148,11 +13188,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     setDrawingShape({type:markupTool,x1:x,y1:y,x2:x,y2:y});
                   }}
                   onMouseMove={e=>{
-                    if(!drawingShape)return;
                     const rect=e.currentTarget.getBoundingClientRect();
                     const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
                     const y=parseFloat(((e.clientY-rect.top)/rect.height*100).toFixed(1));
-                    setDrawingShape(s=>({...s,x2:x,y2:y}));
+                    // Polyline preview
+                    if(markupTool==="line"&&polylinePoints.length>0){setPolylinePreview({x,y});}
+                    // Shape drag preview
+                    if(drawingShape){setDrawingShape(s=>({...s,x2:x,y2:y}));}
                   }}
                   onMouseUp={e=>{
                     if(!drawingShape)return;
@@ -13160,17 +13202,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     const x=parseFloat(((e.clientX-rect.left)/rect.width*100).toFixed(1));
                     const y=parseFloat(((e.clientY-rect.top)/rect.height*100).toFixed(1));
                     const s={...drawingShape,x2:x,y2:y};
-                    // Check minimum size
                     const dist=Math.sqrt((s.x2-s.x1)**2+(s.y2-s.y1)**2);
                     if(dist<1){setDrawingShape(null);return;}
-                    // Finalize shape data
                     let shapeData;
-                    if(s.type==="line")shapeData={type:"line",x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2};
-                    else if(s.type==="circle")shapeData={type:"circle",cx:s.x1,cy:s.y1,r:dist};
+                    if(s.type==="circle")shapeData={type:"circle",cx:s.x1,cy:s.y1,r:dist};
                     else if(s.type==="rect")shapeData={type:"rect",x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2};
                     else if(s.type==="triangle")shapeData={type:"triangle",x1:s.x1,y1:s.y1,x2:s.x2,y2:s.y2};
                     setDrawingShape(null);
-                    setNewShapeData(shapeData);setNewShapeNote("");
+                    if(shapeData){setNewShapeData(shapeData);setNewShapeNote("");}
                   }}
                 />}
               </div>;
