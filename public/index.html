@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.578";
+const APP_VERSION="v1.19.579";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -922,6 +922,10 @@ async function acquireGraphToken(){
     _graphToken=resp.accessToken;return _graphToken;
   }catch(e){console.warn("Graph token acquisition failed:",e);return null;}
 }
+
+// ── PERFORMANCE: Debug logging flag — set window._arcDebug=true in console to enable verbose logs ──
+window._arcDebug=false;
+const _dbg=(...a)=>{if(window._arcDebug)console.log(...a);};
 
 // ── APP CONTEXT ──
 let _appCtx={uid:null,companyId:null,role:null,projectsPath:null,configPath:null,company:{name:null,logoUrl:null,address:null,phone:null}};
@@ -4616,12 +4620,12 @@ async function copyProject(uid,sourceProject,onProgress){
 // ── FIREBASE STORAGE HELPERS ──
 async function uploadPageImage(uid,projectId,pageId,dataUrl){
   const ref=fbStorage.ref(`pageImages/${uid}/${projectId}/${pageId}.jpg`);
-  console.log("UPLOAD IMAGE: starting",pageId,"to",ref.fullPath);
+  _dbg("UPLOAD IMAGE: starting",pageId,"to",ref.fullPath);
   // Use putString with data_url format — avoids blob conversion issues
   const snap=await ref.putString(dataUrl,"data_url");
-  console.log("UPLOAD IMAGE: uploaded",pageId,"state="+snap.state);
+  _dbg("UPLOAD IMAGE: uploaded",pageId,"state="+snap.state);
   const url=await ref.getDownloadURL();
-  console.log("UPLOAD IMAGE: got URL",pageId);
+  _dbg("UPLOAD IMAGE: got URL",pageId);
   return url;
 }
 async function ensureDataUrl(page){
@@ -5344,7 +5348,7 @@ async function analyzeEnclosurePage(dataUrl,layoutLearningHint="",userNotes=""){
 }
 
 function mergeLayoutResults(layouts){
-  console.log("MERGE LAYOUTS: "+layouts.length+" layout results to merge");
+  _dbg("MERGE LAYOUTS: "+layouts.length+" layout results to merge");
   layouts.forEach((l,i)=>console.log("Layout result "+i+":",JSON.stringify({doorCutouts:l?.doorCutouts?.length,backpanelDevices:l?.backpanelDevices?.length})));
   const merged={doorCutouts:[],backpanelDevices:[],ductRuns:[],dinRails:[],sideTopDevices:[],enclosure:null};
   for(const l of layouts){
@@ -5616,7 +5620,7 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
   const panelHoles=hasEnclosureData?layoutPanelHoles:(schDoorCount>0?Math.min(layoutPanelHoles,schDoorCount):layoutPanelHoles);
   // Total devices: door + backpanel (from layout if available, else schematic total)
   const allDevices=layoutMerged?(doorDevices+layBackCount):allDevicesFromSchematic.length;
-  console.log("DOOR DEVICES: schematic="+schDoorCount+", enclosure/layout="+layDoorCount+", hasEnclosureData="+hasEnclosureData+", using="+doorDevices);
+  _dbg("DOOR DEVICES: schematic="+schDoorCount+", enclosure/layout="+layDoorCount+", hasEnclosureData="+hasEnclosureData+", using="+doorDevices);
   console.log("ALL DEVICES: "+allDevices+", panelHoles="+panelHoles);
   const ductDinFeet=layoutMerged?layoutMerged.ductDinFeet:0;
   const hasLayoutData=!!layoutMerged;
@@ -6213,14 +6217,15 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             const pgIdx=latestPanel.pages.findIndex(p=>p.id===pg.id);
             try{
               const stamped=await stampFn(dataUrl,pgIdx,totalPages);
-              if(stamped&&stamped!==dataUrl){dataUrl=stamped;console.log('STAMP OK page',pgIdx+1);}
+              if(stamped&&stamped!==dataUrl){dataUrl=stamped;_dbg('STAMP OK page',pgIdx+1);}
               else console.warn('STAMP returned same/null for page',pgIdx+1);
             }catch(e){console.warn('Stamp failed:',e);}
           }
           urlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,dataUrl);
           upDone++;
         },4);
-        const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id]}:pg);
+        // PERF: After upload, drop dataUrl from memory — storageUrl is now the source of truth
+        const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id],dataUrl:null}:pg);
         latestPanel={...latestPanel,pages:pagesWithUrls};
         await save(latestPanel);
       }catch(e){console.warn("Storage upload failed:",e);}
@@ -10400,7 +10405,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(vendorBackfillRan.current)return;
     function tryBackfill(){
       if(vendorBackfillRan.current)return;
-      if(!_bcToken){console.log("VENDOR BACKFILL: waiting for BC…");return;}
+      if(!_bcToken){_dbg("VENDOR BACKFILL: waiting for BC…");return;}
       const bom=panel.bom||[];
       const needVendor=bom.filter(r=>!r.isLaborRow&&r.priceSource==="bc"&&!r.bcVendorName&&(r.partNumber||"").trim());
       if(!needVendor.length){vendorBackfillRan.current=true;return;}
@@ -10413,7 +10418,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             if(pnVendor[pn]!==undefined)continue;
             const vNo=await bcGetItemVendorNo(pn);
             pnVendor[pn]=vNo?await bcGetVendorName(vNo):"";
-            console.log("VENDOR BACKFILL:",pn,"→ vendorNo=",vNo,"→ name=",pnVendor[pn]);
+            _dbg("VENDOR BACKFILL:",pn,"→ vendorNo=",vNo,"→ name=",pnVendor[pn]);
           }
           let changed=false;
           const newBom=bom.map(r=>{
@@ -10428,13 +10433,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const updated={...panel,bom:newBom};
             onUpdate(updated);
             try{onSaveImmediate(updated);}catch(e){}
-            console.log("VENDOR BACKFILL: updated",newBom.filter(r=>r.bcVendorName&&!bom.find(o=>o.id===r.id&&o.bcVendorName)).length,"rows for panel",panel.name);
+            _dbg("VENDOR BACKFILL: updated",newBom.filter(r=>r.bcVendorName&&!bom.find(o=>o.id===r.id&&o.bcVendorName)).length,"rows for panel",panel.name);
           }
         }catch(e){console.warn("Vendor backfill error:",e);}
       })();
     }
     tryBackfill();
-    const iv=setInterval(tryBackfill,3000);
+    const iv=setInterval(tryBackfill,15000); // PERF: reduced from 3s to 15s
     return()=>clearInterval(iv);
   },[uid]);
 
@@ -10547,7 +10552,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       bcListVendors().then(v=>{if(v.length)setBomVendorList(v);else bomVendorListLoaded.current=false;}).catch(()=>{bomVendorListLoaded.current=false;});
     }
     tryLoad();
-    const iv=setInterval(tryLoad,3000);
+    const iv=setInterval(tryLoad,10000); // PERF: reduced from 3s to 10s
     return()=>clearInterval(iv);
   },[]);
 
@@ -10636,7 +10641,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const layoutCount=pages.filter(p=>getPageTypes(p).includes("layout")).length; // legacy
 
   async function addFiles(files){
-    console.log("ADDFILES: start, files="+files.length+", apiKey="+(!!_apiKey));
+    _dbg("ADDFILES: start, files="+files.length+", apiKey="+(!!_apiKey));
     setProcessing(true);setErr("");
     bgStart(panel.id, panel.name||("Panel "+(idx+1)), projectId);
     let updated;
@@ -14536,7 +14541,7 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,pro
         const aiRemaining=Math.max(0,prior-elapsed);
         const totalEta=Math.round(aiRemaining+SAVE_EST_SEC+meta.pricedCount*MATCH_PER_ITEM_SEC);
         setParseEta(totalEta>3?`~${totalEta}s remaining`:null);
-      },300);
+      },1000); // PERF: reduced from 300ms to 1000ms — progress bar doesn't need 3fps updates
       const promptText=`You are parsing a supplier quote PDF. The page images are provided for visual reference, and the extracted text is included below as backup.
 
 Extract ALL information into this exact JSON structure. Return ONLY valid JSON, no commentary.
@@ -17338,7 +17343,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       })().catch(e=>console.warn("Purchase price check error:",e));
     }
     tryCheck();
-    const iv=setInterval(tryCheck,3000);
+    const iv=setInterval(tryCheck,30000); // PERF: reduced from 3s to 30s — price diffs don't need rapid polling
     return()=>clearInterval(iv);
   },[]);
   function applyPriceCheckDiffs(selectedDiffs){
@@ -17964,7 +17969,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         crossData[key]={bcItemNumber:c.matrixPartNumber,bcItemDescription:c.description||'',confirmedAt:Date.now(),source:'supplier_portal'};
       });
       fbDb.doc(`users/${uid}/config/sqCrossings`).set(crossData,{merge:true}).catch(e=>console.warn("sqCrossings save failed:",e));
-      console.log('PORTAL CROSSINGS: saved',crossings.length,'confirmed supplier→Matrix part crossings');
+      _dbg('PORTAL CROSSINGS: saved',crossings.length,'confirmed supplier→Matrix part crossings');
     }
     // Build normalized part# → price map (skip cannot-supply items)
     // DECISION(v1.19.449): For crossed items (supplier quotes a different PN than the BOM),
@@ -18000,7 +18005,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         if(vMatch)vendorNo=vMatch.number;
       }catch(e){console.warn("Vendor lookup for portal prices failed:",e);}
     }
-    if(vendorNo)console.log("applyPortalPrices: vendor",vendorNo,submission.vendorName);
+    if(vendorNo)_dbg("applyPortalPrices: vendor",vendorNo,submission.vendorName);
     // Push each price (and vendor if resolved) to BC item card
     const bcPushes=Object.values(priceMap).map(({price,partNumber})=>{
       const patch={Unit_Cost:price};
@@ -23339,7 +23344,7 @@ INSTRUCTIONS:
     window.addEventListener("offline",onOffline);
     const conn=navigator.connection||navigator.mozConnection||navigator.webkitConnection;
     if(conn)conn.addEventListener("change",onConnChange);
-    // Firestore latency ping every 30s
+    // Firestore latency ping every 120s (reduced from 30s for performance)
     const ping=async()=>{
       if(!navigator.onLine){apply("offline");return;}
       const t0=Date.now();
@@ -23354,12 +23359,11 @@ INSTRUCTIONS:
       }catch(e){
         if(e==="timeout")apply("offline");
         else if(!navigator.onLine)apply("offline");
-        // permission-denied / not-found = Firestore reachable → connection is good
         else if(e?.code==="unavailable"||e?.code==="resource-exhausted")apply("slow");
         else apply("good");
       }
     };
-    const iv=setInterval(ping,30000);
+    const iv=setInterval(ping,120000);
     setTimeout(ping,5000); // initial check after 5s
     return()=>{
       window.removeEventListener("online",onOnline);
