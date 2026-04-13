@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.579";
+const APP_VERSION="v1.19.580";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -22539,7 +22539,11 @@ function VendorsPanel({uid,onVendorAdded}){
             </tr>
           </thead>
           <tbody>
-            {vendors.length===0&&<tr><td colSpan={4} style={{padding:"16px 10px",color:"#94a3b8",textAlign:"center",fontSize:12}}>
+            {loading&&vendors.length===0&&<tr><td colSpan={4} style={{padding:"20px 0",textAlign:"center"}}>
+              <div style={{display:"inline-block",width:20,height:20,border:"3px solid #334155",borderTopColor:"#3b82f6",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+              <div style={{fontSize:11,color:C.muted,marginTop:4}}>Loading vendors…</div>
+            </td></tr>}
+            {!loading&&vendors.length===0&&<tr><td colSpan={4} style={{padding:"16px 10px",color:"#94a3b8",textAlign:"center",fontSize:12}}>
               No vendors — connect to BC or add one above.
             </td></tr>}
             {vendors.filter(v=>showAll||v.Vendor_Posting_Group==='PARTS').map((v,idx)=>(
@@ -22931,6 +22935,10 @@ function ItemsTab({uid}){
               </tr>
             </thead>
             <tbody>
+              {loading&&items.length===0&&<tr><td colSpan={6} style={{padding:"24px 0",textAlign:"center"}}>
+                <div style={{display:"inline-block",width:24,height:24,border:"3px solid #334155",borderTopColor:"#3b82f6",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+                <div style={{fontSize:12,color:C.muted,marginTop:6}}>Loading items from BC…</div>
+              </td></tr>}
               {items.map((item,idx)=>{
                 const priceMs=priceDateMap[item.No]??null;
                 const daysSince=priceMs!=null
