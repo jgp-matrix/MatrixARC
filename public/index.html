@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.580";
+const APP_VERSION="v1.19.581";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -21335,7 +21335,7 @@ function ReportsModal({uid,onClose}){
 }
 
 function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,forceView}){
-  const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":"status");
+  const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":forceView==="engineering"?"engineering":forceView==="purchasing_kanban"?"purchasing_kanban":"status");
   const [myProjectsOnly,setMyProjectsOnly]=useState(false);
   const [projectSearch,setProjectSearch]=useState("");
   const [dragProjectId,setDragProjectId]=useState(null);
@@ -21391,14 +21391,37 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="production"){
-      const order=["post_review","partsopen","inproduction"];
-      const labels={post_review:"In Post-Review",partsopen:"Parts Orders Open",inproduction:"In Production"};
+      const order=["post_review","buyoff","shipping_prep","ready_pickup","inproduction"];
+      const labels={post_review:"In Post-Review",buyoff:"In-Buyoff",shipping_prep:"Prepare For Shipping",ready_pickup:"Ready For Pick-Up",inproduction:"In Production"};
       const map={};
       list.forEach(p=>{
         const eff=computeProjectEffectiveStatus(p);
         if(eff==="post_review"){if(!map.post_review)map.post_review=[];map.post_review.push(p);return;}
-        if(p.bcPoStatus==="purchasing"){if(!map.partsopen)map.partsopen=[];map.partsopen.push(p);}
+        if(p.productionStatus==="ready_pickup"){if(!map.ready_pickup)map.ready_pickup=[];map.ready_pickup.push(p);return;}
+        if(p.productionStatus==="shipping_prep"){if(!map.shipping_prep)map.shipping_prep=[];map.shipping_prep.push(p);return;}
+        if(p.productionStatus==="buyoff"){if(!map.buyoff)map.buyoff=[];map.buyoff.push(p);return;}
         if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open"){if(!map.inproduction)map.inproduction=[];map.inproduction.push(p);}
+      });
+      return order.map(k=>({label:labels[k],items:map[k]||[]}));
+    }
+    if(groupBy==="engineering"){
+      const order=["pre_review","post_review"];
+      const labels={pre_review:"Needs Pre-Review",post_review:"Needs Post-Review"};
+      const map={};
+      list.forEach(p=>{
+        if(p.preReviewStatus==="pending"){if(!map.pre_review)map.pre_review=[];map.pre_review.push(p);}
+        if(p.postReviewStatus==="pending"){if(!map.post_review)map.post_review=[];map.post_review.push(p);}
+      });
+      return order.map(k=>({label:labels[k],items:map[k]||[]}));
+    }
+    if(groupBy==="purchasing_kanban"){
+      const order=["send_po","po_sent","ready_prod"];
+      const labels={send_po:"Ready To Send Vendor PO's",po_sent:"Vendor PO's Sent",ready_prod:"Ready For Production"};
+      const map={};
+      list.forEach(p=>{
+        if(p.bcPoStatus==="Open"){if(!map.send_po)map.send_po=[];map.send_po.push(p);}
+        else if(p.bcPoStatus==="purchasing"){if(!map.po_sent)map.po_sent=[];map.po_sent.push(p);}
+        else if((p.bcPoStatus==="purchased"||p.bcPoStatus==="Completed")&&p.postReviewStatus!=="approved"){if(!map.ready_prod)map.ready_prod=[];map.ready_prod.push(p);}
       });
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
@@ -21492,7 +21515,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       )}
 
       {(()=>{
-        let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="budgetary"||groupBy==="production"||forceView==="purchasing"||!p.importedFromBC));
+        let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="purchasing_kanban"||groupBy==="engineering"||groupBy==="budgetary"||groupBy==="production"||forceView==="purchasing"||forceView==="engineering"||forceView==="purchasing_kanban"||!p.importedFromBC));
         // "My Projects" filter — show only projects created by or assigned to current user
         if(myProjectsOnly){
           myProjects=myProjects.filter(p=>p.createdBy===uid||p.bcSalespersonCode===(_appCtx.role&&window._arcSalespersonCache?.find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Code));
@@ -21527,13 +21550,13 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
               <button onClick={onNew} style={btn(C.accent,"#fff")}>Create First Project</button>
             </div>
           )}
-          {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(
+          {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQ's Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa"};
-                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQ's Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033"};
-                const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColColors[g.label]||C.muted):C.sub;
-                const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing")?(statusColBg[g.label]||C.border):"#3d6090";
+                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQ's Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor PO's":"#f59e0b","Vendor PO's Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981"};
+                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQ's Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor PO's":"#3a1f00","Vendor PO's Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16"};
+                const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColColors[g.label]||C.muted):C.sub;
+                const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColBg[g.label]||C.border):"#3d6090";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
                 const isDropTarget=groupBy==="customer"&&!isNoCustomer&&!!g.customerNumber&&!!dragProjectId;
                 const isOver=dropTarget===gi;
@@ -23820,8 +23843,8 @@ INSTRUCTIONS:
       <div style={{flex:1,minWidth:0,overflowY:"auto"}}>
       <VendorSyncFloater onSwitchToItems={()=>{setNavTab("items");}}/>
       {navTab==="production"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
-      {navTab==="purchasing"&&<PurchasingTab/>}
-      {navTab==="engineering"&&<EngineeringTab/>}
+      {navTab==="purchasing"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="purchasing_kanban"/>}
+      {navTab==="engineering"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="engineering"/>}
       {navTab==="items"&&<ItemsTab uid={user.uid}/>}
       {navTab==="projects"&&<>
       {/* BC Connection Lost popup */}
