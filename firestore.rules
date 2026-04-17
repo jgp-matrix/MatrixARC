@@ -2,9 +2,21 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // System version — all authenticated users can read, admins write on deploy
+    match /_system/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
     // Users can read/write their own data
     match /users/{uid}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Any authenticated user can create notifications for other users (for review requests, etc.)
+    match /users/{uid}/notifications/{notifId} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if request.auth != null && request.auth.uid == uid;
     }
 
     // DECISION(v1.19.404): Supplier quotes — restricted to authenticated users who own the quote
@@ -36,6 +48,14 @@ service cloud.firestore {
     // DECISION(v1.19.404): Supplier RFQ upload tokens — token-based access for supplier portal.
     // Read: public (suppliers access via token link). Write: authenticated users only + size guard.
     match /rfqUploads/{token} {
+      allow read: if true;
+      allow create: if request.auth != null;
+      allow update: if true;
+      allow delete: if request.auth != null;
+    }
+
+    // Engineering review portal — customer access via token (like supplier portal)
+    match /reviewUploads/{token} {
       allow read: if true;
       allow create: if request.auth != null;
       allow update: if true;
@@ -88,9 +108,23 @@ service cloud.firestore {
         allow write: if canWrite();
       }
 
+      // DECISION(v1.19.411): Config write access — admins can write all config,
+      // edit-role users can write defaultBomItems and laborRates (needed for daily workflow).
+      // API keys and BC environment remain admin-only via client-side guards.
       match /config/{configId} {
         allow read: if isMember();
-        allow write: if isAdminMember();
+        allow write: if canWrite();
+      }
+
+      // Purchase Orders module
+      match /purchaseOrders/{poId} {
+        allow read: if isMember();
+        allow write: if canWrite();
+
+        match /lines/{lineId} {
+          allow read: if isMember();
+          allow write: if canWrite();
+        }
       }
     }
   }

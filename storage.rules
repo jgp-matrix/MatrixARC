@@ -1,8 +1,10 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    // DECISION(v1.19.529): Allow all authenticated users to read AND write page images.
+    // Team members need to upload updated drawings to each other's projects.
     match /pageImages/{uid}/{allPaths=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if request.auth != null;
     }
     // DECISION(v1.19.404): Supplier uploads — token-based, kept open for supplier portal flow.
     // Restrict file size to 25MB to prevent abuse.
