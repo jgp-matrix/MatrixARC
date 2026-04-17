@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ARC Purchasing</title>
+  <link rel="icon" href="/icons/icon-192.png">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d0d1a;
+      color: #f1f5f9;
+      min-height: 100vh;
+    }
+    .po-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .po-loading .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #2a2a3e;
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .po-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 12px 24px;
+      background: #151525;
+      border-bottom: 1px solid #2a2a3e;
+    }
+    .po-header .logo { height: 32px; }
+    .po-header h1 {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #38bdf8;
+    }
+    .po-header .company-name {
+      font-size: 13px;
+      color: #64748b;
+      margin-left: auto;
+    }
+    .po-header .back-btn {
+      background: none;
+      border: 1px solid #2a2a3e;
+      color: #94a3b8;
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    .po-header .back-btn:hover { border-color: #38bdf8; color: #38bdf8; }
+    .po-content {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .po-placeholder {
+      text-align: center;
+      padding: 80px 24px;
+      color: #64748b;
+    }
+    .po-placeholder h2 {
+      font-size: 24px;
+      color: #94a3b8;
+      margin-bottom: 12px;
+    }
+    .po-placeholder p {
+      font-size: 15px;
+      line-height: 1.7;
+      max-width: 500px;
+      margin: 0 auto;
+    }
+    .po-status-badge {
+      display: inline-block;
+      background: #0c2a46;
+      color: #38bdf8;
+      border-radius: 20px;
+      padding: 4px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-top: 16px;
+    }
+  </style>
+
+  <!-- Firebase SDKs (same version as main ARC app) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
+
+  <script>
+    // Initialize Firebase (same config as main ARC app)
+    if (!firebase.apps.length) {
+      firebase.initializeApp({
+        apiKey: "AIzaSyBVdokGsXPxJmp8H3XQZP2B_tcTdPiNsE0",
+        authDomain: "matrix-arc.firebaseapp.com",
+        projectId: "matrix-arc",
+        storageBucket: "matrix-arc.firebasestorage.app",
+        messagingSenderId: "1026422498498",
+        appId: "1:1026422498498:web:e2ee72fd7e0f73b9e0ffae"
+      });
+    }
+  </script>
+
+  <!-- Shared ARC module context bridge -->
+  <script src="/modules/shared.js"></script>
+</head>
+<body>
+  <div id="po-app">
+    <div class="po-loading" id="po-loading">
+      <div class="spinner"></div>
+      <div style="color: #64748b; font-size: 14px;">Loading Purchasing Module...</div>
+    </div>
+  </div>
+
+  <!-- Purchasing module logic -->
+  <script src="/modules/purchasing/purchasing.js?v=0.1.1"></script>
+</body>
+</html>
