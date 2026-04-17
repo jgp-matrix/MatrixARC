@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MatrixARC</title>
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { background: #0d0d14; color: #e8e8f0; font-family: -apple-system, 'Inter', sans-serif; font-size: 14px; }
+    /* SANDBOX watermark */
+    body::after {
+      content: "SANDBOX V1.0";
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-35deg);
+      font-size: 140px;
+      font-weight: 900;
+      font-family: 'Inter', sans-serif;
+      letter-spacing: 20px;
+      color: rgba(239, 68, 68, 0.15);
+      pointer-events: none;
+      z-index: 99999;
+      user-select: none;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <!-- PDF.js loaded on demand -->
+  <script>
+    window.pdfjsReady = new Promise(res => {
+      const s = document.createElement("script");
+      s.type = "module";
+      s.textContent = `import * as pdfjs from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs";pdfjs.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs";window._pdfjs=pdfjs;window._pdfjsResolve();`;
+      window._pdfjsResolve = res;
+      document.head.appendChild(s);
+    });
+  </script>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html>
