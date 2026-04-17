@@ -9,6 +9,16 @@ const { scrapeBatch: codaleScrapeBatch } = require('./codaleScraper');
 const { mouserSearchPart, mouserSearchBatch } = require('./mouserApi');
 const { digikeySearchPart, digikeySearchBatch } = require('./digikeyApi');
 
+// Purchasing module functions
+const purchasing = require('./purchasing');
+exports.poCreateOrder = purchasing.createPurchaseOrder;
+exports.poUpdateStatus = purchasing.updatePurchaseOrderStatus;
+
+// Engineering module functions
+const engineering = require('./engineering');
+exports.onCustomerReviewSubmitted = engineering.onCustomerReviewSubmitted;
+exports.engSendReviewEmail = engineering.sendReviewEmail;
+
 const SENDGRID_KEY = process.env.SENDGRID_API_KEY || '';
 const MOUSER_API_KEY = process.env.MOUSER_API_KEY || '';
 const DIGIKEY_CLIENT_ID = process.env.DIGIKEY_CLIENT_ID || '';
@@ -200,6 +210,16 @@ exports.acceptTeamInvite = functions.https.onCall(async (data, context) => {
   }, { merge: true });
   batch.delete(admin.firestore().doc(`companies/${found.companyId}/pendingInvites/${token}`));
   await batch.commit();
+
+  // DECISION(v1.19.491): Copy company API key to new member's user config so extraction works immediately.
+  try {
+    const compApi = await admin.firestore().doc(`companies/${found.companyId}/config/api`).get();
+    if (compApi.exists && compApi.data()?.key) {
+      await admin.firestore().doc(`users/${context.auth.uid}/config/api`).set({ key: compApi.data().key });
+      console.log(`acceptTeamInvite: Copied company API key to user ${context.auth.uid}`);
+    }
+  } catch (e) { console.warn('acceptTeamInvite: API key copy failed:', e.message); }
+
   return { companyId: found.companyId, role: found.role };
 });
 
@@ -314,22 +334,48 @@ exports.onSupplierQuoteSubmitted = functions.firestore
     // Send emails if SendGrid configured
     if (!SENDGRID_KEY) return null;
 
-    // 1) Notify ARC user
+    // 1) Notify ARC user — include supplier PDF attachment if available
     try {
       const userRecord = await admin.auth().getUser(uid);
       const userEmail = userRecord.email;
       if (userEmail) {
-        await sgMail.send({
+        const emailMsg = {
           to: userEmail,
           from: 'sales@matrixpci.com',
           subject: `New Supplier Quote: ${vendorName}${rfqNum ? ' — ' + rfqNum : projectName ? ' — ' + projectName : ''}`,
           html: `<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
             <h2 style="color:#1e293b;margin-bottom:8px">New Supplier Quote Received</h2>
             <p style="color:#64748b;margin-bottom:16px"><strong>${vendorName}</strong> has submitted a quote${projectName ? ` for <strong>${projectName}</strong>` : ''}${rfqNum ? ` (RFQ: ${rfqNum})` : ''}.</p>
+            ${after.storageUrl ? '<p style="color:#334155;margin-bottom:16px">📎 Supplier quote PDF is attached to this email.</p>' : ''}
             <a href="${APP_URL}" style="display:inline-block;background:#2563eb;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review &#x2192;</a>
             <p style="color:#94a3b8;font-size:12px;margin-top:24px">Log in to ARC and click the notification bell 🔔 to review and approve the quote.</p>
           </div>`,
-        });
+        };
+        // DECISION(v1.19.498): Attach supplier's quote PDF if they uploaded one
+        if (after.storageUrl) {
+          try {
+            const https = require('https');
+            const pdfBuffer = await new Promise((resolve, reject) => {
+              https.get(after.storageUrl, (res) => {
+                const chunks = [];
+                res.on('data', chunk => chunks.push(chunk));
+                res.on('end', () => resolve(Buffer.concat(chunks)));
+                res.on('error', reject);
+              }).on('error', reject);
+            });
+            const pdfFileName = after.fileName || `${vendorName.replace(/[^a-zA-Z0-9]/g, '_')}_Quote_${rfqNum || 'RFQ'}.pdf`;
+            emailMsg.attachments = [{
+              content: pdfBuffer.toString('base64'),
+              filename: pdfFileName,
+              type: 'application/pdf',
+              disposition: 'attachment',
+            }];
+            console.log('Attached supplier PDF:', pdfFileName, pdfBuffer.length, 'bytes');
+          } catch (pdfErr) {
+            console.warn('Failed to attach supplier PDF:', pdfErr.message);
+          }
+        }
+        await sgMail.send(emailMsg);
       }
     } catch (e) {
       console.warn('ARC user notification email failed:', e.message);
@@ -617,6 +663,64 @@ exports.codaleScheduledScrape = functions.runWith({ timeoutSeconds: 540, memory:
     return null;
   });
 
+// TEMPORARY: Admin diagnostic — check and fix team member API key access
+exports.diagnoseMemberApiKey = functions.https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const targetEmail = data?.email;
+  if (!targetEmail) throw new functions.https.HttpsError('invalid-argument', 'Provide email');
+  const db = admin.firestore();
+  const auth = admin.auth();
+  try {
+    const user = await auth.getUserByEmail(targetEmail);
+    const result = { uid: user.uid, email: user.email, displayName: user.displayName };
+
+    const profile = await db.doc(`users/${user.uid}/config/profile`).get();
+    result.profileExists = profile.exists;
+    result.profile = profile.exists ? profile.data() : null;
+
+    const userApi = await db.doc(`users/${user.uid}/config/api`).get();
+    result.userApiKeyExists = userApi.exists;
+    result.userApiKeyLength = userApi.exists ? (userApi.data()?.key?.length || 0) : 0;
+
+    const companyId = profile.exists ? profile.data()?.companyId : null;
+    result.companyId = companyId;
+
+    if (companyId) {
+      const compApi = await db.doc(`companies/${companyId}/config/api`).get();
+      result.companyApiKeyExists = compApi.exists;
+      result.companyApiKeyLength = compApi.exists ? (compApi.data()?.key?.length || 0) : 0;
+
+      const member = await db.doc(`companies/${companyId}/members/${user.uid}`).get();
+      result.memberExists = member.exists;
+      result.memberRole = member.exists ? member.data()?.role : null;
+
+      // If company key exists but user key doesn't, copy it
+      if (compApi.exists && compApi.data()?.key && !userApi.exists) {
+        await db.doc(`users/${user.uid}/config/api`).set({ key: compApi.data().key });
+        result.fixApplied = 'Copied company API key to user config';
+      } else if (!compApi.exists || !compApi.data()?.key) {
+        // Company key missing — find the admin's key and copy it to company + user
+        const adminMembers = await db.collection(`companies/${companyId}/members`).where('role', '==', 'admin').get();
+        let adminKey = null;
+        for (const mem of adminMembers.docs) {
+          const adminApi = await db.doc(`users/${mem.id}/config/api`).get();
+          if (adminApi.exists && adminApi.data()?.key) { adminKey = adminApi.data().key; break; }
+        }
+        if (adminKey) {
+          await db.doc(`companies/${companyId}/config/api`).set({ key: adminKey });
+          if (!userApi.exists) await db.doc(`users/${user.uid}/config/api`).set({ key: adminKey });
+          result.fixApplied = 'Copied admin API key to company config + user config';
+        } else {
+          result.fixNeeded = 'No API key found on any admin — must set in Settings';
+        }
+      }
+    }
+    return result;
+  } catch (e) {
+    throw new functions.https.HttpsError('internal', e.message);
+  }
+});
+
 /**
  * Test endpoint — scrape specific part numbers from Codale with login (customer pricing)
  * Call with { partNumbers: ["25B-D4P0N114", "5069-OB16"] }
@@ -633,7 +737,8 @@ exports.codaleTestScrape = functions.runWith({ timeoutSeconds: 300, memory: '2GB
     throw new functions.https.HttpsError('failed-precondition', 'Codale credentials not configured');
   }
   try {
-    const results = await codaleScrapeBatch(partNumbers.slice(0, 10), username, password);
+    // DECISION(v1.19.482): Increased batch limit from 10 to 30 — most panels have 20-50 Codale items
+    const results = await codaleScrapeBatch(partNumbers.slice(0, 30), username, password);
     return { success: true, results };
   } catch (e) {
     throw new functions.https.HttpsError('internal', 'Scrape failed: ' + e.message);

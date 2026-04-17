@@ -137,6 +137,7 @@ async function extractFromPage(page, partNumber) {
   return page.evaluate((pn) => {
     const result = { partNumber: pn, found: false, price: null, availability: null, uom: "EA", productName: null, codalePartNo: null };
     const body = document.body.innerText || "";
+    const pnNorm = pn.replace(/[\s\-\.]/g, "").toUpperCase();
 
     // Check for no results
     if (/0\s*Products?\s*found|no\s*results|did not match/i.test(body)) {
@@ -144,56 +145,115 @@ async function extractFromPage(page, partNumber) {
       return result;
     }
 
-    // Find ALL prices on the page ($XX.XX pattern)
-    const priceMatches = [...body.matchAll(/\$([\d,]+\.\d{2})\s*\/?\s*(ea|ft|each|m|rl|pk|c|C100)?/gi)];
+    // Strategy 1: Find "Catalog #:" lines and EXACT match against our part number.
+    // Codale shows "Catalog #: 800H-JP2KB7AXXX" — we must match exactly, not substring.
+    // e.g. searching "800H-JP2KB7AXXX" should NOT match "800HL-JP2KB7AXXX".
+    const lines = body.split("\n").map(l => l.trim()).filter(Boolean);
+    const catalogLines = [];
+    for (let i = 0; i < lines.length; i++) {
+      const catMatch = lines[i].match(/Catalog\s*#[:\s]*(.+)/i);
+      if (catMatch) {
+        const catalogPN = catMatch[1].trim();
+        const catalogNorm = catalogPN.replace(/[\s\-\.]/g, "").toUpperCase();
+        catalogLines.push({ idx: i, catalogPN, catalogNorm, exact: catalogNorm === pnNorm });
+      }
+    }
 
-    // Filter out obviously wrong prices (e.g., from footer, unrelated content)
-    // Codale product prices are typically between $0.10 and $50,000
-    const validPrices = priceMatches
-      .map(m => ({ price: parseFloat(m[1].replace(/,/g, "")), uom: (m[2] || "EA").toUpperCase(), raw: m[0] }))
-      .filter(p => p.price >= 0.01 && p.price <= 50000);
+    // Find EXACT catalog match first, then try substring as fallback
+    let matchedCatalogIdx = -1;
+    const exactCat = catalogLines.find(c => c.exact);
+    if (exactCat) {
+      matchedCatalogIdx = exactCat.idx;
+    } else if (catalogLines.length === 1 && catalogLines[0].catalogNorm.includes(pnNorm)) {
+      // Only one catalog entry and it contains our PN — probably close enough
+      matchedCatalogIdx = catalogLines[0].idx;
+    }
 
-    if (validPrices.length > 0) {
-      // If there's exactly one product ("1 Products found"), take the first valid price
-      // If multiple products, try to find the one near our part number
-      const pnNorm = pn.replace(/[\s\-\.]/g, "").toUpperCase();
-      const lines = body.split("\n").map(l => l.trim()).filter(Boolean);
-
-      // Try to find price near our catalog number
-      let bestPrice = null;
-      for (let i = 0; i < lines.length; i++) {
-        const lineNorm = lines[i].replace(/[\s\-\.]/g, "").toUpperCase();
-        if (lineNorm.includes(pnNorm) || (/catalog\s*#/i.test(lines[i]) && lineNorm.includes(pnNorm))) {
-          // Found our part — look for price within 20 lines
-          for (let j = i; j < Math.min(lines.length, i + 20); j++) {
-            const pm = lines[j].match(/\$([\d,]+\.\d{2})/);
-            if (pm) {
-              bestPrice = parseFloat(pm[1].replace(/,/g, ""));
-              const um = lines[j].match(/\/\s*(ea|ft|each|m|rl|pk|c)/i);
-              if (um) result.uom = um[1].toUpperCase();
+    if (matchedCatalogIdx >= 0) {
+      // Found the exact product — look for price within 40 lines
+      for (let j = matchedCatalogIdx; j < Math.min(lines.length, matchedCatalogIdx + 40); j++) {
+        const pm = lines[j].match(/\$([\d,]+\.\d{2})\s*\/?\s*(ea|ft|each|m|rl|pk|c)?/i);
+        if (pm) {
+          const p = parseFloat(pm[1].replace(/,/g, ""));
+          if (p >= 0.01 && p <= 50000) {
+            result.price = p;
+            result.uom = (pm[2] || "EA").toUpperCase();
+            result.found = true;
+            break;
+          }
+        }
+      }
+      // Also look backwards (price might be above catalog line in some layouts)
+      if (!result.found) {
+        for (let j = matchedCatalogIdx; j >= Math.max(0, matchedCatalogIdx - 20); j--) {
+          const pm = lines[j].match(/\$([\d,]+\.\d{2})\s*\/?\s*(ea|ft|each|m|rl|pk|c)?/i);
+          if (pm) {
+            const p = parseFloat(pm[1].replace(/,/g, ""));
+            if (p >= 0.01 && p <= 50000) {
+              result.price = p;
+              result.uom = (pm[2] || "EA").toUpperCase();
+              result.found = true;
               break;
             }
           }
-          break;
         }
       }
-
-      // Use best price near part number, or fall back to first price on page
-      result.price = bestPrice || validPrices[0].price;
-      if (!bestPrice) result.uom = validPrices[0].uom;
-      result.found = true;
     }
 
-    // Extract availability — look for "N available" patterns
-    const availMatches = [...body.matchAll(/(\d+)\s*available\s*(for delivery|at [A-Za-z\s]+)?/gi)];
-    if (availMatches.length) {
-      result.availability = availMatches.map(m => m[0].trim()).join("; ");
+    // Strategy 2: DOM-based — find smallest element with EXACT catalog match + price
+    if (!result.found) {
+      const allElements = document.querySelectorAll('*');
+      const productSections = [];
+      for (const el of allElements) {
+        const text = el.innerText || "";
+        if (text.length > 2000) continue;
+        // Look for "Catalog #: <exact PN>" within this element
+        const catRx = new RegExp("Catalog\\s*#[:\\s]*" + pn.replace(/[-\\\/\.]/g, "[\\-\\.\\s]?"), "i");
+        if (catRx.test(text)) {
+          const priceMatch = text.match(/\$([\d,]+\.\d{2})\s*\/?\s*(ea|ft|each|m|rl|pk|c)?/i);
+          if (priceMatch) {
+            const price = parseFloat(priceMatch[1].replace(/,/g, ""));
+            if (price >= 0.01 && price <= 50000) {
+              productSections.push({ el, price, uom: (priceMatch[2] || "EA").toUpperCase(), textLen: text.length });
+            }
+          }
+        }
+      }
+      if (productSections.length > 0) {
+        productSections.sort((a, b) => a.textLen - b.textLen);
+        const best = productSections[0];
+        result.price = best.price;
+        result.uom = best.uom;
+        result.found = true;
+      }
     }
 
-    // Extract product name — look for line containing the part number that looks like a product title
-    const pnNorm = pn.replace(/[\s\-\.]/g, "").toUpperCase();
-    const lines = body.split("\n").map(l => l.trim()).filter(Boolean);
-    for (const line of lines) {
+    // Strategy 3: Single product on page — safe to take the price
+    if (!result.found) {
+      const countMatch = body.match(/(\d+)\s*Products?\s*found/i);
+      const productCount = countMatch ? parseInt(countMatch[1]) : 0;
+      if (productCount === 1) {
+        const priceMatches = [...body.matchAll(/\$([\d,]+\.\d{2})\s*\/?\s*(ea|ft|each|m|rl|pk|c)?/gi)];
+        const validPrices = priceMatches
+          .map(m => ({ price: parseFloat(m[1].replace(/,/g, "")), uom: (m[2] || "EA").toUpperCase() }))
+          .filter(p => p.price >= 0.01 && p.price <= 50000);
+        if (validPrices.length > 0) {
+          result.price = validPrices[0].price;
+          result.uom = validPrices[0].uom;
+          result.found = true;
+        }
+      }
+    }
+
+    // Extract availability
+    if (!result.availability) {
+      const availMatches = [...body.matchAll(/(\d+)\s*available\s*(for delivery|at [A-Za-z\s]+)?/gi)];
+      if (availMatches.length) result.availability = availMatches.map(m => m[0].trim()).join("; ");
+    }
+
+    // Extract product name
+    const lines2 = body.split("\n").map(l => l.trim()).filter(Boolean);
+    for (const line of lines2) {
       if (line.length > 15 && line.length < 200 && line.replace(/[\s\-\.]/g, "").toUpperCase().includes(pnNorm) && !/catalog|codale|manufacturer|search/i.test(line)) {
         result.productName = line.slice(0, 200);
         break;
@@ -201,13 +261,14 @@ async function extractFromPage(page, partNumber) {
     }
 
     // Extract Codale Part #
-    const codaleMatch = body.match(/Codale\s*Part\s*#[:\s]*(\d+)/i);
-    if (codaleMatch) result.codalePartNo = codaleMatch[1];
+    if (!result.codalePartNo) {
+      const codaleMatch = body.match(/Codale\s*Part\s*#[:\s]*(\d+)/i);
+      if (codaleMatch) result.codalePartNo = codaleMatch[1];
+    }
 
     if (!result.found) {
-      // Include a snippet of page text for debugging
       result.error = "Price not found";
-      result.debug = body.slice(0, 500);
+      result.debug = body.slice(0, 800);
     }
     return result;
   }, partNumber);
