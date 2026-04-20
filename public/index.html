@@ -228,6 +228,103 @@ const fbDb=firebase.firestore();
 const fbFunctions=firebase.functions();
 const fbStorage=firebase.storage();
 
+// ── DEBUG LOGGING ──
+// DECISION(v1.19.584): Capture uncaught errors + console.error + user-reported issues
+// to Firestore (companies/{companyId}/debugLogs) for admin-visible debugging.
+// Admins view logs in Settings → Debug Logs. Breadcrumbs record the last 30 events.
+const _debugBreadcrumbs=[];
+const DEBUG_BREADCRUMB_MAX=30;
+let _currentProjectId=null;
+let _currentPanelId=null;
+const _debugDedup=new Map();
+let _debugSelfError=false;
+function addBreadcrumb(type,message,data){
+  try{
+    _debugBreadcrumbs.push({t:Date.now(),type,message:(message||'').toString().slice(0,500),data:data||null});
+    while(_debugBreadcrumbs.length>DEBUG_BREADCRUMB_MAX)_debugBreadcrumbs.shift();
+  }catch(e){}
+}
+async function logDebugEntry(opts){
+  if(_debugSelfError)return;
+  if(!fbAuth.currentUser)return; // drop pre-auth events (writes would fail rules anyway)
+  try{
+    const uid=fbAuth.currentUser.uid;
+    const entry={
+      createdAt:Date.now(),createdBy:uid,
+      userEmail:fbAuth.currentUser.email||'',
+      userName:fbAuth.currentUser.displayName||'',
+      severity:opts.severity||'error',
+      source:opts.source||'unknown',
+      message:(opts.message||'').toString().slice(0,2000),
+      stack:(opts.stack||'').toString().slice(0,5000),
+      url:location.href.slice(0,500),
+      userAgent:(navigator.userAgent||'').slice(0,500),
+      appVersion:APP_VERSION,
+      projectId:_currentProjectId||null,
+      panelId:_currentPanelId||null,
+      breadcrumbs:opts.breadcrumbs||_debugBreadcrumbs.slice(-DEBUG_BREADCRUMB_MAX),
+      description:opts.description||null,
+      extra:opts.extra||null,
+    };
+    const path=_appCtx&&_appCtx.companyId?`companies/${_appCtx.companyId}/debugLogs`:`users/${uid}/debugLogs`;
+    await fbDb.collection(path).add(entry);
+  }catch(e){
+    _debugSelfError=true;
+    setTimeout(()=>{_debugSelfError=false;},30000);
+    _origConsoleWarn('Debug log emit failed:',e.message);
+  }
+}
+function _debugEmit(source,message,stack){
+  try{
+    const key=source+'|'+(message||'').toString().slice(0,200);
+    const now=Date.now();
+    const last=_debugDedup.get(key);
+    if(last&&now-last<60000)return; // dedup same error within 60s
+    _debugDedup.set(key,now);
+    logDebugEntry({severity:'error',source,message,stack});
+  }catch(e){}
+}
+// Preserve originals BEFORE wrapping so logDebugEntry can use them safely
+const _origConsoleError=console.error.bind(console);
+const _origConsoleWarn=console.warn.bind(console);
+console.error=function(...args){
+  try{
+    const msg=args.map(a=>{
+      if(a instanceof Error)return a.stack||a.message;
+      if(typeof a==='object'){try{return JSON.stringify(a).slice(0,500);}catch(e){return '[unserializable]';}}
+      return String(a).slice(0,500);
+    }).join(' ');
+    addBreadcrumb('console.error',msg);
+    _debugEmit('console_error',msg);
+  }catch(e){}
+  _origConsoleError(...args);
+};
+console.warn=function(...args){
+  try{
+    const msg=args.map(a=>typeof a==='object'?(()=>{try{return JSON.stringify(a).slice(0,300);}catch(e){return '[obj]';}})():String(a).slice(0,300)).join(' ');
+    addBreadcrumb('console.warn',msg);
+  }catch(e){}
+  _origConsoleWarn(...args);
+};
+window.addEventListener('error',function(ev){
+  try{
+    const err=ev.error;
+    const msg=ev.message||(err&&err.message)||'Unknown error';
+    const stack=(err&&err.stack)||`at ${ev.filename}:${ev.lineno}:${ev.colno}`;
+    addBreadcrumb('uncaught',msg);
+    _debugEmit('uncaught',msg,stack);
+  }catch(e){}
+});
+window.addEventListener('unhandledrejection',function(ev){
+  try{
+    const reason=ev.reason;
+    const msg=(reason&&reason.message)||(typeof reason==='string'?reason:'[promise rejection]');
+    const stack=(reason&&reason.stack)||'';
+    addBreadcrumb('promise_rejection',msg);
+    _debugEmit('promise_rejection',msg,stack);
+  }catch(e){}
+});
+
 // ── FCM (Push Notifications) ──
 let fbMessaging=null;
 try{if(firebase.messaging.isSupported()){fbMessaging=firebase.messaging();}}catch(e){console.warn("FCM not supported in this browser:",e);}
@@ -16198,6 +16295,8 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
   const bgTasks=useBgTasks();
   const activeBgTasks=Object.values(bgTasks).filter(t=>t.projectId===project.id&&t.status==="running");
   const [selectedPanelId,setSelectedPanelId]=useState(()=>(project.panels||[])[0]?.id||null);
+  // DECISION(v1.19.584): Track current panel for debug log context
+  useEffect(()=>{_currentPanelId=selectedPanelId||null;},[selectedPanelId]);
   const [eqModalPanelId,setEqModalPanelId]=useState(null);
   const [fbLaborMoreInfo,setFbLaborMoreInfo]=useState(false);
   const [showCADLinkModal,setShowCADLinkModal]=useState(false);
@@ -17272,6 +17371,8 @@ class ErrorBoundary extends React.Component{
 function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,autoOpenPortal,onPortalOpened}){
   const [project,setProject]=useState(()=>migrateProject(init));
   const projectRef=useRef(migrateProject(init));
+  // DECISION(v1.19.584): Track current project/panel for debug log context
+  useEffect(()=>{_currentProjectId=init&&init.id||null;addBreadcrumb('nav',`Project opened: ${init&&init.id}`);return()=>{_currentProjectId=null;_currentPanelId=null;};},[init&&init.id]);
   const [view,setView]=useState("panels"); // "panels"|"quote"
   const [autoPrint,setAutoPrint]=useState(false);
   const [rfqLoading,setRfqLoading]=useState(false);
@@ -20032,7 +20133,7 @@ function APISetupModal({uid,onClose}){
   );
 }
 
-function SettingsModal({uid,onClose,onNameChange}){
+function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs}){
   const [key,setKey]=useState("");
   const [loading,setLoading]=useState(true);
   const [saved,setSaved]=useState(false);
@@ -20253,6 +20354,15 @@ function SettingsModal({uid,onClose,onNameChange}){
             </form>
           )}
         </div>
+
+        {/* Admin: Debug Logs — DECISION(v1.19.584) */}
+        {isAdmin()&&onShowDebugLogs&&(
+          <div style={{marginTop:20,padding:"14px 16px",background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:10}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:6,display:"flex",alignItems:"center",gap:8}}>🪲 Debug Logs <span style={{fontSize:10,fontWeight:600,color:"#a78bfa",background:"#1a1033",borderRadius:10,padding:"1px 8px"}}>ADMIN</span></div>
+            <div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginBottom:10}}>View captured errors and user-submitted issue reports from all team members.</div>
+            <button onClick={()=>{onShowDebugLogs();onClose();}} style={btn(C.accent,"#fff",{fontSize:13,padding:"7px 18px"})}>Open Debug Logs</button>
+          </div>
+        )}
 
         {/* Close button at bottom */}
         <div style={{marginTop:24,textAlign:"center"}}>
@@ -23064,6 +23174,209 @@ function ItemsTab({uid}){
   </div>);
 }
 
+// ── DEBUG LOGGING UI ──
+// DECISION(v1.19.584): Floating "Report Issue" button on every page + admin DebugLogsModal.
+
+function ReportIssueButton({onClick,onDismiss}){
+  return React.createElement("div",{style:{position:"fixed",bottom:16,right:16,zIndex:9998,display:"flex",alignItems:"center",gap:6}},
+    React.createElement("button",{
+      onClick,
+      title:"Report an issue — send recent activity to the admin for debugging",
+      style:{background:"#1a1033",color:"#c4b5fd",border:"1px solid #a78bfa55",borderRadius:20,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,boxShadow:"0 2px 8px rgba(0,0,0,0.4)"}
+    },"🐛 Report Issue"),
+    React.createElement("button",{
+      onClick:onDismiss,
+      title:"Hide for this session",
+      style:{background:"transparent",color:"#64748b",border:"1px solid #2a2a3e",borderRadius:"50%",width:24,height:24,fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",lineHeight:1}
+    },"×")
+  );
+}
+
+function ReportIssueModal({onClose}){
+  const [description,setDescription]=useState('');
+  const [submitting,setSubmitting]=useState(false);
+  const [submitted,setSubmitted]=useState(false);
+  const [error,setError]=useState(null);
+  async function submit(){
+    if(!description.trim()){setError('Please describe what happened');return;}
+    setSubmitting(true);setError(null);
+    try{
+      await logDebugEntry({
+        severity:'user_reported',
+        source:'manual',
+        message:description.trim().slice(0,200),
+        description:description.trim(),
+      });
+      setSubmitted(true);
+      setTimeout(onClose,2000);
+    }catch(e){
+      setError('Failed to submit: '+(e.message||'unknown error'));
+    }finally{
+      setSubmitting(false);
+    }
+  }
+  return React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onClick:e=>{if(e.target===e.currentTarget)onClose();}},
+    React.createElement("div",{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:"24px 28px",maxWidth:480,width:"90%"}},
+      React.createElement("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}},
+        React.createElement("div",{style:{fontSize:16,fontWeight:700,color:C.text,display:"flex",alignItems:"center",gap:8}},"🐛 Report an Issue"),
+        React.createElement("button",{onClick:onClose,style:{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer"}},"×")
+      ),
+      submitted
+        ?React.createElement("div",{style:{textAlign:"center",padding:"24px 0"}},
+            React.createElement("div",{style:{fontSize:32,marginBottom:8}},"✓"),
+            React.createElement("div",{style:{fontSize:14,color:C.green,fontWeight:700}},"Report submitted to admin."),
+            React.createElement("div",{style:{fontSize:12,color:C.muted,marginTop:4}},"Closing…")
+          )
+        :React.createElement(React.Fragment,null,
+            React.createElement("div",{style:{fontSize:13,color:C.sub,marginBottom:12,lineHeight:1.5}},"Describe what you were trying to do and what went wrong. Recent activity (clicks, errors, network) will be attached automatically."),
+            React.createElement("textarea",{
+              autoFocus:true,
+              value:description,
+              onChange:e=>setDescription(e.target.value),
+              placeholder:"e.g. Tried to upload a PDF drawing to panel X, but the progress bar got stuck at 50%\u2026",
+              rows:6,
+              style:{width:"100%",background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",color:C.text,fontSize:13,fontFamily:"inherit",resize:"vertical"}
+            }),
+            error&&React.createElement("div",{style:{marginTop:8,fontSize:12,color:"#f87171"}},error),
+            React.createElement("div",{style:{display:"flex",justifyContent:"flex-end",gap:8,marginTop:16}},
+              React.createElement("button",{onClick:onClose,style:{background:"none",color:C.muted,border:`1px solid ${C.border}`,borderRadius:20,padding:"8px 16px",fontSize:13,fontWeight:600,cursor:"pointer"}},"Cancel"),
+              React.createElement("button",{onClick:submit,disabled:submitting||!description.trim(),style:{background:C.accent,color:"#fff",border:"none",borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:submitting||!description.trim()?"default":"pointer",opacity:submitting||!description.trim()?0.5:1}},submitting?"Sending\u2026":"Send Report")
+            )
+          )
+    )
+  );
+}
+
+function DebugLogsModal({onClose,companyId,uid}){
+  const [logs,setLogs]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState(null);
+  const [selected,setSelected]=useState(null);
+  const [rangeDays,setRangeDays]=useState(7);
+  const [severityFilter,setSeverityFilter]=useState('all');
+  const [userFilter,setUserFilter]=useState('all');
+
+  async function load(){
+    setLoading(true);setError(null);
+    try{
+      if(!companyId){setError('Debug logs require company membership.');setLogs([]);return;}
+      const path=`companies/${companyId}/debugLogs`;
+      let q;
+      if(rangeDays>0){
+        const cutoff=Date.now()-rangeDays*24*60*60*1000;
+        q=fbDb.collection(path).where('createdAt','>=',cutoff).orderBy('createdAt','desc').limit(500);
+      }else{
+        q=fbDb.collection(path).orderBy('createdAt','desc').limit(500);
+      }
+      const snap=await q.get();
+      setLogs(snap.docs.map(d=>({id:d.id,...d.data()})));
+    }catch(e){setError(e.message||'Failed to load logs');}
+    finally{setLoading(false);}
+  }
+  useEffect(()=>{load();},[rangeDays,companyId]);
+
+  const users=[...new Set(logs.map(l=>l.userEmail||l.createdBy).filter(Boolean))].sort();
+  const filtered=logs.filter(l=>{
+    if(severityFilter!=='all'&&l.severity!==severityFilter)return false;
+    if(userFilter!=='all'&&(l.userEmail||l.createdBy)!==userFilter)return false;
+    return true;
+  });
+
+  const fmtTime=ts=>{const d=new Date(ts);return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',hour12:true});};
+  const sevColor=sev=>sev==='user_reported'?'#a78bfa':sev==='error'?'#f87171':sev==='warn'?'#fbbf24':C.muted;
+
+  return React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:20},onClick:e=>{if(e.target===e.currentTarget)onClose();}},
+    React.createElement("div",{style:{background:C.bg,border:`1px solid ${C.border}`,borderRadius:16,width:"95%",maxWidth:1400,height:"90vh",display:"flex",flexDirection:"column",overflow:"hidden"}},
+      React.createElement("div",{style:{padding:"12px 20px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:14,flexShrink:0,flexWrap:"wrap"}},
+        React.createElement("div",{style:{fontSize:16,fontWeight:700,color:C.text}},"\uD83D\uDC1B Debug Logs"),
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:4}},
+          React.createElement("span",{style:{fontSize:11,color:C.muted,marginRight:4}},"Range:"),
+          [1,7,30,0].map(d=>React.createElement("button",{key:d,onClick:()=>setRangeDays(d),style:{background:rangeDays===d?C.accent:C.surface,color:rangeDays===d?"#fff":C.muted,border:`1px solid ${rangeDays===d?C.accent:C.border}`,borderRadius:14,padding:"3px 10px",fontSize:11,cursor:"pointer",fontWeight:600}},d===0?"All":d===1?"24h":d+"d"))
+        ),
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6}},
+          React.createElement("span",{style:{fontSize:11,color:C.muted}},"Severity:"),
+          React.createElement("select",{value:severityFilter,onChange:e=>setSeverityFilter(e.target.value),style:{background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px",fontSize:11}},
+            React.createElement("option",{value:"all"},"All"),
+            React.createElement("option",{value:"error"},"Error"),
+            React.createElement("option",{value:"warn"},"Warn"),
+            React.createElement("option",{value:"user_reported"},"User reported")
+          )
+        ),
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6}},
+          React.createElement("span",{style:{fontSize:11,color:C.muted}},"User:"),
+          React.createElement("select",{value:userFilter,onChange:e=>setUserFilter(e.target.value),style:{background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,maxWidth:180}},
+            React.createElement("option",{value:"all"},"All users"),
+            users.map(u=>React.createElement("option",{key:u,value:u},u))
+          )
+        ),
+        React.createElement("button",{onClick:load,style:{background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:14,padding:"3px 12px",fontSize:11,cursor:"pointer",fontWeight:600}},"\u21BB Reload"),
+        React.createElement("div",{style:{flex:1}}),
+        React.createElement("div",{style:{fontSize:11,color:C.muted}},`${filtered.length} of ${logs.length}`),
+        React.createElement("button",{onClick:onClose,style:{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}},"\u00D7")
+      ),
+      React.createElement("div",{style:{flex:1,display:"flex",minHeight:0}},
+        React.createElement("div",{style:{width:selected?480:"100%",flexShrink:0,overflowY:"auto",borderRight:selected?`1px solid ${C.border}`:"none"}},
+          loading?React.createElement("div",{style:{padding:40,textAlign:"center",color:C.muted}},"Loading\u2026")
+            :error?React.createElement("div",{style:{padding:40,textAlign:"center",color:"#f87171"}},error)
+            :filtered.length===0?React.createElement("div",{style:{padding:40,textAlign:"center",color:C.muted}},"No logs in this range.")
+            :React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:12}},
+              React.createElement("thead",{style:{position:"sticky",top:0,background:C.surface,zIndex:2}},
+                React.createElement("tr",null,
+                  ["Time","Sev","User","Message","Source"].map(h=>React.createElement("th",{key:h,style:{textAlign:"left",padding:"8px 12px",color:C.muted,fontSize:10,textTransform:"uppercase",letterSpacing:0.5,borderBottom:`1px solid ${C.border}`}},h))
+                )
+              ),
+              React.createElement("tbody",null,
+                filtered.map(l=>React.createElement("tr",{key:l.id,onClick:()=>setSelected(l),style:{cursor:"pointer",background:selected&&selected.id===l.id?"#1a1a2e":"transparent",borderBottom:`1px solid ${C.border}`}},
+                  React.createElement("td",{style:{padding:"6px 12px",color:C.sub,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}},fmtTime(l.createdAt)),
+                  React.createElement("td",{style:{padding:"6px 12px"}},React.createElement("span",{style:{color:sevColor(l.severity),fontSize:10,fontWeight:700,textTransform:"uppercase"}},l.severity||"?")),
+                  React.createElement("td",{style:{padding:"6px 12px",color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:140}},l.userEmail||l.userName||(l.createdBy||"").slice(0,8)),
+                  React.createElement("td",{style:{padding:"6px 12px",color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:500}},l.message),
+                  React.createElement("td",{style:{padding:"6px 12px",color:C.muted,fontSize:11}},l.source)
+                ))
+              )
+            )
+        ),
+        selected&&React.createElement("div",{style:{flex:1,overflowY:"auto",padding:"16px 20px"}},
+          React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:14}},
+            React.createElement("span",{style:{fontSize:10,fontWeight:700,color:sevColor(selected.severity),textTransform:"uppercase",letterSpacing:0.5,background:"#1a1a2e",borderRadius:4,padding:"2px 8px"}},selected.severity||"?"),
+            React.createElement("span",{style:{fontSize:11,color:C.muted}},selected.source),
+            React.createElement("span",{style:{fontSize:11,color:C.muted,marginLeft:"auto"}},new Date(selected.createdAt).toLocaleString()),
+            React.createElement("button",{onClick:()=>setSelected(null),style:{background:"none",border:"none",color:C.muted,fontSize:16,cursor:"pointer"}},"\u00D7")
+          ),
+          React.createElement("div",{style:{fontSize:14,fontWeight:700,color:C.text,marginBottom:8,wordBreak:"break-word"}},selected.message),
+          selected.description&&React.createElement("div",{style:{background:"#1a1033",border:"1px solid #a78bfa33",borderRadius:8,padding:"10px 12px",marginBottom:14,fontSize:13,color:"#c4b5fd",whiteSpace:"pre-wrap"}},selected.description),
+          React.createElement("div",{style:{display:"grid",gridTemplateColumns:"auto 1fr",gap:"4px 14px",fontSize:11,marginBottom:14}},
+            React.createElement("span",{style:{color:C.muted,fontWeight:600}},"User:"),React.createElement("span",{style:{color:C.text,wordBreak:"break-all"}},`${selected.userName||""} (${selected.userEmail||selected.createdBy||"?"})`),
+            React.createElement("span",{style:{color:C.muted,fontWeight:600}},"Version:"),React.createElement("span",{style:{color:C.text}},selected.appVersion||"?"),
+            React.createElement("span",{style:{color:C.muted,fontWeight:600}},"URL:"),React.createElement("span",{style:{color:C.text,wordBreak:"break-all"}},selected.url||""),
+            React.createElement("span",{style:{color:C.muted,fontWeight:600}},"Browser:"),React.createElement("span",{style:{color:C.text,fontSize:10,wordBreak:"break-all"}},selected.userAgent||""),
+            selected.projectId?React.createElement(React.Fragment,{key:"proj"},
+              React.createElement("span",{style:{color:C.muted,fontWeight:600}},"Project:"),React.createElement("span",{style:{color:C.text,fontFamily:"monospace"}},selected.projectId)
+            ):null,
+            selected.panelId?React.createElement(React.Fragment,{key:"panel"},
+              React.createElement("span",{style:{color:C.muted,fontWeight:600}},"Panel:"),React.createElement("span",{style:{color:C.text,fontFamily:"monospace"}},selected.panelId)
+            ):null
+          ),
+          selected.stack&&React.createElement("div",{style:{marginBottom:14}},
+            React.createElement("div",{style:{fontSize:11,fontWeight:700,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}},"Stack"),
+            React.createElement("pre",{style:{background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:6,padding:10,fontSize:11,color:"#fbbf24",overflow:"auto",maxHeight:260,fontFamily:"monospace",whiteSpace:"pre-wrap",wordBreak:"break-word"}},selected.stack)
+          ),
+          Array.isArray(selected.breadcrumbs)&&selected.breadcrumbs.length>0&&React.createElement("div",null,
+            React.createElement("div",{style:{fontSize:11,fontWeight:700,color:C.muted,marginBottom:4,textTransform:"uppercase",letterSpacing:0.5}},`Breadcrumbs (${selected.breadcrumbs.length})`),
+            React.createElement("div",{style:{background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 0",maxHeight:300,overflow:"auto"}},
+              selected.breadcrumbs.map((b,i)=>React.createElement("div",{key:i,style:{display:"flex",gap:10,padding:"3px 10px",fontSize:11,borderTop:i>0?`1px solid ${C.border}`:"none"}},
+                React.createElement("span",{style:{color:C.muted,fontFamily:"monospace",fontSize:10,flexShrink:0}},new Date(b.t).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})),
+                React.createElement("span",{style:{color:b.type==='console.error'||b.type==='uncaught'||b.type==='promise_rejection'?'#f87171':b.type==='console.warn'?'#fbbf24':C.sub,fontSize:10,fontWeight:700,flexShrink:0,minWidth:60}},b.type),
+                React.createElement("span",{style:{color:C.text,wordBreak:"break-word",fontFamily:"monospace",fontSize:11}},b.message)
+              ))
+            )
+          )
+        )
+      )
+    )
+  );
+}
+
 // ── APP ──
 function App({user}){
   const [projects,setProjects]=useState([]);
@@ -23079,6 +23392,9 @@ function App({user}){
   const [showApiSetup,setShowApiSetup]=useState(false);
   const [showAbout,setShowAbout]=useState(false);
   const [showConfig,setShowConfig]=useState(false);
+  const [showReportIssue,setShowReportIssue]=useState(false);
+  const [showDebugLogs,setShowDebugLogs]=useState(false);
+  const [reportButtonDismissed,setReportButtonDismissed]=useState(false);
   const [newVersionAvailable,setNewVersionAvailable]=useState(null); // null or "v1.19.XXX"
   const [companyId,setCompanyId]=useState(null);
   const [userRole,setUserRole]=useState(null);
@@ -23889,7 +24205,7 @@ INSTRUCTIONS:
       {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} project={deleteConfirm.project} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
       {transferProject&&<TransferProjectModal project={transferProject} companyId={companyId} uid={user.uid} userEmail={user.email} onTransferred={handleTransferDone} onClose={()=>setTransferProject(null)}/>}
       {copyProject_&&<CopyProjectModal project={copyProject_} uid={user.uid} onCopied={p=>{setCopyProject(null);setProjects(ps=>[p,...ps]);handleOpen(p);}} onClose={()=>setCopyProject(null)}/>}
-      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)}/>}
+      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)} onShowDebugLogs={()=>setShowDebugLogs(true)}/>}
       {showApiSetup&&<APISetupModal uid={user.uid} onClose={()=>setShowApiSetup(false)}/>}
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={url=>{setCompanyLogo(url||null);_appCtx.company={...(_appCtx.company||{}),logoUrl:url||null};}}/>}
@@ -23983,6 +24299,10 @@ INSTRUCTIONS:
       </div>
       </div>{/* end flex row wrapper */}
       {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip} onMinimize={()=>setTourStep(null)}/>}
+      {/* DECISION(v1.19.584): Floating "Report Issue" button — visible on every page until dismissed for this session. */}
+      {!reportButtonDismissed&&<ReportIssueButton onClick={()=>setShowReportIssue(true)} onDismiss={()=>setReportButtonDismissed(true)}/>}
+      {showReportIssue&&<ReportIssueModal onClose={()=>setShowReportIssue(false)}/>}
+      {showDebugLogs&&<DebugLogsModal onClose={()=>setShowDebugLogs(false)} companyId={companyId} uid={user.uid}/>}
     </div>
   );
 }
