@@ -126,6 +126,14 @@ service cloud.firestore {
           allow write: if canWrite();
         }
       }
+
+      // DECISION(v1.19.584): Debug logs — any member can create (client-side error capture
+      // + user-reported issues); only admins can read. Immutable by design (no update/delete).
+      match /debugLogs/{logId} {
+        allow create: if isMember();
+        allow read: if isAdminMember();
+        allow update, delete: if false;
+      }
     }
   }
 }
