@@ -59,6 +59,7 @@ This app is used for real production projects. **No user data may ever be lost d
 | Team invites | `companies/{companyId}/pendingInvites/{token}` | Pending email invitations |
 | FCM push tokens | `users/{uid}/fcmTokens/{tokenHash}` | Push notification device tokens |
 | Quote counter | `users/{uid}/config/quoteCounter` | Sequential quote number (next field) |
+| Debug logs | `companies/{companyId}/debugLogs/{entryId}` | Error captures + user-reported issues; admin-readable (v1.19.584) |
 
 ### Learning Databases
 
@@ -276,6 +277,46 @@ Notifications stored at `users/{uid}/notifications/{id}`:
 - **Print warning**: `handlePrintQuote` warns about unanswered questions before printing
 - **"Questions for Customer"**: Questions with `status:"on_quote"` appear on printed quote
 - **Email engineer**: `sendEngineerQuestionEmail` Cloud Function sends formatted email + push notification
+
+## Debug Logging (v1.19.584+)
+
+Client-side error capture + user-reported issue pipeline. Admins view logs in Settings → Debug Logs.
+
+### Firestore
+- `companies/{companyId}/debugLogs/{entryId}` — admin-readable, member-writable, **immutable** (no update/delete)
+- Fallback `users/{uid}/debugLogs/{entryId}` for users without a company (only writer can read)
+- Rules block all updates/deletes — logs are append-only by design
+
+### Entry schema
+```js
+{
+  createdAt, createdBy (uid), userEmail, userName,
+  severity: "error" | "warn" | "user_reported",
+  source: "uncaught" | "promise_rejection" | "console_error" | "manual" | "module",
+  message, stack, url, userAgent, appVersion,
+  projectId, panelId,            // null if none open
+  breadcrumbs: [{t, type, message}],  // last ~30 events
+  description                     // set for user-reported issues
+}
+```
+
+### Client capture (`public/index.html` + `public/modules/shared.js`)
+- `addBreadcrumb(type, message)` — rolling in-memory buffer, max 30
+- `console.error` / `console.warn` wrapped — breadcrumb + (for error) auto-emit
+- `window.addEventListener('error', ...)` — uncaught errors → emit
+- `window.addEventListener('unhandledrejection', ...)` → emit
+- Dedup: same `source + message` within 60s is skipped
+- Self-error flag: if `logDebugEntry()` itself throws, disable emits for 30s to prevent loops
+- Pre-auth drops writes silently (`fbAuth.currentUser` null → return)
+- Tracked context globals: `_currentProjectId`, `_currentPanelId` set by `ProjectView` mount / `selectedPanelId` effect
+
+### UI surfaces
+- **Floating `🐛 Report Issue` button** — bottom-right of every page (main app + all `/modules/` routes), dismissible per session
+- **`ReportIssueModal`** — textarea + submit; writes entry with `severity:"user_reported"` and auto-attaches last 30 breadcrumbs
+- **`DebugLogsModal`** (admin only, opened from Settings) — table of recent logs with range filters (24h / 7d / 30d / All), severity filter, user filter. Click row → detail panel with stack + breadcrumbs + device info.
+
+### No cleanup / retention
+Logs are kept forever for v1. If retention becomes a concern, add a scheduled Cloud Function that deletes entries where `createdAt < Date.now() - N * day`.
 
 ## Quote / Print System
 
