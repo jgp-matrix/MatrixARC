@@ -9457,6 +9457,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [searched,setSearched]=useState(false);
   const debounceRef=useRef(null);
   const searchIdRef=useRef(0);
+  const enrichIdRef=useRef(0);
   const PAGE=25;
   const [showCreate,setShowCreate]=useState(false);
   const [createNumber,setCreateNumber]=useState(initialQuery||"");
@@ -9651,22 +9652,37 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
 
   async function enrichVendorNames(items){
     if(!_bcToken||!items.length)return;
-    const toFetch=items.filter(it=>it.number&&vendorNames[it.number]===undefined);
+    // DECISION(v1.19.591): Abort if a new enrichment (i.e. a new search) has started while
+    // this one is in progress. Previously, each search fired ~4 BC API calls per item with
+    // no cancellation, so typing several queries in a row piled up hundreds of pending calls,
+    // hit BC's rate limit, and caused subsequent parallel search queries to silently return
+    // partial/empty results — which looked like the search list progressively emptying out.
+    const myEnrichId=++enrichIdRef.current;
+    const aborted=()=>myEnrichId!==enrichIdRef.current;
+    // Cap to first 12 items — the rest can be enriched on demand when user clicks.
+    const toFetch=items.filter(it=>it.number&&vendorNames[it.number]===undefined).slice(0,12);
     if(!toFetch.length)return;
     const vBatch={};const pBatch={};
     const mBatch={};
     for(const it of toFetch){
+      if(aborted())return;
       const vNo=await bcGetItemVendorNo(it.number);
+      if(aborted())return;
       vBatch[it.number]=vNo?await bcGetVendorName(vNo):"";
+      if(aborted())return;
       const lp=await bcGetLastPurchase(it.number);
       pBatch[it.number]=lp||null;
       // Fetch manufacturer code from OData
       try{
+        if(aborted())return;
         const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
         if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${it.number}'&$select=No,Manufacturer_Code&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
           if(mr.ok){const md=((await mr.json()).value||[])[0];if(md)mBatch[it.number]=md.Manufacturer_Code||"";}}
       }catch(e){}
+      // Small inter-request spacing so BC doesn't rate-limit us when the user pages/searches quickly
+      await new Promise(r=>setTimeout(r,30));
     }
+    if(aborted())return;
     setVendorNames(prev=>({...prev,...vBatch}));
     setPurchaseData(prev=>({...prev,...pBatch}));
     setMfrCodes(prev=>({...prev,...mBatch}));
