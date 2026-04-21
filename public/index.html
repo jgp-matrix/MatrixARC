@@ -4112,6 +4112,57 @@ async function graphSearchEmails(graphToken,query,top=15){
   }catch(e){console.warn("graphSearchEmails error:",e);return[];}
 }
 
+// DECISION(v1.19.588): Fetch an Outlook attachment via Microsoft Graph given the Office.js drag JSON.
+// Modern "New Outlook" and Outlook on the Web use an Office.js drag protocol where the attachment
+// never reaches dataTransfer.files — only a JSON descriptor. This helper parses that descriptor,
+// searches the user's mailbox by attachment name, matches by (name + size), and downloads the
+// raw bytes to produce a File object that can be fed into the normal addFiles() pipeline.
+// Returns { ok: boolean, file?: File, reason?: string, status?: number, error?: string }.
+async function fetchOutlookAttachment(attachmentJsonStr){
+  let payload;
+  try{payload=JSON.parse(attachmentJsonStr);}
+  catch(e){return{ok:false,reason:"parse-failed",error:e.message};}
+  const att=payload&&payload.attachmentFiles&&payload.attachmentFiles[0];
+  if(!att||!att.name)return{ok:false,reason:"no-attachment"};
+  const name=att.name,size=att.size,contentType=att.ContentType||"application/octet-stream";
+  // Silent token — don't prompt; if user hasn't granted Mail.Read, fall back to Path A message.
+  const tok=(typeof tryGraphTokenSilent==="function")?await tryGraphTokenSilent().catch(()=>null):null;
+  if(!tok)return{ok:false,reason:"no-graph-token",attachmentName:name};
+  // Sanitize filename for $search: strip double-quotes and backslashes.
+  const searchName=name.replace(/["\\]/g," ");
+  try{
+    const searchUrl=`https://graph.microsoft.com/v1.0/me/messages?$search=${encodeURIComponent('"'+searchName+'"')}&$top=20&$select=id,subject&$expand=attachments($select=id,name,size,contentType)`;
+    const r=await fetch(searchUrl,{headers:{"Authorization":"Bearer "+tok,"ConsistencyLevel":"eventual"}});
+    if(!r.ok)return{ok:false,reason:"search-failed",status:r.status,attachmentName:name};
+    const data=await r.json();
+    // Primary match: name + size exactly
+    let msgId=null,attId=null,actualContentType=contentType;
+    for(const msg of(data.value||[])){
+      for(const a of(msg.attachments||[])){
+        if(a.name===name&&a.size===size){msgId=msg.id;attId=a.id;if(a.contentType)actualContentType=a.contentType;break;}
+      }
+      if(msgId)break;
+    }
+    // Fallback: name-only match (size occasionally differs between Office.js and Graph by a small amount)
+    if(!msgId){
+      for(const msg of(data.value||[])){
+        for(const a of(msg.attachments||[])){
+          if(a.name===name){msgId=msg.id;attId=a.id;if(a.contentType)actualContentType=a.contentType;break;}
+        }
+        if(msgId)break;
+      }
+    }
+    if(!msgId)return{ok:false,reason:"not-found",attachmentName:name};
+    // Download bytes
+    const dlUrl=`https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(msgId)}/attachments/${encodeURIComponent(attId)}/$value`;
+    const dlResp=await fetch(dlUrl,{headers:{"Authorization":"Bearer "+tok}});
+    if(!dlResp.ok)return{ok:false,reason:"download-failed",status:dlResp.status,attachmentName:name};
+    const buf=await dlResp.arrayBuffer();
+    const file=new File([buf],name,{type:actualContentType});
+    return{ok:true,file};
+  }catch(e){return{ok:false,reason:"fetch-error",error:e.message,attachmentName:name};}
+}
+
 // DECISION(v1.19.344): Uses createReplyAll (not createReply) so the response goes to ALL
 // original recipients (To + Cc), not just the sender. Quote replies typically need to include
 // the full team (customer contacts, internal stakeholders) from the original conversation.
@@ -12386,23 +12437,39 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   }
                 }
                 if(files.length>0){addFiles(files);return;}
-                // DECISION(v1.19.587): Detect "New Outlook" / Outlook Web attachment drags (Office.js format —
-                // an item with kind:'string' and type:'attachment' containing an attachmentFiles JSON).
-                // Parse it to show the user the specific filename they tried to drop so they know what to save.
-                // Future: can use attachmentItemId + Microsoft Graph to fetch the file if the app has a graph token.
+                // DECISION(v1.19.588): Outlook drags (New Outlook Desktop + Outlook Web) use Office.js
+                // drag protocol — no file, just a JSON descriptor. First try to fetch the actual bytes
+                // via Microsoft Graph using the app's existing MSAL token; fall back to a helpful error
+                // if Graph isn't consented or the search/download fails.
                 try{
                   const outlookItem=Array.from(e.dataTransfer.items||[]).find(i=>i.kind==='string'&&i.type==='attachment');
                   if(outlookItem){
-                    setErr("Reading Outlook attachment info\u2026");
-                    outlookItem.getAsString(s=>{
-                      let name=null,sizeKb=null;
+                    setErr("Fetching attachment from Outlook\u2026");
+                    outlookItem.getAsString(async(s)=>{
                       try{
-                        const parsed=JSON.parse(s);
-                        const af=parsed&&parsed.attachmentFiles&&parsed.attachmentFiles[0];
-                        if(af){name=af.name||null;if(af.size)sizeKb=Math.round(af.size/1024);}
-                      }catch(parseErr){}
-                      const label=name?`"${name}"${sizeKb?` (${sizeKb} KB)`:""}`:"that Outlook attachment";
-                      setErr(`Outlook doesn't share attachment files with other apps for security reasons. To upload ${label}: save it to your Desktop first (right-click \u2192 Save As), then drag it from File Explorer \u2014 or click the drop zone to browse.`);
+                        const result=await fetchOutlookAttachment(s);
+                        if(result.ok){
+                          setErr("");
+                          addFiles([result.file]);
+                          return;
+                        }
+                        // Failure: show a specific, actionable message based on reason.
+                        const n=result.attachmentName||"the attachment";
+                        const saveHint=`Save it to your Desktop first (right-click \u2192 Save As), then drag from File Explorer \u2014 or click the drop zone to browse.`;
+                        let msg;
+                        switch(result.reason){
+                          case"no-graph-token":msg=`To drag ${n} directly from Outlook, open Settings and sign in with Microsoft first. In the meantime: ${saveHint}`;break;
+                          case"not-found":msg=`Couldn't find "${n}" in your Outlook mailbox \u2014 it may be in a very old email that's out of search range. ${saveHint}`;break;
+                          case"search-failed":msg=`Outlook search returned status ${result.status}. ${saveHint}`;break;
+                          case"download-failed":msg=`Couldn't download "${n}" from Outlook (status ${result.status}). ${saveHint}`;break;
+                          case"parse-failed":case"no-attachment":msg=`Couldn't read the Outlook attachment info. ${saveHint}`;break;
+                          case"fetch-error":msg=`Error fetching from Outlook: ${result.error}. ${saveHint}`;break;
+                          default:msg=`Couldn't fetch "${n}" from Outlook. ${saveHint}`;
+                        }
+                        setErr(msg);
+                      }catch(fetchErr){
+                        setErr(`Failed to process Outlook drop: ${fetchErr.message||fetchErr}. Save it to your Desktop first, then drag from File Explorer.`);
+                      }
                     });
                     return;
                   }
