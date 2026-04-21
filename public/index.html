@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.598";
+const APP_VERSION="v1.19.599";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -750,33 +750,138 @@ function bgStart(taskId,panelName,projectId,msg){
   if(_bgDeleteTimers[taskId]){clearTimeout(_bgDeleteTimers[taskId]);delete _bgDeleteTimers[taskId];}
   _bgTasks[taskId]={taskId,panelName,projectId,status:"running",msg:msg||"Processing…",pct:0,startedAt:Date.now()};
   _bgNotify();
+  // DECISION(v1.19.599): Mirror to Firestore so teammates see cross-user extraction status.
+  try{rbgStart(taskId,panelName,projectId,null);}catch(e){}
 }
 function bgSetPct(taskId,pct,msg){
   if(!_bgTasks[taskId])return;
   _bgTasks[taskId]={..._bgTasks[taskId],pct,...(msg&&{msg})};
   _bgNotify();
+  try{rbgUpdate(taskId,msg||null,pct);}catch(e){}
 }
 function bgUpdate(taskId,msg){
   if(!_bgTasks[taskId])return;
   _bgTasks[taskId]={..._bgTasks[taskId],msg};
   _bgNotify();
+  try{rbgUpdate(taskId,msg,null);}catch(e){}
 }
 function bgDone(taskId,msg){
   if(!_bgTasks[taskId])return;
   _bgTasks[taskId]={..._bgTasks[taskId],status:"done",pct:100,msg:msg||"Complete"};
   _bgNotify();
   _bgDeleteTimers[taskId]=setTimeout(()=>{delete _bgTasks[taskId];delete _bgDeleteTimers[taskId];_bgNotify();},4000);
+  try{rbgDone(taskId,msg);}catch(e){}
 }
 function bgError(taskId,msg){
   if(!_bgTasks[taskId])return;
   _bgTasks[taskId]={..._bgTasks[taskId],status:"error",msg:msg||"Error"};
   _bgNotify();
   // No auto-dismiss — user must acknowledge errors
+  try{rbgError(taskId,msg);}catch(e){}
 }
 function bgDismiss(taskId){
   if(_bgDeleteTimers[taskId]){clearTimeout(_bgDeleteTimers[taskId]);delete _bgDeleteTimers[taskId];}
   delete _bgTasks[taskId];
   _bgNotify();
+}
+
+// ── REMOTE BACKGROUND TASKS (team-wide visibility) ──
+// DECISION(v1.19.599): Mirror extraction status to Firestore so other company members
+// see what's being extracted on their dashboards. Path: companies/{cid}/activeExtractions/{uid_taskId}.
+// Writes are throttled (≥2s between progress updates) to avoid Firestore write spam.
+// Stale filter (>3 min since last heartbeat) ignores crashed/closed tabs client-side.
+const _rbgWriteState={}; // {taskId: {lastWriteMs, pending}}
+const _rbgDocId=(uid,taskId)=>`${uid}_${taskId}`;
+function _rbgPath(){
+  if(!_appCtx||!_appCtx.companyId||!_appCtx.uid)return null;
+  return `companies/${_appCtx.companyId}/activeExtractions`;
+}
+async function rbgStart(taskId,panelName,projectId,projectName){
+  const path=_rbgPath();if(!path)return;
+  try{
+    const uid=_appCtx.uid;
+    const docId=_rbgDocId(uid,taskId);
+    const entry={
+      uid,userEmail:fbAuth.currentUser?.email||'',userName:fbAuth.currentUser?.displayName||'',
+      taskId,panelName:panelName||'',projectId:projectId||'',projectName:projectName||'',
+      status:'running',msg:'Starting extraction…',pct:0,
+      startedAt:Date.now(),heartbeatAt:Date.now(),
+    };
+    await fbDb.doc(`${path}/${docId}`).set(entry);
+    _rbgWriteState[taskId]={lastWriteMs:Date.now(),pending:null};
+  }catch(e){console.warn('rbgStart failed:',e.message);}
+}
+async function _rbgFlush(taskId,fields){
+  const path=_rbgPath();if(!path)return;
+  try{
+    const docId=_rbgDocId(_appCtx.uid,taskId);
+    await fbDb.doc(`${path}/${docId}`).update({...fields,heartbeatAt:Date.now()});
+  }catch(e){/* silent — throttled updates are best-effort */}
+}
+function rbgUpdate(taskId,msg,pct){
+  const path=_rbgPath();if(!path)return;
+  const now=Date.now();
+  const state=_rbgWriteState[taskId]||(_rbgWriteState[taskId]={lastWriteMs:0,pending:null});
+  const fields={};
+  if(msg!=null)fields.msg=String(msg).slice(0,200);
+  if(pct!=null)fields.pct=Math.max(0,Math.min(100,Math.round(pct)));
+  // Throttle: ≥2s between writes. Batch pending update via setTimeout.
+  if(now-state.lastWriteMs>=2000){
+    state.lastWriteMs=now;
+    if(state.pending){clearTimeout(state.pending);state.pending=null;}
+    _rbgFlush(taskId,fields);
+  }else{
+    // Defer until throttle window clears. Last caller wins (merge fields).
+    state.bufferedFields={...(state.bufferedFields||{}),...fields};
+    if(state.pending)return;
+    const delay=2000-(now-state.lastWriteMs);
+    state.pending=setTimeout(()=>{
+      state.lastWriteMs=Date.now();
+      const f=state.bufferedFields||{};state.bufferedFields=null;state.pending=null;
+      _rbgFlush(taskId,f);
+    },delay);
+  }
+}
+async function rbgDone(taskId,msg,status){
+  const path=_rbgPath();if(!path)return;
+  const state=_rbgWriteState[taskId];
+  if(state?.pending){clearTimeout(state.pending);state.pending=null;}
+  try{
+    const docId=_rbgDocId(_appCtx.uid,taskId);
+    // Mark done with brief TTL, then delete after 4s (matches local bgDone behavior)
+    await fbDb.doc(`${path}/${docId}`).update({status:status||'done',msg:(msg||'Complete').slice(0,200),pct:100,heartbeatAt:Date.now()});
+    setTimeout(async()=>{
+      try{await fbDb.doc(`${path}/${docId}`).delete();}catch(e){}
+      delete _rbgWriteState[taskId];
+    },4000);
+  }catch(e){/* silent */}
+}
+async function rbgError(taskId,msg){
+  const path=_rbgPath();if(!path)return;
+  const state=_rbgWriteState[taskId];
+  if(state?.pending){clearTimeout(state.pending);state.pending=null;}
+  try{
+    const docId=_rbgDocId(_appCtx.uid,taskId);
+    await fbDb.doc(`${path}/${docId}`).update({status:'error',msg:(msg||'Error').slice(0,200),heartbeatAt:Date.now()});
+    // Errors auto-clear after 15s so we don't leave stale scary-looking entries on teammates' screens
+    setTimeout(async()=>{
+      try{await fbDb.doc(`${path}/${docId}`).delete();}catch(e){}
+      delete _rbgWriteState[taskId];
+    },15000);
+  }catch(e){}
+}
+// On tab close, best-effort delete own in-progress tasks so teammates don't see ghosts
+if(typeof window!=='undefined'){
+  window.addEventListener('beforeunload',()=>{
+    const path=_rbgPath();if(!path)return;
+    for(const taskId of Object.keys(_rbgWriteState)){
+      try{
+        const docId=_rbgDocId(_appCtx.uid,taskId);
+        // fire-and-forget (beforeunload won't await)
+        fbDb.doc(`${path}/${docId}`).delete().catch(()=>{});
+      }catch(e){}
+    }
+  });
 }
 
 // ── PROJECT LIVE UPDATE SYSTEM (for background extraction notifications) ──
@@ -10622,7 +10727,7 @@ function ScanResultsBanner({panel}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -11562,6 +11667,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&r.priceSource!=="bc"&&r.priceSource!=="manual");
     if(unpriced.length){setUnpricedAlert(unpriced);return;}
     setBcSyncing(true);setBcSyncStatus(null);setSyncFailedAlert(null);
+    // DECISION(v1.19.599): Mirror BC sync status to team-wide bus so teammates see "X is syncing to BC".
+    const syncTaskId=panel.id+"_bcsync";
+    bgStart(syncTaskId,panel.name||("Panel "+(idx+1)),projectId,"Syncing to Business Central…");
     try{
       if(!_bcToken){await acquireBcToken(true);}
       if(!_bcToken)throw new Error("Could not connect to Business Central");
@@ -11587,8 +11695,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       console.error("bcSyncPlanningLines failed:",e);
       setBcSyncStatus("error");
       setTimeout(()=>setBcSyncStatus(null),6000);
+      bgError(syncTaskId,"BC sync failed: "+(e.message||"").slice(0,60));
+      setBcSyncing(false);return;
     }
     setBcSyncing(false);
+    bgDone(syncTaskId,"✓ Synced to BC");
   }
   function saveLineQty(){
     const q=Math.max(1,Math.min(20,parseInt(draftLineQty)||1));
@@ -11668,6 +11779,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Save snapshot before re-extraction so user can revert
     if((panel.bom||[]).length>0)saveSnapshot(uid,projectId,panel,"Before re-extraction").catch(()=>{});
     setExtracting(true);setErr("");ep.start(startMsg||"Extracting BOM…",bomPages.length*15);
+    // DECISION(v1.19.599): Mirror re-extract status to team-wide bus so teammates see it.
+    bgStart(panel.id,panel.name||("Panel "+(idx+1)),projectId,"Re-extracting BOM…");
     const noData=bomPages.find(pg=>!pg.dataUrl&&!pg.storageUrl);
     if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();return;}
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
@@ -11752,6 +11865,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     ep.finish(`✓ ${bom.length} items extracted`);
     setExtracting(false);
+    bgDone(panel.id,`✓ ${bom.length} items extracted`);
     // BC drawing upload deferred until user prints quote (As-Quoted flow)
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
@@ -12541,7 +12655,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
 
   return(
-    <div className="fade-in" onClick={()=>{if(onSelect)onSelect();}} style={{...card(),border:`2px solid ${isSelected?C.accent:C.border}`,cursor:"pointer"}}>
+    <div className="fade-in" onClick={()=>{if(onSelect)onSelect();}} style={{...card(),border:`2px solid ${isSelected?C.accent:C.border}`,cursor:"pointer",position:"relative",opacity:remoteEditor?0.45:1,pointerEvents:remoteEditor?"none":"auto",transition:"opacity 0.2s"}}>
+      {/* DECISION(v1.19.599): Grey-out overlay when a teammate is editing this project.
+          Owner priority: non-owners see the overlay; owner never does (handled upstream). */}
+      {remoteEditor&&(
+        <div style={{position:"absolute",inset:0,zIndex:20,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"auto",background:"rgba(10,10,20,0.55)",borderRadius:10}}>
+          <div style={{background:"#1e2a4a",border:`2px solid #818cf8`,borderRadius:12,padding:"18px 24px",maxWidth:440,boxShadow:"0 12px 40px rgba(0,0,0,0.6)",display:"flex",flexDirection:"column",alignItems:"center",gap:8,animation:"pulse 2.5s ease-in-out infinite"}}>
+            <div style={{fontSize:32}}>🔒</div>
+            <div style={{fontSize:13,fontWeight:700,color:"#c4b5fd",textAlign:"center"}}>
+              {remoteEditor.userName||(remoteEditor.userEmail||"").split("@")[0]||"A teammate"} is editing this project
+            </div>
+            <div style={{fontSize:11,color:"#a5b4fc",textAlign:"center"}}>Please wait for changes to process</div>
+            {remoteEditor.msg&&<div style={{fontSize:11,color:"#818cf8",marginTop:4,textAlign:"center",fontStyle:"italic"}}>{remoteEditor.msg}{remoteEditor.pct?` (${remoteEditor.pct}%)`:""}</div>}
+          </div>
+        </div>
+      )}
       {/* Combined header + title block */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
         <div style={{background:C.accentDim,color:C.accent,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:800,letterSpacing:1,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",justifyContent:"center"}}>LINE {idx+1}</div>
@@ -16735,7 +16863,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
   </>,document.body);
 }
 
-function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink,bcUploadRef}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink,bcUploadRef}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -17181,7 +17309,23 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                 <button onClick={onTransfer} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⇄ Transfer</button>
               )}
               {!readOnly&&onDelete&&(
-                <button onClick={()=>{if(isAdmin())onDelete();else setShowDeleteAdminWarn(true);}} style={btn(C.redDim,C.red,{border:`1px solid ${C.red}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>🗑 Delete</button>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+                  <button onClick={()=>{if(isAdmin())onDelete();else setShowDeleteAdminWarn(true);}} style={btn(C.redDim,C.red,{border:`1px solid ${C.red}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>🗑 Delete</button>
+                  {/* DECISION(v1.19.599): Show who else is viewing this project. Owner first (priority), then others. */}
+                  {(viewers||[]).filter(v=>v.uid!==uid).length>0&&(
+                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,fontSize:10,color:C.muted,maxWidth:240}}>
+                      <div style={{color:"#a5b4fc",fontWeight:700,fontSize:10,letterSpacing:0.5,textTransform:"uppercase"}}>👥 Also viewing</div>
+                      {[...(viewers||[]).filter(v=>v.uid!==uid)]
+                        .sort((a,b)=>(b.isOwner?1:0)-(a.isOwner?1:0))
+                        .map(v=>(
+                          <div key={v.uid} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:v.isOwner?"#fcd34d":C.sub,whiteSpace:"nowrap"}}>
+                            <span style={{width:6,height:6,borderRadius:"50%",background:v.isOwner?C.yellow:"#a5b4fc",boxShadow:`0 0 4px ${v.isOwner?C.yellow:"#a5b4fc"}`,flexShrink:0}}/>
+                            <span>{v.userName||(v.userEmail||"").split("@")[0]||"Teammate"}{v.isOwner?" · Owner":""}</span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -17223,6 +17367,14 @@ function PanelListView({project,uid,readOnly,onBack,onViewQuote,quotePrinting,on
                   quoteData={project.quote||{}}
                   quoteRev={project.quoteRev||0}
                   readOnly={readOnly}
+                  remoteEditor={(() => {
+                    // DECISION(v1.19.599): If someone else has an active task on this project AND
+                    // I'm not the owner, the panel is read-only-ish with a grey-out overlay.
+                    const t=(projectRemoteTasks||[]).find(t=>t.taskId===panel.id||t.taskId===panel.id+'_bcsync');
+                    if(!t)return null;
+                    const iAmOwner=project.createdBy===uid;
+                    return iAmOwner?null:t; // owner wins; others get greyed
+                  })()}
                   isSelected={panel.id===selectedPanelId}
                   onSelect={()=>setSelectedPanelId(panel.id)}
                   onDelete={()=>deletePanel(panel.id)}
@@ -17837,6 +17989,64 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const projectRef=useRef(migrateProject(init));
   // DECISION(v1.19.584): Track current project/panel for debug log context
   useEffect(()=>{_currentProjectId=init&&init.id||null;addBreadcrumb('nav',`Project opened: ${init&&init.id}`);return()=>{_currentProjectId=null;_currentPanelId=null;};},[init&&init.id]);
+  // DECISION(v1.19.599): Track active tasks by OTHER users on this project — used to
+  // grey out panel cards when a teammate is mid-extraction (owner is exempt — owner wins).
+  const [projectRemoteTasks,setProjectRemoteTasks]=useState([]);
+  useEffect(()=>{
+    const cid=_appCtx.companyId;const projectId=init&&init.id;
+    if(!cid||!projectId||!uid)return;
+    const unsub=fbDb.collection(`companies/${cid}/activeExtractions`)
+      .where('projectId','==',projectId)
+      .onSnapshot(snap=>{
+        const now=Date.now();
+        const fresh=snap.docs
+          .map(d=>({id:d.id,...d.data()}))
+          .filter(t=>t.uid&&t.uid!==uid&&t.status==='running')
+          .filter(t=>t.heartbeatAt&&(now-t.heartbeatAt)<180000);
+        setProjectRemoteTasks(fresh);
+      },()=>setProjectRemoteTasks([]));
+    return()=>unsub();
+  },[init&&init.id,uid]);
+
+  // DECISION(v1.19.599): Project presence — announce I'm viewing this project so teammates
+  // see me listed under the DELETE button, and heartbeat so I don't go stale.
+  const [viewers,setViewers]=useState([]); // [{uid, userName, userEmail, isOwner, lastSeen}]
+  useEffect(()=>{
+    const cid=_appCtx.companyId;const projectId=init&&init.id;
+    if(!cid||!projectId||!uid)return;
+    const docId=`${projectId}_${uid}`;
+    const presencePath=`companies/${cid}/projectPresence/${docId}`;
+    const entry=()=>({
+      uid,userEmail:fbAuth.currentUser?.email||"",userName:fbAuth.currentUser?.displayName||"",
+      projectId,isOwner:init?.createdBy===uid,
+      lastSeen:Date.now(),
+    });
+    let alive=true;let heartbeat=null;
+    fbDb.doc(presencePath).set(entry()).catch(()=>{});
+    heartbeat=setInterval(()=>{
+      if(!alive)return;
+      fbDb.doc(presencePath).update({lastSeen:Date.now()}).catch(()=>{});
+    },30000);
+    // Listen for other viewers of this project
+    const unsub=fbDb.collection(`companies/${cid}/projectPresence`)
+      .where('projectId','==',projectId)
+      .onSnapshot(snap=>{
+        const now=Date.now();
+        const rows=snap.docs
+          .map(d=>({id:d.id,...d.data()}))
+          .filter(r=>r.uid&&r.lastSeen&&(now-r.lastSeen)<90000); // 90s stale window
+        setViewers(rows);
+      },()=>setViewers([]));
+    // Best-effort cleanup on page close
+    const onBeforeUnload=()=>{try{fbDb.doc(presencePath).delete();}catch(e){}};
+    window.addEventListener('beforeunload',onBeforeUnload);
+    return()=>{
+      alive=false;if(heartbeat)clearInterval(heartbeat);
+      window.removeEventListener('beforeunload',onBeforeUnload);
+      unsub();
+      fbDb.doc(presencePath).delete().catch(()=>{});
+    };
+  },[init&&init.id,uid]);
   const [view,setView]=useState("panels"); // "panels"|"quote"
   const [autoPrint,setAutoPrint]=useState(false);
   const [rfqLoading,setRfqLoading]=useState(false);
@@ -18671,6 +18881,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             project={project}
             uid={uid}
             readOnly={readOnly}
+            viewers={viewers}
+            projectRemoteTasks={projectRemoteTasks}
             onBack={onBack}
             onViewQuote={handlePrintQuote}
             quotePrinting={quotePrinting}
@@ -21908,7 +22120,7 @@ function ReportsModal({uid,onClose}){
   );
 }
 
-function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,forceView}){
+function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,forceView}){
   const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":forceView==="engineering"?"engineering":forceView==="purchasing_kanban"?"purchasing_kanban":"status");
   const [myProjectsOnly,setMyProjectsOnly]=useState(false);
   const [projectSearch,setProjectSearch]=useState("");
@@ -22145,6 +22357,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                       <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
                         onUpdateStatus={onUpdateProject?async(proj,newStatus)=>{const u={...proj,bcPoStatus:newStatus,updatedAt:Date.now()};await onUpdateProject(u);}:undefined}
                         userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}
+                        remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)}
                         draggable={isNoCustomer}
                         onDragStart={isNoCustomer?e=>{e.dataTransfer.effectAllowed="move";setDragProjectId(p.id);}:undefined}
                         onDragEnd={isNoCustomer?()=>{setDragProjectId(null);setDropTarget(null);}:undefined}/>
@@ -22161,7 +22374,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                   {g.label&&<div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:12,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>{g.label}</div>}
                   <div data-tour="project-list" style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}/>
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0} remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)}/>
                     ))}
                   </div>
                 </div>
@@ -22351,7 +22564,7 @@ function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onC
 }
 
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd,rfqCount}){
+function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd,rfqCount,remoteTask}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
@@ -22396,6 +22609,18 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
             </div>
           ):null}
         </>)}
+      </div>
+    )}
+    {/* DECISION(v1.19.599): Remote (teammate) task indicator — distinct purple/indigo style so
+        you can tell at a glance that someone else is working on this project. */}
+    {!activeTask&&remoteTask&&remoteTask.status==="running"&&(
+      <div style={{marginTop:4,padding:"3px 8px",background:"#1e2a4a",border:"1px solid #818cf866",borderRadius:6,display:"flex",alignItems:"center",gap:6,animation:"pulse 2.5s ease-in-out infinite"}}
+        title={`${remoteTask.userName||remoteTask.userEmail||'A teammate'} is processing ${remoteTask.panelName||'this project'}`}>
+        <span className="spin" style={{fontSize:10,color:"#c4b5fd",lineHeight:1}}>◌</span>
+        <span style={{fontSize:10,color:"#c4b5fd",fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>
+          👤 {(remoteTask.userName||(remoteTask.userEmail||'').split('@')[0]||'Teammate').slice(0,12)} — {remoteTask.msg||'processing…'}
+        </span>
+        {remoteTask.pct>0&&<span style={{fontSize:9,color:"#a5b4fc",fontFamily:"ui-monospace,Menlo,Consolas,monospace"}}>{remoteTask.pct}%</span>}
       </div>
     )}
   </div>
@@ -23981,6 +24206,23 @@ function App({user}){
     return()=>unsub();
   },[user.uid]);
 
+  // DECISION(v1.19.599): Team-wide active-task visibility. Listens to company/activeExtractions
+  // and surfaces OTHER members' in-progress extractions / pricing / validation on everyone's
+  // dashboard. Stale filter (3 min) guards against crashed tabs.
+  const [teamTasks,setTeamTasks]=useState([]);
+  useEffect(()=>{
+    if(!companyId||!user.uid)return;
+    const unsub=fbDb.collection(`companies/${companyId}/activeExtractions`).onSnapshot(snap=>{
+      const now=Date.now();
+      const fresh=snap.docs
+        .map(d=>({id:d.id,...d.data()}))
+        .filter(t=>t.uid&&t.uid!==user.uid) // exclude own tasks (shown locally via bgTasks)
+        .filter(t=>t.heartbeatAt&&(now-t.heartbeatAt)<180000); // stale > 3 min
+      setTeamTasks(fresh);
+    },(err)=>{console.warn('teamTasks listener error:',err.message);setTeamTasks([]);});
+    return()=>unsub();
+  },[companyId,user.uid]);
+
   function handleNotifClick(notif){
     fbDb.doc(`users/${user.uid}/notifications/${notif.id}`).update({read:true}).catch(()=>{});
     setShowBellMenu(false);
@@ -24514,6 +24756,19 @@ INSTRUCTIONS:
               <span style={{fontSize:12,fontWeight:600,color:"#86efac",whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
             </div>
           )}
+          {/* DECISION(v1.19.599): Team-wide active-task indicator. Shows when teammates are processing anything. */}
+          {teamTasks.length>0&&(
+            <div title={teamTasks.map(t=>{
+              const who=t.userName||(t.userEmail||'').split('@')[0]||'teammate';
+              return `${who}: ${t.projectName||t.projectId||''} — ${t.panelName||''} (${t.msg||'processing…'}${t.pct?' '+t.pct+'%':''})`;
+            }).join("\n")}
+              style={{display:"flex",alignItems:"center",gap:6,padding:"0 10px",height:36,borderRadius:10,background:"#1e2a4a",border:"1px solid #818cf899",cursor:"default",flexShrink:0}}>
+              <span className="spin" style={{fontSize:12,color:"#c4b5fd",lineHeight:1}}>◌</span>
+              <span style={{fontSize:12,fontWeight:600,color:"#c4b5fd",whiteSpace:"nowrap"}}>
+                👥 {teamTasks.length} teammate{teamTasks.length>1?'s':''} working
+              </span>
+            </div>
+          )}
           {connStatus!=="good"&&(
             <div style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,
               background:connStatus==="offline"?"#3b080844":"#3a1f0044",border:`1px solid ${connStatus==="offline"?"#ef444466":"#f59e0b66"}`}}>
@@ -24688,7 +24943,7 @@ INSTRUCTIONS:
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks}/>
         </>
       )}
       {view==="project"&&openProject&&(
