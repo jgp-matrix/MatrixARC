@@ -632,6 +632,21 @@ let _msalReady=false;
 let _bgTasks={};           // { [taskId]: { taskId, panelName, projectId, status, msg } }
 let _bgDeleteTimers={};    // { [taskId]: timerHandle } — cancel stale timers on bgStart
 let _bgListeners=new Set();
+
+// DECISION(v1.19.589): Pending-pages cache keyed by panel.id. Survives PanelCard
+// remounts (which happen when user navigates away from the project and back),
+// so drawings dropped from Outlook (or anywhere else) don't get silently lost
+// if user clicks away before confirming extraction.
+// Entries: { pages: [...livePages], newItems: [...items], awaiting: true }
+// Cleared when user confirms (confirmAndExtract) or explicitly cancels.
+// NOT persisted across page reloads — intentional trade-off; badge on the Project
+// Card uses _bgTasks (which is similarly module-scoped) to signal "needs review".
+let _pendingPagesCache={};
+let _pendingPagesListeners=new Set();
+function _pendingPagesNotify(){_pendingPagesListeners.forEach(fn=>fn({..._pendingPagesCache}));}
+function pendingPagesSet(panelId,data){_pendingPagesCache[panelId]=data;_pendingPagesNotify();}
+function pendingPagesClear(panelId){if(panelId in _pendingPagesCache){delete _pendingPagesCache[panelId];_pendingPagesNotify();}}
+function pendingPagesGet(panelId){return _pendingPagesCache[panelId]||null;}
 function _bgNotify(){_bgListeners.forEach(fn=>fn({..._bgTasks}));}
 function bgStart(taskId,panelName,projectId,msg){
   // Cancel any pending delete timer so a re-upload within the cleanup window doesn't wipe the new task
@@ -10284,6 +10299,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const bgTask=bgTasks[panel.id];
   // Restore extracting spinner if a bg task is still running when this panel mounts
   useEffect(()=>{if(bgTask?.status==="running")setExtracting(true);},[]);
+  // DECISION(v1.19.589): Restore pendingPages + awaitingConfirm from the module-scope cache.
+  // If the user dropped drawings, navigated away (unmounting PanelCard), and came back,
+  // their pending state would otherwise be lost — the drawings would appear to vanish while
+  // the bg task remained stuck on "Awaiting confirmation…". This useEffect reads the cache
+  // and rehydrates local state so the review banner returns.
+  useEffect(()=>{
+    const cached=pendingPagesGet(panel.id);
+    if(cached){
+      if(Array.isArray(cached.pages)&&cached.pages.length>0)setPendingPages(cached.pages);
+      if(cached.newItems)pendingNewItemsRef.current=cached.newItems;
+      if(cached.awaiting)setAwaitingConfirm(true);
+    }
+  },[panel.id]);
   // DECISION(v1.19.435): Auto-sync labor BOM rows on mount and when BOM changes.
   // Labor rows are dynamic — always recalculated from computeLaborEstimate.
   // This ensures labor costs update immediately when hours or rates change.
@@ -10803,6 +10831,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }else if(newItems.length>0){
       bgUpdate(panel.id,"Awaiting confirmation…");
       setAwaitingConfirm(true);
+      // DECISION(v1.19.589): Persist pendingPages + awaitingConfirm to module-scope cache so
+      // navigating out of the project and back doesn't silently lose the user's dropped drawings.
+      // PanelCard's mount useEffect restores from this cache.
+      pendingPagesSet(panel.id,{pages:livePages,newItems,awaiting:true});
     }else if(files&&files.length>0){
       // DECISION(v1.19.584): Files were dropped but none were recognized as PDF/image.
       // Common cause: drag from Outlook/Teams/other app that doesn't set file MIME correctly.
@@ -10817,6 +10849,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       setErr(`Error processing files: ${ex.message}`);
       bgError(panel.id,ex.message.slice(0,60));
       setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setExtracting(false);setValidatingPanel(false);setPendingPages([]);setAwaitingConfirm(false);
+      pendingPagesClear(panel.id); // DECISION(v1.19.589): error path — remove cache so user isn't shown stale state on remount
       bgDone(panel.id,"Error");return;
     }
     setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");
@@ -10849,6 +10882,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const updated={...panel,pages:livePages,...(notes?{extractionNotes:notes}:{})};
     onUpdate(updated);
     setPendingPages([]);
+    pendingPagesClear(panel.id); // DECISION(v1.19.589): confirmed — remove from cross-remount cache
     onSaveImmediate(updated).catch(()=>{});
     // DECISION(v1.19.474): Title block extraction — try multiple pages, use Sonnet for accuracy.
     // Only auto-populate fields that are currently empty (don't overwrite user edits).
@@ -21741,12 +21775,19 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                     <div style={{fontSize:11,color:C.muted,marginBottom:"auto"}}>{p.createdAt?new Date(p.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):p.updatedAt?new Date(p.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
                     {activeTask&&(
                       <div style={{marginTop:6}}>
-                        <div style={{fontSize:10,color:activeTask.status==="error"?C.red:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
-                        {activeTask.status!=="error"?(
-                          <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
-                            <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+                        {activeTask.msg==="Awaiting confirmation…"?(
+                          <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",background:"#3a2800",border:"1px solid #fde04788",borderRadius:6,animation:"pulseYellow 1.8s ease-in-out infinite"}}>
+                            <span style={{fontSize:13}}>👆</span>
+                            <span style={{fontSize:10,color:"#fde047",fontWeight:700,letterSpacing:0.4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>NEEDS REVIEW — confirm drawing types</span>
                           </div>
-                        ):null}
+                        ):(<>
+                          <div style={{fontSize:10,color:activeTask.status==="error"?C.red:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
+                          {activeTask.status!=="error"?(
+                            <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
+                              <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+                            </div>
+                          ):null}
+                        </>)}
                       </div>
                     )}
                     <div style={{marginTop:5,marginBottom:6}}><Badge status={st} project={p}/></div>
@@ -21925,12 +21966,22 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     </div>
     {activeTask&&(
       <div style={{marginTop:4}}>
-        <div style={{fontSize:10,color:activeTask.status==="error"?C.red:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
-        {activeTask.status!=="error"?(
-          <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
-            <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+        {activeTask.msg==="Awaiting confirmation…"?(
+          /* DECISION(v1.19.589): Distinct "needs user input" badge so users know to open
+             the project and confirm drawing types after an Outlook/File drop — otherwise the
+             ordinary progress bar is easy to mistake for a still-running task. */
+          <div style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",background:"#3a2800",border:"1px solid #fde04788",borderRadius:6,animation:"pulseYellow 1.8s ease-in-out infinite"}}>
+            <span style={{fontSize:13}}>👆</span>
+            <span style={{fontSize:10,color:"#fde047",fontWeight:700,letterSpacing:0.4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>NEEDS REVIEW — confirm drawing types</span>
           </div>
-        ):null}
+        ):(<>
+          <div style={{fontSize:10,color:activeTask.status==="error"?C.red:C.accent,marginBottom:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{activeTask.msg}</div>
+          {activeTask.status!=="error"?(
+            <div style={{width:"100%",height:4,background:C.border,borderRadius:4,overflow:"hidden"}}>
+              <div style={{height:"100%",width:(activeTask.pct||0)+"%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+            </div>
+          ):null}
+        </>)}
       </div>
     )}
   </div>
