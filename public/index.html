@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.599";
+const APP_VERSION="v1.19.600";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -18154,6 +18154,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   },[uid,init.id]);
   // DECISION(v1.19.421): Concurrent editing detection — only show warning for OTHER users' changes.
   // Uses updatedBy field to distinguish own saves from external updates.
+  // DECISION(v1.19.600): When a teammate is/was editing (grey-out overlay active or recent),
+  // silently apply remote updates instead of showing the "Refresh" banner — user wasn't
+  // editing (panels were locked), so merging is safe and removes the manual-reload friction.
+  const lastRemoteEditorAtRef=useRef(0);
+  useEffect(()=>{if(projectRemoteTasks&&projectRemoteTasks.length>0)lastRemoteEditorAtRef.current=Date.now();},[projectRemoteTasks&&projectRemoteTasks.length]);
   useEffect(()=>{
     if(!init.id)return;
     const path=_appCtx.projectsPath||`users/${uid}/projects`;
@@ -18163,11 +18168,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(firstSnapshot){firstSnapshot=false;return;} // Skip initial load
       const remote=snap.data();
       if(remote.updatedBy&&remote.updatedBy!==uid){
-        setExternalUpdate(true);
+        // If a teammate is editing right now, or finished editing in the last 20s, silent-apply.
+        const remoteActive=(projectRemoteTasks||[]).length>0;
+        const recentlyActive=Date.now()-lastRemoteEditorAtRef.current<20000;
+        if(remoteActive||recentlyActive){
+          const migrated=migrateProject({...remote,id:init.id});
+          projectRef.current=migrated;
+          setProject(migrated);
+          console.log('[CONCURRENT] Silent-applied remote update from',remote.updatedBy,'(grey-out was active)');
+        }else{
+          setExternalUpdate(true);
+        }
       }
     });
     return()=>unsub();
-  },[init.id]);
+  },[init.id,uid,projectRemoteTasks]);
 
   // Auto-open portal modal when navigated from a notification
   useEffect(()=>{
