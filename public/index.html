@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.601";
+const APP_VERSION="v1.19.602";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17292,25 +17292,23 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 <button onClick={onTransfer} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⇄ Transfer</button>
               )}
               {!readOnly&&onDelete&&(
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
-                  <button onClick={()=>{if(isAdmin())onDelete();else setShowDeleteAdminWarn(true);}} style={btn(C.redDim,C.red,{border:`1px solid ${C.red}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>🗑 Delete</button>
-                  {/* DECISION(v1.19.599): Show who else is viewing this project. Owner first (priority), then others. */}
-                  {(viewers||[]).filter(v=>v.uid!==uid).length>0&&(
-                    <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,fontSize:10,color:C.muted,maxWidth:240}}>
-                      <div style={{color:"#a5b4fc",fontWeight:700,fontSize:10,letterSpacing:0.5,textTransform:"uppercase"}}>👥 Also viewing</div>
-                      {[...(viewers||[]).filter(v=>v.uid!==uid)]
-                        .sort((a,b)=>(b.isOwner?1:0)-(a.isOwner?1:0))
-                        .map(v=>(
-                          <div key={v.uid} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:v.isOwner?"#fcd34d":C.sub,whiteSpace:"nowrap"}}>
-                            <span style={{width:6,height:6,borderRadius:"50%",background:v.isOwner?C.yellow:"#a5b4fc",boxShadow:`0 0 4px ${v.isOwner?C.yellow:"#a5b4fc"}`,flexShrink:0}}/>
-                            <span>{v.userName||(v.userEmail||"").split("@")[0]||"Teammate"}{v.isOwner?" · Owner":""}</span>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                </div>
+                <button onClick={()=>{if(isAdmin())onDelete();else setShowDeleteAdminWarn(true);}} style={btn(C.redDim,C.red,{border:`1px solid ${C.red}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>🗑 Delete</button>
               )}
             </div>
+            {/* DECISION(v1.19.602): Viewer list lives BELOW the button row so it can't push the Delete button out of alignment. Right-aligned to sit under the action buttons. */}
+            {(viewers||[]).filter(v=>v.uid!==uid).length>0&&(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",flexWrap:"wrap",gap:10,marginTop:6,fontSize:11,color:C.muted}}>
+                <div style={{color:"#a5b4fc",fontWeight:700,fontSize:10,letterSpacing:0.5,textTransform:"uppercase"}}>👥 Also viewing</div>
+                {[...(viewers||[]).filter(v=>v.uid!==uid)]
+                  .sort((a,b)=>(b.isOwner?1:0)-(a.isOwner?1:0))
+                  .map(v=>(
+                    <div key={v.uid} style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:v.isOwner?"#fcd34d":C.sub,whiteSpace:"nowrap"}}>
+                      <span style={{width:6,height:6,borderRadius:"50%",background:v.isOwner?C.yellow:"#a5b4fc",boxShadow:`0 0 4px ${v.isOwner?C.yellow:"#a5b4fc"}`,flexShrink:0}}/>
+                      <span>{v.userName||(v.userEmail||"").split("@")[0]||"Teammate"}{v.isOwner?" · Owner":""}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
           {/* Active background tasks banner */}
           {activeBgTasks.length>0&&(
@@ -22118,7 +22116,7 @@ function ReportsModal({uid,onClose}){
   );
 }
 
-function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,forceView}){
+function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,teamViewers,forceView}){
   const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":forceView==="engineering"?"engineering":forceView==="purchasing_kanban"?"purchasing_kanban":"status");
   const [myProjectsOnly,setMyProjectsOnly]=useState(false);
   const [projectSearch,setProjectSearch]=useState("");
@@ -22356,6 +22354,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                         onUpdateStatus={onUpdateProject?async(proj,newStatus)=>{const u={...proj,bcPoStatus:newStatus,updatedAt:Date.now()};await onUpdateProject(u);}:undefined}
                         userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}
                         remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)}
+                        activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}
                         draggable={isNoCustomer}
                         onDragStart={isNoCustomer?e=>{e.dataTransfer.effectAllowed="move";setDragProjectId(p.id);}:undefined}
                         onDragEnd={isNoCustomer?()=>{setDragProjectId(null);setDropTarget(null);}:undefined}/>
@@ -22372,7 +22371,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                   {g.label&&<div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:12,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>{g.label}</div>}
                   <div data-tour="project-list" style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0} remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)}/>
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0} remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)} activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}/>
                     ))}
                   </div>
                 </div>
@@ -22562,7 +22561,7 @@ function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onC
 }
 
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd,rfqCount,remoteTask}){
+function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd,rfqCount,remoteTask,activeViewer}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
@@ -22582,7 +22581,17 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
       {customerLogo&&<img src={customerLogo} alt="" style={{width:22,height:22,objectFit:"contain",borderRadius:3,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>{p.bcProjectNumber||"–"}{bcDisconnected&&<span style={{fontSize:9,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={"Linked to "+p.bcEnv}>⚠</span>}</div>
       <div style={{fontSize:14,color:C.text,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,visibility:p.bcCustomerName?"visible":"hidden"}}>{p.bcCustomerName||"–"}</div>
-      {(()=>{const owner=memberMap&&p.createdBy&&memberMap[p.createdBy];const name=owner?owner.firstName||owner.email.split("@")[0]:userFirstName;return name?<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0}}>{name}</div>:null;})()}
+      {(()=>{
+        // DECISION(v1.19.602): If a teammate is in this project right now, replace the
+        // creator's name with "<Viewer> editing" (amber + pulsing) so it's clear at a glance.
+        if(activeViewer){
+          const viewerName=(activeViewer.userName||(activeViewer.userEmail||"").split("@")[0]||"Teammate").slice(0,12);
+          return<div title={`${activeViewer.userName||activeViewer.userEmail} is viewing this project`} style={{fontSize:9,color:"#fcd34d",fontWeight:700,letterSpacing:0.3,maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0,animation:"pulseYellow 2s ease-in-out infinite"}}>{viewerName} EDITING</div>;
+        }
+        const owner=memberMap&&p.createdBy&&memberMap[p.createdBy];
+        const name=owner?owner.firstName||owner.email.split("@")[0]:userFirstName;
+        return name?<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0}}>{name}</div>:null;
+      })()}
     </div>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
       <div style={{fontSize:17,fontWeight:700,color:C.green,lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{p.name}</div>
@@ -24221,6 +24230,23 @@ function App({user}){
     return()=>unsub();
   },[companyId,user.uid]);
 
+  // DECISION(v1.19.602): Company-wide projectPresence listener so Project Tiles can show
+  // "<User> editing" when a teammate is in that project. Stale filter 90s matches the
+  // ProjectView heartbeat cadence (30s * 3 missed beats).
+  const [teamViewers,setTeamViewers]=useState([]); // [{uid, userName, userEmail, projectId, lastSeen}]
+  useEffect(()=>{
+    if(!companyId||!user.uid)return;
+    const unsub=fbDb.collection(`companies/${companyId}/projectPresence`).onSnapshot(snap=>{
+      const now=Date.now();
+      const fresh=snap.docs
+        .map(d=>({id:d.id,...d.data()}))
+        .filter(v=>v.uid&&v.uid!==user.uid) // exclude own presence
+        .filter(v=>v.projectId&&v.lastSeen&&(now-v.lastSeen)<90000);
+      setTeamViewers(fresh);
+    },(err)=>{console.warn('teamViewers listener error:',err.message);setTeamViewers([]);});
+    return()=>unsub();
+  },[companyId,user.uid]);
+
   function handleNotifClick(notif){
     fbDb.doc(`users/${user.uid}/notifications/${notif.id}`).update({read:true}).catch(()=>{});
     setShowBellMenu(false);
@@ -24944,7 +24970,7 @@ INSTRUCTIONS:
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks} teamViewers={teamViewers}/>
         </>
       )}
       {view==="project"&&openProject&&(
