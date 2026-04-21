@@ -749,6 +749,48 @@ exports.codaleTestScrape = functions.runWith({ timeoutSeconds: 300, memory: '2GB
 // DECISION(v1.19.387): Generic scraper that executes admin-defined browser automation steps.
 // Steps are configured in ARC UI and stored in Firestore. Puppeteer runs each step sequentially.
 // Supports: navigate, fill, click, wait, extract. Placeholders: {partNumber}, {username}, {password}.
+// DECISION(v1.19.590): Harden puppeteer page against third-party JS errors.
+// Many vendor sites (Royal Wholesale, etc.) try to register for push notifications
+// on page load. In headless Chrome with no active push service, PushManager.subscribe
+// throws and breaks the site's init JS — preventing login/search forms from rendering
+// and causing our scraper to time out or surface the cryptic "Failed to execute
+// 'subscribe' on 'PushManager'" error as if scraping itself failed.
+// This stubs PushManager/Notification before the vendor page loads AND swallows
+// pageerror events so a broken vendor init-script doesn't fail our whole batch.
+async function hardenScraperPage(page, label) {
+  const tag = label || 'scraper';
+  page.on('pageerror', err => {
+    console.warn(`[${tag}] page JS error (swallowed):`, String(err && err.message || err).slice(0, 200));
+  });
+  page.on('console', msg => {
+    const t = msg.type();
+    if (t !== 'error' && t !== 'warning') return;
+    const txt = (msg.text() || '').slice(0, 160);
+    if (/PushManager|Service Worker|Notification|push subscription|subscribe/i.test(txt)) return;
+    console.log(`[${tag}] console.${t}:`, txt);
+  });
+  await page.evaluateOnNewDocument(() => {
+    try {
+      if (typeof PushManager !== 'undefined' && PushManager.prototype) {
+        PushManager.prototype.subscribe = function() { return Promise.reject(new Error('push disabled in headless scraper')); };
+        PushManager.prototype.getSubscription = function() { return Promise.resolve(null); };
+        PushManager.prototype.permissionState = function() { return Promise.resolve('denied'); };
+      }
+      if (typeof Notification !== 'undefined') {
+        try { Object.defineProperty(Notification, 'permission', { get: () => 'denied', configurable: true }); } catch(_) {}
+        try { Notification.requestPermission = () => Promise.resolve('denied'); } catch(_) {}
+      }
+      // Silence "PushManager subscribe failed" log spam so real scraper errors stand out.
+      const origErr = console.error;
+      console.error = function() {
+        const first = String(arguments[0] || '');
+        if (/PushManager|subscribe|push subscription|service worker/i.test(first)) return;
+        return origErr.apply(console, arguments);
+      };
+    } catch (e) {}
+  });
+}
+
 exports.customScraperLookup = functions.runWith({ timeoutSeconds: 300, memory: '2GB' }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { partNumber, config, steps } = data || {};
@@ -839,6 +881,7 @@ exports.customScraperLookup = functions.runWith({ timeoutSeconds: 300, memory: '
     const page = await browser.newPage();
     // Set a realistic user agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    await hardenScraperPage(page, 'customScraperLookup');
 
     const extracted = {};
     const stepLog = [];
@@ -1039,6 +1082,7 @@ exports.customScraperBatch = functions.runWith({ timeoutSeconds: 540, memory: '2
     });
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    await hardenScraperPage(page, 'customScraperBatch');
 
     // Shadow DOM helper
     async function findInShadow(sel) {

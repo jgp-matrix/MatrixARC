@@ -304,6 +304,21 @@ async function scrapeBatch(partNumbers, username, password) {
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     );
 
+    // DECISION(v1.19.590): Harden against third-party JS that breaks on push/notification APIs in headless Chrome.
+    page.on('pageerror', err => console.warn('[codaleScrape] page JS error (swallowed):', String(err && err.message || err).slice(0, 200)));
+    await page.evaluateOnNewDocument(() => {
+      try {
+        if (typeof PushManager !== 'undefined' && PushManager.prototype) {
+          PushManager.prototype.subscribe = function() { return Promise.reject(new Error('push disabled in headless scraper')); };
+          PushManager.prototype.getSubscription = function() { return Promise.resolve(null); };
+        }
+        if (typeof Notification !== 'undefined') {
+          try { Object.defineProperty(Notification, 'permission', { get: () => 'denied', configurable: true }); } catch(_) {}
+          try { Notification.requestPermission = () => Promise.resolve('denied'); } catch(_) {}
+        }
+      } catch (e) {}
+    });
+
     // Login for customer-specific pricing
     await login(page, username, password);
 
