@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.593";
+const APP_VERSION="v1.19.594";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -23675,6 +23675,21 @@ function App({user}){
     return()=>unsub();
   },[user.uid]);
 
+  // DECISION(v1.19.594): Auto-open Debug Logs when arriving via ?openDebugLogs=1
+  // (used by Issue Report push/email deep-links).
+  useEffect(()=>{
+    try{
+      const p=new URLSearchParams(window.location.search);
+      if(p.get('openDebugLogs')==='1'&&companyId){
+        setShowDebugLogs(true);
+        // strip query to avoid re-opening on refresh
+        const url=new URL(window.location.href);
+        url.searchParams.delete('openDebugLogs');
+        window.history.replaceState({},document.title,url.pathname+(url.search?url.search:'')+url.hash);
+      }
+    }catch(e){}
+  },[companyId]);
+
   // RFQ pending counts per project (for dashboard cards)
   const [rfqCounts,setRfqCounts]=useState({});
   useEffect(()=>{
@@ -23693,6 +23708,8 @@ function App({user}){
     if(notif.type==='supplier_quote'&&notif.projectId){
       const proj=projects.find(p=>p.id===notif.projectId);
       if(proj){handleOpen(proj);setPendingPortalOpen(notif.projectId);}
+    }else if(notif.type==='issue_report'){
+      setShowDebugLogs(true);
     }
   }
 
