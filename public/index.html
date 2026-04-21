@@ -2124,7 +2124,10 @@ async function bcLookupItem(partNumber){
     const d=await r.json();
     const item=(d.value||[])[0];
     if(!item||item.blocked)return null;
-    return{unitCost:item.unitCost||null,unitPrice:item.unitPrice||null,displayName:item.displayName||"",inventory:item.inventory||0,number:item.number||"",vendorNo:item.vendorNo||""};
+    // DECISION(v1.19.591): Preserve BC cost of 0 (don't coerce to null). An item that exists in
+    // BC with zero cost still represents a real BC link — downstream callers should mark the row
+    // priceSource="bc" and NOT fall back to AI. Use ?? so undefined becomes null but 0 stays 0.
+    return{unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,displayName:item.displayName||"",inventory:item.inventory||0,number:item.number||"",vendorNo:item.vendorNo||""};
   }catch(e){console.warn("BC item lookup error:",e);return null;}
 }
 
