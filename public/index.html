@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.608";
+const APP_VERSION="v1.19.609";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -18057,6 +18057,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   useEffect(()=>{_currentProjectId=init&&init.id||null;addBreadcrumb('nav',`Project opened: ${init&&init.id}`);return()=>{_currentProjectId=null;_currentPanelId=null;};},[init&&init.id]);
   // DECISION(v1.19.599): Track active tasks by OTHER users on this project — used to
   // grey out panel cards when a teammate is mid-extraction (owner is exempt — owner wins).
+  // DECISION(v1.19.609): Tightened stale filter — heartbeat ≤ 30s AND startedAt ≤ 15 min ago.
+  // Prior 3-min window let orphaned "running" docs from crashed/hard-reloaded tabs flag every
+  // project the user tested. Added console logging to diagnose ghosts.
   const [projectRemoteTasks,setProjectRemoteTasks]=useState([]);
   useEffect(()=>{
     const cid=_appCtx.companyId;const projectId=init&&init.id;
@@ -18065,12 +18068,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       .where('projectId','==',projectId)
       .onSnapshot(snap=>{
         const now=Date.now();
-        const fresh=snap.docs
-          .map(d=>({id:d.id,...d.data()}))
+        const all=snap.docs.map(d=>({id:d.id,...d.data()}));
+        const fresh=all
           .filter(t=>t.uid&&t.uid!==uid&&t.status==='running')
-          .filter(t=>t.heartbeatAt&&(now-t.heartbeatAt)<180000);
+          .filter(t=>t.heartbeatAt&&(now-t.heartbeatAt)<30000) // 30s stale cutoff
+          .filter(t=>!t.startedAt||(now-t.startedAt)<900000); // 15 min max age
+        if(all.length!==fresh.length){
+          const stale=all.filter(t=>!fresh.find(f=>f.id===t.id));
+          console.log('[PROJECT-TASKS] filtered out',stale.length,'stale/own docs:',stale.map(t=>({user:t.userName||t.userEmail,status:t.status,heartAge:Math.round((now-(t.heartbeatAt||0))/1000)+'s'})));
+        }
         setProjectRemoteTasks(fresh);
-      },()=>setProjectRemoteTasks([]));
+      },(err)=>{console.warn('[PROJECT-TASKS] listener error:',err.message);setProjectRemoteTasks([]);});
     return()=>unsub();
   },[init&&init.id,uid]);
 
@@ -24313,16 +24321,38 @@ function App({user}){
 
   // DECISION(v1.19.599): Team-wide active-task visibility. Listens to company/activeExtractions
   // and surfaces OTHER members' in-progress extractions / pricing / validation on everyone's
-  // dashboard. Stale filter (3 min) guards against crashed tabs.
+  // dashboard.
+  // DECISION(v1.19.609): Tightened stale filter (30s heartbeat, 15 min max age) + status guard.
   const [teamTasks,setTeamTasks]=useState([]);
   useEffect(()=>{
     if(!companyId||!user.uid)return;
+    // One-time startup sweep: delete MY own stale tasks (orphaned from crashed tabs / hard reloads).
+    // Rules only let me delete my own records, which is exactly what we want — each user cleans up
+    // after themselves. Runs once per session on mount.
+    (async()=>{
+      try{
+        const ownSnap=await fbDb.collection(`companies/${companyId}/activeExtractions`)
+          .where('uid','==',user.uid).get();
+        const now=Date.now();
+        const stale=ownSnap.docs.filter(d=>{
+          const t=d.data();
+          const heartAge=now-(t.heartbeatAt||0);
+          const startAge=now-(t.startedAt||0);
+          return heartAge>60000||startAge>900000||t.status!=='running';
+        });
+        if(stale.length){
+          await Promise.all(stale.map(d=>d.ref.delete().catch(()=>{})));
+          console.log('[ACTIVE-EXTRACTIONS] cleaned up',stale.length,'own stale docs');
+        }
+      }catch(e){console.warn('own-stale cleanup failed:',e.message);}
+    })();
     const unsub=fbDb.collection(`companies/${companyId}/activeExtractions`).onSnapshot(snap=>{
       const now=Date.now();
       const fresh=snap.docs
         .map(d=>({id:d.id,...d.data()}))
-        .filter(t=>t.uid&&t.uid!==user.uid) // exclude own tasks (shown locally via bgTasks)
-        .filter(t=>t.heartbeatAt&&(now-t.heartbeatAt)<180000); // stale > 3 min
+        .filter(t=>t.uid&&t.uid!==user.uid&&t.status==='running') // exclude own + done/error
+        .filter(t=>t.heartbeatAt&&(now-t.heartbeatAt)<30000) // 30s stale cutoff
+        .filter(t=>!t.startedAt||(now-t.startedAt)<900000); // 15 min max age
       setTeamTasks(fresh);
     },(err)=>{console.warn('teamTasks listener error:',err.message);setTeamTasks([]);});
     return()=>unsub();
