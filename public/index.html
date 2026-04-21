@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.602";
+const APP_VERSION="v1.19.603";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5156,6 +5156,21 @@ function fuzzyMergeBomItemsWithReport(items){
 }
 // Back-compat wrapper (items-only)
 function fuzzyMergeBomItems(items){return fuzzyMergeBomItemsWithReport(items).items;}
+// DECISION(v1.19.603): When an extraction unit is a cropped portion of the page, the AI
+// returns y_top/y_bottom/x_left/x_right as fractions of the CROP. Translate them back to
+// fractions of the original page so Drawing Reference previews still point at the right spot.
+function translateItemsToPageCoords(items,cropBounds){
+  if(!cropBounds)return items;
+  const {x:cx,y:cy,w:cw,h:ch}=cropBounds;
+  return items.map(it=>{
+    const out={...it};
+    if(typeof it.y_top==="number")out.y_top=Math.max(0,Math.min(1,cy+(it.y_top*ch)));
+    if(typeof it.y_bottom==="number")out.y_bottom=Math.max(0,Math.min(1,cy+(it.y_bottom*ch)));
+    if(typeof it.x_left==="number")out.x_left=Math.max(0,Math.min(1,cx+(it.x_left*cw)));
+    if(typeof it.x_right==="number")out.x_right=Math.max(0,Math.min(1,cx+(it.x_right*cw)));
+    return out;
+  });
+}
 function mergeBoms(bomArrays){
   const map={};
   bomArrays.flat().forEach(item=>{
@@ -5309,13 +5324,49 @@ function cropRegionFromImage(dataUrl,region){
 // Build extraction units from a page — if BOM regions exist, crop them; otherwise use full page
 async function getExtractionUnits(pg){
   const regions=(pg.regions||[]).filter(r=>r.type==="bom");
-  if(!regions.length)return[{dataUrl:pg.dataUrl,regionNote:null}];
-  const units=[];
-  for(const r of regions){
-    const cropped=await cropRegionFromImage(pg.dataUrl,r);
-    if(cropped)units.push({dataUrl:cropped,regionNote:r.note||null});
+  if(regions.length){
+    const units=[];
+    for(const r of regions){
+      const cropped=await cropRegionFromImage(pg.dataUrl,r);
+      if(cropped)units.push({dataUrl:cropped,regionNote:r.note||null});
+    }
+    return units.length?units:[{dataUrl:pg.dataUrl,regionNote:null}];
   }
-  return units.length?units:[{dataUrl:pg.dataUrl,regionNote:null}];
+  // DECISION(v1.19.603): If no user-drawn BOM region, auto-split the page into FOUR
+  // overlapping quadrants. Each quadrant is 55% × 55% (10% overlap on each internal edge).
+  // Anthropic caps images at 1568px on the LONG edge, so a full 40"-wide landscape drawing
+  // has text rendered at ~40 px/char. Cropping to a quadrant (same aspect ratio, sent at
+  // the same 1568 cap) doubles horizontal pixel density AND doubles vertical — so each
+  // character now has ~4× the pixel area for OCR. This is what fixes character mis-reads
+  // like 800FP-P5PN3Y being extracted as 800FP-P5PKJY. Fuzzy dedup merges overlap duplicates.
+  try{
+    // 65% × 65% quadrants with 30% overlap on each internal edge. This way any single
+    // BOM row/column that spans up to 65% of the page fits entirely inside at least one
+    // quadrant, and rows in the middle appear in multiple quadrants (merged via fuzzy dedup).
+    const quadrants=[
+      {x:0.00,y:0.00,w:0.65,h:0.65,tag:"top-left"},
+      {x:0.35,y:0.00,w:0.65,h:0.65,tag:"top-right"},
+      {x:0.00,y:0.35,w:0.65,h:0.65,tag:"bottom-left"},
+      {x:0.35,y:0.35,w:0.65,h:0.65,tag:"bottom-right"},
+    ];
+    const units=[];
+    for(const q of quadrants){
+      const cropped=await cropRegionFromImage(pg.dataUrl,q);
+      if(cropped)units.push({
+        dataUrl:cropped,
+        regionNote:`${q.tag} quadrant of the page (x=${q.x}–${q.x+q.w}, y=${q.y}–${q.y+q.h}). This is a ZOOMED region — character detail is high. Extract only rows fully visible here. Downstream dedup merges rows that appear in multiple quadrants.`,
+        // DECISION(v1.19.603): Pass crop bounds so the caller can translate the AI's
+        // quadrant-relative y_top/y_bottom/x_left/x_right back to original-page fractions.
+        // This keeps the Drawing Reference preview accurate.
+        cropBounds:{x:q.x,y:q.y,w:q.w,h:q.h},
+      });
+    }
+    if(units.length>=2)return units;
+    return[{dataUrl:pg.dataUrl,regionNote:null}];
+  }catch(e){
+    console.warn("[BOM SPLIT] auto-quadrant failed, falling back to full page:",e.message);
+    return[{dataUrl:pg.dataUrl,regionNote:null}];
+  }
 }
 
 // Build region context string for extraction notes
@@ -6499,7 +6550,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         for(const unit of units){
           const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):userNotes;
           const result=await extractBomPage(unit.dataUrl,"",notes);
-          const items=result.items||result;
+          const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
           if(qs.length)pageQs.push(...qs);
@@ -11780,7 +11831,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         for(const unit of units){
           const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):rgnNotes;
           const result=await extractBomPage(unit.dataUrl,"",notes);
-          const items=result.items||result;
+          const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           console.log(`[RE-EXTRACT] Page ${pgIdx+1} unit: ${items.length} items, ${(result.questions||[]).length} questions`);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
@@ -11927,7 +11978,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         for(const unit of units){
           const notes=unit.regionNote?("Cropped BOM region: "+unit.regionNote+fbRgnCtx):fbRgnCtx;
           const result=await extractBomPage(unit.dataUrl,aiFeedback,notes);
-          const items=result.items||result;
+          const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
           if(qs.length)pageQs.push(...qs);
