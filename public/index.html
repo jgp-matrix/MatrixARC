@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.610";
+const APP_VERSION="v1.19.611";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11810,6 +11810,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
 
   async function runExtraction(startMsg){
+    // DECISION(v1.19.611): Wrap the entire re-extract in try/finally so a thrown error anywhere
+    // (pricing, validation, save) can't leave an orphan activeExtractions doc as "running".
+    // The finally runs bgDone only if bgError hasn't already fired.
+    let _reBgFinished=false;
+    try{
     let bomPages=pages.filter(p=>getPageTypes(p).includes("bom"));
     if(!bomPages.length){setErr("No pages tagged BOM yet.");return;}
     // Save snapshot before re-extraction so user can revert
@@ -11821,7 +11826,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     bgStart(panel.id,panel.name||("Panel "+(idx+1)),projectId,"Re-extracting BOM…");
     bgSetPct(panel.id,1,"Re-extracting BOM…");
     const noData=bomPages.find(pg=>!pg.dataUrl&&!pg.storageUrl);
-    if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();bgError(panel.id,"Missing image");return;}
+    if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();bgError(panel.id,"Missing image");_reBgFinished=true;return;}
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     const rgnCtx=buildRegionContext(pages);
     const rgnNotes=(panel.extractionNotes||"")+rgnCtx;
@@ -11857,7 +11862,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       all=bomResults.flat();
       reQs=reQs.slice(0,10);
       console.log(`[RE-EXTRACT] Total: ${all.length} items, ${reQs.length} questions across all pages`);
-    }catch(ex){console.error("[RE-EXTRACT] Failed:",ex);setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();bgError(panel.id,"Re-extract failed: "+(ex.message||"").slice(0,60));return;}
+    }catch(ex){console.error("[RE-EXTRACT] Failed:",ex);setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();bgError(panel.id,"Re-extract failed: "+(ex.message||"").slice(0,60));_reBgFinished=true;return;}
     ep.set(65,"Merging results…");
     bgSetPct(panel.id,65,"Merging results…");
     const map={};
@@ -11920,6 +11925,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     ep.finish(`✓ ${bom.length} items extracted`);
     setExtracting(false);
     bgDone(panel.id,`✓ ${bom.length} items re-extracted`);
+    _reBgFinished=true;
     // BC drawing upload deferred until user prints quote (As-Quoted flow)
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
@@ -11927,6 +11933,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       extractPanelMetadata(pages).then(metadata=>{
         return logPanelToCPD(uid,updated,categorized,metadata||undefined);
       }).catch(()=>{});
+    }
+    }catch(topErr){
+      console.error('[RE-EXTRACT] top-level failure:',topErr);
+      setExtracting(false);
+      try{ep.stop();}catch(e){}
+      if(!_reBgFinished){try{bgError(panel.id,'Re-extract failed: '+(topErr.message||'').slice(0,60));}catch(e){}}
+    }finally{
+      // Defensive: if we exited without bgDone or bgError, clean up the Firestore orphan.
+      if(!_reBgFinished){try{bgError(panel.id,'Re-extract interrupted');}catch(e){}}
     }
   }
 
@@ -17432,13 +17447,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     // I'm not the owner, the panel is read-only-ish with a grey-out overlay.
                     // DECISION(v1.19.608): Broadened — ANY teammate task on this project greys out
                     // ALL panels (extraction, pricing, BC sync, validation — anything using bg*).
-                    // Prefer the task matching this specific panel (more relevant msg), fall back
-                    // to any active task on the project.
-                    const tasks=(projectRemoteTasks||[]).filter(t=>t.status==='running');
+                    // DECISION(v1.19.611): Extra defensive uid-check + diagnostic log + projectId
+                    // match (belt-and-suspenders against any ghost/leak).
+                    const tasks=(projectRemoteTasks||[]).filter(t=>t.status==='running'&&t.uid&&t.uid!==uid&&t.projectId===project.id);
                     if(!tasks.length)return null;
                     const iAmOwner=project.createdBy===uid;
                     if(iAmOwner)return null; // owner wins — never greyed
                     const t=tasks.find(t=>t.taskId===panel.id||t.taskId===panel.id+'_bcsync')||tasks[0];
+                    if(t)console.log('[PANEL GREY]',panel.name||panel.id,'flagged by',{taskUid:t.uid,user:t.userName||t.userEmail,taskId:t.taskId,projectId:t.projectId,msg:t.msg,heartAge:Math.round((Date.now()-(t.heartbeatAt||0))/1000)+'s'});
                     return t;
                   })()}
                   isSelected={panel.id===selectedPanelId}
