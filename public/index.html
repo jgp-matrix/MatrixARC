@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.604";
+const APP_VERSION="v1.19.605";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12690,20 +12690,27 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   return(
     <div className="fade-in" onClick={()=>{if(onSelect)onSelect();}} style={{...card(),border:`2px solid ${isSelected?C.accent:C.border}`,cursor:"pointer",position:"relative",opacity:remoteEditor?0.45:1,pointerEvents:remoteEditor?"none":"auto",transition:"opacity 0.2s"}}>
-      {/* DECISION(v1.19.599): Grey-out overlay when a teammate is editing this project.
-          Owner priority: non-owners see the overlay; owner never does (handled upstream). */}
-      {remoteEditor&&(
-        <div style={{position:"absolute",inset:0,zIndex:20,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"auto",background:"rgba(10,10,20,0.55)",borderRadius:10}}>
-          <div style={{background:"#1e2a4a",border:`2px solid #818cf8`,borderRadius:12,padding:"18px 24px",maxWidth:440,boxShadow:"0 12px 40px rgba(0,0,0,0.6)",display:"flex",flexDirection:"column",alignItems:"center",gap:8,animation:"pulse 2.5s ease-in-out infinite"}}>
-            <div style={{fontSize:32}}>🔒</div>
-            <div style={{fontSize:13,fontWeight:700,color:"#c4b5fd",textAlign:"center"}}>
-              {remoteEditor.userName||(remoteEditor.userEmail||"").split("@")[0]||"A teammate"} is editing this project
+      {/* DECISION(v1.19.605): Top-of-card notification banner when a teammate is editing
+          this project. Replaces the earlier centered overlay modal — less obtrusive, still
+          greys the card below (opacity:0.45, pointer-events:none on the root).
+          Owner priority: non-owners see this; owner never does (handled upstream). */}
+      {remoteEditor&&(()=>{
+        const fullName=remoteEditor.userName||(remoteEditor.userEmail||"").split("@")[0]||"A teammate";
+        const firstName=fullName.split(/\s+/)[0];
+        return(
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",marginBottom:12,background:"#1e2a4a",border:`1px solid #818cf8`,borderRadius:8,boxShadow:"0 2px 12px rgba(129,140,248,0.25)",animation:"pulse 2.5s ease-in-out infinite"}}>
+            <span style={{fontSize:18}}>🔒</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:700,color:"#c4b5fd",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                {firstName} is editing this project
+              </div>
+              <div style={{fontSize:11,color:"#a5b4fc",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                Please wait for changes to process{remoteEditor.msg?` — ${remoteEditor.msg}${remoteEditor.pct?` (${remoteEditor.pct}%)`:""}`:""}
+              </div>
             </div>
-            <div style={{fontSize:11,color:"#a5b4fc",textAlign:"center"}}>Please wait for changes to process</div>
-            {remoteEditor.msg&&<div style={{fontSize:11,color:"#818cf8",marginTop:4,textAlign:"center",fontStyle:"italic"}}>{remoteEditor.msg}{remoteEditor.pct?` (${remoteEditor.pct}%)`:""}</div>}
           </div>
-        </div>
-      )}
+        );
+      })()}
       {/* Combined header + title block */}
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
         <div style={{background:C.accentDim,color:C.accent,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:800,letterSpacing:1,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",justifyContent:"center"}}>LINE {idx+1}</div>
