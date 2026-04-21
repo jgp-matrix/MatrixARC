@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.595";
+const APP_VERSION="v1.19.596";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9043,32 +9043,68 @@ function PlaceholderTab({icon,title,desc,coming}){
 // ── TITLE BLOCK EXTRACTOR ──
 // DECISION(v1.19.474): Title block extraction — resize for readability, try multiple pages,
 // use Sonnet for better OCR accuracy on small title block text.
+// DECISION(v1.19.596): Send full page + high-res crop of bottom-right region. On scanned
+// drawings the title block text becomes illegible when a 42" drawing is downscaled to 1568px;
+// a zoomed crop of just the title block region recovers ~2x effective resolution on that text.
+function cropImageRegion(dataUrl,xPct,yPct,wPct,hPct,maxDim=1568){
+  return new Promise((res,rej)=>{
+    if(!dataUrl){return rej(new Error("cropImageRegion: empty dataUrl"));}
+    const img=new Image();
+    img.onload=()=>{
+      const sx=Math.floor(img.width*xPct);
+      const sy=Math.floor(img.height*yPct);
+      const sw=Math.floor(img.width*wPct);
+      const sh=Math.floor(img.height*hPct);
+      let dw=sw,dh=sh;
+      if(dw>maxDim){dh=Math.round(dh*(maxDim/dw));dw=maxDim;}
+      if(dh>maxDim){dw=Math.round(dw*(maxDim/dh));dh=maxDim;}
+      const c=document.createElement("canvas");c.width=dw;c.height=dh;
+      const ctx=c.getContext("2d");
+      // Slight contrast/brightness boost helps on low-contrast scanned drawings
+      ctx.imageSmoothingEnabled=true;
+      ctx.imageSmoothingQuality="high";
+      ctx.drawImage(img,sx,sy,sw,sh,0,0,dw,dh);
+      res(c.toDataURL("image/jpeg",0.95));c.width=0;c.height=0;
+    };
+    img.onerror=()=>rej(new Error("cropImageRegion: failed to load image"));
+    img.src=dataUrl;
+  });
+}
+
 async function extractTitleBlock(dataUrl){
   if(!_apiKey||!dataUrl)return null;
   try{
-    const small=await resizeForAnalysis(dataUrl,2400);
-    const b64=small?.split(",")[1];
-    if(!b64)return null;
+    // Full page at 1568 for context
+    const full=await resizeForAnalysis(dataUrl,1568);
+    // Bottom-right 65% wide × 45% tall — catches both corner-style and bottom-edge title blocks
+    // at roughly 2x the effective pixel density of the full-page version.
+    const crop=await cropImageRegion(dataUrl,0.35,0.55,0.65,0.45,1568).catch(()=>null);
+    const images=[full,crop].filter(Boolean).map(img=>({
+      type:"image",source:{type:"base64",media_type:"image/jpeg",data:img.split(",")[1]}
+    }));
+    if(!images.length)return null;
     const resp=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
         model:"claude-sonnet-4-6",
-        max_tokens:300,
+        max_tokens:400,
         messages:[{role:"user",content:[
-          {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`Carefully examine this engineering drawing page. Read ALL text on the page — both the large centered text (project name, location, panel description) AND the title block (typically bottom-right corner, bottom edge, or border frame).
+          ...images,
+          {type:"text",text:`You are shown ${images.length===2?"TWO images of the same engineering drawing: Image 1 is the full page (for overall context), Image 2 is a zoomed crop of the bottom-right region where the title block typically lives.":"an engineering drawing page"}. Read ALL text — both the large centered text (project name, location, panel description) AND the title block (typically bottom-right corner, bottom edge, or border frame).
+
+${images.length===2?"IMPORTANT: Prefer text readings from Image 2 (the zoomed crop) when extracting drawingNo and drawingRev — those values are often tiny in the full page. Use Image 1 for large centered text like location/facility name.\n\n":""}This may be a SCANNED drawing with low contrast, speckle noise, or rotation — read carefully. If a character is ambiguous between 0/O, 1/I/l, 5/S, 8/B, use context (most drawing numbers have a consistent alphanumeric pattern).
 
 Extract these fields:
 
-1. **Drawing number** (drawingNo): Look in the title block for DWG NO., DRAWING NO., DWG #, DOCUMENT NO., or similar. Usually an alphanumeric code like "CSW1881-221" or "E-001". Do NOT include sheet numbers (SHT1, SHT2) — just the base drawing number.
+1. **Drawing number** (drawingNo): Look in the title block for DWG NO., DRAWING NO., DWG #, DOCUMENT NO., SHEET NO. base, or similar. Usually an alphanumeric code like "CSW1881-221", "E-001", "M-4821-01". Do NOT include sheet-of-sheets suffixes (SHT 1 OF 8) — just the base drawing number. If you see multiple candidates, pick the one labeled "DWG NO." or similar.
 
 2. **Description** (drawingDesc): Build a descriptive name by combining the LOCATION/FACILITY name with the PANEL TYPE from the drawing. Read the large centered text AND the title block text. Examples:
    - If page says "BRUSH CREEK WPC" and "LM16 MIXER CONTROL PANEL" → "Brush Creek WPC - LM16 Mixer Control Panel"
    - If page says "LEBANON CLARIFIER" and title block says "PLC CONTROL PANEL" → "Lebanon Clarifier - PLC Control Panel"
    - Format: "[Location/Facility] - [Panel Type/Name]"
 
-3. **Revision** (drawingRev): Look for REV, REVISION, or a revision block. Typically a letter (A, B, C) or number. Return "" if not visible.
+3. **Revision** (drawingRev): Look for REV, REVISION, or a dedicated revision box (usually a small table with columns like REV/DATE/DESCRIPTION). Typically a single letter (A, B, C) or number (0, 1, 2). If a revision table has multiple rows, take the value from the LAST/highest row. Return "" if not visible.
 
 4. **Voltages**: Look anywhere on the page for supply/line voltage (e.g. "480V 3PH") and control voltage (e.g. "120VAC", "24VDC").
 
@@ -9077,7 +9113,7 @@ Return ONLY valid JSON: {"drawingNo":"...","drawingDesc":"...","drawingRev":"...
       })
     });
     const d=await resp.json();
-    if(!resp.ok)return null;
+    if(!resp.ok){console.warn("extractTitleBlock API error:",d?.error?.message||resp.status);return null;}
     const text=(d.content||[]).find(b=>b.type==="text")?.text||"";
     const m=text.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
     if(!m)return null;
