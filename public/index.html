@@ -10640,6 +10640,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const enclosureCount=pages.filter(p=>getPageTypes(p).includes("enclosure")).length;
   const layoutCount=pages.filter(p=>getPageTypes(p).includes("layout")).length; // legacy
 
+  // DECISION(v1.19.584): Sniff magic bytes when MIME type is missing/generic.
+  // Files dragged from Outlook and some cloud-storage clients arrive with empty type
+  // or application/octet-stream. Peek at the first 8 bytes to recover the real type
+  // so the drop still works end-to-end.
+  async function _sniffFileType(f){
+    if(f.type&&f.type!=="application/octet-stream")return f.type;
+    try{
+      const buf=await f.slice(0,8).arrayBuffer();
+      const b=new Uint8Array(buf);
+      if(b[0]===0x25&&b[1]===0x50&&b[2]===0x44&&b[3]===0x46)return"application/pdf"; // %PDF
+      if(b[0]===0xFF&&b[1]===0xD8&&b[2]===0xFF)return"image/jpeg";
+      if(b[0]===0x89&&b[1]===0x50&&b[2]===0x4E&&b[3]===0x47)return"image/png";
+      if(b[0]===0x47&&b[1]===0x49&&b[2]===0x46)return"image/gif";
+      if(b[0]===0x52&&b[1]===0x49&&b[2]===0x46&&b[3]===0x46&&b[8]===undefined){/* RIFF → likely WebP */}
+    }catch(e){console.warn("_sniffFileType failed:",f.name,e.message);}
+    return f.type||"";
+  }
   async function addFiles(files){
     _dbg("ADDFILES: start, files="+files.length+", apiKey="+(!!_apiKey));
     setProcessing(true);setErr("");
@@ -10649,7 +10666,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const newItems=[];
     let livePages=[...savedPages];
     for(const f of Array.from(files)){
-      if(f.type==="application/pdf"){
+      const effectiveType=await _sniffFileType(f);
+      if(effectiveType==="application/pdf"){
         await window.pdfjsReady;
         const pdfjs=window._pdfjs;
         const buf=await f.arrayBuffer();
@@ -10675,7 +10693,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           livePages=[...livePages,item];
           setPendingPages([...livePages]);
         }
-      } else if(f.type.startsWith("image/")){
+      } else if(effectiveType&&effectiveType.startsWith("image/")){
         setProcessingMsg(f.name);
         const reader=new FileReader();
         const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
@@ -10734,6 +10752,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }else if(newItems.length>0){
       bgUpdate(panel.id,"Awaiting confirmation…");
       setAwaitingConfirm(true);
+    }else if(files&&files.length>0){
+      // DECISION(v1.19.584): Files were dropped but none were recognized as PDF/image.
+      // Common cause: drag from Outlook/Teams/other app that doesn't set file MIME correctly.
+      // Surface a clear, actionable message instead of a silent "Complete".
+      bgDone(panel.id,"⚠ Couldn't read the file — save it to disk first, then drag from File Explorer");
+      setErr("Couldn't read that file. If it came from an email or chat app, save it to your Desktop first, then drag it in from File Explorer.");
     }else{
       bgDone(panel.id,"Complete");
     }
