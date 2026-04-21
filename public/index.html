@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.613";
+const APP_VERSION="v1.19.614";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17443,21 +17443,22 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   quoteRev={project.quoteRev||0}
                   readOnly={readOnly}
                   remoteEditor={(() => {
-                    // DECISION(v1.19.599): If someone else has an active task on this project AND
-                    // I'm not the owner, the panel is read-only-ish with a grey-out overlay.
-                    // DECISION(v1.19.608): Broadened — ANY teammate task on this project greys out
-                    // ALL panels (extraction, pricing, BC sync, validation — anything using bg*).
-                    // DECISION(v1.19.611): Extra defensive uid-check + diagnostic log + projectId match.
-                    // DECISION(v1.19.613): Fix false grey-out on projects without createdBy (imported
-                    // from BC, migrated from older schemas). Treat "no createdBy" as "I own it" —
-                    // safer default than greying out a project whose ownership can't be determined.
-                    // Also skip grey-out for the specific panel I'M re-extracting (matches my bg task).
-                    const tasks=(projectRemoteTasks||[]).filter(t=>t.status==='running'&&t.uid&&t.uid!==uid&&t.projectId===project.id);
-                    if(!tasks.length)return null;
+                    // DECISION(v1.19.614): REVERTED v1.19.608 broadening. Only grey out the
+                    // specific panel whose bg task matches (panel.id or panel.id+'_bcsync').
+                    // The broadened "any task on this project greys all panels" was causing
+                    // false grey-outs on projects Jon owned but couldn't be determined as owner
+                    // (missing createdBy, race conditions with stale listener state, etc.).
+                    // Safer: narrow match to the panel-specific task only.
+                    const t=(projectRemoteTasks||[]).find(t=>
+                      t.status==='running'&&
+                      t.uid&&t.uid!==uid&&
+                      t.projectId===project.id&&
+                      (t.taskId===panel.id||t.taskId===panel.id+'_bcsync')
+                    );
+                    if(!t)return null;
                     const iAmOwner=!project.createdBy||project.createdBy===uid;
                     if(iAmOwner)return null; // owner wins — never greyed
-                    const t=tasks.find(t=>t.taskId===panel.id||t.taskId===panel.id+'_bcsync')||tasks[0];
-                    if(t)console.log('[PANEL GREY]',panel.name||panel.id,'flagged by',{taskUid:t.uid,user:t.userName||t.userEmail,taskId:t.taskId,projectId:t.projectId,msg:t.msg,heartAge:Math.round((Date.now()-(t.heartbeatAt||0))/1000)+'s',projectCreatedBy:project.createdBy,myUid:uid});
+                    console.log('[PANEL GREY]',panel.name||panel.id,'flagged by',{taskUid:t.uid,user:t.userName||t.userEmail,taskId:t.taskId,msg:t.msg});
                     return t;
                   })()}
                   isSelected={panel.id===selectedPanelId}
