@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.603";
+const APP_VERSION="v1.19.604";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -22636,8 +22636,10 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
         // DECISION(v1.19.602): If a teammate is in this project right now, replace the
         // creator's name with "<Viewer> editing" (amber + pulsing) so it's clear at a glance.
         if(activeViewer){
-          const viewerName=(activeViewer.userName||(activeViewer.userEmail||"").split("@")[0]||"Teammate").slice(0,12);
-          return<div title={`${activeViewer.userName||activeViewer.userEmail} is viewing this project`} style={{fontSize:9,color:"#fcd34d",fontWeight:700,letterSpacing:0.3,maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0,animation:"pulseYellow 2s ease-in-out infinite"}}>{viewerName} EDITING</div>;
+          // DECISION(v1.19.604): First name only — "Noah Parkinson EDITING" was getting cut off.
+          const fullName=activeViewer.userName||(activeViewer.userEmail||"").split("@")[0]||"Teammate";
+          const firstName=fullName.split(/\s+/)[0].slice(0,10);
+          return<div title={`${activeViewer.userName||activeViewer.userEmail} is viewing this project`} style={{fontSize:9,color:"#fcd34d",fontWeight:700,letterSpacing:0.3,maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0,animation:"pulseYellow 2s ease-in-out infinite"}}>{firstName} EDITING</div>;
         }
         const owner=memberMap&&p.createdBy&&memberMap[p.createdBy];
         const name=owner?owner.firstName||owner.email.split("@")[0]:userFirstName;
