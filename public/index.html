@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.606";
+const APP_VERSION="v1.19.607";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6597,7 +6597,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       version:APP_VERSION,
     }:null;
     if(mergedBom.length>0||hazlocResult){
-      const bomSave={...latestPanel,...(mergedBom.length>0?{bom:mergedBom}:{}),...(aiQuestions.length?{aiQuestions}:{}),engineeringQuestions:eqs,...(hazlocResult?{hazardousLocation:hazlocResult}:{}),...(extractionReport?{extractionReport}:{}),status:mergedBom.length>0?"extracted":latestPanel.status,updatedAt:Date.now()};
+      // DECISION(v1.19.607): Always set aiQuestions (including []) so stale questions clear.
+      const bomSave={...latestPanel,...(mergedBom.length>0?{bom:mergedBom}:{}),aiQuestions:aiQuestions||[],engineeringQuestions:eqs,...(hazlocResult?{hazardousLocation:hazlocResult}:{}),...(extractionReport?{extractionReport}:{}),status:mergedBom.length>0?"extracted":latestPanel.status,updatedAt:Date.now()};
       await save(bomSave);
       latestPanel={...bomSave};
     }
@@ -11881,7 +11882,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     ep.set(80,"Saving BOM…");
     bgSetPct(panel.id,80,"Saving BOM…");
     const reEqs=mergeEngineeringQuestions([],reQs,null); // fresh questions on re-extract
-    let updated={...latestPanelRef.current,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),engineeringQuestions:reEqs,extractionReport:reExtractionReport,status:"extracted",updatedAt:Date.now()};
+    // DECISION(v1.19.607): Always overwrite aiQuestions (even with []) so stale questions
+    // from prior extractions get cleared. Questions feature disabled globally (v1.19.601).
+    let updated={...latestPanelRef.current,bom,aiQuestions:reQs||[],engineeringQuestions:reEqs,extractionReport:reExtractionReport,status:"extracted",updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     setTagsChanged(false);
@@ -12027,7 +12030,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
     const feedbackLog=[...((latestPanel.extractionFeedbackLog)||[]),logEntry];
     const fbEqs=mergeEngineeringQuestions([],fbQs,null);
-    const updated={...latestPanel,bom,...(typeof fbQs!=='undefined'&&fbQs.length?{aiQuestions:fbQs}:{}),engineeringQuestions:fbEqs,extractionReport:fbReport,status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
+    // DECISION(v1.19.607): Always set aiQuestions (including []) so stale questions clear.
+    const updated={...latestPanel,bom,aiQuestions:fbQs||[],engineeringQuestions:fbEqs,extractionReport:fbReport,status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     const laborMsg=laborResult?.wires!=null?` · labor set to ${updated.pricing?.laborHoursOverride} hrs`:"";
