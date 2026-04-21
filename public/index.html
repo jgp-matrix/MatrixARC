@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.609";
+const APP_VERSION="v1.19.610";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -24860,14 +24860,36 @@ INSTRUCTIONS:
   return(
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column"}}>
       {/* DECISION(v1.19.415): New version banner — pushed to all users via Firestore onSnapshot */}
-      {newVersionAvailable&&(
-        <div style={{position:"fixed",top:0,left:0,right:0,zIndex:10000,background:"linear-gradient(90deg,#1e3a5f,#2563eb)",padding:"10px 20px",display:"flex",alignItems:"center",justifyContent:"center",gap:16,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>
-          <span style={{fontSize:14,fontWeight:700,color:"#fff"}}>🚀 New version {newVersionAvailable} is available!</span>
-          <span style={{fontSize:12,color:"#93c5fd"}}>Please refresh to get the latest features and fixes.</span>
-          <button onClick={()=>window.location.reload()} style={{background:"#fff",color:"#1e3a5f",border:"none",borderRadius:6,padding:"6px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Refresh Now (Ctrl+Shift+R)</button>
-          <button onClick={()=>setNewVersionAvailable(null)} style={{background:"none",border:"1px solid #ffffff44",borderRadius:6,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>Later</button>
-        </div>
-      )}
+      {/* DECISION(v1.19.610): If bg tasks are running, warn and clean up Firestore orphans before
+          reloading. Noah's re-extract died mid-flight on v1.19.608→609 deploy because this banner
+          let him hard-reload with an in-flight task, leaving a ghost activeExtractions doc that
+          flagged every project. Fix: confirm first, then bgError all running tasks (which triggers
+          rbgError → Firestore status="error" → 15s auto-delete) before the reload. */}
+      {newVersionAvailable&&(()=>{
+        const runningTasks=Object.values(_bgTasks||{}).filter(t=>t.status==='running');
+        const hasRunning=runningTasks.length>0;
+        async function safeRefresh(){
+          if(hasRunning){
+            const msg=`You have ${runningTasks.length} task${runningTasks.length>1?'s':''} running:\n\n${runningTasks.map(t=>'• '+(t.panelName||'Task')+': '+t.msg).join('\n')}\n\nRefreshing NOW will cancel them. Refresh anyway?`;
+            if(!window.confirm(msg))return;
+            // Gracefully abort so Firestore orphans get cleaned up
+            for(const t of runningTasks){try{bgError(t.taskId,'Cancelled by version refresh');}catch(e){}}
+            // Give rbgError a moment to write to Firestore, then reload
+            await new Promise(r=>setTimeout(r,500));
+          }
+          window.location.reload();
+        }
+        return(
+          <div style={{position:"fixed",top:0,left:0,right:0,zIndex:10000,background:hasRunning?"linear-gradient(90deg,#451a03,#b45309)":"linear-gradient(90deg,#1e3a5f,#2563eb)",padding:"10px 20px",display:"flex",alignItems:"center",justifyContent:"center",gap:16,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>
+            <span style={{fontSize:14,fontWeight:700,color:"#fff"}}>🚀 New version {newVersionAvailable} is available!</span>
+            <span style={{fontSize:12,color:hasRunning?"#fde68a":"#93c5fd"}}>
+              {hasRunning?`⚠ ${runningTasks.length} task${runningTasks.length>1?'s':''} running — refresh will cancel them`:"Please refresh to get the latest features and fixes."}
+            </span>
+            <button onClick={safeRefresh} style={{background:"#fff",color:hasRunning?"#7c2d12":"#1e3a5f",border:"none",borderRadius:6,padding:"6px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>{hasRunning?"Cancel & Refresh":"Refresh Now"}</button>
+            <button onClick={()=>setNewVersionAvailable(null)} style={{background:"none",border:"1px solid #ffffff44",borderRadius:6,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>Later</button>
+          </div>
+        );
+      })()}
       {/* ── SPLASH SCREEN ── */}
       {splash!=="done"&&(
         <div style={{position:"fixed",inset:0,zIndex:9999,background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
