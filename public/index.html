@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.594";
+const APP_VERSION="v1.19.595";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -612,7 +612,7 @@ function useCustomerLogo(name){
 
 // ── THEME ──
 const C={
-  bg:"#0f1117",card:"#1a2235",border:"#3d6090",
+  bg:"#0f1117",card:"#1a2235",surface:"#1e293b",border:"#3d6090",
   accent:"#3b82f6",accentDim:"#1d3a6e",
   green:"#10b981",greenDim:"#052e1c",
   yellow:"#f59e0b",yellowDim:"#3a1f00",
@@ -23521,19 +23521,19 @@ function DebugLogsModal({onClose,companyId,uid}){
           loading?React.createElement("div",{style:{padding:40,textAlign:"center",color:C.muted}},"Loading\u2026")
             :error?React.createElement("div",{style:{padding:40,textAlign:"center",color:"#f87171"}},error)
             :filtered.length===0?React.createElement("div",{style:{padding:40,textAlign:"center",color:C.muted}},"No logs in this range.")
-            :React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:12}},
+            :React.createElement("table",{style:{width:"100%",borderCollapse:"collapse",fontSize:12,tableLayout:"fixed"}},
               React.createElement("thead",{style:{position:"sticky",top:0,background:C.surface,zIndex:2}},
                 React.createElement("tr",null,
-                  ["Time","Sev","User","Message","Source"].map(h=>React.createElement("th",{key:h,style:{textAlign:"left",padding:"8px 12px",color:C.muted,fontSize:10,textTransform:"uppercase",letterSpacing:0.5,borderBottom:`1px solid ${C.border}`}},h))
+                  (selected?["Time","Sev","Message"]:["Time","Sev","User","Message","Source"]).map(h=>React.createElement("th",{key:h,style:{textAlign:"left",padding:"8px 12px",color:C.muted,fontSize:10,textTransform:"uppercase",letterSpacing:0.5,borderBottom:`1px solid ${C.border}`,...(h==="Time"?{width:selected?92:130}:h==="Sev"?{width:70}:h==="User"?{width:150}:h==="Source"?{width:90}:{})}},h))
                 )
               ),
               React.createElement("tbody",null,
                 filtered.map(l=>React.createElement("tr",{key:l.id,onClick:()=>setSelected(l),style:{cursor:"pointer",background:selected&&selected.id===l.id?"#1a1a2e":"transparent",borderBottom:`1px solid ${C.border}`}},
-                  React.createElement("td",{style:{padding:"6px 12px",color:C.sub,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}},fmtTime(l.createdAt)),
-                  React.createElement("td",{style:{padding:"6px 12px"}},React.createElement("span",{style:{color:sevColor(l.severity),fontSize:10,fontWeight:700,textTransform:"uppercase"}},l.severity||"?")),
-                  React.createElement("td",{style:{padding:"6px 12px",color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:140}},l.userEmail||l.userName||(l.createdBy||"").slice(0,8)),
-                  React.createElement("td",{style:{padding:"6px 12px",color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:500}},l.message),
-                  React.createElement("td",{style:{padding:"6px 12px",color:C.muted,fontSize:11}},l.source)
+                  React.createElement("td",{style:{padding:"6px 12px",color:C.sub,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",fontSize:selected?10:12}},selected?new Date(l.createdAt).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit',hour12:true}):fmtTime(l.createdAt)),
+                  React.createElement("td",{style:{padding:"6px 12px"}},React.createElement("span",{style:{color:sevColor(l.severity),fontSize:10,fontWeight:700,textTransform:"uppercase"}},(l.severity||"?").slice(0,selected?4:20))),
+                  !selected&&React.createElement("td",{key:"user",style:{padding:"6px 12px",color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},l.userEmail||l.userName||(l.createdBy||"").slice(0,8)),
+                  React.createElement("td",{style:{padding:"6px 12px",color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},l.message),
+                  !selected&&React.createElement("td",{key:"source",style:{padding:"6px 12px",color:C.muted,fontSize:11,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}},l.source)
                 ))
               )
             )
