@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.596";
+const APP_VERSION="v1.19.597";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4948,15 +4948,107 @@ function appendDefaultBomItems(bom){
 }
 
 // ── BOM MERGER (combine by partNumber, sum qty) ──
+// DECISION(v1.19.597): Fuzzy BOM dedup to collapse OCR-variant duplicates.
+// Users reported ~40% false-duplicate rate on scanned drawings (PRJ402079: 51 items → 71 extracted)
+// where the same part reads differently on page 1 vs page 2 (O/0, B/8, S/5, missing chars).
+// Strategy: after exact-normalized merge, run an edit-distance pass that collapses near-duplicates
+// when manufacturer matches AND description is similar (both signals → almost certainly same part).
+// Bounded Levenshtein — early-exits once distance exceeds threshold, so it's fast on long lists.
+function _bomLevDistBounded(a,b,max){
+  if(a===b)return 0;
+  const la=a.length,lb=b.length;
+  if(Math.abs(la-lb)>max)return max+1;
+  if(!la)return lb;if(!lb)return la;
+  const prev=new Array(lb+1),curr=new Array(lb+1);
+  for(let j=0;j<=lb;j++)prev[j]=j;
+  for(let i=1;i<=la;i++){
+    curr[0]=i;let rowMin=curr[0];
+    for(let j=1;j<=lb;j++){
+      const cost=a.charCodeAt(i-1)===b.charCodeAt(j-1)?0:1;
+      curr[j]=Math.min(prev[j]+1,curr[j-1]+1,prev[j-1]+cost);
+      if(curr[j]<rowMin)rowMin=curr[j];
+    }
+    if(rowMin>max)return max+1;
+    for(let j=0;j<=lb;j++)prev[j]=curr[j];
+  }
+  return prev[lb];
+}
+function _bomNormPn(s){return(s||"").replace(/[\s\-\.\/\u00a0_]+/g,"").toUpperCase();}
+function _bomDescSim(a,b){
+  // Return true if descriptions are similar enough to be the same item
+  const na=(a||"").replace(/\s+/g," ").trim().toLowerCase();
+  const nb=(b||"").replace(/\s+/g," ").trim().toLowerCase();
+  if(!na||!nb)return false;
+  if(na===nb)return true;
+  // First 25 chars match (same prefix = same item, just truncated differently)
+  if(na.length>=15&&nb.length>=15&&na.slice(0,25)===nb.slice(0,25))return true;
+  // One is a prefix of the other (truncation)
+  if(na.startsWith(nb)||nb.startsWith(na))return true;
+  // Word-level overlap: ≥60% of words shared
+  const wa=new Set(na.split(/\s+/).filter(w=>w.length>2));
+  const wb=new Set(nb.split(/\s+/).filter(w=>w.length>2));
+  if(!wa.size||!wb.size)return false;
+  let shared=0;for(const w of wa)if(wb.has(w))shared++;
+  return shared/Math.max(wa.size,wb.size)>=0.6;
+}
+// Fuzzy merge: assumes exact-normalized dedup has already run. Collapses near-duplicates.
+function fuzzyMergeBomItems(items){
+  const out=[];const consumed=new Set();
+  for(let i=0;i<items.length;i++){
+    if(consumed.has(i))continue;
+    let base=items[i];
+    const pnA=_bomNormPn(base.partNumber);
+    if(pnA.length<5){out.push(base);continue;} // too short → skip fuzzy (too many false matches)
+    const mfrA=(base.manufacturer||"").trim().toLowerCase();
+    for(let j=i+1;j<items.length;j++){
+      if(consumed.has(j))continue;
+      const b=items[j];
+      const pnB=_bomNormPn(b.partNumber);
+      if(pnB.length<5)continue;
+      if(pnA===pnB)continue; // exact dedup already handled elsewhere
+      // Length delta ≤ 2 keeps us safe (OCR typically adds/drops 1-2 chars)
+      if(Math.abs(pnA.length-pnB.length)>2)continue;
+      // Edit-distance threshold scales with PN length — short PNs get stricter
+      const maxLen=Math.max(pnA.length,pnB.length);
+      const threshold=maxLen<=8?1:maxLen<=14?2:3;
+      const ed=_bomLevDistBounded(pnA,pnB,threshold);
+      if(ed>threshold)continue;
+      // Guard: require either matching manufacturer OR matching description
+      // (both signals would be ideal but users don't always fill both)
+      const mfrB=(b.manufacturer||"").trim().toLowerCase();
+      const mfrMatch=mfrA&&mfrB&&mfrA===mfrB;
+      const descMatch=_bomDescSim(base.description,b.description);
+      if(!mfrMatch&&!descMatch)continue;
+      // Both signals weak? require stricter edit distance
+      if(!mfrMatch&&descMatch&&ed>1)continue;
+      if(mfrMatch&&!descMatch&&ed>2)continue;
+      // Merge: prefer the LONGER partNumber as canonical (more chars = more likely correct reading)
+      const keepA=pnA.length>=pnB.length;
+      const mergedNotes=[base.notes,b.notes].filter(Boolean).join("; ")||base.notes||b.notes||"";
+      base={
+        ...base,
+        partNumber:keepA?base.partNumber:b.partNumber,
+        qty:(+base.qty||1)+(+b.qty||1),
+        description:(base.description||"").length>=(b.description||"").length?base.description:b.description,
+        manufacturer:base.manufacturer||b.manufacturer,
+        notes:mergedNotes,
+      };
+      consumed.add(j);
+      console.log(`BOM FUZZY MERGE: "${b.partNumber}" → "${base.partNumber}" (editDist=${ed}, qty=${base.qty})`);
+    }
+    out.push(base);
+  }
+  return out;
+}
 function mergeBoms(bomArrays){
   const map={};
   bomArrays.flat().forEach(item=>{
-    const pn=(item.partNumber||"").replace(/[\s\-\.\/\u00a0]+/g,"").toUpperCase();
+    const pn=_bomNormPn(item.partNumber);
     const key=pn||("desc:"+((item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40)));
     if(map[key]){map[key]={...map[key],qty:(+map[key].qty||1)+(+item.qty||1)};}
     else{map[key]={...item};}
   });
-  return Object.values(map);
+  return fuzzyMergeBomItems(Object.values(map));
 }
 
 // ── FIRESTORE TEAM HELPERS ──
@@ -6318,9 +6410,11 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       },3).then(results=>{
         const all=results.flat();if(!all.length)return{bom:[],questions:allQuestions};
         const map={};
-        all.forEach(item=>{const pn=(item.partNumber||"").replace(/[\s\-\.\/\u00a0]+/g,"").toUpperCase();const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}});
-        console.log(`BOM MERGE: ${all.length} raw items → ${Object.keys(map).length} unique items`);
-        return{bom:appendDefaultBomItems(Object.values(map)),questions:allQuestions.slice(0,10)};
+        all.forEach(item=>{const pn=_bomNormPn(item.partNumber);const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}});
+        const exact=Object.values(map);
+        const fuzzy=fuzzyMergeBomItems(exact);
+        console.log(`BOM MERGE: ${all.length} raw → ${exact.length} exact-dedup → ${fuzzy.length} fuzzy-dedup`);
+        return{bom:appendDefaultBomItems(fuzzy),questions:allQuestions.slice(0,10)};
       }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[]};});
     }
     // Hazardous location scan (parallel with BOM — uses Haiku, fast)
@@ -11476,13 +11570,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     ep.set(65,"Merging results…");
     const map={};
     all.forEach(item=>{
-      const pn=(item.partNumber||"").replace(/[\s\-\.\/\u00a0]+/g,"").toUpperCase();
+      const pn=_bomNormPn(item.partNumber);
       const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged (now qty ${map[key].qty})`);}
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
-    console.log(`BOM MERGE: ${all.length} raw items → ${Object.keys(map).length} unique items`);
-    const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,Object.values(map).map(row=>{
+    const exactDedup=Object.values(map);
+    const fuzzyDedup=fuzzyMergeBomItems(exactDedup);
+    console.log(`BOM MERGE: ${all.length} raw → ${exactDedup.length} exact-dedup → ${fuzzyDedup.length} fuzzy-dedup`);
+    const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fuzzyDedup.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     })));
@@ -11611,12 +11707,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }catch(ex){setErr(`Failed: ${ex.message}`);setReExtracting(false);return;}
     const map={};
     all.forEach(item=>{
-      const pn=(item.partNumber||"").replace(/[\s\-\.\/\u00a0]+/g,"").toUpperCase();
+      const pn=_bomNormPn(item.partNumber);
       const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
-    const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,Object.values(map).map(row=>{
+    const fbFuzzy=fuzzyMergeBomItems(Object.values(map));
+    const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fbFuzzy.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     })));
