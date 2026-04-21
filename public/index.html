@@ -12377,8 +12377,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 e.preventDefault();setDragging(false);
                 if(awaitingConfirm)return;
                 // DECISION(v1.19.585): Outlook drags put attachments in dataTransfer.items (kind:'file'),
-                // not dataTransfer.files. Collect from BOTH sources synchronously before the event ends
-                // (dataTransfer is revoked after the handler returns).
+                // not dataTransfer.files. Collect from BOTH sources synchronously before the event ends.
                 const files=[];
                 if(e.dataTransfer.files)for(const f of Array.from(e.dataTransfer.files))files.push(f);
                 if(files.length===0&&e.dataTransfer.items){
@@ -12386,18 +12385,29 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     if(item.kind==='file'){const f=item.getAsFile();if(f)files.push(f);}
                   }
                 }
-                if(files.length>0){addFiles(files);}
-                else{
-                  // DIAG(v1.19.586): log what Outlook/clipboard-source DID offer so we can add a fallback if there's something fetchable
-                  try{
-                    const dxTypes=Array.from(e.dataTransfer.types||[]);
-                    const dxItems=Array.from(e.dataTransfer.items||[]).map(i=>({kind:i.kind,type:i.type}));
-                    const dxExtra={};
-                    ['text/plain','text/uri-list','text/html','application/x-moz-file-promise-url','DownloadURL','Files','FileName','FileNameW','FileGroupDescriptor','FileGroupDescriptorW'].forEach(t=>{try{const v=e.dataTransfer.getData(t);if(v)dxExtra[t]=v.slice(0,500);}catch(e){}});
-                    console.log('[DROP-FAIL DIAG] dataTransfer contents:',{types:dxTypes,items:dxItems,extra:dxExtra});
-                  }catch(diagErr){}
-                  setErr("Couldn't read that attachment. If it's from Outlook or another email app, save it to your Desktop first, then drag it from File Explorer.");
-                }
+                if(files.length>0){addFiles(files);return;}
+                // DECISION(v1.19.587): Detect "New Outlook" / Outlook Web attachment drags (Office.js format —
+                // an item with kind:'string' and type:'attachment' containing an attachmentFiles JSON).
+                // Parse it to show the user the specific filename they tried to drop so they know what to save.
+                // Future: can use attachmentItemId + Microsoft Graph to fetch the file if the app has a graph token.
+                try{
+                  const outlookItem=Array.from(e.dataTransfer.items||[]).find(i=>i.kind==='string'&&i.type==='attachment');
+                  if(outlookItem){
+                    setErr("Reading Outlook attachment info\u2026");
+                    outlookItem.getAsString(s=>{
+                      let name=null,sizeKb=null;
+                      try{
+                        const parsed=JSON.parse(s);
+                        const af=parsed&&parsed.attachmentFiles&&parsed.attachmentFiles[0];
+                        if(af){name=af.name||null;if(af.size)sizeKb=Math.round(af.size/1024);}
+                      }catch(parseErr){}
+                      const label=name?`"${name}"${sizeKb?` (${sizeKb} KB)`:""}`:"that Outlook attachment";
+                      setErr(`Outlook doesn't share attachment files with other apps for security reasons. To upload ${label}: save it to your Desktop first (right-click \u2192 Save As), then drag it from File Explorer \u2014 or click the drop zone to browse.`);
+                    });
+                    return;
+                  }
+                }catch(dropErr){console.warn("Outlook drop detection failed:",dropErr);}
+                setErr("Couldn't read that attachment. If it's from Outlook or another email app, save it to your Desktop first, then drag it from File Explorer \u2014 or click the drop zone to browse.");
               }}
               onClick={()=>!processing&&!detecting&&!awaitingConfirm&&fileRef.current?.click()}
               data-tour="add-files-zone"
