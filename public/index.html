@@ -2174,13 +2174,19 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   if(!_bcToken)return{items:[],hasMore:false};
   const compId=await bcGetCompanyId();
   if(!compId)return{items:[],hasMore:false};
-  const q=query.trim().replace(/'/g,"''");
+  // DECISION(v1.19.592): Tokenize on whitespace OR comma so "DUCT COVER", "DUCT,COVER",
+  // and "DUCT, COVER" all find items containing both tokens in number OR displayName.
+  // BC rejects `or` across distinct fields, so we still run two queries (number, displayName)
+  // and merge. Within a field the tokens are ANDed — an item matches only if it contains ALL
+  // tokens in that field.
+  const tokens=query.trim().split(/[\s,]+/).map(t=>t.trim()).filter(t=>t.length>0).map(t=>t.replace(/'/g,"''"));
+  if(!tokens.length)return{items:[],hasMore:false};
+  const andOn=(fieldName)=>tokens.map(t=>`contains(${fieldName},'${t}')`).join(' and ');
   try{
     if(field==="both"){
-      // Two separate calls — BC may not support 'or' with contains()
       const [byNum,byName]=await Promise.all([
-        _bcFetchItems(compId,`contains(number,'${q}')`,top+1,skip),
-        _bcFetchItems(compId,`contains(displayName,'${q}')`,top+1,skip)
+        _bcFetchItems(compId,andOn('number'),top+1,skip),
+        _bcFetchItems(compId,andOn('displayName'),top+1,skip)
       ]);
       const seen=new Set();
       const merged=[];
@@ -2189,10 +2195,10 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
       }
       merged.sort((a,b)=>a.number.localeCompare(b.number));
       const hasMore=merged.length>top;
-      console.log("bcSearchItems results:",Math.min(merged.length,top),"items (both fields)");
+      console.log(`bcSearchItems results: ${Math.min(merged.length,top)} items (both fields, ${tokens.length} token${tokens.length>1?'s':''})`);
       return{items:merged.slice(0,top),hasMore};
     }
-    const filter=field==="number"?`contains(number,'${q}')`:`contains(displayName,'${q}')`;
+    const filter=field==="number"?andOn('number'):andOn('displayName');
     const all=await _bcFetchItems(compId,filter,top+1,skip);
     if(!all)return{items:[],hasMore:false};
     const hasMore=all.length>top;
