@@ -12387,7 +12387,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   }
                 }
                 if(files.length>0){addFiles(files);}
-                else{setErr("Couldn't read that attachment. If it's from Outlook or another email app, save it to your Desktop first, then drag it from File Explorer.");}
+                else{
+                  // DIAG(v1.19.586): log what Outlook/clipboard-source DID offer so we can add a fallback if there's something fetchable
+                  try{
+                    const dxTypes=Array.from(e.dataTransfer.types||[]);
+                    const dxItems=Array.from(e.dataTransfer.items||[]).map(i=>({kind:i.kind,type:i.type}));
+                    const dxExtra={};
+                    ['text/plain','text/uri-list','text/html','application/x-moz-file-promise-url','DownloadURL','Files','FileName','FileNameW','FileGroupDescriptor','FileGroupDescriptorW'].forEach(t=>{try{const v=e.dataTransfer.getData(t);if(v)dxExtra[t]=v.slice(0,500);}catch(e){}});
+                    console.log('[DROP-FAIL DIAG] dataTransfer contents:',{types:dxTypes,items:dxItems,extra:dxExtra});
+                  }catch(diagErr){}
+                  setErr("Couldn't read that attachment. If it's from Outlook or another email app, save it to your Desktop first, then drag it from File Explorer.");
+                }
               }}
               onClick={()=>!processing&&!detecting&&!awaitingConfirm&&fileRef.current?.click()}
               data-tour="add-files-zone"
