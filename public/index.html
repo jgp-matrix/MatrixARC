@@ -12373,7 +12373,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <div
               onDragOver={e=>{e.preventDefault();setDragging(true);}}
               onDragLeave={()=>setDragging(false)}
-              onDrop={e=>{e.preventDefault();setDragging(false);if(!awaitingConfirm)addFiles(e.dataTransfer.files);}}
+              onDrop={e=>{
+                e.preventDefault();setDragging(false);
+                if(awaitingConfirm)return;
+                // DECISION(v1.19.585): Outlook drags put attachments in dataTransfer.items (kind:'file'),
+                // not dataTransfer.files. Collect from BOTH sources synchronously before the event ends
+                // (dataTransfer is revoked after the handler returns).
+                const files=[];
+                if(e.dataTransfer.files)for(const f of Array.from(e.dataTransfer.files))files.push(f);
+                if(files.length===0&&e.dataTransfer.items){
+                  for(const item of Array.from(e.dataTransfer.items)){
+                    if(item.kind==='file'){const f=item.getAsFile();if(f)files.push(f);}
+                  }
+                }
+                if(files.length>0){addFiles(files);}
+                else{setErr("Couldn't read that attachment. If it's from Outlook or another email app, save it to your Desktop first, then drag it from File Explorer.");}
+              }}
               onClick={()=>!processing&&!detecting&&!awaitingConfirm&&fileRef.current?.click()}
               data-tour="add-files-zone"
               style={{flexShrink:0,width:420,height:381,border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:6,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:processing||detecting?"default":"pointer",transition:"all 0.15s",background:dragging?C.accentDim+"33":"transparent",textAlign:"center",padding:12,gap:8}}>
