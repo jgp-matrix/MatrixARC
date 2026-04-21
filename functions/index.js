@@ -408,6 +408,144 @@ exports.onSupplierQuoteSubmitted = functions.firestore
     return null;
   });
 
+// ── USER-REPORTED ISSUE NOTIFICATIONS ──
+// DECISION(v1.19.594): When a user clicks "Report Issue", notify all admins of the
+// company via in-app bell, push, email, and Teams. Only fires for severity='user_reported'
+// so we don't spam for auto-captured console errors (those are visible in-app only).
+
+exports.onIssueReported = functions.firestore
+  .document('companies/{companyId}/debugLogs/{logId}')
+  .onCreate(async (snap, context) => {
+    const entry = snap.data() || {};
+    if (entry.severity !== 'user_reported') return null;
+
+    const companyId = context.params.companyId;
+    const logId = context.params.logId;
+    const reporterEmail = entry.userEmail || '';
+    const reporterName = entry.userName || reporterEmail.split('@')[0] || 'A user';
+    const description = (entry.description || entry.message || '').toString();
+    const shortDesc = description.length > 160 ? description.slice(0, 157) + '…' : description;
+    const appVersion = entry.appVersion || '';
+    const url = entry.url || APP_URL;
+
+    // Look up company name + admin members
+    let companyName = 'MatrixARC';
+    try {
+      const companyDoc = await db.doc(`companies/${companyId}`).get();
+      if (companyDoc.exists) companyName = companyDoc.data().name || companyName;
+    } catch (e) { /* ignore */ }
+
+    const membersSnap = await db.collection(`companies/${companyId}/members`).get();
+    const adminUids = membersSnap.docs
+      .filter(d => d.data().role === 'admin')
+      .map(d => d.id);
+
+    if (adminUids.length === 0) {
+      console.log('No admins found for company', companyId, '- skipping issue notification');
+      return null;
+    }
+
+    const notifTitle = `Issue Reported by ${reporterName}`;
+    const notifBody = shortDesc;
+
+    // 1) In-app bell notification + push per admin
+    for (const adminUid of adminUids) {
+      try {
+        await db.collection(`users/${adminUid}/notifications`).add({
+          type: 'issue_report',
+          title: notifTitle,
+          body: notifBody,
+          createdAt: Date.now(),
+          read: false,
+          debugLogId: logId,
+          reporterEmail,
+          reporterName,
+          companyId,
+          appVersion,
+        });
+      } catch (e) {
+        console.warn(`Notification write failed for ${adminUid}:`, e.message);
+      }
+      await sendPushToUser(adminUid, {
+        title: notifTitle,
+        body: notifBody,
+        data: {
+          url: APP_URL + '?openDebugLogs=1',
+          type: 'issue_report',
+          debugLogId: logId,
+          tag: `issue_${logId}`,
+        },
+      });
+    }
+
+    // 2) Teams webhook (once)
+    await postToTeams({
+      title: `🐛 Issue Reported — ${companyName}`,
+      body: shortDesc,
+      url: APP_URL,
+      facts: [
+        { name: 'Reporter', value: `${reporterName} (${reporterEmail})` },
+        { name: 'App Version', value: appVersion },
+        { name: 'Page', value: url },
+      ],
+    });
+
+    // 3) Email each admin via SendGrid
+    if (!SENDGRID_KEY) {
+      console.log('SENDGRID_KEY not set - skipping issue report email');
+      return null;
+    }
+
+    const breadcrumbs = Array.isArray(entry.breadcrumbs) ? entry.breadcrumbs.slice(-15) : [];
+    const breadcrumbsHtml = breadcrumbs.length
+      ? `<div style="margin-top:16px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">
+          <div style="font-size:11px;color:#64748b;font-weight:700;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">Recent Activity</div>
+          <pre style="margin:0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#334155;line-height:1.5;white-space:pre-wrap;word-break:break-word">${breadcrumbs.map(b => {
+            const ts = new Date(b.t || Date.now()).toLocaleTimeString();
+            const msg = (b.message || '').toString().slice(0, 180).replace(/</g, '&lt;');
+            return `${ts}  [${b.type || '?'}] ${msg}`;
+          }).join('\n')}</pre>
+        </div>`
+      : '';
+
+    const emailHtml = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;color:#1e293b">
+      <h2 style="color:#1e293b;margin:0 0 8px 0;font-size:20px">🐛 Issue Report</h2>
+      <p style="color:#64748b;margin:0 0 20px 0;font-size:13px"><strong>${reporterName}</strong> (${reporterEmail}) reported an issue in ${companyName}.</p>
+      <div style="background:#fef9c3;border-left:4px solid #eab308;padding:14px 18px;border-radius:4px;margin-bottom:16px">
+        <div style="font-size:11px;color:#854d0e;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Description</div>
+        <div style="font-size:14px;color:#422006;line-height:1.55;white-space:pre-wrap">${(description || '(no description)').replace(/</g, '&lt;')}</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:8px;font-size:12px">
+        <tr><td style="padding:4px 0;color:#64748b;width:110px">Page URL:</td><td style="padding:4px 0;color:#1e293b;word-break:break-all">${url.replace(/</g, '&lt;')}</td></tr>
+        <tr><td style="padding:4px 0;color:#64748b">App Version:</td><td style="padding:4px 0;color:#1e293b">${appVersion || '(unknown)'}</td></tr>
+        <tr><td style="padding:4px 0;color:#64748b">Project / Panel:</td><td style="padding:4px 0;color:#1e293b">${entry.projectId || '—'}${entry.panelId ? ' / ' + entry.panelId : ''}</td></tr>
+      </table>
+      ${breadcrumbsHtml}
+      <div style="margin-top:24px">
+        <a href="${APP_URL}?openDebugLogs=1" style="display:inline-block;background:#2563eb;color:#fff;font-weight:700;font-size:14px;padding:11px 24px;border-radius:8px;text-decoration:none">Open Debug Logs in ARC &rarr;</a>
+      </div>
+      <p style="color:#94a3b8;font-size:11px;margin-top:24px">You are receiving this because you are an admin of ${companyName} in MatrixARC.</p>
+    </div>`;
+
+    for (const adminUid of adminUids) {
+      try {
+        const adminRecord = await admin.auth().getUser(adminUid);
+        const adminEmail = adminRecord.email;
+        if (!adminEmail) continue;
+        await sgMail.send({
+          to: adminEmail,
+          from: 'sales@matrixpci.com',
+          subject: `🐛 ARC Issue: ${shortDesc.slice(0, 90) || 'User-reported issue'}`,
+          html: emailHtml,
+        });
+      } catch (e) {
+        console.warn(`Issue report email failed for admin ${adminUid}:`, e.message);
+      }
+    }
+
+    return null;
+  });
+
 // ── ENGINEERING QUESTIONS EMAIL ──
 
 exports.sendEngineerQuestionEmail = functions.https.onCall(async (data, context) => {
