@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.597";
+const APP_VERSION="v1.19.598";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4992,8 +4992,9 @@ function _bomDescSim(a,b){
   return shared/Math.max(wa.size,wb.size)>=0.6;
 }
 // Fuzzy merge: assumes exact-normalized dedup has already run. Collapses near-duplicates.
-function fuzzyMergeBomItems(items){
-  const out=[];const consumed=new Set();
+// Returns { items, merges } where merges is [{ kept, dropped, editDist, reason, manufacturer, description }].
+function fuzzyMergeBomItemsWithReport(items){
+  const out=[];const consumed=new Set();const merges=[];
   for(let i=0;i<items.length;i++){
     if(consumed.has(i))continue;
     let base=items[i];
@@ -5025,21 +5026,31 @@ function fuzzyMergeBomItems(items){
       // Merge: prefer the LONGER partNumber as canonical (more chars = more likely correct reading)
       const keepA=pnA.length>=pnB.length;
       const mergedNotes=[base.notes,b.notes].filter(Boolean).join("; ")||base.notes||b.notes||"";
+      const kept=keepA?base.partNumber:b.partNumber;
+      const dropped=keepA?b.partNumber:base.partNumber;
+      merges.push({
+        kept,dropped,editDist:ed,
+        reason:mfrMatch&&descMatch?"mfr+desc match":mfrMatch?"mfr match":"desc match",
+        manufacturer:base.manufacturer||b.manufacturer||"",
+        description:((base.description||"").length>=(b.description||"").length?base.description:b.description)||"",
+      });
       base={
         ...base,
-        partNumber:keepA?base.partNumber:b.partNumber,
+        partNumber:kept,
         qty:(+base.qty||1)+(+b.qty||1),
         description:(base.description||"").length>=(b.description||"").length?base.description:b.description,
         manufacturer:base.manufacturer||b.manufacturer,
         notes:mergedNotes,
       };
       consumed.add(j);
-      console.log(`BOM FUZZY MERGE: "${b.partNumber}" → "${base.partNumber}" (editDist=${ed}, qty=${base.qty})`);
+      console.log(`BOM FUZZY MERGE: "${dropped}" → "${kept}" (editDist=${ed}, qty=${base.qty})`);
     }
     out.push(base);
   }
-  return out;
+  return {items:out,merges};
 }
+// Back-compat wrapper (items-only)
+function fuzzyMergeBomItems(items){return fuzzyMergeBomItemsWithReport(items).items;}
 function mergeBoms(bomArrays){
   const map={};
   bomArrays.flat().forEach(item=>{
@@ -6408,14 +6419,15 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         if(pageQs.length)allQuestions.push(...pageQs);
         return pageItems.map(item=>({...item,sourcePageIdx:pgIdx}));
       },3).then(results=>{
-        const all=results.flat();if(!all.length)return{bom:[],questions:allQuestions};
+        const all=results.flat();if(!all.length)return{bom:[],questions:allQuestions,mergeStats:{raw:0,exact:0,fuzzy:0,fuzzyMerges:[]}};
         const map={};
         all.forEach(item=>{const pn=_bomNormPn(item.partNumber);const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}});
         const exact=Object.values(map);
-        const fuzzy=fuzzyMergeBomItems(exact);
+        const fuzzyReport=fuzzyMergeBomItemsWithReport(exact);
+        const fuzzy=fuzzyReport.items;
         console.log(`BOM MERGE: ${all.length} raw → ${exact.length} exact-dedup → ${fuzzy.length} fuzzy-dedup`);
-        return{bom:appendDefaultBomItems(fuzzy),questions:allQuestions.slice(0,10)};
-      }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[]};});
+        return{bom:appendDefaultBomItems(fuzzy),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,exact:exact.length,fuzzy:fuzzy.length,fuzzyMerges:fuzzyReport.merges}};
+      }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[],mergeStats:null};});
     }
     // Hazardous location scan (parallel with BOM — uses Haiku, fast)
     const hazlocPromise=scanForHazardousLocation(latestPanel.pages);
@@ -6427,14 +6439,26 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // Await BOM and save
     const bomResult=await bomMergePromise;
     const mergedBom=bomResult.bom||bomResult;
+    const mergeStats=bomResult.mergeStats||null;
     const aiQuestions=[]; // DECISION(v1.19.530): Disabled — engineering questions feature needs attention
     const eqs=[];
     // DECISION(v1.19.395): Refresh latestPanel after BOM save so compliance review sees the latest
     // engineering questions. Without this, the stale reference caused duplicate questions.
     // Await hazardous location scan result
     const hazlocResult=await hazlocPromise.catch(()=>null);
+    // DECISION(v1.19.598): Build extraction report so user sees scan concerns (fuzzy-merged
+    // OCR variants, suspect parts, missing title block) instead of them being silent.
+    const extractionReport=mergeStats?{
+      rawCount:mergeStats.raw,
+      exactCount:mergeStats.exact,
+      finalCount:mergeStats.fuzzy,
+      fuzzyMerges:mergeStats.fuzzyMerges||[],
+      bomPageCount:bomPages.length,
+      timestamp:Date.now(),
+      version:APP_VERSION,
+    }:null;
     if(mergedBom.length>0||hazlocResult){
-      const bomSave={...latestPanel,...(mergedBom.length>0?{bom:mergedBom}:{}),...(aiQuestions.length?{aiQuestions}:{}),engineeringQuestions:eqs,...(hazlocResult?{hazardousLocation:hazlocResult}:{}),status:mergedBom.length>0?"extracted":latestPanel.status,updatedAt:Date.now()};
+      const bomSave={...latestPanel,...(mergedBom.length>0?{bom:mergedBom}:{}),...(aiQuestions.length?{aiQuestions}:{}),engineeringQuestions:eqs,...(hazlocResult?{hazardousLocation:hazlocResult}:{}),...(extractionReport?{extractionReport}:{}),status:mergedBom.length>0?"extracted":latestPanel.status,updatedAt:Date.now()};
       await save(bomSave);
       latestPanel={...bomSave};
     }
@@ -6453,7 +6477,17 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const bomToVerify=(latestPanel.bom||[]).slice();
     if(bomToVerify.length>0&&hasVerify){
       phasePct("verify",0);bgUpdate(panel.id,"Verifying part numbers…");
-      try{const vr=await verifyPartNumbers(bomToVerify);phasePct("verify",1);if(vr?.length>0)await save({...latestPanel,bomVerification:vr,updatedAt:Date.now()});}
+      try{
+        const vr=await verifyPartNumbers(bomToVerify);
+        phasePct("verify",1);
+        if(vr?.length>0){
+          // DECISION(v1.19.598): fold suspect/plausible counts into extractionReport for banner.
+          const suspectCount=vr.filter(v=>v.status==="suspect").length;
+          const plausibleCount=vr.filter(v=>v.status==="plausible").length;
+          const updatedReport=latestPanel.extractionReport?{...latestPanel.extractionReport,suspectCount,plausibleCount}:null;
+          await save({...latestPanel,bomVerification:vr,...(updatedReport?{extractionReport:updatedReport}:{}),updatedAt:Date.now()});
+        }
+      }
       catch(e){console.warn("Part verification failed:",e);}
     }
     // Compliance review — UL508A/C22.2 analysis against ARC Neural IQ
@@ -10491,6 +10525,102 @@ function StampedDrawing({src,overlay,width,height,onClick}){
   return <canvas ref={canvasRef} width={width} height={height} onClick={onClick} style={{borderRadius:6,display:'block',cursor:'zoom-in'}}/>;
 }
 
+// ── SCAN RESULTS BANNER ──
+// DECISION(v1.19.598): Surface extraction concerns (OCR-variant dedups, suspect parts,
+// missing title block) so the user gets a heads-up instead of silently-resolved edge cases.
+function ScanResultsBanner({panel}){
+  const [expanded,setExpanded]=React.useState(false);
+  const r=panel.extractionReport;
+  if(!r)return null;
+  const fuzzyMerges=r.fuzzyMerges||[];
+  const duplicatesFound=Math.max(0,(r.rawCount||0)-(r.finalCount||0));
+  const missingTitle=[];
+  if(!panel.drawingNo)missingTitle.push("DWG #");
+  if(!panel.drawingDesc)missingTitle.push("Description");
+  if(!panel.drawingRev)missingTitle.push("Revision");
+  const suspectCount=r.suspectCount||0;
+  const plausibleCount=r.plausibleCount||0;
+  const concerns=[];
+  if(fuzzyMerges.length>0)concerns.push(`${fuzzyMerges.length} OCR duplicate${fuzzyMerges.length>1?"s":""} auto-merged`);
+  if(duplicatesFound>0&&fuzzyMerges.length===0)concerns.push(`${duplicatesFound} duplicate rows merged`);
+  if(suspectCount>0)concerns.push(`${suspectCount} suspect part #${suspectCount>1?"s":""}`);
+  if(missingTitle.length>0)concerns.push(`title block missing: ${missingTitle.join(", ")}`);
+  if(concerns.length===0)return null;
+  const fmtTs=()=>{try{return new Date(r.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});}catch(e){return "";}};
+  return(
+    <div style={{background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:expanded?"12px 14px":"8px 12px",marginBottom:12,fontSize:12}}>
+      <div onClick={()=>setExpanded(!expanded)} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
+        <span style={{fontSize:16}}>⚠️</span>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:700,color:C.yellow,fontSize:13}}>Scan Results — {concerns.length} concern{concerns.length>1?"s":""}</div>
+          <div style={{color:"#fde68a",fontSize:11,marginTop:2}}>{concerns.join(" · ")}</div>
+        </div>
+        <div style={{color:C.yellow,fontSize:11,fontWeight:600}}>{expanded?"▼ Hide":"▶ Details"}</div>
+      </div>
+      {expanded&&(
+        <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.yellow}55`}}>
+          <div style={{color:"#fef3c7",fontSize:11,marginBottom:10,display:"flex",gap:20,flexWrap:"wrap"}}>
+            <div><span style={{color:"#fcd34d",fontWeight:600}}>Extracted:</span> {r.rawCount||0} raw → {r.finalCount||0} unique ({r.bomPageCount||0} page{r.bomPageCount!==1?"s":""})</div>
+            {r.timestamp&&<div><span style={{color:"#fcd34d",fontWeight:600}}>When:</span> {fmtTs()}</div>}
+            {r.version&&<div><span style={{color:"#fcd34d",fontWeight:600}}>Version:</span> {r.version}</div>}
+          </div>
+          {missingTitle.length>0&&(
+            <div style={{marginBottom:10}}>
+              <div style={{color:C.yellow,fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>🏷 Title Block</div>
+              <div style={{color:"#fef3c7",fontSize:12,lineHeight:1.5}}>
+                AI could not read the following field{missingTitle.length>1?"s":""} from the title block: <strong>{missingTitle.join(", ")}</strong>. Fill in manually above.
+              </div>
+            </div>
+          )}
+          {fuzzyMerges.length>0&&(
+            <div style={{marginBottom:10}}>
+              <div style={{color:C.yellow,fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>🔀 OCR Duplicates Merged ({fuzzyMerges.length})</div>
+              <div style={{color:"#fef3c7",fontSize:11,marginBottom:6,lineHeight:1.4}}>
+                The AI read these part numbers two different ways on the drawings (likely OCR errors). They were auto-merged — verify the kept value is correct. If a merge is wrong, edit the BOM row to split them back out.
+              </div>
+              <div style={{background:"#1a1300",border:`1px solid ${C.yellow}33`,borderRadius:6,overflow:"hidden"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                  <thead>
+                    <tr style={{background:"#2a1700"}}>
+                      <th style={{textAlign:"left",padding:"6px 10px",color:"#fcd34d",fontSize:10,textTransform:"uppercase",letterSpacing:0.5}}>Kept</th>
+                      <th style={{textAlign:"left",padding:"6px 10px",color:"#fcd34d",fontSize:10,textTransform:"uppercase",letterSpacing:0.5}}>Dropped</th>
+                      <th style={{textAlign:"left",padding:"6px 10px",color:"#fcd34d",fontSize:10,textTransform:"uppercase",letterSpacing:0.5}}>Mfr</th>
+                      <th style={{textAlign:"left",padding:"6px 10px",color:"#fcd34d",fontSize:10,textTransform:"uppercase",letterSpacing:0.5}}>Reason</th>
+                      <th style={{textAlign:"left",padding:"6px 10px",color:"#fcd34d",fontSize:10,textTransform:"uppercase",letterSpacing:0.5}}>Δ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fuzzyMerges.map((m,i)=>(
+                      <tr key={i} style={{borderTop:`1px solid ${C.yellow}22`}}>
+                        <td style={{padding:"5px 10px",color:"#fef3c7",fontFamily:"ui-monospace,Menlo,Consolas,monospace",fontSize:11,fontWeight:600}}>{m.kept}</td>
+                        <td style={{padding:"5px 10px",color:"#fcd34d",fontFamily:"ui-monospace,Menlo,Consolas,monospace",fontSize:11,textDecoration:"line-through",opacity:0.8}}>{m.dropped}</td>
+                        <td style={{padding:"5px 10px",color:"#fef3c7",fontSize:11}}>{m.manufacturer||"—"}</td>
+                        <td style={{padding:"5px 10px",color:"#fef3c7",fontSize:11}}>{m.reason}</td>
+                        <td style={{padding:"5px 10px",color:"#fef3c7",fontSize:11,fontFamily:"ui-monospace,Menlo,Consolas,monospace"}}>{m.editDist}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {suspectCount>0&&(
+            <div style={{marginBottom:4}}>
+              <div style={{color:C.yellow,fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>❓ Suspect Part Numbers ({suspectCount})</div>
+              <div style={{color:"#fef3c7",fontSize:11,lineHeight:1.5}}>
+                The AI flagged {suspectCount} part number{suspectCount>1?"s":""} as not matching a known manufacturer pattern. Look for the <span style={{color:C.red,fontWeight:600}}>red</span> verification badge in the BOM table below and double-check those rows.
+              </div>
+            </div>
+          )}
+          {plausibleCount>0&&(
+            <div style={{color:"#fde68a",fontSize:11,fontStyle:"italic",marginTop:6}}>Plus {plausibleCount} plausible-but-unverified part{plausibleCount>1?"s":""} — likely fine but worth a glance.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── PANEL CARD (inline workspace) ──
 function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project}){
   const [dragging,setDragging]=useState(false);
@@ -11576,15 +11706,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
     const exactDedup=Object.values(map);
-    const fuzzyDedup=fuzzyMergeBomItems(exactDedup);
+    const fuzzyReport=fuzzyMergeBomItemsWithReport(exactDedup);
+    const fuzzyDedup=fuzzyReport.items;
     console.log(`BOM MERGE: ${all.length} raw → ${exactDedup.length} exact-dedup → ${fuzzyDedup.length} fuzzy-dedup`);
     const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fuzzyDedup.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     })));
+    const reExtractionReport={
+      rawCount:all.length,exactCount:exactDedup.length,finalCount:fuzzyDedup.length,
+      fuzzyMerges:fuzzyReport.merges,bomPageCount:bomPages.length,
+      timestamp:Date.now(),version:APP_VERSION,
+    };
     ep.set(80,"Saving BOM…");
     const reEqs=mergeEngineeringQuestions([],reQs,null); // fresh questions on re-extract
-    let updated={...latestPanelRef.current,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),engineeringQuestions:reEqs,status:"extracted",updatedAt:Date.now()};
+    let updated={...latestPanelRef.current,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),engineeringQuestions:reEqs,extractionReport:reExtractionReport,status:"extracted",updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     setTagsChanged(false);
@@ -11712,15 +11848,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
-    const fbFuzzy=fuzzyMergeBomItems(Object.values(map));
+    const fbExact=Object.values(map);
+    const fbFuzzyReport=fuzzyMergeBomItemsWithReport(fbExact);
+    const fbFuzzy=fbFuzzyReport.items;
     const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fbFuzzy.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     })));
+    const fbReport={
+      rawCount:all.length,exactCount:fbExact.length,finalCount:fbFuzzy.length,
+      fuzzyMerges:fbFuzzyReport.merges,bomPageCount:bomPages.length,
+      timestamp:Date.now(),version:APP_VERSION,
+    };
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
     const feedbackLog=[...((latestPanel.extractionFeedbackLog)||[]),logEntry];
     const fbEqs=mergeEngineeringQuestions([],fbQs,null);
-    const updated={...latestPanel,bom,...(typeof fbQs!=='undefined'&&fbQs.length?{aiQuestions:fbQs}:{}),engineeringQuestions:fbEqs,status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
+    const updated={...latestPanel,bom,...(typeof fbQs!=='undefined'&&fbQs.length?{aiQuestions:fbQs}:{}),engineeringQuestions:fbEqs,extractionReport:fbReport,status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
     onUpdate(updated);
     const laborMsg=laborResult?.wires!=null?` · labor set to ${updated.pricing?.laborHoursOverride} hrs`:"";
@@ -12936,6 +13079,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>}
         </div>;
       })()}
+
+      {/* Scan Results Banner — shows extraction concerns (OCR dedups, title block gaps, suspect parts) */}
+      {!extracting&&!validatingPanel&&(panel.bom||[]).length>0&&<ScanResultsBanner panel={panel}/>}
 
       {/* BOM Table */}
       {true&&(
