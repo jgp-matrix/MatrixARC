@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.611";
+const APP_VERSION="v1.19.612";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -24342,25 +24342,24 @@ function App({user}){
   const [teamTasks,setTeamTasks]=useState([]);
   useEffect(()=>{
     if(!companyId||!user.uid)return;
-    // One-time startup sweep: delete MY own stale tasks (orphaned from crashed tabs / hard reloads).
-    // Rules only let me delete my own records, which is exactly what we want — each user cleans up
-    // after themselves. Runs once per session on mount.
+    // DECISION(v1.19.612): Startup sweep — delete ALL stale activeExtractions docs, not just
+    // own. Firestore rules (v1.19.612) allow any member to delete any doc here so ghosts from
+    // a teammate's crashed tab get cleaned up by anyone who opens the app next.
     (async()=>{
       try{
-        const ownSnap=await fbDb.collection(`companies/${companyId}/activeExtractions`)
-          .where('uid','==',user.uid).get();
+        const allSnap=await fbDb.collection(`companies/${companyId}/activeExtractions`).get();
         const now=Date.now();
-        const stale=ownSnap.docs.filter(d=>{
+        const stale=allSnap.docs.filter(d=>{
           const t=d.data();
           const heartAge=now-(t.heartbeatAt||0);
           const startAge=now-(t.startedAt||0);
           return heartAge>60000||startAge>900000||t.status!=='running';
         });
         if(stale.length){
-          await Promise.all(stale.map(d=>d.ref.delete().catch(()=>{})));
-          console.log('[ACTIVE-EXTRACTIONS] cleaned up',stale.length,'own stale docs');
+          await Promise.all(stale.map(d=>d.ref.delete().catch(err=>console.warn('stale delete failed for',d.id,':',err.code))));
+          console.log('[ACTIVE-EXTRACTIONS] cleaned up',stale.length,'stale docs company-wide:',stale.map(d=>({id:d.id,user:d.data().userName||d.data().userEmail||'?',heartAge:Math.round((now-(d.data().heartbeatAt||0))/1000)+'s',status:d.data().status})));
         }
-      }catch(e){console.warn('own-stale cleanup failed:',e.message);}
+      }catch(e){console.warn('stale cleanup failed:',e.message);}
     })();
     const unsub=fbDb.collection(`companies/${companyId}/activeExtractions`).onSnapshot(snap=>{
       const now=Date.now();
