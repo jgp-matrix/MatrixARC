@@ -24,6 +24,7 @@ input[type=number].no-spin{-moz-appearance:textfield}
 [data-tip]:hover::after{opacity:1;}
 body.no-tips [data-tip]::after{opacity:0!important;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeInDown{from{opacity:0;transform:translate(-50%,-12px)}to{opacity:1;transform:translate(-50%,0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
 @keyframes shimmer{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}
@@ -210,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.607";
+const APP_VERSION="v1.19.608";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -17429,10 +17430,16 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   remoteEditor={(() => {
                     // DECISION(v1.19.599): If someone else has an active task on this project AND
                     // I'm not the owner, the panel is read-only-ish with a grey-out overlay.
-                    const t=(projectRemoteTasks||[]).find(t=>t.taskId===panel.id||t.taskId===panel.id+'_bcsync');
-                    if(!t)return null;
+                    // DECISION(v1.19.608): Broadened — ANY teammate task on this project greys out
+                    // ALL panels (extraction, pricing, BC sync, validation — anything using bg*).
+                    // Prefer the task matching this specific panel (more relevant msg), fall back
+                    // to any active task on the project.
+                    const tasks=(projectRemoteTasks||[]).filter(t=>t.status==='running');
+                    if(!tasks.length)return null;
                     const iAmOwner=project.createdBy===uid;
-                    return iAmOwner?null:t; // owner wins; others get greyed
+                    if(iAmOwner)return null; // owner wins — never greyed
+                    const t=tasks.find(t=>t.taskId===panel.id||t.taskId===panel.id+'_bcsync')||tasks[0];
+                    return t;
                   })()}
                   isSelected={panel.id===selectedPanelId}
                   onSelect={()=>setSelectedPanelId(panel.id)}
@@ -18216,7 +18223,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // DECISION(v1.19.600): When a teammate is/was editing (grey-out overlay active or recent),
   // silently apply remote updates instead of showing the "Refresh" banner — user wasn't
   // editing (panels were locked), so merging is safe and removes the manual-reload friction.
+  // DECISION(v1.19.608): ALWAYS soft-apply remote changes (no more hard page reload). Show a
+  // brief transient toast so the user knows data refreshed. Auto-save runs every 1–2 s so
+  // local unsaved edits are rare; if they do exist and conflict, the user's next auto-save
+  // will win (Firestore has no merge, last-write-wins is the existing semantics).
   const lastRemoteEditorAtRef=useRef(0);
+  const [externalUpdateToast,setExternalUpdateToast]=useState(null); // {userName, updatedAt} | null
   useEffect(()=>{if(projectRemoteTasks&&projectRemoteTasks.length>0)lastRemoteEditorAtRef.current=Date.now();},[projectRemoteTasks&&projectRemoteTasks.length]);
   useEffect(()=>{
     if(!init.id)return;
@@ -18227,16 +18239,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(firstSnapshot){firstSnapshot=false;return;} // Skip initial load
       const remote=snap.data();
       if(remote.updatedBy&&remote.updatedBy!==uid){
-        // If a teammate is editing right now, or finished editing in the last 20s, silent-apply.
+        // Always soft-apply: migrate remote data into local state (no page reload).
+        const migrated=migrateProject({...remote,id:init.id});
+        projectRef.current=migrated;
+        setProject(migrated);
+        console.log('[CONCURRENT] Soft-applied remote update from',remote.updatedBy);
+        // Show a brief toast (skip if grey-out overlay already communicates the source).
         const remoteActive=(projectRemoteTasks||[]).length>0;
         const recentlyActive=Date.now()-lastRemoteEditorAtRef.current<20000;
-        if(remoteActive||recentlyActive){
-          const migrated=migrateProject({...remote,id:init.id});
-          projectRef.current=migrated;
-          setProject(migrated);
-          console.log('[CONCURRENT] Silent-applied remote update from',remote.updatedBy,'(grey-out was active)');
-        }else{
-          setExternalUpdate(true);
+        if(!remoteActive&&!recentlyActive){
+          setExternalUpdateToast({updatedAt:Date.now()});
+          // Auto-dismiss after 4 seconds
+          setTimeout(()=>setExternalUpdateToast(null),4000);
         }
       }
     });
@@ -18944,13 +18958,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         </div>
       ):(
         <>
-          {externalUpdate&&(
-            <div style={{position:"fixed",top:80,left:"50%",transform:"translateX(-50%)",zIndex:800,background:"#451a03",border:"1px solid #f59e0b",borderRadius:8,padding:"10px 20px",display:"flex",alignItems:"center",gap:12,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>
-              <span style={{fontSize:13,color:"#f59e0b",fontWeight:700}}>⚠ This project was updated by another user.</span>
-              <button onClick={()=>{window.location.reload();}} style={{background:"#f59e0b",color:"#0d0d1a",border:"none",borderRadius:6,padding:"4px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Refresh</button>
-              <button onClick={()=>setExternalUpdate(false)} style={{background:"none",border:"1px solid #f59e0b44",borderRadius:6,padding:"4px 10px",fontSize:12,color:"#f59e0b",cursor:"pointer"}}>Dismiss</button>
+          {/* DECISION(v1.19.608): Brief transient toast in place of the "Refresh" banner.
+              Remote changes are already soft-applied to local state; this is just a heads-up. */}
+          {externalUpdateToast&&(
+            <div style={{position:"fixed",top:80,left:"50%",transform:"translateX(-50%)",zIndex:800,background:"#052e1c",border:"1px solid #10b981",borderRadius:8,padding:"8px 16px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 4px 20px rgba(0,0,0,0.5)",fontSize:12,color:"#6ee7b7",fontWeight:600,animation:"fadeInDown 0.25s ease-out"}}>
+              <span style={{fontSize:14}}>🔄</span>
+              <span>Updated by a teammate — data refreshed</span>
+              <button onClick={()=>setExternalUpdateToast(null)} style={{background:"none",border:"1px solid #10b98144",borderRadius:4,padding:"2px 8px",fontSize:11,color:"#6ee7b7",cursor:"pointer",marginLeft:4}}>×</button>
             </div>
           )}
+          {/* Keep legacy state-variable wired (harmless, unused by new toast flow) */}
+          {false&&externalUpdate&&(<div style={{display:"none"}}/>)}
           <PanelListView
             project={project}
             uid={uid}
