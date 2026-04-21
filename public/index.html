@@ -210,7 +210,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.605";
+const APP_VERSION="v1.19.606";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11814,17 +11814,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if((panel.bom||[]).length>0)saveSnapshot(uid,projectId,panel,"Before re-extraction").catch(()=>{});
     setExtracting(true);setErr("");ep.start(startMsg||"Extracting BOM…",bomPages.length*15);
     // DECISION(v1.19.599): Mirror re-extract status to team-wide bus so teammates see it.
+    // DECISION(v1.19.606): Also emit bgSetPct/bgUpdate alongside ep.set so the team-wide
+    // progress bar actually advances (was stuck at 0% because only local ep was being updated).
     bgStart(panel.id,panel.name||("Panel "+(idx+1)),projectId,"Re-extracting BOM…");
+    bgSetPct(panel.id,1,"Re-extracting BOM…");
     const noData=bomPages.find(pg=>!pg.dataUrl&&!pg.storageUrl);
-    if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();return;}
+    if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();bgError(panel.id,"Missing image");return;}
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     const rgnCtx=buildRegionContext(pages);
     const rgnNotes=(panel.extractionNotes||"")+rgnCtx;
-    let all=[];let bomDone=0;let reQs=[];
+    let all=[];let reQs=[];
+    // DECISION(v1.19.606): Quadrant extraction = ~4 API calls per page, so page-level
+    // progress is too coarse (stuck at 0% for 1-2 min). Count COMPLETED quadrant units
+    // across all pages and update progress per-unit so the bar actually advances.
+    let completedUnits=0;
+    const estUnitsPerPage=4; // matches the 4 quadrant crops in getExtractionUnits
+    const totalUnitsEst=Math.max(1,bomPages.length*estUnitsPerPage);
     try{
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
-        bomDone++;
-        ep.set(Math.round((bomDone/bomPages.length)*60),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
         const units=await getExtractionUnits(pg);
         console.log(`[RE-EXTRACT] Page ${pgIdx+1}: ${units.length} extraction unit(s), dataUrl=${!!pg.dataUrl}, regions=${(pg.regions||[]).filter(r=>r.type==="bom").length} BOM regions`);
         let pageItems=[],pageQs=[];
@@ -11836,6 +11843,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
           if(qs.length)pageQs.push(...qs);
+          completedUnits++;
+          const pct=Math.min(60,Math.round((completedUnits/totalUnitsEst)*60));
+          const msg=`Extracting BOM — region ${completedUnits}/${totalUnitsEst}…`;
+          ep.set(pct,msg);
+          bgSetPct(panel.id,pct,msg);
         }
         if(pageQs.length)reQs.push(...pageQs);
         return pageItems;
@@ -11843,8 +11855,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       all=bomResults.flat();
       reQs=reQs.slice(0,10);
       console.log(`[RE-EXTRACT] Total: ${all.length} items, ${reQs.length} questions across all pages`);
-    }catch(ex){console.error("[RE-EXTRACT] Failed:",ex);setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();return;}
+    }catch(ex){console.error("[RE-EXTRACT] Failed:",ex);setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();bgError(panel.id,"Re-extract failed: "+(ex.message||"").slice(0,60));return;}
     ep.set(65,"Merging results…");
+    bgSetPct(panel.id,65,"Merging results…");
     const map={};
     all.forEach(item=>{
       const pn=_bomNormPn(item.partNumber);
@@ -11866,6 +11879,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       timestamp:Date.now(),version:APP_VERSION,
     };
     ep.set(80,"Saving BOM…");
+    bgSetPct(panel.id,80,"Saving BOM…");
     const reEqs=mergeEngineeringQuestions([],reQs,null); // fresh questions on re-extract
     let updated={...latestPanelRef.current,bom,...(typeof reQs!=='undefined'&&reQs.length?{aiQuestions:reQs}:{}),engineeringQuestions:reEqs,extractionReport:reExtractionReport,status:"extracted",updatedAt:Date.now()};
     try{await onSaveImmediate(updated);}catch(e){}
@@ -11881,9 +11895,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const valPages=(pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
     if(valPages.length>0&&_apiKey){
       ep.set(65,"Validating drawings…");
+      bgSetPct(panel.id,82,"Validating drawings…");
       setValidatingPanel(true);
       try{
-        const result=await runPanelValidation(latestPanelRef.current,pct=>{ep.set(65+Math.round(pct*0.15),"Validating…");});
+        const result=await runPanelValidation(latestPanelRef.current,pct=>{const p=65+Math.round(pct*0.15);ep.set(p,"Validating…");bgSetPct(panel.id,82+Math.round(pct*0.04),"Validating…");});
         if(result?.validation||result?.laborData){
           updated={...latestPanelRef.current,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
           onUpdate(updated);
@@ -11895,11 +11910,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Auto-run pricing after re-extraction
     if(bom.length>0&&_apiKey){
       ep.set(82,"Getting prices…");
-      try{await runPricingOnPanel(bom,updated,pct=>{ep.set(82+Math.round(pct*0.16),null);});}catch(e){console.warn("Post-extract pricing failed:",e);}
+      bgSetPct(panel.id,88,"Getting prices…");
+      try{await runPricingOnPanel(bom,updated,pct=>{ep.set(82+Math.round(pct*0.16),null);bgSetPct(panel.id,88+Math.round(pct*0.10),"Getting prices…");});}catch(e){console.warn("Post-extract pricing failed:",e);}
     }
     ep.finish(`✓ ${bom.length} items extracted`);
     setExtracting(false);
-    bgDone(panel.id,`✓ ${bom.length} items extracted`);
+    bgDone(panel.id,`✓ ${bom.length} items re-extracted`);
     // BC drawing upload deferred until user prints quote (As-Quoted flow)
     // Background: extract panel metadata from drawings and log to CPD
     if(_apiKey&&pages.length){
