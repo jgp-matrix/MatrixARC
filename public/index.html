@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.629";
+const APP_VERSION="v1.19.630";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5316,7 +5316,12 @@ function positionalMergeBomItems(items){
   // Sort by y_top so overlap merging is a single linear pass.
   withY.sort((a,b)=>(a.y_top||0)-(b.y_top||0));
   const merged=[];const consumed=new Set();const posMerges=[];
-  const Y_TOL=0.008; // 0.8% of page height — tight enough to distinguish adjacent rows, loose enough to catch cross-quadrant variants.
+  // DECISION(v1.19.630): Tightened from 0.008 to 0.004 (0.4% of page). For a tight BOM with
+  // 51 rows over 60% of page height, row spacing ≈ 1.18%; 0.8% was close enough to that
+  // spacing that AI noise could make adjacent rows merge. 0.4% is safer for dense tables.
+  // Since the v1.19.622 quadrant revert, we no longer need loose tolerance to catch cross-
+  // quadrant duplicates (there are none in single-pass extraction).
+  const Y_TOL=0.004;
   for(let i=0;i<withY.length;i++){
     if(consumed.has(i))continue;
     let base={...withY[i]};
@@ -5833,11 +5838,13 @@ function applyAuditCorrections(bom,audit){
       filteredBom.push(r);
       continue;
     }
-    // spurious → remove the row
+    // DECISION(v1.19.630): DO NOT auto-remove "spurious" rows. Opus was wrongly flagging
+    // legitimate rows as spurious when it skimmed a section of the drawing, silently
+    // dropping 20+ real items from a 51-row BOM. KEEP the row and surface the flag for
+    // manual review. Only field-level updates (qty/pn/desc wrong) are auto-applied.
     if(flag.status==="spurious"){
-      appliedLog.push({rowId:r.id,action:"removed",from:{pn:r.partNumber,qty:r.qty,desc:r.description},note:flag.note||""});
-      changes++;
-      continue; // drop the row
+      filteredBom.push(r);
+      continue;
     }
     const exp=flag.expected||{};
     const rowChanges=[];
