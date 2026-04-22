@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.647";
+const APP_VERSION="v1.19.648";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7640,8 +7640,27 @@ Types (use only these values):
 "enclosure" — Enclosure/cabinet drawing. MOST RELIABLE SIGN: a side view drawn beside or below the front view. Also: overall W×H×D dimensions labeled, door cutout holes for pushbuttons/HMIs, side-panel fans or AC units, title says Enclosure/Cabinet/Door Layout
 "pid"       — Process & Instrumentation Diagram. UNIQUE SIGNS not found in schematics: two-letter ISA instrument codes (YA, HS, ZS, SA, FT, PT, LIC, PIC) inside circles paired with a tag number, OR "DI"/"DO" text inside diamond shapes, OR a box labeled "INSTRUMENT & FUNCTION LEGEND". A P&ID has NO wire numbers, NO terminal numbers, NO ladder rungs.
 
-Use [] for title sheets, rev blocks, or unrecognized pages.
-"sheetNo": sheet number from title block (e.g. "1 of 5"). "" if not found.
+Use [] (empty array) for the following — these are NOT BOM/schematic/backpanel/enclosure/pid:
+  • Cover sheets / title pages — large drawing title, drawing number, customer logo, date, large company name. Often has a "List of Sheets" or "Sheet Index" table listing the other pages.
+  • Revision blocks / revision history tables
+  • Drawing index / table of contents pages — a table listing sheet numbers and their titles
+  • Pages that contain only a title block with no technical content
+  • Notes pages / general notes pages
+  • Legend pages — just a symbol key
+  • Blank or nearly-blank pages
+  • Pages you cannot confidently classify
+CRITICAL — the "bom" classification is ONLY for Bill of Materials tables with clear columns for QTY + PART NUMBER + DESCRIPTION + MANUFACTURER. A "List of Sheets" or "Sheet Index" table (which lists sheet numbers and titles) is NOT a BOM, even if it looks table-shaped — return [] for those.
+
+SHEET NUMBER — strict format:
+The title block typically shows the sheet number like "Sheet 1 of 8", "SHT 1/8", or "1 of 8". You MUST return the sheetNo in the format "<current> of <total>" — always include BOTH numbers.
+Examples of CORRECT format: "1 of 8", "3 of 12", "2 of 2"
+Examples of WRONG format (DO NOT return these):
+  • "1 of 01"        → "01" is a misread of a larger number. Re-examine the total-sheets field. If you truly cannot read the total clearly, return just "1".
+  • "2"              → missing total. If the total isn't visible on the page, return just "2" as a bare string. Prefer reading the total from the title block.
+  • "Sheet 1 of 8"   → remove the "Sheet" prefix, just "1 of 8"
+  • "1/8"            → use "of" not "/"
+Only return the bare number "X" (without "of N") when you truly cannot read the total on this page. If the page has no visible sheet number at all, return "".
+
 Example: {"types":["schematic"],"sheetNo":"3 of 8"}`;
 
 async function detectPageTypes(dataUrl,learningExamples=[]){
@@ -12517,6 +12536,50 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,aiDetectedTypes:info.types,sheetNo:info.sheetNo}:p);
         setPendingPages([...livePages]);
       },4);
+      // DECISION(v1.19.648): Reconcile sheet numbers across all pages in this batch.
+      // Haiku is inconsistent — sometimes returns "1 of 8", sometimes just "2", sometimes
+      // garbage like "1 of 01". Pick the most-common "of N" across pages as the authoritative
+      // total, and fill in bare "X" values with "X of <total>". If pages clearly belong to
+      // different sheet sets (different totals), don't reconcile.
+      try{
+        const totalCounts={};
+        for(const p of livePages){
+          const sn=(p.sheetNo||"").trim();
+          const m=sn.match(/^(\d+)\s*of\s*(\d+)$/i);
+          if(m){
+            const total=+m[2];
+            if(total>=1&&total<=500){totalCounts[total]=(totalCounts[total]||0)+1;}
+          }
+        }
+        const entries=Object.entries(totalCounts).sort((a,b)=>b[1]-a[1]);
+        const majorityTotal=entries[0]?+entries[0][0]:null;
+        // Only reconcile if a single "of N" value dominates (≥50% of pages that returned an "of N")
+        const sumCounts=entries.reduce((s,e)=>s+e[1],0);
+        if(majorityTotal&&sumCounts>0&&entries[0][1]/sumCounts>=0.5){
+          livePages=livePages.map(p=>{
+            const sn=(p.sheetNo||"").trim();
+            if(!sn)return p;
+            // Already has "X of N" — leave alone
+            if(/^\d+\s*of\s*\d+$/i.test(sn))return p;
+            // Bare "X" — fill in "X of <majorityTotal>"
+            const barNum=sn.match(/^(\d+)$/);
+            if(barNum){
+              const filled=`${barNum[1]} of ${majorityTotal}`;
+              console.log(`SHEET RECONCILE: page "${p.name}" sheetNo "${sn}" → "${filled}"`);
+              return{...p,sheetNo:filled};
+            }
+            // Weird format like "1 of 01" with a tiny total — if majority says otherwise, correct it
+            const oddFormat=sn.match(/^(\d+)\s*of\s*(\d+)$/i);
+            if(oddFormat&&+oddFormat[2]<majorityTotal*0.25){
+              const filled=`${oddFormat[1]} of ${majorityTotal}`;
+              console.log(`SHEET RECONCILE: page "${p.name}" suspicious "${sn}" → "${filled}" (majority total=${majorityTotal})`);
+              return{...p,sheetNo:filled};
+            }
+            return p;
+          });
+          setPendingPages([...livePages]);
+        }
+      }catch(e){console.warn("Sheet number reconcile failed:",e.message);}
       // Zoomed-page cross-check for types with 2+ pages
       const zoomMsg="🤖 Checking for zoomed/duplicate pages…";
       setDetectProgress(zoomMsg);bgUpdate(panel.id,zoomMsg);
