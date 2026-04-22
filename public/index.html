@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.638";
+const APP_VERSION="v1.19.639";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5763,6 +5763,133 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
   }catch(e){console.error("JSON parse error:",e,raw);return{items:[],questions:[]};}
 }
 
+// ── PER-ROW SNIPPET SELF-CORRECTION ──
+// DECISION(v1.19.639): After extraction, re-verify each BOM row in ISOLATION by cropping its
+// y-band from the drawing image and asking Haiku "read this one row exactly". Because the
+// crop contains exactly ONE row, cross-column misalignment (e.g. qty=143 from a terminal-block
+// row getting attached to a window-kit row) cannot happen — there are no other rows to pull
+// values from. The AI fixes its own errors before the user ever sees them.
+async function selfCorrectBomRowsWithSnippets(bom,pages,onProgress){
+  if(!_apiKey||!bom||!bom.length||!pages||!pages.length)return{bom,corrections:[]};
+  const rowsToCheck=bom.filter(r=>
+    !r.isLaborRow&&!r.isContingency&&!r.autoLoaded&&
+    !r.isCrossed&&!r.isCorrection&&!r.correctedByLibrary&&
+    typeof r.y_top==="number"&&typeof r.y_bottom==="number"&&
+    r.y_bottom>r.y_top&&typeof r.sourcePageIdx==="number"
+  );
+  if(!rowsToCheck.length)return{bom,corrections:[]};
+  const corrections=[];
+  const BATCH=8;
+  const total=rowsToCheck.length;
+  // Pre-load dataUrls for each needed page, once
+  const pageDataUrlCache={};
+  async function getPageDataUrl(pgIdx){
+    if(pgIdx in pageDataUrlCache)return pageDataUrlCache[pgIdx];
+    const pg=pages[pgIdx];
+    if(!pg){pageDataUrlCache[pgIdx]=null;return null;}
+    let du=pg.dataUrl;
+    if(!du&&pg.storageUrl){try{const loaded=await ensureDataUrl(pg);du=loaded.dataUrl;}catch(e){du=null;}}
+    pageDataUrlCache[pgIdx]=du||null;
+    return du||null;
+  }
+  for(let i=0;i<total;i+=BATCH){
+    const batch=rowsToCheck.slice(i,i+BATCH);
+    if(onProgress)onProgress(Math.round(i/total*100),`Re-verifying row ${i+1}-${Math.min(i+BATCH,total)} of ${total}`);
+    await Promise.all(batch.map(async(row)=>{
+      try{
+        const dataUrl=await getPageDataUrl(row.sourcePageIdx);
+        if(!dataUrl)return;
+        // Crop with generous margin — include headers optionally? No, pure row only.
+        const rowH=row.y_bottom-row.y_top;
+        const yMargin=Math.max(0.004,rowH*0.35);
+        const cropY=Math.max(0,row.y_top-yMargin);
+        const cropH=Math.min(1-cropY,rowH+2*yMargin);
+        // Use full page width so column headers implied by position are included
+        const xL=typeof row.x_left==="number"?Math.max(0,row.x_left-0.02):0;
+        const xR=typeof row.x_right==="number"?Math.min(1,row.x_right+0.02):1;
+        const cropW=Math.max(0.1,xR-xL);
+        const cropUrl=await cropImageRegion(dataUrl,xL,cropY,cropW,cropH,2400).catch(()=>null);
+        if(!cropUrl)return;
+        const b64=cropUrl.split(",")[1];
+        if(!b64)return;
+        const resp=await fetch("https://api.anthropic.com/v1/messages",{
+          method:"POST",
+          headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+          body:JSON.stringify({
+            model:"claude-haiku-4-5-20251001",
+            max_tokens:600,
+            messages:[{role:"user",content:[
+              {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
+              {type:"text",text:`This image is exactly ONE row from a BOM table. Read the values PRECISELY as printed.
+
+Return ONLY valid JSON (no markdown, no commentary):
+{"qty":<number>,"partNumber":"<exact string>","description":"<exact string>","manufacturer":"<exact string or empty>"}
+
+RULES:
+• qty MUST be a number (integer). If printed as "A/R", "AR", "As Required", return qty: 1.
+• partNumber: copy EXACTLY — do not autocomplete, normalize, or guess. If a character is ambiguous (O/0, I/1, B/8, S/5), examine glyph shape.
+• description: copy the description text for this single row only.
+• manufacturer: the manufacturer name from this row, or "" if blank.
+• If this image does not contain a single clear BOM row (e.g. it's blank, a header, or spans multiple rows), return {"qty":0,"partNumber":"","description":"","manufacturer":""}.`}
+            ]}]
+          })
+        });
+        if(!resp.ok)return;
+        const d=await resp.json();
+        const text=(d.content||[]).find(b=>b.type==="text")?.text||"";
+        const m=text.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
+        if(!m)return;
+        let verified;
+        try{verified=JSON.parse(m[0]);}catch(e){return;}
+        if(!verified||typeof verified!=="object")return;
+        // Sanity: if all fields empty, snippet failed — skip
+        if(!verified.partNumber&&!verified.description&&!verified.qty)return;
+        const origQty=+row.qty||0;
+        const newQty=+verified.qty||0;
+        const origPN=(row.partNumber||"").trim();
+        const newPN=(verified.partNumber||"").trim();
+        const origDesc=(row.description||"").trim();
+        const newDesc=(verified.description||"").trim();
+        const origMfr=(row.manufacturer||"").trim();
+        const newMfr=(verified.manufacturer||"").trim();
+        const normPN=s=>(s||"").toUpperCase().replace(/[\s\-_.]/g,"");
+        const normDesc=s=>(s||"").toLowerCase().replace(/[\s,.()\/\-]/g,"");
+        const changes={};
+        // Qty: trust snippet when materially different AND plausible (>0, <10000)
+        if(newQty>0&&newQty<10000&&newQty!==origQty){
+          changes.qty={from:origQty,to:newQty};
+        }
+        // PN: trust snippet when different after normalization, and snippet value is non-empty + long enough
+        if(newPN.length>=3&&normPN(newPN)!==normPN(origPN)){
+          changes.partNumber={from:origPN,to:newPN};
+        }
+        // Description: only change when meaningfully different (not just whitespace/punct)
+        if(newDesc.length>=5&&normDesc(newDesc)!==normDesc(origDesc)&&Math.abs(newDesc.length-origDesc.length)>3){
+          changes.description={from:origDesc,to:newDesc};
+        }
+        // Manufacturer: fill if missing
+        if(!origMfr&&newMfr&&newMfr.length>1){
+          changes.manufacturer={from:origMfr,to:newMfr};
+        }
+        if(Object.keys(changes).length){
+          if(changes.qty)row.qty=changes.qty.to;
+          if(changes.partNumber)row.partNumber=changes.partNumber.to;
+          if(changes.description)row.description=changes.description.to;
+          if(changes.manufacturer)row.manufacturer=changes.manufacturer.to;
+          row.snippetCorrected=true;
+          // Clear the suspectQty flag if qty was fixed
+          if(changes.qty){delete row.suspectQty;delete row.suspectQtyReason;}
+          corrections.push({rowId:String(row.id),partNumber:row.partNumber,changes});
+          console.log(`SNIPPET FIX: ${origPN||"(blank)"} row → ${JSON.stringify(changes)}`);
+        }
+      }catch(e){console.warn("Snippet verify failed for",row.partNumber,e.message);}
+    }));
+  }
+  if(onProgress)onProgress(100,`Self-corrected ${corrections.length} row${corrections.length===1?"":"s"}`);
+  if(corrections.length>0)console.log(`SNIPPET SELF-CORRECTION: ${corrections.length} row(s) auto-corrected`);
+  return{bom,corrections};
+}
+
 // ── PART NUMBER VERIFICATION ──
 async function verifyPartNumbers(bomRows){
   const toCheck=bomRows.filter(r=>(r.partNumber||"").trim().length>=3).slice(0,60);
@@ -7033,6 +7160,26 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         learnedLog=learned.appliedLog||[];
       }catch(e){console.warn("applyLearnedCorrections failed:",e.message);}
     }
+    // DECISION(v1.19.639): Per-row snippet self-correction. Each row's y-band is cropped from
+    // the drawing and sent to Haiku in ISOLATION — Haiku re-reads that single row and any
+    // mismatch (qty, partNumber, description, manufacturer) overwrites the first-pass value.
+    // Because the crop contains exactly one row, column misalignment (qty=143 from a terminal-
+    // block row attached to a window-kit row) is structurally impossible. Catches errors
+    // automatically BEFORE the user sees the BOM. User-validated rows (isCrossed/isCorrection/
+    // correctedByLibrary) are skipped — already vetted.
+    let snippetCorrections=[];
+    if(mergedBom.length>0){
+      try{
+        bgUpdate(panel.id,"Re-verifying each row…");
+        const livePages=latestPanel.pages||panel.pages||[];
+        const res=await selfCorrectBomRowsWithSnippets(mergedBom,livePages,(pct,msg)=>{
+          phasePct("bom",0.9+pct/1000); // small boost at tail end of BOM phase
+          if(msg)bgUpdate(panel.id,msg);
+        });
+        mergedBom=res.bom;
+        snippetCorrections=res.corrections||[];
+      }catch(e){console.warn("snippet self-correct failed:",e.message);}
+    }
     const aiQuestions=[]; // DECISION(v1.19.530): Disabled — engineering questions feature needs attention
     const eqs=[];
     // DECISION(v1.19.395): Refresh latestPanel after BOM save so compliance review sees the latest
@@ -7049,6 +7196,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       bomPageCount:bomPages.length,
       learnedCorrections:learnedLog.length, // DECISION(v1.19.626): surfaced in banner
       learnedCorrectionsLog:learnedLog.slice(-50),
+      snippetCorrectionCount:snippetCorrections.length, // DECISION(v1.19.639)
+      snippetCorrectionsLog:snippetCorrections.slice(-50),
       timestamp:Date.now(),
       version:APP_VERSION,
     }:null;
@@ -11301,9 +11450,12 @@ function ScanResultsBanner({panel}){
   const auditRoundsUsed=r.auditRoundsUsed||0;
   const auditCleanOnRound=r.auditCleanOnRound||null;
   const auditAppliedLog=r.auditAppliedLog||[];
+  const snippetCorrectionCount=r.snippetCorrectionCount||0; // DECISION(v1.19.639)
+  const snippetCorrectionsLog=r.snippetCorrectionsLog||[];
   const concerns=[];
   if(fuzzyMerges.length>0)concerns.push(`${fuzzyMerges.length} OCR duplicate${fuzzyMerges.length>1?"s":""} auto-merged`);
   if(duplicatesFound>0&&fuzzyMerges.length===0)concerns.push(`${duplicatesFound} duplicate rows merged`);
+  if(snippetCorrectionCount>0)concerns.push(`AI self-corrected ${snippetCorrectionCount} row${snippetCorrectionCount>1?"s":""}`); // v1.19.639
   if(suspectCount>0)concerns.push(`${suspectCount} suspect part #${suspectCount>1?"s":""}`);
   if(missingTitle.length>0)concerns.push(`title block missing: ${missingTitle.join(", ")}`);
   // Self-healed corrections are informational (not errors)
@@ -11375,6 +11527,35 @@ function ScanResultsBanner({panel}){
               <div style={{color:"#fef3c7",fontSize:11,lineHeight:1.5}}>
                 The AI flagged {suspectCount} part number{suspectCount>1?"s":""} as not matching a known manufacturer pattern. Look for the <span style={{color:C.red,fontWeight:600}}>red</span> verification badge in the BOM table below and double-check those rows.
               </div>
+            </div>
+          )}
+          {/* DECISION(v1.19.639): Snippet self-correction results. Each BOM row was re-read in
+             isolation by Haiku; differences between the first-pass extraction and the single-row
+             re-read overwrote the first-pass values automatically. */}
+          {snippetCorrectionCount>0&&(
+            <div style={{marginTop:10,padding:"8px 12px",background:"#052e1c",border:`1px solid #10b98155`,borderRadius:6}}>
+              <div style={{color:"#6ee7b7",fontWeight:700,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>✓ AI Self-Corrected {snippetCorrectionCount} Row{snippetCorrectionCount>1?"s":""}</div>
+              <div style={{color:"#a7f3d0",fontSize:11,marginBottom:8,lineHeight:1.5}}>
+                After extraction, each BOM row was re-read in isolation (one row per image, so nothing to misalign with). Where the single-row re-read disagreed with the first-pass values, ARC applied the correction automatically. No user action needed.
+              </div>
+              {snippetCorrectionsLog.length>0&&(
+                <div style={{fontSize:10,color:"#a7f3d0",maxHeight:180,overflowY:"auto"}}>
+                  {snippetCorrectionsLog.slice(0,30).map((c,i)=>(
+                    <div key={i} style={{padding:"3px 0",borderTop:i>0?`1px solid #10b98122`:"none",fontFamily:"ui-monospace,Menlo,Consolas,monospace"}}>
+                      <span style={{color:"#6ee7b7",fontWeight:600}}>{c.partNumber||"(blank)"}</span>
+                      <span style={{color:"#a7f3d0"}}>{" — "}</span>
+                      {Object.entries(c.changes||{}).map(([k,v],j)=>(
+                        <span key={k} style={{marginRight:8}}>
+                          <span style={{color:"#86efac"}}>{k}</span>
+                          <span style={{color:"#fca5a5"}}> {JSON.stringify(v.from)}</span>
+                          <span style={{color:"#a7f3d0"}}> → </span>
+                          <span style={{color:"#6ee7b7",fontWeight:600}}>{JSON.stringify(v.to)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {plausibleCount>0&&(
@@ -12707,12 +12888,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.629): Sort by drawing Y-position for spot-check parity with the drawing.
     const bomSorted=sortBomByDrawingPosition(bomPreDefaults);
     flagSuspectQuantities(bomSorted); // DECISION(v1.19.638)
+    // DECISION(v1.19.639): Per-row snippet self-correction on re-extract.
+    let reSnippetCorrections=[];
+    try{
+      ep.set(72,"Re-verifying each row…");
+      bgSetPct(panel.id,78,"Re-verifying each row…");
+      const res=await selfCorrectBomRowsWithSnippets(bomSorted,pages||[],(pct,msg)=>{
+        const p=72+Math.round(pct*0.08);ep.set(p,msg||"Re-verifying…");
+      });
+      reSnippetCorrections=res.corrections||[];
+    }catch(e){console.warn("re-extract snippet self-correct failed:",e.message);}
     const bom=appendDefaultBomItems(bomSorted);
     const reExtractionReport={
       rawCount:all.length,exactCount:exactDedup.length,finalCount:fuzzyDedup.length,
       fuzzyMerges:fuzzyReport.merges,bomPageCount:bomPages.length,
       learnedCorrections:reLearnedLog.length,
       learnedCorrectionsLog:reLearnedLog.slice(-50),
+      snippetCorrectionCount:reSnippetCorrections.length,
+      snippetCorrectionsLog:reSnippetCorrections.slice(-50),
       timestamp:Date.now(),version:APP_VERSION,
     };
     ep.set(80,"Saving BOM…");
@@ -12880,12 +13073,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.629): Sort by drawing Y-position for spot-check parity with the drawing.
     const bomSorted=sortBomByDrawingPosition(fbPreDefaults);
     flagSuspectQuantities(bomSorted); // DECISION(v1.19.638)
+    // DECISION(v1.19.639): Per-row snippet self-correction on feedback re-extract.
+    let fbSnippetCorrections=[];
+    try{
+      ep.set(72,"Re-verifying each row…");
+      const res=await selfCorrectBomRowsWithSnippets(bomSorted,pages||[],(pct,msg)=>{
+        const p=72+Math.round(pct*0.08);ep.set(p,msg||"Re-verifying…");
+      });
+      fbSnippetCorrections=res.corrections||[];
+    }catch(e){console.warn("feedback snippet self-correct failed:",e.message);}
     const bom=appendDefaultBomItems(bomSorted);
     const fbReport={
       rawCount:all.length,exactCount:fbExact.length,finalCount:fbFuzzy.length,
       fuzzyMerges:fbFuzzyReport.merges,bomPageCount:bomPages.length,
       learnedCorrections:fbLearnedLog.length,
       learnedCorrectionsLog:fbLearnedLog.slice(-50),
+      snippetCorrectionCount:fbSnippetCorrections.length,
+      snippetCorrectionsLog:fbSnippetCorrections.slice(-50),
       timestamp:Date.now(),version:APP_VERSION,
     };
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
@@ -14437,15 +14641,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               {row.correctionType==='extraction'?'extraction corrected':row.correctionType==='formatting'?'formatting error':row.correctionType==='format'?'format corrected':'corrected'}
                             </span>
                           )}
-                          {/* DECISION(v1.19.636): Verification badge — suspect (red) and plausible (yellow)
-                             from panel.bomVerification. Scan Results Banner points users at this badge. */}
+                          {/* DECISION(v1.19.636/639): Verification badge — suspect (red) and
+                             plausible (yellow) from panel.bomVerification. v1.19.639: suppress
+                             "unverified" / "plausible" when the row has BC-confirmed pricing —
+                             BC proves the part is real, pattern-match doubt is no longer useful. */}
                           {f==="partNumber"&&!row.isLaborRow&&!row.isCrossed&&!row.isCorrection&&!row.correctedByLibrary&&(()=>{
                             const verif=(panel.bomVerification||[]).find(v=>String(v.id)===String(row.id));
                             if(!verif)return null;
-                            if(verif.status==="suspect")return(
+                            const bcConfirmed=row.priceSource==="bc"&&row.unitPrice>0;
+                            if(verif.status==="suspect"&&!bcConfirmed)return(
                               <span title={verif.note||"Part number not recognized — may be an OCR error or invalid"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.red+"22",padding:"1px 6px",borderRadius:10}}>? not recognized</span>
                             );
-                            if(verif.status==="plausible")return(
+                            if(verif.status==="plausible"&&!bcConfirmed)return(
                               <span title={verif.note||"Follows a valid part number pattern but not confirmed"} style={{fontSize:10,color:C.yellow,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.yellow+"22",padding:"1px 6px",borderRadius:10}}>~ unverified</span>
                             );
                             return null;
@@ -14455,6 +14662,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                              a column-alignment error where qty was grabbed from a different row. */}
                           {f==="partNumber"&&row.suspectQty&&!row.isLaborRow&&(
                             <span title={row.suspectQtyReason||"Qty looks wrong for this type of item — verify against the drawing"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.red+"33",padding:"1px 6px",borderRadius:10}}>⚠ qty looks wrong</span>
+                          )}
+                          {/* DECISION(v1.19.639): Snippet self-correction badge — AI re-read this
+                             row in isolation and fixed at least one field. Visible so user knows
+                             which rows were auto-corrected (informational, not actionable). */}
+                          {f==="partNumber"&&row.snippetCorrected&&!row.isLaborRow&&(
+                            <span title="AI re-read this row in isolation and corrected it" style={{fontSize:10,color:"#6ee7b7",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#10b98122",padding:"1px 6px",borderRadius:10}}>✓ AI fixed</span>
                           )}
                           </div>
                           {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&!readOnly&&(()=>{
