@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.639";
+const APP_VERSION="v1.19.640";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13170,7 +13170,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
       const newPN=bcItem.number;
       const now=Date.now();
-      const updates={...r,...(newPN?{partNumber:newPN}:{}),unitPrice:bcItem.unitCost??r.unitPrice??0,priceSource:"bc",priceDate:now,bcPoDate:now};
+      // DECISION(v1.19.640): Only stamp priceDate/bcPoDate when BC actually supplies a price.
+      // Previously commitBcItem fabricated today's date on EVERY apply — including MFR-only
+      // changes or applying an item that had no PurchasePrice record — misleading the user
+      // into thinking the row was priced today. If no price, leave priceDate untouched so
+      // the BC poll backfill or scraper can populate it from the real BC Starting_Date.
+      const bcCost=bcItem.unitCost;
+      const hasPrice=bcCost!=null&&+bcCost>0;
+      const updates={...r,
+        ...(newPN?{partNumber:newPN}:{}),
+        priceSource:"bc",
+        ...(hasPrice?{unitPrice:+bcCost,priceDate:now,bcPoDate:now}:
+           (bcCost!=null?{unitPrice:+bcCost}:{}))
+      };
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // Async vendor lookup — uses latestPanelRef to avoid stale overwrites
@@ -19293,7 +19305,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [showPriceCheckModal,setShowPriceCheckModal]=useState(false);
   const [priceCheckDiffs,setPriceCheckDiffs]=useState(null);
   // Compare BOM prices against BC Purchase Prices on project open
+  // DECISION(v1.19.640): Modal was re-firing every project open because:
+  //   1. Threshold was $0.005 (sub-penny) — any rounding diff triggered it
+  //   2. Dismiss didn't persist — same diffs detected again next open
+  //   3. Rows with null bcPoDate ALWAYS looked "older than BC" → always flagged
+  // Fix: tighten threshold (>1% AND >$0.10), persist dismissals per-row, and treat
+  // dismissal as acknowledgment (stamp row with bcPoDate so the diff doesn't re-fire).
   const priceCheckRan=useRef(false);
+  const priceCheckDiffsRef=useRef([]); // full diff list so dismiss can stamp all
   useEffect(()=>{
     if(priceCheckRan.current)return;
     function tryCheck(){
@@ -19314,21 +19333,29 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           const pn=(r.partNumber||'').trim();
           const bc=bcPrices.get(pn);
           if(!bc)return;
-          const bomPrice=r.unitPrice||0;
-          const bcPrice=bc.directUnitCost;
+          const bomPrice=+r.unitPrice||0;
+          const bcPrice=+bc.directUnitCost||0;
           const bcDateMs=bc.startingDate||null;
           const bomDateMs=r.bcPoDate||r.priceDate||null;
-          const priceDiff=Math.abs(bomPrice-bcPrice)>0.005;
-          // Only flag if BC price is newer than BOM price — avoids repeat prompts for known differences
+          // DECISION(v1.19.640): Material-price threshold. Both relative (>1%) AND absolute
+          // (>$0.10) must be exceeded to count as a real diff. Filters float rounding noise.
+          const priceDelta=Math.abs(bomPrice-bcPrice);
+          const priceDiffPct=bomPrice>0?priceDelta/bomPrice:1;
+          const priceDiff=priceDelta>0.10&&priceDiffPct>0.01;
+          if(!priceDiff)return;
+          // Skip rows previously dismissed at this same BC state (price+date).
+          const dism=r.bcPriceCheckDismissed;
+          if(dism&&Math.abs((+dism.bcPrice||0)-bcPrice)<0.005&&dism.bcDate===bcDateMs)return;
+          // Only flag if BC price is newer. For rows with no date at all, require BC to be priced >0.
           const bcNewer=bcDateMs&&(!bomDateMs||bcDateMs>bomDateMs);
-          if(priceDiff&&bcNewer){
-            diffs.push({panelIdx:pi,panelName:p.name||'Panel '+(pi+1),rowId:r.id,partNumber:pn,
-              description:r.description||'',bomPrice,bomDate:bomDateMs,
-              bcPrice,bcDate:bcDateMs,bcVendor:bc.vendorNo||''});
-          }
+          if(!bcNewer)return;
+          diffs.push({panelIdx:pi,panelName:p.name||'Panel '+(pi+1),rowId:r.id,partNumber:pn,
+            description:r.description||'',bomPrice,bomDate:bomDateMs,
+            bcPrice,bcDate:bcDateMs,bcVendor:bc.vendorNo||''});
         }));
+        priceCheckDiffsRef.current=diffs;
         if(diffs.length>0){console.log("[BC] Purchase Price diffs found:",diffs.length);setPriceCheckDiffs(diffs);setShowPriceCheckModal(true);}
-        else{console.log("[BC] Purchase Prices match BOM — no updates needed");}
+        else{console.log("[BC] Purchase Prices match BOM — no material diffs");}
       })().catch(e=>console.warn("Purchase price check error:",e));
     }
     tryCheck();
@@ -19346,12 +19373,38 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       return{...p,bom:(p.bom||[]).map(r=>{
         const d=diffMap[pi][String(r.id)];
         if(!d)return r;
-        return{...r,unitPrice:d.bcPrice,priceDate:d.bcDate,bcPoDate:d.bcDate,priceSource:'bc'};
+        // clear any prior dismissal since we're now accepting the update
+        const{bcPriceCheckDismissed,...rest}=r;
+        return{...rest,unitPrice:d.bcPrice,priceDate:d.bcDate,bcPoDate:d.bcDate,priceSource:'bc'};
       })};
     });
     update({...projectRef.current,panels:updatedPanels});
     setShowPriceCheckModal(false);setPriceCheckDiffs(null);
     console.log("[BC] Applied",selectedDiffs.length,"Purchase Price updates to BOM");
+  }
+  // DECISION(v1.19.640): Dismiss stamps every currently-shown diff with bcPriceCheckDismissed
+  // so subsequent project opens don't re-fire the same modal. If BC's price or date later
+  // changes (a real update), the stamped state won't match and the modal will fire again.
+  function dismissPriceCheckDiffs(){
+    const diffs=priceCheckDiffsRef.current||[];
+    if(diffs.length===0){setShowPriceCheckModal(false);setPriceCheckDiffs(null);return;}
+    const diffMap={};
+    diffs.forEach(d=>{
+      if(!diffMap[d.panelIdx])diffMap[d.panelIdx]={};
+      diffMap[d.panelIdx][String(d.rowId)]=d;
+    });
+    const updatedPanels=(projectRef.current.panels||[]).map((p,pi)=>{
+      if(!diffMap[pi])return p;
+      return{...p,bom:(p.bom||[]).map(r=>{
+        const d=diffMap[pi][String(r.id)];
+        if(!d)return r;
+        return{...r,bcPriceCheckDismissed:{bcPrice:d.bcPrice,bcDate:d.bcDate,dismissedAt:Date.now()}};
+      })};
+    });
+    update({...projectRef.current,panels:updatedPanels});
+    setShowPriceCheckModal(false);setPriceCheckDiffs(null);
+    priceCheckDiffsRef.current=[];
+    console.log("[BC] Dismissed",diffs.length,"Purchase Price diffs — won't re-prompt unless BC changes again");
   }
   useEffect(()=>{
     if(!uid||!init.id){setPendingRfqUploads(0);setPortalSubmissions([]);return;}
@@ -20296,7 +20349,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             // Prompt to upload production drawings
             setShowProductionUpload({poNumber:poNum,dueDate});
           }}/>}
-          {showPriceCheckModal&&priceCheckDiffs&&<PurchasePriceCheckModal diffs={priceCheckDiffs} onAccept={applyPriceCheckDiffs} onClose={()=>{setShowPriceCheckModal(false);setPriceCheckDiffs(null);}}/>}
+          {showPriceCheckModal&&priceCheckDiffs&&<PurchasePriceCheckModal diffs={priceCheckDiffs} onAccept={applyPriceCheckDiffs} onClose={dismissPriceCheckDiffs}/>}
           {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
           {quoteReview&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
