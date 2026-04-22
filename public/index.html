@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.625";
+const APP_VERSION="v1.19.626";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5057,6 +5057,63 @@ function applyPartCorrections(corrections,bom){
   });
 }
 
+// DECISION(v1.19.626): Centralized learning-DB application. Runs on EVERY newly-extracted BOM
+// (initial, re-extract, feedback re-extract). Applies in this order:
+//   1. Alternates (autoReplace=true)         → sets isCrossed + crossedFrom + autoReplaced
+//   2. Correction DB (bad PN → corrected PN) → sets isCorrection + correctionFrom
+//   3. Part library corrections              → sets correctedByLibrary
+//   4. Supplier cross-refs                   → sets crossRef (informational, PN unchanged)
+// Each path checks the row's existing flags so corrections don't cascade/double-apply.
+// The resulting flags (isCrossed/isCorrection/correctedByLibrary) are THE signal that tells
+// the audit's self-healing NOT to override these rows — the user has already vetted them.
+async function applyLearnedCorrections(bom,uid){
+  if(!bom||!bom.length||!uid)return{bom,appliedLog:[]};
+  let userAlts=[],userCorrs=[],userPartCorrs=[];
+  try{[userAlts,userCorrs,userPartCorrs]=await Promise.all([
+    loadAlternates(uid).catch(()=>[]),
+    loadCorrectionDB(uid).catch(()=>[]),
+    loadPartCorrections(uid).catch(()=>[]),
+  ]);}catch(e){console.warn("applyLearnedCorrections: load failed:",e.message);return{bom,appliedLog:[]};}
+  if(!userAlts.length&&!userCorrs.length&&!userPartCorrs.length)return{bom,appliedLog:[]};
+  const normPN=s=>(s||"").replace(/[-\s./\\]/g,"").toUpperCase();
+  const appliedLog=[];
+  const result=bom.map(r=>{
+    if(r.isLaborRow||r.isContingency)return r;
+    const pn=(r.partNumber||"").trim();
+    if(!pn)return r;
+    // 1. Auto-replace alternates (part crosses)
+    if(!r.isCrossed){
+      const alt=userAlts.find(a=>a.autoReplace&&a.replacement&&(a.originalPN===pn||normPN(a.originalPN)===normPN(pn)));
+      if(alt){
+        appliedLog.push({rowId:r.id,kind:"alternate",from:pn,to:alt.replacement.partNumber,reason:"auto-cross from learning DB"});
+        return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:Date.now(),isCrossed:true,crossedFrom:pn,autoReplaced:true};
+      }
+    }
+    // 2. Bad PN → corrected PN (from correctionDB)
+    if(!r.isCorrection){
+      const corr=userCorrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn));
+      if(corr&&corr.correctedPN){
+        appliedLog.push({rowId:r.id,kind:"correction",from:pn,to:corr.correctedPN,reason:"auto-fix from correction DB"});
+        return{...r,partNumber:corr.correctedPN,isCorrection:true,correctionType:corr.type||"extraction",correctionFrom:pn};
+      }
+    }
+    // 3. Part library correction (legacy partLibrary.corrections)
+    if(!r.correctedByLibrary){
+      const pcKey=pn.toLowerCase();
+      const pc=userPartCorrs.find(c=>c.key===pcKey);
+      if(pc&&pc.correctValue){
+        appliedLog.push({rowId:r.id,kind:"partCorrection",from:pn,to:pc.correctValue,reason:"auto-fix from part library"});
+        return{...r,partNumber:pc.correctValue,correctedByLibrary:true};
+      }
+    }
+    return r;
+  });
+  if(appliedLog.length>0){
+    console.log(`[LEARNING DB] Applied ${appliedLog.length} correction${appliedLog.length>1?"s":""} from memory:`,appliedLog.map(l=>`${l.kind}: ${l.from} → ${l.to}`));
+  }
+  return{bom:result,appliedLog};
+}
+
 // ── DEFAULT BOM ITEMS (appended after extraction if not already present) ──
 // DECISION(v1.19.413): Combined "BOM CONTINGENCY" + "WIRE & CONSUMABLES" into single "Contingency" item.
 // Old items changed to Inventory type in BC and can't be retyped — new Non-Inventory item created.
@@ -5728,6 +5785,16 @@ function applyAuditCorrections(bom,audit){
     if(r.isLaborRow||r.isContingency){filteredBom.push(r);continue;}
     const flag=checksById[String(r.id)];
     if(!flag||flag.status==="ok"){filteredBom.push(r);continue;}
+    // DECISION(v1.19.626): Rows corrected from the user's learning DBs (alternates, corrections,
+    // part library) are trusted. The user has vetted these values and saved them as the
+    // authoritative answer — the audit must NOT override them even if the drawing appears
+    // to show a different value. Qty corrections are still allowed (qty is drawing-specific).
+    const userLocked=r.isCrossed||r.isCorrection||r.correctedByLibrary||r.autoReplaced;
+    if(userLocked&&(flag.status==="pn_wrong"||flag.status==="desc_wrong"||flag.status==="spurious")){
+      console.log(`AUDIT PROTECT: row "${r.partNumber}" is user-learned — ignoring ${flag.status} flag`);
+      filteredBom.push(r);
+      continue;
+    }
     // spurious → remove the row
     if(flag.status==="spurious"){
       appliedLog.push({rowId:r.id,action:"removed",from:{pn:r.partNumber,qty:r.qty,desc:r.description},note:flag.note||""});
@@ -6846,8 +6913,20 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     }
     // Await BOM and save
     const bomResult=await bomMergePromise;
-    const mergedBom=bomResult.bom||bomResult;
+    let mergedBom=bomResult.bom||bomResult;
     const mergeStats=bomResult.mergeStats||null;
+    // DECISION(v1.19.626): Apply learning DBs (alternates + corrections from all 3 sources)
+    // to the freshly-extracted BOM BEFORE saving. Each corrected row is flagged (isCrossed /
+    // isCorrection / correctedByLibrary) which the audit's self-healing pass respects — the
+    // audit will NOT override user-verified values.
+    let learnedLog=[];
+    if(mergedBom.length>0){
+      try{
+        const learned=await applyLearnedCorrections(mergedBom,uid);
+        mergedBom=learned.bom;
+        learnedLog=learned.appliedLog||[];
+      }catch(e){console.warn("applyLearnedCorrections failed:",e.message);}
+    }
     const aiQuestions=[]; // DECISION(v1.19.530): Disabled — engineering questions feature needs attention
     const eqs=[];
     // DECISION(v1.19.395): Refresh latestPanel after BOM save so compliance review sees the latest
@@ -6862,6 +6941,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       finalCount:mergeStats.fuzzy,
       fuzzyMerges:mergeStats.fuzzyMerges||[],
       bomPageCount:bomPages.length,
+      learnedCorrections:learnedLog.length, // DECISION(v1.19.626): surfaced in banner
+      learnedCorrectionsLog:learnedLog.slice(-50),
       timestamp:Date.now(),
       version:APP_VERSION,
     }:null;
@@ -6945,7 +7026,22 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       }
       // Save final state with corrected BOM + audit result
       if(finalAudit){
-        const persistentFlagged=(finalAudit.rowChecks||[]).filter(c=>c.status!=="ok").length;
+        // DECISION(v1.19.626): Filter out row flags for user-locked (learning-DB) rows from
+        // the final audit report. These rows are intentionally preserved by the self-healer,
+        // so showing them as "errors" in the banner is misleading — the user has already
+        // settled those values. Qty flags on user-locked rows remain visible (qty is
+        // drawing-specific, not user-settled).
+        const bomById=Object.fromEntries((currentBom||[]).map(r=>[String(r.id),r]));
+        const filteredChecks=(finalAudit.rowChecks||[]).filter(c=>{
+          if(c.status==="ok")return true;
+          const row=bomById[String(c.id)];
+          if(!row)return true;
+          const userLocked=row.isCrossed||row.isCorrection||row.correctedByLibrary||row.autoReplaced;
+          if(userLocked&&(c.status==="pn_wrong"||c.status==="desc_wrong"||c.status==="spurious"))return false;
+          return true;
+        });
+        const scrubbed={...finalAudit,rowChecks:filteredChecks};
+        const persistentFlagged=filteredChecks.filter(c=>c.status!=="ok").length;
         const persistentMissing=(finalAudit.missingRows||[]).length;
         const updatedReport={
           ...(latestPanel.extractionReport||{}),
@@ -6958,7 +7054,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           timestamp:latestPanel.extractionReport?.timestamp||Date.now(),
           version:APP_VERSION,
         };
-        await save({...latestPanel,bom:currentBom,bomAudit:finalAudit,extractionReport:updatedReport,updatedAt:Date.now()});
+        await save({...latestPanel,bom:currentBom,bomAudit:scrubbed,extractionReport:updatedReport,updatedAt:Date.now()});
         if(totalCorrections>0){
           console.log(`BOM AUDIT: ${totalCorrections} total corrections applied across ${roundsUsed} rounds${cleanOnRound?` — clean on round ${cleanOnRound}`:` — ${persistentFlagged+persistentMissing} persistent issues`}`);
         }
@@ -12367,13 +12463,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const fuzzyReport=fuzzyMergeBomItemsWithReport(exactDedup);
     const fuzzyDedup=fuzzyReport.items;
     console.log(`BOM MERGE: ${all.length} raw → ${positionalDedup.length} positional → ${exactDedup.length} exact → ${fuzzyDedup.length} fuzzy`);
-    const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fuzzyDedup.map(row=>{
+    const corrected=applyPartCorrections(partCorrections,fuzzyDedup.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
-    })));
+    }));
+    // DECISION(v1.19.626): Also apply alternates + correctionDB on re-extract.
+    let reLearnedLog=[];
+    try{
+      const reLearned=await applyLearnedCorrections(corrected,uid);
+      var bomPreDefaults=reLearned.bom;
+      reLearnedLog=reLearned.appliedLog||[];
+    }catch(e){var bomPreDefaults=corrected;}
+    const bom=appendDefaultBomItems(bomPreDefaults);
     const reExtractionReport={
       rawCount:all.length,exactCount:exactDedup.length,finalCount:fuzzyDedup.length,
       fuzzyMerges:fuzzyReport.merges,bomPageCount:bomPages.length,
+      learnedCorrections:reLearnedLog.length,
+      learnedCorrectionsLog:reLearnedLog.slice(-50),
       timestamp:Date.now(),version:APP_VERSION,
     };
     ep.set(80,"Saving BOM…");
@@ -12528,13 +12634,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const fbExact=Object.values(map);
     const fbFuzzyReport=fuzzyMergeBomItemsWithReport(fbExact);
     const fbFuzzy=fbFuzzyReport.items;
-    const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fbFuzzy.map(row=>{
+    const fbCorrected=applyPartCorrections(partCorrections,fbFuzzy.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
-    })));
+    }));
+    let fbLearnedLog=[];
+    try{
+      const fbLearned=await applyLearnedCorrections(fbCorrected,uid);
+      var fbPreDefaults=fbLearned.bom;
+      fbLearnedLog=fbLearned.appliedLog||[];
+    }catch(e){var fbPreDefaults=fbCorrected;}
+    const bom=appendDefaultBomItems(fbPreDefaults);
     const fbReport={
       rawCount:all.length,exactCount:fbExact.length,finalCount:fbFuzzy.length,
       fuzzyMerges:fbFuzzyReport.merges,bomPageCount:bomPages.length,
+      learnedCorrections:fbLearnedLog.length,
+      learnedCorrectionsLog:fbLearnedLog.slice(-50),
       timestamp:Date.now(),version:APP_VERSION,
     };
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
