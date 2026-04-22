@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.615";
+const APP_VERSION="v1.19.616";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -18310,11 +18310,23 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   useEffect(()=>{
     if(!init.id)return;
     const path=_appCtx.projectsPath||`users/${uid}/projects`;
+    // DECISION(v1.19.616): On first snapshot, ALWAYS apply remote data — never skip.
+    // The old "skip first load" logic meant ProjectView started with whatever stale copy
+    // the dashboard had cached. If Jon opened Noah's project while Noah was mid-drop, Jon's
+    // stale state could get auto-saved back over Noah's fresh data, wiping the drawings.
     let firstSnapshot=true;
     const unsub=fbDb.doc(`${path}/${init.id}`).onSnapshot(snap=>{
       if(!snap.exists)return;
-      if(firstSnapshot){firstSnapshot=false;return;} // Skip initial load
       const remote=snap.data();
+      if(firstSnapshot){
+        firstSnapshot=false;
+        // Always refresh to Firestore's truth on mount, regardless of updatedBy.
+        const migrated=migrateProject({...remote,id:init.id});
+        projectRef.current=migrated;
+        setProject(migrated);
+        console.log('[CONCURRENT] Initial load — synced to Firestore truth');
+        return;
+      }
       if(remote.updatedBy&&remote.updatedBy!==uid){
         // Always soft-apply: migrate remote data into local state (no page reload).
         const migrated=migrateProject({...remote,id:init.id});
@@ -19027,11 +19039,43 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     }
   },[autoPrintRfq,rfqGroups]);
 
+  // DECISION(v1.19.616): Hard lockout — if a teammate is actively running an extraction
+  // (or any bg task) on this project, block ALL access until they're done. Prevents the
+  // concurrent-write collision that wiped Noah's drawings when Jon opened his project.
+  // Only bite for non-owners: the owner always wins (can keep working on their own project).
+  const projectLockTask=(projectRemoteTasks||[]).find(t=>
+    t.status==='running'&&
+    t.uid&&t.uid!==uid&&
+    t.projectId===init.id&&
+    t.heartbeatAt&&(Date.now()-t.heartbeatAt)<30000
+  );
+  const iAmProjectOwner=!project.createdBy||project.createdBy===uid;
+  const lockedOut=!!projectLockTask&&!iAmProjectOwner;
+
   return(
     <>
       {view==="quote"?(
         <div style={autoPrint?{height:0,overflow:"hidden"}:undefined}>
           <QuoteView project={project} uid={uid} onBack={()=>setView("panels")} onUpdate={update}/>
+        </div>
+      ):lockedOut?(
+        <div style={{minHeight:"calc(100vh - 140px)",display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
+          <div style={{background:"#1e2a4a",border:`2px solid #818cf8`,borderRadius:16,padding:"40px 48px",maxWidth:540,boxShadow:"0 20px 60px rgba(0,0,0,0.6)",display:"flex",flexDirection:"column",alignItems:"center",gap:14,animation:"pulse 2.8s ease-in-out infinite"}}>
+            <div style={{fontSize:56}}>🔒</div>
+            <div style={{fontSize:22,fontWeight:800,color:"#c4b5fd",textAlign:"center"}}>Project In Use</div>
+            <div style={{fontSize:15,color:"#e0e7ff",textAlign:"center",lineHeight:1.55}}>
+              <strong style={{color:"#fcd34d"}}>{(projectLockTask.userName||(projectLockTask.userEmail||'').split('@')[0]||'A teammate').split(/\s+/)[0]}</strong> is currently processing this project.
+            </div>
+            <div style={{fontSize:13,color:"#a5b4fc",textAlign:"center",maxWidth:420,lineHeight:1.55}}>
+              To prevent conflicting edits, access is temporarily restricted. You'll be let in automatically as soon as they're done.
+            </div>
+            {projectLockTask.msg&&(
+              <div style={{marginTop:6,padding:"8px 14px",background:"#0d0d1a",border:"1px solid #818cf833",borderRadius:8,fontSize:12,color:"#c4b5fd",fontStyle:"italic",maxWidth:420,textAlign:"center"}}>
+                {projectLockTask.msg}{projectLockTask.pct>0?` (${projectLockTask.pct}%)`:""}
+              </div>
+            )}
+            <button onClick={onBack} style={{marginTop:12,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>← Back to Dashboard</button>
+          </div>
         </div>
       ):(
         <>
