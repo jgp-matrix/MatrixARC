@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.623";
+const APP_VERSION="v1.19.624";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5632,6 +5632,86 @@ Return ONLY a JSON array: [{"id":"...","status":"verified|plausible|suspect","no
   }catch(e){console.error("Part verification failed:",e);return[];}
 }
 
+// ── BOM AUDIT — second-pass verification against the drawing images ──
+// DECISION(v1.19.624): Independent Opus pass that re-reads the BOM table from the drawing
+// images and cross-checks against what the first extraction produced. Flags qty mismatches,
+// PN character errors, description mismatches, missing rows, and spurious rows. This is the
+// "belt-and-suspenders" verification the user explicitly requested — BOM accuracy is the
+// core product, worth the extra API call.
+async function auditBomAgainstDrawings(bom,bomPages){
+  if(!_apiKey||!bom.length||!bomPages.length)return null;
+  const realBom=bom.filter(r=>!r.isLaborRow&&!r.isContingency);
+  if(!realBom.length)return null;
+  // Ensure we have data-URLs for every BOM page (load from storage if needed)
+  const ensured=await Promise.all(bomPages.map(ensureDataUrl));
+  const imgSources=[];
+  for(const pg of ensured){
+    if(!pg.dataUrl)continue;
+    try{
+      const small=await resizeForAnalysis(pg.dataUrl,2400);
+      const b64=small?.split(",")[1];
+      if(b64)imgSources.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}});
+    }catch(e){console.warn("BOM AUDIT: resize failed for page:",e.message);}
+  }
+  if(!imgSources.length)return null;
+  // Compact row summary — IDs are what we match back to BOM rows.
+  const rowSummary=realBom.map(r=>({
+    id:String(r.id),
+    itemNo:(r.itemNo||"").toString().slice(0,10),
+    pn:(r.partNumber||"").trim(),
+    qty:+r.qty||0,
+    desc:(r.description||"").trim().slice(0,100),
+    mfr:(r.manufacturer||"").trim().slice(0,30),
+  }));
+  const prompt=`You are auditing an extracted Bill of Materials against ${imgSources.length>1?"drawing images":"the drawing image"}. This is a VERIFICATION pass — your job is to catch errors the first extractor made. Accuracy matters more than coverage.
+
+EXTRACTED BOM (JSON):
+${JSON.stringify(rowSummary,null,2)}
+
+TASK:
+1. For each row in the extracted BOM, compare against the drawing:
+   - Does the part number match EXACTLY (character-by-character)?
+   - Is the quantity correct?
+   - Does the description match?
+   - Does this row actually exist in the drawing?
+2. Scan the BOM table in the drawing for any rows that are MISSING from the extracted list.
+
+RULES:
+- Only flag a row as incorrect if you have HIGH confidence. Prefer "ok" when uncertain.
+- For quantity errors, report the CORRECT quantity from the drawing in "expected.qty".
+- For part-number errors, report the CORRECT part number (character-perfect reading) in "expected.pn".
+- For description errors, report the CORRECT description from the drawing in "expected.desc".
+- Do NOT flag minor description wording differences (e.g. "24VDC Relay" vs "Relay, 24VDC") unless the actual component type differs.
+- Ignore labor rows, "JOB BUYOFF", crating, contingency items — they're not on the drawing.
+- If the extracted BOM has rows that don't appear anywhere in the drawing, flag them as "spurious".
+
+Return ONLY valid JSON (no markdown, no commentary):
+{
+  "rowChecks": [{"id":"<row-id>","status":"ok|qty_wrong|pn_wrong|desc_wrong|spurious","expected":{"pn":"...","qty":N,"desc":"..."},"note":"short reason"}],
+  "missingRows": [{"pn":"...","qty":N,"desc":"...","mfr":"..."}]
+}
+
+If everything matches perfectly, return {"rowChecks": [{"id":"...","status":"ok"}, ...], "missingRows": []}.
+If you cannot read the image at all, return {"rowChecks": [], "missingRows": [], "error": "image unreadable"}.`;
+  try{
+    const raw=await apiCall({
+      model:"claude-opus-4-6",
+      max_tokens:8000,
+      thinking:{type:"enabled",budget_tokens:4000},
+      messages:[{role:"user",content:[...imgSources,{type:"text",text:prompt}]}]
+    });
+    const cleaned=(raw||"").replace(/```json|```/g,"").trim();
+    const m=cleaned.match(/\{[\s\S]*\}/);
+    if(!m){console.warn("BOM AUDIT: no JSON in response");return null;}
+    const parsed=JSON.parse(m[0]);
+    const rowChecks=Array.isArray(parsed.rowChecks)?parsed.rowChecks.filter(c=>c&&c.id&&c.status):[];
+    const missingRows=Array.isArray(parsed.missingRows)?parsed.missingRows.filter(r=>r&&(r.pn||r.desc)):[];
+    const flagged=rowChecks.filter(c=>c.status!=="ok");
+    console.log(`BOM AUDIT: ${rowChecks.length} rows checked, ${flagged.length} flagged, ${missingRows.length} missing`);
+    return{rowChecks,missingRows,auditedAt:Date.now(),version:APP_VERSION};
+  }catch(e){console.warn("BOM audit failed:",e.message);return null;}
+}
+
 // ── SCHEMATIC ANALYSIS PROMPT ──
 const SCHEMATIC_PROMPT=`You are reading a UL508A electrical control panel schematic page.
 
@@ -6752,6 +6832,24 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         }
       }
       catch(e){console.warn("Part verification failed:",e);}
+    }
+    // DECISION(v1.19.624): BOM audit — independent Opus pass that re-reads BOM table from
+    // drawing images and cross-checks qty, PN, description, missing rows, spurious rows.
+    // Results surfaced in Scan Results Banner with actionable flags per row.
+    const bomToAudit=(latestPanel.bom||[]).slice();
+    const auditPages=(latestPanel.pages||[]).filter(p=>getPageTypes(p).includes("bom")&&(p.dataUrl||p.storageUrl));
+    if(bomToAudit.length>0&&auditPages.length>0&&hasBom){
+      bgUpdate(panel.id,"Auditing BOM against drawings…");
+      try{
+        const audit=await auditBomAgainstDrawings(bomToAudit,auditPages);
+        if(audit){
+          const flaggedCount=(audit.rowChecks||[]).filter(c=>c.status!=="ok").length;
+          const missingCount=(audit.missingRows||[]).length;
+          // Fold audit stats into extractionReport for banner display
+          const updatedReport=latestPanel.extractionReport?{...latestPanel.extractionReport,auditFlaggedCount:flaggedCount,auditMissingCount:missingCount}:{auditFlaggedCount:flaggedCount,auditMissingCount:missingCount,timestamp:Date.now(),version:APP_VERSION};
+          await save({...latestPanel,bomAudit:audit,extractionReport:updatedReport,updatedAt:Date.now()});
+        }
+      }catch(e){console.warn("BOM audit failed:",e);}
     }
     // Compliance review — UL508A/C22.2 analysis against ARC Neural IQ
     if(hasCompliance&&(latestPanel.bom?.length>0||latestPanel.validation)){
@@ -10803,11 +10901,19 @@ function ScanResultsBanner({panel}){
   if(!panel.drawingRev)missingTitle.push("Revision");
   const suspectCount=r.suspectCount||0;
   const plausibleCount=r.plausibleCount||0;
+  // DECISION(v1.19.624): Audit section — independent second-pass verification against drawing.
+  const audit=panel.bomAudit;
+  const auditFlagged=(audit?.rowChecks||[]).filter(c=>c.status!=="ok");
+  const auditMissing=audit?.missingRows||[];
+  const flagsByStatus={};
+  for(const f of auditFlagged){flagsByStatus[f.status]=(flagsByStatus[f.status]||0)+1;}
   const concerns=[];
   if(fuzzyMerges.length>0)concerns.push(`${fuzzyMerges.length} OCR duplicate${fuzzyMerges.length>1?"s":""} auto-merged`);
   if(duplicatesFound>0&&fuzzyMerges.length===0)concerns.push(`${duplicatesFound} duplicate rows merged`);
   if(suspectCount>0)concerns.push(`${suspectCount} suspect part #${suspectCount>1?"s":""}`);
   if(missingTitle.length>0)concerns.push(`title block missing: ${missingTitle.join(", ")}`);
+  if(auditFlagged.length>0)concerns.push(`audit flagged ${auditFlagged.length} row${auditFlagged.length>1?"s":""}`);
+  if(auditMissing.length>0)concerns.push(`audit found ${auditMissing.length} missing row${auditMissing.length>1?"s":""}`);
   if(concerns.length===0)return null;
   const fmtTs=()=>{try{return new Date(r.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});}catch(e){return "";}};
   return(
@@ -10877,6 +10983,68 @@ function ScanResultsBanner({panel}){
           )}
           {plausibleCount>0&&(
             <div style={{color:"#fde68a",fontSize:11,fontStyle:"italic",marginTop:6}}>Plus {plausibleCount} plausible-but-unverified part{plausibleCount>1?"s":""} — likely fine but worth a glance.</div>
+          )}
+          {/* DECISION(v1.19.624): Audit findings — independent second-pass against drawings */}
+          {(auditFlagged.length>0||auditMissing.length>0)&&(
+            <div style={{marginTop:12,paddingTop:10,borderTop:`1px dashed ${C.yellow}44`}}>
+              <div style={{color:"#fca5a5",fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>🔍 Audit Findings — second-pass verification</div>
+              <div style={{color:"#fef3c7",fontSize:11,marginBottom:8,lineHeight:1.5}}>
+                Opus re-read the drawing{(panel.pages||[]).filter(p=>(p.types||[]).includes("bom")).length>1?"s":""} and cross-checked each extracted row. Findings below are worth a closer look.
+              </div>
+              {auditFlagged.length>0&&(
+                <div style={{marginBottom:10}}>
+                  <div style={{color:"#fcd34d",fontWeight:600,fontSize:11,marginBottom:4}}>
+                    {auditFlagged.length} row{auditFlagged.length>1?"s":""} flagged
+                    {Object.keys(flagsByStatus).length>0?" — "+Object.entries(flagsByStatus).map(([s,n])=>`${n} ${s.replace(/_/g," ")}`).join(", "):""}
+                  </div>
+                  <div style={{background:"#1a1300",border:`1px solid ${C.yellow}33`,borderRadius:6,overflow:"hidden",maxHeight:240,overflowY:"auto"}}>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+                      <thead>
+                        <tr style={{background:"#2a1700"}}>
+                          <th style={{textAlign:"left",padding:"5px 8px",color:"#fcd34d",fontSize:10,textTransform:"uppercase"}}>Row</th>
+                          <th style={{textAlign:"left",padding:"5px 8px",color:"#fcd34d",fontSize:10,textTransform:"uppercase"}}>Issue</th>
+                          <th style={{textAlign:"left",padding:"5px 8px",color:"#fcd34d",fontSize:10,textTransform:"uppercase"}}>Expected</th>
+                          <th style={{textAlign:"left",padding:"5px 8px",color:"#fcd34d",fontSize:10,textTransform:"uppercase"}}>Note</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {auditFlagged.slice(0,30).map((f,i)=>{
+                          const row=(panel.bom||[]).find(r=>String(r.id)===f.id);
+                          const rowLabel=row?(row.partNumber||row.description||"").slice(0,24):f.id.slice(0,12);
+                          const exp=f.expected||{};
+                          const expStr=[exp.pn&&`PN "${exp.pn}"`,typeof exp.qty==="number"&&`qty ${exp.qty}`,exp.desc&&`"${exp.desc.slice(0,40)}"`].filter(Boolean).join(" · ")||"—";
+                          return(
+                            <tr key={i} style={{borderTop:`1px solid ${C.yellow}22`}}>
+                              <td style={{padding:"4px 8px",color:"#fef3c7",fontFamily:"ui-monospace,Menlo,Consolas,monospace",whiteSpace:"nowrap"}}>{rowLabel}</td>
+                              <td style={{padding:"4px 8px",color:f.status==="spurious"?"#fca5a5":"#fcd34d",fontWeight:600,whiteSpace:"nowrap"}}>{f.status.replace(/_/g," ")}</td>
+                              <td style={{padding:"4px 8px",color:"#fef3c7"}}>{expStr}</td>
+                              <td style={{padding:"4px 8px",color:"#fef3c7",fontStyle:"italic",fontSize:10}}>{f.note||""}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {auditFlagged.length>30&&<div style={{padding:"4px 8px",color:"#fcd34d",fontSize:10,fontStyle:"italic",textAlign:"center"}}>… {auditFlagged.length-30} more</div>}
+                  </div>
+                </div>
+              )}
+              {auditMissing.length>0&&(
+                <div>
+                  <div style={{color:"#fcd34d",fontWeight:600,fontSize:11,marginBottom:4}}>{auditMissing.length} row{auditMissing.length>1?"s":""} missing from extracted BOM</div>
+                  <div style={{background:"#1a1300",border:`1px solid ${C.yellow}33`,borderRadius:6,padding:"6px 10px",fontSize:11}}>
+                    {auditMissing.slice(0,15).map((m,i)=>(
+                      <div key={i} style={{padding:"3px 0",borderTop:i>0?`1px solid ${C.yellow}22`:"none",color:"#fef3c7"}}>
+                        <span style={{fontFamily:"ui-monospace,Menlo,Consolas,monospace",fontWeight:600}}>{m.pn||"(no PN)"}</span>
+                        {m.qty&&<span style={{color:"#fcd34d",marginLeft:8}}>qty {m.qty}</span>}
+                        {m.mfr&&<span style={{color:"#a5b4fc",marginLeft:8,fontSize:10}}>{m.mfr}</span>}
+                        {m.desc&&<div style={{fontSize:10,color:"#fef3c7",opacity:0.8,marginTop:1}}>{m.desc.slice(0,80)}</div>}
+                      </div>
+                    ))}
+                    {auditMissing.length>15&&<div style={{padding:"3px 0",color:"#fcd34d",fontSize:10,fontStyle:"italic"}}>… {auditMissing.length-15} more</div>}
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
