@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.644";
+const APP_VERSION="v1.19.645";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5335,17 +5335,26 @@ function fuzzyMergeBomItems(items){return fuzzyMergeBomItemsWithReport(items).it
 // our translateItemsToPageCoords(v1.19.603) normalizes Y to original-page fractions.
 function positionalMergeBomItems(items){
   // Items without y_top are passed through untouched (legacy rows, manual adds, labor rows, etc.).
+  // DECISION(v1.19.645): CRITICAL fix — items without sourcePageIdx also bypass positional
+  // dedup. Previously items from DIFFERENT pages at similar Y coordinates were wrongly
+  // merged as duplicates. For a 2-page BOM this dropped ~50% of page-2 rows because their
+  // y_top values (0–1, per-page) collided with page-1 y_top values. Now positional dedup
+  // ONLY merges items from the SAME page.
   const withY=[],withoutY=[];
   for(const it of items){
-    if(typeof it.y_top==="number"&&typeof it.y_bottom==="number"&&it.y_bottom>it.y_top){
+    if(typeof it.y_top==="number"&&typeof it.y_bottom==="number"&&it.y_bottom>it.y_top&&typeof it.sourcePageIdx==="number"){
       withY.push(it);
     }else{
       withoutY.push(it);
     }
   }
   if(withY.length<2)return items;
-  // Sort by y_top so overlap merging is a single linear pass.
-  withY.sort((a,b)=>(a.y_top||0)-(b.y_top||0));
+  // Sort by (sourcePageIdx, y_top) so same-page items cluster together. Inner loop breaks
+  // when sourcePageIdx changes — never compares items across different pages.
+  withY.sort((a,b)=>{
+    if(a.sourcePageIdx!==b.sourcePageIdx)return a.sourcePageIdx-b.sourcePageIdx;
+    return (a.y_top||0)-(b.y_top||0);
+  });
   const merged=[];const consumed=new Set();const posMerges=[];
   // DECISION(v1.19.630): Tightened from 0.008 to 0.004 (0.4% of page). For a tight BOM with
   // 51 rows over 60% of page height, row spacing ≈ 1.18%; 0.8% was close enough to that
@@ -5359,9 +5368,12 @@ function positionalMergeBomItems(items){
     for(let j=i+1;j<withY.length;j++){
       if(consumed.has(j))continue;
       const b=withY[j];
+      // DECISION(v1.19.645): Different page → not the same row, and sorted by page first
+      // so no further candidates can match this base either. Break out immediately.
+      if(b.sourcePageIdx!==base.sourcePageIdx)break;
       // Y-tops within tolerance → likely same row
       if(Math.abs((b.y_top||0)-(base.y_top||0))>Y_TOL){
-        // Sorted by y_top — if we've exceeded tolerance, no further candidates can match this base.
+        // Sorted by y_top within same page — if we've exceeded tolerance, no more candidates.
         break;
       }
       // Also require similar y_bottom (guards against rows that happen to start at the same y but span different heights, e.g. multi-line cell vs single-line).
@@ -12927,7 +12939,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           bgSetPct(panel.id,pct,msg);
         }
         if(pageQs.length)reQs.push(...pageQs);
-        return pageItems;
+        // DECISION(v1.19.645): Attach sourcePageIdx so positional dedup can distinguish
+        // rows from different pages. Without this, multi-page BOM re-extracts lost ~50%
+        // of rows to cross-page Y-coordinate collisions.
+        return pageItems.map(item=>({...item,sourcePageIdx:pgIdx}));
       },3);
       all=bomResults.flat();
       reQs=reQs.slice(0,10);
@@ -13117,7 +13132,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if(qs.length)pageQs.push(...qs);
         }
         if(pageQs.length)fbQs.push(...pageQs);
-        return pageItems;
+        // DECISION(v1.19.645): Attach sourcePageIdx — see same fix in re-extract above.
+        return pageItems.map(item=>({...item,sourcePageIdx:pgIdx}));
       },3);
       all=bomResults.flat();
       fbQs=fbQs.slice(0,10);
