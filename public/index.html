@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.646";
+const APP_VERSION="v1.19.647";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5478,8 +5478,10 @@ const NON_BOM_PN_PATTERNS=[
   /^=?[A-Za-z]+\d*\+[A-Za-z]+\d+\/\d+$/,
   // Bare "=" prefix followed by anything with + or /
   /^=[A-Za-z0-9]+[+\/][A-Za-z0-9\/+]+$/,
-  // Pure-numeric PNs >= 10 digits — barcodes / UPC / project IDs
-  /^\d{10,}$/,
+  // DECISION(v1.19.647): REMOVED the `/^\d{10,}$/` pure-digit pattern. It was a false
+  // positive for legitimate 10+-digit manufacturer PNs (Weidmuller uses 3137290000 etc).
+  // Barcode filtering now relies on structural checks (4-field rule) — a real barcode row
+  // from a title block lacks manufacturer/description so gets caught by the structural pass.
 ];
 // Description patterns that strongly indicate a SHEET TITLE (not a component description)
 const NON_BOM_DESC_PATTERNS=[
@@ -5922,25 +5924,33 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
 // values from. The AI fixes its own errors before the user ever sees them.
 async function selfCorrectBomRowsWithSnippets(bom,pages,onProgress){
   if(!_apiKey||!bom||!bom.length||!pages||!pages.length)return{bom,corrections:[]};
+  // DECISION(v1.19.647): Require sourcePageId (actual page.id) to find the source page.
+  // Previously used sourcePageIdx (index into bomPages filtered list) against `pages`
+  // (full panel pages) — different arrays, different indexing. That misalignment loaded
+  // the WRONG page image for every row (typically the cover page at index 0), and Haiku
+  // dutifully re-read cover-page title-block text and returned it as "corrections",
+  // destroying every real BOM row by overwriting PN/description with sheet identifiers
+  // and project codes. Strict fix: only re-verify rows that have sourcePageId, and look
+  // up pages by id not index.
   const rowsToCheck=bom.filter(r=>
     !r.isLaborRow&&!r.isContingency&&!r.autoLoaded&&
     !r.isCrossed&&!r.isCorrection&&!r.correctedByLibrary&&
     typeof r.y_top==="number"&&typeof r.y_bottom==="number"&&
-    r.y_bottom>r.y_top&&typeof r.sourcePageIdx==="number"
+    r.y_bottom>r.y_top&&r.sourcePageId
   );
   if(!rowsToCheck.length)return{bom,corrections:[]};
   const corrections=[];
   const BATCH=8;
   const total=rowsToCheck.length;
-  // Pre-load dataUrls for each needed page, once
+  // Pre-load dataUrls for each needed page, once. Keyed by page.id (not index).
   const pageDataUrlCache={};
-  async function getPageDataUrl(pgIdx){
-    if(pgIdx in pageDataUrlCache)return pageDataUrlCache[pgIdx];
-    const pg=pages[pgIdx];
-    if(!pg){pageDataUrlCache[pgIdx]=null;return null;}
+  async function getPageDataUrl(pageId){
+    if(pageId in pageDataUrlCache)return pageDataUrlCache[pageId];
+    const pg=pages.find(p=>p.id===pageId);
+    if(!pg){pageDataUrlCache[pageId]=null;console.warn("SNIPPET: no page found for id",pageId);return null;}
     let du=pg.dataUrl;
     if(!du&&pg.storageUrl){try{const loaded=await ensureDataUrl(pg);du=loaded.dataUrl;}catch(e){du=null;}}
-    pageDataUrlCache[pgIdx]=du||null;
+    pageDataUrlCache[pageId]=du||null;
     return du||null;
   }
   for(let i=0;i<total;i+=BATCH){
@@ -5948,7 +5958,7 @@ async function selfCorrectBomRowsWithSnippets(bom,pages,onProgress){
     if(onProgress)onProgress(Math.round(i/total*100),`Re-verifying row ${i+1}-${Math.min(i+BATCH,total)} of ${total}`);
     await Promise.all(batch.map(async(row)=>{
       try{
-        const dataUrl=await getPageDataUrl(row.sourcePageIdx);
+        const dataUrl=await getPageDataUrl(row.sourcePageId);
         if(!dataUrl)return;
         // Crop with generous margin — include headers optionally? No, pure row only.
         const rowH=row.y_bottom-row.y_top;
@@ -6005,20 +6015,42 @@ RULES:
         const newMfr=(verified.manufacturer||"").trim();
         const normPN=s=>(s||"").toUpperCase().replace(/[\s\-_.]/g,"");
         const normDesc=s=>(s||"").toLowerCase().replace(/[\s,.()\/\-]/g,"");
+        // DECISION(v1.19.647): Corruption guard — NEVER accept a "correction" that would
+        // turn a valid-looking PN into a sheet-identifier pattern or a valid description
+        // into a sheet-title phrase. Haiku has been observed to read title-block text and
+        // return it as the row's "true" value. Even with the page-id fix, this belt-and-
+        // suspenders rejects any obviously wrong substitution.
+        const looksLikeSheetId=s=>/^=?[A-Za-z]+\d*\+[A-Za-z]+\d+\/\d+$/.test((s||"").trim());
+        const looksLikeSheetTitle=s=>/^(panel grounding|end cover|list of assemblies|electrical schematic diagram|panel layout|title page|title none|sheet overview|symbol overview|power supply)$/i.test((s||"").trim());
         const changes={};
         // Qty: trust snippet when materially different AND plausible (>0, <10000)
         if(newQty>0&&newQty<10000&&newQty!==origQty){
           changes.qty={from:origQty,to:newQty};
         }
-        // PN: trust snippet when different after normalization, and snippet value is non-empty + long enough
+        // PN: trust snippet when different after normalization, and snippet value is non-empty + long enough.
+        // GUARD: reject if snippet's PN looks like a sheet identifier (e.g. =CCD1+A01/08) — that's
+        // title-block pollution, not a real correction. Also reject if original PN was valid-looking
+        // (has letters+digits, length >=4) and snippet PN is structurally weaker.
         if(newPN.length>=3&&normPN(newPN)!==normPN(origPN)){
-          changes.partNumber={from:origPN,to:newPN};
+          const newIsSheetId=looksLikeSheetId(newPN);
+          const origWasRealPn=origPN.length>=4&&/[A-Z]/i.test(origPN)&&/\d/.test(origPN);
+          if(!newIsSheetId&&!(origWasRealPn&&!/[A-Z0-9]{3}/i.test(newPN))){
+            changes.partNumber={from:origPN,to:newPN};
+          }else{
+            console.warn(`SNIPPET REJECT PN: "${origPN}" → "${newPN}" (would corrupt valid PN)`);
+          }
         }
         // Description: only change when meaningfully different (not just whitespace/punct)
+        // GUARD: reject if snippet's description is a sheet-title phrase.
         if(newDesc.length>=5&&normDesc(newDesc)!==normDesc(origDesc)&&Math.abs(newDesc.length-origDesc.length)>3){
-          changes.description={from:origDesc,to:newDesc};
+          if(!looksLikeSheetTitle(newDesc)){
+            changes.description={from:origDesc,to:newDesc};
+          }else{
+            console.warn(`SNIPPET REJECT DESC: "${origDesc}" → "${newDesc}" (sheet title, not a component description)`);
+          }
         }
-        // Manufacturer: fill if missing
+        // Manufacturer: fill if missing (never overwrite an existing MFR via snippet —
+        // Haiku too often invents a plausible-sounding one from nearby context)
         if(!origMfr&&newMfr&&newMfr.length>1){
           changes.manufacturer={from:origMfr,to:newMfr};
         }
@@ -7288,7 +7320,12 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           if(qs.length)pageQs.push(...qs);
         }
         if(pageQs.length)allQuestions.push(...pageQs);
-        return pageItems.map(item=>({...item,sourcePageIdx:pgIdx}));
+        // DECISION(v1.19.647): Also attach sourcePageId (the actual page.id). sourcePageIdx
+        // is an index into BOMpages (the filtered list), NOT into panel.pages — using it to
+        // load page images by index picks up the wrong page (catastrophic: snippet correction
+        // was re-reading cover pages instead of BOM pages, destroying every row by overwriting
+        // with cover-page text). sourcePageId is unambiguous.
+        return pageItems.map(item=>({...item,sourcePageIdx:pgIdx,sourcePageId:pg.id}));
       },3).then(results=>{
         const all=results.flat();if(!all.length)return{bom:[],questions:allQuestions,mergeStats:{raw:0,exact:0,fuzzy:0,fuzzyMerges:[]}};
         // DECISION(v1.19.620): Run POSITIONAL dedup FIRST (before exact PN dedup) so cross-
@@ -13065,7 +13102,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // DECISION(v1.19.645): Attach sourcePageIdx so positional dedup can distinguish
         // rows from different pages. Without this, multi-page BOM re-extracts lost ~50%
         // of rows to cross-page Y-coordinate collisions.
-        return pageItems.map(item=>({...item,sourcePageIdx:pgIdx}));
+        // DECISION(v1.19.647): Also sourcePageId — see initial extract for the critical
+        // index-vs-id distinction that was destroying rows via wrong-page snippet reads.
+        return pageItems.map(item=>({...item,sourcePageIdx:pgIdx,sourcePageId:pg.id}));
       },3);
       all=bomResults.flat();
       reQs=reQs.slice(0,10);
@@ -13258,8 +13297,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if(qs.length)pageQs.push(...qs);
         }
         if(pageQs.length)fbQs.push(...pageQs);
-        // DECISION(v1.19.645): Attach sourcePageIdx — see same fix in re-extract above.
-        return pageItems.map(item=>({...item,sourcePageIdx:pgIdx}));
+        // DECISION(v1.19.645/647): Attach sourcePageIdx + sourcePageId — see same fix above.
+        return pageItems.map(item=>({...item,sourcePageIdx:pgIdx,sourcePageId:pg.id}));
       },3);
       all=bomResults.flat();
       fbQs=fbQs.slice(0,10);
