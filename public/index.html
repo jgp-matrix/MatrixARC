@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.635";
+const APP_VERSION="v1.19.636";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14368,6 +14368,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               {row.correctionType==='extraction'?'extraction corrected':row.correctionType==='formatting'?'formatting error':row.correctionType==='format'?'format corrected':'corrected'}
                             </span>
                           )}
+                          {/* DECISION(v1.19.636): Verification badge — suspect (red) and plausible (yellow)
+                             from panel.bomVerification. Scan Results Banner points users at this badge. */}
+                          {f==="partNumber"&&!row.isLaborRow&&!row.isCrossed&&!row.isCorrection&&!row.correctedByLibrary&&(()=>{
+                            const verif=(panel.bomVerification||[]).find(v=>String(v.id)===String(row.id));
+                            if(!verif)return null;
+                            if(verif.status==="suspect")return(
+                              <span title={verif.note||"Part number not recognized — may be an OCR error or invalid"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.red+"22",padding:"1px 6px",borderRadius:10}}>? not recognized</span>
+                            );
+                            if(verif.status==="plausible")return(
+                              <span title={verif.note||"Follows a valid part number pattern but not confirmed"} style={{fontSize:10,color:C.yellow,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.yellow+"22",padding:"1px 6px",borderRadius:10}}>~ unverified</span>
+                            );
+                            return null;
+                          })()}
                           </div>
                           {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&!readOnly&&(()=>{
                             const alt=alternates.find(a=>a.originalPN===row.crossedFrom);
