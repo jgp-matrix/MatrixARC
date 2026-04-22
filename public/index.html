@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.636";
+const APP_VERSION="v1.19.637";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9899,7 +9899,11 @@ async function extractTitleBlock(dataUrl,opts){
       headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
         model:"claude-opus-4-6",
-        max_tokens:2000,
+        // DECISION(v1.19.637): max_tokens MUST exceed budget_tokens when thinking is enabled —
+        // thinking tokens are drawn from the max budget. Previously max=2000, budget=2000 left
+        // zero room for the JSON text response, so title block extraction silently returned
+        // nothing. 4000 total / 2000 thinking gives ~2000 tokens for the ~300-token JSON output.
+        max_tokens:4000,
         thinking:{type:"enabled",budget_tokens:2000},
         messages:[{role:"user",content:[
           ...imageContents,
@@ -13842,11 +13846,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       {pg.regions.length} region{pg.regions.length>1?"s":""}
                     </span>
                   )}
+                  {/* DECISION(v1.19.637): Disable type tagging while AI detection is running
+                     — the AI results will overwrite any clicks anyway, and it confuses users
+                     to see their choice revert when detection completes. */}
                   {["bom","schematic","backpanel","enclosure","pid"].map(t=>{
                     const active=types.includes(t);
+                    const lockedForDetect=detecting;
                     return(
-                      <button key={t} data-tip={active?`Remove "${SHORT[t]}" tag from this page`:`Tag this page as ${SHORT[t]}`} disabled={readOnly} onClick={()=>tagPage(pg.id,active?types.filter(x=>x!==t):[...types,t])}
-                        style={{background:active?typeColors[t]+"33":"transparent",color:active?typeColors[t]:C.muted,border:`1px solid ${active?typeColors[t]+"88":C.border}`,borderRadius:10,padding:"2px 8px",fontSize:12,fontWeight:700,cursor:readOnly?"default":"pointer",transition:"all 0.1s"}}>
+                      <button key={t} data-tip={lockedForDetect?"Wait for AI detection to finish":active?`Remove "${SHORT[t]}" tag from this page`:`Tag this page as ${SHORT[t]}`} disabled={readOnly||lockedForDetect} onClick={()=>tagPage(pg.id,active?types.filter(x=>x!==t):[...types,t])}
+                        style={{background:active?typeColors[t]+"33":"transparent",color:active?typeColors[t]:C.muted,border:`1px solid ${active?typeColors[t]+"88":C.border}`,borderRadius:10,padding:"2px 8px",fontSize:12,fontWeight:700,cursor:(readOnly||lockedForDetect)?"not-allowed":"pointer",opacity:lockedForDetect?0.45:1,transition:"all 0.1s"}}>
                         {SHORT[t]}
                       </button>
                     );
