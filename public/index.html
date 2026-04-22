@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.645";
+const APP_VERSION="v1.19.646";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5466,6 +5466,76 @@ function flagSuspectQuantities(bom){
   return bom;
 }
 
+// DECISION(v1.19.646): Structural + pattern-based filter for non-BOM rows. A real BOM row
+// must have all four essentials: qty > 0, partNumber, description, manufacturer. Anything
+// missing one of those is likely a sheet-index entry, title-block artifact, or drawing-set
+// reference that Opus wrongly picked up. Additionally, known non-BOM PN patterns (sheet
+// identifiers like =CCD1+A01/05, barcodes, all-letter short codes) get filtered explicitly.
+// Runs AFTER dedup, BEFORE sort + appendDefaultBomItems, so we only filter AI-extracted
+// rows — never the contingency/labor/default rows added by the pipeline.
+const NON_BOM_PN_PATTERNS=[
+  // Sheet identifier patterns — always contain a "+" between alphanumerics and end with /NN or /NNN
+  /^=?[A-Za-z]+\d*\+[A-Za-z]+\d+\/\d+$/,
+  // Bare "=" prefix followed by anything with + or /
+  /^=[A-Za-z0-9]+[+\/][A-Za-z0-9\/+]+$/,
+  // Pure-numeric PNs >= 10 digits — barcodes / UPC / project IDs
+  /^\d{10,}$/,
+];
+// Description patterns that strongly indicate a SHEET TITLE (not a component description)
+const NON_BOM_DESC_PATTERNS=[
+  /^(panel grounding|end cover|list of assemblies|electrical schematic diagram|schematic diagram|drawing index|sheet index|title page|cover sheet|cover page|revision block|notes page|legend page|general notes)$/i,
+  /^drawing (no|number|list|index)/i,
+  /^sheet (no|number|index|list)/i,
+  /^title none$/i,
+];
+function filterNonBomRows(bom){
+  const kept=[],dropped=[];
+  for(const r of bom){
+    // Flag-based exemptions — user-added, labor, contingency, auto-loaded rows pass through.
+    if(r.isLaborRow||r.isContingency||r.autoLoaded||r.isCrossed||r.isCorrection||r.correctedByLibrary){
+      kept.push(r);
+      continue;
+    }
+    const pn=(r.partNumber||"").trim();
+    const desc=(r.description||"").trim();
+    const mfr=(r.manufacturer||"").trim();
+    const qty=+r.qty||0;
+    // STRUCTURAL CHECK: a true BOM row has all four essentials populated.
+    // If missing 2+ of the four, definitely not a BOM row — drop.
+    const missing=[];
+    if(qty<=0)missing.push("qty");
+    if(pn.length<2)missing.push("partNumber");
+    if(desc.length<3)missing.push("description");
+    if(mfr.length<2)missing.push("manufacturer");
+    if(missing.length>=2){
+      dropped.push({partNumber:pn,description:desc,reason:`Not a BOM row — missing ${missing.join(", ")}`});
+      continue;
+    }
+    // PATTERN CHECKS: sheet identifiers, barcodes, drawing references
+    if(NON_BOM_PN_PATTERNS.some(re=>re.test(pn))){
+      dropped.push({partNumber:pn,description:desc,reason:`Sheet identifier / drawing reference — not a component`});
+      continue;
+    }
+    if(NON_BOM_DESC_PATTERNS.some(re=>re.test(desc))){
+      dropped.push({partNumber:pn,description:desc,reason:`Description is a drawing sheet title — not a component`});
+      continue;
+    }
+    // SPATIAL CHECK: rows in the bottom-right quadrant are likely title-block artifacts.
+    // Only apply when position data exists and row is clearly in title-block territory.
+    if(typeof r.y_top==="number"&&typeof r.x_left==="number"&&
+       r.y_top>0.88&&r.x_left>0.65){
+      // Bottom-right corner. Unless it's clearly a multi-row repeat, it's likely title block.
+      dropped.push({partNumber:pn,description:desc,reason:`Position suggests title-block area (bottom-right corner)`});
+      continue;
+    }
+    kept.push(r);
+  }
+  if(dropped.length>0){
+    console.log(`BOM FILTER: dropped ${dropped.length} non-BOM row${dropped.length>1?"s":""}:`,dropped.slice(0,10));
+  }
+  return{kept,dropped};
+}
+
 // ── FIRESTORE TEAM HELPERS ──
 async function loadUserProfile(uid){
   try{const d=await fbDb.doc(`users/${uid}/config/profile`).get();return d.exists?d.data():null;}catch(e){return null;}
@@ -5510,14 +5580,43 @@ const BOM_PROMPT=`You are an expert at reading UL508A industrial electrical cont
 
 TASK: Extract every line item from the BOM table on this drawing page.
 
-STEP 1 — ANALYZE THE TABLE STRUCTURE FIRST:
+WHAT IS A BOM (Bill of Materials)?
+A BOM is a structured spreadsheet-style grid listing physical components that go INTO a control panel. A real BOM row always has ALL FOUR essential fields populated:
+  1. QTY — a numeric quantity
+  2. PART NUMBER / TYPE NUMBER — the manufacturer's catalog code (alphanumeric)
+  3. DESCRIPTION / DESIGNATION — what the component is
+  4. MANUFACTURER — who makes it
+If a row lacks any of these four, it is NOT a BOM line item. Do NOT extract it.
+
+WHAT IS NOT A BOM (skip these entirely):
+• TITLE BLOCKS — the small bordered box anchored to the BOTTOM-RIGHT (sometimes bottom-left) corner of every engineering drawing. Contains the drawing number, sheet number, revision, designer, date, scale. NONE of this belongs in a BOM.
+• SHEET INDEX / TABLE OF CONTENTS — a list of all sheets in the drawing set with their titles. Rows look like:
+    =CCD1+A01/05  |  Panel Grounding
+    =CCD1+A01/10  |  End cover
+    =CD1+A01/18   |  List of Assemblies
+  These reference OTHER drawing sheets, not physical components. Skip entirely.
+• REVISION BLOCK — table of revision letter/date/description of drawing changes. Skip.
+• DRAWING NUMBERS, PROJECT CODES, BARCODES — examples: "GOPAU", "073752511566", "CCD1+A01/10", "=CCD1+A01/13". These are document identifiers, not parts. Skip.
+• NOTES / LEGENDS — any text paragraphs, symbol keys, or annotation blocks. Skip.
+
+SPATIAL CUES to distinguish BOM from title block:
+• BOM tables typically float in the UPPER half of the page, or are explicitly headed "BILL OF MATERIALS", "PARTS LIST", "LIST OF PARTS", "MATERIAL LIST".
+• TITLE BLOCKS are always anchored at the BOTTOM edge, typically bottom-right corner. Anything in the lower ~15% of the page is suspect unless it's clearly part of a multi-row BOM table.
+• SHEET INDEX tables often have only 2 columns (sheet number + title) — they LACK the manufacturer and quantity columns that BOMs have. That missing-columns pattern is the dead giveaway.
+
+STRICT RULE: If you're about to emit a row where partNumber contains "=" or "+" symbols in a sheet-identifier pattern (like =XX+AXX/NN), OR where the row has no manufacturer, OR where the description is a drawing sheet title like "Panel Grounding" / "End cover" / "Electrical Schematic Diagram" / "List of Assemblies" — STOP. That row is a sheet reference, not a component. Do not emit it.
+
+STEP 1 — IDENTIFY THE BOM TABLE:
+First confirm the page actually contains a BOM table (the 4-column grid defined above). If the page is a cover sheet, schematic, layout drawing, or title block only, return {"items":[],"questions":[]} with no items.
+
+STEP 2 — ANALYZE THE TABLE STRUCTURE:
 Before extracting anything, carefully examine:
 • All column headers exactly as printed
 • Total number of data rows in the table (count them)
 • Any multi-line cells, merged cells, or continuation rows
 • Whether rows continue from a previous page (no header row visible)
 
-STEP 2 — MAP COLUMNS:
+STEP 3 — MAP COLUMNS:
 • itemNo      → ITEM, Item #, Item No., LINE, Line #, No., or leftmost sequential number column
 • qty         → QTY, Quantity, Qty., EA, Each
 • partNumber  → "MFG/PART NO.", "Part No.", "Part #", "Cat. No.", "Catalog No.", "Model No.",
@@ -5526,7 +5625,7 @@ STEP 2 — MAP COLUMNS:
 • notes       → TAG, Tag No., Ref, Reference, Device ID — contains ref designators (CB1, M2, OL1…)
 • description → Description, Item Description, Function, Material Description
 
-STEP 3 — EXTRACT EVERY ROW (no skipping):
+STEP 4 — EXTRACT EVERY ROW (no skipping):
 • Multi-line cells: if text wraps to the next printed line, it is ONE row — keep it as one item
 • itemNo: copy exact value printed. Use "" if no item number column exists
 • NEVER invent or use sequential row counts (1,2,3…) as partNumber values
@@ -5541,7 +5640,7 @@ STEP 3 — EXTRACT EVERY ROW (no skipping):
 • Reference designators (CB1, M1, OL2, PB3, SS1…) → notes field only, never partNumber
 • Include ALL data rows even when some fields are blank — only skip: column header row, totals rows, title block text, revision block rows
 
-STEP 4 — CHARACTER ACCURACY (most critical step):
+STEP 5 — CHARACTER ACCURACY (most critical step):
 Industrial part numbers are alpha-numeric codes where a SINGLE wrong character makes the part unfindable. You MUST verify each character individually by examining its actual glyph shape — do NOT rely on context or guessing.
 
 LETTER vs DIGIT confusion matrix — examine stroke shape carefully:
@@ -7204,12 +7303,15 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         const exact=Object.values(map);
         const fuzzyReport=fuzzyMergeBomItemsWithReport(exact);
         const fuzzy=fuzzyReport.items;
-        console.log(`BOM MERGE: ${all.length} raw → ${positional.length} positional → ${exact.length} exact → ${fuzzy.length} fuzzy`);
+        // DECISION(v1.19.646): Filter non-BOM rows (sheet identifiers, title block artifacts,
+        // drawing references) based on the 4-field structural rule + pattern + spatial checks.
+        const {kept:filtered,dropped:nonBomRows}=filterNonBomRows(fuzzy);
+        console.log(`BOM MERGE: ${all.length} raw → ${positional.length} positional → ${exact.length} exact → ${fuzzy.length} fuzzy → ${filtered.length} after non-BOM filter (${nonBomRows.length} dropped)`);
         // DECISION(v1.19.629): Sort by drawing Y-position so ARC BOM matches drawing row order.
-        const sorted=sortBomByDrawingPosition(fuzzy);
+        const sorted=sortBomByDrawingPosition(filtered);
         // DECISION(v1.19.638): Flag column-alignment qty errors (e.g. qty=143 on a window kit).
         flagSuspectQuantities(sorted);
-        return{bom:appendDefaultBomItems(sorted),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,fuzzyMerges:fuzzyReport.merges}};
+        return{bom:appendDefaultBomItems(sorted),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows}};
       }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[],mergeStats:null};});
     }
     // Hazardous location scan (parallel with BOM — uses Haiku, fast)
@@ -11539,9 +11641,11 @@ function ScanResultsBanner({panel}){
   const auditAppliedLog=r.auditAppliedLog||[];
   const snippetCorrectionCount=r.snippetCorrectionCount||0; // DECISION(v1.19.639)
   const snippetCorrectionsLog=r.snippetCorrectionsLog||[];
+  const nonBomRowsFiltered=r.nonBomRowsFiltered||[]; // DECISION(v1.19.646)
   const concerns=[];
   if(fuzzyMerges.length>0)concerns.push(`${fuzzyMerges.length} OCR duplicate${fuzzyMerges.length>1?"s":""} auto-merged`);
   if(duplicatesFound>0&&fuzzyMerges.length===0)concerns.push(`${duplicatesFound} duplicate rows merged`);
+  if(nonBomRowsFiltered.length>0)concerns.push(`${nonBomRowsFiltered.length} non-BOM row${nonBomRowsFiltered.length>1?"s":""} filtered`); // v1.19.646
   if(snippetCorrectionCount>0)concerns.push(`AI self-corrected ${snippetCorrectionCount} row${snippetCorrectionCount>1?"s":""}`); // v1.19.639
   if(suspectCount>0)concerns.push(`${suspectCount} suspect part #${suspectCount>1?"s":""}`);
   if(missingTitle.length>0)concerns.push(`title block missing: ${missingTitle.join(", ")}`);
@@ -11613,6 +11717,25 @@ function ScanResultsBanner({panel}){
               <div style={{color:C.yellow,fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>❓ Suspect Part Numbers ({suspectCount})</div>
               <div style={{color:"#fef3c7",fontSize:11,lineHeight:1.5}}>
                 The AI flagged {suspectCount} part number{suspectCount>1?"s":""} as not matching a known manufacturer pattern. Look for the <span style={{color:C.red,fontWeight:600}}>red</span> verification badge in the BOM table below and double-check those rows.
+              </div>
+            </div>
+          )}
+          {/* DECISION(v1.19.646): Non-BOM rows filtered out — sheet identifiers, title-block
+             artifacts, drawing-index references. Shown so user can see what was dropped. */}
+          {nonBomRowsFiltered.length>0&&(
+            <div style={{marginTop:10,padding:"8px 12px",background:"#1f0e2a",border:`1px solid #a78bfa55`,borderRadius:6}}>
+              <div style={{color:"#c4b5fd",fontWeight:700,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>🚫 Filtered {nonBomRowsFiltered.length} Non-BOM Row{nonBomRowsFiltered.length>1?"s":""}</div>
+              <div style={{color:"#ddd6fe",fontSize:11,marginBottom:8,lineHeight:1.5}}>
+                These rows were extracted from the drawing but don't match BOM structure (missing qty/part#/description/manufacturer, or match sheet-identifier / title-block / drawing-index patterns). They've been removed automatically.
+              </div>
+              <div style={{fontSize:10,color:"#ddd6fe",maxHeight:180,overflowY:"auto"}}>
+                {nonBomRowsFiltered.slice(0,30).map((d,i)=>(
+                  <div key={i} style={{padding:"3px 0",borderTop:i>0?`1px solid #a78bfa22`:"none",fontFamily:"ui-monospace,Menlo,Consolas,monospace"}}>
+                    <span style={{color:"#c4b5fd",fontWeight:600}}>{d.partNumber||"(blank)"}</span>
+                    {d.description&&<span style={{color:"#ddd6fe"}}>{" — "+d.description.slice(0,60)}</span>}
+                    <div style={{color:"#a78bfa",fontSize:9,marginTop:2,fontFamily:"inherit"}}>↳ {d.reason}</div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -12963,8 +13086,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const exactDedup=Object.values(map);
     const fuzzyReport=fuzzyMergeBomItemsWithReport(exactDedup);
     const fuzzyDedup=fuzzyReport.items;
-    console.log(`BOM MERGE: ${all.length} raw → ${positionalDedup.length} positional → ${exactDedup.length} exact → ${fuzzyDedup.length} fuzzy`);
-    const corrected=applyPartCorrections(partCorrections,fuzzyDedup.map(row=>{
+    // DECISION(v1.19.646): Non-BOM row filter (structural + pattern + spatial).
+    const {kept:reFiltered,dropped:reNonBomRows}=filterNonBomRows(fuzzyDedup);
+    console.log(`BOM MERGE: ${all.length} raw → ${positionalDedup.length} positional → ${exactDedup.length} exact → ${fuzzyDedup.length} fuzzy → ${reFiltered.length} after non-BOM filter (${reNonBomRows.length} dropped)`);
+    const corrected=applyPartCorrections(partCorrections,reFiltered.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     }));
@@ -12996,6 +13121,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       learnedCorrectionsLog:reLearnedLog.slice(-50),
       snippetCorrectionCount:reSnippetCorrections.length,
       snippetCorrectionsLog:reSnippetCorrections.slice(-50),
+      nonBomRowsFiltered:reNonBomRows,
       timestamp:Date.now(),version:APP_VERSION,
     };
     ep.set(80,"Saving BOM…");
@@ -13151,7 +13277,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const fbExact=Object.values(map);
     const fbFuzzyReport=fuzzyMergeBomItemsWithReport(fbExact);
     const fbFuzzy=fbFuzzyReport.items;
-    const fbCorrected=applyPartCorrections(partCorrections,fbFuzzy.map(row=>{
+    // DECISION(v1.19.646): Non-BOM row filter (structural + pattern + spatial).
+    const {kept:fbFiltered,dropped:fbNonBomRows}=filterNonBomRows(fbFuzzy);
+    console.log(`BOM MERGE (feedback): ${fbFuzzy.length} fuzzy → ${fbFiltered.length} after non-BOM filter (${fbNonBomRows.length} dropped)`);
+    const fbCorrected=applyPartCorrections(partCorrections,fbFiltered.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     }));
@@ -13181,6 +13310,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       learnedCorrectionsLog:fbLearnedLog.slice(-50),
       snippetCorrectionCount:fbSnippetCorrections.length,
       snippetCorrectionsLog:fbSnippetCorrections.slice(-50),
+      nonBomRowsFiltered:fbNonBomRows,
       timestamp:Date.now(),version:APP_VERSION,
     };
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
