@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.651";
+const APP_VERSION="v1.19.652";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5939,17 +5939,24 @@ async function selfCorrectBomRowsWithSnippets(bom,pages,onProgress){
     r.y_bottom>r.y_top&&r.sourcePageId
   );
   if(!rowsToCheck.length)return{bom,corrections:[]};
-  // DECISION(v1.19.649): Precompute a set of all existing PNs in the BOM. If Haiku's
-  // "correction" tries to replace a row's PN with another row's existing PN, that's
-  // guaranteed adjacent-row drift — reject. A real correction never equals an existing
-  // different row's PN (same PN on two rows would have been merged by dedup already).
-  const existingPnByRowId={};
+  // DECISION(v1.19.649/652): Precompute a set of all existing PNs in the BOM. If the
+  // snippet's "correction" tries to replace a row's PN with another row's existing PN,
+  // that's guaranteed adjacent-row drift — reject.
+  // v1.19.652: expanded to include crossedFrom and correctionFrom. When a learning-DB
+  // cross is applied (isCrossed + crossedFrom), the row's DISPLAYED partNumber is the
+  // replacement value and the ORIGINAL extracted PN is stashed in crossedFrom. If the
+  // snippet pass reads adjacent-row data that matches the crossedFrom value, the guard
+  // must still recognize it as "belongs to another row". Same for correctionFrom.
   const normPNEarly=s=>(s||"").toUpperCase().replace(/[\s\-_.]/g,"");
+  const allExistingPns=new Set();
   for(const r of bom){
     const pn=normPNEarly(r.partNumber);
-    if(pn)existingPnByRowId[String(r.id)]=pn;
+    if(pn)allExistingPns.add(pn);
+    const crossed=normPNEarly(r.crossedFrom);
+    if(crossed)allExistingPns.add(crossed);
+    const corrected=normPNEarly(r.correctionFrom);
+    if(corrected)allExistingPns.add(corrected);
   }
-  const allExistingPns=new Set(Object.values(existingPnByRowId));
   const corrections=[];
   const BATCH=8;
   const total=rowsToCheck.length;
