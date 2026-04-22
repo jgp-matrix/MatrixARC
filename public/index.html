@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.627";
+const APP_VERSION="v1.19.628";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5213,6 +5213,22 @@ function fuzzyMergeBomItemsWithReport(items){
       if(pnA===pnB)continue; // exact dedup already handled elsewhere
       // Length delta ≤ 2 keeps us safe (OCR typically adds/drops 1-2 chars)
       if(Math.abs(pnA.length-pnB.length)>2)continue;
+      // DECISION(v1.19.628): CRITICAL Y-position guard. If both items have y_top and they're
+      // at materially different positions on the page, they are DIFFERENT ROWS in the same
+      // BOM table — never merge. This was silently destroying legitimate product-family
+      // variants (Allen-Bradley 800FP-F2/F3/F4 pilot lights that differ only by color code,
+      // Phoenix Contact 2907561/2907563/2907566 terminal blocks, etc.). All are real BC parts.
+      // Positional dedup runs before fuzzy and only collapses items at the SAME Y (cross-quadrant
+      // duplicates, which we no longer generate anyway after v1.19.622 full-page revert). For
+      // single-pass extraction, fuzzy should ONLY merge items without Y data OR items at the
+      // same Y (already handled). If both have Y and they differ, STOP.
+      if(typeof base.y_top==="number"&&typeof b.y_top==="number"){
+        const yDiff=Math.abs((base.y_top||0)-(b.y_top||0));
+        if(yDiff>0.008){
+          // Different rows on the page — never merge, even if PN + MFR + desc all look similar.
+          continue;
+        }
+      }
       // Edit-distance threshold scales with PN length — short PNs get stricter
       const maxLen=Math.max(pnA.length,pnB.length);
       const threshold=maxLen<=8?1:maxLen<=14?2:3;
