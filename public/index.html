@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.614";
+const APP_VERSION="v1.19.615";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1847,18 +1847,50 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p))||null;
   if(!planPage)throw new Error(`No Project Planning Lines OData page found (available: ${allPages.join(", ")||"none"}). Publish BC web service page 1007 as 'ProjectPlanningLines'.`);
 
-  // Probe: GET one record to detect whether page uses Project_No or Job_No
+  // Probe: GET one record to detect whether page uses Project_No or Job_No.
+  // DECISION(v1.19.615): If the $top=1 probe returns 0 records (empty table), inspect
+  // the OData $metadata endpoint as a secondary probe — it lists every property even when
+  // no rows exist. Cache result per-session to avoid re-probing on every sync.
   let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
-  {
-    const probeUrl=`${BC_ODATA_BASE}/${planPage}?$top=1`;
-    const pr=await fetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
-    if(pr.ok){
-      const pd=await pr.json();
-      const rec=(pd.value||[])[0];
-      if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}
+  if(!window._bcPlanFieldsCache)window._bcPlanFieldsCache={};
+  const cacheKey=`${BC_ODATA_BASE}::${planPage}`;
+  if(window._bcPlanFieldsCache[cacheKey]){
+    FP_NO=window._bcPlanFieldsCache[cacheKey].FP_NO;
+    FP_TASK_NO=window._bcPlanFieldsCache[cacheKey].FP_TASK_NO;
+  }else{
+    let detected=false;
+    try{
+      const probeUrl=`${BC_ODATA_BASE}/${planPage}?$top=1`;
+      const pr=await fetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(pr.ok){
+        const pd=await pr.json();
+        const rec=(pd.value||[])[0];
+        if(rec){
+          if("Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";detected=true;}
+          else if("Project_No"in rec){detected=true;}
+        }
+      }
+    }catch(e){/* probe failed — fall through to metadata */}
+    // Fallback: OData $metadata (XML describing the schema) lists properties even when no data rows exist.
+    if(!detected){
+      try{
+        const metaUrl=`${BC_ODATA_BASE}/$metadata`;
+        const mr=await fetch(metaUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/xml"}});
+        if(mr.ok){
+          const xml=await mr.text();
+          // Find the EntityType for this page and check its Property names
+          const entityRe=new RegExp(`<EntityType Name="${planPage.replace(/[.*+?^${}()|[\\\]\\\\]/g,'\\\\$&')}"[\\\\s\\\\S]*?</EntityType>`);
+          const m=xml.match(entityRe);
+          const entityXml=m?m[0]:xml;
+          if(/Name="Job_No"/.test(entityXml)&&!/Name="Project_No"/.test(entityXml)){
+            FP_NO="Job_No";FP_TASK_NO="Job_Task_No";detected=true;
+          }else if(/Name="Project_No"/.test(entityXml)){detected=true;}
+        }
+      }catch(e){/* metadata probe failed — keep defaults */}
     }
+    window._bcPlanFieldsCache[cacheKey]={FP_NO,FP_TASK_NO,detected};
+    console.log(`bcSyncPlanningLines: detected ${FP_NO}/${FP_TASK_NO} for '${planPage}'${detected?"":" (defaults — neither probe succeeded)"}`);
   }
-  console.log(`bcSyncPlanningLines: using page '${planPage}' with fields ${FP_NO}/${FP_TASK_NO}`);
 
   // Step 1: fetch existing planning lines for this task (for incremental sync)
   const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}'`;
@@ -1955,16 +1987,25 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   let created=0,updated=0,deleted=0,skipped=0;
   const desiredLineNos=new Set(lines.map(l=>l.Line_No));
 
+  // DECISION(v1.19.615): Exponential-backoff retry (up to 3 attempts) on 429 Too Many Requests.
+  // Was: single 2-s retry, which still left tens of failed lines on busy BC tenants. Also suppress
+  // per-line 429 warnings — caller logs a summary of failures at the end.
   async function postLine(payload){
-    const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
-    if(r.status===429){await sleep(2000);return fetch(`${BC_ODATA_BASE}/${planPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});}
-    return r;
+    for(let attempt=0;attempt<4;attempt++){
+      const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      if(r.status!==429)return r;
+      if(attempt===3)return r; // exhausted
+      await sleep(1000*Math.pow(2,attempt)); // 1s, 2s, 4s
+    }
   }
   async function patchLine(lineNo,fields,etag){
     const url=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${lineNo})`;
-    const r=await fetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(fields)});
-    if(r.status===429){await sleep(2000);return fetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},body:JSON.stringify(fields)});}
-    return r;
+    for(let attempt=0;attempt<4;attempt++){
+      const r=await fetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(fields)});
+      if(r.status!==429)return r;
+      if(attempt===3)return r;
+      await sleep(1000*Math.pow(2,attempt));
+    }
   }
 
   // Compare desired lines with existing — PATCH if changed, POST if new, skip if identical
@@ -1982,7 +2023,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
       const costChanged=!isBillable&&"Unit_Cost"in payload&&Math.abs((existing.Unit_Cost||0)-(payload.Unit_Cost||0))>0.001;
       if(!noChanged&&!descChanged&&!qtyChanged&&!priceChanged&&!costChanged){skipped++;continue;}
       // PATCH changed fields
-      await sleep(100);
+      await sleep(300); // was 100 — slower to avoid BC rate limiting
       const patch={};
       if(noChanged)patch.No=payload.No||"";
       if(descChanged)patch.Description=payload.Description||"";
@@ -1990,17 +2031,17 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
       if(priceChanged)patch.Unit_Price=payload.Unit_Price||0;
       if(costChanged)patch.Unit_Cost=payload.Unit_Cost||0;
       const pr=await patchLine(line.Line_No,patch,existing["@odata.etag"]);
-      if(pr.ok||pr.status===204){updated++;console.log(`bcSyncPlanningLines: PATCHED line ${line.Line_No}`);}
-      else{const txt=await pr.text();console.warn(`bcSyncPlanningLines: PATCH line ${line.Line_No} failed (${pr.status}):`,txt.slice(0,120));
+      // DECISION(v1.19.615): Suppress per-line console.log/warn — caller logs a summary at end.
+      if(pr.ok||pr.status===204){updated++;}
+      else{const txt=await pr.text();
         if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt});}
     }else{
       // New line — POST
-      await sleep(150);
+      await sleep(300); // was 150 — slower to avoid BC rate limiting
       const r=await postLine(payload);
-      if(r.ok){created++;console.log(`bcSyncPlanningLines: CREATED line ${line.Line_No} (${line.Description})`);}
+      if(r.ok){created++;}
       else if(_fallback){
         const txt=await r.text();
-        console.warn(`bcSyncPlanningLines: line ${line.Line_No} POST failed (${r.status}), trying text:`,txt.slice(0,120));
         await sleep(400);
         const r2=await postLine(_fallback);
         if(r2.ok){created++;}else{const txt2=await r2.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt2});}
@@ -10819,9 +10860,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [extracting,setExtracting]=useState(false);
   const ep=useSmoothProgress();
   const bgTasks=useBgTasks();
+  // DECISION(v1.19.615): Guard bgTask lookup by projectId too. Without this, COPIED projects
+  // (which reuse IDs like "panel-1","panel-2") cross-contaminate: a re-extract on Project A's
+  // panel-1 lights up "extracting" on Project B's panel-1 because the taskId key is identical.
   const bgTask=bgTasks[panel.id];
-  // Restore extracting spinner if a bg task is still running when this panel mounts
-  useEffect(()=>{if(bgTask?.status==="running")setExtracting(true);},[]);
+  const bgTaskIsForThisProject=bgTask&&bgTask.projectId===projectId;
+  // Restore extracting spinner if a bg task is still running when this panel mounts — only if
+  // that task actually belongs to THIS project, not a different project with a colliding ID.
+  useEffect(()=>{if(bgTaskIsForThisProject&&bgTask?.status==="running")setExtracting(true);},[]);
   // DECISION(v1.19.589): Restore pendingPages + awaitingConfirm from the module-scope cache.
   // If the user dropped drawings, navigated away (unmounting PanelCard), and came back,
   // their pending state would otherwise be lost — the drawings would appear to vanish while
@@ -10848,13 +10894,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(changed){onUpdate(synced);try{onSaveImmediate(synced);}catch(e){}}
   },[panel.id]);
   // Progress bar: use bgTask (persists navigation) or ep (for re-extract/validate flows)
-  const extractProgress=(bgTask?.status==="running"||bgTask?.status==="done")?{pct:bgTask.pct||0,msg:bgTask.msg}:ep.progress;
+  // DECISION(v1.19.615): Only consider bgTask if it belongs to THIS project — otherwise a
+  // copied panel with the same id in another project would inherit the wrong progress bar.
+  const _bgTaskHere=bgTaskIsForThisProject?bgTask:null;
+  const extractProgress=(_bgTaskHere?.status==="running"||_bgTaskHere?.status==="done")?{pct:_bgTaskHere.pct||0,msg:_bgTaskHere.msg}:ep.progress;
   // Unified progress: pricing takes priority when active, then extraction, then null
   const _showExtract=extractProgress&&(!awaitingConfirm||detecting);
   // When aiPricing=true, guarantee a non-null value even if pricingProgress state hasn't synced yet
   const _activePricing=aiPricing?(pricingProgress||{msg:"Getting prices…",pct:5}):pricingProgress;
   const _rawUnified=_activePricing||(_showExtract?extractProgress:null);
-  const unifiedProgress=_rawUnified?{..._rawUnified,isError:_rawUnified.isError||bgTask?.status==="error"}:null;
+  const unifiedProgress=_rawUnified?{..._rawUnified,isError:_rawUnified.isError||_bgTaskHere?.status==="error"}:null;
   const [lightboxId,setLightboxId]=useState(null);
   const [showCompliance,setShowCompliance]=useState(false);
   const [draftName,setDraftName]=useState(panel.name||"");
