@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.621";
+const APP_VERSION="v1.19.622";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5235,19 +5235,31 @@ function positionalMergeBomItems(items){
       }
       // Also require similar y_bottom (guards against rows that happen to start at the same y but span different heights, e.g. multi-line cell vs single-line).
       if(Math.abs((b.y_bottom||0)-(base.y_bottom||0))>Y_TOL*2)continue;
-      // Prefer the longer / more complete reading; merge quantities conservatively (the row really only has ONE qty, so MAX not SUM — this is not the same as exact-PN dedup where qty summed across legit repeats).
-      const keepPn=(base.partNumber||"").length>=(b.partNumber||"").length?base.partNumber:b.partNumber;
-      const keepDesc=(base.description||"").length>=(b.description||"").length?base.description:b.description;
-      const keepMfr=base.manufacturer||b.manufacturer||"";
-      const keepNotes=[base.notes,b.notes].filter(Boolean).join("; ")||"";
+      // DECISION(v1.19.622): Keep the ENTIRE row data from the more-complete source, not
+      // independent max-length per field. Previous bug: picking the longest PN from source A
+      // and longest description from source B could glue the wrong description to a part #
+      // (producing scrambled BOM rows). Now we pick the source with more populated fields
+      // and use ITS values as a coherent unit. Qty is MAX (a row has one qty, regardless of
+      // how many sources saw it).
+      const scoreItem=(it)=>{
+        let s=0;
+        if((it.partNumber||"").trim())s+=3;
+        if((it.description||"").trim())s+=2;
+        if((it.manufacturer||"").trim())s+=1;
+        if((it.itemNo||"").trim())s+=1;
+        if((+it.qty||0)>0)s+=1;
+        return s+((it.partNumber||"").length*0.01)+((it.description||"").length*0.005);
+      };
+      const winner=scoreItem(b)>scoreItem(base)?b:base;
       const keepQty=Math.max(+base.qty||1,+b.qty||1);
+      const keepNotes=[base.notes,b.notes].filter(Boolean).join("; ")||"";
       posMerges.push({
-        kept:keepPn,dropped:keepPn===base.partNumber?b.partNumber:base.partNumber,
+        kept:winner.partNumber,dropped:winner===base?b.partNumber:base.partNumber,
         y:base.y_top?.toFixed(3),reason:"position match",
       });
-      base={...base,partNumber:keepPn,description:keepDesc,manufacturer:keepMfr,notes:keepNotes,qty:keepQty};
+      base={...winner,id:base.id,qty:keepQty,notes:keepNotes,y_top:base.y_top,y_bottom:base.y_bottom};
       consumed.add(j);
-      console.log(`BOM POS MERGE: y≈${base.y_top?.toFixed(3)} — kept "${keepPn}", dropped "${posMerges[posMerges.length-1].dropped}"`);
+      console.log(`BOM POS MERGE: y≈${base.y_top?.toFixed(3)} — kept "${winner.partNumber}" (score wins), dropped "${posMerges[posMerges.length-1].dropped}"`);
     }
     merged.push(base);
   }
@@ -5429,41 +5441,19 @@ async function getExtractionUnits(pg){
     }
     return units.length?units:[{dataUrl:pg.dataUrl,regionNote:null}];
   }
-  // DECISION(v1.19.603): If no user-drawn BOM region, auto-split the page into FOUR
-  // overlapping quadrants. Each quadrant is 55% × 55% (10% overlap on each internal edge).
-  // Anthropic caps images at 1568px on the LONG edge, so a full 40"-wide landscape drawing
-  // has text rendered at ~40 px/char. Cropping to a quadrant (same aspect ratio, sent at
-  // the same 1568 cap) doubles horizontal pixel density AND doubles vertical — so each
-  // character now has ~4× the pixel area for OCR. This is what fixes character mis-reads
-  // like 800FP-P5PN3Y being extracted as 800FP-P5PKJY. Fuzzy dedup merges overlap duplicates.
-  try{
-    // 65% × 65% quadrants with 30% overlap on each internal edge. This way any single
-    // BOM row/column that spans up to 65% of the page fits entirely inside at least one
-    // quadrant, and rows in the middle appear in multiple quadrants (merged via fuzzy dedup).
-    const quadrants=[
-      {x:0.00,y:0.00,w:0.65,h:0.65,tag:"top-left"},
-      {x:0.35,y:0.00,w:0.65,h:0.65,tag:"top-right"},
-      {x:0.00,y:0.35,w:0.65,h:0.65,tag:"bottom-left"},
-      {x:0.35,y:0.35,w:0.65,h:0.65,tag:"bottom-right"},
-    ];
-    const units=[];
-    for(const q of quadrants){
-      const cropped=await cropRegionFromImage(pg.dataUrl,q);
-      if(cropped)units.push({
-        dataUrl:cropped,
-        regionNote:`${q.tag} quadrant of the page (x=${q.x}–${q.x+q.w}, y=${q.y}–${q.y+q.h}). This is a ZOOMED region — character detail is high. Extract only rows fully visible here. Downstream dedup merges rows that appear in multiple quadrants.`,
-        // DECISION(v1.19.603): Pass crop bounds so the caller can translate the AI's
-        // quadrant-relative y_top/y_bottom/x_left/x_right back to original-page fractions.
-        // This keeps the Drawing Reference preview accurate.
-        cropBounds:{x:q.x,y:q.y,w:q.w,h:q.h},
-      });
-    }
-    if(units.length>=2)return units;
-    return[{dataUrl:pg.dataUrl,regionNote:null}];
-  }catch(e){
-    console.warn("[BOM SPLIT] auto-quadrant failed, falling back to full page:",e.message);
-    return[{dataUrl:pg.dataUrl,regionNote:null}];
-  }
+  // DECISION(v1.19.622): REVERTED v1.19.603 auto-quadrant split. Quadrants fixed one-off
+  // character-misread bugs (P5PN3Y→P5PKJY) but created much worse problems:
+  //   1. QUANTITY INFLATION — a qty-of-3 row appearing in 4 quadrants got summed to 12 in
+  //      exact-PN dedup when positional dedup missed it (Y-coord noise across quadrants).
+  //   2. FIELD SCRAMBLING — when two quadrant readings disagreed, positional dedup picked
+  //      max-length PN and max-length description INDEPENDENTLY, so the wrong description
+  //      got glued to the wrong part number.
+  // Quadrants were the WRONG trade-off: the character-accuracy gains aren't worth silently
+  // corrupted quantities and descriptions on every row. Full-page single-image extraction
+  // is the original behavior that had been reliable since the program was written. Users
+  // who need higher character detail on a specific BOM table can draw a user region on
+  // that page — the user-region code path above is preserved.
+  return [{dataUrl:pg.dataUrl,regionNote:null}];
 }
 
 // Build region context string for extraction notes
