@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.619";
+const APP_VERSION="v1.19.620";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5198,6 +5198,61 @@ function fuzzyMergeBomItemsWithReport(items){
 }
 // Back-compat wrapper (items-only)
 function fuzzyMergeBomItems(items){return fuzzyMergeBomItemsWithReport(items).items;}
+
+// DECISION(v1.19.620): Positional BOM dedup — same Y position in the original page means
+// same row, regardless of how different quadrants read the part number/description.
+// This is critical for the v1.19.603 quadrant extraction which can produce 2–4 readings
+// of the same row (if the row falls in the overlap region between quadrants). Fuzzy PN
+// dedup catches variants where MFR or description match, but misses cases where the AI
+// read the description differently in each quadrant (e.g. truncated at a quadrant edge).
+// Y-coord match is a near-deterministic signal: rows in a BOM table are horizontal, and
+// our translateItemsToPageCoords(v1.19.603) normalizes Y to original-page fractions.
+function positionalMergeBomItems(items){
+  // Items without y_top are passed through untouched (legacy rows, manual adds, labor rows, etc.).
+  const withY=[],withoutY=[];
+  for(const it of items){
+    if(typeof it.y_top==="number"&&typeof it.y_bottom==="number"&&it.y_bottom>it.y_top){
+      withY.push(it);
+    }else{
+      withoutY.push(it);
+    }
+  }
+  if(withY.length<2)return items;
+  // Sort by y_top so overlap merging is a single linear pass.
+  withY.sort((a,b)=>(a.y_top||0)-(b.y_top||0));
+  const merged=[];const consumed=new Set();const posMerges=[];
+  const Y_TOL=0.008; // 0.8% of page height — tight enough to distinguish adjacent rows, loose enough to catch cross-quadrant variants.
+  for(let i=0;i<withY.length;i++){
+    if(consumed.has(i))continue;
+    let base={...withY[i]};
+    for(let j=i+1;j<withY.length;j++){
+      if(consumed.has(j))continue;
+      const b=withY[j];
+      // Y-tops within tolerance → likely same row
+      if(Math.abs((b.y_top||0)-(base.y_top||0))>Y_TOL){
+        // Sorted by y_top — if we've exceeded tolerance, no further candidates can match this base.
+        break;
+      }
+      // Also require similar y_bottom (guards against rows that happen to start at the same y but span different heights, e.g. multi-line cell vs single-line).
+      if(Math.abs((b.y_bottom||0)-(base.y_bottom||0))>Y_TOL*2)continue;
+      // Prefer the longer / more complete reading; merge quantities conservatively (the row really only has ONE qty, so MAX not SUM — this is not the same as exact-PN dedup where qty summed across legit repeats).
+      const keepPn=(base.partNumber||"").length>=(b.partNumber||"").length?base.partNumber:b.partNumber;
+      const keepDesc=(base.description||"").length>=(b.description||"").length?base.description:b.description;
+      const keepMfr=base.manufacturer||b.manufacturer||"";
+      const keepNotes=[base.notes,b.notes].filter(Boolean).join("; ")||"";
+      const keepQty=Math.max(+base.qty||1,+b.qty||1);
+      posMerges.push({
+        kept:keepPn,dropped:keepPn===base.partNumber?b.partNumber:base.partNumber,
+        y:base.y_top?.toFixed(3),reason:"position match",
+      });
+      base={...base,partNumber:keepPn,description:keepDesc,manufacturer:keepMfr,notes:keepNotes,qty:keepQty};
+      consumed.add(j);
+      console.log(`BOM POS MERGE: y≈${base.y_top?.toFixed(3)} — kept "${keepPn}", dropped "${posMerges[posMerges.length-1].dropped}"`);
+    }
+    merged.push(base);
+  }
+  return [...merged,...withoutY];
+}
 // DECISION(v1.19.603): When an extraction unit is a cropped portion of the page, the AI
 // returns y_top/y_bottom/x_left/x_right as fractions of the CROP. Translate them back to
 // fractions of the original page so Drawing Reference previews still point at the right spot.
@@ -6629,10 +6684,13 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         const map={};
         all.forEach(item=>{const pn=_bomNormPn(item.partNumber);const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}});
         const exact=Object.values(map);
-        const fuzzyReport=fuzzyMergeBomItemsWithReport(exact);
+        // DECISION(v1.19.620): Run POSITIONAL dedup before fuzzy. Catches cross-quadrant
+        // duplicates (same page row, different quadrant readings) using Y-coord agreement.
+        const positional=positionalMergeBomItems(exact);
+        const fuzzyReport=fuzzyMergeBomItemsWithReport(positional);
         const fuzzy=fuzzyReport.items;
-        console.log(`BOM MERGE: ${all.length} raw → ${exact.length} exact-dedup → ${fuzzy.length} fuzzy-dedup`);
-        return{bom:appendDefaultBomItems(fuzzy),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,exact:exact.length,fuzzy:fuzzy.length,fuzzyMerges:fuzzyReport.merges}};
+        console.log(`BOM MERGE: ${all.length} raw → ${exact.length} exact → ${positional.length} positional → ${fuzzy.length} fuzzy`);
+        return{bom:appendDefaultBomItems(fuzzy),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,exact:exact.length,positional:positional.length,fuzzy:fuzzy.length,fuzzyMerges:fuzzyReport.merges}};
       }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[],mergeStats:null};});
     }
     // Hazardous location scan (parallel with BOM — uses Haiku, fast)
@@ -11978,9 +12036,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
     const exactDedup=Object.values(map);
-    const fuzzyReport=fuzzyMergeBomItemsWithReport(exactDedup);
+    // DECISION(v1.19.620): Positional dedup before fuzzy — catches cross-quadrant duplicates.
+    const positionalDedup=positionalMergeBomItems(exactDedup);
+    const fuzzyReport=fuzzyMergeBomItemsWithReport(positionalDedup);
     const fuzzyDedup=fuzzyReport.items;
-    console.log(`BOM MERGE: ${all.length} raw → ${exactDedup.length} exact-dedup → ${fuzzyDedup.length} fuzzy-dedup`);
+    console.log(`BOM MERGE: ${all.length} raw → ${exactDedup.length} exact → ${positionalDedup.length} positional → ${fuzzyDedup.length} fuzzy`);
     const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fuzzyDedup.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
@@ -12137,7 +12197,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
     });
     const fbExact=Object.values(map);
-    const fbFuzzyReport=fuzzyMergeBomItemsWithReport(fbExact);
+    const fbPositional=positionalMergeBomItems(fbExact);
+    const fbFuzzyReport=fuzzyMergeBomItemsWithReport(fbPositional);
     const fbFuzzy=fbFuzzyReport.items;
     const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fbFuzzy.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
