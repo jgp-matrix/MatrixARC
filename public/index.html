@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.618";
+const APP_VERSION="v1.19.619";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6577,6 +6577,31 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     function phasePct(name,frac){const r=phaseRange[name];if(!r)return;const pct=r.start+Math.round(frac*(r.end-r.start));bgSetPct(panel.id,Math.min(pct,99));}
 
     bgSetPct(panel.id,0,hasBom?"Extracting BOM…":hasVal?"Validating…":"Processing…");
+
+    // DECISION(v1.19.619): Upload pages to Firebase Storage EARLY (before any Firestore saves)
+    // so they have storageUrls before being persisted. Without this, intermediate saves during
+    // BOM/validation/compliance strip dataUrl but leave storageUrl empty — if the tab crashes
+    // or the user refreshes mid-extraction, the Firestore doc ends up with BLANK pages.
+    // We upload without stamping here (hazloc unknown yet); final stamped upload overwrites
+    // at the same storage path at the end of the task.
+    const earlyUploadNeeded=(panel.pages||[]).filter(pg=>pg.dataUrl&&!pg.storageUrl);
+    if(earlyUploadNeeded.length>0&&projectId){
+      try{
+        const earlyUrlMap={};
+        await parallelMap(earlyUploadNeeded,async pg=>{
+          try{earlyUrlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,pg.dataUrl);}
+          catch(e){console.warn("Early storage upload failed for page",pg.id,":",e.message);}
+        },4);
+        if(Object.keys(earlyUrlMap).length>0){
+          // Set storageUrl but KEEP dataUrl (AI still needs it for extraction).
+          latestPanel={...latestPanel,pages:latestPanel.pages.map(pg=>earlyUrlMap[pg.id]?{...pg,storageUrl:earlyUrlMap[pg.id]}:pg)};
+          // Save immediately so Firestore has storageUrl before any extraction-phase save could strip dataUrl.
+          await save(latestPanel);
+          console.log('[EARLY UPLOAD]',Object.keys(earlyUrlMap).length,'pages uploaded before extraction starts');
+        }
+      }catch(e){console.warn("Early upload phase failed:",e);}
+    }
+
     // BOM extraction — use cropped regions if available
     let bomMergePromise=Promise.resolve([]);
     if(hasBom){
@@ -10868,6 +10893,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // Restore extracting spinner if a bg task is still running when this panel mounts — only if
   // that task actually belongs to THIS project, not a different project with a colliding ID.
   useEffect(()=>{if(bgTaskIsForThisProject&&bgTask?.status==="running")setExtracting(true);},[]);
+  // DECISION(v1.19.619): Failsafe — if the bg task has transitioned to done/error/deleted but
+  // local `extracting` state is still true, force-clear it. Prevents the "extraction finished
+  // but overlay is stuck on Extracting BOM…" symptom if onDone didn't fire or stale state
+  // survives. Fires whenever bgTask status changes.
+  useEffect(()=>{
+    if(!extracting)return;
+    if(!bgTaskIsForThisProject)return; // task for a different project — ignore
+    if(!bgTask||bgTask.status==="done"||bgTask.status==="error"){
+      console.log('[EXTRACT FAILSAFE] forcing setExtracting(false) — bgTask status:',bgTask?.status||'missing');
+      setExtracting(false);
+    }
+  },[bgTask?.status,extracting,bgTaskIsForThisProject]);
   // DECISION(v1.19.618): Retroactive cleanup for panels where the drawings were deleted
   // before the "clear title block on last page remove" logic existed. If pages=[] but
   // drawingNo/Desc/Rev are populated, clear them in Firestore too so future renders/prints
