@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.624";
+const APP_VERSION="v1.19.625";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5712,6 +5712,72 @@ If you cannot read the image at all, return {"rowChecks": [], "missingRows": [],
   }catch(e){console.warn("BOM audit failed:",e.message);return null;}
 }
 
+// DECISION(v1.19.625): Self-healing audit — apply corrections from an audit result to a BOM,
+// producing a corrected BOM plus a log of what changed. Only applies high-confidence fixes
+// (audit's own "expected" values). Qty must be > 0 and a number; PN/desc must be non-empty.
+// Every correction is stamped onto the row's `auditCorrections[]` history so the user can
+// review what was changed. Rows added for missingRows get `autoAddedByAudit: true`.
+function applyAuditCorrections(bom,audit){
+  if(!audit||!Array.isArray(bom))return{corrected:bom,changes:0,appliedLog:[]};
+  const appliedLog=[];
+  const checksById=Object.fromEntries((audit.rowChecks||[]).map(c=>[String(c.id),c]));
+  let changes=0;
+  // Row-level corrections (qty_wrong, pn_wrong, desc_wrong, spurious)
+  const filteredBom=[];
+  for(const r of bom){
+    if(r.isLaborRow||r.isContingency){filteredBom.push(r);continue;}
+    const flag=checksById[String(r.id)];
+    if(!flag||flag.status==="ok"){filteredBom.push(r);continue;}
+    // spurious → remove the row
+    if(flag.status==="spurious"){
+      appliedLog.push({rowId:r.id,action:"removed",from:{pn:r.partNumber,qty:r.qty,desc:r.description},note:flag.note||""});
+      changes++;
+      continue; // drop the row
+    }
+    const exp=flag.expected||{};
+    const rowChanges=[];
+    const updated={...r};
+    if(flag.status==="qty_wrong"&&typeof exp.qty==="number"&&exp.qty>=0&&exp.qty!==(+r.qty||0)){
+      rowChanges.push({field:"qty",from:r.qty,to:exp.qty,note:flag.note||""});
+      updated.qty=exp.qty;
+    }
+    if(flag.status==="pn_wrong"&&typeof exp.pn==="string"&&exp.pn.trim()&&exp.pn.trim()!==(r.partNumber||"").trim()){
+      rowChanges.push({field:"partNumber",from:r.partNumber,to:exp.pn.trim(),note:flag.note||""});
+      updated.partNumber=exp.pn.trim();
+    }
+    if(flag.status==="desc_wrong"&&typeof exp.desc==="string"&&exp.desc.trim()&&exp.desc.trim()!==(r.description||"").trim()){
+      rowChanges.push({field:"description",from:r.description,to:exp.desc.trim(),note:flag.note||""});
+      updated.description=exp.desc.trim();
+    }
+    if(rowChanges.length>0){
+      const prevLog=Array.isArray(r.auditCorrections)?r.auditCorrections:[];
+      updated.auditCorrections=[...prevLog,...rowChanges.map(c=>({...c,timestamp:Date.now()}))];
+      changes+=rowChanges.length;
+      for(const c of rowChanges)appliedLog.push({rowId:r.id,action:"updated",...c});
+    }
+    filteredBom.push(updated);
+  }
+  // Add missing rows
+  for(const missing of (audit.missingRows||[])){
+    if(!missing||(!missing.pn&&!missing.desc))continue;
+    const newId=Date.now()+Math.random();
+    const newRow={
+      id:newId,
+      partNumber:(missing.pn||"").trim(),
+      qty:+missing.qty||1,
+      description:(missing.desc||"").trim(),
+      manufacturer:(missing.mfr||"").trim(),
+      notes:"",
+      autoAddedByAudit:true,
+      auditCorrections:[{field:"added",from:null,to:{pn:missing.pn,qty:missing.qty,desc:missing.desc},timestamp:Date.now(),note:"added by audit"}],
+    };
+    filteredBom.push(newRow);
+    changes++;
+    appliedLog.push({rowId:newId,action:"added",...missing});
+  }
+  return{corrected:filteredBom,changes,appliedLog};
+}
+
 // ── SCHEMATIC ANALYSIS PROMPT ──
 const SCHEMATIC_PROMPT=`You are reading a UL508A electrical control panel schematic page.
 
@@ -6835,21 +6901,68 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     }
     // DECISION(v1.19.624): BOM audit — independent Opus pass that re-reads BOM table from
     // drawing images and cross-checks qty, PN, description, missing rows, spurious rows.
-    // Results surfaced in Scan Results Banner with actionable flags per row.
-    const bomToAudit=(latestPanel.bom||[]).slice();
+    // DECISION(v1.19.625): SELF-HEALING — when audit finds issues, apply the corrections
+    // automatically and re-audit. Repeat up to MAX_ROUNDS. Only surface PERSISTENT issues
+    // (ones that couldn't be resolved after retries). Each correction is logged on the row
+    // via `row.auditCorrections[]` so users can review what changed.
     const auditPages=(latestPanel.pages||[]).filter(p=>getPageTypes(p).includes("bom")&&(p.dataUrl||p.storageUrl));
-    if(bomToAudit.length>0&&auditPages.length>0&&hasBom){
-      bgUpdate(panel.id,"Auditing BOM against drawings…");
-      try{
-        const audit=await auditBomAgainstDrawings(bomToAudit,auditPages);
-        if(audit){
-          const flaggedCount=(audit.rowChecks||[]).filter(c=>c.status!=="ok").length;
-          const missingCount=(audit.missingRows||[]).length;
-          // Fold audit stats into extractionReport for banner display
-          const updatedReport=latestPanel.extractionReport?{...latestPanel.extractionReport,auditFlaggedCount:flaggedCount,auditMissingCount:missingCount}:{auditFlaggedCount:flaggedCount,auditMissingCount:missingCount,timestamp:Date.now(),version:APP_VERSION};
-          await save({...latestPanel,bomAudit:audit,extractionReport:updatedReport,updatedAt:Date.now()});
+    if((latestPanel.bom||[]).length>0&&auditPages.length>0&&hasBom){
+      const MAX_AUDIT_ROUNDS=3;
+      let currentBom=(latestPanel.bom||[]).slice();
+      let finalAudit=null;
+      let totalCorrections=0;
+      let roundsUsed=0;
+      const allAppliedLog=[];
+      let cleanOnRound=null;
+      for(let round=1;round<=MAX_AUDIT_ROUNDS;round++){
+        roundsUsed=round;
+        bgUpdate(panel.id,`BOM audit — pass ${round}/${MAX_AUDIT_ROUNDS}…`);
+        let audit=null;
+        try{audit=await auditBomAgainstDrawings(currentBom,auditPages);}
+        catch(e){console.warn(`BOM audit round ${round} threw:`,e.message);break;}
+        if(!audit){console.warn(`BOM audit round ${round}: no result`);break;}
+        finalAudit=audit;
+        const flagged=(audit.rowChecks||[]).filter(c=>c.status!=="ok");
+        const missing=audit.missingRows||[];
+        console.log(`BOM AUDIT round ${round}: ${flagged.length} flagged, ${missing.length} missing`);
+        // Clean run — all good
+        if(flagged.length===0&&missing.length===0){cleanOnRound=round;break;}
+        // Final round — don't apply, just surface issues
+        if(round===MAX_AUDIT_ROUNDS){
+          console.warn(`BOM AUDIT: ${flagged.length+missing.length} issues persist after ${MAX_AUDIT_ROUNDS} rounds`);
+          break;
         }
-      }catch(e){console.warn("BOM audit failed:",e);}
+        // Apply corrections
+        const {corrected,changes,appliedLog}=applyAuditCorrections(currentBom,audit);
+        if(changes===0){
+          console.log(`BOM AUDIT round ${round}: audit flagged but no applicable high-confidence corrections — stopping to avoid loop`);
+          break;
+        }
+        totalCorrections+=changes;
+        allAppliedLog.push(...appliedLog.map(l=>({...l,round})));
+        currentBom=corrected;
+        bgUpdate(panel.id,`BOM audit — applied ${changes} correction${changes>1?"s":""}, re-verifying…`);
+      }
+      // Save final state with corrected BOM + audit result
+      if(finalAudit){
+        const persistentFlagged=(finalAudit.rowChecks||[]).filter(c=>c.status!=="ok").length;
+        const persistentMissing=(finalAudit.missingRows||[]).length;
+        const updatedReport={
+          ...(latestPanel.extractionReport||{}),
+          auditRoundsUsed:roundsUsed,
+          auditCleanOnRound:cleanOnRound,
+          auditCorrectionCount:totalCorrections,
+          auditFlaggedCount:persistentFlagged,
+          auditMissingCount:persistentMissing,
+          auditAppliedLog:allAppliedLog.slice(-50), // keep last 50 for review
+          timestamp:latestPanel.extractionReport?.timestamp||Date.now(),
+          version:APP_VERSION,
+        };
+        await save({...latestPanel,bom:currentBom,bomAudit:finalAudit,extractionReport:updatedReport,updatedAt:Date.now()});
+        if(totalCorrections>0){
+          console.log(`BOM AUDIT: ${totalCorrections} total corrections applied across ${roundsUsed} rounds${cleanOnRound?` — clean on round ${cleanOnRound}`:` — ${persistentFlagged+persistentMissing} persistent issues`}`);
+        }
+      }
     }
     // Compliance review — UL508A/C22.2 analysis against ARC Neural IQ
     if(hasCompliance&&(latestPanel.bom?.length>0||latestPanel.validation)){
@@ -10901,19 +11014,28 @@ function ScanResultsBanner({panel}){
   if(!panel.drawingRev)missingTitle.push("Revision");
   const suspectCount=r.suspectCount||0;
   const plausibleCount=r.plausibleCount||0;
-  // DECISION(v1.19.624): Audit section — independent second-pass verification against drawing.
+  // DECISION(v1.19.624/625): Audit section — independent second-pass verification against drawing.
+  // With self-healing (v1.19.625), findings that were auto-corrected during the audit loop are
+  // surfaced as "auto-corrected" (informational); only rows that PERSISTED after retries are
+  // surfaced as errors/concerns.
   const audit=panel.bomAudit;
-  const auditFlagged=(audit?.rowChecks||[]).filter(c=>c.status!=="ok");
-  const auditMissing=audit?.missingRows||[];
+  const auditFlagged=(audit?.rowChecks||[]).filter(c=>c.status!=="ok"); // persistent flags after final round
+  const auditMissing=audit?.missingRows||[]; // persistent missing after final round
   const flagsByStatus={};
   for(const f of auditFlagged){flagsByStatus[f.status]=(flagsByStatus[f.status]||0)+1;}
+  const auditCorrectionCount=r.auditCorrectionCount||0; // total across all rounds
+  const auditRoundsUsed=r.auditRoundsUsed||0;
+  const auditCleanOnRound=r.auditCleanOnRound||null;
+  const auditAppliedLog=r.auditAppliedLog||[];
   const concerns=[];
   if(fuzzyMerges.length>0)concerns.push(`${fuzzyMerges.length} OCR duplicate${fuzzyMerges.length>1?"s":""} auto-merged`);
   if(duplicatesFound>0&&fuzzyMerges.length===0)concerns.push(`${duplicatesFound} duplicate rows merged`);
   if(suspectCount>0)concerns.push(`${suspectCount} suspect part #${suspectCount>1?"s":""}`);
   if(missingTitle.length>0)concerns.push(`title block missing: ${missingTitle.join(", ")}`);
-  if(auditFlagged.length>0)concerns.push(`audit flagged ${auditFlagged.length} row${auditFlagged.length>1?"s":""}`);
-  if(auditMissing.length>0)concerns.push(`audit found ${auditMissing.length} missing row${auditMissing.length>1?"s":""}`);
+  // Self-healed corrections are informational (not errors)
+  if(auditCorrectionCount>0&&auditCleanOnRound)concerns.push(`audit auto-corrected ${auditCorrectionCount} row${auditCorrectionCount>1?"s":""}`);
+  if(auditFlagged.length>0)concerns.push(`audit: ${auditFlagged.length} unresolved error${auditFlagged.length>1?"s":""}`);
+  if(auditMissing.length>0)concerns.push(`audit: ${auditMissing.length} missing row${auditMissing.length>1?"s":""} could not be added`);
   if(concerns.length===0)return null;
   const fmtTs=()=>{try{return new Date(r.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});}catch(e){return "";}};
   return(
@@ -10984,13 +11106,50 @@ function ScanResultsBanner({panel}){
           {plausibleCount>0&&(
             <div style={{color:"#fde68a",fontSize:11,fontStyle:"italic",marginTop:6}}>Plus {plausibleCount} plausible-but-unverified part{plausibleCount>1?"s":""} — likely fine but worth a glance.</div>
           )}
-          {/* DECISION(v1.19.624): Audit findings — independent second-pass against drawings */}
-          {(auditFlagged.length>0||auditMissing.length>0)&&(
+          {/* DECISION(v1.19.624/625): Audit findings — self-healing second-pass against drawings */}
+          {(auditCorrectionCount>0||auditFlagged.length>0||auditMissing.length>0)&&(
             <div style={{marginTop:12,paddingTop:10,borderTop:`1px dashed ${C.yellow}44`}}>
-              <div style={{color:"#fca5a5",fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>🔍 Audit Findings — second-pass verification</div>
+              <div style={{color:auditFlagged.length+auditMissing.length>0?"#fca5a5":"#6ee7b7",fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>🔍 Audit — self-healing verification {auditRoundsUsed>0?`(${auditRoundsUsed} pass${auditRoundsUsed>1?"es":""})`:""}</div>
               <div style={{color:"#fef3c7",fontSize:11,marginBottom:8,lineHeight:1.5}}>
-                Opus re-read the drawing{(panel.pages||[]).filter(p=>(p.types||[]).includes("bom")).length>1?"s":""} and cross-checked each extracted row. Findings below are worth a closer look.
+                Opus re-read the drawing{(panel.pages||[]).filter(p=>(p.types||[]).includes("bom")).length>1?"s":""} and cross-checked each extracted row. When it found issues, it applied corrections and re-verified — up to {3} rounds.
               </div>
+              {/* AUTO-HEALED section (green) */}
+              {auditCorrectionCount>0&&(
+                <div style={{marginBottom:10,padding:"8px 12px",background:"#052e1c",border:`1px solid #10b98155`,borderRadius:6}}>
+                  <div style={{color:"#6ee7b7",fontWeight:700,fontSize:11,marginBottom:4}}>
+                    ✓ Auto-corrected {auditCorrectionCount} issue{auditCorrectionCount>1?"s":""} {auditCleanOnRound?`— clean on round ${auditCleanOnRound}`:"— changes persisted through final pass"}
+                  </div>
+                  {auditAppliedLog.length>0&&(
+                    <div style={{fontSize:10,color:"#a7f3d0",marginTop:6,maxHeight:160,overflowY:"auto"}}>
+                      {auditAppliedLog.slice(0,20).map((l,i)=>(
+                        <div key={i} style={{padding:"2px 0",borderTop:i>0?`1px solid #10b98122`:"none"}}>
+                          <span style={{color:"#6ee7b7",textTransform:"uppercase",fontWeight:600,fontSize:9}}>R{l.round}</span>
+                          <span style={{marginLeft:6,textTransform:"uppercase",fontWeight:600,fontSize:9,color:l.action==="removed"?"#fca5a5":l.action==="added"?"#a7f3d0":"#fcd34d"}}>{l.action}</span>
+                          {l.field&&<span style={{marginLeft:6,color:"#6ee7b7",fontSize:10}}>{l.field}</span>}
+                          {l.from!=null&&l.to!=null&&(
+                            <span style={{marginLeft:6,color:"#a7f3d0",fontSize:10}}>
+                              <span style={{textDecoration:"line-through",opacity:0.6}}>{String(l.from).slice(0,25)}</span>
+                              {" → "}
+                              <span style={{fontWeight:600}}>{String(l.to).slice(0,25)}</span>
+                            </span>
+                          )}
+                          {l.pn&&l.action==="added"&&<span style={{marginLeft:6,color:"#a7f3d0",fontFamily:"ui-monospace,Menlo,Consolas,monospace",fontSize:10}}>{l.pn} (qty {l.qty||1})</span>}
+                        </div>
+                      ))}
+                      {auditAppliedLog.length>20&&<div style={{padding:"2px 0",fontSize:10,fontStyle:"italic",color:"#6ee7b7"}}>… {auditAppliedLog.length-20} more</div>}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* PERSISTENT ERRORS section (red) — only if post-self-healing issues remain */}
+              {(auditFlagged.length>0||auditMissing.length>0)&&(
+                <div style={{marginBottom:10,padding:"8px 12px",background:"#3b0808",border:`1px solid ${C.red}`,borderRadius:6}}>
+                  <div style={{color:"#fca5a5",fontWeight:700,fontSize:11,marginBottom:6}}>
+                    ⚠ {auditFlagged.length+auditMissing.length} unresolved issue{auditFlagged.length+auditMissing.length>1?"s":""} — manual review needed
+                  </div>
+                  <div style={{fontSize:10,color:"#fecaca",marginBottom:6}}>These rows failed all {auditRoundsUsed} audit passes. The audit couldn't resolve them automatically — please verify against the drawing.</div>
+                </div>
+              )}
               {auditFlagged.length>0&&(
                 <div style={{marginBottom:10}}>
                   <div style={{color:"#fcd34d",fontWeight:600,fontSize:11,marginBottom:4}}>
