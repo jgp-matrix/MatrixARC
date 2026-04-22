@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.653";
+const APP_VERSION="v1.19.654";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7413,6 +7413,14 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     }
     // Hazardous location scan (parallel with BOM — uses Haiku, fast)
     const hazlocPromise=scanForHazardousLocation(latestPanel.pages);
+    // DECISION(v1.19.654): Title block extraction now runs as a pipeline stage instead of
+    // a fire-and-forget from PanelCard.confirmAndExtract. Previously the fire-and-forget
+    // wrote drawingNo/Desc/Rev to Firestore via onSaveImmediate but the consolidated
+    // runExtractionTask save (v1.19.644) afterwards overwrote those fields with empty
+    // values because latestPanel didn't know about them. Moving it inline fixes the race.
+    const titleBlockPromise=(_apiKey&&(latestPanel.pages||[]).length>0)
+      ? extractTitleBlockMulti(latestPanel.pages,{customerName:projectName||"",bcProjectNumber,uid}).catch(()=>null)
+      : Promise.resolve(null);
     // Validation (parallel with BOM)
     let valPromise=Promise.resolve(null);
     if(hasVal){
@@ -7460,6 +7468,31 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // engineering questions. Without this, the stale reference caused duplicate questions.
     // Await hazardous location scan result
     const hazlocResult=await hazlocPromise.catch(()=>null);
+    // DECISION(v1.19.654): Await title block and fold into latestPanel so it lands in the
+    // single consolidated save. Only sets fields that aren't already populated (preserves
+    // user manual edits). Also captures the raw AI read as aiExtractedTitleBlock for later
+    // learning-DB diffs when the user manually corrects a field.
+    try{
+      const tb=await titleBlockPromise;
+      if(tb){
+        const v=tb.voltages||{};
+        const tbPatch={
+          aiExtractedTitleBlock:{
+            drawingNo:tb.drawingNo||"",
+            drawingDesc:tb.drawingDesc||"",
+            drawingRev:tb.drawingRev||"",
+            extractedAt:Date.now(),
+          },
+          ...(!latestPanel.drawingNo&&tb.drawingNo?{drawingNo:(tb.drawingNo||"").slice(0,25)}:{}),
+          ...(!latestPanel.drawingDesc&&tb.drawingDesc?{drawingDesc:tb.drawingDesc}:{}),
+          ...(!latestPanel.drawingRev&&tb.drawingRev?{drawingRev:tb.drawingRev}:{}),
+          ...(v.lineVoltage&&v.lineVoltage!=="unknown"&&!latestPanel.supplyVoltage?{supplyVoltage:v.lineVoltage}:{}),
+          ...(v.controlVoltage&&v.controlVoltage!=="unknown"&&!latestPanel.controlVoltage?{controlVoltage:v.controlVoltage}:{})
+        };
+        applyInMemory({...latestPanel,...tbPatch});
+        console.log("TITLE BLOCK: applied to panel →",tb.drawingNo,tb.drawingDesc,tb.drawingRev);
+      }
+    }catch(e){console.warn("Title block extraction failed:",e.message);}
     // DECISION(v1.19.598): Build extraction report so user sees scan concerns (fuzzy-merged
     // OCR variants, suspect parts, missing title block) instead of them being silent.
     const extractionReport=mergeStats?{
@@ -10414,28 +10447,66 @@ async function extractTitleBlock(dataUrl,opts){
         thinking:{type:"enabled",budget_tokens:2000},
         messages:[{role:"user",content:[
           ...imageContents,
-          {type:"text",text:`You are reading the title block on an engineering drawing. ${images.length>1?`You are shown ${images.length} images of the SAME drawing (${tagList})${titleblockRegion?" — the user-region image is a high-resolution crop of the exact title block area. Prefer reading from that image.":" — Image 2 and 3 are zoomed crops of likely title block locations."} Cross-reference between images.`:"You are shown a single image."}${customerHint}
+          {type:"text",text:`You are extracting title-block information from an engineering drawing. ${images.length>1?`You are shown ${images.length} images of the SAME drawing (${tagList})${titleblockRegion?" — the user-region image is a high-resolution crop of the exact title block area. Prefer reading from that image.":" — Image 2 and 3 are zoomed crops of likely title block locations."} Cross-reference between images.`:"You are shown a single image."}${customerHint}
 
-The title block is typically a small bordered grid of labeled fields in the bottom-right corner, along the bottom edge, or along the right edge. Labels are often abbreviated (DWG NO., REV, SHT). The fields may be VERY SMALL — read carefully.
+There are TWO TYPES OF PAGE LAYOUT to recognize:
 
-This may be a SCANNED drawing with low contrast, speckle noise, or rotation — if a character is ambiguous between 0/O, 1/I/l, 5/S, 8/B, use the rest of the drawing number's pattern as context.
+═══ TYPE A: COVER / TITLE PAGE (most reliable source) ═══
+The first (or sometimes last) sheet of a multi-sheet drawing set is often a COVER PAGE with large, clearly-labeled fields filling the body of the page. Common labels:
+  • "Project name" / "Project" / "Client" → customer / facility name
+  • "Project Number" / "Project No." / "Job No." → project/job code (NOT the drawing number)
+  • "Panel" / "Panel Name" / "Panel Description" → the thing you want for drawingDesc
+  • "Panel ID" / "Tag" → internal panel tag (NOT drawingDesc)
+  • "Drawing Number" / "Drawing No." / "DWG No." / "No.:" → drawingNo
+  • "Power Supply" / "Main Voltage" → lineVoltage
+  • "Control Voltage" / "Control Power" → controlVoltage
+  • "Rev" / "Revision" / "Content Rev." → drawingRev
+If a cover page is present, PREFER these large body fields over the small corner title block (they're less likely to be misread).
 
-Extract these fields:
+═══ TYPE B: REGULAR DRAWING SHEET ═══
+A small bordered title block in the BOTTOM-RIGHT corner (or bottom-edge, or right-edge) with abbreviated labels like DWG NO., REV, SHT, SCALE. Labels and fields may be VERY SMALL — read carefully. These drawings typically have the panel/location in a "Description" or "Title" field of the title block.
 
-1. **Drawing number** (drawingNo): Look for labels like DWG NO., DRAWING NO., DWG #, DOCUMENT NO., DOC NO., No.:, Part No., or similar. Usually an alphanumeric code like "CSW1881-221", "E-001", "M-4821-01", "1001207609". Do NOT include sheet-of-sheets suffixes (SHT 1 OF 8, / 01, / 15). Just the base drawing number.
+═══ SCANNED DRAWING HANDLING ═══
+Many drawings are scanned PDFs with low contrast, speckle noise, or slight rotation. When a character is ambiguous (0/O, 1/I/l, 5/S, 8/B, 6/G), use surrounding pattern context: all-digit codes favor digits, mixed alpha-numeric codes may have either.
 
-2. **Description** (drawingDesc): Combine the LOCATION/FACILITY name with the PANEL TYPE/NAME. Read both large centered text AND the title block text. Format: "[Location/Facility] - [Panel Type/Name]". Examples:
-   - "BRUSH CREEK WPC" + "LM16 MIXER CONTROL PANEL" → "Brush Creek WPC - LM16 Mixer Control Panel"
-   - "Golden Chest Mine" + "DCT Gold Tailings Thickener Control Panel" → "Golden Chest Mine - DCT Gold Tailings Thickener Control Panel"
-   - "Lebanon Clarifier" + "PLC CONTROL PANEL" → "Lebanon Clarifier - PLC Control Panel"
+═══ EXTRACT THESE FOUR FIELDS ═══
 
-3. **Revision** (drawingRev): Look for REV, REVISION, Content Rev., or a revision box (small table with columns REV/DATE/DESCRIPTION). Usually a single letter (A, B, C) or number (0, 1, 2). Multi-row rev tables: take the LAST/highest value. Return "" if not visible.
+**1. drawingNo** — the alphanumeric document code identifying this drawing
+  • Look for: "Drawing Number", "Drawing No.", "DWG NO.", "DWG #", "DOCUMENT NO.", "DOC NO.", "No.:", "Part No.", "Cat. No.", "Sheet No.:"
+  • Examples: "1001207609", "CSW1881-221", "E-001", "M-4821-01", "LCP-100/200"
+  • IMPORTANT: do NOT include sheet-of-sheets suffixes. If the drawing says "1001207609 SHT 1 OF 8" or "1001207609 / 01", return just "1001207609".
+  • IMPORTANT: Drawing Number ≠ Project Number. Don't confuse them. Project Number is usually separate (labeled "Project No.", "Job No.").
 
-4. **Voltages**: Find the main line voltage (e.g. "480V 3PH", "208V 3PH", "120VAC 1PH") and control voltage (e.g. "120VAC", "24VDC").${learnedExamplesBlock}
+**2. drawingDesc** — what the panel IS (combined location + panel type)
+  • SOURCE — prefer in this order:
+    a) Cover page "Panel" or "Panel Name" field text (clearest, bold body text)
+    b) Title block "Description" or "Title" field
+    c) Large centered text in the drawing
+  • FORMAT — combine facility + panel type with " - " separator:
+    - "Golden Chest Mine" + "DCT Gold Tailings Thickener Control Panel" → "Golden Chest Mine - DCT Gold Tailings Thickener Control Panel"
+    - "Brush Creek WPC" + "LM16 MIXER CONTROL PANEL" → "Brush Creek WPC - LM16 Mixer Control Panel"
+    - "Lebanon Clarifier" + "PLC CONTROL PANEL" → "Lebanon Clarifier - PLC Control Panel"
+  • PATTERN HEURISTIC: the panel-type portion almost always ends in one of these: "Control Panel", "Panel", "CCP", "LCP", "MCC", "CCW", "Main Control Panel", "RTU", "Skid Panel". If a short phrase on the page ends with one of those, it's almost certainly the panel type.
+  • If only the panel type is visible (no facility name), return just the panel type.
+  • Use Title Case (capitalize each major word) for consistency.
 
-Return ONLY valid JSON (no markdown): {"drawingNo":"...","drawingDesc":"...","drawingRev":"...","voltages":{"lineVoltage":"...or unknown","controlVoltage":"...or unknown"}}
+**3. drawingRev** — current revision of this drawing
+  • Look for: "REV", "Revision", "Content Rev.", "Content Rev", or a rev-history table with columns (Rev / Drawn / Approved / Date / Description)
+  • If a rev-history table shows multiple rows (Rev 1 "Initial Release", Rev 2 "Certified Final"), return the HIGHEST/LATEST row's revision value.
+  • "Content Rev." is distinct from the rev-history table — it's usually a single current-state value and is the most authoritative.
+  • Return just the value (single letter/digit, or multi-character like "0A"), NOT "REV A" or "Rev. 2".
+  • Return "" if genuinely not visible.
 
-If you cannot read a field clearly, return "" for that field rather than guessing.`}
+**4. voltages** — main line voltage + control voltage
+  • "Power Supply", "Line Voltage", "Main Voltage" → lineVoltage (e.g. "120VAC 1PH 60Hz", "480V 3PH", "208V 3PH 60Hz")
+  • "Control Voltage", "Control Power" → controlVoltage (e.g. "120VAC", "24VDC")
+  • Return "unknown" if not visible.${learnedExamplesBlock}
+
+═══ OUTPUT FORMAT ═══
+Return ONLY valid JSON (no markdown, no commentary):
+{"drawingNo":"...","drawingDesc":"...","drawingRev":"...","voltages":{"lineVoltage":"...or unknown","controlVoltage":"...or unknown"}}
+
+If a field is genuinely not visible on the drawing, return "" for that field rather than guessing.`}
         ]}]
       })
     });
@@ -12114,6 +12185,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const changed=oldLabor.length!==newLabor.length||oldLabor.some((r,i)=>r.qty!==newLabor[i]?.qty||r.unitPrice!==newLabor[i]?.unitPrice);
     if(changed){onUpdate(synced);try{onSaveImmediate(synced);}catch(e){}}
   },[panel.id]);
+  // DECISION(v1.19.654): Sync draft title-block state from panel props when extraction
+  // populates drawingNo/Desc/Rev AFTER the component already mounted with empty drafts.
+  // Only fills EMPTY drafts — never overwrites a user's in-progress edit.
+  useEffect(()=>{
+    if(panel.drawingNo&&!draftNo)setDraftNo((panel.drawingNo||"").slice(0,25));
+  },[panel.drawingNo]);
+  useEffect(()=>{
+    if(panel.drawingDesc&&!draftDesc)setDraftDesc(panel.drawingDesc||"");
+  },[panel.drawingDesc]);
+  useEffect(()=>{
+    if(panel.drawingRev&&!draftRev)setDraftRev(panel.drawingRev||"");
+  },[panel.drawingRev]);
   // Progress bar: use bgTask (persists navigation) or ep (for re-extract/validate flows)
   // DECISION(v1.19.615): Only consider bgTask if it belongs to THIS project — otherwise a
   // copied panel with the same id in another project would inherit the wrong progress bar.
@@ -12739,38 +12822,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // learned corrections and user-drawn titleblock regions. Now also stores AI's raw read as
     // `aiExtractedTitleBlock` on the panel so later user edits can be diffed and saved to the
     // learning DB automatically.
-    if(_apiKey&&livePages.length>0){
-      extractTitleBlockMulti(livePages,{
-        customerName:project?.bcCustomerName||"",
-        bcProjectNumber,
-        uid,
-      }).then(tb=>{
-        if(!tb)return;
-        const fresh=latestPanelRef.current;
-        const v=tb.voltages||{};
-        // Snapshot the AI read (for later learning-DB diff when user manually corrects)
-        const aiExtractedTitleBlock={
-          drawingNo:tb.drawingNo||"",
-          drawingDesc:tb.drawingDesc||"",
-          drawingRev:tb.drawingRev||"",
-          extractedAt:Date.now(),
-        };
-        const patched={...fresh,
-          aiExtractedTitleBlock,
-          ...(!fresh.drawingNo&&tb.drawingNo?{drawingNo:(tb.drawingNo||"").slice(0,25)}:{}),
-          ...(!fresh.drawingDesc&&tb.drawingDesc?{drawingDesc:tb.drawingDesc}:{}),
-          ...(!fresh.drawingRev&&tb.drawingRev?{drawingRev:tb.drawingRev}:{}),
-          ...(v.lineVoltage&&v.lineVoltage!=="unknown"&&!fresh.supplyVoltage?{supplyVoltage:v.lineVoltage}:{}),
-          ...(v.controlVoltage&&v.controlVoltage!=="unknown"&&!fresh.controlVoltage?{controlVoltage:v.controlVoltage}:{})
-        };
-        if(JSON.stringify(patched)===JSON.stringify(fresh))return;
-        onUpdate(patched);
-        if(tb.drawingNo&&!fresh.drawingNo)setDraftNo((tb.drawingNo||"").slice(0,25));
-        if(tb.drawingDesc&&!fresh.drawingDesc)setDraftDesc(tb.drawingDesc);
-        if(tb.drawingRev&&!fresh.drawingRev)setDraftRev(tb.drawingRev);
-        onSaveImmediate(patched).catch(()=>{});
-      }).catch(()=>{});
-    }
+    // DECISION(v1.19.654): Title block extraction moved INTO runExtractionTask so it's
+    // part of the consolidated save. The previous fire-and-forget was racing with the
+    // extraction task's final save and getting clobbered on every new extraction.
     // Start background extraction
     const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
     const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&(p.dataUrl||p.storageUrl));
