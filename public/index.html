@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.633";
+const APP_VERSION="v1.19.634";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2709,20 +2709,11 @@ async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
       const gd=await gr.json();
       const existing=(gd.value||[])[0];
       if(existing){
-        // DECISION(v1.19.633): SANITY CHECK before overwriting an existing BC PurchasePrice.
-        // A scraper once returned $0.71 for Phoenix Contact 2907627 (a $128 circuit breaker),
-        // and we dutifully pushed it, destroying the real price. Refuse overwrites that are
-        // wildly out of range from the existing price, unless the existing is trivial (<$1).
-        const existingCost=+existing.Direct_Unit_Cost||0;
-        const newCost=+unitCost||0;
-        if(existingCost>=1&&newCost>=0){
-          const ratio=newCost/existingCost;
-          // Reject if new price is <20% or >500% of existing. These are almost certainly bad data.
-          if(ratio<0.2||ratio>5){
-            console.warn(`bcPushPurchasePrice: REJECTED overwrite — ${itemNo}/${vendorNo}: existing $${existingCost.toFixed(2)}, new $${newCost.toFixed(2)} (ratio ${ratio.toFixed(2)}). Suspect price, not applying. If the new price is correct, edit the BOM row manually and use 'Push to BC'.`);
-            return{ok:false,reason:'sanity_check_failed',existingCost,newCost,ratio};
-          }
-        }
+        // DECISION(v1.19.634): Removed % sanity check. Per user: pricing decisions must be
+        // driven by eligibility logic (only scrape when BC price is stale), not by ratio
+        // heuristics that can be fooled by genuine price movements. The upstream fix is to
+        // not call bcPushPurchasePrice with bad data in the first place — see runPricingOnPanel
+        // eligibility filter which now respects BC PurchasePrices Starting_Date.
         // PATCH existing record
         const etag=existing["@odata.etag"];
         const patchBody={Direct_Unit_Cost:unitCost,Starting_Date:dateStr};
@@ -13261,10 +13252,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Phase 1b: Codale auto-pricing for Codale-vendor items that need pricing
     // DECISION(v1.19.503): Use configurable stale days per supplier (Settings → Price Refresh Thresholds)
     const _codaleStaleDays=(_pricingConfig.codaleStaleDays||30)*24*60*60*1000;
+    // DECISION(v1.19.634): Scrape Codale only when BC lacks a recent price. Same
+    // logic as custom scraper filter above — trust BC's priceDate within stale window.
     const codaleItems=updatedBom.filter(r=>{
       if(r.isLaborRow||!/codale/i.test(r.bcVendorName||""))return false;
-      // Always re-price "No PO" items
-      if(r.priceSource==="bc"&&r.unitPrice>0&&!r.bcPoDate)return true;
       if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_codaleStaleDays&&r.priceSource==="bc")return false;
       return true;
     });
@@ -13331,12 +13322,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // Don't re-scrape items that already have confirmed pricing — saves time and API calls.
         // DECISION(v1.19.503): Per-scraper staleDays — skip items priced within threshold
         const _scraperStaleMs=(scraper.staleDays||_pricingConfig.defaultStaleDays||60)*24*60*60*1000;
+        // DECISION(v1.19.634): Scrape only when BC truly lacks a recent price.
+        // Per user's 6-step flow: if item has a price and its priceDate is within the
+        // stale threshold, trust it — no scrape. The PurchasePrices fallback in the BC
+        // phase now populates priceDate/bcPoDate from BC Starting_Date, so rows still
+        // missing a priceDate are genuinely unpriced and should be scraped.
         const scraperItems=updatedBom.filter(r=>{
           if(r.isLaborRow||r.priceSource==="manual")return false;
           const vn=(r.bcVendorName||"").toLowerCase();
           if(!matchTerms.some(t=>vn.includes(t.toLowerCase())))return false;
-          // Always re-price "No PO" items
-          if(r.priceSource==="bc"&&r.unitPrice>0&&!r.bcPoDate)return true;
           if(r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_scraperStaleMs)return false;
           return true;
         });
@@ -13347,32 +13341,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const pns=scraperItems.map(r=>(r.partNumber||"").trim()).filter(Boolean);
           const cr=await fn({scraperId:scraper.id,partNumbers:pns,config:{username:scraper.username,password:scraper.password,accountId:scraper.accountId||""},steps:scraper.steps});
           const results=cr.data.results||{};
-          let scraperCount=0;let scraperRejected=0;
+          // DECISION(v1.19.634): No % sanity check — per user, pricing decisions are driven
+          // by eligibility (only scrape when BC lacks a recent price). If scraper returns no
+          // price, leave the row untouched (unitPrice, priceDate preserved as-is).
+          let scraperCount=0;
           updatedBom=updatedBom.map(r=>{
             const pn=(r.partNumber||"").trim().toUpperCase();
             const pr=results[pn]||results[(r.partNumber||"").trim()];
             if(pr&&pr.price){
               const numPrice=parseFloat(pr.price.replace(/[$,]/g,""));
               if(!isNaN(numPrice)&&numPrice>0){
-                // DECISION(v1.19.633): Sanity-check scraper price against any existing BC cost.
-                // Scrapers can return garbage (item not on supplier site, stale cache, wrong match).
-                // If the row already has a BC PO-backed price and the scraper's is wildly out of
-                // range (< 20% or > 500%), reject the scraper value — keep the BC price.
-                const existingBcPrice=(r.priceSource==="bc"&&r.unitPrice>0)?+r.unitPrice:0;
-                if(existingBcPrice>=1){
-                  const ratio=numPrice/existingBcPrice;
-                  if(ratio<0.2||ratio>5){
-                    console.warn(`${scraper.name}: REJECTED $${numPrice.toFixed(2)} for ${r.partNumber} — existing BC price $${existingBcPrice.toFixed(2)} (ratio ${ratio.toFixed(2)}), scraper value is suspect.`);
-                    scraperRejected++;
-                    return r; // keep the BC-backed price
-                  }
-                }
                 scraperCount++;return{...r,unitPrice:numPrice,priceSource:"bc",priceDate:Date.now(),bcPoDate:Date.now()};
               }
             }
             return r;
           });
-          if(scraperRejected>0)console.warn(`${scraper.name}: rejected ${scraperRejected} suspect price${scraperRejected>1?"s":""} (guarded by sanity check)`);
           const scraperMissed=scraperItems.filter(r=>{const pn=(r.partNumber||"").trim().toUpperCase();const pr=results[pn]||results[(r.partNumber||"").trim()];return!pr||!pr.price;});
           _report.push({source:scraper.name,obtained:scraperCount,skipped:0,failed:scraperMissed.length,total:scraperItems.length,
             items:scraperMissed.map(r=>({pn:r.partNumber,reason:"Price not found"}))});
