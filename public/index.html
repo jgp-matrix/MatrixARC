@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.650";
+const APP_VERSION="v1.19.651";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13776,7 +13776,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
   }
-  async function runPricingOnPanel(bomOverride,panelOverride,onEpProgress){
+  // DECISION(v1.19.651): Added `opts` param with `forceFresh` flag. Previously the
+  // Codale and BC eligibility filters used `!bomOverride` to bypass stale-date skip logic
+  // when the user hit "Force refresh ALL prices". But extraction flows ALSO pass
+  // bomOverride (to hand over the fresh extracted BOM), which accidentally triggered
+  // force-refresh semantics on every extraction — scraping Codale every time even when
+  // BC had fresh PP records. Now `forceFresh` is explicit and only set by the Force
+  // Refresh button.
+  async function runPricingOnPanel(bomOverride,panelOverride,onEpProgress,opts={}){
+    const forceFresh=!!(opts&&opts.forceFresh);
     const bom=bomOverride||panel.bom||[];
     if(!bom.length||!_apiKey)return;
     // Save snapshot before bulk pricing so user can revert
@@ -13828,7 +13836,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             // Always re-check "No PO" items — they need vendor pricing confirmation
             const noPo=ps==="bc"&&r.unitPrice>0&&!r.bcPoDate;
             if(noPo)return true;
-            if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_bcStaleMs&&ps==="bc")return false;
+            // DECISION(v1.19.651): Use forceFresh (not !bomOverride) for the stale-date skip.
+            if(!forceFresh&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_bcStaleMs&&ps==="bc")return false;
             return true;
           });
           _totalEligible=eligible.length;
@@ -13930,7 +13939,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // logic as custom scraper filter above — trust BC's priceDate within stale window.
     const codaleItems=updatedBom.filter(r=>{
       if(r.isLaborRow||!/codale/i.test(r.bcVendorName||""))return false;
-      if(!bomOverride&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_codaleStaleDays&&r.priceSource==="bc")return false;
+      // DECISION(v1.19.651): Use forceFresh (not !bomOverride) for the stale-date skip.
+      if(!forceFresh&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_codaleStaleDays&&r.priceSource==="bc")return false;
       return true;
     });
     if(codaleItems.length>0){
@@ -14847,7 +14857,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,cursor:aiPricing?"default":"pointer",borderRadius:"6px 0 0 6px"})}>
                   {aiPricing?"Refreshing…":"↻ Get New Pricing"}
                 </button>
-                <button disabled={aiPricing} onClick={()=>{if(confirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item."))runPricingOnPanel(panel.bom,panel);}}
+                <button disabled={aiPricing} onClick={()=>{if(confirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item."))runPricingOnPanel(panel.bom,panel,null,{forceFresh:true});}}
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 6px",opacity:aiPricing?0.5:1,cursor:aiPricing?"default":"pointer",borderRadius:"0 6px 6px 0",borderLeft:`1px solid ${C.accent}33`})}
                   title="Force refresh all prices — ignores stale thresholds">▾</button>
               </div>
