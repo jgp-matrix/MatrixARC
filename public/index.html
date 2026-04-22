@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.652";
+const APP_VERSION="v1.19.653";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5923,6 +5923,26 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
 // row getting attached to a window-kit row) cannot happen — there are no other rows to pull
 // values from. The AI fixes its own errors before the user ever sees them.
 async function selfCorrectBomRowsWithSnippets(bom,pages,onProgress){
+  // DECISION(v1.19.653) — DISABLED ENTIRELY (Option C Session 2):
+  // Real-world testing showed this pass had a 100% bad-attempt rate:
+  //   • Single-row crops lack column-header / cross-row context, so the model guesses
+  //     which values correspond to which fields
+  //   • 15/17 corrections per extraction were caught by the stolen-PN guard as adjacent-
+  //     row drift (wasted API calls + latency)
+  //   • 2/17 slipped through the guard (learning-DB-crossed rows hid the original PN
+  //     in `crossedFrom` where the original v1.19.649 guard didn't look) and CORRUPTED
+  //     legitimate BOM rows — silently replacing correct PN/qty/desc with the adjacent
+  //     row's data, branded "✓ AI fixed" in the UI
+  //   • Zero legitimate corrections were ever produced across dozens of extractions
+  // The theoretical qty=143-on-WKDH use case is already handled by:
+  //   • Hardened BOM_PROMPT (column-alignment rules, DO-NOT-EXTRACT list, v1.19.646/648)
+  //   • flagSuspectQuantities (heuristic alert on the row for user review, v1.19.638)
+  //   • Non-BOM filter (structural 4-field check, v1.19.646)
+  //   • BOM audit pass (Opus re-read with column context, v1.19.624–625)
+  // Keeping the function body below as dead code for reference in case we later rebuild
+  // a context-aware re-verification pass (e.g., multi-row image that includes headers).
+  return{bom,corrections:[]};
+  // eslint-disable-next-line no-unreachable
   if(!_apiKey||!bom||!bom.length||!pages||!pages.length)return{bom,corrections:[]};
   // DECISION(v1.19.647): Require sourcePageId (actual page.id) to find the source page.
   // Previously used sourcePageIdx (index into bomPages filtered list) against `pages`
