@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.628";
+const APP_VERSION="v1.19.629";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5124,6 +5124,28 @@ const CONTINGENCY_ITEMS=[
 ];
 const CONTINGENCY_PNS=new Set([...CONTINGENCY_ITEMS.map(c=>c.partNumber.toUpperCase()),"BOM CONTINGENCY","WIRE & CONSUMABLES"]);
 
+// DECISION(v1.19.629): Sort the extracted BOM in the same top-to-bottom order the rows appear
+// on the drawing. This lets the user spot-check by visually scanning the drawing alongside
+// ARC's list. Rows without position data (manual additions, labor, contingency, defaults)
+// stay at the end in their existing order — preserved for stable UX.
+function sortBomByDrawingPosition(bom){
+  if(!Array.isArray(bom)||bom.length<2)return bom;
+  const positioned=[],unpositioned=[];
+  for(const r of bom){
+    if(r.isLaborRow||r.isContingency){unpositioned.push(r);continue;}
+    if(typeof r.y_top==="number"&&!isNaN(r.y_top)){positioned.push(r);}
+    else{unpositioned.push(r);}
+  }
+  positioned.sort((a,b)=>{
+    const pa=+a.sourcePageIdx||0,pb=+b.sourcePageIdx||0;
+    if(pa!==pb)return pa-pb;
+    const yDiff=(a.y_top||0)-(b.y_top||0);
+    if(Math.abs(yDiff)>0.002)return yDiff;
+    return (a.x_left||0)-(b.x_left||0);
+  });
+  return [...positioned,...unpositioned];
+}
+
 function appendDefaultBomItems(bom){
   console.log("APPEND DEFAULTS: _defaultBomItems=",_defaultBomItems.length,"items:",_defaultBomItems.map(d=>d.description));
   const lower=new Set(bom.map(r=>(r.description||"").trim().toLowerCase()));
@@ -6917,7 +6939,9 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         const fuzzyReport=fuzzyMergeBomItemsWithReport(exact);
         const fuzzy=fuzzyReport.items;
         console.log(`BOM MERGE: ${all.length} raw → ${positional.length} positional → ${exact.length} exact → ${fuzzy.length} fuzzy`);
-        return{bom:appendDefaultBomItems(fuzzy),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,fuzzyMerges:fuzzyReport.merges}};
+        // DECISION(v1.19.629): Sort by drawing Y-position so ARC BOM matches drawing row order.
+        const sorted=sortBomByDrawingPosition(fuzzy);
+        return{bom:appendDefaultBomItems(sorted),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,fuzzyMerges:fuzzyReport.merges}};
       }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[],mergeStats:null};});
     }
     // Hazardous location scan (parallel with BOM — uses Haiku, fast)
@@ -12494,7 +12518,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       var bomPreDefaults=reLearned.bom;
       reLearnedLog=reLearned.appliedLog||[];
     }catch(e){var bomPreDefaults=corrected;}
-    const bom=appendDefaultBomItems(bomPreDefaults);
+    // DECISION(v1.19.629): Sort by drawing Y-position for spot-check parity with the drawing.
+    const bom=appendDefaultBomItems(sortBomByDrawingPosition(bomPreDefaults));
     const reExtractionReport={
       rawCount:all.length,exactCount:exactDedup.length,finalCount:fuzzyDedup.length,
       fuzzyMerges:fuzzyReport.merges,bomPageCount:bomPages.length,
@@ -12664,7 +12689,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       var fbPreDefaults=fbLearned.bom;
       fbLearnedLog=fbLearned.appliedLog||[];
     }catch(e){var fbPreDefaults=fbCorrected;}
-    const bom=appendDefaultBomItems(fbPreDefaults);
+    // DECISION(v1.19.629): Sort by drawing Y-position for spot-check parity with the drawing.
+    const bom=appendDefaultBomItems(sortBomByDrawingPosition(fbPreDefaults));
     const fbReport={
       rawCount:all.length,exactCount:fbExact.length,finalCount:fbFuzzy.length,
       fuzzyMerges:fbFuzzyReport.merges,bomPageCount:bomPages.length,
