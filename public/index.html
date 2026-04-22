@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.622";
+const APP_VERSION="v1.19.623";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5502,12 +5502,16 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
   if(!b64){console.warn("extractBomPage: skipping — empty or invalid dataUrl");return[];}
   const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
   const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
-  // Use extended thinking so Claude reasons through the table structure before extracting
+  // DECISION(v1.19.623): Restored Opus + thinking per CLAUDE.md spec ("BOM extraction | Opus + thinking").
+  // Was accidentally switched to Sonnet in an earlier edit. Opus's stronger visual reasoning is
+  // what made BOM extraction reliable historically (qty + description integrity). Sonnet was
+  // ~30% cheaper but demonstrably worse on small-text row-alignment tasks, which compounded
+  // once quadrant crops added cross-source merging on top.
   const resp=await fetch("https://api.anthropic.com/v1/messages",{
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
     body:JSON.stringify({
-      model:"claude-sonnet-4-6",
+      model:"claude-opus-4-6",
       max_tokens:16000,
       thinking:{type:"enabled",budget_tokens:4000},
       messages:[{role:"user",content:[
