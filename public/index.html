@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.642";
+const APP_VERSION="v1.19.643";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5778,6 +5778,25 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
       const q=String(item.qty||"").trim().toUpperCase();
       if(q==="A/R"||q==="AR"||q==="AS REQUIRED"||q==="AS REQ'D"||q==="A.R."||q==="A\\R"){item.qty=1;}
     }
+    // DECISION(v1.19.643): Fallback y_top from array index when AI omits coordinates.
+    // The AI almost always returns rows in top-to-bottom table order even when it forgets
+    // to emit y_top/y_bottom. Without this fallback, coord-less rows fell into the
+    // "unpositioned" bucket at the end of the sort → BOM appeared out of drawing order.
+    // Proxy y-values are small fractional offsets (0..0.999) so real coordinates, when
+    // present, still win the sort (they'd be >0.001 apart from these indexed fallbacks).
+    if(expanded.length>0){
+      const count=expanded.length;
+      for(let i=0;i<count;i++){
+        const it=expanded[i];
+        if(typeof it.y_top!=="number"||isNaN(it.y_top)){
+          it.y_top=(i+0.5)/count; // center of this "slot" in 0..1
+          it.y_bottom=(i+0.95)/count;
+          it._yEstimated=true;
+        }
+        if(typeof it.x_left!=="number"||isNaN(it.x_left))it.x_left=0;
+        if(typeof it.x_right!=="number"||isNaN(it.x_right))it.x_right=1;
+      }
+    }
     // DECISION(v1.19.601): User turned off extraction questions — always return empty array,
     // regardless of what the AI returned. No more "10 questions to answer" on new extractions.
     return{items:expanded,questions:[]};
@@ -6075,9 +6094,15 @@ function applyAuditCorrections(bom,audit){
     filteredBom.push(updated);
   }
   // Add missing rows
+  // DECISION(v1.19.643): Stamp y_top at end of the last known BOM page so added rows land
+  // at the bottom of the BOM (not in a floating "unpositioned" tail). If the audit
+  // indicated a position (missing.y_top), use that instead.
+  const maxPageIdx=filteredBom.reduce((m,r)=>typeof r.sourcePageIdx==="number"&&r.sourcePageIdx>m?r.sourcePageIdx:m,0);
+  let tailOffset=0;
   for(const missing of (audit.missingRows||[])){
     if(!missing||(!missing.pn&&!missing.desc))continue;
     const newId=Date.now()+Math.random();
+    tailOffset+=1;
     const newRow={
       id:newId,
       partNumber:(missing.pn||"").trim(),
@@ -6086,6 +6111,11 @@ function applyAuditCorrections(bom,audit){
       manufacturer:(missing.mfr||"").trim(),
       notes:"",
       autoAddedByAudit:true,
+      sourcePageIdx:typeof missing.sourcePageIdx==="number"?missing.sourcePageIdx:maxPageIdx,
+      y_top:typeof missing.y_top==="number"?missing.y_top:0.99+tailOffset*0.0001,
+      y_bottom:typeof missing.y_bottom==="number"?missing.y_bottom:0.995+tailOffset*0.0001,
+      x_left:0,x_right:1,
+      _yEstimated:true,
       auditCorrections:[{field:"added",from:null,to:{pn:missing.pn,qty:missing.qty,desc:missing.desc},timestamp:Date.now(),note:"added by audit"}],
     };
     filteredBom.push(newRow);
@@ -7330,7 +7360,11 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           timestamp:latestPanel.extractionReport?.timestamp||Date.now(),
           version:APP_VERSION,
         };
-        await save({...latestPanel,bom:currentBom,bomAudit:scrubbed,extractionReport:updatedReport,updatedAt:Date.now()});
+        // DECISION(v1.19.643): Re-sort after audit so missing rows added by audit (which
+        // don't have y_top) don't pile up at the end of the BOM. Also re-sorts any rows
+        // whose y_top was adjusted by the audit's qty/pn/desc corrections.
+        const sortedAfterAudit=sortBomByDrawingPosition(currentBom);
+        await save({...latestPanel,bom:sortedAfterAudit,bomAudit:scrubbed,extractionReport:updatedReport,updatedAt:Date.now()});
         if(totalCorrections>0){
           console.log(`BOM AUDIT: ${totalCorrections} total corrections applied across ${roundsUsed} rounds${cleanOnRound?` — clean on round ${cleanOnRound}`:` — ${persistentFlagged+persistentMissing} persistent issues`}`);
         }
