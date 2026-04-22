@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.634";
+const APP_VERSION="v1.19.635";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5087,11 +5087,17 @@ async function applyLearnedCorrections(bom,uid){
     const pn=(r.partNumber||"").trim();
     if(!pn)return r;
     // 1. Auto-replace alternates (part crosses)
+    // DECISION(v1.19.635): Swap the PN/description + flag as crossed/BC-locked. DO NOT
+    // fabricate a priceDate or carry over the cached alt.replacement.unitCost — those
+    // go stale and make the UI show today's date as if the row was priced today.
+    // priceSource="bc" tells runPricingOnPanel to do an EXACT BC lookup (no fuzzy,
+    // avoids re-crossing the already-crossed PN). unitPrice/priceDate/bcPoDate come
+    // from BC ItemCard / PurchasePrices in the pricing phase. Matches user's 6-step flow.
     if(!r.isCrossed){
       const alt=userAlts.find(a=>a.autoReplace&&a.replacement&&(a.originalPN===pn||normPN(a.originalPN)===normPN(pn)));
       if(alt){
         appliedLog.push({rowId:r.id,kind:"alternate",from:pn,to:alt.replacement.partNumber,reason:"auto-cross from learning DB"});
-        return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:Date.now(),isCrossed:true,crossedFrom:pn,autoReplaced:true};
+        return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:null,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true};
       }
     }
     // 2. Bad PN → corrected PN (from correctionDB)
@@ -11687,10 +11693,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const pn=(r.partNumber||"").trim();
         if(!pn)return r;
         // Auto-replace: exact match first, then normalized match (catches format variants)
+        // DECISION(v1.19.635): Swap PN/description + BC-lock + cross flags. Clear cached
+        // unitPrice/priceDate so UI doesn't show today's date as "priced". BC lookup in
+        // runPricingOnPanel / BC poll backfill populates real pricing data.
         const alt=alts.find(a=>a.autoReplace&&(a.originalPN===pn||normPN(a.originalPN)===normPN(pn)));
         if(alt){
           changed=true;
-          return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:Date.now(),isCrossed:true,crossedFrom:pn,autoReplaced:true};
+          return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:null,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true};
         }
         // Auto-correct: apply known corrections (exact or normalized match)
         const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn));
