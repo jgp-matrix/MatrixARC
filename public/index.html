@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.656";
+const APP_VERSION="v1.19.657";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10447,6 +10447,36 @@ async function updateCustomerTemplate(customerName,fieldSources,corrections){
   try{await fbDb.doc(_ctPath()).set({templates:all});console.log("CUSTOMER TEMPLATE: updated for",customerName,"→",existing.labelMappings);}
   catch(e){console.warn("Customer template save failed:",e.message);}
 }
+// DECISION(v1.19.657): Save a region rectangle to a customer's template. Used when user
+// draws a rectangle on a sample drawing and tags it as drawingNo / drawingDesc / drawingRev.
+// On future extractions for this customer, the region gets cropped from the drawing at the
+// same fractional coordinates — giving the AI a targeted crop instead of the whole page.
+async function saveTemplateRegion(customerName,field,region){
+  const norm=_normCustomerName(customerName);
+  if(!norm||!field||!region)return;
+  const all=await loadCustomerTemplates();
+  const existing=all[norm]||{customerName,labelMappings:{drawingNo:[],drawingDesc:[],drawingRev:[]},regions:{},correctionCount:0,lastUpdated:0};
+  if(!existing.regions)existing.regions={};
+  existing.regions[field]={x:region.x,y:region.y,w:region.w,h:region.h,savedAt:Date.now()};
+  existing.lastUpdated=Date.now();
+  all[norm]=existing;
+  _ctCache=all;
+  try{await fbDb.doc(_ctPath()).set({templates:all});console.log("TEMPLATE REGION: saved",field,"for",customerName,region);}
+  catch(e){console.warn("Template region save failed:",e.message);throw e;}
+}
+async function deleteTemplateRegion(customerName,field){
+  const norm=_normCustomerName(customerName);
+  if(!norm||!field)return;
+  const all=await loadCustomerTemplates();
+  const existing=all[norm];
+  if(!existing||!existing.regions||!existing.regions[field])return;
+  delete existing.regions[field];
+  existing.lastUpdated=Date.now();
+  all[norm]=existing;
+  _ctCache=all;
+  try{await fbDb.doc(_ctPath()).set({templates:all});}catch(e){}
+}
+
 // Build a prompt-hint block from the customer template, to inject into extractTitleBlock.
 function _ctPromptHint(template){
   if(!template||!template.labelMappings)return "";
@@ -10475,8 +10505,29 @@ async function extractTitleBlock(dataUrl,opts){
   if(!_apiKey||!dataUrl)return null;
   const{customerName,bcProjectNumber,uid,titleblockRegion}=opts||{};
   try{
+    // DECISION(v1.19.657): Check for customer-template field regions FIRST. When present,
+    // crop each field's specific region at max resolution and include them as labeled inputs.
+    // Much more precise than a generic title-block crop — the AI reads from exactly the box
+    // the user pre-trained for that customer.
+    let customerTemplate=null;
+    if(customerName){
+      customerTemplate=await getCustomerTemplate(customerName).catch(()=>null);
+    }
+    const templateRegions=(customerTemplate&&customerTemplate.regions)||{};
+    const hasFieldRegions=!!(templateRegions.drawingNo||templateRegions.drawingDesc||templateRegions.drawingRev);
     let images=[];
-    if(titleblockRegion&&titleblockRegion.w>0.05&&titleblockRegion.h>0.05){
+    if(hasFieldRegions){
+      // Add a high-resolution crop for each template region, tagged with the field name
+      for(const field of["drawingNo","drawingDesc","drawingRev"]){
+        const r=templateRegions[field];
+        if(!r||!(r.w>0.02)||!(r.h>0.01))continue;
+        const crop=await cropImageRegion(dataUrl,r.x,r.y,r.w,r.h,1568).catch(()=>null);
+        if(crop)images.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:crop.split(",")[1]},_tag:`template-${field}`});
+      }
+      // Also include full page context
+      const full=await resizeForAnalysis(dataUrl,1568);
+      if(full)images.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:full.split(",")[1]},_tag:"full"});
+    }else if(titleblockRegion&&titleblockRegion.w>0.05&&titleblockRegion.h>0.05){
       // DECISION(v1.19.632) Phase 3: User-drawn title block region — crop to EXACTLY that
       // region at max resolution. This is the most reliable approach when available:
       // no wasted pixels on rest of drawing, ~3-5× pixel density on title block text.
@@ -10506,11 +10557,15 @@ async function extractTitleBlock(dataUrl,opts){
         learnedExamplesBlock=`\n\nLEARNED FROM PRIOR EXTRACTIONS — the user has corrected the AI on these fields before${sameCust.length>0?` (${sameCust.length} are from this same customer, "${customerName}", so follow those conventions closely)`:""}. When you encounter similar patterns, apply the user's corrections as a guide:\n\n`+examples.map(e=>`• Field: ${e.field} — AI extracted: ${JSON.stringify(e.aiValue||"")} — User corrected to: ${JSON.stringify(e.userValue||"")}${e.customerName?` [customer: ${e.customerName}]`:""}`).join("\n");
       }
     }
-    // DECISION(v1.19.655): Load per-customer TEMPLATE with learned label mappings.
+    // DECISION(v1.19.655/657): Customer template hint. We already loaded customerTemplate
+    // above for region checking — reuse that object (no second Firestore fetch).
     let templateHintBlock="";
-    if(customerName){
-      const template=await getCustomerTemplate(customerName).catch(()=>null);
-      if(template)templateHintBlock=_ctPromptHint(template);
+    if(customerTemplate)templateHintBlock=_ctPromptHint(customerTemplate);
+    // DECISION(v1.19.657): Tell AI explicitly when images are pre-cropped template regions.
+    let regionHintBlock="";
+    if(hasFieldRegions){
+      const trained=["drawingNo","drawingDesc","drawingRev"].filter(f=>templateRegions[f]).map(f=>`Image tagged "template-${f}"`).join(", ");
+      regionHintBlock=`\n\nPRE-TRAINED TEMPLATE REGIONS for this customer: ${trained}. Each of those images is a high-resolution crop of exactly the region where this customer's ${trained.includes("template-drawingNo")?"drawingNo ":""}${trained.includes("template-drawingDesc")?"drawingDesc ":""}${trained.includes("template-drawingRev")?"drawingRev ":""}lives on their drawings. READ THE FIELD FROM ITS TAGGED IMAGE — that crop was chosen by the user from a prior drawing of this customer. Fall back to the "full" image only for fields that don't have a template region.`;
     }
     const tagList=images.map((img,i)=>`Image ${i+1}: ${img._tag}`).join(", ");
     const imageContents=images.map(img=>{const{_tag,...clean}=img;return clean;});
@@ -10581,7 +10636,7 @@ Many drawings are scanned PDFs with low contrast, speckle noise, or slight rotat
 **4. voltages** — main line voltage + control voltage
   • "Power Supply", "Line Voltage", "Main Voltage" → lineVoltage (e.g. "120VAC 1PH 60Hz", "480V 3PH", "208V 3PH 60Hz")
   • "Control Voltage", "Control Power" → controlVoltage (e.g. "120VAC", "24VDC")
-  • Return "unknown" if not visible.${learnedExamplesBlock}${templateHintBlock}
+  • Return "unknown" if not visible.${learnedExamplesBlock}${templateHintBlock}${regionHintBlock}
 
 ═══ OUTPUT FORMAT ═══
 Return ONLY valid JSON (no markdown, no commentary):
@@ -10706,7 +10761,7 @@ Return ONLY valid JSON (no markdown):
 }
 
 // ── DRAWING LIGHTBOX ──
-function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
+function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex(p=>p.id===startId);return i>=0?i:0;});
   const pg=pages[idx]||pages[0];
   const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted,zoomed_detail:"#fde047",label:"#f97316",spec:"#38bdf8",titleblock:"#f472b6",other:"#a78bfa",ignore:"#6b7280"};
@@ -11016,6 +11071,28 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
                       </button>
                     ))}
                   </div>
+                  {/* DECISION(v1.19.657): Customer template region shortcuts — save drawn
+                     rectangle directly to the customer's template instead of to the page. */}
+                  {customerName&&(
+                    <>
+                      <div style={{fontSize:10,color:"#c4b5fd",fontWeight:700,marginTop:10,marginBottom:5,textTransform:"uppercase",letterSpacing:0.5}}>📋 Customer Template · "{customerName}"</div>
+                      <div style={{fontSize:10,color:C.muted,marginBottom:6,lineHeight:1.4}}>Save as a template region — applies to all future extractions for this customer.</div>
+                      <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                        {[["drawingNo","DWG #"],["drawingDesc","Description"],["drawingRev","Rev"]].map(([field,label])=>(
+                          <button key={field} onClick={async()=>{
+                            const region={x:pendingRect.x,y:pendingRect.y,w:pendingRect.w,h:pendingRect.h};
+                            try{
+                              await saveTemplateRegion(customerName,field,region);
+                              setPendingRect(null);setPendingType(null);setPendingNote("");
+                              alert(`Saved as ${label} template region for customer "${customerName}". Future extractions for this customer will crop from this exact area.`);
+                            }catch(e){alert("Save failed: "+e.message);}
+                          }} style={{background:"rgba(167,139,250,0.18)",color:"#c4b5fd",border:"1px solid #a78bfa66",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                            📌 {label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                   <button onClick={()=>{setPendingRect(null);setPendingType(null);}}
                     style={{marginTop:8,background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,
                       padding:"3px 10px",fontSize:11,cursor:"pointer",width:"100%"}}>
@@ -15518,6 +15595,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         <DrawingLightbox
           pages={pages.filter(p=>p.dataUrl||p.storageUrl)}
           startId={lightboxId}
+          customerName={(project&&project.bcCustomerName)||""}
           onClose={()=>setLightboxId(null)}
           onRegionsChange={(pgId,newRegions)=>{
             const fresh=latestPanelRef.current;
@@ -22918,12 +22996,41 @@ function CustomerTemplatesModal({uid,onClose}){
                     </div>
                   );
                 })}
-                {curTemplate.regions&&Object.keys(curTemplate.regions).length>0&&(
-                  <div style={{marginTop:20,padding:"12px 14px",background:"#0a0a16",border:`1px solid ${C.border}`,borderRadius:8}}>
-                    <div style={{fontSize:12,fontWeight:700,color:"#c4b5fd",marginBottom:6}}>📐 SAVED REGIONS</div>
-                    <div style={{fontSize:11,color:C.muted}}>{Object.keys(curTemplate.regions).length} region{Object.keys(curTemplate.regions).length!==1?"s":""} saved. (Region editing UI coming in v1.19.657.)</div>
+                <div style={{marginTop:20,padding:"12px 14px",background:"#0a0a16",border:`1px solid ${C.border}`,borderRadius:8}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#c4b5fd",marginBottom:8,textTransform:"uppercase",letterSpacing:0.5}}>📐 Template Regions</div>
+                  <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>
+                    Pre-trained crop boxes for each field. When a drawing is extracted for this customer, each region is cropped at high resolution and sent to the AI directly — far more accurate than generic extraction.
+                    <br/>
+                    <strong style={{color:"#c4b5fd"}}>To add a region:</strong> open any drawing in the lightbox, enter Region Mode (🔲), draw a rectangle, then click 📌 DWG #, 📌 Description, or 📌 Rev under the "Customer Template" section.
                   </div>
-                )}
+                  {["drawingNo","drawingDesc","drawingRev"].map(field=>{
+                    const labels={drawingNo:"DWG #",drawingDesc:"Description",drawingRev:"Rev"};
+                    const r=curTemplate.regions?.[field];
+                    return(
+                      <div key={field} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderTop:`1px solid ${C.border}`,fontSize:12}}>
+                        <span style={{minWidth:110,color:"#c4b5fd",fontWeight:600}}>📌 {labels[field]}</span>
+                        {r?(
+                          <>
+                            <span style={{flex:1,fontFamily:"ui-monospace,monospace",fontSize:11,color:C.muted}}>
+                              x={(r.x*100).toFixed(0)}% · y={(r.y*100).toFixed(0)}% · w={(r.w*100).toFixed(0)}% · h={(r.h*100).toFixed(0)}%
+                            </span>
+                            <button onClick={async()=>{
+                              if(!window.confirm(`Clear ${labels[field]} region for ${curTemplate.customerName||selectedCust}?`))return;
+                              try{
+                                await deleteTemplateRegion(curTemplate.customerName||selectedCust,field);
+                                _ctCache=null;
+                                const all=await loadCustomerTemplates();
+                                setTemplates(all||{});
+                              }catch(e){alert("Delete failed: "+e.message);}
+                            }} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12,padding:"2px 8px"}}>🗑 Clear</button>
+                          </>
+                        ):(
+                          <span style={{flex:1,fontSize:11,color:C.muted,fontStyle:"italic"}}>— no region saved —</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </>
             )}
           </div>
