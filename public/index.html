@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.654";
+const APP_VERSION="v1.19.655";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7477,10 +7477,15 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       if(tb){
         const v=tb.voltages||{};
         const tbPatch={
+          // DECISION(v1.19.655): Also capture the *Label source fields so saveTitleFields
+          // can update the customer template when user corrects (or accepts) values.
           aiExtractedTitleBlock:{
             drawingNo:tb.drawingNo||"",
+            drawingNoLabel:tb.drawingNoLabel||"",
             drawingDesc:tb.drawingDesc||"",
+            drawingDescLabel:tb.drawingDescLabel||"",
             drawingRev:tb.drawingRev||"",
+            drawingRevLabel:tb.drawingRevLabel||"",
             extractedAt:Date.now(),
           },
           ...(!latestPanel.drawingNo&&tb.drawingNo?{drawingNo:(tb.drawingNo||"").slice(0,25)}:{}),
@@ -10387,6 +10392,76 @@ async function saveTitleBlockLearningEntry(uid,entry){
   _tbLearningCache=entries;
   try{await fbDb.doc(_tbLearningPath(uid)).set({entries});}catch(e){console.warn("TB learning save failed:",e.message);}
 }
+// ── PER-CUSTOMER TITLE BLOCK TEMPLATES (Level 3 Session 1) ──
+// DECISION(v1.19.655): Templates accumulate per-customer label mappings from the user's
+// corrections. Over 5-10 drawings from a customer, the system learns "for customer X,
+// drawingNo is labeled 'Drawing Number', drawingDesc is labeled 'Panel'" etc.
+// The AI returns source labels (drawingNoLabel, etc.) alongside values. On user correction
+// (via saveTitleFields) we update the template. On next extraction, template hints get
+// injected into the prompt so the AI prioritizes the known-good labels for this customer.
+let _ctCache=null;
+function _ctPath(){return (_appCtx.configPath||`users/${fbAuth.currentUser?.uid}/config`)+"/customerTemplates";}
+function _normCustomerName(s){return (s||"").trim().toLowerCase().replace(/[\s,.&]+/g," ").trim();}
+async function loadCustomerTemplates(){
+  if(_ctCache)return _ctCache;
+  try{const d=await fbDb.doc(_ctPath()).get();_ctCache=d.exists?(d.data().templates||{}):{};}
+  catch(e){_ctCache={};}
+  return _ctCache;
+}
+async function getCustomerTemplate(customerName){
+  const norm=_normCustomerName(customerName);
+  if(!norm)return null;
+  const all=await loadCustomerTemplates();
+  return all[norm]||null;
+}
+// Update the template for a customer based on an extraction + correction event.
+// fieldSources: {drawingNo: "Drawing Number", drawingDesc: "Panel", ...} — labels AI reported.
+// corrections: {drawingNo: {aiValue, userValue}, ...} — only fields the user changed.
+// If a field was NOT corrected (user accepted), increment its label positively.
+// If a field WAS corrected (user changed), decrement that label's confidence.
+async function updateCustomerTemplate(customerName,fieldSources,corrections){
+  const norm=_normCustomerName(customerName);
+  if(!norm)return;
+  const all=await loadCustomerTemplates();
+  const existing=all[norm]||{customerName,labelMappings:{drawingNo:[],drawingDesc:[],drawingRev:[]},correctionCount:0,lastUpdated:0};
+  function bumpLabel(field,label,delta){
+    if(!label||!label.trim())return;
+    const arr=existing.labelMappings[field]||[];
+    const idx=arr.findIndex(x=>x.label.trim().toLowerCase()===label.trim().toLowerCase());
+    if(idx>=0){arr[idx].count=(arr[idx].count||0)+delta;}
+    else if(delta>0){arr.push({label:label.trim(),count:1});}
+    // Remove entries that went to zero or below
+    existing.labelMappings[field]=arr.filter(x=>(x.count||0)>0).sort((a,b)=>(b.count||0)-(a.count||0)).slice(0,10);
+  }
+  for(const field of ["drawingNo","drawingDesc","drawingRev"]){
+    const label=fieldSources&&fieldSources[field];
+    const wasCorrected=corrections&&corrections[field];
+    if(!label)continue;
+    // Positive if accepted, negative if corrected
+    bumpLabel(field,label,wasCorrected?-1:1);
+  }
+  existing.correctionCount=(existing.correctionCount||0)+(corrections?Object.keys(corrections).length:0);
+  existing.lastUpdated=Date.now();
+  all[norm]=existing;
+  _ctCache=all;
+  try{await fbDb.doc(_ctPath()).set({templates:all});console.log("CUSTOMER TEMPLATE: updated for",customerName,"→",existing.labelMappings);}
+  catch(e){console.warn("Customer template save failed:",e.message);}
+}
+// Build a prompt-hint block from the customer template, to inject into extractTitleBlock.
+function _ctPromptHint(template){
+  if(!template||!template.labelMappings)return "";
+  const pick=(arr)=>(arr||[]).filter(x=>x.count>=1).slice(0,3).map(x=>`"${x.label}"`).join(", ");
+  const lines=[];
+  const dn=pick(template.labelMappings.drawingNo);
+  const dd=pick(template.labelMappings.drawingDesc);
+  const dr=pick(template.labelMappings.drawingRev);
+  if(dn)lines.push(`  • drawingNo is typically labeled: ${dn}`);
+  if(dd)lines.push(`  • drawingDesc is typically labeled: ${dd}`);
+  if(dr)lines.push(`  • drawingRev is typically labeled: ${dr}`);
+  if(!lines.length)return "";
+  return `\n\nLEARNED FROM PRIOR EXTRACTIONS FOR THIS CUSTOMER (${template.correctionCount||0} correction${template.correctionCount===1?"":"s"} captured):\n${lines.join("\n")}\nPrefer these labels when identifying each field.`;
+}
+
 function _tbRelevantExamples(learningDB,customerName,bcProjectNumber,limit=12){
   if(!learningDB||!learningDB.length)return [];
   const cust=(customerName||"").trim().toLowerCase();
@@ -10430,6 +10505,12 @@ async function extractTitleBlock(dataUrl,opts){
         const sameCust=examples.filter(e=>(e.customerName||"").trim().toLowerCase()===(customerName||"").trim().toLowerCase());
         learnedExamplesBlock=`\n\nLEARNED FROM PRIOR EXTRACTIONS — the user has corrected the AI on these fields before${sameCust.length>0?` (${sameCust.length} are from this same customer, "${customerName}", so follow those conventions closely)`:""}. When you encounter similar patterns, apply the user's corrections as a guide:\n\n`+examples.map(e=>`• Field: ${e.field} — AI extracted: ${JSON.stringify(e.aiValue||"")} — User corrected to: ${JSON.stringify(e.userValue||"")}${e.customerName?` [customer: ${e.customerName}]`:""}`).join("\n");
       }
+    }
+    // DECISION(v1.19.655): Load per-customer TEMPLATE with learned label mappings.
+    let templateHintBlock="";
+    if(customerName){
+      const template=await getCustomerTemplate(customerName).catch(()=>null);
+      if(template)templateHintBlock=_ctPromptHint(template);
     }
     const tagList=images.map((img,i)=>`Image ${i+1}: ${img._tag}`).join(", ");
     const imageContents=images.map(img=>{const{_tag,...clean}=img;return clean;});
@@ -10500,13 +10581,23 @@ Many drawings are scanned PDFs with low contrast, speckle noise, or slight rotat
 **4. voltages** — main line voltage + control voltage
   • "Power Supply", "Line Voltage", "Main Voltage" → lineVoltage (e.g. "120VAC 1PH 60Hz", "480V 3PH", "208V 3PH 60Hz")
   • "Control Voltage", "Control Power" → controlVoltage (e.g. "120VAC", "24VDC")
-  • Return "unknown" if not visible.${learnedExamplesBlock}
+  • Return "unknown" if not visible.${learnedExamplesBlock}${templateHintBlock}
 
 ═══ OUTPUT FORMAT ═══
 Return ONLY valid JSON (no markdown, no commentary):
-{"drawingNo":"...","drawingDesc":"...","drawingRev":"...","voltages":{"lineVoltage":"...or unknown","controlVoltage":"...or unknown"}}
+{
+  "drawingNo":"...",
+  "drawingNoLabel":"... (the exact label text that preceded/identified this value, e.g. 'Drawing Number' or 'DWG NO.' — empty if you inferred the value without a clear label)",
+  "drawingDesc":"...",
+  "drawingDescLabel":"...",
+  "drawingRev":"...",
+  "drawingRevLabel":"...",
+  "voltages":{"lineVoltage":"...or unknown","controlVoltage":"...or unknown"}
+}
 
-If a field is genuinely not visible on the drawing, return "" for that field rather than guessing.`}
+The *Label fields are CRITICAL for the system to learn this customer's drawing style over time. Report the exact label text (e.g. "Drawing Number", "Panel", "Content Rev.", "DWG NO.") that pointed you at each value. If you genuinely inferred a value without a clear label (e.g. from large centered text), return "" for that *Label field.
+
+If a value field is genuinely not visible on the drawing, return "" for that field AND its *Label rather than guessing.`}
         ]}]
       })
     });
@@ -12914,21 +13005,35 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.632) Phase 2: If user's value differs from the last AI extraction, save the
     // correction to the title block learning DB. Future extractions for this customer get
     // calibrated automatically.
+    // DECISION(v1.19.655): ALSO update the per-customer template with label mappings (Level 3).
+    // GOTCHA-2 FIX: Always attempt to save learning even when AI returned empty — a complete
+    // AI failure still gives us training data if the user fills the fields in manually.
     const ai=panel.aiExtractedTitleBlock||{};
     const customerName=(project&&project.bcCustomerName)||"";
+    const corrections={};
     const saveIfDiff=(field,aiVal,userVal)=>{
       const aiStr=(aiVal||"").trim(),userStr=(userVal||"").trim();
       if(!userStr||aiStr===userStr)return;
+      corrections[field]={aiValue:aiStr,userValue:userStr};
       saveTitleBlockLearningEntry(uid,{
         field,aiValue:aiStr,userValue:userStr,
         customerName,bcProjectNumber:bcProjectNumber||"",
         panelId:panel.id,
       }).catch(()=>{});
     };
-    if(ai&&(ai.drawingNo||ai.drawingDesc||ai.drawingRev)){
-      saveIfDiff("drawingNo",ai.drawingNo,newNo);
-      saveIfDiff("drawingDesc",ai.drawingDesc,newDesc);
-      saveIfDiff("drawingRev",ai.drawingRev,newRev);
+    saveIfDiff("drawingNo",ai.drawingNo,newNo);
+    saveIfDiff("drawingDesc",ai.drawingDesc,newDesc);
+    saveIfDiff("drawingRev",ai.drawingRev,newRev);
+    // Update per-customer template — reinforces labels on accepted fields, weakens on corrected.
+    // Only runs when the AI gave us label info (means it actually executed).
+    const fieldSources={
+      drawingNo:ai.drawingNoLabel||"",
+      drawingDesc:ai.drawingDescLabel||"",
+      drawingRev:ai.drawingRevLabel||"",
+    };
+    const hasAnyLabel=fieldSources.drawingNo||fieldSources.drawingDesc||fieldSources.drawingRev;
+    if(customerName&&hasAnyLabel){
+      updateCustomerTemplate(customerName,fieldSources,corrections).catch(()=>{});
     }
   }
 
