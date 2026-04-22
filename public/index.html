@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.631";
+const APP_VERSION="v1.19.632";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9816,44 +9816,104 @@ function cropImageRegion(dataUrl,xPct,yPct,wPct,hPct,maxDim=1568){
   });
 }
 
-async function extractTitleBlock(dataUrl){
+// ── TITLE BLOCK LEARNING DATABASE ──
+// DECISION(v1.19.632): Store user corrections to AI-extracted title block fields so future
+// extractions get calibrated to the user's drawing conventions. Scoped per-customer when
+// possible (customer name from BC project) so each customer's format is learned independently.
+let _tbLearningCache=null;
+function _tbLearningPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/titleBlockLearning";}
+async function loadTitleBlockLearning(uid){
+  if(_tbLearningCache)return _tbLearningCache;
+  try{const d=await fbDb.doc(_tbLearningPath(uid)).get();_tbLearningCache=d.exists?(d.data().entries||[]):[];}
+  catch(e){_tbLearningCache=[];}
+  return _tbLearningCache;
+}
+async function saveTitleBlockLearningEntry(uid,entry){
+  if(!uid||!entry||!entry.field)return;
+  if(entry.aiValue===entry.userValue)return; // no correction, no entry
+  const existing=await loadTitleBlockLearning(uid);
+  const entries=[...existing,{...entry,savedAt:Date.now()}].slice(-200); // keep last 200
+  _tbLearningCache=entries;
+  try{await fbDb.doc(_tbLearningPath(uid)).set({entries});}catch(e){console.warn("TB learning save failed:",e.message);}
+}
+function _tbRelevantExamples(learningDB,customerName,bcProjectNumber,limit=12){
+  if(!learningDB||!learningDB.length)return [];
+  const cust=(customerName||"").trim().toLowerCase();
+  // Prefer corrections from SAME customer; fall back to cross-customer if thin.
+  const sameCust=cust?learningDB.filter(e=>(e.customerName||"").trim().toLowerCase()===cust):[];
+  const rest=learningDB.filter(e=>!sameCust.includes(e));
+  return [...sameCust.slice(-limit),...rest.slice(-(limit-sameCust.length))].slice(-limit);
+}
+
+async function extractTitleBlock(dataUrl,opts){
   if(!_apiKey||!dataUrl)return null;
+  const{customerName,bcProjectNumber,uid,titleblockRegion}=opts||{};
   try{
-    // Full page at 1568 for context
-    const full=await resizeForAnalysis(dataUrl,1568);
-    // Bottom-right 65% wide × 45% tall — catches both corner-style and bottom-edge title blocks
-    // at roughly 2x the effective pixel density of the full-page version.
-    const crop=await cropImageRegion(dataUrl,0.35,0.55,0.65,0.45,1568).catch(()=>null);
-    const images=[full,crop].filter(Boolean).map(img=>({
-      type:"image",source:{type:"base64",media_type:"image/jpeg",data:img.split(",")[1]}
-    }));
+    let images=[];
+    if(titleblockRegion&&titleblockRegion.w>0.05&&titleblockRegion.h>0.05){
+      // DECISION(v1.19.632) Phase 3: User-drawn title block region — crop to EXACTLY that
+      // region at max resolution. This is the most reliable approach when available:
+      // no wasted pixels on rest of drawing, ~3-5× pixel density on title block text.
+      const tbCrop=await cropImageRegion(dataUrl,titleblockRegion.x,titleblockRegion.y,titleblockRegion.w,titleblockRegion.h,1568).catch(()=>null);
+      if(tbCrop)images.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:tbCrop.split(",")[1]},_tag:"user-region"});
+      // Also include full page for overall context (project name / large centered text)
+      const full=await resizeForAnalysis(dataUrl,1568);
+      if(full)images.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:full.split(",")[1]},_tag:"full"});
+    }else{
+      // DECISION(v1.19.632) Phase 1: Three-crop approach. Catches corner-style, bottom-edge, and
+      // right-edge title blocks at roughly 2× the pixel density of full-page rendering.
+      const full=await resizeForAnalysis(dataUrl,1568);
+      const brCrop=await cropImageRegion(dataUrl,0.35,0.55,0.65,0.45,1568).catch(()=>null); // bottom-right corner
+      const bottomStrip=await cropImageRegion(dataUrl,0.0,0.72,1.0,0.28,1568).catch(()=>null); // full-width bottom strip
+      if(full)images.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:full.split(",")[1]},_tag:"full"});
+      if(brCrop)images.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:brCrop.split(",")[1]},_tag:"bottom-right"});
+      if(bottomStrip)images.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:bottomStrip.split(",")[1]},_tag:"bottom-strip"});
+    }
     if(!images.length)return null;
+    // DECISION(v1.19.632) Phase 2: Load user corrections from learning DB and include as few-shot examples.
+    let learnedExamplesBlock="";
+    if(uid){
+      const learning=await loadTitleBlockLearning(uid).catch(()=>[]);
+      const examples=_tbRelevantExamples(learning,customerName,bcProjectNumber,12);
+      if(examples.length>0){
+        const sameCust=examples.filter(e=>(e.customerName||"").trim().toLowerCase()===(customerName||"").trim().toLowerCase());
+        learnedExamplesBlock=`\n\nLEARNED FROM PRIOR EXTRACTIONS — the user has corrected the AI on these fields before${sameCust.length>0?` (${sameCust.length} are from this same customer, "${customerName}", so follow those conventions closely)`:""}. When you encounter similar patterns, apply the user's corrections as a guide:\n\n`+examples.map(e=>`• Field: ${e.field} — AI extracted: ${JSON.stringify(e.aiValue||"")} — User corrected to: ${JSON.stringify(e.userValue||"")}${e.customerName?` [customer: ${e.customerName}]`:""}`).join("\n");
+      }
+    }
+    const tagList=images.map((img,i)=>`Image ${i+1}: ${img._tag}`).join(", ");
+    const imageContents=images.map(img=>{const{_tag,...clean}=img;return clean;});
+    const customerHint=customerName?`\n\nThis drawing is for customer: "${customerName}". If you have seen other drawings from this customer in the learned examples below, their title block format is likely consistent.`:"";
     const resp=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
-      headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+      headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
-        model:"claude-sonnet-4-6",
-        max_tokens:400,
+        model:"claude-opus-4-6",
+        max_tokens:2000,
+        thinking:{type:"enabled",budget_tokens:2000},
         messages:[{role:"user",content:[
-          ...images,
-          {type:"text",text:`You are shown ${images.length===2?"TWO images of the same engineering drawing: Image 1 is the full page (for overall context), Image 2 is a zoomed crop of the bottom-right region where the title block typically lives.":"an engineering drawing page"}. Read ALL text — both the large centered text (project name, location, panel description) AND the title block (typically bottom-right corner, bottom edge, or border frame).
+          ...imageContents,
+          {type:"text",text:`You are reading the title block on an engineering drawing. ${images.length>1?`You are shown ${images.length} images of the SAME drawing (${tagList})${titleblockRegion?" — the user-region image is a high-resolution crop of the exact title block area. Prefer reading from that image.":" — Image 2 and 3 are zoomed crops of likely title block locations."} Cross-reference between images.`:"You are shown a single image."}${customerHint}
 
-${images.length===2?"IMPORTANT: Prefer text readings from Image 2 (the zoomed crop) when extracting drawingNo and drawingRev — those values are often tiny in the full page. Use Image 1 for large centered text like location/facility name.\n\n":""}This may be a SCANNED drawing with low contrast, speckle noise, or rotation — read carefully. If a character is ambiguous between 0/O, 1/I/l, 5/S, 8/B, use context (most drawing numbers have a consistent alphanumeric pattern).
+The title block is typically a small bordered grid of labeled fields in the bottom-right corner, along the bottom edge, or along the right edge. Labels are often abbreviated (DWG NO., REV, SHT). The fields may be VERY SMALL — read carefully.
+
+This may be a SCANNED drawing with low contrast, speckle noise, or rotation — if a character is ambiguous between 0/O, 1/I/l, 5/S, 8/B, use the rest of the drawing number's pattern as context.
 
 Extract these fields:
 
-1. **Drawing number** (drawingNo): Look in the title block for DWG NO., DRAWING NO., DWG #, DOCUMENT NO., SHEET NO. base, or similar. Usually an alphanumeric code like "CSW1881-221", "E-001", "M-4821-01". Do NOT include sheet-of-sheets suffixes (SHT 1 OF 8) — just the base drawing number. If you see multiple candidates, pick the one labeled "DWG NO." or similar.
+1. **Drawing number** (drawingNo): Look for labels like DWG NO., DRAWING NO., DWG #, DOCUMENT NO., DOC NO., No.:, Part No., or similar. Usually an alphanumeric code like "CSW1881-221", "E-001", "M-4821-01", "1001207609". Do NOT include sheet-of-sheets suffixes (SHT 1 OF 8, / 01, / 15). Just the base drawing number.
 
-2. **Description** (drawingDesc): Build a descriptive name by combining the LOCATION/FACILITY name with the PANEL TYPE from the drawing. Read the large centered text AND the title block text. Examples:
-   - If page says "BRUSH CREEK WPC" and "LM16 MIXER CONTROL PANEL" → "Brush Creek WPC - LM16 Mixer Control Panel"
-   - If page says "LEBANON CLARIFIER" and title block says "PLC CONTROL PANEL" → "Lebanon Clarifier - PLC Control Panel"
-   - Format: "[Location/Facility] - [Panel Type/Name]"
+2. **Description** (drawingDesc): Combine the LOCATION/FACILITY name with the PANEL TYPE/NAME. Read both large centered text AND the title block text. Format: "[Location/Facility] - [Panel Type/Name]". Examples:
+   - "BRUSH CREEK WPC" + "LM16 MIXER CONTROL PANEL" → "Brush Creek WPC - LM16 Mixer Control Panel"
+   - "Golden Chest Mine" + "DCT Gold Tailings Thickener Control Panel" → "Golden Chest Mine - DCT Gold Tailings Thickener Control Panel"
+   - "Lebanon Clarifier" + "PLC CONTROL PANEL" → "Lebanon Clarifier - PLC Control Panel"
 
-3. **Revision** (drawingRev): Look for REV, REVISION, or a dedicated revision box (usually a small table with columns like REV/DATE/DESCRIPTION). Typically a single letter (A, B, C) or number (0, 1, 2). If a revision table has multiple rows, take the value from the LAST/highest row. Return "" if not visible.
+3. **Revision** (drawingRev): Look for REV, REVISION, Content Rev., or a revision box (small table with columns REV/DATE/DESCRIPTION). Usually a single letter (A, B, C) or number (0, 1, 2). Multi-row rev tables: take the LAST/highest value. Return "" if not visible.
 
-4. **Voltages**: Look anywhere on the page for supply/line voltage (e.g. "480V 3PH") and control voltage (e.g. "120VAC", "24VDC").
+4. **Voltages**: Find the main line voltage (e.g. "480V 3PH", "208V 3PH", "120VAC 1PH") and control voltage (e.g. "120VAC", "24VDC").${learnedExamplesBlock}
 
-Return ONLY valid JSON: {"drawingNo":"...","drawingDesc":"...","drawingRev":"...","voltages":{"lineVoltage":"...or unknown","controlVoltage":"...or unknown"}}`}
+Return ONLY valid JSON (no markdown): {"drawingNo":"...","drawingDesc":"...","drawingRev":"...","voltages":{"lineVoltage":"...or unknown","controlVoltage":"...or unknown"}}
+
+If you cannot read a field clearly, return "" for that field rather than guessing.`}
         ]}]
       })
     });
@@ -9867,17 +9927,22 @@ Return ONLY valid JSON: {"drawingNo":"...","drawingDesc":"...","drawingRev":"...
 }
 
 // Try multiple pages to find the title block — first page, last page, then others
-async function extractTitleBlockMulti(pages){
+async function extractTitleBlockMulti(pages,opts){
   if(!_apiKey||!pages?.length)return null;
-  // Priority order: first page (most common), last page, then page 2
-  const candidates=[pages[0],pages.length>1?pages[pages.length-1]:null,pages.length>2?pages[1]:null].filter(Boolean);
+  // DECISION(v1.19.632): Priority 1 — any page with a user-drawn titleblock region. These are
+  // explicit user hints, so respect them first. Priority 2 — first page (most common), then
+  // last, then page 2 (sometimes page 1 is cover art and page 2 is the real first drawing).
+  const regionPages=pages.filter(p=>(p.regions||[]).some(r=>r.type==="titleblock"));
+  const othersPref=[pages[0],pages.length>1?pages[pages.length-1]:null,pages.length>2?pages[1]:null].filter(Boolean).filter(p=>!regionPages.includes(p));
+  const candidates=[...regionPages,...othersPref];
   for(const pg of candidates){
     let dataUrl=pg.dataUrl;
     if(!dataUrl&&pg.storageUrl){try{const loaded=await ensureDataUrl(pg);dataUrl=loaded.dataUrl;}catch(e){continue;}}
     if(!dataUrl)continue;
-    const tb=await extractTitleBlock(dataUrl);
+    const tbRegion=(pg.regions||[]).find(r=>r.type==="titleblock")||null;
+    const tb=await extractTitleBlock(dataUrl,{...(opts||{}),titleblockRegion:tbRegion});
     if(tb&&(tb.drawingNo||tb.drawingDesc)){
-      console.log("TITLE BLOCK: found on page",pages.indexOf(pg)+1,"→",tb.drawingNo,tb.drawingDesc,tb.drawingRev);
+      console.log("TITLE BLOCK: found on page",pages.indexOf(pg)+1,"→",tb.drawingNo,tb.drawingDesc,tb.drawingRev,tbRegion?"(used user region)":"");
       return tb;
     }
   }
@@ -9960,9 +10025,12 @@ Return ONLY valid JSON (no markdown):
 function DrawingLightbox({pages,startId,onClose,onRegionsChange}){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex(p=>p.id===startId);return i>=0?i:0;});
   const pg=pages[idx]||pages[0];
-  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted,zoomed_detail:"#fde047",label:"#f97316",spec:"#38bdf8",other:"#a78bfa",ignore:"#6b7280"};
-  const typeLabels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout",pid:"P&ID",zoomed_detail:"Zoomed Detail",label:"Label",spec:"Spec",other:"Other",ignore:"Ignore"};
-  const regionTypeShort={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",pid:"P&ID",zoomed_detail:"Zoom",label:"Label",spec:"Spec",other:"Other",ignore:"Ignore"};
+  const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted,zoomed_detail:"#fde047",label:"#f97316",spec:"#38bdf8",titleblock:"#f472b6",other:"#a78bfa",ignore:"#6b7280"};
+  const typeLabels={bom:"BOM",schematic:"Schematic",backpanel:"Back Panel",enclosure:"Enclosure",layout:"Layout",pid:"P&ID",zoomed_detail:"Zoomed Detail",label:"Label",spec:"Spec",titleblock:"Title Block",other:"Other",ignore:"Ignore"};
+  // DECISION(v1.19.632): "Title Block" region type — user marks the rectangular area where the
+  // DWG#/Rev/Desc live; title block extractor crops to that region at high resolution. Huge
+  // accuracy gain, especially on drawings with tiny title block text.
+  const regionTypeShort={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",pid:"P&ID",zoomed_detail:"Zoom",label:"Label",spec:"Spec",titleblock:"Title Block",other:"Other",ignore:"Ignore"};
 
   // Region drawing state
   const [regionMode,setRegionMode]=useState(false);
@@ -12044,14 +12112,29 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // is still cleared (that's cross-remount persistence, not in-tab display).
     pendingPagesClear(panel.id);
     onSaveImmediate(updated).catch(()=>{});
-    // DECISION(v1.19.474): Title block extraction — try multiple pages, use Sonnet for accuracy.
-    // Only auto-populate fields that are currently empty (don't overwrite user edits).
+    // DECISION(v1.19.474): Title block extraction — try multiple pages for accuracy.
+    // DECISION(v1.19.632): Pass customer + project context + uid so the extractor can load
+    // learned corrections and user-drawn titleblock regions. Now also stores AI's raw read as
+    // `aiExtractedTitleBlock` on the panel so later user edits can be diffed and saved to the
+    // learning DB automatically.
     if(_apiKey&&livePages.length>0){
-      extractTitleBlockMulti(livePages).then(tb=>{
+      extractTitleBlockMulti(livePages,{
+        customerName:project?.bcCustomerName||"",
+        bcProjectNumber,
+        uid,
+      }).then(tb=>{
         if(!tb)return;
         const fresh=latestPanelRef.current;
         const v=tb.voltages||{};
+        // Snapshot the AI read (for later learning-DB diff when user manually corrects)
+        const aiExtractedTitleBlock={
+          drawingNo:tb.drawingNo||"",
+          drawingDesc:tb.drawingDesc||"",
+          drawingRev:tb.drawingRev||"",
+          extractedAt:Date.now(),
+        };
         const patched={...fresh,
+          aiExtractedTitleBlock,
           ...(!fresh.drawingNo&&tb.drawingNo?{drawingNo:(tb.drawingNo||"").slice(0,25)}:{}),
           ...(!fresh.drawingDesc&&tb.drawingDesc?{drawingDesc:tb.drawingDesc}:{}),
           ...(!fresh.drawingRev&&tb.drawingRev?{drawingRev:tb.drawingRev}:{}),
@@ -12128,21 +12211,49 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(!firstWithData||!_apiKey)return;
     setExtractingTitle(true);
     const ensured=await ensureDataUrl(firstWithData);
-    const tb=await extractTitleBlock(ensured.dataUrl);
+    // DECISION(v1.19.632): Pass customer + uid + any user-drawn titleblock region on this page.
+    const tbRegion=(firstWithData.regions||[]).find(r=>r.type==="titleblock")||null;
+    const tb=await extractTitleBlock(ensured.dataUrl,{
+      customerName:project?.bcCustomerName||"",
+      bcProjectNumber,
+      uid,
+      titleblockRegion:tbRegion,
+    });
     setExtractingTitle(false);
     if(tb){
       setDraftNo((tb.drawingNo||"").slice(0,25));setDraftDesc(tb.drawingDesc||"");setDraftRev(tb.drawingRev||"");
       const fresh=latestPanelRef.current;
-      const updated={...fresh,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
+      const aiExtractedTitleBlock={drawingNo:tb.drawingNo||"",drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||"",extractedAt:Date.now()};
+      const updated={...fresh,aiExtractedTitleBlock,drawingNo:(tb.drawingNo||"").slice(0,25),drawingDesc:tb.drawingDesc||"",drawingRev:tb.drawingRev||""};
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
     }
   }
 
   function saveTitleFields(){
-    const updated={...panel,drawingNo:draftNo.trim(),drawingDesc:draftDesc.trim(),drawingRev:draftRev.trim(),requestedShipDate:draftShipDate};
+    const newNo=draftNo.trim(),newDesc=draftDesc.trim(),newRev=draftRev.trim();
+    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
+    // DECISION(v1.19.632) Phase 2: If user's value differs from the last AI extraction, save the
+    // correction to the title block learning DB. Future extractions for this customer get
+    // calibrated automatically.
+    const ai=panel.aiExtractedTitleBlock||{};
+    const customerName=(project&&project.bcCustomerName)||"";
+    const saveIfDiff=(field,aiVal,userVal)=>{
+      const aiStr=(aiVal||"").trim(),userStr=(userVal||"").trim();
+      if(!userStr||aiStr===userStr)return;
+      saveTitleBlockLearningEntry(uid,{
+        field,aiValue:aiStr,userValue:userStr,
+        customerName,bcProjectNumber:bcProjectNumber||"",
+        panelId:panel.id,
+      }).catch(()=>{});
+    };
+    if(ai&&(ai.drawingNo||ai.drawingDesc||ai.drawingRev)){
+      saveIfDiff("drawingNo",ai.drawingNo,newNo);
+      saveIfDiff("drawingDesc",ai.drawingDesc,newDesc);
+      saveIfDiff("drawingRev",ai.drawingRev,newRev);
+    }
   }
 
   // Expose buildAndAttachPdf to parent via ref (supports opts for production mode)
