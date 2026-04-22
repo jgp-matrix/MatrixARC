@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.626";
+const APP_VERSION="v1.19.627";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11988,8 +11988,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const notes=extractionNotes.trim();
     const updated={...panel,pages:livePages,...(notes?{extractionNotes:notes}:{})};
     onUpdate(updated);
-    setPendingPages([]);
-    pendingPagesClear(panel.id); // DECISION(v1.19.589): confirmed — remove from cross-remount cache
+    // DECISION(v1.19.627): Defer pendingPages clear to next animation frame. Previously, setting
+    // pendingPages=[] synchronously could race the parent's prop update — for one render,
+    // pendingPages was empty AND panel.pages (savedPages via props) hadn't caught up, so
+    // `pages = pendingPages.length>0 ? pendingPages : savedPages` would resolve to [] and the
+    // thumbnails briefly vanished. rAF defers the clear until after the parent re-render lands.
+    requestAnimationFrame(()=>{setPendingPages([]);pendingPagesClear(panel.id);});
     onSaveImmediate(updated).catch(()=>{});
     // DECISION(v1.19.474): Title block extraction — try multiple pages, use Sonnet for accuracy.
     // Only auto-populate fields that are currently empty (don't overwrite user edits).
