@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.630";
+const APP_VERSION="v1.19.631";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -12035,12 +12035,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const notes=extractionNotes.trim();
     const updated={...panel,pages:livePages,...(notes?{extractionNotes:notes}:{})};
     onUpdate(updated);
-    // DECISION(v1.19.627): Defer pendingPages clear to next animation frame. Previously, setting
-    // pendingPages=[] synchronously could race the parent's prop update — for one render,
-    // pendingPages was empty AND panel.pages (savedPages via props) hadn't caught up, so
-    // `pages = pendingPages.length>0 ? pendingPages : savedPages` would resolve to [] and the
-    // thumbnails briefly vanished. rAF defers the clear until after the parent re-render lands.
-    requestAnimationFrame(()=>{setPendingPages([]);pendingPagesClear(panel.id);});
+    // DECISION(v1.19.631): Do NOT eagerly clear pendingPages. The rAF defer (v1.19.627) still
+    // left a visible flicker because React's cross-component prop propagation doesn't always
+    // land before the local state update re-renders. Instead, leave pendingPages populated —
+    // the UI fallback (`pages = pendingPages.length>0 ? pendingPages : savedPages`) will keep
+    // showing the pending content until the parent's panel prop arrives with identical data.
+    // Once both sources have the same rows, switching display source is invisible. Module-cache
+    // is still cleared (that's cross-remount persistence, not in-tab display).
+    pendingPagesClear(panel.id);
     onSaveImmediate(updated).catch(()=>{});
     // DECISION(v1.19.474): Title block extraction — try multiple pages, use Sonnet for accuracy.
     // Only auto-populate fields that are currently empty (don't overwrite user edits).
