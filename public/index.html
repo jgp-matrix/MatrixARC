@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.657";
+const APP_VERSION="v1.19.658";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13390,7 +13390,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const remaining=pages.filter(p=>p.id!==id);
     let updated={...panel,pages:remaining};
     if(remaining.length===0){
-      updated={...updated,drawingNo:"",drawingDesc:"",drawingRev:"",bom:[],validation:null,pricing:null,budgetaryQuote:null,hazardousLocation:null,status:"draft"};
+      // DECISION(v1.19.658): When all drawings are removed, clear EVERYTHING derived from
+      // them — including laborData, bomAudit, bomVerification, engineeringQuestions,
+      // aiExtractedTitleBlock, extractionReport, and supply voltages. Previously laborData
+      // persisted after the drawings that produced it were gone, leaving stale labor hours
+      // on an otherwise empty panel.
+      updated={...updated,
+        drawingNo:"",drawingDesc:"",drawingRev:"",
+        bom:[],validation:null,pricing:null,budgetaryQuote:null,
+        hazardousLocation:null,status:"draft",
+        laborData:null,bomAudit:null,bomVerification:null,
+        engineeringQuestions:[],aiQuestions:[],
+        aiExtractedTitleBlock:null,extractionReport:null,
+        supplyVoltage:"",controlVoltage:"",
+        extractionFeedbackLog:[],
+      };
       setDraftNo("");setDraftDesc("");setDraftRev("");ep.stop();setErr("");
     }
     onUpdate(updated);
