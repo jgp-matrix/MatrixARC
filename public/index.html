@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.649";
+const APP_VERSION="v1.19.650";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5992,7 +5992,11 @@ async function selfCorrectBomRowsWithSnippets(bom,pages,onProgress){
           method:"POST",
           headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
           body:JSON.stringify({
-            model:"claude-haiku-4-5-20251001",
+            // DECISION(v1.19.650): Switched snippet self-correction from Haiku to Sonnet.
+            // Haiku was returning adjacent-row data on tight single-row crops (couldn't resolve
+            // small-text OCR accurately). Sonnet's visual reasoning on small crops is materially
+            // better. Cost goes from ~$0.15 to ~$2 per 60-row BOM — negligible for a quoting tool.
+            model:"claude-sonnet-4-6",
             max_tokens:600,
             messages:[{role:"user",content:[
               {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -7698,8 +7702,13 @@ async function detectPageTypes(dataUrl,learningExamples=[]){
   try{
     const hint=buildLearningHint(learningExamples);
     const raw=await apiCall({
-      model:"claude-haiku-4-5-20251001",
-      max_tokens:120,
+      // DECISION(v1.19.650): Switched page-type detection from Haiku to Sonnet. Haiku was
+      // inconsistent on sheet-number reads ("1 of 01" / bare "2" / etc) and mis-tagged cover
+      // pages and drawing-index pages as "bom", which poisoned extraction downstream. Sonnet's
+      // visual reasoning and structural-classification accuracy is materially better.
+      // Bumped max_tokens to 240 because Sonnet tends to produce slightly more complete output.
+      model:"claude-sonnet-4-6",
+      max_tokens:240,
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
         {type:"text",text:PAGE_TYPE_DETECT_PROMPT+hint}
