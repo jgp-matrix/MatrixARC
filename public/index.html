@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.643";
+const APP_VERSION="v1.19.644";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7096,7 +7096,19 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   const willValidate=!!_apiKey&&hasSchOrLayout;
   const regionContext=buildRegionContext(panel.pages||[]);
   const userNotes=(panel.extractionNotes||"")+regionContext;
+  // DECISION(v1.19.644): Session 1 of the Option C consolidation. Replaced the per-stage
+  // saveProjectPanel calls with in-memory state accumulation. Previously each stage (BOM
+  // merge, validation, verification, audit, compliance, stamp upload) fired its own Firestore
+  // write — 5-7 writes racing against each other and against fire-and-forget
+  // title-block / pricing saves from PanelCard. Late-arriving writes overwrote earlier ones
+  // and reads/writes interleaved unpredictably.
+  // NOW: `save()` still saves to Firestore, but is ONLY called in two places — the protective
+  // early-upload save (before AI work, ensures storageUrls persist if tab crashes) and the
+  // final consolidated save at the end (with ALL stage results). Intermediate stages use
+  // `applyInMemory()` which only updates the local `latestPanel`. Eliminates all intra-
+  // extraction save races.
   const save=async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));};
+  const applyInMemory=p=>{latestPanel=p;};
   // Always update immediately so the bar never stays on "Starting extraction…"
   // Calculate phase weights for progress — each phase gets a proportional slice
     const hasBom=_apiKey&&bomPages.length>0;
@@ -7254,22 +7266,21 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     }:null;
     if(mergedBom.length>0||hazlocResult){
       // DECISION(v1.19.607): Always set aiQuestions (including []) so stale questions clear.
+      // DECISION(v1.19.644): In-memory only — consolidated save happens at end of extraction.
       const bomSave={...latestPanel,...(mergedBom.length>0?{bom:mergedBom}:{}),aiQuestions:aiQuestions||[],engineeringQuestions:eqs,...(hazlocResult?{hazardousLocation:hazlocResult}:{}),...(extractionReport?{extractionReport}:{}),status:mergedBom.length>0?"extracted":latestPanel.status,updatedAt:Date.now()};
-      await save(bomSave);
-      latestPanel={...bomSave};
+      applyInMemory(bomSave);
     }
-    // Await validation and save
+    // Await validation (in-memory accumulation)
     if(hasVal){
       try{
         const result=await valPromise;
         if(result?.validation||result?.laborData){
           const valSave={...latestPanel,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated",updatedAt:Date.now()};
-          await save(valSave);
-          latestPanel={...valSave};
+          applyInMemory(valSave);
         }
       }catch(valEx){console.error("Validation failed:",valEx);}
     }
-    // Part number verification
+    // Part number verification (in-memory accumulation)
     const bomToVerify=(latestPanel.bom||[]).slice();
     if(bomToVerify.length>0&&hasVerify){
       phasePct("verify",0);bgUpdate(panel.id,"Verifying part numbers…");
@@ -7281,7 +7292,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           const suspectCount=vr.filter(v=>v.status==="suspect").length;
           const plausibleCount=vr.filter(v=>v.status==="plausible").length;
           const updatedReport=latestPanel.extractionReport?{...latestPanel.extractionReport,suspectCount,plausibleCount}:null;
-          await save({...latestPanel,bomVerification:vr,...(updatedReport?{extractionReport:updatedReport}:{}),updatedAt:Date.now()});
+          applyInMemory({...latestPanel,bomVerification:vr,...(updatedReport?{extractionReport:updatedReport}:{}),updatedAt:Date.now()});
         }
       }
       catch(e){console.warn("Part verification failed:",e);}
@@ -7363,8 +7374,9 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // DECISION(v1.19.643): Re-sort after audit so missing rows added by audit (which
         // don't have y_top) don't pile up at the end of the BOM. Also re-sorts any rows
         // whose y_top was adjusted by the audit's qty/pn/desc corrections.
+        // DECISION(v1.19.644): In-memory only — consolidated save at end of extraction.
         const sortedAfterAudit=sortBomByDrawingPosition(currentBom);
-        await save({...latestPanel,bom:sortedAfterAudit,bomAudit:scrubbed,extractionReport:updatedReport,updatedAt:Date.now()});
+        applyInMemory({...latestPanel,bom:sortedAfterAudit,bomAudit:scrubbed,extractionReport:updatedReport,updatedAt:Date.now()});
         if(totalCorrections>0){
           console.log(`BOM AUDIT: ${totalCorrections} total corrections applied across ${roundsUsed} rounds${cleanOnRound?` — clean on round ${cleanOnRound}`:` — ${persistentFlagged+persistentMissing} persistent issues`}`);
         }
@@ -7378,12 +7390,14 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         phasePct("compliance",1);
         if(cr){
           const eqs=mergeEngineeringQuestions(latestPanel.engineeringQuestions,null,cr.questions);
-          await save({...latestPanel,complianceReview:cr,engineeringQuestions:eqs,updatedAt:Date.now()});
+          applyInMemory({...latestPanel,complianceReview:cr,engineeringQuestions:eqs,updatedAt:Date.now()});
         }
       }catch(e){console.warn("Compliance review failed:",e);}
     }
     // DECISION(v1.19.473): Stamp + upload LAST — after all scans complete (including hazloc).
     // This ensures the stamp has the UL698/1203 flag if hazardous location was detected.
+    // DECISION(v1.19.644): Stamp upload accumulates in-memory like other stages; the final
+    // consolidated save below writes everything at once.
     const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
     if(pagesNeedingUpload.length>0&&projectId){
       bgUpdate(panel.id,"Stamping & uploading drawings…");bgSetPct(panel.id,92);
@@ -7406,10 +7420,13 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         },4);
         // PERF: After upload, drop dataUrl from memory — storageUrl is now the source of truth
         const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id],dataUrl:null}:pg);
-        latestPanel={...latestPanel,pages:pagesWithUrls};
-        await save(latestPanel);
+        applyInMemory({...latestPanel,pages:pagesWithUrls});
       }catch(e){console.warn("Storage upload failed:",e);}
     }
+    // DECISION(v1.19.644): SINGLE CONSOLIDATED SAVE. All stages have accumulated into
+    // `latestPanel` in-memory. One Firestore write captures BOM + validation + verification
+    // + audit + compliance + stamp upload atomically. No more intra-extraction races.
+    await save(latestPanel);
     const itemCount=(latestPanel.bom||[]).length;
     bgUpdate(panel.id,itemCount>0?`${itemCount} items extracted — pricing…`:"Extracted");bgSetPct(panel.id,95);
     // Save learning record to ARC Neural IQ
@@ -7417,6 +7434,9 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   }catch(ex){
     console.error("runExtractionTask error:",ex);
     bgError(panel.id,ex.message.slice(0,60));
+    // DECISION(v1.19.644): If extraction fails partway, persist whatever we've accumulated
+    // so the user doesn't lose intermediate progress. Otherwise in-memory state is gone.
+    try{await saveProjectPanel(uid,projectId,panel.id,latestPanel).catch(()=>{});}catch(e){}
   }finally{
     try{if(onDone)onDone(latestPanel);}catch(e){}
   }
