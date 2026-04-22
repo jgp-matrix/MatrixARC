@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.641";
+const APP_VERSION="v1.19.642";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5254,11 +5254,25 @@ function fuzzyMergeBomItemsWithReport(items){
       // duplicates, which we no longer generate anyway after v1.19.622 full-page revert). For
       // single-pass extraction, fuzzy should ONLY merge items without Y data OR items at the
       // same Y (already handled). If both have Y and they differ, STOP.
+      //
+      // DECISION(v1.19.642): Override Y-guard ONLY when descriptions are IDENTICAL (after
+      // normalization — whitespace / punctuation stripped). Legit product-family variants
+      // (800FP-F2 "Flush, Green" vs 800FP-F3 "Flush, Red") always have distinguishing
+      // descriptions. Identical descriptions at different Y-positions + near-identical PN
+      // = AI-hallucinated duplicate (e.g. WKDH12126 + WKDH2126). Catches this case while
+      // still protecting the variant-family pattern the original guard was added for.
+      let ydiffOcrDupOverride=false;
       if(typeof base.y_top==="number"&&typeof b.y_top==="number"){
         const yDiff=Math.abs((base.y_top||0)-(b.y_top||0));
         if(yDiff>0.008){
-          // Different rows on the page — never merge, even if PN + MFR + desc all look similar.
-          continue;
+          const normDesc=s=>(s||"").replace(/[\s,.()\/\-]/g,"").toLowerCase();
+          const dA=normDesc(base.description),dB=normDesc(b.description);
+          const descIdentical=dA&&dB&&dA===dB&&dA.length>=8;
+          if(!descIdentical){
+            // Different rows, distinguishing descriptions → legit variants, don't merge.
+            continue;
+          }
+          ydiffOcrDupOverride=true; // signal: merge but use MAX qty, not SUM
         }
       }
       // Edit-distance threshold scales with PN length — short PNs get stricter
@@ -5286,16 +5300,23 @@ function fuzzyMergeBomItemsWithReport(items){
         manufacturer:base.manufacturer||b.manufacturer||"",
         description:((base.description||"").length>=(b.description||"").length?base.description:b.description)||"",
       });
+      // DECISION(v1.19.642): When the Y-guard was overridden because descriptions were identical,
+      // use MAX qty — not SUM. A hallucinated duplicate row shouldn't double the quantity. Legit
+      // same-item-twice cases (rare) are already handled by positional dedup upstream. Normal
+      // fuzzy merges (same-Y or no-Y) still sum, since those are legit repeat rows.
+      const mergedQty=ydiffOcrDupOverride
+        ? Math.max(+base.qty||1,+b.qty||1)
+        : (+base.qty||1)+(+b.qty||1);
       base={
         ...base,
         partNumber:kept,
-        qty:(+base.qty||1)+(+b.qty||1),
+        qty:mergedQty,
         description:(base.description||"").length>=(b.description||"").length?base.description:b.description,
         manufacturer:base.manufacturer||b.manufacturer,
         notes:mergedNotes,
       };
       consumed.add(j);
-      console.log(`BOM FUZZY MERGE: "${dropped}" → "${kept}" (editDist=${ed}, qty=${base.qty})`);
+      console.log(`BOM FUZZY MERGE${ydiffOcrDupOverride?" (OCR-dup override)":""}: "${dropped}" → "${kept}" (editDist=${ed}, qty=${base.qty})`);
     }
     out.push(base);
   }
