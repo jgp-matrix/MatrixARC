@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.648";
+const APP_VERSION="v1.19.649";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5939,6 +5939,17 @@ async function selfCorrectBomRowsWithSnippets(bom,pages,onProgress){
     r.y_bottom>r.y_top&&r.sourcePageId
   );
   if(!rowsToCheck.length)return{bom,corrections:[]};
+  // DECISION(v1.19.649): Precompute a set of all existing PNs in the BOM. If Haiku's
+  // "correction" tries to replace a row's PN with another row's existing PN, that's
+  // guaranteed adjacent-row drift — reject. A real correction never equals an existing
+  // different row's PN (same PN on two rows would have been merged by dedup already).
+  const existingPnByRowId={};
+  const normPNEarly=s=>(s||"").toUpperCase().replace(/[\s\-_.]/g,"");
+  for(const r of bom){
+    const pn=normPNEarly(r.partNumber);
+    if(pn)existingPnByRowId[String(r.id)]=pn;
+  }
+  const allExistingPns=new Set(Object.values(existingPnByRowId));
   const corrections=[];
   const BATCH=8;
   const total=rowsToCheck.length;
@@ -5960,11 +5971,15 @@ async function selfCorrectBomRowsWithSnippets(bom,pages,onProgress){
       try{
         const dataUrl=await getPageDataUrl(row.sourcePageId);
         if(!dataUrl)return;
-        // Crop with generous margin — include headers optionally? No, pure row only.
+        // DECISION(v1.19.649): TIGHT row crop — no margin. Previously used rowH*0.35
+        // margin which caused adjacent-row drift: crop included part of the next row,
+        // Haiku saw two rows in the image, returned the bottom one (the NEXT row's data),
+        // and that got applied as a "correction" — silently replacing row N with row N+1's
+        // data. Catastrophic. Clip exactly to row bounds; accept that narrow rows may be
+        // harder to OCR but correct-row-only is the non-negotiable property here.
         const rowH=row.y_bottom-row.y_top;
-        const yMargin=Math.max(0.004,rowH*0.35);
-        const cropY=Math.max(0,row.y_top-yMargin);
-        const cropH=Math.min(1-cropY,rowH+2*yMargin);
+        const cropY=Math.max(0,row.y_top);
+        const cropH=Math.min(1-cropY,rowH);
         // Use full page width so column headers implied by position are included
         const xL=typeof row.x_left==="number"?Math.max(0,row.x_left-0.02):0;
         const xR=typeof row.x_right==="number"?Math.min(1,row.x_right+0.02):1;
@@ -6022,6 +6037,14 @@ RULES:
         // suspenders rejects any obviously wrong substitution.
         const looksLikeSheetId=s=>/^=?[A-Za-z]+\d*\+[A-Za-z]+\d+\/\d+$/.test((s||"").trim());
         const looksLikeSheetTitle=s=>/^(panel grounding|end cover|list of assemblies|electrical schematic diagram|panel layout|title page|title none|sheet overview|symbol overview|power supply)$/i.test((s||"").trim());
+        // DECISION(v1.19.649): If snippet's PN matches another existing row's PN, it's
+        // adjacent-row drift — the whole snippet payload is from the wrong row. Reject
+        // EVERYTHING (qty, desc, mfr included) for this row. Don't try to salvage any field.
+        const wholePayloadStolen=newPN.length>=3&&normPN(newPN)!==normPN(origPN)&&allExistingPns.has(normPN(newPN));
+        if(wholePayloadStolen){
+          console.warn(`SNIPPET SKIP ALL: "${origPN}" → row-shift detected (PN "${newPN}" belongs to another row). All fields for this row are from the adjacent row — rejecting entire payload.`);
+          return; // skip this row entirely
+        }
         const changes={};
         // Qty: trust snippet when materially different AND plausible (>0, <10000)
         if(newQty>0&&newQty<10000&&newQty!==origQty){
@@ -6031,10 +6054,16 @@ RULES:
         // GUARD: reject if snippet's PN looks like a sheet identifier (e.g. =CCD1+A01/08) — that's
         // title-block pollution, not a real correction. Also reject if original PN was valid-looking
         // (has letters+digits, length >=4) and snippet PN is structurally weaker.
+        // DECISION(v1.19.649) GUARD: reject if snippet's PN matches ANOTHER existing BOM row's PN.
+        // That's the telltale sign of adjacent-row drift — Haiku cropped into the next row and
+        // returned row N+1's data as row N's "correction". Never a legitimate fix.
         if(newPN.length>=3&&normPN(newPN)!==normPN(origPN)){
           const newIsSheetId=looksLikeSheetId(newPN);
           const origWasRealPn=origPN.length>=4&&/[A-Z]/i.test(origPN)&&/\d/.test(origPN);
-          if(!newIsSheetId&&!(origWasRealPn&&!/[A-Z0-9]{3}/i.test(newPN))){
+          const newPnStolen=allExistingPns.has(normPN(newPN))&&normPN(newPN)!==normPN(origPN);
+          if(newPnStolen){
+            console.warn(`SNIPPET REJECT PN: "${origPN}" → "${newPN}" (adjacent-row drift — that PN already belongs to another row)`);
+          }else if(!newIsSheetId&&!(origWasRealPn&&!/[A-Z0-9]{3}/i.test(newPN))){
             changes.partNumber={from:origPN,to:newPN};
           }else{
             console.warn(`SNIPPET REJECT PN: "${origPN}" → "${newPN}" (would corrupt valid PN)`);
