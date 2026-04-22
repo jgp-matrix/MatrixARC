@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.632";
+const APP_VERSION="v1.19.633";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2709,6 +2709,20 @@ async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
       const gd=await gr.json();
       const existing=(gd.value||[])[0];
       if(existing){
+        // DECISION(v1.19.633): SANITY CHECK before overwriting an existing BC PurchasePrice.
+        // A scraper once returned $0.71 for Phoenix Contact 2907627 (a $128 circuit breaker),
+        // and we dutifully pushed it, destroying the real price. Refuse overwrites that are
+        // wildly out of range from the existing price, unless the existing is trivial (<$1).
+        const existingCost=+existing.Direct_Unit_Cost||0;
+        const newCost=+unitCost||0;
+        if(existingCost>=1&&newCost>=0){
+          const ratio=newCost/existingCost;
+          // Reject if new price is <20% or >500% of existing. These are almost certainly bad data.
+          if(ratio<0.2||ratio>5){
+            console.warn(`bcPushPurchasePrice: REJECTED overwrite — ${itemNo}/${vendorNo}: existing $${existingCost.toFixed(2)}, new $${newCost.toFixed(2)} (ratio ${ratio.toFixed(2)}). Suspect price, not applying. If the new price is correct, edit the BOM row manually and use 'Push to BC'.`);
+            return{ok:false,reason:'sanity_check_failed',existingCost,newCost,ratio};
+          }
+        }
         // PATCH existing record
         const etag=existing["@odata.etag"];
         const patchBody={Direct_Unit_Cost:unitCost,Starting_Date:dateStr};
@@ -13195,6 +13209,25 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             }
           }
           bcCount=Object.keys(bcMap).length;
+          // DECISION(v1.19.633): For items matched to BC but with $0 ItemCard cost, also check
+          // PurchasePrices — real pricing often lives there (from prior POs) even when ItemCard
+          // hasn't been updated. Fixes "blue BC circle, no price" → unnecessary scraper lookup →
+          // garbage overwrite pattern that corrupted Phoenix 2907627's $128.22 PO price.
+          const zeroItemCardIds=Object.keys(bcMap).filter(k=>!(bcMap[k].unitPrice>0));
+          if(zeroItemCardIds.length>0){
+            const partNums=[...new Set(zeroItemCardIds.map(k=>bcMap[k].bcNumber).filter(Boolean))];
+            try{
+              const ppMap=await bcFetchPurchasePrices(partNums);
+              for(const k of zeroItemCardIds){
+                const pn=bcMap[k].bcNumber;
+                const pp=pn?ppMap.get(pn):null;
+                if(pp&&pp.directUnitCost>0){
+                  console.log(`BC PurchasePrice fallback: ${pn} → $${pp.directUnitCost.toFixed(2)} (ItemCard was $0)`);
+                  bcMap[k]={...bcMap[k],unitPrice:pp.directUnitCost,bcPoDate:pp.startingDate||bcMap[k].bcPoDate};
+                }
+              }
+            }catch(e){console.warn("BC PurchasePrices fallback failed:",e.message);}
+          }
           updatedBom=updatedBom.map(r=>{
             const key=String(r.id);
             if(key in bcMap){
@@ -13314,16 +13347,32 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const pns=scraperItems.map(r=>(r.partNumber||"").trim()).filter(Boolean);
           const cr=await fn({scraperId:scraper.id,partNumbers:pns,config:{username:scraper.username,password:scraper.password,accountId:scraper.accountId||""},steps:scraper.steps});
           const results=cr.data.results||{};
-          let scraperCount=0;
+          let scraperCount=0;let scraperRejected=0;
           updatedBom=updatedBom.map(r=>{
             const pn=(r.partNumber||"").trim().toUpperCase();
             const pr=results[pn]||results[(r.partNumber||"").trim()];
             if(pr&&pr.price){
               const numPrice=parseFloat(pr.price.replace(/[$,]/g,""));
-              if(!isNaN(numPrice)&&numPrice>0){scraperCount++;return{...r,unitPrice:numPrice,priceSource:"bc",priceDate:Date.now(),bcPoDate:Date.now()};}
+              if(!isNaN(numPrice)&&numPrice>0){
+                // DECISION(v1.19.633): Sanity-check scraper price against any existing BC cost.
+                // Scrapers can return garbage (item not on supplier site, stale cache, wrong match).
+                // If the row already has a BC PO-backed price and the scraper's is wildly out of
+                // range (< 20% or > 500%), reject the scraper value — keep the BC price.
+                const existingBcPrice=(r.priceSource==="bc"&&r.unitPrice>0)?+r.unitPrice:0;
+                if(existingBcPrice>=1){
+                  const ratio=numPrice/existingBcPrice;
+                  if(ratio<0.2||ratio>5){
+                    console.warn(`${scraper.name}: REJECTED $${numPrice.toFixed(2)} for ${r.partNumber} — existing BC price $${existingBcPrice.toFixed(2)} (ratio ${ratio.toFixed(2)}), scraper value is suspect.`);
+                    scraperRejected++;
+                    return r; // keep the BC-backed price
+                  }
+                }
+                scraperCount++;return{...r,unitPrice:numPrice,priceSource:"bc",priceDate:Date.now(),bcPoDate:Date.now()};
+              }
             }
             return r;
           });
+          if(scraperRejected>0)console.warn(`${scraper.name}: rejected ${scraperRejected} suspect price${scraperRejected>1?"s":""} (guarded by sanity check)`);
           const scraperMissed=scraperItems.filter(r=>{const pn=(r.partNumber||"").trim().toUpperCase();const pr=results[pn]||results[(r.partNumber||"").trim()];return!pr||!pr.price;});
           _report.push({source:scraper.name,obtained:scraperCount,skipped:0,failed:scraperMissed.length,total:scraperItems.length,
             items:scraperMissed.map(r=>({pn:r.partNumber,reason:"Price not found"}))});
