@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.620";
+const APP_VERSION="v1.19.621";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6681,16 +6681,20 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         return pageItems.map(item=>({...item,sourcePageIdx:pgIdx}));
       },3).then(results=>{
         const all=results.flat();if(!all.length)return{bom:[],questions:allQuestions,mergeStats:{raw:0,exact:0,fuzzy:0,fuzzyMerges:[]}};
+        // DECISION(v1.19.620): Run POSITIONAL dedup FIRST (before exact PN dedup) so cross-
+        // quadrant duplicates of the same row don't get their quantities INFLATED by the
+        // exact-dedup's summing step. Positional takes MAX qty (a row has one qty, not
+        // one qty per quadrant it's visible in). Then exact dedup sums qty for legitimate
+        // repeats that have different Y positions.
+        const raw=all.map(it=>({...it,id:it.id||(Date.now()+Math.random()),qty:+it.qty||1}));
+        const positional=positionalMergeBomItems(raw);
         const map={};
-        all.forEach(item=>{const pn=_bomNormPn(item.partNumber);const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}});
+        positional.forEach(item=>{const pn=_bomNormPn(item.partNumber);const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item};}});
         const exact=Object.values(map);
-        // DECISION(v1.19.620): Run POSITIONAL dedup before fuzzy. Catches cross-quadrant
-        // duplicates (same page row, different quadrant readings) using Y-coord agreement.
-        const positional=positionalMergeBomItems(exact);
-        const fuzzyReport=fuzzyMergeBomItemsWithReport(positional);
+        const fuzzyReport=fuzzyMergeBomItemsWithReport(exact);
         const fuzzy=fuzzyReport.items;
-        console.log(`BOM MERGE: ${all.length} raw → ${exact.length} exact → ${positional.length} positional → ${fuzzy.length} fuzzy`);
-        return{bom:appendDefaultBomItems(fuzzy),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,exact:exact.length,positional:positional.length,fuzzy:fuzzy.length,fuzzyMerges:fuzzyReport.merges}};
+        console.log(`BOM MERGE: ${all.length} raw → ${positional.length} positional → ${exact.length} exact → ${fuzzy.length} fuzzy`);
+        return{bom:appendDefaultBomItems(fuzzy),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,fuzzyMerges:fuzzyReport.merges}};
       }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[],mergeStats:null};});
     }
     // Hazardous location scan (parallel with BOM — uses Haiku, fast)
@@ -12028,19 +12032,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }catch(ex){console.error("[RE-EXTRACT] Failed:",ex);setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();bgError(panel.id,"Re-extract failed: "+(ex.message||"").slice(0,60));_reBgFinished=true;return;}
     ep.set(65,"Merging results…");
     bgSetPct(panel.id,65,"Merging results…");
+    // DECISION(v1.19.620): Positional FIRST (max qty), then exact PN (sum qty for legit repeats), then fuzzy.
+    const reRaw=all.map(it=>({...it,id:it.id||(Date.now()+Math.random()),qty:+it.qty||1}));
+    const positionalDedup=positionalMergeBomItems(reRaw);
     const map={};
-    all.forEach(item=>{
+    positionalDedup.forEach(item=>{
       const pn=_bomNormPn(item.partNumber);
       const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged (now qty ${map[key].qty})`);}
-      else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
+      else{map[key]={...item};}
     });
     const exactDedup=Object.values(map);
-    // DECISION(v1.19.620): Positional dedup before fuzzy — catches cross-quadrant duplicates.
-    const positionalDedup=positionalMergeBomItems(exactDedup);
-    const fuzzyReport=fuzzyMergeBomItemsWithReport(positionalDedup);
+    const fuzzyReport=fuzzyMergeBomItemsWithReport(exactDedup);
     const fuzzyDedup=fuzzyReport.items;
-    console.log(`BOM MERGE: ${all.length} raw → ${exactDedup.length} exact → ${positionalDedup.length} positional → ${fuzzyDedup.length} fuzzy`);
+    console.log(`BOM MERGE: ${all.length} raw → ${positionalDedup.length} positional → ${exactDedup.length} exact → ${fuzzyDedup.length} fuzzy`);
     const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fuzzyDedup.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
@@ -12189,16 +12194,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       all=bomResults.flat();
       fbQs=fbQs.slice(0,10);
     }catch(ex){setErr(`Failed: ${ex.message}`);setReExtracting(false);return;}
+    // DECISION(v1.19.620): Positional FIRST (max qty for cross-quadrant), then exact PN, then fuzzy.
+    const fbRaw=all.map(it=>({...it,id:it.id||(Date.now()+Math.random()),qty:+it.qty||1}));
+    const fbPositional=positionalMergeBomItems(fbRaw);
     const map={};
-    all.forEach(item=>{
+    fbPositional.forEach(item=>{
       const pn=_bomNormPn(item.partNumber);
       const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
-      else{map[key]={...item,id:Date.now()+Math.random(),qty:+item.qty||1};}
+      else{map[key]={...item};}
     });
     const fbExact=Object.values(map);
-    const fbPositional=positionalMergeBomItems(fbExact);
-    const fbFuzzyReport=fuzzyMergeBomItemsWithReport(fbPositional);
+    const fbFuzzyReport=fuzzyMergeBomItemsWithReport(fbExact);
     const fbFuzzy=fbFuzzyReport.items;
     const bom=appendDefaultBomItems(applyPartCorrections(partCorrections,fbFuzzy.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
