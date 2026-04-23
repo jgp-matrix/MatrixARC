@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.691";
+const APP_VERSION="v1.19.692";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3515,8 +3515,25 @@ function buildReviewEmailHtml(projectName,bcProjectNumber,designerName,notes,rev
 </div></body></html>`;
 }
 
-function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl=null,companyInfo=null){
-  const rows=group.items.map((item,i)=>`
+function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl=null,companyInfo=null,opts={}){
+  // DECISION(v1.19.692): opts.leadTimeOnly — when true, render a "Current Price" reference
+  // column with BC prices, mark Lead Time as the field to fill, and swap banner + body.
+  const leadTimeOnly=!!(opts&&opts.leadTimeOnly);
+  const rows=group.items.map((item,i)=>{
+    const refP=item.unitPrice!=null?`$${Number(item.unitPrice).toFixed(2)}`:"—";
+    if(leadTimeOnly){
+      return `
+    <tr>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${i+1}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">${item.partNumber||"—"}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${item.description||"—"}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${item.manufacturer||"—"}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${item.qty||1}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b;font-style:italic">${refP}</td>
+      <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:center;background:#fef9c3">&nbsp;</td>
+    </tr>`;
+    }
+    return `
     <tr>
       <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${i+1}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">${item.partNumber||"—"}</td>
@@ -3525,7 +3542,8 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
       <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${item.qty||1}</td>
       <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:right">&nbsp;</td>
       <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:center">&nbsp;</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
   const co=companyInfo||{};
   const coHeader=co.logoUrl
     ?`<img src="${co.logoUrl}" alt="Company Logo" style="max-height:52px;max-width:180px;object-fit:contain"/>`
@@ -3534,11 +3552,14 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
     ?`<p style="margin:4px 0 0;color:#64748b;font-size:13px">${[co.address,co.phone].filter(Boolean).join(' · ')}</p>`
     :``;
   return`<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#1e293b;max-width:820px;margin:0 auto;padding:24px">
-  <div style="font-size:22px;font-weight:900;color:#1e293b;margin-bottom:12px;letter-spacing:-0.3px">Request For Quote from</div>
+  <div style="font-size:22px;font-weight:900;color:#1e293b;margin-bottom:12px;letter-spacing:-0.3px">${leadTimeOnly?"Lead Time Request from":"Request For Quote from"}</div>
+  ${leadTimeOnly?`<div style="background:#fef9c3;border:2px solid #fcd34d;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#78350f;line-height:1.6">
+    <strong>📅 LEAD TIME REQUEST ONLY</strong> — We already have pricing for these items on file. We're requesting confirmation of current lead times only. Please provide lead time in days ARO for each item below. Current pricing is shown for reference; no need to re-quote.
+  </div>`:""}
   <table style="width:100%;margin-bottom:16px"><tr>
     <td>${coHeader}${coAddr}</td>
     <td style="text-align:right;vertical-align:top">
-      <div style="font-size:11px;color:#64748b;letter-spacing:2px;text-transform:uppercase">Request for Quote</div>
+      <div style="font-size:11px;color:#64748b;letter-spacing:2px;text-transform:uppercase">${leadTimeOnly?"Lead Time Request":"Request for Quote"}</div>
       <div style="font-size:18px;font-weight:700;color:#1e293b">${rfqNum}</div>
     </td>
   </tr></table>
@@ -3561,8 +3582,8 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
       <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #cbd5e1">Description</th>
       <th style="padding:8px 10px;text-align:left;border-bottom:2px solid #cbd5e1">Manufacturer</th>
       <th style="padding:8px 10px;text-align:center;border-bottom:2px solid #cbd5e1">Qty</th>
-      <th style="padding:8px 10px;text-align:right;border-bottom:2px solid #cbd5e1">Unit Price</th>
-      <th style="padding:8px 10px;text-align:center;border-bottom:2px solid #cbd5e1">Lead Time</th>
+      <th style="padding:8px 10px;text-align:right;border-bottom:2px solid #cbd5e1">${leadTimeOnly?"Current Price (ref)":"Unit Price"}</th>
+      <th style="padding:8px 10px;text-align:center;border-bottom:2px solid #cbd5e1;${leadTimeOnly?"background:#fef9c3":""}">Lead Time${leadTimeOnly?" (days ARO) ↓":""}</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
@@ -4417,16 +4438,19 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
   });
 }
 
-async function buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy,companyInfo=null){
+async function buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy,companyInfo=null,opts={}){
+  // DECISION(v1.19.692): opts.leadTimeOnly — when true, render LEAD TIME REQUEST ONLY
+  // banner + Current Price reference column + Lead Time highlighted.
+  const leadTimeOnly=!!(opts&&opts.leadTimeOnly);
   const JsPDF=await ensureJsPDF();
   const doc=new JsPDF({format:"letter",unit:"mm"});
   const W=doc.internal.pageSize.getWidth();
   const slate=r=>[r>>16&255,r>>8&255,r&255];
   // Header — company name/logo
   const co=companyInfo||{};
-  // "Request For Quote from" label
+  // "Request For Quote from" / "Lead Time Request from" label
   doc.setFontSize(11);doc.setFont("helvetica","bold");doc.setTextColor(30,41,59);
-  doc.text("Request For Quote from",14,12);
+  doc.text(leadTimeOnly?"Lead Time Request from":"Request For Quote from",14,12);
   if(co.logoUrl){
     try{
       const imgData=await new Promise((res,rej)=>{const img=new Image();img.crossOrigin="anonymous";img.onload=()=>{const c=document.createElement("canvas");c.width=img.naturalWidth;c.height=img.naturalHeight;c.getContext("2d").drawImage(img,0,0);res(c.toDataURL("image/png"));};img.onerror=rej;img.src=co.logoUrl;});
@@ -4443,26 +4467,43 @@ async function buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy,companyIn
   }
   // RFQ label — right
   doc.setFontSize(9);doc.setTextColor(100,116,139);
-  doc.text("REQUEST FOR QUOTE",W-14,18,{align:"right"});
+  doc.text(leadTimeOnly?"LEAD TIME REQUEST":"REQUEST FOR QUOTE",W-14,18,{align:"right"});
   doc.setFontSize(15);doc.setFont("helvetica","bold");doc.setTextColor(30,41,59);
   doc.text(rfqNum,W-14,25,{align:"right"});
   // Divider
   doc.setDrawColor(203,213,225);doc.setLineWidth(0.3);doc.line(14,29,W-14,29);
+  // DECISION(v1.19.692): Lead-time-only banner — yellow callout explaining that only
+  // lead times are being requested and pricing is on file.
+  let bannerEnd=0;
+  if(leadTimeOnly){
+    doc.setFillColor(254,249,195);doc.setDrawColor(252,211,77);doc.setLineWidth(0.5);
+    doc.rect(14,32,W-28,14,"FD");
+    doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(120,53,15);
+    doc.text("LEAD TIME REQUEST ONLY",17,37);
+    doc.setFont("helvetica","normal");doc.setFontSize(8);
+    doc.text("We have pricing on file. Please confirm current lead times in days ARO. No need to re-quote.",17,41.5);
+    bannerEnd=14;
+  }
   // Info block
-  const iy=36;doc.setFontSize(10);
+  const iy=36+bannerEnd;doc.setFontSize(10);
   const infoRows=[["To:",group.vendorName],["Project:",projectName||"—"],["RFQ Date:",rfqDate],["Response By:",responseBy]];
   infoRows.forEach(([lbl,val],i)=>{
     doc.setFont("helvetica","normal");doc.setTextColor(100,116,139);doc.text(lbl,14,iy+i*6);
     doc.setFont("helvetica","bold");doc.setTextColor(30,41,59);doc.text(val,42,iy+i*6);
   });
-  // Items table
+  // Items table — header + body adjust when leadTimeOnly mode is active
+  const priceHeader=leadTimeOnly?"Current Price (ref)":"Unit Price";
+  const ltHeader=leadTimeOnly?"Lead Time (days) ↓":"Lead Time";
   doc.autoTable({
     startY:iy+infoRows.length*6+4,
-    head:[["#","Part Number","Description","Manufacturer","Qty","Unit Price","Lead Time"]],
-    body:group.items.map((item,i)=>[i+1,item.partNumber||"—",item.description||"—",item.manufacturer||"—",item.qty||1,"",""]),
+    head:[["#","Part Number","Description","Manufacturer","Qty",priceHeader,ltHeader]],
+    body:group.items.map((item,i)=>{
+      const refP=(leadTimeOnly&&item.unitPrice!=null)?`$${Number(item.unitPrice).toFixed(2)}`:"";
+      return [i+1,item.partNumber||"—",item.description||"—",item.manufacturer||"—",item.qty||1,refP,""];
+    }),
     styles:{fontSize:9,cellPadding:2.5,textColor:[30,41,59]},
     headStyles:{fillColor:[241,245,249],textColor:[30,41,59],fontStyle:"bold",lineColor:[203,213,225],lineWidth:0.3},
-    columnStyles:{0:{cellWidth:10,halign:"center"},1:{cellWidth:32,fontStyle:"bold"},2:{cellWidth:"auto"},3:{cellWidth:34},4:{cellWidth:12,halign:"center"},5:{cellWidth:24,halign:"right"},6:{cellWidth:22,halign:"center"}},
+    columnStyles:{0:{cellWidth:10,halign:"center"},1:{cellWidth:32,fontStyle:"bold"},2:{cellWidth:"auto"},3:{cellWidth:34},4:{cellWidth:12,halign:"center"},5:{cellWidth:26,halign:"right"},6:{cellWidth:26,halign:"center",...(leadTimeOnly?{fillColor:[254,249,195]}:{})}},
     theme:"grid",tableLineColor:[203,213,225],tableLineWidth:0.3
   });
   // Footer
@@ -9644,6 +9685,10 @@ async function bcFetchVendorContacts(vendorNo,vendorName){
 function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEmail,onClose,onSent,onPrint,onApiPriced,onApiAlternates}){
   const [emails,setEmails]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=g.vendorEmail||"";});return m;});
   const [included,setIncluded]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;});
+  // DECISION(v1.19.692): Per-vendor "Lead Times Only" mode. When checked, the vendor's RFQ
+  // shows BC prices as reference and asks supplier to confirm lead times only. Email
+  // subject + body swap to lead-time-focused wording; portal renders prices read-only.
+  const [leadTimeOnly,setLeadTimeOnly]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=false;});return m;});
   const [vendorContacts,setVendorContacts]=useState({}); // {vendorName: [{name,email,type}]}
   const [contactsLoading,setContactsLoading]=useState(true);
   const [remember,setRemember]=useState({});
@@ -9716,7 +9761,19 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         const rfqNum=makeRfqNum(group.vendorName);
         const tok=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
         vendorTokens[group.vendorName]=tok;
-        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:(emails[group.vendorName]||"").trim(),rfqNum,lineItems:group.items.map(i=>({partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""})),sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
+        // DECISION(v1.19.692): When leadTimeOnly mode is active for this vendor, capture BC
+        // prices as referencePrice on each line item (frozen at send time) so the portal + PDF
+        // can show them read-only to the supplier.
+        const ltOnly=!!leadTimeOnly[group.vendorName];
+        const lineItemsPayload=group.items.map(i=>{
+          const base={partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""};
+          if(ltOnly){
+            base.referencePrice=i.unitPrice!=null?+i.unitPrice:null;
+            base.referencePriceSource=i.unitPrice!=null?"bc":null;
+          }
+          return base;
+        });
+        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:(emails[group.vendorName]||"").trim(),rfqNum,lineItems:lineItemsPayload,leadTimeOnly:ltOnly,sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
       }
     }
     const sentItemIds=[];
@@ -9748,9 +9805,14 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         let rfqNum=makeRfqNum(group.vendorName);
         const uploadToken=vendorTokens[group.vendorName];
         const uploadUrl=uploadToken?`https://matrix-arc.web.app?rfqUpload=${uploadToken}`:null;
-        const subject=`Request for Quote — ${projectName||"Project"} — ${rfqNum}`;
-        const html=buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl,_appCtx.company);
-        const pdfBase64=await buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy,_appCtx.company).catch(()=>null);
+        // DECISION(v1.19.692): Subject + body swap for leadTimeOnly mode. Pass through to
+        // buildRfqEmailHtml + buildRfqPdf so both PDF and email body render the lead-time-focused variant.
+        const isLtOnly=!!leadTimeOnly[group.vendorName];
+        const subject=isLtOnly
+          ? `[Lead Time Request] ${projectName||"Project"} — ${rfqNum}`
+          : `Request for Quote — ${projectName||"Project"} — ${rfqNum}`;
+        const html=buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl,_appCtx.company,{leadTimeOnly:isLtOnly});
+        const pdfBase64=await buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy,_appCtx.company,{leadTimeOnly:isLtOnly}).catch(()=>null);
         const pdfName=`${rfqNum}-${(group.vendorName||"Supplier").replace(/[^a-z0-9]/gi,"_")}.pdf`;
         await sendGraphEmail(graphToken,to,subject,html,pdfBase64,pdfName);
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent"}}));
@@ -9980,6 +10042,15 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                         }
                       }} style={{accentColor:"#4ade80",width:12,height:12,cursor:"pointer"}}/>
                       {remember[g.vendorName]?"Default for future RFQs":"Remember for future RFQs"}
+                    </label>
+                    {/* DECISION(v1.19.692): Per-vendor Lead Times Only checkbox. When active,
+                       the RFQ PDF shows BC prices as reference and asks supplier for lead times only. */}
+                    <label style={{display:"flex",alignItems:"center",gap:4,marginTop:3,cursor:"pointer",fontSize:10,color:leadTimeOnly[g.vendorName]?"#fcd34d":"#64748b"}}
+                      title="When checked, the RFQ asks the supplier to confirm lead times only. BC prices will be shown as reference; supplier doesn't quote prices.">
+                      <input type="checkbox" checked={!!leadTimeOnly[g.vendorName]}
+                        onChange={e=>setLeadTimeOnly(prev=>({...prev,[g.vendorName]:e.target.checked}))}
+                        style={{accentColor:"#fcd34d",width:12,height:12,cursor:"pointer"}}/>
+                      📅 Request Lead Times Only (prices already in BC)
                     </label>
                   </div>;
                 })()}
@@ -29071,6 +29142,18 @@ function SupplierPortalPage({token}){
         const data=snap.data();
         if(data.status==="submitted")setDone(true);
         setInfo(data);
+        // DECISION(v1.19.692): In leadTimeOnly mode, pre-populate unitPrices from
+        // referencePrice so the submit captures the prices (supplier can't edit them).
+        // This keeps the downstream Apply Prices flow unchanged.
+        if(data.leadTimeOnly&&Array.isArray(data.lineItems)){
+          const prefillPrices={};
+          data.lineItems.forEach((item,i)=>{
+            if(item.referencePrice!=null){
+              prefillPrices[i]=Number(item.referencePrice).toFixed(2);
+            }
+          });
+          setUnitPrices(prefillPrices);
+        }
         setLoading(false);
       })
       .catch(e=>{setError("Could not load RFQ: "+e.message);setLoading(false);});
@@ -29184,7 +29267,22 @@ function SupplierPortalPage({token}){
 
   async function handleSubmit(){
     if(uploading)return;
-    if(!leadTime.trim()){alert("Please enter the lead time in days ARO for this order before submitting.");return;}
+    // DECISION(v1.19.692): In leadTimeOnly mode, validate per-line lead times instead of the
+    // bulk order-lead-time field. Each non-cannot-supply line must have a per-item lead time.
+    if(info?.leadTimeOnly){
+      const lineItems=info?.lineItems||[];
+      const missing=[];
+      lineItems.forEach((item,i)=>{
+        if(cannotSupply[i]===true)return;
+        const v=itemLeadTimes[i];
+        if(v===undefined||v===null||String(v).trim()===""||!(+v>0)){
+          missing.push((item.partNumber||"")+" (row "+(i+1)+")");
+        }
+      });
+      if(missing.length){alert("Please provide a lead time for every item:\n\n"+missing.slice(0,10).join("\n")+(missing.length>10?`\n…and ${missing.length-10} more`:""));return;}
+    }else{
+      if(!leadTime.trim()){alert("Please enter the lead time in days ARO for this order before submitting.");return;}
+    }
     setUploading(true);
     try{
       let storageUrl=null,fileName=null;
@@ -29290,6 +29388,18 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
       <div style={{minHeight:"100vh",background:bg,padding:"32px 16px"}}>
         <div style={{maxWidth:1200,margin:"0 auto"}}>
           <Header/>
+          {/* DECISION(v1.19.692): Lead-time-only banner shown when ARC set leadTimeOnly=true on the RFQ. */}
+          {info?.leadTimeOnly&&(
+            <div style={{background:"#fef9c3",border:"2px solid #fcd34d",borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:12}}>
+              <span style={{fontSize:22,flexShrink:0}}>📅</span>
+              <div>
+                <div style={{fontSize:15,fontWeight:700,color:"#78350f",marginBottom:3}}>Lead Time Request — prices already in BC</div>
+                <div style={{fontSize:13,color:"#78350f",lineHeight:1.5}}>
+                  We have current pricing on file. Please confirm lead times (in days ARO) for each item below. Prices are shown for reference only — no need to re-quote.
+                </div>
+              </div>
+            </div>
+          )}
           {(unmatchedRfqCount>0||unmatchedSupplierCount>0)&&(
             <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:12}}>
               <span style={{fontSize:22,flexShrink:0}}>⚠️</span>
@@ -29430,6 +29540,13 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                           {!conf&&!hasPrice&&<span style={{fontSize:14,color:"#dc2626",fontWeight:600,flexShrink:0}}>⚠ Missing</span>}
                           {isNoMatch&&<span style={{fontSize:12,color:"#991b1b",flexShrink:0}}>Please enter price</span>}
                           <span style={{color:muted}}>$</span>
+                          {/* DECISION(v1.19.692): In leadTimeOnly mode, render price read-only with
+                             the BC reference price pre-filled. Supplier can't override prices. */}
+                          {info.leadTimeOnly?(
+                            <span style={{width:100,textAlign:"right",padding:"4px 8px",background:"#f1f5f9",border:"1px solid #cbd5e1",borderRadius:4,color:"#64748b",fontStyle:"italic",fontSize:13,fontFamily:"inherit"}}>
+                              {item.referencePrice!=null?Number(item.referencePrice).toFixed(2):"—"}
+                            </span>
+                          ):(
                           <input type="text" inputMode="decimal" placeholder="0.00"
                             value={unitPrices[i]??''}
                             onChange={e=>{const v=e.target.value;if(v===''||/^\d*\.?\d*$/.test(v))setUnitPrices(prev=>({...prev,[i]:v}));}}
@@ -29437,7 +29554,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                             onBlur={e=>{const v=parseFloat(e.target.value);if(!isNaN(v))setUnitPrices(prev=>({...prev,[i]:v.toFixed(2)}));}}
                             onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
                             style={{width:100,textAlign:"right",...inp,border:`1px solid ${hasPrice?(isMatch?"#86efac":"#e2e8f0"):"#fca5a5"}`,background:hasPrice?"#f0fdf4":"#fff5f5"}}
-                          />
+                          />)}
                         </div>)}
                       </td>
                       <td style={{padding:"8px 12px",textAlign:"center"}}>
