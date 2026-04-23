@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.670";
+const APP_VERSION="v1.19.671";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4228,22 +4228,25 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
   const fontSize=baseFontSize;
   const cellPad=m(1.8);
 
-  // Fixed column widths — table is only as wide as needed, not forced to full page
+  // DECISION(v1.19.671): Auto-size columns so long part numbers (especially the
+  // "Original Part #" column) aren't truncated with an ellipsis. Minimum widths keep
+  // narrow columns (#, Qty) compact; the rest expand to fit the widest value on each.
+  // Text that still exceeds will wrap via overflow:"linebreak" rather than truncate.
   const colStyles=hasCrosses?{
-    0:{cellWidth:m(7),halign:"center"},
-    1:{cellWidth:m(11),halign:"center"},
-    2:{cellWidth:m(38)},   // Part # (replacement)
-    3:{cellWidth:m(30)},   // Original Part #
-    4:{cellWidth:m(100)},  // Description — fixed, not auto-expanding
-    5:{cellWidth:m(32)},   // MFR
-    6:{cellWidth:m(34)},   // Supplier
+    0:{cellWidth:m(7),halign:"center"},           // #
+    1:{cellWidth:m(11),halign:"center"},          // Qty
+    2:{cellWidth:'auto',minCellWidth:m(30)},      // Part # (replacement)
+    3:{cellWidth:'auto',minCellWidth:m(30)},      // Original Part #
+    4:{cellWidth:'auto',minCellWidth:m(60)},      // Description — expands
+    5:{cellWidth:'auto',minCellWidth:m(24)},      // MFR
+    6:{cellWidth:'auto',minCellWidth:m(28)},      // Supplier
   }:{
-    0:{cellWidth:m(8),halign:"center"},
-    1:{cellWidth:m(13),halign:"center"},
-    2:{cellWidth:m(42)},   // Part #
-    3:{cellWidth:m(110)},  // Description — fixed, not auto-expanding
-    4:{cellWidth:m(36)},   // MFR
-    5:{cellWidth:m(38)},   // Supplier
+    0:{cellWidth:m(8),halign:"center"},           // #
+    1:{cellWidth:m(13),halign:"center"},          // Qty
+    2:{cellWidth:'auto',minCellWidth:m(32)},      // Part #
+    3:{cellWidth:'auto',minCellWidth:m(60)},      // Description — expands
+    4:{cellWidth:'auto',minCellWidth:m(28)},      // MFR
+    5:{cellWidth:'auto',minCellWidth:m(30)},      // Supplier
   };
   const head=hasCrosses
     ?[["#","Qty","Part #","Original Part #","Description","MFR","Supplier"]]
@@ -4257,11 +4260,11 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
   doc.autoTable({
     startY:tableStart,
     margin:{left:margin,right:margin,bottom:m(12)},
-    tableWidth:"wrap",
+    tableWidth:"auto",
     headStyles:{fillColor:[220,220,220],textColor:[0,0,0],fontStyle:"bold",fontSize:fontSize+m(0.5),cellPadding:cellPad,lineWidth:m(0.2),lineColor:[0,0,0]},
     bodyStyles:{fontSize,cellPadding:cellPad,lineWidth:m(0.1),lineColor:[180,180,180],textColor:[0,0,0]},
     alternateRowStyles:{fillColor:[245,245,245]},
-    styles:{overflow:"ellipsize"},
+    styles:{overflow:"linebreak"},
     columnStyles:colStyles,
     head,
     body,
@@ -8186,6 +8189,13 @@ function computeProjectEffectiveStatus(project){
   const isBudgetary=panels.some(pan=>(pan.pricing||{}).isBudgetary);
   const quoteSent=!!project.quoteSentAt;
   const hasBom=panels.some(pan=>(pan.bom||[]).some(r=>!r.isLaborRow));
+  // DECISION(v1.19.671): If NO panel has any drawings uploaded AND no panel has started
+  // work (status is still "draft"), the project stays in DRAFT. Previously any panel
+  // in "draft" status pushed the project to "In Process" — but an empty project with
+  // zero drawings has no work in flight, so "In Process" was misleading.
+  const hasAnyDrawings=panels.some(pan=>(pan.pages||[]).length>0);
+  const anyPanelStarted=panels.some(pan=>pan.status&&pan.status!=="draft");
+  if(!hasAnyDrawings&&!anyPanelStarted&&!hasBom)return"draft";
   // Check pricing completeness across all panels
   const priceable=panels.flatMap(pan=>(pan.bom||[]).filter(r=>!_isExcludedFromPriceCheck(r)));
   const hasUnpriced=hasBom&&priceable.some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate);
