@@ -415,3 +415,33 @@ Company info is populated from BC on connect and from Firestore on load.
 `<Badge status={st}/>` — status pill styling used throughout:
 - `background`, `borderRadius:20`, `padding:"3px 12px"`, `fontWeight:700`
 - Status values: `draft`, `in_progress`, `extracted`, `validated`, `costed`, `quoted`
+
+### Owner Priority Mode (v1.19.678–683)
+
+Soft-lockout that activates when the project owner is viewing. Sits between Hard Project Lock (task running) and free-for-all. See `docs/superpowers/specs/2026-04-23-owner-priority-mode-design.md` for full spec and `docs/superpowers/plans/2026-04-23-owner-priority-mode.md` for the implementation plan.
+
+**Trigger:** Owner's `projectPresence` doc has `lastSeen` within 90s OR `project.ownerLockActive === true`. Overridden by active admin takeover.
+
+**New fields on `project` doc:**
+- `ownerLockActive: boolean` — owner's "🔒 Hold priority while I'm away" checkbox (default false)
+- `ownerTakeoverActive: { byUid, byName, atMs, reason, expiresAt } | null` — active admin override; 15-min auto-expire
+- `ownerTakeoverLog: []` — append-only history of past takeovers on this project
+
+**New field on `projectPresence` doc:**
+- `lockActive: boolean` — mirrored from `project.ownerLockActive` for convenience
+
+**New Firestore collection:**
+- `companies/{companyId}/ownerTakeovers/{id}` — append-only audit trail. Read by all members, create by `takeoverBy` user only, immutable (`update, delete: if false`).
+
+**13 actions hard-locked when mode is active (see full list in spec):**
+re-extract, re-extract with feedback, refresh pricing (normal + force-fresh), apply supplier portal prices, delete panel, delete drawing, send quote (both callsites), send RFQs, PO received, approve pre/post review (4 buttons), unlock quote, push BOM to BC. Transfer/Copy is server-gated via Firestore rules instead of client-gated.
+
+**Allowed while mode is active:** view, BOM row edits (qty/price/PN/description), title block edits, quote field edits, review notes, answer questions, BC browser lookups, Just Print.
+
+**Firestore rules helper:** `isOwnerPriorityLocked(project)` inside `/companies/{companyId}` — rejects non-owner writes when `ownerLockActive=true` AND no active takeover. The 90s-presence-based lock is client-side only (can't query `projectPresence` from within a project rule).
+
+**Client-side state (ProjectView):** `ownerPriorityActive` (boolean), `takeoverActive` (null | takeover obj), `showTakeoverModal` (boolean), `ownerPriorityToast` ({ownerName, shownAt} | null), `chimeOnViewer` (boolean, localStorage-persisted, owner-side opt-in).
+
+**Chime helper:** `_playChime("owner-join" | "viewer-join")` — module-level, WebAudio, 250ms, volume 0.15. Silent-fail if autoplay blocked.
+
+**Shared constants:** `_OWNER_PRIORITY_ALERT`, `_OWNER_PRIORITY_TOOLTIP`, `_fireOwnerPriorityAlert()`.
