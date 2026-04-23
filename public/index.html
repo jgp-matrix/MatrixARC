@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.683";
+const APP_VERSION="v1.19.684";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2353,6 +2353,22 @@ async function bcUpdateProject(bcProjectId, displayName){
     if(!r.ok){console.warn("bcUpdateProject PATCH failed:",r.status,await r.text());return false;}
     return true;
   }catch(e){console.warn("bcUpdateProject error:",e);return false;}
+}
+
+// DECISION(v1.19.684): BC DateFormula helpers. Item Card Lead_Time_Calculation and
+// ItemVendorCatalog Lead_Time_Calculation are stored as "14D" / "2W" / "1M" / "1Y"
+// (BC's DateFormula data type). Convert to days for ARC's integer leadTimeDays field
+// and back for writeback to BC. See docs/superpowers/specs/2026-04-23-item-lead-times-design.md
+function _bcDateFormulaToDays(f){
+  if(!f)return null;
+  const m=String(f).toUpperCase().replace(/^P/,"").match(/^(\d+)\s*([DWMY])$/);
+  if(!m)return null;
+  const n=+m[1], u=m[2];
+  return u==="D"?n : u==="W"?n*7 : u==="M"?n*30 : u==="Y"?n*365 : null;
+}
+function _daysToBcDateFormula(days){
+  if(days==null||days<=0)return "";
+  return `${Math.round(days)}D`;
 }
 
 async function bcLookupItem(partNumber){
