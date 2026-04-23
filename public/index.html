@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.678";
+const APP_VERSION="v1.19.679";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8292,6 +8292,28 @@ function _isBomRowFlaggedRed(r){
   }
   return false;
 }
+// DECISION(v1.19.678): Subtle chime via WebAudio — single tone, 250ms. Browsers require
+// a user interaction before audio can play, so we silently swallow errors if autoplay
+// blocks us. Tones: E5 (659Hz) for owner-join (non-owner hears this when owner arrives),
+// C5 (523Hz) for viewer-join (owner hears this when a teammate opens their project).
+// Volume 0.15 with a short linear ramp so it doesn't click.
+function _playChime(type){
+  try{
+    const Ctx=window.AudioContext||window.webkitAudioContext;
+    if(!Ctx)return;
+    const ctx=new Ctx();
+    const osc=ctx.createOscillator();const gain=ctx.createGain();
+    osc.frequency.value=type==="owner-join"?659:523;
+    gain.gain.value=0;
+    osc.connect(gain);gain.connect(ctx.destination);
+    const now=ctx.currentTime;
+    gain.gain.linearRampToValueAtTime(0.15,now+0.02);
+    gain.gain.linearRampToValueAtTime(0,now+0.25);
+    osc.start(now);osc.stop(now+0.27);
+    setTimeout(()=>{try{ctx.close();}catch(e){}},500);
+  }catch(e){/* autoplay blocked, etc. — silent */}
+}
+
 // DECISION(v1.19.663): Quote send gating. Walk every panel's BOM and surface any row
 // that's missing a price, qty, or priced date (excluding labor/customer-supplied/
 // contingency/crate/job-buyoff). Returns a list suitable for display in an alert so
@@ -20418,6 +20440,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [ownerPriorityActive,setOwnerPriorityActive]=useState(false);
   const [takeoverActive,setTakeoverActive]=useState(null);
   const [showTakeoverModal,setShowTakeoverModal]=useState(false);
+  const [ownerPriorityToast,setOwnerPriorityToast]=useState(null); // {ownerName, shownAt} | null
   const iAmOwner=!project.createdBy||project.createdBy===uid;
   const iAmAdmin=_appCtx.role==="admin";
   useEffect(()=>{
@@ -20480,6 +20503,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       _prevOwnerPriorityRef.current=ownerPriorityActive;
     }
   },[ownerPriorityActive,iAmOwner,takeoverActive]);
+  // DECISION(v1.19.678): Fire toast + chime on transition INTO Owner Priority Mode.
+  useEffect(()=>{
+    if(!ownerPriorityActive)return;
+    const ownerPresence=viewers.find(v=>v.isOwner&&v.uid===project.createdBy);
+    const ownerName=(ownerPresence?.userName||(ownerPresence?.userEmail||"").split("@")[0])||"The owner";
+    setOwnerPriorityToast({ownerName,shownAt:Date.now()});
+    _playChime("owner-join");
+    const t=setTimeout(()=>setOwnerPriorityToast(null),6000);
+    return()=>clearTimeout(t);
+  },[ownerPriorityActive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [view,setView]=useState("panels"); // "panels"|"quote"
   const [autoPrint,setAutoPrint]=useState(false);
@@ -21448,6 +21481,38 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   return(
     <>
+      {/* DECISION(v1.19.678): Owner Priority Mode — toast + banner + chime. Toast is a
+         transient notification; banner persists while active; green takeover banner
+         replaces the purple one while admin takeover is in effect. */}
+      {ownerPriorityToast&&(
+        <div style={{position:"fixed",top:16,left:"50%",transform:"translateX(-50%)",zIndex:99998,
+          background:"#1e1b4b",border:"2px solid #c4b5fd",borderRadius:10,padding:"10px 18px",
+          boxShadow:"0 8px 40px rgba(167,139,250,0.5)",fontSize:14,fontWeight:600,color:"#e0e7ff",
+          animation:"fadeInDown 0.25s ease"}}>
+          👑 <strong style={{color:"#fcd34d"}}>{ownerPriorityToast.ownerName}</strong> (owner) just joined — they now have priority. Your destructive actions are disabled.
+        </div>
+      )}
+      {ownerPriorityActive&&!takeoverActive&&(
+        <div style={{background:"#1e1b4b",border:"1px solid #818cf8",borderRadius:8,
+          padding:"10px 16px",margin:"12px 24px 0",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <span style={{fontSize:18}}>👑</span>
+          <div style={{flex:1,minWidth:240,fontSize:13,color:"#e0e7ff",lineHeight:1.5}}>
+            <strong style={{color:"#c4b5fd"}}>Owner is working this project.</strong> You can keep reviewing, but destructive and state-changing actions are disabled until they leave.
+          </div>
+          {iAmAdmin&&(
+            <button onClick={()=>setShowTakeoverModal(true)}
+              style={{background:"#3b0764",color:"#fcd34d",border:"1px solid #fcd34d66",borderRadius:6,padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+              🛡 Admin Take Over
+            </button>
+          )}
+        </div>
+      )}
+      {takeoverActive&&!iAmOwner&&(
+        <div style={{background:"#052e16",border:"1px solid #4ade80",borderRadius:8,
+          padding:"10px 16px",margin:"12px 24px 0",fontSize:13,color:"#bbf7d0",lineHeight:1.5}}>
+          🛡 <strong style={{color:"#4ade80"}}>Admin Take Over active</strong> by {takeoverActive.byName||"admin"}. Reason: {takeoverActive.reason||"(none given)"}. Expires {new Date(takeoverActive.expiresAt).toLocaleTimeString()}.
+        </div>
+      )}
       {view==="quote"?(
         <div style={autoPrint?{height:0,overflow:"hidden"}:undefined}>
           <QuoteView project={project} uid={uid} onBack={()=>setView("panels")} onUpdate={update}/>
