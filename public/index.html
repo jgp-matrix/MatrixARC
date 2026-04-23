@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.672";
+const APP_VERSION="v1.19.673";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5483,6 +5483,26 @@ function _looksLikeCompanionPn(token,primaryPn){
   if(normPart(up)===normPart(primaryPn||""))return false;
   return true;
 }
+function _makeCompanionRow(parentRow,pn,relationship){
+  return{
+    id:(Date.now()+Math.random()),
+    itemNo:parentRow.itemNo||"",
+    qty:+parentRow.qty||1,
+    partNumber:pn,
+    description:`Companion of ${parentRow.partNumber||"item"}${relationship?" ("+relationship+")":""}`,
+    manufacturer:parentRow.manufacturer||"",
+    notes:`Auto-added — companion part identified on same BOM line as ${parentRow.partNumber||"item"}${relationship?" ("+relationship+")":""}`,
+    unitPrice:0,
+    priceSource:"",
+    priceDate:null,
+    autoAddedCompanion:true,
+    companionOfPartNumber:parentRow.partNumber||"",
+    y_top:(typeof parentRow.y_top==="number"?parentRow.y_top:undefined),
+    y_bottom:(typeof parentRow.y_bottom==="number"?parentRow.y_bottom:undefined),
+    sourcePageIdx:parentRow.sourcePageIdx,
+    sourcePageId:parentRow.sourcePageId,
+  };
+}
 function splitCompanionParts(bom){
   const existing=new Set(bom.filter(r=>!r.isLaborRow).map(r=>normPart(r.partNumber||"")).filter(Boolean));
   const results=[];
@@ -5492,54 +5512,50 @@ function splitCompanionParts(bom){
     if(row.isLaborRow||row.isContingency)continue;
     const primary=(row.partNumber||"").trim();
     if(!primary)continue;
-    const desc=(row.description||"");
-    if(!desc)continue;
-    const descLow=desc.toLowerCase();
-    // Must have at least one companion keyword present
-    if(!_COMPANION_KEYWORDS.some(k=>descLow.includes(k)))continue;
-    // Scan for candidate catalog codes in the description
     const seen=new Set();
+    // DECISION(v1.19.673): First pass — consume the AI's structured `additionalPartNumbers`
+    // array. This is the authoritative channel — the AI is instructed (in BOM_PROMPT) to put
+    // EVERY extra catalog code from the row here, regardless of which column it was in.
+    const addl=Array.isArray(row.additionalPartNumbers)?row.additionalPartNumbers:[];
+    for(const a of addl){
+      const tok=(a&&a.partNumber||"").trim();
+      if(!tok)continue;
+      if(!_looksLikeCompanionPn(tok,primary))continue;
+      const nk=normPart(tok);
+      if(seen.has(nk)||existing.has(nk))continue;
+      seen.add(nk);existing.add(nk);
+      const companion=_makeCompanionRow(row,tok,a.relationship||"");
+      if(a.context)companion.notes+=` · ${a.context}`;
+      results.push(companion);
+      added.push({primary,companion:tok,source:"additionalPartNumbers"});
+      const parentNote=`Companion part ${tok} auto-added as separate BOM row`;
+      if(!(row.notes||"").includes(parentNote))row.notes=row.notes?(row.notes+" · "+parentNote):parentNote;
+    }
+    // DECISION(v1.19.673): Second pass (safety net) — scan description AND notes for catalog
+    // codes near companion keywords, in case the AI didn't populate additionalPartNumbers.
+    const scanText=[(row.description||""),(row.notes||"")].filter(Boolean).join(" · ");
+    if(!scanText)continue;
+    const scanLow=scanText.toLowerCase();
+    if(!_COMPANION_KEYWORDS.some(k=>scanLow.includes(k)))continue;
     let m;_COMPANION_PN_RE.lastIndex=0;
-    while((m=_COMPANION_PN_RE.exec(desc))!==null){
+    while((m=_COMPANION_PN_RE.exec(scanText))!==null){
       const tok=m[1];
       if(!_looksLikeCompanionPn(tok,primary))continue;
       const nk=normPart(tok);
-      if(seen.has(nk))continue;
-      if(existing.has(nk))continue; // already its own BOM row
-      // Check keyword proximity — a keyword must appear within ~25 chars on either side
+      if(seen.has(nk)||existing.has(nk))continue;
       const idx=m.index;
-      const window=desc.slice(Math.max(0,idx-25),Math.min(desc.length,idx+tok.length+25)).toLowerCase();
-      if(!_COMPANION_KEYWORDS.some(k=>window.includes(k)))continue;
-      seen.add(nk);
-      existing.add(nk);
-      const companion={
-        id:(Date.now()+Math.random()),
-        itemNo:row.itemNo||"",
-        qty:+row.qty||1,
-        partNumber:tok,
-        description:`Companion of ${primary}`,
-        manufacturer:row.manufacturer||"",
-        notes:`Auto-added — companion part identified on same BOM line as ${primary}`,
-        unitPrice:0,
-        priceSource:"",
-        priceDate:null,
-        autoAddedCompanion:true,
-        companionOfPartNumber:primary,
-        y_top:(typeof row.y_top==="number"?row.y_top:undefined),
-        y_bottom:(typeof row.y_bottom==="number"?row.y_bottom:undefined),
-        sourcePageIdx:row.sourcePageIdx,
-        sourcePageId:row.sourcePageId,
-      };
+      const win=scanText.slice(Math.max(0,idx-25),Math.min(scanText.length,idx+tok.length+25)).toLowerCase();
+      if(!_COMPANION_KEYWORDS.some(k=>win.includes(k)))continue;
+      seen.add(nk);existing.add(nk);
+      const companion=_makeCompanionRow(row,tok,"");
       results.push(companion);
-      added.push({primary,companion:tok});
-      // Also annotate parent's notes so user sees the relationship on the parent row
+      added.push({primary,companion:tok,source:"regex"});
       const parentNote=`Companion part ${tok} auto-added as separate BOM row`;
-      if(!(row.notes||"").includes(parentNote)){
-        row.notes=row.notes?(row.notes+" · "+parentNote):parentNote;
-      }
+      if(!(row.notes||"").includes(parentNote))row.notes=row.notes?(row.notes+" · "+parentNote):parentNote;
     }
   }
-  if(added.length)console.log(`COMPANION SPLIT: added ${added.length} companion part row${added.length>1?"s":""}:`,added.map(a=>`${a.primary} → ${a.companion}`).join(", "));
+  if(added.length)console.log(`COMPANION SPLIT: added ${added.length} companion part row${added.length>1?"s":""}:`,added.map(a=>`${a.primary} → ${a.companion} (${a.source})`).join(", "));
+  else console.log("COMPANION SPLIT: no companion parts detected");
   return results;
 }
 
@@ -5730,26 +5746,35 @@ STEP 4 — EXTRACT EVERY ROW (no skipping):
   e.g. "ABB KXTBRHEBFP, OXP10X225, OH865L10B" → three rows, each with same qty/manufacturer/notes
   First row: original description unchanged
   Each extra row: append " (sub-part)" to description
-• COMPANION PARTS (relay+base, contactor+aux, etc.) — catalog code in DESCRIPTION column:
-  Industrial BOMs sometimes list a primary component with a companion part whose catalog code
-  appears in the DESCRIPTION text rather than a separate row. Detect and split these out.
+• COMPANION PARTS (relay+base, contactor+aux, etc.) — critical: NEVER drop a second catalog code:
+  Industrial BOMs often list a primary component with a companion part on the SAME row. The
+  companion code might appear in the description, the notes/tag column, or even a separate
+  un-labeled column. You MUST capture EVERY alphanumeric catalog code on the row — do not
+  discard a second/third PN just because it's in a column you'd otherwise ignore.
+
+  Output ALL catalog codes found on the row via the `additionalPartNumbers` array on the item.
+  Each entry: {"partNumber":"...", "relationship":"base|socket|aux|accessory|other", "context":"brief snippet showing where it was"}.
+
   Examples:
-    "RH2B-ULC-DC24" [partNumber] | "DPDT Ice Cube Relay w/ SH2B-05 Base" [description]
-      → Two items:
-         (1) RH2B-ULC-DC24 — description: "DPDT Ice Cube Relay"
-         (2) SH2B-05       — description: "Socket base for RH2B-ULC-DC24",
-                             notes: "Companion part — identified on same BOM line as RH2B-ULC-DC24"
-    "100-C09KJ10" | "9A Contactor with 100-FA22 Aux Contact"
-      → Two items:
-         (1) 100-C09KJ10 — "9A Contactor"
-         (2) 100-FA22    — "Aux contact for 100-C09KJ10",
-                           notes: "Companion part — identified on same BOM line as 100-C09KJ10"
-  Detection rule: scan the description for an ADDITIONAL alphanumeric catalog code (letters+digits,
-  often with dashes, 4+ chars) that is distinct from the primary partNumber, typically adjacent to
-  companion keywords: "base", "socket", "holder", "mount", "aux", "auxiliary", "module", "kit",
-  "includes", "w/", "with", "&", "+". If found, emit as a separate item with qty inherited from the
-  primary, appropriate description, and a notes field that explicitly says "Companion part —
-  identified on same BOM line as {primaryPN}".
+    Row: [Qty:5] [PN:RH2B-ULC-DC24] [Desc:DPDT Ice Cube Relay] [Tag:SH2B-05]
+      → item: {partNumber:"RH2B-ULC-DC24", qty:5, description:"DPDT Ice Cube Relay",
+               additionalPartNumbers:[{partNumber:"SH2B-05", relationship:"base", context:"Tag column"}]}
+
+    Row: [Qty:3] [PN:100-C09KJ10] [Desc:9A Contactor w/ 100-FA22 Aux]
+      → item: {partNumber:"100-C09KJ10", qty:3, description:"9A Contactor",
+               additionalPartNumbers:[{partNumber:"100-FA22", relationship:"aux", context:"in description"}]}
+
+    Row with THREE codes in one cell: [Qty:2] [PN:ABB KXTBRHEBFP, OXP10X225, OH865L10B]
+      → Still emit as 3 separate items (existing rule), OR use additionalPartNumbers on a primary. Either is fine.
+
+  Detection rule for additionalPartNumbers: look for any alphanumeric token on the row that
+  (a) has letters AND digits, (b) is 4+ chars, (c) is distinct from the primary partNumber,
+  and (d) is NOT a ref designator (e.g. "CB1", "M2", "OL1" — single-letter prefix + small number
+  typical of tag/ID columns). Ref designators go in the `notes` field as before. Catalog codes
+  (longer, often with dashes like "SH2B-05" or "100-FA22") go in `additionalPartNumbers`.
+
+  If you're uncertain whether a code is a ref designator or a catalog code: when in doubt,
+  include it in additionalPartNumbers. ARC's post-processor will de-duplicate and filter.
 • Reference designators (CB1, M1, OL2, PB3, SS1…) → notes field only, never partNumber
 • Include ALL data rows even when some fields are blank — only skip: column header row, totals rows, title block text, revision block rows
 
@@ -5800,7 +5825,9 @@ Output ONLY a valid JSON object — no markdown, no explanation. Format:
 {"items":[...],"questions":[]}
 
 Each item in the "items" array must have exactly:
-{"itemNo":"","qty":1,"partNumber":"","description":"","manufacturer":"","notes":"","y_top":0.0,"y_bottom":0.0,"x_left":0.0,"x_right":1.0}
+{"itemNo":"","qty":1,"partNumber":"","description":"","manufacturer":"","notes":"","additionalPartNumbers":[],"y_top":0.0,"y_bottom":0.0,"x_left":0.0,"x_right":1.0}
+
+additionalPartNumbers is an array of {"partNumber","relationship","context"} for every EXTRA catalog code found on the same row as this item (relay bases, aux contacts, sockets, accessories etc.). If none, use []. See the COMPANION PARTS section above. NEVER drop a second catalog code from the row.
 
 y_top and y_bottom are the top and bottom edges of this row as fractions of the total image height (0.0=top, 1.0=bottom). Be precise.
 x_left and x_right are the left and right edges of the entire BOM TABLE (all columns) as fractions of the total image width. Exclude any schematic diagram, layout drawing, or whitespace to the left of the table — crop to where the BOM table columns begin and end. All rows on the same page share the same x_left/x_right values.
