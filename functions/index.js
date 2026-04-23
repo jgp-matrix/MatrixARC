@@ -673,7 +673,11 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
 
   const result = await response.json();
   const text = result.content?.[0]?.text || '{}';
-  functions.logger.info('extractSupplierQuotePricing AI response length:', text.length, 'preview:', text.slice(0, 300));
+  // DECISION(v1.19.664): Log only length — no content preview. Previously the first 300 chars
+  // of the AI response were logged to Cloud Logging on every call, which leaks the parsed
+  // supplier part numbers / pricing data into log infrastructure. Length alone is enough to
+  // detect truncation issues without exposing the content.
+  functions.logger.info('extractSupplierQuotePricing AI response length:', text.length);
 
   let extracted = [];
   let quoteHeader = null;
@@ -697,10 +701,17 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     }
     if (!Array.isArray(extracted)) extracted = [];
   } catch (e) {
-    functions.logger.warn('extractSupplierQuotePricing JSON parse failed:', e.message, 'raw:', text.slice(0, 500));
+    // DECISION(v1.19.664): On parse failure, log first 120 chars only (usually enough to see
+    // "missing brace" or "unexpected token X" context without leaking the whole response).
+    functions.logger.warn('extractSupplierQuotePricing JSON parse failed:', e.message, 'raw_head:', text.slice(0, 120));
     extracted = [];
   }
 
+  // DECISION(v1.19.664): Track whether cross-ref enrichment succeeded so the client can show
+  // a non-blocking notice to the supplier. Previously the failure was silently logged; the
+  // supplier had no way to know their extraction was less accurate than usual.
+  let crossRefEnriched = false;
+  let crossRefSkipReason = null;
   // Enrich with saved cross-references: sqCrossings maps supplierPN→{bcItemNumber}
   // Build reverse map bcItemNumber→supplierPN so we can fill missing supplierPartNumbers
   try {
@@ -736,16 +747,27 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
         if (bcToSupplier[key]) item.supplierPartNumber = bcToSupplier[key];
       }
     }
+    crossRefEnriched = true;
   } catch (e) {
-    functions.logger.warn('Cross-ref enrichment failed:', e.message);
+    crossRefSkipReason = e.message || 'unknown error';
+    functions.logger.warn('Cross-ref enrichment failed:', crossRefSkipReason);
   }
 
   // Validation: log count comparison
   const matchedCount = extracted.filter(e => e.partNumber && e.confidence !== 'unmatched').length;
   const unmatchedCount = extracted.filter(e => e.confidence === 'unmatched').length;
-  functions.logger.info(`extractSupplierQuotePricing: requested=${lineItems.length}, matched=${matchedCount}, unmatched_supplier_items=${unmatchedCount}, total_extracted=${extracted.length}`);
+  functions.logger.info(`extractSupplierQuotePricing: requested=${lineItems.length}, matched=${matchedCount}, unmatched_supplier_items=${unmatchedCount}, total_extracted=${extracted.length}, crossRefEnriched=${crossRefEnriched}`);
 
-  return { extracted, quoteHeader, summary: summary || { requestedCount: lineItems.length, matchedCount, unmatchedSupplierItems: unmatchedCount } };
+  return {
+    extracted,
+    quoteHeader,
+    summary: summary || { requestedCount: lineItems.length, matchedCount, unmatchedSupplierItems: unmatchedCount },
+    // DECISION(v1.19.664): Flag so the client can show a non-blocking warning if enrichment
+    // was skipped. The BOM matching in ARC still works — it just misses the saved supplier
+    // PN crossings from previous extractions.
+    crossRefEnriched,
+    ...(crossRefSkipReason ? { crossRefSkipReason } : {}),
+  };
 });
 
 // ── CODALE PRICE SCRAPER ──
