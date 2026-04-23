@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.675";
+const APP_VERSION="v1.19.676";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13740,6 +13740,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(!bomPages.length){setErr("No pages tagged BOM yet.");return;}
     // Save snapshot before re-extraction so user can revert
     if((panel.bom||[]).length>0)saveSnapshot(uid,projectId,panel,"Before re-extraction").catch(()=>{});
+    // DECISION(v1.19.676): Clear stale derived data on re-extract init so the Confidence
+    // Bar and labor section don't show old values during the re-run. laborData, validation,
+    // bomVerification, bomAudit, and extractionReport all rebuild during the new pass —
+    // holding onto the old values gives a false "it's done / this is current" impression.
+    // Preserve the snapshot (just saved above) so a revert still works.
+    {
+      const cleared={...panel,
+        laborData:null,
+        validation:null,
+        bomVerification:null,
+        bomAudit:null,
+        extractionReport:null,
+        updatedAt:Date.now(),
+      };
+      onUpdate(cleared);
+      try{onSaveImmediate(cleared);}catch(e){}
+    }
     setExtracting(true);setErr("");ep.start(startMsg||"Extracting BOM…",bomPages.length*15);
     // DECISION(v1.19.599): Mirror re-extract status to team-wide bus so teammates see it.
     // DECISION(v1.19.606): Also emit bgSetPct/bgUpdate alongside ep.set so the team-wide
