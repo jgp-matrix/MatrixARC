@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.660";
+const APP_VERSION="v1.19.661";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10452,21 +10452,77 @@ async function updateCustomerTemplate(customerName,fieldSources,corrections){
   try{await fbDb.doc(_ctPath()).set({templates:all});console.log("CUSTOMER TEMPLATE: updated for",customerName,"→",existing.labelMappings);}
   catch(e){console.warn("Customer template save failed:",e.message);}
 }
+// DECISION(v1.19.661): Generate preview thumbnails for template regions. The preview
+// (~400px wide JPEG) is what the AI effectively sees, and the contextImage (~900px wide
+// JPEG of the full page) gives the user spatial context when editing the region later.
+// Both are dataURLs stored directly in Firestore — small enough (~30-150KB each) to fit.
+async function _cropRegionToDataUrl(sourceDataUrl,region,maxW=400,quality=0.75){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        const srcW=img.naturalWidth,srcH=img.naturalHeight;
+        const cropX=Math.max(0,Math.floor(region.x*srcW));
+        const cropY=Math.max(0,Math.floor(region.y*srcH));
+        const cropW=Math.max(1,Math.floor(region.w*srcW));
+        const cropH=Math.max(1,Math.floor(region.h*srcH));
+        const scale=cropW>maxW?(maxW/cropW):1;
+        const outW=Math.max(1,Math.floor(cropW*scale));
+        const outH=Math.max(1,Math.floor(cropH*scale));
+        const c=document.createElement("canvas");
+        c.width=outW;c.height=outH;
+        c.getContext("2d").drawImage(img,cropX,cropY,cropW,cropH,0,0,outW,outH);
+        resolve(c.toDataURL("image/jpeg",quality));
+      }catch(e){reject(e);}
+    };
+    img.onerror=()=>reject(new Error("Source image load failed"));
+    img.src=sourceDataUrl;
+  });
+}
+async function _scaleDataUrl(sourceDataUrl,maxW=900,quality=0.7){
+  return new Promise((resolve,reject)=>{
+    const img=new Image();
+    img.onload=()=>{
+      try{
+        const srcW=img.naturalWidth,srcH=img.naturalHeight;
+        const scale=srcW>maxW?(maxW/srcW):1;
+        const outW=Math.max(1,Math.floor(srcW*scale));
+        const outH=Math.max(1,Math.floor(srcH*scale));
+        const c=document.createElement("canvas");
+        c.width=outW;c.height=outH;
+        c.getContext("2d").drawImage(img,0,0,outW,outH);
+        resolve(c.toDataURL("image/jpeg",quality));
+      }catch(e){reject(e);}
+    };
+    img.onerror=()=>reject(new Error("Source image load failed"));
+    img.src=sourceDataUrl;
+  });
+}
 // DECISION(v1.19.657): Save a region rectangle to a customer's template. Used when user
 // draws a rectangle on a sample drawing and tags it as drawingNo / drawingDesc / drawingRev.
 // On future extractions for this customer, the region gets cropped from the drawing at the
 // same fractional coordinates — giving the AI a targeted crop instead of the whole page.
-async function saveTemplateRegion(customerName,field,region){
+// DECISION(v1.19.661): Accept opts.sourceDataUrl to generate preview + contextImage
+// thumbnails so the user can visually verify what was captured and edit it later.
+// opts.reuseContext=existing contextImage dataURL (used when redrawing from the modal).
+async function saveTemplateRegion(customerName,field,region,opts){
   const norm=_normCustomerName(customerName);
   if(!norm||!field||!region)return;
   const all=await loadCustomerTemplates();
   const existing=all[norm]||{customerName,labelMappings:{drawingNo:[],drawingDesc:[],drawingRev:[]},regions:{},correctionCount:0,lastUpdated:0};
   if(!existing.regions)existing.regions={};
-  existing.regions[field]={x:region.x,y:region.y,w:region.w,h:region.h,savedAt:Date.now()};
+  let preview=null,contextImage=null;
+  const src=opts&&(opts.sourceDataUrl||opts.reuseContext);
+  if(src){
+    try{preview=await _cropRegionToDataUrl(src,region,400,0.75);}catch(e){console.warn("preview crop failed:",e.message);}
+    if(opts.reuseContext){contextImage=opts.reuseContext;}
+    else{try{contextImage=await _scaleDataUrl(src,900,0.7);}catch(e){console.warn("context scale failed:",e.message);}}
+  }
+  existing.regions[field]={x:region.x,y:region.y,w:region.w,h:region.h,savedAt:Date.now(),preview,contextImage};
   existing.lastUpdated=Date.now();
   all[norm]=existing;
   _ctCache=all;
-  try{await fbDb.doc(_ctPath()).set({templates:all});console.log("TEMPLATE REGION: saved",field,"for",customerName,region);}
+  try{await fbDb.doc(_ctPath()).set({templates:all});console.log("TEMPLATE REGION: saved",field,"for",customerName,region,"preview:"+(preview?"yes":"no"));}
   catch(e){console.warn("Template region save failed:",e.message);throw e;}
 }
 async function deleteTemplateRegion(customerName,field){
@@ -11087,7 +11143,12 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
                           <button key={field} onClick={async()=>{
                             const region={x:pendingRect.x,y:pendingRect.y,w:pendingRect.w,h:pendingRect.h};
                             try{
-                              await saveTemplateRegion(customerName,field,region);
+                              // DECISION(v1.19.661): Pass the current page's dataUrl so saveTemplateRegion
+                              // can generate a preview crop + full-page context thumbnail. If the page only
+                              // has a storageUrl, fetch it via ensureDataUrl first.
+                              let src=pg.dataUrl;
+                              if(!src&&pg.storageUrl){try{const p=await ensureDataUrl(pg);src=p.dataUrl;}catch(e){}}
+                              await saveTemplateRegion(customerName,field,region,{sourceDataUrl:src});
                               setPendingRect(null);setPendingType(null);setPendingNote("");
                               alert(`Saved as ${label} template region for customer "${customerName}". Future extractions for this customer will crop from this exact area.`);
                             }catch(e){alert("Save failed: "+e.message);}
@@ -22856,6 +22917,154 @@ function APISetupModal({uid,onClose}){
 // was established in v1.19.655 (auto-learning from corrections). This UI makes the
 // templates visible and editable so users can prune bad label mappings or reorder
 // preferences. Regions field is shown read-only for now (Session 2 will add region drawing).
+// DECISION(v1.19.661): TemplateRegionRow renders the visual preview + an inline editor so
+// users can see the exact crop that the AI sees for each field, and adjust it without
+// leaving the modal. If the region was saved pre-v1.19.661 it has no preview/contextImage
+// — the row falls back to % coords and points users to the "draw on a drawing" flow.
+function TemplateRegionRow({field,label,region,customerName,onCleared,onSaved}){
+  const [editing,setEditing]=useState(false);
+  const [rect,setRect]=useState(null); // {x,y,w,h} fractional while editing
+  const [saving,setSaving]=useState(false);
+  const [dragMode,setDragMode]=useState(null); // "move" | "nw" | "ne" | "sw" | "se" | "n" | "s" | "e" | "w"
+  const [dragStart,setDragStart]=useState(null); // {mx,my,origRect}
+  const imgRef=useRef(null);
+  const r=region;
+  // Reset local rect whenever we enter edit mode
+  useEffect(()=>{if(editing&&r)setRect({x:r.x,y:r.y,w:r.w,h:r.h});},[editing,r?.savedAt]);
+  function getNorm(e){
+    if(!imgRef.current)return null;
+    const b=imgRef.current.getBoundingClientRect();
+    return{x:(e.clientX-b.left)/b.width,y:(e.clientY-b.top)/b.height};
+  }
+  function onHandleDown(mode,e){
+    e.preventDefault();e.stopPropagation();
+    const p=getNorm(e);if(!p||!rect)return;
+    setDragMode(mode);setDragStart({mx:p.x,my:p.y,orig:{...rect}});
+  }
+  function onMouseMove(e){
+    if(!dragMode||!dragStart||!rect)return;
+    e.preventDefault();
+    const p=getNorm(e);if(!p)return;
+    const dx=p.x-dragStart.mx,dy=p.y-dragStart.my;
+    const o=dragStart.orig;
+    let nx=o.x,ny=o.y,nw=o.w,nh=o.h;
+    if(dragMode==="move"){nx=o.x+dx;ny=o.y+dy;}
+    else{
+      if(dragMode.includes("w")){nx=o.x+dx;nw=o.w-dx;}
+      if(dragMode.includes("e")){nw=o.w+dx;}
+      if(dragMode.includes("n")){ny=o.y+dy;nh=o.h-dy;}
+      if(dragMode.includes("s")){nh=o.h+dy;}
+    }
+    // Clamp + min size
+    if(nw<0.01){nw=0.01;}if(nh<0.01){nh=0.01;}
+    nx=Math.max(0,Math.min(1-nw,nx));ny=Math.max(0,Math.min(1-nh,ny));
+    if(nx+nw>1)nw=1-nx;if(ny+nh>1)nh=1-ny;
+    setRect({x:nx,y:ny,w:nw,h:nh});
+  }
+  function onMouseUp(){setDragMode(null);setDragStart(null);}
+  async function handleSave(){
+    if(!rect||!r?.contextImage)return;
+    setSaving(true);
+    try{
+      await saveTemplateRegion(customerName,field,rect,{reuseContext:r.contextImage});
+      setEditing(false);
+      if(onSaved)await onSaved();
+    }catch(e){alert("Save failed: "+e.message);}
+    setSaving(false);
+  }
+  async function handleClear(){
+    if(!window.confirm(`Clear ${label} region for ${customerName}?`))return;
+    try{await deleteTemplateRegion(customerName,field);if(onCleared)await onCleared();}
+    catch(e){alert("Clear failed: "+e.message);}
+  }
+  const hasPreview=!!(r&&r.preview);
+  const hasContext=!!(r&&r.contextImage);
+  return(
+    <div style={{padding:"10px 0",borderTop:`1px solid ${C.border}`}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+        <span style={{minWidth:110,color:"#c4b5fd",fontWeight:600}}>📌 {label}</span>
+        {r?(
+          <>
+            <span style={{flex:1,fontFamily:"ui-monospace,monospace",fontSize:11,color:C.muted}}>
+              x={(r.x*100).toFixed(0)}% · y={(r.y*100).toFixed(0)}% · w={(r.w*100).toFixed(0)}% · h={(r.h*100).toFixed(0)}%
+            </span>
+            {hasContext&&!editing&&(
+              <button onClick={()=>setEditing(true)} style={{background:"rgba(167,139,250,0.15)",border:"1px solid #a78bfa66",color:"#c4b5fd",fontSize:11,padding:"3px 10px",borderRadius:6,cursor:"pointer",fontWeight:600}}>✎ Edit</button>
+            )}
+            <button onClick={handleClear} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12,padding:"2px 8px"}}>🗑 Clear</button>
+          </>
+        ):(
+          <span style={{flex:1,fontSize:11,color:C.muted,fontStyle:"italic"}}>— no region saved —</span>
+        )}
+      </div>
+      {/* Preview crop (what the AI sees) */}
+      {r&&hasPreview&&!editing&&(
+        <div style={{marginTop:8,marginLeft:118,display:"flex",alignItems:"flex-start",gap:10}}>
+          <div style={{fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,fontWeight:600,minWidth:80}}>What AI sees</div>
+          <div style={{background:"#000",border:`1px solid ${C.border}`,borderRadius:6,padding:4,maxWidth:360}}>
+            <img src={r.preview} alt="Region preview" style={{display:"block",maxWidth:"100%",maxHeight:120,width:"auto",height:"auto"}}/>
+          </div>
+        </div>
+      )}
+      {r&&!hasPreview&&!editing&&(
+        <div style={{marginTop:6,marginLeft:118,fontSize:11,color:"#fbbf24",fontStyle:"italic"}}>
+          ⚠ Saved before previews were supported. Re-draw the region from any drawing to add a preview + enable inline editing.
+        </div>
+      )}
+      {/* Inline editor — draggable/resizable rectangle on context image */}
+      {editing&&hasContext&&rect&&(
+        <div style={{marginTop:10,marginLeft:118}}>
+          <div style={{fontSize:11,color:C.muted,marginBottom:6,lineHeight:1.4}}>
+            Drag the rectangle to reposition, or drag any corner/edge to resize. Click <strong style={{color:"#c4b5fd"}}>Save</strong> when it's right.
+          </div>
+          <div style={{position:"relative",display:"inline-block",border:`1px solid ${C.border}`,borderRadius:6,overflow:"hidden",background:"#000",maxWidth:"100%",userSelect:"none"}}
+               onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp}>
+            <img ref={imgRef} src={r.contextImage} alt="Context" draggable={false}
+                 style={{display:"block",maxWidth:"100%",maxHeight:440,width:"auto",height:"auto"}}/>
+            {/* Dim overlay */}
+            <div style={{position:"absolute",inset:0,pointerEvents:"none"}}>
+              <svg width="100%" height="100%" style={{position:"absolute",inset:0}} preserveAspectRatio="none" viewBox="0 0 100 100">
+                <defs>
+                  <mask id={`mask_${field}`}>
+                    <rect x="0" y="0" width="100" height="100" fill="white"/>
+                    <rect x={rect.x*100} y={rect.y*100} width={rect.w*100} height={rect.h*100} fill="black"/>
+                  </mask>
+                </defs>
+                <rect x="0" y="0" width="100" height="100" fill="rgba(0,0,0,0.55)" mask={`url(#mask_${field})`}/>
+                <rect x={rect.x*100} y={rect.y*100} width={rect.w*100} height={rect.h*100} fill="none" stroke="#c4b5fd" strokeWidth="0.3" vectorEffect="non-scaling-stroke"/>
+              </svg>
+            </div>
+            {/* Rectangle + handles (positioned in %, clickable) */}
+            <div style={{position:"absolute",left:(rect.x*100)+"%",top:(rect.y*100)+"%",width:(rect.w*100)+"%",height:(rect.h*100)+"%",cursor:dragMode==="move"?"grabbing":"grab"}}
+                 onMouseDown={(e)=>onHandleDown("move",e)}>
+              {/* Corner + edge handles */}
+              {[
+                {m:"nw",s:{left:-5,top:-5,cursor:"nwse-resize"}},
+                {m:"ne",s:{right:-5,top:-5,cursor:"nesw-resize"}},
+                {m:"sw",s:{left:-5,bottom:-5,cursor:"nesw-resize"}},
+                {m:"se",s:{right:-5,bottom:-5,cursor:"nwse-resize"}},
+                {m:"n",s:{left:"calc(50% - 5px)",top:-5,cursor:"ns-resize"}},
+                {m:"s",s:{left:"calc(50% - 5px)",bottom:-5,cursor:"ns-resize"}},
+                {m:"w",s:{left:-5,top:"calc(50% - 5px)",cursor:"ew-resize"}},
+                {m:"e",s:{right:-5,top:"calc(50% - 5px)",cursor:"ew-resize"}},
+              ].map(h=>(
+                <div key={h.m} onMouseDown={(e)=>onHandleDown(h.m,e)}
+                  style={{position:"absolute",width:10,height:10,background:"#c4b5fd",border:"1px solid #fff",borderRadius:2,...h.s}}/>
+              ))}
+            </div>
+          </div>
+          <div style={{marginTop:8,display:"flex",gap:8,alignItems:"center"}}>
+            <button onClick={handleSave} disabled={saving} style={{background:"#a78bfa",color:"#fff",border:"none",fontSize:12,padding:"6px 16px",borderRadius:6,cursor:saving?"default":"pointer",fontWeight:600,opacity:saving?0.6:1}}>{saving?"Saving…":"Save"}</button>
+            <button onClick={()=>setEditing(false)} disabled={saving} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,fontSize:12,padding:"6px 14px",borderRadius:6,cursor:"pointer"}}>Cancel</button>
+            <span style={{fontSize:11,color:C.muted,fontFamily:"ui-monospace,monospace"}}>
+              x={(rect.x*100).toFixed(0)}% · y={(rect.y*100).toFixed(0)}% · w={(rect.w*100).toFixed(0)}% · h={(rect.h*100).toFixed(0)}%
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 function CustomerTemplatesModal({uid,onClose}){
   const [templates,setTemplates]=useState({});
   const [loading,setLoading]=useState(true);
@@ -23007,31 +23216,20 @@ function CustomerTemplatesModal({uid,onClose}){
                     <br/>
                     <strong style={{color:"#c4b5fd"}}>To add a region:</strong> open any drawing in the lightbox, enter Region Mode (🔲), draw a rectangle, then click 📌 DWG #, 📌 Description, or 📌 Rev under the "Customer Template" section.
                   </div>
+                  {/* DECISION(v1.19.661): Render a visual preview + edit flow per region so users
+                     can see what the AI sees and fix the rectangle if it's off. */}
                   {["drawingNo","drawingDesc","drawingRev"].map(field=>{
                     const labels={drawingNo:"DWG #",drawingDesc:"Description",drawingRev:"Rev"};
                     const r=curTemplate.regions?.[field];
                     return(
-                      <div key={field} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderTop:`1px solid ${C.border}`,fontSize:12}}>
-                        <span style={{minWidth:110,color:"#c4b5fd",fontWeight:600}}>📌 {labels[field]}</span>
-                        {r?(
-                          <>
-                            <span style={{flex:1,fontFamily:"ui-monospace,monospace",fontSize:11,color:C.muted}}>
-                              x={(r.x*100).toFixed(0)}% · y={(r.y*100).toFixed(0)}% · w={(r.w*100).toFixed(0)}% · h={(r.h*100).toFixed(0)}%
-                            </span>
-                            <button onClick={async()=>{
-                              if(!window.confirm(`Clear ${labels[field]} region for ${curTemplate.customerName||selectedCust}?`))return;
-                              try{
-                                await deleteTemplateRegion(curTemplate.customerName||selectedCust,field);
-                                _ctCache=null;
-                                const all=await loadCustomerTemplates();
-                                setTemplates(all||{});
-                              }catch(e){alert("Delete failed: "+e.message);}
-                            }} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12,padding:"2px 8px"}}>🗑 Clear</button>
-                          </>
-                        ):(
-                          <span style={{flex:1,fontSize:11,color:C.muted,fontStyle:"italic"}}>— no region saved —</span>
-                        )}
-                      </div>
+                      <TemplateRegionRow key={field}
+                        field={field}
+                        label={labels[field]}
+                        region={r}
+                        customerName={curTemplate.customerName||selectedCust}
+                        onCleared={async()=>{_ctCache=null;const all=await loadCustomerTemplates();setTemplates(all||{});}}
+                        onSaved={async()=>{_ctCache=null;const all=await loadCustomerTemplates();setTemplates(all||{});}}
+                      />
                     );
                   })}
                 </div>
