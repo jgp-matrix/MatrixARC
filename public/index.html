@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.686";
+const APP_VERSION="v1.19.687";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14165,6 +14165,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(r.id!==id)return r;
       const next={...r,[field]:val};
       if(field==="qty"&&r.suspectQty){delete next.suspectQty;delete next.suspectQtyReason;}
+      // DECISION(v1.19.687): Manual edit of leadTimeDays — stamp source, timestamp, clear estimate flag.
+      if(field==="leadTimeDays"){
+        next.leadTimeSource="manual";
+        next.leadTimeUpdatedAt=Date.now();
+        next.leadTimeEstimated=false;
+      }
       return next;
     })};
     onUpdate(updated);
@@ -15738,12 +15744,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <col style={{width:42}}/><col style={{width:42}}/><col style={{width:42}}/>
                 <col style={{width:"18%"}}/><col style={{width:28}}/><col style={{width:"22%"}}/>
                 <col style={{width:"10%"}}/><col style={{width:"11%"}}/>
-                <col style={{width:82}}/><col style={{width:72}}/><col style={{width:60}}/><col style={{width:40}}/>
+                <col style={{width:82}}/><col style={{width:72}}/><col style={{width:48}}/><col style={{width:60}}/><col style={{width:40}}/>
               </colgroup>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
-                  {["#","Ref","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Priced",""].map((h,hi)=>(
-                    <th key={h||"bc"+hi} style={{padding:"9px 4px",textAlign:h==="Unit $"||h==="Ext $"?"right":hi<3?"center":"left",color:C.muted,fontWeight:700,fontSize:11,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                  {/* DECISION(v1.19.687): Lead column placed between Ext $ and Priced per user pick. */}
+                  {["#","Ref","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Lead","Priced",""].map((h,hi)=>(
+                    <th key={h||"bc"+hi} style={{padding:"9px 4px",textAlign:h==="Unit $"||h==="Ext $"?"right":h==="Lead"||hi<3?"center":"left",color:C.muted,fontWeight:700,fontSize:11,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -16026,6 +16033,31 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     </td>
                     <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                       {row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
+                    </td>
+                    {/* DECISION(v1.19.687): Lead column — source + age in hover tooltip.
+                       Editable inline; manual edit flips source to "manual" via updateBomRow. */}
+                    <td style={{padding:"3px 2px",textAlign:"center",width:48,fontSize:13,verticalAlign:"middle"}}>
+                      {(()=>{
+                        if(row.isLaborRow)return <span style={{color:C.muted}}>—</span>;
+                        const v=row.leadTimeDays;
+                        if(v==null){
+                          if(readOnly)return <span style={{color:C.muted}}>—</span>;
+                          return <input type="text" value="" placeholder="—" readOnly={readOnly}
+                            onChange={e=>{const m=e.target.value.match(/\d+/);const n=m?+m[0]:null;if(n!=null)updateBomRow(row.id,"leadTimeDays",n);}}
+                            style={{width:40,textAlign:"center",background:"transparent",border:"none",color:C.muted,fontSize:13,cursor:"text"}}/>;
+                        }
+                        const staleMs=(_pricingConfig?.defaultStaleDays||60)*86400000;
+                        const stale=row.leadTimeUpdatedAt&&(Date.now()-row.leadTimeUpdatedAt)>staleMs;
+                        const estim=!!row.leadTimeEstimated;
+                        const srcLabels={supplier:"Supplier portal",scraper:"Web scraper",bc_vendor:"BC Item Vendor Catalog",bc_item:"BC Item Card",ai:"AI estimate — not firm",manual:"Manual entry"};
+                        const ageStr=row.leadTimeUpdatedAt?`${Math.max(0,Math.round((Date.now()-row.leadTimeUpdatedAt)/86400000))} days ago`:"unknown";
+                        const tip=`Lead time: ${v} days\nSource: ${srcLabels[row.leadTimeSource]||"Unknown"}\nUpdated: ${ageStr}${stale?" (stale — >60d)":""}`;
+                        return <input type="text" value={(stale?"~":"")+v+(estim?"*":"")}
+                          title={tip}
+                          onChange={e=>{const m=e.target.value.match(/\d+/);const n=m?+m[0]:null;updateBomRow(row.id,"leadTimeDays",n);}}
+                          readOnly={readOnly}
+                          style={{width:40,textAlign:"center",background:"transparent",border:"none",color:estim?C.muted:C.text,fontSize:13,fontStyle:estim?"italic":"normal",cursor:readOnly?"help":"text"}}/>;
+                      })()}
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,whiteSpace:"nowrap",cursor:(!row.isLaborRow&&row.unitPrice!=null)?"help":"default",...(()=>{
                       if(row.isLaborRow)return{color:C.muted};
