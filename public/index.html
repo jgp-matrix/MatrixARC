@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.677";
+const APP_VERSION="v1.19.678";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20412,6 +20412,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // DECISION(v1.19.599): Project presence — announce I'm viewing this project so teammates
   // see me listed under the DELETE button, and heartbeat so I don't go stale.
   const [viewers,setViewers]=useState([]); // [{uid, userName, userEmail, isOwner, lastSeen}]
+  // DECISION(v1.19.678): Owner Priority Mode — soft-lockout that activates when the project
+  // owner is present. Non-owners see banner + chime; 14 destructive actions are disabled.
+  // See docs/superpowers/specs/2026-04-23-owner-priority-mode-design.md
+  const [ownerPriorityActive,setOwnerPriorityActive]=useState(false);
+  const [takeoverActive,setTakeoverActive]=useState(null);
+  const [showTakeoverModal,setShowTakeoverModal]=useState(false);
+  const iAmOwner=!project.createdBy||project.createdBy===uid;
+  const iAmAdmin=_appCtx.role==="admin";
   useEffect(()=>{
     const cid=_appCtx.companyId;const projectId=init&&init.id;
     if(!cid||!projectId||!uid)return;
@@ -20448,6 +20456,31 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       fbDb.doc(presencePath).delete().catch(()=>{});
     };
   },[init&&init.id,uid]);
+
+  // DECISION(v1.19.678): Compute Owner Priority Mode from viewers + project doc.
+  // Active when owner is present (recent heartbeat OR lockActive checkbox) AND
+  // no takeover is currently overriding it AND I am not the owner.
+  useEffect(()=>{
+    if(iAmOwner){setOwnerPriorityActive(false);setTakeoverActive(null);return;}
+    const now=Date.now();
+    const ownerPresence=viewers.find(v=>v.isOwner&&v.uid===project.createdBy);
+    const lockHeld=!!project.ownerLockActive;
+    const ownerIsWatching=ownerPresence&&(lockHeld||(now-(ownerPresence.lastSeen||0))<90000);
+    const ta=project.ownerTakeoverActive;
+    const takeoverValid=ta&&ta.expiresAt>now;
+    setTakeoverActive(takeoverValid?ta:null);
+    setOwnerPriorityActive(!!ownerIsWatching&&!takeoverValid);
+  },[viewers,project.createdBy,project.ownerLockActive,project.ownerTakeoverActive,iAmOwner,uid]);
+  // DECISION(v1.19.678): Log state transitions for debug (remove when stable).
+  const _prevOwnerPriorityRef=useRef(false);
+  useEffect(()=>{
+    if(_prevOwnerPriorityRef.current!==ownerPriorityActive){
+      console.log("[OWNER PRIORITY]",ownerPriorityActive?"ACTIVATED":"DEACTIVATED",
+        "iAmOwner:",iAmOwner,"takeoverActive:",!!takeoverActive);
+      _prevOwnerPriorityRef.current=ownerPriorityActive;
+    }
+  },[ownerPriorityActive,iAmOwner,takeoverActive]);
+
   const [view,setView]=useState("panels"); // "panels"|"quote"
   const [autoPrint,setAutoPrint]=useState(false);
   const [rfqLoading,setRfqLoading]=useState(false);
