@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.662";
+const APP_VERSION="v1.19.663";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8114,6 +8114,49 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
 // ALL status displays (Badge, Dashboard columns, Quote Summary, PanelCard) use this function.
 function _isExcludedFromPriceCheck(r){
   return r.isLaborRow||r.customerSupplied||r.isContingency||/matrix\s*systems/i.test(r.bcVendorName||"")||/^job.?buyoff$/i.test(r.partNumber||"")||/crate/i.test(r.description||"");
+}
+// DECISION(v1.19.663): Quote send gating. Walk every panel's BOM and surface any row
+// that's missing a price, qty, or priced date (excluding labor/customer-supplied/
+// contingency/crate/job-buyoff). Returns a list suitable for display in an alert so
+// the user knows exactly which rows to fix. Used by QuoteSendModal.handleSend to
+// block the send action; printing/viewing are NOT gated — the user can still open
+// the quote editor and hit Just Print.
+function findIncompleteQuoteItems(project){
+  if(!project)return[];
+  const issues=[];
+  const panels=project.panels||[];
+  for(let pi=0;pi<panels.length;pi++){
+    const pan=panels[pi];
+    const bom=pan.bom||[];
+    for(const r of bom){
+      if(_isExcludedFromPriceCheck(r))continue;
+      const reasons=[];
+      const pn=(r.partNumber||"").trim();
+      const desc=(r.description||"").trim();
+      // Skip entirely-blank rows — they aren't real items
+      if(!pn&&!desc)continue;
+      if(!r.qty||+r.qty===0)reasons.push("qty");
+      if(!r.unitPrice||+r.unitPrice===0)reasons.push("price");
+      if(!r.priceDate)reasons.push("priced date");
+      if(reasons.length){
+        issues.push({
+          panelName:pan.name||`Panel ${pi+1}`,
+          partNumber:pn||"(no part #)",
+          description:desc.slice(0,60),
+          missing:reasons,
+        });
+      }
+    }
+  }
+  return issues;
+}
+function formatIncompleteQuoteAlert(issues){
+  if(!issues.length)return"";
+  const maxShow=12;
+  const shown=issues.slice(0,maxShow);
+  const lines=shown.map(i=>`  • ${i.panelName} — ${i.partNumber}${i.description?" · "+i.description:""}  [missing: ${i.missing.join(", ")}]`);
+  const more=issues.length>maxShow?`\n  … and ${issues.length-maxShow} more`:"";
+  return `Quote cannot be SENT — ${issues.length} item${issues.length>1?"s":""} still need${issues.length===1?"s":""} price, qty, or priced date:\n\n${lines.join("\n")}${more}\n\nFix those rows first, or use "🖨 Just Print" if you only want a hard copy for review.`;
 }
 function computeProjectEffectiveStatus(project){
   if(!project)return"draft";
@@ -18683,8 +18726,17 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
 
   function fmtDate(iso){if(!iso)return"";try{return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit",hour:"numeric",minute:"2-digit"});}catch(e){return"";}}
 
+  // DECISION(v1.19.663): Gate send on complete pricing. Printing/viewing is still allowed
+  // (the "🖨 Just Print" button bypasses this). Computed live so edits before clicking Send
+  // are reflected.
+  const incompleteItems=findIncompleteQuoteItems(project);
+  const sendBlocked=incompleteItems.length>0;
   async function handleSend(){
     const m=modalData;
+    if(sendBlocked){
+      alert(formatIncompleteQuoteAlert(incompleteItems));
+      return;
+    }
     if(sendMode==="new"&&!m.to.trim()){alert("Enter a recipient email.");return;}
     if(sendMode==="reply"&&!selectedThread){alert("Select an email thread to reply to.");return;}
     setSending(true);
@@ -18812,12 +18864,36 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
         </div>
         <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line",marginTop:6}}>{modalData.signature}</div>
         </div>
+        {/* DECISION(v1.19.663): Block Send when any item is missing price, qty, or priced date.
+            Show a warning banner listing the issues; Just Print remains available. */}
+        {sendBlocked&&(
+          <div style={{marginTop:12,padding:"10px 12px",background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,flexShrink:0}}>
+            <div style={{fontSize:12,fontWeight:700,color:C.yellow,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
+              <span>⚠</span>
+              <span>Send disabled — {incompleteItems.length} item{incompleteItems.length>1?"s":""} incomplete</span>
+            </div>
+            <div style={{fontSize:11,color:"#fde68a",lineHeight:1.5,maxHeight:140,overflow:"auto"}}>
+              {incompleteItems.slice(0,8).map((i,k)=>(
+                <div key={k} style={{padding:"2px 0"}}>
+                  <span style={{color:"#fcd34d",fontWeight:600}}>{i.panelName}</span>
+                  <span style={{fontFamily:"ui-monospace,monospace",marginLeft:6}}>{i.partNumber}</span>
+                  <span style={{color:C.red,marginLeft:6,fontWeight:600}}>missing: {i.missing.join(", ")}</span>
+                </div>
+              ))}
+              {incompleteItems.length>8&&<div style={{padding:"2px 0",color:C.muted,fontStyle:"italic"}}>… and {incompleteItems.length-8} more</div>}
+            </div>
+            <div style={{marginTop:6,fontSize:11,color:C.muted,fontStyle:"italic"}}>
+              Fix these rows first, or use <strong style={{color:C.green}}>🖨 Just Print</strong> for a hard copy without sending.
+            </div>
+          </div>
+        )}
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,flexShrink:0}}>
           <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
           <button onClick={()=>{onClose();setTimeout(()=>{const evt=new CustomEvent("arc-just-print");window.dispatchEvent(evt);},100);}} style={btn(C.greenDim,C.green,{fontSize:13,fontWeight:700,border:`1px solid ${C.green}44`})}>🖨 Just Print</button>
-          <button onClick={handleSend} disabled={sending}
-            style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:sending?0.5:1})}>
-            {sending?"Sending…":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
+          <button onClick={handleSend} disabled={sending||sendBlocked}
+            title={sendBlocked?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:""}
+            style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:(sending||sendBlocked)?0.4:1,cursor:sendBlocked?"not-allowed":undefined})}>
+            {sending?"Sending…":sendBlocked?"✉ Send (blocked)":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
           </button>
         </div>
       </div>
@@ -21058,6 +21134,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                   <button onClick={()=>setQuoteSendModal(null)} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
                   <button onClick={async()=>{
                     const m=quoteSendModal;
+                    // DECISION(v1.19.663): Guard on incomplete BOM rows.
+                    const incomplete=findIncompleteQuoteItems(project);
+                    if(incomplete.length){alert(formatIncompleteQuoteAlert(incomplete));return;}
                     if(!m.to.trim()){alert("Enter a recipient email.");return;}
                     const graphToken=await acquireGraphToken();
                     if(!graphToken){alert("Could not get Microsoft 365 token.");return;}
