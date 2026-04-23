@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.673";
+const APP_VERSION="v1.19.674";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5752,7 +5752,7 @@ STEP 4 — EXTRACT EVERY ROW (no skipping):
   un-labeled column. You MUST capture EVERY alphanumeric catalog code on the row — do not
   discard a second/third PN just because it's in a column you'd otherwise ignore.
 
-  Output ALL catalog codes found on the row via the `additionalPartNumbers` array on the item.
+  Output ALL catalog codes found on the row via the "additionalPartNumbers" array on the item.
   Each entry: {"partNumber":"...", "relationship":"base|socket|aux|accessory|other", "context":"brief snippet showing where it was"}.
 
   Examples:
@@ -5770,8 +5770,8 @@ STEP 4 — EXTRACT EVERY ROW (no skipping):
   Detection rule for additionalPartNumbers: look for any alphanumeric token on the row that
   (a) has letters AND digits, (b) is 4+ chars, (c) is distinct from the primary partNumber,
   and (d) is NOT a ref designator (e.g. "CB1", "M2", "OL1" — single-letter prefix + small number
-  typical of tag/ID columns). Ref designators go in the `notes` field as before. Catalog codes
-  (longer, often with dashes like "SH2B-05" or "100-FA22") go in `additionalPartNumbers`.
+  typical of tag/ID columns). Ref designators go in the "notes" field as before. Catalog codes
+  (longer, often with dashes like "SH2B-05" or "100-FA22") go in "additionalPartNumbers".
 
   If you're uncertain whether a code is a ref designator or a catalog code: when in doubt,
   include it in additionalPartNumbers. ARC's post-processor will de-duplicate and filter.
