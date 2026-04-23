@@ -19,6 +19,9 @@ Other skills present but lower-utility for this solo/single-file codebase: `suba
 - **"Superpowers on this"** / **"Superpower it"** → same as "use Superpowers".
 - If multiple skills apply (e.g. a multi-step feature with a bug inside), load them in sequence: plan first, then debug as issues surface.
 
+### User preference: always render spec + plan content inline
+When the brainstorming or writing-plans skill produces a design spec or implementation plan document, SAVE it to the standard location (`docs/superpowers/specs/…` or `docs/superpowers/plans/…`) AND ALSO paste the full file content into the chat. User prefers to read specs/plans in the chat directly rather than opening the file. For long files (500+ lines) offer to chunk it into sections rather than a single message — but always show the content inline unless the user explicitly asks to just see the file path.
+
 ## Project Overview
 - **App**: Firebase-hosted at https://matrix-arc.web.app
 - **Architecture**: Single-file app — `public/index.html` (~1MB, no build step) + Cloud Functions in `functions/index.js`
