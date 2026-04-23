@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.669";
+const APP_VERSION="v1.19.670";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -19871,7 +19871,16 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     {_sendBlocked&&(
                       <div style={{background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 12px",fontSize:11,color:"#fde68a",lineHeight:1.5}}>
                         <div style={{fontWeight:700,color:C.yellow,marginBottom:4,fontSize:12}}>⚠ Send blocked — {_incompleteItems.length} item{_incompleteItems.length>1?"s":""} incomplete</div>
-                        <div>Fix the red rows in the BOM below (missing price, qty, or priced date). Once fixed, the Send button will enable. You can still use <strong style={{color:C.green}}>🖨 Just Print</strong> from the Send dialog for a review copy.</div>
+                        <div style={{marginBottom:8}}>Fix the red rows in the BOM below (missing price, qty, or priced date). Once fixed, the Send button will enable.</div>
+                        {/* DECISION(v1.19.670): Just Print button lives directly in the banner so
+                           users aren't blocked from printing a review copy when Send is disabled.
+                           Previously the banner said "use Just Print from the Send dialog" — but the
+                           Send button was disabled, so the dialog couldn't be opened. Fires the
+                           same arc-just-print event that the in-modal button uses. */}
+                        <button onClick={()=>{const evt=new CustomEvent("arc-just-print");window.dispatchEvent(evt);}}
+                          style={btn(C.greenDim,C.green,{fontSize:12,padding:"5px 14px",fontWeight:700,border:`1px solid ${C.green}66`})}>
+                          🖨 Just Print (review copy)
+                        </button>
                       </div>
                     )}
                 <button data-tour="print-quote-btn" disabled={_sendBlocked}
