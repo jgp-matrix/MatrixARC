@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.663";
+const APP_VERSION="v1.19.664";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20888,22 +20888,69 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // Add unmatched BOM rows (requested but supplier didn't price)
     const unmatchedBom=bomRows.filter(r=>!usedBomIds.has(r.id));
 
-    setQuoteReview({submission,matches,unmatchedBom});
+    // DECISION(v1.19.664): Snapshot updatedAt so doApplyPortalPrices can detect concurrent
+    // edits to the project between review-start and apply-click (another team member editing
+    // a row's price, or user editing a panel's BOM in a different tab). Without this, the
+    // write in doApplyPortalPrices would overwrite those edits.
+    const projectUpdatedAtAtReviewStart=projectRef.current?.updatedAt||null;
+    setQuoteReview({submission,matches,unmatchedBom,projectUpdatedAtAtReviewStart});
   }
 
   async function doApplyPortalPrices(submission){
+    // DECISION(v1.19.664): Stale-state guard. If the project was edited between the time
+    // the review was opened (applyPortalPrices) and now (doApplyPortalPrices), prompt the
+    // user before writing — otherwise the BOM edits from another session would be clobbered.
+    // Snapshot captured in applyPortalPrices as projectUpdatedAtAtReviewStart.
+    try{
+      const reviewStartedAt=quoteReview?.projectUpdatedAtAtReviewStart||null;
+      const currentUpdatedAt=projectRef.current?.updatedAt||null;
+      if(reviewStartedAt&&currentUpdatedAt&&currentUpdatedAt!==reviewStartedAt){
+        const secs=Math.max(1,Math.round((currentUpdatedAt-reviewStartedAt)/1000));
+        const cont=window.confirm(
+          `This project was edited ${secs<60?secs+" seconds":Math.round(secs/60)+" minutes"} after you opened this review — possibly by another team member or another tab.\n\n`+
+          `Applying these prices will overwrite any concurrent changes to the BOM.\n\n`+
+          `Click OK to apply anyway, or Cancel to close this review and re-open it to see the latest data.`
+        );
+        if(!cont){setQuoteReview(null);setShowPortalModal(false);return;}
+      }
+    }catch(e){console.warn("stale-state guard check failed (non-fatal):",e);}
+    // DECISION(v1.19.664): Collect learning-DB save warnings so we can surface them to
+    // the user at the end instead of swallowing silently. User sees a single consolidated
+    // note if any learning writes failed, so they know the BOM succeeded but the next
+    // extraction won't benefit from this session's learnings.
+    const learningSaveWarnings=[];
     try{
     // Save cannot-supply records to Firestore for future tracking
+    // DECISION(v1.19.664): De-duplicate {vendorName, partNumber} before saving. Previously
+    // arrayUnion appended every time the same supplier marked the same part as cannot-supply,
+    // leading to unbounded duplicates on re-applies. Now we read existing records, merge new
+    // ones by {vendor, PN} key, and write back the deduped set.
     const cantItems=(submission.lineItems||[]).filter(item=>item.cannotSupply&&item.partNumber);
     if(cantItems.length>0){
-      const records=cantItems.map(item=>({
-        vendorName:submission.vendorName||'',
-        partNumber:(item.partNumber||'').trim(),
-        description:item.description||'',
-        markedAt:Date.now(),
-        rfqNum:submission.rfqNum||'',
-      }));
-      fbDb.doc(`users/${uid}/config/supplierCantSupply`).set({records:firebase.firestore.FieldValue.arrayUnion(...records)},{merge:true}).catch(e=>console.warn("supplierCantSupply save failed:",e));
+      try{
+        const docRef=fbDb.doc(`users/${uid}/config/supplierCantSupply`);
+        const snap=await docRef.get();
+        const existing=(snap.exists?(snap.data().records||[]):[]);
+        const byKey=new Map();
+        // Seed with existing; new records overwrite older ones for the same key so markedAt/rfqNum reflect latest
+        for(const r of existing){
+          const key=`${(r.vendorName||'').toLowerCase().trim()}::${(r.partNumber||'').trim().toUpperCase()}`;
+          if(key!=="::")byKey.set(key,r);
+        }
+        for(const item of cantItems){
+          const vn=(submission.vendorName||'').trim();
+          const pn=(item.partNumber||'').trim();
+          if(!vn&&!pn)continue;
+          const key=`${vn.toLowerCase()}::${pn.toUpperCase()}`;
+          byKey.set(key,{vendorName:vn,partNumber:pn,description:item.description||'',markedAt:Date.now(),rfqNum:submission.rfqNum||''});
+        }
+        const deduped=Array.from(byKey.values());
+        await docRef.set({records:deduped},{merge:false});
+        _dbg("supplierCantSupply: saved",deduped.length,"deduped records (",existing.length,"existing +",cantItems.length,"new)");
+      }catch(e){
+        console.warn("supplierCantSupply save failed:",e);
+        learningSaveWarnings.push(`cannot-supply learning (${cantItems.length} item${cantItems.length>1?"s":""})`);
+      }
     }
     // Save confirmed supplier PN → Matrix PN crossings to sqCrossings for future auto-matching
     const crossings=submission.confirmedCrossings||[];
@@ -20913,8 +20960,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         const key=c.supplierPartNumber.toLowerCase().trim();
         crossData[key]={bcItemNumber:c.matrixPartNumber,bcItemDescription:c.description||'',confirmedAt:Date.now(),source:'supplier_portal'};
       });
-      fbDb.doc(`users/${uid}/config/sqCrossings`).set(crossData,{merge:true}).catch(e=>console.warn("sqCrossings save failed:",e));
-      _dbg('PORTAL CROSSINGS: saved',crossings.length,'confirmed supplier→Matrix part crossings');
+      try{
+        await fbDb.doc(`users/${uid}/config/sqCrossings`).set(crossData,{merge:true});
+        _dbg('PORTAL CROSSINGS: saved',crossings.length,'confirmed supplier→Matrix part crossings');
+      }catch(e){
+        console.warn("sqCrossings save failed:",e);
+        learningSaveWarnings.push(`supplier-to-Matrix PN crossings (${crossings.length})`);
+      }
     }
     // Build normalized part# → price map (skip cannot-supply items)
     // DECISION(v1.19.449): For crossed items (supplier quotes a different PN than the BOM),
@@ -21009,13 +21061,23 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }catch(e){console.warn("Failed to attach supplier quote to BC:",e);}
     }
     const cantCount=cantItems.length;
-    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${crossedSkipped>0?`\n${crossedSkipped} crossed item${crossedSkipped!==1?'s':''} — price pushed to supplier's PN in BC only (BOM unchanged).`:''}${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.`);
+    // DECISION(v1.19.664): If any learning-DB saves failed, tell the user in the same alert
+    // so they know the BOM work succeeded but future extractions won't benefit from this run.
+    const learningWarn=learningSaveWarnings.length>0
+      ? `\n\n⚠ Learning database saves failed: ${learningSaveWarnings.join(", ")}. The BOM changes are applied, but ARC won't remember these for the next extraction. Try again later.`
+      : '';
+    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${crossedSkipped>0?`\n${crossedSkipped} crossed item${crossedSkipped!==1?'s':''} — price pushed to supplier's PN in BC only (BOM unchanged).`:''}${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.${learningWarn}`);
     }catch(e){
       console.error("applyPortalPrices error:",e);
       alert("Error applying prices: "+e.message+"\nPrices may have been partially applied. Check console for details.");
     }
-    // Always close modal and mark as imported
-    fbDb.collection('rfqUploads').doc(submission.id).update({status:'imported',importedAt:Date.now()}).catch(()=>{});
+    // DECISION(v1.19.664): Surface import-status save failures instead of silent swallow.
+    // If the status update fails, the submission may re-appear as "new" in the list even
+    // though prices were applied — user needs to know.
+    fbDb.collection('rfqUploads').doc(submission.id).update({status:'imported',importedAt:Date.now()}).catch(e=>{
+      console.warn("rfqUploads status update failed:",e);
+      alert(`Note: could not mark the supplier submission as imported in Firestore (${e.message}). It may re-appear as "new" in the list — refresh to clear.`);
+    });
     setShowPortalModal(false);
   }
 
@@ -27916,14 +27978,23 @@ function stripMfrPrefix(pn){
   }
   return pn.trim();
 }
-// Fuzzy match: exact after normalize, OR one contains the other (handles manufacturer prefix)
+// Fuzzy match: exact after normalize, OR one is an ANCHORED (prefix/suffix) match of the
+// other with a minimum length. Used for supplier/BC PN matching where vendors often prepend
+// or append manufacturer codes (e.g. "HOFF CEL550M" vs BC "CEL550M").
+// DECISION(v1.19.664): Tightened from middle-substring containment to prefix/suffix only
+// with a 5-char minimum on the shorter string. Previous version allowed "ARL449" in
+// "MARL4497" (middle substring) and short generic codes cross-matched unrelated parts.
 function partMatch(a,b){
   const na=normPart(a),nb=normPart(b);
   if(!na||!nb||na.length<3||nb.length<3)return false;
   if(na===nb)return true;
-  // Contains: "HOFFCEL550M" contains "CEL550M", or "ARL449" within "ARL449"
-  if(nb.length>=4&&na.includes(nb))return true;
-  if(na.length>=4&&nb.includes(na))return true;
+  // Anchored-only containment: the shorter string must be a prefix or suffix of the
+  // longer, AND must itself be at least 5 chars. This covers the common MFR-prefix
+  // pattern ("HOFFCEL550M" ends with "CEL550M") and MFR-suffix pattern ("AB-1492-W3"
+  // starts with "1492-W3") while blocking middle-substring false positives.
+  const [short,long]=na.length<=nb.length?[na,nb]:[nb,na];
+  if(short.length<5)return false;
+  if(long.startsWith(short)||long.endsWith(short))return true;
   return false;
 }
 
@@ -27973,6 +28044,9 @@ function SupplierPortalPage({token}){
     if(!f||!f.type.includes("pdf")){alert("Please select a PDF file.");return;}
     setFile(f);setPhase('analyzing');setAiError(null);
     const allPrices={};const allConf={};const allLeadTimes={};const allSupplierPNs={};const allSupplierLineNums={};const collectedExtracted=[];let lastSummary=null;
+    // DECISION(v1.19.664): Track if any batch reported crossRefEnriched=false so we can
+    // show a non-blocking note to the supplier that extraction was slightly less accurate.
+    let crossRefMissed=false;
     try{
       setAnalyzeMsg(`Reading ${f.name}…`);
       await window.pdfjsReady;
@@ -28004,6 +28078,10 @@ function SupplierPortalPage({token}){
         const extracted=result.data?.extracted||[];
         if(result.data?.quoteHeader&&!quoteHeaderInfo)setQuoteHeaderInfo(result.data.quoteHeader);
         if(result.data?.summary)lastSummary=result.data.summary;
+        // DECISION(v1.19.664): If the Cloud Function couldn't load saved part-number
+        // crossings, the supplierPartNumber fields may be blank for parts previously
+        // confirmed. Still accurate — just less helpful. Flag for non-blocking notice.
+        if(result.data&&result.data.crossRefEnriched===false)crossRefMissed=true;
         console.log('PORTAL EXTRACT: got',extracted.length,'results, summary:',result.data?.summary,'sample:',JSON.stringify(extracted.slice(0,3)));
         extracted.forEach(ex=>{
           collectedExtracted.push(ex);
@@ -28032,11 +28110,32 @@ function SupplierPortalPage({token}){
       Object.entries(allConf).forEach(([idx,c])=>{if(c==='high'||c==='medium')autoConfirm[idx]=true;});
       setConfirmedMatches(autoConfirm);
       setMorePages(null);
+      // DECISION(v1.19.664): Non-blocking notice — if the Cloud Function couldn't enrich
+      // with saved crossings, show it in the aiError slot as an informational message
+      // (not a hard error; extraction succeeded).
+      if(crossRefMissed){
+        setAiError("Note: saved supplier part-number crossings couldn't be loaded for this extraction. Prices and matching are still accurate; you may just need to manually enter a few supplier part numbers below.");
+      }
       setPhase('review');
     }catch(e){
+      // DECISION(v1.19.664): Partial-result save. Previously only unitPrices was partially
+      // restored on error — confidences, lead times, supplier PNs, extracted items list, and
+      // auto-confirmations were discarded, so if batch 5 of 10 failed the supplier had to
+      // re-upload the entire PDF from scratch. Now all accumulated state is saved with a
+      // "(partial)" marker in the error so the supplier can manually fill in the gaps.
       console.warn("ARC AI extraction failed:",e);
-      setAiError(e.message||String(e));
-      setUnitPrices(prev=>({...allPrices,...prev}));
+      const haveAny=Object.keys(allPrices).length>0||collectedExtracted.length>0;
+      setAiError((e.message||String(e))+(haveAny?` — partial results from successful batches have been preserved; missing items can be filled in manually below.`:''));
+      setUnitPrices(allPrices);
+      setAiConfidences(allConf);
+      setItemLeadTimes(allLeadTimes);
+      setSupplierPartNums(allSupplierPNs);
+      setSupplierLineNums(allSupplierLineNums);
+      setAllExtractedItems(collectedExtracted);
+      setExtractionSummary(lastSummary);
+      const autoConfirmPartial={};
+      Object.entries(allConf).forEach(([idx,c])=>{if(c==='high'||c==='medium')autoConfirmPartial[idx]=true;});
+      setConfirmedMatches(autoConfirmPartial);
       setPhase('review');
     }
   }
