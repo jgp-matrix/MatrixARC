@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.689";
+const APP_VERSION="v1.19.690";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14773,7 +14773,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const pns=batch.map(r=>(r.partNumber||"").trim()).filter(Boolean);
           const cr=await fn({partNumbers:pns});
           (cr.data.results||[]).forEach(function(r){
-            if(r.price>0)codaleMap[(r.partNumber||"").toUpperCase()]={price:r.price};
+            // DECISION(v1.19.690): Capture leadTime from Codale response when present.
+            // Codale Cloud Function may or may not return leadTime yet — handle both shapes.
+            if(r.price>0)codaleMap[(r.partNumber||"").toUpperCase()]={price:r.price,leadTime:r.leadTime||null};
             else console.warn("Codale: no price for",r.partNumber,r.error||"");
           });
         }catch(e){console.warn("Codale batch",batchNum,"failed:",e);_pp({msg:`Codale: batch ${batchNum} failed — ${e.message}`,pct:48});}
@@ -14785,7 +14787,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       updatedBom=updatedBom.map(r=>{
         if(!r.isLaborRow&&/codale/i.test(r.bcVendorName||"")){
           const pn=(r.partNumber||"").trim().toUpperCase();
-          if(codaleMap[pn]){codaleCount++;codalePns.add((r.partNumber||"").trim());return{...r,unitPrice:codaleMap[pn].price,priceSource:"bc"};}
+          if(codaleMap[pn]){
+            codaleCount++;codalePns.add((r.partNumber||"").trim());
+            const updates={unitPrice:codaleMap[pn].price,priceSource:"bc"};
+            // DECISION(v1.19.690): Parse Codale leadTime ("14 days" / "2 weeks" / "14d" / "21").
+            if(codaleMap[pn].leadTime&&r.leadTimeSource!=="supplier"){
+              const ltStr=String(codaleMap[pn].leadTime).trim();
+              let ltDays=null;
+              const wkMatch=ltStr.match(/(\d+)\s*-?\s*(\d+)?\s*(?:week|wk)/i);
+              const dayMatch=ltStr.match(/(\d+)\s*(?:day|d\b)/i);
+              const bareNum=ltStr.match(/^(\d+)/);
+              if(wkMatch){ltDays=(+wkMatch[2]||+wkMatch[1])*7;}
+              else if(dayMatch){ltDays=+dayMatch[1];}
+              else if(bareNum){ltDays=+bareNum[1];}
+              if(ltDays!=null&&ltDays>0&&ltDays<730){
+                updates.leadTimeDays=ltDays;
+                updates.leadTimeSource="scraper";
+                updates.leadTimeUpdatedAt=Date.now();
+                updates.leadTimeEstimated=false;
+              }
+            }
+            return{...r,...updates};
+          }
           else{codaleMissed.push(r.partNumber);}
         }
         return r;
@@ -14869,15 +14892,32 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           updatedBom=updatedBom.map(r=>{
             const pn=(r.partNumber||"").trim().toUpperCase();
             const pr=results[pn]||results[(r.partNumber||"").trim()];
+            let updates=null;
             if(pr&&pr.price){
               const numPrice=parseFloat(pr.price.replace(/[$,]/g,""));
               if(!isNaN(numPrice)&&numPrice>0){
                 scraperCount++;
                 scrapedPns.add((r.partNumber||"").trim());
-                return{...r,unitPrice:numPrice,priceSource:"bc"};
+                updates={unitPrice:numPrice,priceSource:"bc"};
               }
             }
-            return r;
+            // DECISION(v1.19.690): Scraper returns leadTime field via extract-step.
+            // Parse "14 days" / "2 weeks" / "14d" / "21" forms. Only apply if row doesn't
+            // already have a supplier-sourced (freshest) lead time.
+            if(pr&&pr.leadTime&&r.leadTimeSource!=="supplier"){
+              const ltStr=String(pr.leadTime).trim();
+              let ltDays=null;
+              const wkMatch=ltStr.match(/(\d+)\s*-?\s*(\d+)?\s*(?:week|wk)/i);
+              const dayMatch=ltStr.match(/(\d+)\s*(?:day|d\b)/i);
+              const bareNum=ltStr.match(/^(\d+)/);
+              if(wkMatch){ltDays=(+wkMatch[2]||+wkMatch[1])*7;}
+              else if(dayMatch){ltDays=+dayMatch[1];}
+              else if(bareNum){ltDays=+bareNum[1];}
+              if(ltDays!=null&&ltDays>0&&ltDays<730){
+                updates=Object.assign({},updates,{leadTimeDays:ltDays,leadTimeSource:"scraper",leadTimeUpdatedAt:Date.now(),leadTimeEstimated:false});
+              }
+            }
+            return updates?{...r,...updates}:r;
           });
           const scraperMissed=scraperItems.filter(r=>{const pn=(r.partNumber||"").trim().toUpperCase();const pr=results[pn]||results[(r.partNumber||"").trim()];return!pr||!pr.price;});
           _report.push({source:scraper.name,obtained:scraperCount,skipped:0,failed:scraperMissed.length,total:scraperItems.length,
