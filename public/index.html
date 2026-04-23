@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.666";
+const APP_VERSION="v1.19.667";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8214,7 +8214,7 @@ function Badge({status,project}){
   const map={
     draft:["#3d1a00","#f97316","Draft"],
     in_progress:[C.yellowDim,C.yellow,"In Process"],
-    rfqs:[C.redDim,C.red,"RFQ's"],
+    rfqs:[C.redDim,C.red,"RFQs"],
     pre_review:["#1a1040","#a78bfa","In Pre-Review"],
     post_review:["#1a1040","#a78bfa","In Post-Review"],
     evc:[C.greenDim,C.green,"Ready"],
@@ -18764,6 +18764,16 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
     }
     if(sendMode==="new"&&!m.to.trim()){alert("Enter a recipient email.");return;}
     if(sendMode==="reply"&&!selectedThread){alert("Select an email thread to reply to.");return;}
+    // DECISION(v1.19.667): Validate recipient emails before send. Catches typos like
+    // `jon@matrixpci,com` (comma instead of dot) which would otherwise split into two
+    // malformed addresses and get rejected by Graph API with a generic error.
+    if(sendMode==="new"){
+      const emailRe=/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+      const recipients=m.to.split(/[,;]\s*/).map(e=>e.trim()).filter(Boolean);
+      const bad=recipients.filter(e=>!emailRe.test(e));
+      if(recipients.length===0){alert("Enter at least one recipient email.");return;}
+      if(bad.length){alert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
+    }
     setSending(true);
     try{
       const graphToken=await acquireGraphToken();
@@ -18775,6 +18785,16 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
       await buildQuotePdfDoc(pdfDoc,project);
       const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
       console.log("[SEND QUOTE] PDF generated, base64 length:",pdfBase64?.length||0,"mode:",sendMode);
+      // DECISION(v1.19.667): Warn if PDF is getting close to Graph API request limits.
+      // Graph's sendMail endpoint caps at ~4MB for inline file attachments; above that we'd
+      // need to use LargeFileUploadTask which we don't implement. Warn at 3MB so sales has
+      // time to reduce the PDF (strip drawing pages or compress) before hitting a hard fail.
+      const approxBytes=Math.floor((pdfBase64?.length||0)*0.75);
+      if(approxBytes>3*1024*1024){
+        const mb=(approxBytes/(1024*1024)).toFixed(1);
+        const cont=window.confirm(`Warning: the quote PDF is ${mb} MB. Microsoft 365 sendMail inline attachments are limited to ~4 MB. Sending may fail.\n\nClick OK to attempt send anyway, or Cancel to reduce the PDF (remove drawing pages from the quote or contact engineering to compress images).`);
+        if(!cont){setSending(false);return;}
+      }
       const q=project.quote||{};
       const rev=project.quoteRev||0;
       const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
@@ -18796,9 +18816,18 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
           try{await bcSyncPanelPlanningLines(project.bcProjectNumber,i+1,project.panels[i],project.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",i+1,"failed:",e);}
         }
       }
-      // Lock the quote — BOM and BC planning lines are now frozen
+      // DECISION(v1.19.667): Email has been confirmed sent at this point (await above).
+      // Separate the Firestore lock try/catch so a save failure doesn't look like a send failure.
+      // Sales rep needs to know "email went out but lock didn't save" vs "email never sent".
       const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true};
-      onUpdate(upd);safeSave(uid,upd);
+      try{
+        onUpdate(upd);safeSave(uid,upd);
+      }catch(saveErr){
+        console.error("[QUOTE SEND] Firestore save failed after email succeeded:",saveErr);
+        alert(`⚠ Email was sent successfully to ${sentTo}, but the quote-lock record failed to save (${saveErr.message}). The quote may still appear unsent in the dashboard. Refresh and if the lock is missing, click Send again (the customer will get a duplicate — let them know).`);
+        setSending(false);
+        return;
+      }
       if(project.bcProjectNumber&&_bcToken){
         bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
       }
@@ -19748,7 +19777,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   const expiredVendors=new Set(expired.map(r=>r.bcVendorName||"Unknown"));
                   const badge=expired.length>0?`⚠ ${expiredVendors.size} Expired RFQ${expiredVendors.size!==1?"s":""}`:awaitingCount>0?`${pendingVendors.size} RFQ${pendingVendors.size!==1?"s":""} Awaiting Response`:null;
                   return <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
-                    <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:12,padding:"8px 12px",flex:2,opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQ's"}</button>
+                    <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:12,padding:"8px 12px",flex:2,opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQs"}</button>
                     <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:12,padding:"8px 12px",flex:2,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
                     <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"8px 6px",flex:0,whiteSpace:"nowrap",minWidth:28})}>📜</button>
                   </div>;
@@ -19812,7 +19841,24 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     }catch(e){console.warn("Review notification failed:",e);alert("Review submitted but notification failed: "+(e.message||e)+"\n\nThe project status has been updated. Please notify the designer manually.");}
                   }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>;
                 })()}
-                {!readOnly&&<button data-tour="print-quote-btn" onClick={async()=>{
+                {/* DECISION(v1.19.667): Pre-gate the Send button on the main view so sales sees
+                   the incomplete-items warning BEFORE opening the modal and typing a recipient.
+                   The in-modal guard stays as a second line of defense. Also disables the button
+                   when send is blocked to reinforce that something needs fixing first. */}
+                {!readOnly&&(()=>{
+                  const _incompleteItems=findIncompleteQuoteItems(project);
+                  const _sendBlocked=_incompleteItems.length>0;
+                  return(<>
+                    {_sendBlocked&&(
+                      <div style={{background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 12px",fontSize:11,color:"#fde68a",lineHeight:1.5}}>
+                        <div style={{fontWeight:700,color:C.yellow,marginBottom:4,fontSize:12}}>⚠ Send blocked — {_incompleteItems.length} item{_incompleteItems.length>1?"s":""} incomplete</div>
+                        <div>Fix the red rows in the BOM below (missing price, qty, or priced date). Once fixed, the Send button will enable. You can still use <strong style={{color:C.green}}>🖨 Just Print</strong> from the Send dialog for a review copy.</div>
+                      </div>
+                    )}
+                <button data-tour="print-quote-btn" disabled={_sendBlocked}
+                  title={_sendBlocked?`Send disabled — ${_incompleteItems.length} incomplete item${_incompleteItems.length>1?"s":""}. Fix red rows in the BOM.`:""}
+                  onClick={async()=>{
+                  if(_sendBlocked){alert(formatIncompleteQuoteAlert(_incompleteItems));return;}
                   // Gate: require pre-review approval before sending quote
                   if(project.preReviewStatus&&project.preReviewStatus!=="approved"){
                     alert("Engineering approval required before sending quote.\n\nCurrent status: "+(project.preReviewStatus==="pending"?"Awaiting designer review":"Returned for changes")+"\n\nClick 'Send for Technical Review' to submit for review, or wait for the designer to approve.");
@@ -19853,7 +19899,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
-                }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700})}>✉ {project.quoteSentAt?"Resend":"Send"} / Print Quote — Rev {String(project.quoteRev||0).padStart(2,"0")}</button>}
+                }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700,opacity:_sendBlocked?0.45:1,cursor:_sendBlocked?"not-allowed":"pointer"})}>{_sendBlocked?"✉ Send (blocked — "+_incompleteItems.length+" incomplete)":"✉ "+(project.quoteSentAt?"Resend":"Send")+" / Print Quote — Rev "+String(project.quoteRev||0).padStart(2,"0")}</button>
+                  </>);
+                })()}
                 {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
                 {project.quoteLocked&&(
                   <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:4}}>
@@ -21225,6 +21273,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     const incomplete=findIncompleteQuoteItems(project);
                     if(incomplete.length){alert(formatIncompleteQuoteAlert(incomplete));return;}
                     if(!m.to.trim()){alert("Enter a recipient email.");return;}
+                    // DECISION(v1.19.667): Email regex validation — same as QuoteSendModal.
+                    {
+                      const emailRe=/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+                      const recipients=m.to.split(/[,;]\s*/).map(e=>e.trim()).filter(Boolean);
+                      const bad=recipients.filter(e=>!emailRe.test(e));
+                      if(bad.length){alert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
+                    }
                     const graphToken=await acquireGraphToken();
                     if(!graphToken){alert("Could not get Microsoft 365 token.");return;}
                     const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
@@ -24837,7 +24892,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
     }
     if(groupBy==="purchasing_kanban"){
       const order=["send_po","po_sent","ready_prod"];
-      const labels={send_po:"Ready To Send Vendor PO's",po_sent:"Vendor PO's Sent",ready_prod:"Ready For Production"};
+      const labels={send_po:"Ready To Send Vendor POs",po_sent:"Vendor POs Sent",ready_prod:"Ready For Production"};
       const map={};
       list.forEach(p=>{
         if(p.bcPoStatus==="Open"){if(!map.send_po)map.send_po=[];map.send_po.push(p);}
@@ -24849,7 +24904,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
     if(groupBy==="status"){
       // DECISION(v1.19.510): Use computeProjectEffectiveStatus for column routing — single source of truth
       const order=["draft","in_progress","process_rfq","evc","pre_review","quotes_sent"];
-      const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQ's Send/Receive",evc:"Ready To Review/Send",pre_review:"In Pre-Review",quotes_sent:"Quotes Sent"};
+      const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQs Send/Receive",evc:"Ready To Review/Send",pre_review:"In Pre-Review",quotes_sent:"Quotes Sent"};
       const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc:"evc",pre_review:"pre_review",extracted:"evc",validated:"evc",costed:"evc",quoted:"evc",pushed_to_bc:"evc",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
       const map={};
       list.forEach(p=>{
@@ -24974,8 +25029,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQ's Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor PO's":"#f59e0b","Vendor PO's Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981"};
-                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQ's Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor PO's":"#3a1f00","Vendor PO's Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16"};
+                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981"};
+                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16"};
                 const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColBg[g.label]||C.border):"#3d6090";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
@@ -26779,7 +26834,10 @@ function App({user}){
   // NIQ uses module-level _niqCache via loadNIQ() and searchNIQ()
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
+  // DECISION(v1.19.667): tourMode selects between full engineering tour and sales-focused tour
+  const [tourMode,setTourMode]=useState("full"); // "full" | "sales"
   const TOUR_KEY='arc_tour_step_'+user.uid;
+  const TOUR_KEY_SALES='arc_tour_step_sales_'+user.uid;
   const [showGearMenu,setShowGearMenu]=useState(false);
   const [showUserMenu,setShowUserMenu]=useState(false);
   const [showBellMenu,setShowBellMenu]=useState(false);
@@ -26807,14 +26865,22 @@ function App({user}){
   const [showReports,setShowReports]=useState(false);
   const [showSupplierPricing,setShowSupplierPricing]=useState(false);
   const [showCustomerTemplates,setShowCustomerTemplates]=useState(false); // DECISION(v1.19.656)
-  function saveTourStep(s){try{if(s===null)localStorage.removeItem(TOUR_KEY);else localStorage.setItem(TOUR_KEY,String(s));}catch(e){}}
-  function startTour(){
+  // DECISION(v1.19.667): Keyed tour-step storage — separate progress saves for full vs sales tour.
+  const _tourKey=()=>(tourMode==="sales"?TOUR_KEY_SALES:TOUR_KEY);
+  const _tourSteps=()=>(tourMode==="sales"?SALES_TOUR_STEPS:TOUR_STEPS);
+  function saveTourStep(s){try{const k=_tourKey();if(s===null)localStorage.removeItem(k);else localStorage.setItem(k,String(s));}catch(e){}}
+  function startTour(mode){
+    const m=mode||"full";
+    setTourMode(m);
+    const key=m==="sales"?TOUR_KEY_SALES:TOUR_KEY;
+    const steps=m==="sales"?SALES_TOUR_STEPS:TOUR_STEPS;
     let saved=null;
-    try{const v=localStorage.getItem(TOUR_KEY);if(v!==null){const n=parseInt(v);if(!isNaN(n)&&n>=0&&n<TOUR_STEPS.length)saved=n;}}catch(e){}
+    try{const v=localStorage.getItem(key);if(v!==null){const n=parseInt(v);if(!isNaN(n)&&n>=0&&n<steps.length)saved=n;}}catch(e){}
     const step=saved!==null?saved:0;
-    setTourStep(step);saveTourStep(step);
+    setTourStep(step);
+    try{if(step===null)localStorage.removeItem(key);else localStorage.setItem(key,String(step));}catch(e){}
   }
-  function tourNext(){setTourStep(prev=>{const n=Math.min(prev+1,TOUR_STEPS.length-1);saveTourStep(n);return n;});}
+  function tourNext(){setTourStep(prev=>{const n=Math.min(prev+1,_tourSteps().length-1);saveTourStep(n);return n;});}
   function tourPrev(){setTourStep(prev=>{const n=Math.max(prev-1,0);saveTourStep(n);return n;});}
   function tourDone(){setTourStep(null);saveTourStep(null);}
   function tourSkip(){setTourStep(null);}
@@ -27557,7 +27623,9 @@ INSTRUCTIONS:
               {userRole==="admin"&&<button onClick={()=>{setShowApiSetup(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>🔌 API Setup</button>}
               <button data-tour="config-btn" onClick={()=>{setShowConfig(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>🔧 Configuration</button>
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
-              <button data-tour="training-btn" onClick={()=>{startTour();setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null?"#172554":"none",border:"none",color:tourStep!==null?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null?700:500}} onMouseEnter={e=>{if(tourStep===null)e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(tourStep===null)e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&tourStep===null){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Training'}</button>
+              <button data-tour="training-btn" onClick={()=>{startTour("full");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null&&tourMode==="full"?"#172554":"none",border:"none",color:tourStep!==null&&tourMode==="full"?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null&&tourMode==="full"?700:500}} onMouseEnter={e=>{if(!(tourStep!==null&&tourMode==="full"))e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(!(tourStep!==null&&tourMode==="full"))e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&(tourStep===null||tourMode!=="full")){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume Full Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Full Training (Engineering)'}</button>
+              {/* DECISION(v1.19.667): Sales-focused walkthrough — ~8 steps, skips extraction/RFQ/BOM-building. */}
+              <button onClick={()=>{startTour("sales");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null&&tourMode==="sales"?"#1a2e1a":"none",border:"none",color:tourStep!==null&&tourMode==="sales"?"#86efac":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null&&tourMode==="sales"?700:500}} onMouseEnter={e=>{if(!(tourStep!==null&&tourMode==="sales"))e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(!(tourStep!==null&&tourMode==="sales"))e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY_SALES);if(v!==null&&(tourStep===null||tourMode!=="sales")){const n=parseInt(v);if(!isNaN(n)&&n>0)return`🏷 Resume Sales Walkthrough (${n+1}/${SALES_TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'🏷 Sales Walkthrough'}</button>
               <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📊 Reports</button>
               <button onClick={()=>{setShowSupplierPricing(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📥 Upload Supplier Pricing</button>
               {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?"#1a0a2a":"none",border:"none",color:"#a78bfa",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={e=>{if(view!=="aidb")e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(view!=="aidb")e.target.style.background="none";}}>🧠 ARC AI Database</button>}
@@ -27765,7 +27833,7 @@ INSTRUCTIONS:
         </div>
       </div>
       </div>{/* end flex row wrapper */}
-      {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip} onMinimize={()=>setTourStep(null)}/>}
+      {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip} onMinimize={()=>setTourStep(null)} steps={tourMode==="sales"?SALES_TOUR_STEPS:TOUR_STEPS}/>}
       {/* DECISION(v1.19.601): Report Issue moved from floating button to user-menu entry
           so it stops overlapping in-page controls (PO Received, etc.). */}
       {showReportIssue&&<ReportIssueModal onClose={()=>setShowReportIssue(false)}/>}
@@ -27777,6 +27845,45 @@ INSTRUCTIONS:
 // ── INTERACTIVE TRAINING TOUR ──
 
 const TOUR_PHASES=['Overview','Create a Project','Upload Drawings','ARC AI Extraction','Review the BOM','Generate a Quote','Send RFQs','PO Received'];
+
+// DECISION(v1.19.667): Sales-team walkthrough — focused on the sales workflow only (open an
+// extracted project → review quote fields → review pricing → send quote → track PO). Skips
+// all extraction / drawing / BOM-building / RFQ steps that only engineering does. Roughly
+// 8 steps vs the 18-step full engineering tour.
+const SALES_TOUR_STEPS=[
+  {phase:'Sales Walkthrough',title:'Welcome, Sales 👋',
+   body:'This short walkthrough covers the sales workflow: finding a quote, reviewing it, sending it to the customer, and recording the PO when it arrives.\n\nEngineering has already extracted the BOM and priced the items. Your job is to review, send, and track.',
+   target:null},
+
+  {phase:'Sales Walkthrough',title:'Step 1 — Find the Project',
+   body:'Your quotes live on the Projects Dashboard. Use the 🔍 search bar at the top to find a project by customer name, project name, or Business Central project number.\n\nOr use the filter buttons (By Status, By Customer, By Date, etc.) to narrow the list.',
+   target:'[data-tour="project-list"]',placement:'center'},
+
+  {phase:'Sales Walkthrough',title:'Step 2 — Review the Quote Fields',
+   body:'Open a project. The quote editor shows customer, contact, address, payment terms, ship date, and salesperson — most of which auto-populate from Business Central.\n\nDouble-check the recipient email on the contact line before sending.',
+   target:null,
+   action:true,actionLabel:'👆 Open an extracted project and scroll through the quote fields. Return here when you\'ve reviewed them.'},
+
+  {phase:'Sales Walkthrough',title:'Step 3 — Review BOM & Pricing',
+   body:'The BOM table below shows every item engineering extracted. Red rows still need attention:\n\n• Missing price, qty, or priced date\n• Stale prices (older than 60 days)\n\nIf you see red rows, the Send button will be disabled. Ask engineering to refresh pricing, or use 🖨 Just Print for a review copy.',
+   target:'[data-tour="bom-table"]',placement:'top'},
+
+  {phase:'Sales Walkthrough',title:'Step 4 — Send or Print',
+   body:'When everything looks good, click the blue "✉ Send / Print Quote" button. A modal opens with:\n\n• ✉ Send — attaches the PDF and emails the customer via Microsoft 365\n• 🖨 Just Print — generates the PDF for a hard copy without sending\n\nAfter send, the quote locks automatically. If you need to edit, click the "Unlock" button next to the QUOTE LOCKED badge.',
+   target:'[data-tour="print-quote-btn"]',placement:'top'},
+
+  {phase:'Sales Walkthrough',title:'Step 5 — Customer Responds with a PO',
+   body:'When the customer issues a Purchase Order, click the 📬 PO Received button. Enter the PO number, PO date, and any delivery requirements.\n\nThis records the PO in Business Central and moves the project into the Purchasing workflow.',
+   target:null},
+
+  {phase:'Sales Walkthrough',title:'Step 6 — Status Tracking',
+   body:'Each project card shows a status pill:\n\n• Draft / In Progress — engineering working\n• Ready — priced and ready to quote\n• Active — quoted and awaiting PO\n• Purchasing In Progress — PO received, procurement working\n\nFilter the dashboard by status to find what needs follow-up.',
+   target:null},
+
+  {phase:'Sales Walkthrough',title:'You\'re Ready 🎉',
+   body:'That\'s the sales workflow. A few tips:\n\n• Use the Ask ARC search (💬 in the header) to find quotes by any field\n• Questions from engineering appear as pulsing yellow badges — click to respond\n• If the customer asks for changes, unlock the quote, edit, and re-send — the rev auto-bumps\n\nFor the full engineering walkthrough (extraction, RFQs, etc.), use the "📋 Full Training" option in the gear menu.',
+   target:null},
+];
 
 const TOUR_STEPS=[
   // ── OVERVIEW ──
@@ -27862,9 +27969,9 @@ const TOUR_STEPS=[
 
   // ── SEND RFQs ──
   {phase:'Send RFQs',title:'Step 12 — Open the RFQ Modal',
-   body:'An RFQ (Request for Quote) is sent to vendors to get pricing on your BOM items. ARC automatically groups BOM items by supplier and generates a separate, formatted RFQ document for each vendor.\n\nClick "Send/Print RFQ\'s" to open the RFQ modal.',
+   body:'An RFQ (Request for Quote) is sent to vendors to get pricing on your BOM items. ARC automatically groups BOM items by supplier and generates a separate, formatted RFQ document for each vendor.\n\nClick "Send/Print RFQs" to open the RFQ modal.',
    target:'[data-tour="rfq-btn"]',placement:'top',
-   action:true,actionLabel:'👆 Click Send/Print RFQ\'s to open the RFQ modal. Return here once it\'s open.'},
+   action:true,actionLabel:'👆 Click Send/Print RFQs to open the RFQ modal. Return here once it\'s open.'},
 
   {phase:'Send RFQs',title:'Step 13 — Preview an RFQ',
    body:'In the RFQ modal, you\'ll see one row per vendor. Click 👁 Preview next to any vendor to review the full RFQ document before it goes out.\n\nVerify the part list, quantities, RFQ number, and response deadline look correct.',
@@ -27908,8 +28015,11 @@ function useTourRect(target){
   return rect;
 }
 
-function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize}){
-  const step=TOUR_STEPS[stepIdx];
+function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps}){
+  // DECISION(v1.19.667): Accept a `steps` prop so we can swap between TOUR_STEPS (full)
+  // and SALES_TOUR_STEPS without duplicating this component.
+  const stepsArr=steps||TOUR_STEPS;
+  const step=stepsArr[stepIdx];
   const PAD=12;const PW=480;
   const rect=useTourRect(step?.target||null);
   const[popStyle,setPopStyle]=useState({});
@@ -27942,8 +28052,8 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize}){
     setPopStyle({position:'fixed',top:Math.max(10,top),left:Math.max(10,left),width:PW});
   },[rect,step,stepIdx]);
 
-  const isFirst=stepIdx===0;const isLast=stepIdx===TOUR_STEPS.length-1;
-  const phasePct=Math.round(((stepIdx+1)/TOUR_STEPS.length)*100);
+  const isFirst=stepIdx===0;const isLast=stepIdx===stepsArr.length-1;
+  const phasePct=Math.round(((stepIdx+1)/stepsArr.length)*100);
 
   return(
     <div style={{position:'fixed',inset:0,zIndex:99997,pointerEvents:'all'}}>
@@ -27956,7 +28066,7 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize}){
           <div style={{flex:1,height:4,background:'#1e293b',borderRadius:2,overflow:'hidden'}}>
             <div style={{height:'100%',width:phasePct+'%',background:'#3b82f6',borderRadius:2,transition:'width 0.3s ease'}}/>
           </div>
-          <span style={{fontSize:13,color:'#64748b',flexShrink:0,fontWeight:600}}>{stepIdx+1} / {TOUR_STEPS.length}</span>
+          <span style={{fontSize:13,color:'#64748b',flexShrink:0,fontWeight:600}}>{stepIdx+1} / {stepsArr.length}</span>
           <button onClick={onMinimize} title="Minimize — your progress is saved" style={{background:'none',border:'1px solid #1e3a5f',color:'#94a3b8',cursor:'pointer',fontSize:13,lineHeight:1,padding:'3px 10px',borderRadius:5,flexShrink:0,fontFamily:'inherit'}}>– Hide</button>
         </div>
         {/* Body */}
