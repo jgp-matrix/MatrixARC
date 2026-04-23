@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.661";
+const APP_VERSION="v1.19.662";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7339,14 +7339,27 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // so they have storageUrls before being persisted. Without this, intermediate saves during
     // BOM/validation/compliance strip dataUrl but leave storageUrl empty — if the tab crashes
     // or the user refreshes mid-extraction, the Firestore doc ends up with BLANK pages.
-    // We upload without stamping here (hazloc unknown yet); final stamped upload overwrites
-    // at the same storage path at the end of the task.
+    // DECISION(v1.19.662): STAMP during EARLY UPLOAD — user's request is that the stamp is
+    // the first thing applied once pages are gathered. Hazloc isn't known yet, so the stamp
+    // uses hazloc=false provisionally; if hazloc IS found later, the final stamp step
+    // re-stamps with UL698/1203 included. If hazloc is not found (the common case), the
+    // early stamp is the final stamp and no re-upload is needed.
     const earlyUploadNeeded=(panel.pages||[]).filter(pg=>pg.dataUrl&&!pg.storageUrl);
     if(earlyUploadNeeded.length>0&&projectId){
       try{
         const earlyUrlMap={};
+        const totalPages=(panel.pages||[]).length;
         await parallelMap(earlyUploadNeeded,async pg=>{
-          try{earlyUrlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,pg.dataUrl);}
+          let dataUrl=pg.dataUrl;
+          if(stampFn){
+            const pgIdx=(panel.pages||[]).findIndex(p=>p.id===pg.id);
+            try{
+              const stamped=await stampFn(dataUrl,pgIdx,totalPages,{hazloc:false});
+              if(stamped&&stamped!==dataUrl){dataUrl=stamped;_dbg('EARLY STAMP OK page',pgIdx+1);}
+              else console.warn('EARLY STAMP returned same/null for page',pgIdx+1);
+            }catch(e){console.warn('Early stamp failed:',e);}
+          }
+          try{earlyUrlMap[pg.id]=await uploadPageImage(uid,projectId,pg.id,dataUrl);}
           catch(e){console.warn("Early storage upload failed for page",pg.id,":",e.message);}
         },4);
         if(Object.keys(earlyUrlMap).length>0){
@@ -7354,7 +7367,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           latestPanel={...latestPanel,pages:latestPanel.pages.map(pg=>earlyUrlMap[pg.id]?{...pg,storageUrl:earlyUrlMap[pg.id]}:pg)};
           // Save immediately so Firestore has storageUrl before any extraction-phase save could strip dataUrl.
           await save(latestPanel);
-          console.log('[EARLY UPLOAD]',Object.keys(earlyUrlMap).length,'pages uploaded before extraction starts');
+          console.log('[EARLY UPLOAD]',Object.keys(earlyUrlMap).length,'pages stamped + uploaded before extraction starts');
         }
       }catch(e){console.warn("Early upload phase failed:",e);}
     }
@@ -7647,9 +7660,16 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // This ensures the stamp has the UL698/1203 flag if hazardous location was detected.
     // DECISION(v1.19.644): Stamp upload accumulates in-memory like other stages; the final
     // consolidated save below writes everything at once.
-    const pagesNeedingUpload=latestPanel.pages.filter(pg=>pg.dataUrl&&!pg.storageUrl);
+    // DECISION(v1.19.662): With stamping moved to EARLY UPLOAD, this step now only runs as
+    // a re-stamp when hazloc was actually found during the scan — the UL698/1203 flag needs
+    // to replace the provisional no-hazloc stamp. In the common case (no hazloc), early
+    // upload was already the final stamp and we just strip dataUrl and move on.
+    const hazlocFound=!!(latestPanel.hazardousLocation&&latestPanel.hazardousLocation.found);
+    const pagesNeedingUpload=hazlocFound
+      ? latestPanel.pages.filter(pg=>pg.dataUrl)
+      : [];
     if(pagesNeedingUpload.length>0&&projectId){
-      bgUpdate(panel.id,"Stamping & uploading drawings…");bgSetPct(panel.id,92);
+      bgUpdate(panel.id,"Re-stamping with UL698/1203 flag…");bgSetPct(panel.id,92);
       try{
         const urlMap={};
         const totalPages=latestPanel.pages.length;
@@ -7659,7 +7679,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           if(stampFn){
             const pgIdx=latestPanel.pages.findIndex(p=>p.id===pg.id);
             try{
-              const stamped=await stampFn(dataUrl,pgIdx,totalPages);
+              const stamped=await stampFn(dataUrl,pgIdx,totalPages,{hazloc:true});
               if(stamped&&stamped!==dataUrl){dataUrl=stamped;_dbg('STAMP OK page',pgIdx+1);}
               else console.warn('STAMP returned same/null for page',pgIdx+1);
             }catch(e){console.warn('Stamp failed:',e);}
@@ -7670,7 +7690,11 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // PERF: After upload, drop dataUrl from memory — storageUrl is now the source of truth
         const pagesWithUrls=latestPanel.pages.map(pg=>urlMap[pg.id]?{...pg,storageUrl:urlMap[pg.id],dataUrl:null}:pg);
         applyInMemory({...latestPanel,pages:pagesWithUrls});
-      }catch(e){console.warn("Storage upload failed:",e);}
+      }catch(e){console.warn("Re-stamp upload failed:",e);}
+    }else{
+      // No re-stamp needed — drop dataUrl now to free memory (storageUrl is the source of truth)
+      const pagesCleaned=latestPanel.pages.map(pg=>pg.storageUrl?{...pg,dataUrl:null}:pg);
+      applyInMemory({...latestPanel,pages:pagesCleaned});
     }
     // DECISION(v1.19.644): SINGLE CONSOLIDATED SAVE. All stages have accumulated into
     // `latestPanel` in-memory. One Firestore write captures BOM + validation + verification
@@ -13076,14 +13100,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         }
         // BC sync + PDF upload deferred until after pricing completes (see runPricingOnPanel)
       },
-      stampFn:async(dataUrl,pgIdx,total)=>{
+      // DECISION(v1.19.662): stampFn accepts an optional ctx arg so runExtractionTask
+      // can pass a specific hazloc value. During EARLY UPLOAD we pass hazloc=false
+      // (scan hasn't run yet); during the final re-stamp we pass the real value from
+      // the in-memory panel (latestPanelRef.current lags behind mid-task).
+      stampFn:async(dataUrl,pgIdx,total,ctx)=>{
         const d=new Date();
         const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
         const scanned=`Scanned ${String(d.getDate()).padStart(2,'0')}-${mon}-${String(d.getFullYear()).slice(2)}`;
         const rev=quoteRev||0;
         const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
-        // Stamp runs AFTER all scans — latestPanelRef has the hazloc result
-        const hazloc=latestPanelRef.current?.hazardousLocation?.found||_stampPanel.hazardousLocation?.found;
+        const hazloc=(ctx&&'hazloc' in ctx)?!!ctx.hazloc:(latestPanelRef.current?.hazardousLocation?.found||_stampPanel.hazardousLocation?.found);
         const rightParts=[hazloc?'UL698/1203':null,_stampBcProjNo?`${_stampBcProjNo} - ${String((idx+1)*100)}`:null,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ');
         return burnStampCanvas(dataUrl,{
           left:stampLabel,
