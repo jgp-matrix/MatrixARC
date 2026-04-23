@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.659";
+const APP_VERSION="v1.19.660";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7855,11 +7855,21 @@ function calcConfidence(panel){
       if(!desc){pts-=15;issues.push("no description");}
       if(!r.qty||+r.qty===0){pts-=10;issues.push("missing qty");}
       // Part number verification scoring
+      // DECISION(v1.19.660): BC-confirmed pricing overrides pattern-match doubt — if BC has a
+      // live price for this part, it's real by definition, so suppress plausible/suspect
+      // counts (matches the BOM table badge suppression from v1.19.639).
       const vr=verifMap[String(r.id)];
+      const bcConfirmed=r.priceSource==="bc"&&r.unitPrice>0;
       if(vr){
         if(vr.status==="verified"){verifiedCount++;}
-        else if(vr.status==="plausible"){plausibleCount++;pts-=10;issues.push("part # plausible but unverified");}
-        else if(vr.status==="suspect"){suspectCount++;pts-=30;issues.push("part # not recognized");}
+        else if(vr.status==="plausible"){
+          if(bcConfirmed){verifiedCount++;}
+          else{plausibleCount++;pts-=10;issues.push("part # plausible but unverified");}
+        }
+        else if(vr.status==="suspect"){
+          if(bcConfirmed){verifiedCount++;}
+          else{suspectCount++;pts-=30;issues.push("part # not recognized");}
+        }
       }else if(pn.length>=3){uncheckedCount++;}
       pts=Math.max(pts,0);
       totalPts+=pts;
@@ -11979,8 +11989,29 @@ function ScanResultsBanner({panel}){
   if(!panel.drawingNo)missingTitle.push("DWG #");
   if(!panel.drawingDesc)missingTitle.push("Description");
   if(!panel.drawingRev)missingTitle.push("Revision");
-  const suspectCount=r.suspectCount||0;
-  const plausibleCount=r.plausibleCount||0;
+  // DECISION(v1.19.660): Suspect count here must match what the BOM actually shows as red
+  // badges. The red "? not recognized" badge is suppressed when the row has BC-confirmed
+  // pricing (v1.19.639) — BC proves the part is real. So recompute suspectCount live from
+  // the current bom + bomVerification, filtering out rows that BC ended up confirming.
+  // Without this, the banner reads "10 suspect part #s" while zero red badges actually
+  // render in the table, which is confusing.
+  const verifMap=new Map((panel.bomVerification||[]).map(v=>[String(v.id),v]));
+  const liveSuspectRows=(panel.bom||[]).filter(row=>{
+    if(row.isLaborRow||row.isCrossed||row.isCorrection||row.correctedByLibrary)return false;
+    const v=verifMap.get(String(row.id));
+    if(!v||v.status!=="suspect")return false;
+    const bcConfirmed=row.priceSource==="bc"&&row.unitPrice>0;
+    return !bcConfirmed;
+  });
+  const livePlausibleRows=(panel.bom||[]).filter(row=>{
+    if(row.isLaborRow||row.isCrossed||row.isCorrection||row.correctedByLibrary)return false;
+    const v=verifMap.get(String(row.id));
+    if(!v||v.status!=="plausible")return false;
+    const bcConfirmed=row.priceSource==="bc"&&row.unitPrice>0;
+    return !bcConfirmed;
+  });
+  const suspectCount=liveSuspectRows.length;
+  const plausibleCount=livePlausibleRows.length;
   // DECISION(v1.19.624/625): Audit section — independent second-pass verification against drawing.
   // With self-healing (v1.19.625), findings that were auto-corrected during the audit loop are
   // surfaced as "auto-corrected" (informational); only rows that PERSISTED after retries are
