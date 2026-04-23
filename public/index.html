@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.658";
+const APP_VERSION="v1.19.659";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -7728,8 +7728,13 @@ async function estimatePrices(items){
 }
 
 // ── PAGE TYPE DETECTION ──
+// DECISION(v1.19.659): Removed sheetNo from this prompt entirely. Sheet numbers are now
+// DERIVED from page position in the panel (idx+1 / totalPages), not read from drawings.
+// The AI read was wildly inconsistent ("1 of 01", "2", "09", bare ordinals) and the data
+// wasn't useful anyway — page order at upload time is the authoritative sheet order.
+// This saves ~50 prompt tokens per page + removes a class of user-visible bugs.
 const PAGE_TYPE_DETECT_PROMPT=`Classify this page from a UL508A industrial control panel drawing set.
-Return ONLY a JSON object: {"types":[...],"sheetNo":"..."}
+Return ONLY a JSON object: {"types":[...]}
 
 Types (use only these values):
 "bom"       — Bill of Materials table with columns for qty, part number, description
@@ -7749,41 +7754,31 @@ Use [] (empty array) for the following — these are NOT BOM/schematic/backpanel
   • Pages you cannot confidently classify
 CRITICAL — the "bom" classification is ONLY for Bill of Materials tables with clear columns for QTY + PART NUMBER + DESCRIPTION + MANUFACTURER. A "List of Sheets" or "Sheet Index" table (which lists sheet numbers and titles) is NOT a BOM, even if it looks table-shaped — return [] for those.
 
-SHEET NUMBER — strict format:
-The title block typically shows the sheet number like "Sheet 1 of 8", "SHT 1/8", or "1 of 8". You MUST return the sheetNo in the format "<current> of <total>" — always include BOTH numbers.
-Examples of CORRECT format: "1 of 8", "3 of 12", "2 of 2"
-Examples of WRONG format (DO NOT return these):
-  • "1 of 01"        → "01" is a misread of a larger number. Re-examine the total-sheets field. If you truly cannot read the total clearly, return just "1".
-  • "2"              → missing total. If the total isn't visible on the page, return just "2" as a bare string. Prefer reading the total from the title block.
-  • "Sheet 1 of 8"   → remove the "Sheet" prefix, just "1 of 8"
-  • "1/8"            → use "of" not "/"
-Only return the bare number "X" (without "of N") when you truly cannot read the total on this page. If the page has no visible sheet number at all, return "".
-
-Example: {"types":["schematic"],"sheetNo":"3 of 8"}`;
+Example: {"types":["schematic"]}`;
 
 async function detectPageTypes(dataUrl,learningExamples=[]){
   const b64=dataUrl&&dataUrl.split(",")[1];
-  if(!b64||!_apiKey)return{types:[],sheetNo:""};
+  if(!b64||!_apiKey)return{types:[]};
   try{
     const hint=buildLearningHint(learningExamples);
     const raw=await apiCall({
-      // DECISION(v1.19.650): Switched page-type detection from Haiku to Sonnet. Haiku was
-      // inconsistent on sheet-number reads ("1 of 01" / bare "2" / etc) and mis-tagged cover
-      // pages and drawing-index pages as "bom", which poisoned extraction downstream. Sonnet's
-      // visual reasoning and structural-classification accuracy is materially better.
-      // Bumped max_tokens to 240 because Sonnet tends to produce slightly more complete output.
+      // DECISION(v1.19.650): Switched page-type detection from Haiku to Sonnet. Haiku
+      // mis-tagged cover pages and drawing-index pages as "bom", which poisoned extraction
+      // downstream. Sonnet's structural-classification accuracy is materially better.
+      // DECISION(v1.19.659): Lowered max_tokens to 100 now that sheetNo is removed from
+      // the response — smaller JSON, no need for generous budget.
       model:"claude-sonnet-4-6",
-      max_tokens:240,
+      max_tokens:100,
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
         {type:"text",text:PAGE_TYPE_DETECT_PROMPT+hint}
       ]}]
     });
     const m=raw.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
-    if(!m)return{types:[],sheetNo:""};
+    if(!m)return{types:[]};
     const obj=JSON.parse(m[0]);
-    return{types:(obj.types||[]).filter(t=>["bom","schematic","backpanel","enclosure","pid"].includes(t)),sheetNo:obj.sheetNo||""};
-  }catch(e){return{types:[],sheetNo:""};}
+    return{types:(obj.types||[]).filter(t=>["bom","schematic","backpanel","enclosure","pid"].includes(t))};
+  }catch(e){return{types:[]};}
 }
 
 // ── PAGE TYPES HELPER (backward compat: old pages have type string, new have types array) ──
@@ -12845,57 +12840,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const info=await detectPageTypes(item.dataUrl,learningEx);
         newItems[i].types=info.types;
         newItems[i].aiDetectedTypes=info.types; // store original AI result
-        newItems[i].sheetNo=info.sheetNo;
         done++;
         const msg=`🤖 Detecting page types — ${done}/${newItems.length}…`;
         setDetectProgress(msg);bgUpdate(panel.id,msg);
-        livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,aiDetectedTypes:info.types,sheetNo:info.sheetNo}:p);
+        livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,aiDetectedTypes:info.types}:p);
         setPendingPages([...livePages]);
       },4);
-      // DECISION(v1.19.648): Reconcile sheet numbers across all pages in this batch.
-      // Haiku is inconsistent — sometimes returns "1 of 8", sometimes just "2", sometimes
-      // garbage like "1 of 01". Pick the most-common "of N" across pages as the authoritative
-      // total, and fill in bare "X" values with "X of <total>". If pages clearly belong to
-      // different sheet sets (different totals), don't reconcile.
-      try{
-        const totalCounts={};
-        for(const p of livePages){
-          const sn=(p.sheetNo||"").trim();
-          const m=sn.match(/^(\d+)\s*of\s*(\d+)$/i);
-          if(m){
-            const total=+m[2];
-            if(total>=1&&total<=500){totalCounts[total]=(totalCounts[total]||0)+1;}
-          }
-        }
-        const entries=Object.entries(totalCounts).sort((a,b)=>b[1]-a[1]);
-        const majorityTotal=entries[0]?+entries[0][0]:null;
-        // Only reconcile if a single "of N" value dominates (≥50% of pages that returned an "of N")
-        const sumCounts=entries.reduce((s,e)=>s+e[1],0);
-        if(majorityTotal&&sumCounts>0&&entries[0][1]/sumCounts>=0.5){
-          livePages=livePages.map(p=>{
-            const sn=(p.sheetNo||"").trim();
-            if(!sn)return p;
-            // Already has "X of N" — leave alone
-            if(/^\d+\s*of\s*\d+$/i.test(sn))return p;
-            // Bare "X" — fill in "X of <majorityTotal>"
-            const barNum=sn.match(/^(\d+)$/);
-            if(barNum){
-              const filled=`${barNum[1]} of ${majorityTotal}`;
-              console.log(`SHEET RECONCILE: page "${p.name}" sheetNo "${sn}" → "${filled}"`);
-              return{...p,sheetNo:filled};
-            }
-            // Weird format like "1 of 01" with a tiny total — if majority says otherwise, correct it
-            const oddFormat=sn.match(/^(\d+)\s*of\s*(\d+)$/i);
-            if(oddFormat&&+oddFormat[2]<majorityTotal*0.25){
-              const filled=`${oddFormat[1]} of ${majorityTotal}`;
-              console.log(`SHEET RECONCILE: page "${p.name}" suspicious "${sn}" → "${filled}" (majority total=${majorityTotal})`);
-              return{...p,sheetNo:filled};
-            }
-            return p;
-          });
-          setPendingPages([...livePages]);
-        }
-      }catch(e){console.warn("Sheet number reconcile failed:",e.message);}
+      // DECISION(v1.19.659): Removed the sheet-number reconciler. Sheet numbers are now
+      // DERIVED from page position (idx+1 / totalPages) at render time — no AI read, no
+      // reconciliation needed. See display site in PanelCard thumbnail strip.
       // Zoomed-page cross-check for types with 2+ pages
       const zoomMsg="🤖 Checking for zoomed/duplicate pages…";
       setDetectProgress(zoomMsg);bgUpdate(panel.id,zoomMsg);
@@ -13421,7 +13374,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     let done=0;
     await parallelMap(untagged,async(page)=>{
       const info=await detectPageTypes(page.dataUrl);
-      updatedPages=updatedPages.map(p=>p.id===page.id?{...p,types:info.types,sheetNo:info.sheetNo}:p);
+      // DECISION(v1.19.659): sheetNo no longer stored — derived from position at render.
+      updatedPages=updatedPages.map(p=>p.id===page.id?{...p,types:info.types}:p);
       done++;setDetectProgress(`Detecting ${done}/${untagged.length}…`);
     },4);
     const updated={...panel,pages:updatedPages};
@@ -14824,7 +14778,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   ):(
                     <div style={{fontSize:12,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pg.name}</div>
                   )}
-                  {pg.sheetNo&&<div style={{fontSize:11,color:C.teal,fontWeight:700,marginTop:1}}>Sht {pg.sheetNo}</div>}
+                  {/* DECISION(v1.19.659): Sheet number is DERIVED from page position in the
+                     panel, not from AI extraction. Haiku/Sonnet reads of the title block's
+                     "Sheet X of N" field were wildly inconsistent ("1 of 01", "2", "09",
+                     "1 of 13"), so using the natural order of the uploaded pages is more
+                     reliable. Users upload drawings in the order they belong. */}
+                  <div style={{fontSize:11,color:C.teal,fontWeight:700,marginTop:1}}>Sht {pgIdx+1}/{pages.length}</div>
                 </div>
                 <div style={{display:"flex",gap:3,flexWrap:"wrap",alignItems:"center"}}>
                   {pg.isZoomedSection&&(
