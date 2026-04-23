@@ -445,3 +445,48 @@ re-extract, re-extract with feedback, refresh pricing (normal + force-fresh), ap
 **Chime helper:** `_playChime("owner-join" | "viewer-join")` — module-level, WebAudio, 250ms, volume 0.15. Silent-fail if autoplay blocked.
 
 **Shared constants:** `_OWNER_PRIORITY_ALERT`, `_OWNER_PRIORITY_TOOLTIP`, `_fireOwnerPriorityAlert()`.
+
+### Item Lead Times (v1.19.684–692)
+
+Per-item lead times populated from a ranked source precedence on every BOM row. See `docs/superpowers/specs/2026-04-23-item-lead-times-design.md` for the full spec and `docs/superpowers/plans/2026-04-23-item-lead-times.md` for the 10-task plan.
+
+**Precedence (best → worst):**
+1. `supplier` — supplier portal submission (already writes `leadTimeDays`)
+2. `scraper` — scraper output (Codale / custom-scraper framework returns `leadTime` via extract step)
+3. `bc_vendor` — BC `ItemVendorCatalog` (Page 114) per-vendor default
+4. `bc_item` — BC Item Card `Lead_Time_Calculation` (reference)
+5. `ai` — Haiku estimate, flagged `leadTimeEstimated:true`
+
+Manual edits override all auto-sources until explicit force-refresh.
+
+**New fields on BOM rows** (preserved on save per retention rule):
+- `leadTimeDays: number|null`
+- `leadTimeSource: "supplier"|"scraper"|"bc_vendor"|"bc_item"|"ai"|"manual"`
+- `leadTimeUpdatedAt: number` (ms epoch, for stale detection — reuses `defaultStaleDays`)
+- `leadTimeEstimated: boolean` (only true when source === "ai")
+
+**New fields on `rfqUploads/{token}` doc:**
+- `leadTimeOnly: boolean` — per-vendor "Request Lead Times Only" mode
+- Per-line `referencePrice` + `referencePriceSource` — BC prices frozen at RFQ send time when leadTimeOnly
+
+**New Firestore collection:**
+- `companies/{companyId}/bcLeadTimeWrites/{id}` — append-only audit trail for every BC `ItemVendorCatalog` writeback (success or skip). Members read; writer creates; immutable.
+
+**Helpers:** `_bcDateFormulaToDays`, `_daysToBcDateFormula`, `bcLookupLeadTime`, `bcLookupItemVendorLeadTime`, `bcUpsertItemVendorLeadTime`, `aiEstimateLeadTimes`.
+
+**Fetch pipeline:** Lead time fetch piggybacks on `runPricingOnPanel` — no separate button. BC phase pulls `bc_vendor` + `bc_item` sources in a batch after pricing matches complete. Scraper phase (Codale + custom) extracts `leadTime` alongside `price`. AI fallback runs at the very end for rows still missing data. Force-refresh also force-refreshes lead times.
+
+**Writeback:** `doApplyPortalPrices` (same transaction as BC price push) calls `bcUpsertItemVendorLeadTime` for each applied row with `leadTimeDays > 0` AND resolved `vendorNo` AND **non-blank `partNumber` (HARD REJECT)**. Audit entry always written to `bcLeadTimeWrites`, including skips.
+
+**RFQ "Lead Times Only" mode (per-vendor checkbox in `RfqEmailModal`):** When enabled:
+- Email subject: `[Lead Time Request] …`
+- PDF + email body show yellow "LEAD TIME REQUEST ONLY" banner
+- "Current Price (ref)" column populated from BC
+- Portal: prices shown read-only (grey); supplier fills lead times only
+- Submit validates per-line `leadTimeDays > 0` instead of the bulk order-lead-time field
+
+**BOM table:** New `Lead` column between `Ext $` and `Priced`. Editable inline. Source in hover tooltip. AI estimates render italic + asterisk (`14*`). Stale (>60d) renders with tilde prefix (`~14`).
+
+**BC Item Browser:** New `Lead` column between `Unit Cost` and `Last Purchased`. Read-only display. Selecting an item populates BOM row's lead time (source=`bc_item`).
+
+**Out of scope (future):** Quote-level lead time rollup (needs production schedule data); per-panel build time config; `requestedShipDate` feasibility warning; lead time history / diff view.
