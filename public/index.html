@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.688";
+const APP_VERSION="v1.19.689";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6359,6 +6359,37 @@ Return ONLY a JSON array: [{"id":"...","status":"verified|plausible|suspect","no
     if(!m)return[];
     return JSON.parse(m[0]);
   }catch(e){console.error("Part verification failed:",e);return[];}
+}
+
+// DECISION(v1.19.689): AI lead-time estimator — last-resort fallback when no BC/scraper/
+// portal source returned a value. Uses Haiku (same model as verifyPartNumbers, cheap + fast).
+// Output marked leadTimeEstimated:true so UI renders italic + asterisk.
+async function aiEstimateLeadTimes(rows){
+  const toEstimate=(rows||[]).filter(r=>(r.partNumber||"").trim().length>=3).slice(0,40);
+  if(!toEstimate.length||!_apiKey)return[];
+  const list=toEstimate.map(r=>({id:String(r.id),pn:(r.partNumber||"").trim(),mfr:(r.manufacturer||"").trim(),desc:(r.description||"").trim().slice(0,60)}));
+  const prompt=`You are estimating typical US industrial electrical distribution lead times in days ARO (after receipt of order) for these parts. Be conservative. If unsure, lean higher.
+
+Guidelines:
+- Stock items (standard contactors, relays, breakers, terminals, common wire): 5-14 days
+- Custom or specialized assemblies (safety relays, complex drives, PLCs with options): 30-90 days
+- Enclosures, custom panels, nameplates: 14-45 days
+- HMIs, touch panels: 14-30 days
+- If genuinely unknown, use 21.
+
+Parts:
+${JSON.stringify(list)}
+
+Return ONLY a JSON array: [{"id":"...","leadTimeDays":14,"reasoning":"brief"}]
+- leadTimeDays: integer 1 to 180
+- Omit or skip entries you truly can't estimate (return empty for those ids)
+- Keep reasoning under 12 words`;
+  try{
+    const raw=await apiCall({model:"claude-haiku-4-5-20251001",max_tokens:4000,messages:[{role:"user",content:prompt}]});
+    const m=raw.replace(/```json|```/g,"").trim().match(/\[[\s\S]*\]/);
+    if(!m)return[];
+    return JSON.parse(m[0]);
+  }catch(e){console.error("AI lead time estimate failed:",e);return[];}
 }
 
 // ── BOM AUDIT — second-pass verification against the drawing images ──
@@ -14923,6 +14954,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           });
         }catch(ex){setAiPricing(false);_pp({msg:`Pricing error: ${(ex.message||"failed").slice(0,60)}`,pct:0,isError:true});return;}
       }
+    }
+
+    // DECISION(v1.19.689): AI lead-time fallback. Rows still lacking leadTimeDays after
+    // BC + scraper passes get estimated by Haiku. Flagged leadTimeEstimated:true so the
+    // UI renders them italic + asterisk.
+    const rowsNeedingAiLead=updatedBom.filter(r=>!r.isLaborRow&&!_isExcludedFromPriceCheck(r)&&(r.partNumber||"").trim()&&(r.leadTimeDays==null));
+    if(rowsNeedingAiLead.length>0){
+      _pp({msg:`AI: estimating lead times for ${rowsNeedingAiLead.length} items…`,pct:96});
+      try{
+        const estimates=await aiEstimateLeadTimes(rowsNeedingAiLead);
+        const estMap={};
+        estimates.forEach(est=>{if(est&&est.id&&est.leadTimeDays)estMap[String(est.id)]=+est.leadTimeDays;});
+        const aiLeadCount=Object.keys(estMap).length;
+        console.log(`[LEAD TIME] AI: ${aiLeadCount}/${rowsNeedingAiLead.length} rows estimated`);
+        updatedBom=updatedBom.map(r=>{
+          const k=String(r.id);
+          if(k in estMap){
+            return{...r,leadTimeDays:estMap[k],leadTimeSource:"ai",leadTimeUpdatedAt:Date.now(),leadTimeEstimated:true};
+          }
+          return r;
+        });
+      }catch(e){console.warn("AI lead time fallback failed:",e);}
     }
 
     const panelBase=panelOverride||panelRef.current;
