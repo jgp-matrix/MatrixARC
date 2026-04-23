@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.687";
+const APP_VERSION="v1.19.688";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -11606,6 +11606,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [drawingPageIdx,setDrawingPageIdx]=useState(0);
   const [vendorNames,setVendorNames]=useState({});
   const [purchaseData,setPurchaseData]=useState({});
+  // DECISION(v1.19.688): Lazy-enriched lead time data per item number.
+  // Keyed by item.number → integer days (null = confirmed empty, undefined = not yet fetched).
+  const [leadTimeData,setLeadTimeData]=useState({});
   const [customerSupplied,setCustomerSupplied]=useState(false);
   const [editVendorItem,setEditVendorItem]=useState(null); // item.number being edited
   const [editVendorNo,setEditVendorNo]=useState("");
@@ -11777,7 +11780,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     const toFetch=items.filter(it=>it.number&&vendorNames[it.number]===undefined).slice(0,12);
     if(!toFetch.length)return;
     const vBatch={};const pBatch={};
-    const mBatch={};
+    const mBatch={};const ltBatch={};
     for(const it of toFetch){
       if(aborted())return;
       const vNo=await bcGetItemVendorNo(it.number);
@@ -11786,12 +11789,17 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       if(aborted())return;
       const lp=await bcGetLastPurchase(it.number);
       pBatch[it.number]=lp||null;
-      // Fetch manufacturer code from OData
+      // DECISION(v1.19.688): Fetch Lead_Time_Calculation alongside manufacturer code so the
+      // Item Browser Lead column populates without an extra round-trip per item.
+      // Combined SELECT on ItemCard.
       try{
         if(aborted())return;
         const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
-        if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${it.number}'&$select=No,Manufacturer_Code&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-          if(mr.ok){const md=((await mr.json()).value||[])[0];if(md)mBatch[it.number]=md.Manufacturer_Code||"";}}
+        if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${it.number}'&$select=No,Manufacturer_Code,Lead_Time_Calculation&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          if(mr.ok){const md=((await mr.json()).value||[])[0];if(md){
+            mBatch[it.number]=md.Manufacturer_Code||"";
+            ltBatch[it.number]=_bcDateFormulaToDays(md.Lead_Time_Calculation);
+          }}}
       }catch(e){}
       // Small inter-request spacing so BC doesn't rate-limit us when the user pages/searches quickly
       await new Promise(r=>setTimeout(r,30));
@@ -11800,6 +11808,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     setVendorNames(prev=>({...prev,...vBatch}));
     setPurchaseData(prev=>({...prev,...pBatch}));
     setMfrCodes(prev=>({...prev,...mBatch}));
+    setLeadTimeData(prev=>({...prev,...ltBatch}));
   }
 
   function onQueryChange(val){
@@ -12134,8 +12143,10 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead style={{position:"sticky",top:0,zIndex:1}}>
               <tr style={{background:"#0a0a12"}}>
-                {["Part #","Description","MFR","Vendor","Unit Cost","Last Purchased",""].map(h=>(
-                  <th key={h} style={{padding:"9px 10px",textAlign:h==="Unit Cost"?"right":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                {/* DECISION(v1.19.688): Lead column between Unit Cost and Last Purchased.
+                   Reads Lead_Time_Calculation from Item Card via lazy-enriched state. */}
+                {["Part #","Description","MFR","Vendor","Unit Cost","Lead","Last Purchased",""].map(h=>(
+                  <th key={h} style={{padding:"9px 10px",textAlign:h==="Unit Cost"?"right":h==="Lead"?"center":"left",color:C.muted,fontWeight:700,fontSize:12,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -12273,6 +12284,10 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                     {purchaseData[item.number]?.directUnitCost!=null?(
                       <span title="Last PO cost">${purchaseData[item.number].directUnitCost.toFixed(2)}</span>
                     ):item.unitCost!=null?"$"+item.unitCost.toFixed(2):"—"}
+                  </td>
+                  <td style={{padding:"7px 10px",textAlign:"center",color:leadTimeData[item.number]!=null?C.text:C.muted,fontSize:12,whiteSpace:"nowrap"}}
+                    title={leadTimeData[item.number]!=null?`Lead time: ${leadTimeData[item.number]} days (from BC Item Card)`:leadTimeData[item.number]===null?"No lead time set on BC Item Card":""}>
+                    {leadTimeData[item.number]!=null?leadTimeData[item.number]:(leadTimeData[item.number]===null?"—":"…")}
                   </td>
                   <td style={{padding:"7px 10px",color:C.muted,fontSize:12,whiteSpace:"nowrap"}}>
                     {purchaseData[item.number]?.postingDate?fmtDate(purchaseData[item.number].postingDate):(purchaseData[item.number]===null?"No POs":"…")}
@@ -14265,15 +14280,29 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
       if(bcItem.displayName)updates.description=bcItem.displayName;
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
-      // Update manufacturer from BC item — async lookup
+      // Update manufacturer + lead time from BC item — async lookup
+      // DECISION(v1.19.688): Item Browser selection also populates leadTimeDays from
+      // Item Card Lead_Time_Calculation. Single SELECT fetches both fields.
       if(newPN){(async()=>{try{
         const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
-        if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${newPN}'&$select=No,Manufacturer_Code&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-          if(mr.ok){const md=((await mr.json()).value||[])[0];if(md&&md.Manufacturer_Code){
-            const mfrs=await bcFetchManufacturers();const mfr=mfrs.find(m=>m.Code===md.Manufacturer_Code);
-            const mfrName=mfr?mfr.Name:md.Manufacturer_Code;
-            const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,manufacturer:mfrName}:r2);
-            const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});
+        if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${newPN}'&$select=No,Manufacturer_Code,Lead_Time_Calculation&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          if(mr.ok){const md=((await mr.json()).value||[])[0];if(md){
+            const patches={};
+            if(md.Manufacturer_Code){
+              const mfrs=await bcFetchManufacturers();const mfr=mfrs.find(m=>m.Code===md.Manufacturer_Code);
+              patches.manufacturer=mfr?mfr.Name:md.Manufacturer_Code;
+            }
+            const ltDays=_bcDateFormulaToDays(md.Lead_Time_Calculation);
+            if(ltDays!=null){
+              patches.leadTimeDays=ltDays;
+              patches.leadTimeSource="bc_item";
+              patches.leadTimeUpdatedAt=Date.now();
+              patches.leadTimeEstimated=false;
+            }
+            if(Object.keys(patches).length>0){
+              const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,...patches}:r2);
+              const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});
+            }
           }}}
       }catch(e){}})();}
       if(!skipLearning){
