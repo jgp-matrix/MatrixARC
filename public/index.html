@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.668";
+const APP_VERSION="v1.19.669";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13501,6 +13501,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
 
   function tagPage(id,types,reason=null){
+    // DECISION(v1.19.669): Belt-and-suspenders guard — block page-type changes while
+    // extraction, pricing, validation, or AI detection is in flight. The UI button is
+    // already disabled; this catches any future callers that forget to check.
+    if(detecting||extracting||aiPricing||validatingPanel){
+      console.warn("tagPage blocked — task in flight:",{detecting,extracting,aiPricing,validatingPanel});
+      return;
+    }
     const pg=pages.find(p=>p.id===id);
     if(pendingPages.length>0)setPendingPages(pp=>pp.map(p=>p.id===id?{...p,types}:p));
     onUpdate({...panel,pages:pages.map(p=>p.id===id?{...p,types}:p)});
@@ -14984,12 +14991,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   )}
                   {/* DECISION(v1.19.637): Disable type tagging while AI detection is running
                      — the AI results will overwrite any clicks anyway, and it confuses users
-                     to see their choice revert when detection completes. */}
+                     to see their choice revert when detection completes.
+                     DECISION(v1.19.669): Also lock during extraction / pricing. Changing a
+                     page's type mid-extraction would produce a BOM that doesn't reflect the
+                     tags used to generate it; mid-pricing it would invalidate the page-type
+                     snapshot the pricing pipeline depends on. Wait until the task completes. */}
                   {["bom","schematic","backpanel","enclosure","pid"].map(t=>{
                     const active=types.includes(t);
-                    const lockedForDetect=detecting;
+                    const lockedForDetect=detecting||extracting||aiPricing||validatingPanel;
+                    const lockReason=detecting?"Wait for AI detection to finish"
+                      :extracting?"Drawing types are locked during BOM extraction — wait until it finishes."
+                      :aiPricing?"Drawing types are locked during pricing — wait until it finishes."
+                      :validatingPanel?"Drawing types are locked during validation — wait until it finishes."
+                      :null;
                     return(
-                      <button key={t} data-tip={lockedForDetect?"Wait for AI detection to finish":active?`Remove "${SHORT[t]}" tag from this page`:`Tag this page as ${SHORT[t]}`} disabled={readOnly||lockedForDetect} onClick={()=>tagPage(pg.id,active?types.filter(x=>x!==t):[...types,t])}
+                      <button key={t} data-tip={lockReason||(active?`Remove "${SHORT[t]}" tag from this page`:`Tag this page as ${SHORT[t]}`)} disabled={readOnly||lockedForDetect} onClick={()=>tagPage(pg.id,active?types.filter(x=>x!==t):[...types,t])}
                         style={{background:active?typeColors[t]+"33":"transparent",color:active?typeColors[t]:C.muted,border:`1px solid ${active?typeColors[t]+"88":C.border}`,borderRadius:10,padding:"2px 8px",fontSize:12,fontWeight:700,cursor:(readOnly||lockedForDetect)?"not-allowed":"pointer",opacity:lockedForDetect?0.45:1,transition:"all 0.1s"}}>
                         {SHORT[t]}
                       </button>
