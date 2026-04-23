@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.680";
+const APP_VERSION="v1.19.681";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8292,6 +8292,11 @@ function _isBomRowFlaggedRed(r){
   }
   return false;
 }
+// DECISION(v1.19.678): Owner Priority Mode — shared lock message for button tooltips + alerts.
+const _OWNER_PRIORITY_ALERT="This action is disabled while the owner is working this project. Wait until they leave, or ask an admin to Take Over.";
+const _OWNER_PRIORITY_TOOLTIP="Disabled — owner is working this project. Wait until they leave or ask an admin to Take Over.";
+function _fireOwnerPriorityAlert(){alert(_OWNER_PRIORITY_ALERT);}
+
 // DECISION(v1.19.678): Subtle chime via WebAudio — single tone, 250ms. Browsers require
 // a user interaction before audio can play, so we silently swallow errors if autoplay
 // blocks us. Tones: E5 (659Hz) for owner-join (non-owner hears this when owner arrives),
@@ -12603,7 +12608,7 @@ function ScanResultsBanner({panel}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project,ownerPriorityActive}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -15069,7 +15074,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {panelCollapsed?"▶ Expand":"▼ Collapse"}
           </button>
           <Badge status={computeProjectEffectiveStatus({panels:[panel]})}/>
-          {!readOnly&&<button data-tip="Delete this panel" onClick={onDelete} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.target.style.color=C.red} onMouseLeave={e=>e.target.style.color=C.muted}>✕</button>}
+          {!readOnly&&<button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Delete this panel"}
+            onClick={ownerPriorityActive?_fireOwnerPriorityAlert:onDelete}
+            disabled={ownerPriorityActive}
+            style={{background:"none",border:"none",color:ownerPriorityActive?C.border:C.muted,cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:15,padding:"2px 6px",borderRadius:4,opacity:ownerPriorityActive?0.45:1}}
+            onMouseEnter={e=>{if(!ownerPriorityActive)e.target.style.color=C.red;}}
+            onMouseLeave={e=>{if(!ownerPriorityActive)e.target.style.color=C.muted;}}>✕</button>}
         </div>
       </div>
 
@@ -15116,11 +15126,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
           <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:2}}>DRAWINGS</div>
           {!readOnly&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(
-            <button data-tip="Re-run AI extraction on tagged BOM pages — uses region crops if defined" onClick={()=>{
-              if(localStorage.getItem("_arc_skip_reextract_warn")){runExtraction();return;}
-              setReExtractWarn(true);
-            }} disabled={extracting}
-              style={{background:"none",border:`1px solid ${C.accent}88`,color:C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:extracting?0.6:1}}>
+            <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Re-run AI extraction on tagged BOM pages — uses region crops if defined"}
+              onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{
+                if(localStorage.getItem("_arc_skip_reextract_warn")){runExtraction();return;}
+                setReExtractWarn(true);
+              }} disabled={extracting||ownerPriorityActive}
+              style={{background:"none",border:`1px solid ${C.accent}88`,color:C.accent,cursor:(extracting||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:(extracting||ownerPriorityActive)?0.45:1}}>
               {extracting?"Extracting…":"Re-Extract Drawings"}
             </button>
           )}
@@ -15168,7 +15179,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               <div key={pg.id} style={{flexShrink:0,width:420,display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
                   <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
-                  {!readOnly&&<button data-tip="Remove this drawing page" onClick={e=>{e.stopPropagation();removePage(pg.id);}} style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:C.red,cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px"}}>✕</button>}
+                  {!readOnly&&<button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Remove this drawing page"}
+                    onClick={ownerPriorityActive?(e=>{e.stopPropagation();_fireOwnerPriorityAlert();}):(e=>{e.stopPropagation();removePage(pg.id);})}
+                    disabled={ownerPriorityActive}
+                    style={{position:"absolute",top:4,right:4,background:"rgba(0,0,0,0.75)",border:"none",color:ownerPriorityActive?C.muted:C.red,cursor:ownerPriorityActive?"not-allowed":"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px",opacity:ownerPriorityActive?0.45:1}}>✕</button>}
                   {/* Engineering note + shape indicators on thumbnail */}
                   {((pg.reviewNotes||[]).length>0||(pg.reviewShapes||[]).length>0)&&(
                     <div style={{position:"absolute",top:4,left:4,display:"flex",gap:3,flexWrap:"wrap",maxWidth:260}}>
@@ -15512,13 +15526,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             </div>
             {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
               <div style={{position:"relative",display:"inline-flex"}}>
-                <button data-tip="Refresh pricing — skips items priced within threshold" onClick={()=>runPricingOnPanel()} disabled={aiPricing}
-                  style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:aiPricing?0.5:1,cursor:aiPricing?"default":"pointer",borderRadius:"6px 0 0 6px"})}>
+                <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Refresh pricing — skips items priced within threshold"}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>runPricingOnPanel()}
+                  disabled={aiPricing||ownerPriorityActive}
+                  style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"6px 0 0 6px"})}>
                   {aiPricing?"Refreshing…":"↻ Get New Pricing"}
                 </button>
-                <button disabled={aiPricing} onClick={()=>{if(confirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item."))runPricingOnPanel(panel.bom,panel,null,{forceFresh:true});}}
-                  style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 6px",opacity:aiPricing?0.5:1,cursor:aiPricing?"default":"pointer",borderRadius:"0 6px 6px 0",borderLeft:`1px solid ${C.accent}33`})}
-                  title="Force refresh all prices — ignores stale thresholds">▾</button>
+                <button disabled={aiPricing||ownerPriorityActive}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{if(confirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item."))runPricingOnPanel(panel.bom,panel,null,{forceFresh:true});}}
+                  style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 6px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"0 6px 6px 0",borderLeft:`1px solid ${C.accent}33`})}
+                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Force refresh all prices — ignores stale thresholds"}>▾</button>
               </div>
             )}
             {!readOnly&&(
@@ -16430,7 +16447,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               </div>
             ))}
             <div style={{display:"flex",gap:10,marginTop:16}}>
-              <button onClick={()=>{
+              <button disabled={ownerPriorityActive}
+                title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{
                 // Build feedback string from answers and re-apply
                 const feedback=(panel.aiQuestions||[]).map((q,qi)=>{
                   const ans=aiAnswers[qi];
@@ -16448,7 +16467,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   });}catch(e){}
                 }
                 setShowAiQuestions(false);setAiAnswers({});
-              }} style={{flex:1,background:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              }} style={{flex:1,background:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 16px",fontSize:13,fontWeight:700,cursor:ownerPriorityActive?"not-allowed":"pointer",opacity:ownerPriorityActive?0.45:1}}>
                 Save Answers &amp; Re-Extract
               </button>
               <button onClick={()=>{
@@ -18945,7 +18964,7 @@ function CADLinkSendModal({project,onClose}){
 // ── PANEL LIST VIEW ──
 // DECISION(v1.19.338): Extracted as a proper component (not IIFE) because React hooks require
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
-function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
+function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,ownerPriorityActive}){
   const [sendMode,setSendMode]=useState("new");
   const [threadSearch,setThreadSearch]=useState(project.quote?.company||project.bcCustomerName||project.name||"");
   const [threadResults,setThreadResults]=useState([]);
@@ -19001,8 +19020,10 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
   // (the "🖨 Just Print" button bypasses this). Computed live so edits before clicking Send
   // are reflected.
   const incompleteItems=findIncompleteQuoteItems(project);
-  const sendBlocked=incompleteItems.length>0;
+  const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive;
   async function handleSend(){
+    // DECISION(v1.19.681): Owner Priority Mode gate. Blocks quote send.
+    if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
     const m=modalData;
     if(sendBlocked){
       alert(formatIncompleteQuoteAlert(incompleteItems));
@@ -19241,7 +19262,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose}){
   </>,document.body);
 }
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink,bcUploadRef}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -19461,20 +19482,22 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             </div>
             {!readOnly&&(project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin")&&(
               <div style={{display:"flex",gap:6}}>
-                <button onClick={async()=>{
+                <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                   const upd={...project,preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
                   onUpdate(upd);safeSave(uid,upd);
                   // Re-stamp drawings as QUOTE READY and upload to BC (archive old AS-QUOTED)
                   if(bcUploadRef?.current){
                     try{await bcUploadRef.current({stampMode:"quote_ready",archiveOld:true});}catch(e){console.warn("QUOTE READY stamp upload failed:",e);}
                   }
-                }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px"})}>✓ Approve</button>
-                <button onClick={async()=>{
+                }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✓ Approve</button>
+                <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                   const notes=prompt("Notes for the salesperson (reason for return):");
                   if(notes===null)return;
                   const upd={...project,preReviewStatus:"rejected",preReviewNotes:notes};
                   onUpdate(upd);safeSave(uid,upd);
-                }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px"})}>✗ Return</button>
+                }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✗ Return</button>
               </div>
             )}
           </div>
@@ -19495,20 +19518,22 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             </div>
             {!readOnly&&_appCtx.role==="admin"&&(
               <div style={{display:"flex",gap:6}}>
-                <button onClick={async()=>{
+                <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                   const upd={...project,postReviewStatus:"approved",postReviewApprovedAt:Date.now(),postReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
                   onUpdate(upd);safeSave(uid,upd);
                   // Re-stamp drawings as READY TO PRODUCE and upload to BC (archive QUOTE READY)
                   if(bcUploadRef?.current){
                     try{await bcUploadRef.current({stampMode:"ready_to_produce",archiveOld:true});}catch(e){console.warn("READY TO PRODUCE stamp upload failed:",e);}
                   }
-                }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px"})}>✓ Approved for Production</button>
-                <button onClick={async()=>{
+                }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✓ Approved for Production</button>
+                <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                   const notes=prompt("Notes (reason for return):");
                   if(notes===null)return;
                   const upd={...project,postReviewStatus:"rejected",postReviewNotes:notes};
                   onUpdate(upd);safeSave(uid,upd);
-                }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px"})}>✗ Return</button>
+                }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✗ Return</button>
               </div>
             )}
           </div>
@@ -19743,6 +19768,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   quoteData={project.quote||{}}
                   quoteRev={project.quoteRev||0}
                   readOnly={readOnly}
+                  ownerPriorityActive={ownerPriorityActive}
                   remoteEditor={(() => {
                     // DECISION(v1.19.614): REVERTED v1.19.608 broadening. Only grey out the
                     // specific panel whose bg task matches (panel.id or panel.id+'_bcsync').
@@ -20023,7 +20049,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   const expiredVendors=new Set(expired.map(r=>r.bcVendorName||"Unknown"));
                   const badge=expired.length>0?`⚠ ${expiredVendors.size} Expired RFQ${expiredVendors.size!==1?"s":""}`:awaitingCount>0?`${pendingVendors.size} RFQ${pendingVendors.size!==1?"s":""} Awaiting Response`:null;
                   return <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
-                    <button data-tour="rfq-btn" onClick={onSendRfqEmails} disabled={rfqLoading} style={btn("#1e1b4b","#818cf8",{fontSize:12,padding:"8px 12px",flex:2,opacity:rfqLoading?0.5:1})}>{rfqLoading?"Building…":"Send/Print RFQs"}</button>
+                    <button data-tour="rfq-btn"
+                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:onSendRfqEmails}
+                      disabled={rfqLoading||ownerPriorityActive}
+                      title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                      style={btn("#1e1b4b","#818cf8",{fontSize:12,padding:"8px 12px",flex:2,opacity:(rfqLoading||ownerPriorityActive)?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>{rfqLoading?"Building…":"Send/Print RFQs"}</button>
                     <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:12,padding:"8px 12px",flex:2,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
                     <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"8px 6px",flex:0,whiteSpace:"nowrap",minWidth:28})}>📜</button>
                   </div>;
@@ -20093,7 +20123,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                    when send is blocked to reinforce that something needs fixing first. */}
                 {!readOnly&&(()=>{
                   const _incompleteItems=findIncompleteQuoteItems(project);
-                  const _sendBlocked=_incompleteItems.length>0;
+                  // DECISION(v1.19.681): Owner Priority Mode extends the send-block reasons.
+                  const _sendBlocked=_incompleteItems.length>0||!!ownerPriorityActive;
                   return(<>
                     {_sendBlocked&&(
                       <div style={{background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 12px",fontSize:11,color:"#fde68a",lineHeight:1.5}}>
@@ -20111,9 +20142,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       </div>
                     )}
                 <button data-tour="print-quote-btn" disabled={_sendBlocked}
-                  title={_sendBlocked?`Send disabled — ${_incompleteItems.length} incomplete item${_incompleteItems.length>1?"s":""}. Fix red rows in the BOM.`:""}
+                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:(_sendBlocked?`Send disabled — ${_incompleteItems.length} incomplete item${_incompleteItems.length>1?"s":""}. Fix red rows in the BOM.`:"")}
                   onClick={async()=>{
-                  if(_sendBlocked){alert(formatIncompleteQuoteAlert(_incompleteItems));return;}
+                  if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
+                  if(_incompleteItems.length>0){alert(formatIncompleteQuoteAlert(_incompleteItems));return;}
                   // Gate: require pre-review approval before sending quote
                   if(project.preReviewStatus&&project.preReviewStatus!=="approved"){
                     alert("Engineering approval required before sending quote.\n\nCurrent status: "+(project.preReviewStatus==="pending"?"Awaiting designer review":"Returned for changes")+"\n\nClick 'Send for Technical Review' to submit for review, or wait for the designer to approve.");
@@ -20154,21 +20186,31 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
-                }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700,opacity:_sendBlocked?0.45:1,cursor:_sendBlocked?"not-allowed":"pointer"})}>{_sendBlocked?"✉ Send (blocked — "+_incompleteItems.length+" incomplete)":"✉ "+(project.quoteSentAt?"Resend":"Send")+" / Print Quote — Rev "+String(project.quoteRev||0).padStart(2,"0")}</button>
+                }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700,opacity:_sendBlocked?0.45:1,cursor:_sendBlocked?"not-allowed":"pointer"})}>{ownerPriorityActive?"✉ Send (blocked — owner working)":(_incompleteItems.length>0?"✉ Send (blocked — "+_incompleteItems.length+" incomplete)":"✉ "+(project.quoteSentAt?"Resend":"Send")+" / Print Quote — Rev "+String(project.quoteRev||0).padStart(2,"0"))}</button>
                   </>);
                 })()}
                 {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
                 {project.quoteLocked&&(
                   <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:4}}>
                     <span style={{fontSize:12,fontWeight:700,color:"#f59e0b",background:"#3a2800",borderRadius:6,padding:"3px 10px",letterSpacing:0.5}}>QUOTE LOCKED</span>
-                    {!isReadOnly()&&<button onClick={()=>setShowUnlockConfirm(true)} style={{background:"none",border:"1px solid #f59e0b44",borderRadius:6,color:"#f59e0b",cursor:"pointer",fontSize:11,padding:"2px 10px",fontWeight:600}}>Unlock</button>}
+                    {!isReadOnly()&&<button
+                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>setShowUnlockConfirm(true)}
+                      disabled={ownerPriorityActive}
+                      title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                      style={{background:"none",border:"1px solid #f59e0b44",borderRadius:6,color:"#f59e0b",cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:11,padding:"2px 10px",fontWeight:600,opacity:ownerPriorityActive?0.45:1}}>Unlock</button>}
                   </div>
                 )}
-                {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button onClick={onPoReceived} style={btn("#0d1a10","#4ade80",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #4ade8044",fontWeight:700})}>📬 PO Received</button>}
+                {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:onPoReceived}
+                  disabled={ownerPriorityActive}
+                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                  style={btn("#0d1a10","#4ade80",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #4ade8044",fontWeight:700,opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>📬 PO Received</button>}
                 {!readOnly&&sp.bcItemNumber&&(
-                  <button onClick={()=>{}} disabled={pendingBcCount>0}
-                    title={pendingBcCount>0?`${pendingBcCount} unverified BC parts — resolve blue circles first`:`Update Assembly BOM for item ${sp.bcItemNumber}`}
-                    style={{background:pendingBcCount>0?"#111":"#0d1f3c",border:'1px solid '+(pendingBcCount>0?"#444":"#38bdf866"),color:pendingBcCount>0?"#555":"#38bdf8",cursor:pendingBcCount>0?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:pendingBcCount>0?0.5:1,textAlign:"center"}}>
+                  <button
+                    onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{}}
+                    disabled={pendingBcCount>0||ownerPriorityActive}
+                    title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:(pendingBcCount>0?`${pendingBcCount} unverified BC parts — resolve blue circles first`:`Update Assembly BOM for item ${sp.bcItemNumber}`)}
+                    style={{background:pendingBcCount>0?"#111":"#0d1f3c",border:'1px solid '+(pendingBcCount>0?"#444":"#38bdf866"),color:pendingBcCount>0?"#555":"#38bdf8",cursor:(pendingBcCount>0||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:20,padding:"5px 16px",fontSize:12,fontWeight:700,whiteSpace:"nowrap",letterSpacing:0.3,opacity:(pendingBcCount>0||ownerPriorityActive)?0.45:1,textAlign:"center"}}>
                     🔄 Update BOM in BC (Item# {sp.bcItemNumber})
                   </button>
                 )}
@@ -20197,7 +20239,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
       onUpdate:updated=>onUpdate({...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)}),
       onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
-    {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)}/>}
+    {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)} ownerPriorityActive={ownerPriorityActive}/>}
     {showCADLinkModal&&<CADLinkSendModal project={project} onClose={()=>setShowCADLinkModal(false)}/>}
     {showUnlockConfirm&&ReactDOM.createPortal(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -21190,6 +21232,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [varianceProcessing,setVarianceProcessing]=useState(false);
 
   async function applyPortalPrices(submission){
+    // DECISION(v1.19.681): Owner Priority Mode gate. Blocks supplier-quote apply flow.
+    if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
     // Build a review screen: match supplier items to BOM rows
     const items=(submission.lineItems||[]).filter(item=>(item.partNumber||'').trim()||(item.unitPrice!=null)||(item.description||'').trim());
     submission={...submission,lineItems:items};
@@ -21583,6 +21627,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             readOnly={readOnly}
             viewers={viewers}
             projectRemoteTasks={projectRemoteTasks}
+            ownerPriorityActive={ownerPriorityActive}
             onBack={onBack}
             onViewQuote={handlePrintQuote}
             quotePrinting={quotePrinting}
