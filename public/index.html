@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.671";
+const APP_VERSION="v1.19.672";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5455,6 +5455,94 @@ const SUSPECT_QTY_PATTERNS=[
   /\bHMI\b/,/\btouchscreen\b/i,/\boperator\s*interface\b/i,
   /\bPLC\b/,/\bcontroller\b/i,
 ];
+// DECISION(v1.19.672): Companion-part auto-splitter. Some BOM lines list a primary
+// component with a companion catalog code embedded in the description column (e.g.
+// "RH2B-ULC-DC24" with "w/ SH2B-05 Base" in the description). The AI prompt already
+// instructs Claude to split these, but this is a belt-and-suspenders post-processor:
+// scan each row's description for an additional catalog code adjacent to a companion
+// keyword, and emit a new BOM row for it.
+//
+// Conservative matching — we only split when:
+//   (a) description contains a companion keyword ("base","socket","aux","holder","mount",
+//       "includes","w/","with","&","+","kit"), AND
+//   (b) a plausible catalog code (4+ chars, letter+digit mix, optional dashes) appears
+//       within ~3 tokens of that keyword, AND
+//   (c) that code normalizes to something DIFFERENT from the primary partNumber, AND
+//   (d) that code isn't already in the BOM as its own row.
+const _COMPANION_KEYWORDS=["base","socket","holder","mount","aux","auxiliary","module","kit","includes","w/","with"];
+const _COMPANION_PN_RE=/\b([A-Z][A-Z0-9]{1,}(?:-[A-Z0-9]+){0,5})\b/g;
+// Tokens that LOOK like a PN but are almost always specs / non-parts — skip these.
+const _COMPANION_PN_BLACKLIST=new Set(["VDC","VAC","AWG","NEMA","IP65","IP67","IP54","IP66","NC","NO","DIN","UL","CSA","SPST","SPDT","DPDT","3PH","1PH","AC","DC","HP","RPM","PLC","HMI","LED","LCD","PCB","USB","COM","RS485","RS232","PNP","NPN","PNPNPN","MOV","TVS","EMI","EMC","RTD","PT100","0-10V","4-20MA","24V","12V","120V","240V","480V","277V","208V","600V"]);
+function _looksLikeCompanionPn(token,primaryPn){
+  if(!token||token.length<4)return false;
+  const up=token.toUpperCase();
+  if(_COMPANION_PN_BLACKLIST.has(up))return false;
+  if(/^\d+$/.test(up))return false; // all digits → spec, not PN
+  if(!/[A-Z]/.test(up)||!/[0-9]/.test(up))return false; // PNs have both letters and digits
+  // Normalized difference check
+  if(normPart(up)===normPart(primaryPn||""))return false;
+  return true;
+}
+function splitCompanionParts(bom){
+  const existing=new Set(bom.filter(r=>!r.isLaborRow).map(r=>normPart(r.partNumber||"")).filter(Boolean));
+  const results=[];
+  const added=[];
+  for(const row of bom){
+    results.push(row);
+    if(row.isLaborRow||row.isContingency)continue;
+    const primary=(row.partNumber||"").trim();
+    if(!primary)continue;
+    const desc=(row.description||"");
+    if(!desc)continue;
+    const descLow=desc.toLowerCase();
+    // Must have at least one companion keyword present
+    if(!_COMPANION_KEYWORDS.some(k=>descLow.includes(k)))continue;
+    // Scan for candidate catalog codes in the description
+    const seen=new Set();
+    let m;_COMPANION_PN_RE.lastIndex=0;
+    while((m=_COMPANION_PN_RE.exec(desc))!==null){
+      const tok=m[1];
+      if(!_looksLikeCompanionPn(tok,primary))continue;
+      const nk=normPart(tok);
+      if(seen.has(nk))continue;
+      if(existing.has(nk))continue; // already its own BOM row
+      // Check keyword proximity — a keyword must appear within ~25 chars on either side
+      const idx=m.index;
+      const window=desc.slice(Math.max(0,idx-25),Math.min(desc.length,idx+tok.length+25)).toLowerCase();
+      if(!_COMPANION_KEYWORDS.some(k=>window.includes(k)))continue;
+      seen.add(nk);
+      existing.add(nk);
+      const companion={
+        id:(Date.now()+Math.random()),
+        itemNo:row.itemNo||"",
+        qty:+row.qty||1,
+        partNumber:tok,
+        description:`Companion of ${primary}`,
+        manufacturer:row.manufacturer||"",
+        notes:`Auto-added — companion part identified on same BOM line as ${primary}`,
+        unitPrice:0,
+        priceSource:"",
+        priceDate:null,
+        autoAddedCompanion:true,
+        companionOfPartNumber:primary,
+        y_top:(typeof row.y_top==="number"?row.y_top:undefined),
+        y_bottom:(typeof row.y_bottom==="number"?row.y_bottom:undefined),
+        sourcePageIdx:row.sourcePageIdx,
+        sourcePageId:row.sourcePageId,
+      };
+      results.push(companion);
+      added.push({primary,companion:tok});
+      // Also annotate parent's notes so user sees the relationship on the parent row
+      const parentNote=`Companion part ${tok} auto-added as separate BOM row`;
+      if(!(row.notes||"").includes(parentNote)){
+        row.notes=row.notes?(row.notes+" · "+parentNote):parentNote;
+      }
+    }
+  }
+  if(added.length)console.log(`COMPANION SPLIT: added ${added.length} companion part row${added.length>1?"s":""}:`,added.map(a=>`${a.primary} → ${a.companion}`).join(", "));
+  return results;
+}
+
 function flagSuspectQuantities(bom){
   for(const r of bom){
     if(r.isLaborRow||r.isContingency)continue;
@@ -5642,6 +5730,26 @@ STEP 4 — EXTRACT EVERY ROW (no skipping):
   e.g. "ABB KXTBRHEBFP, OXP10X225, OH865L10B" → three rows, each with same qty/manufacturer/notes
   First row: original description unchanged
   Each extra row: append " (sub-part)" to description
+• COMPANION PARTS (relay+base, contactor+aux, etc.) — catalog code in DESCRIPTION column:
+  Industrial BOMs sometimes list a primary component with a companion part whose catalog code
+  appears in the DESCRIPTION text rather than a separate row. Detect and split these out.
+  Examples:
+    "RH2B-ULC-DC24" [partNumber] | "DPDT Ice Cube Relay w/ SH2B-05 Base" [description]
+      → Two items:
+         (1) RH2B-ULC-DC24 — description: "DPDT Ice Cube Relay"
+         (2) SH2B-05       — description: "Socket base for RH2B-ULC-DC24",
+                             notes: "Companion part — identified on same BOM line as RH2B-ULC-DC24"
+    "100-C09KJ10" | "9A Contactor with 100-FA22 Aux Contact"
+      → Two items:
+         (1) 100-C09KJ10 — "9A Contactor"
+         (2) 100-FA22    — "Aux contact for 100-C09KJ10",
+                           notes: "Companion part — identified on same BOM line as 100-C09KJ10"
+  Detection rule: scan the description for an ADDITIONAL alphanumeric catalog code (letters+digits,
+  often with dashes, 4+ chars) that is distinct from the primary partNumber, typically adjacent to
+  companion keywords: "base", "socket", "holder", "mount", "aux", "auxiliary", "module", "kit",
+  "includes", "w/", "with", "&", "+". If found, emit as a separate item with qty inherited from the
+  primary, appropriate description, and a notes field that explicitly says "Companion part —
+  identified on same BOM line as {primaryPN}".
 • Reference designators (CB1, M1, OL2, PB3, SS1…) → notes field only, never partNumber
 • Include ALL data rows even when some fields are blank — only skip: column header row, totals rows, title block text, revision block rows
 
@@ -7422,9 +7530,14 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         console.log(`BOM MERGE: ${all.length} raw → ${positional.length} positional → ${exact.length} exact → ${fuzzy.length} fuzzy → ${filtered.length} after non-BOM filter (${nonBomRows.length} dropped)`);
         // DECISION(v1.19.629): Sort by drawing Y-position so ARC BOM matches drawing row order.
         const sorted=sortBomByDrawingPosition(filtered);
+        // DECISION(v1.19.672): Split companion parts (e.g. RH2B-ULC-DC24 relay + SH2B-05 base
+        // both on the same BOM line). The AI prompt already asks for this split, but this pass
+        // catches cases the AI missed. Runs AFTER sort so the companion inserts directly after
+        // its parent (same Y-position metadata).
+        const withCompanions=splitCompanionParts(sorted);
         // DECISION(v1.19.638): Flag column-alignment qty errors (e.g. qty=143 on a window kit).
-        flagSuspectQuantities(sorted);
-        return{bom:appendDefaultBomItems(sorted),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows}};
+        flagSuspectQuantities(withCompanions);
+        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length}};
       }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[],mergeStats:null};});
     }
     // Hazardous location scan (parallel with BOM — uses Haiku, fast)
@@ -13672,7 +13785,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       reLearnedLog=reLearned.appliedLog||[];
     }catch(e){var bomPreDefaults=corrected;}
     // DECISION(v1.19.629): Sort by drawing Y-position for spot-check parity with the drawing.
-    const bomSorted=sortBomByDrawingPosition(bomPreDefaults);
+    // DECISION(v1.19.672): Re-run companion-part splitter on re-extract so new companion
+    // parts in the refreshed BOM get broken out too.
+    const bomSorted=splitCompanionParts(sortBomByDrawingPosition(bomPreDefaults));
     flagSuspectQuantities(bomSorted); // DECISION(v1.19.638)
     // DECISION(v1.19.639): Per-row snippet self-correction on re-extract.
     let reSnippetCorrections=[];
@@ -13862,7 +13977,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       fbLearnedLog=fbLearned.appliedLog||[];
     }catch(e){var fbPreDefaults=fbCorrected;}
     // DECISION(v1.19.629): Sort by drawing Y-position for spot-check parity with the drawing.
-    const bomSorted=sortBomByDrawingPosition(fbPreDefaults);
+    // DECISION(v1.19.672): Companion-part splitter also runs on feedback-based re-extract.
+    const bomSorted=splitCompanionParts(sortBomByDrawingPosition(fbPreDefaults));
     flagSuspectQuantities(bomSorted); // DECISION(v1.19.638)
     // DECISION(v1.19.639): Per-row snippet self-correction on feedback re-extract.
     let fbSnippetCorrections=[];
@@ -15533,6 +15649,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                              the Part # text on narrow rows. Tooltips keep the full meaning. */}
                           {f==="partNumber"&&row.autoLoaded&&(
                             <span title="Auto-loaded from a supplier portal import" style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help"}}>Auto</span>
+                          )}
+                          {/* DECISION(v1.19.672): Companion-part badge — identifies rows that
+                             were auto-added because a secondary part number was detected on
+                             the parent's BOM line (e.g. relay + socket base). */}
+                          {f==="partNumber"&&row.autoAddedCompanion&&(
+                            <span title={`Auto-added companion part — identified on the same BOM line as ${row.companionOfPartNumber||"another part"}. Verify qty and details.`} style={{fontSize:10,color:"#fb923c",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#fb923c22",padding:"1px 6px",borderRadius:10}}>🔗 Co-Part</span>
                           )}
                           {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&(
                             <span title={row.autoReplaced?"ARC auto-crossed this part from a saved alternate":"Part crossed to an alternate during extraction"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help"}}>{row.autoReplaced?"ARC Cross":"Crossed"}</span>
