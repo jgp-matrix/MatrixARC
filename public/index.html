@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.682";
+const APP_VERSION="v1.19.683";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20580,6 +20580,26 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     setTakeoverActive(takeoverValid?ta:null);
     setOwnerPriorityActive(!!ownerIsWatching&&!takeoverValid);
   },[viewers,project.createdBy,project.ownerLockActive,project.ownerTakeoverActive,iAmOwner,uid]);
+
+  // DECISION(v1.19.683): Owner-side — chime when a teammate opens my project. Preference
+  // stored in localStorage per uid. Default OFF — opt-in via Settings. Owner-only.
+  const [chimeOnViewer,setChimeOnViewer]=useState(()=>{
+    try{return localStorage.getItem("arc_chime_on_viewer_"+uid)==="1";}catch(e){return false;}
+  });
+  const _viewersMountedRef=useRef(false);
+  const _prevViewersRef=useRef(new Set());
+  useEffect(()=>{
+    if(!iAmOwner)return;
+    const currentSet=new Set(viewers.filter(v=>v.uid!==uid).map(v=>v.uid));
+    if(_viewersMountedRef.current&&chimeOnViewer){
+      let newViewer=false;
+      currentSet.forEach(id=>{if(!_prevViewersRef.current.has(id))newViewer=true;});
+      if(newViewer)_playChime("viewer-join");
+    }
+    _prevViewersRef.current=currentSet;
+    _viewersMountedRef.current=true;
+  },[viewers,iAmOwner,chimeOnViewer,uid]);
+
   // DECISION(v1.19.678): Log state transitions for debug (remove when stable).
   const _prevOwnerPriorityRef=useRef(false);
   useEffect(()=>{
@@ -21628,6 +21648,25 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           {project.ownerLockActive&&(
             <span style={{fontSize:11,color:"#fcd34d",fontWeight:700,background:"#3a2800",borderRadius:4,padding:"1px 8px"}}>ACTIVE</span>
           )}
+          {/* DECISION(v1.19.683): Viewers badge — shows who else is watching the project.
+             Tooltip lists names. Clickable label toggles the chime preference for future joins. */}
+          {(()=>{
+            const otherViewers=viewers.filter(v=>v.uid!==uid&&(Date.now()-(v.lastSeen||0))<90000);
+            if(!otherViewers.length)return null;
+            return(
+              <span
+                title={"Watching: "+otherViewers.map(v=>v.userName||v.userEmail||"unknown").join(", ")+(chimeOnViewer?" · Chime ON (click to toggle)":" · Chime OFF (click to toggle)")}
+                onClick={()=>{
+                  const next=!chimeOnViewer;
+                  try{localStorage.setItem("arc_chime_on_viewer_"+uid,next?"1":"0");}catch(e){}
+                  setChimeOnViewer(next);
+                }}
+                role="button"
+                style={{display:"inline-flex",alignItems:"center",gap:6,marginLeft:4,padding:"3px 10px",background:"#1e1b4b",border:"1px solid #818cf866",borderRadius:14,fontSize:11,fontWeight:600,color:"#c4b5fd",cursor:"pointer"}}>
+                👁 {otherViewers.length} watching{chimeOnViewer?" 🔔":""}
+              </span>
+            );
+          })()}
         </div>
       )}
       {/* DECISION(v1.19.678): Owner Priority Mode — toast + banner + chime. Toast is a
