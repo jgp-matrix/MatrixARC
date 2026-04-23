@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.667";
+const APP_VERSION="v1.19.668";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14846,8 +14846,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       </div>
 
       {!panelCollapsed&&<>
-      {/* CPD Search bar — hidden after drawings have been extracted */}
-      {!((panel.bom&&panel.bom.length>0)||["extracted","validated","costed","quoted"].includes(panel.status))&&<div style={{marginBottom:12}}>
+      {/* DECISION(v1.19.668): CPD Search bar hidden pending further feature exploration.
+         Code preserved for re-enablement — flip CPD_SEARCH_ENABLED to true to restore.
+         State (cpdQuery, showCpdSearch) + modal (CPDSearchModal) + DB helpers (loadCPD/
+         saveCPD/logPanelToCPD) remain intact. */}
+      {false&&!((panel.bom&&panel.bom.length>0)||["extracted","validated","costed","quoted"].includes(panel.status))&&<div style={{marginBottom:12}}>
         <div style={{display:"flex",gap:0,borderRadius:8,overflow:"hidden",border:`1px solid ${C.accent}55`,background:"#0a0a16"}}>
           <input
             value={cpdQuery}
