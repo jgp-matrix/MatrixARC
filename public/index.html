@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.679";
+const APP_VERSION="v1.19.680";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20452,12 +20452,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       uid,userEmail:fbAuth.currentUser?.email||"",userName:fbAuth.currentUser?.displayName||"",
       projectId,isOwner:init?.createdBy===uid,
       lastSeen:Date.now(),
+      // DECISION(v1.19.680): Mirror the owner's ownerLockActive flag onto their presence
+      // doc so the non-owner's client-side state detection can see it without fetching
+      // the project doc separately. See docs/superpowers/specs/2026-04-23-owner-priority-mode-design.md
+      lockActive:!!projectRef.current?.ownerLockActive,
     });
     let alive=true;let heartbeat=null;
     fbDb.doc(presencePath).set(entry()).catch(()=>{});
     heartbeat=setInterval(()=>{
       if(!alive)return;
-      fbDb.doc(presencePath).update({lastSeen:Date.now()}).catch(()=>{});
+      fbDb.doc(presencePath).update({
+        lastSeen:Date.now(),
+        lockActive:!!projectRef.current?.ownerLockActive,
+      }).catch(()=>{});
     },30000);
     // Listen for other viewers of this project
     const unsub=fbDb.collection(`companies/${cid}/projectPresence`)
@@ -21481,6 +21488,27 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   return(
     <>
+      {/* DECISION(v1.19.678): Owner-only "Hold priority while away" checkbox.
+         Writes project.ownerLockActive. When true, the client-side 90s-stale timeout is
+         bypassed AND Firestore rules reject non-owner writes. Default false. */}
+      {iAmOwner&&view!=="quote"&&(
+        <div style={{margin:"8px 24px 0",display:"flex",alignItems:"center",gap:10,fontSize:12,color:C.muted,flexWrap:"wrap"}}>
+          <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+            <input type="checkbox"
+              checked={!!project.ownerLockActive}
+              onChange={e=>{
+                const upd={...project,ownerLockActive:e.target.checked,updatedAt:Date.now()};
+                update(upd);
+              }}
+              style={{cursor:"pointer"}}/>
+            <span>🔒 Hold priority while I'm away</span>
+          </label>
+          <span style={{fontSize:11,color:C.muted,fontStyle:"italic"}} title="Normally your priority lock releases 90 seconds after you close the tab. Check this to keep teammates locked out even if you step away or lose connection.">(keeps lock active if tab goes idle)</span>
+          {project.ownerLockActive&&(
+            <span style={{fontSize:11,color:"#fcd34d",fontWeight:700,background:"#3a2800",borderRadius:4,padding:"1px 8px"}}>ACTIVE</span>
+          )}
+        </div>
+      )}
       {/* DECISION(v1.19.678): Owner Priority Mode — toast + banner + chime. Toast is a
          transient notification; banner persists while active; green takeover banner
          replaces the purple one while admin takeover is in effect. */}
