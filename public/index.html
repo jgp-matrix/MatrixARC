@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.685";
+const APP_VERSION="v1.19.686";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2389,6 +2389,41 @@ async function bcLookupItem(partNumber){
     // priceSource="bc" and NOT fall back to AI. Use ?? so undefined becomes null but 0 stays 0.
     return{unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,displayName:item.displayName||"",inventory:item.inventory||0,number:item.number||"",vendorNo:item.vendorNo||""};
   }catch(e){console.warn("BC item lookup error:",e);return null;}
+}
+
+// DECISION(v1.19.685): Read Lead_Time_Calculation from BC Item Card. The /items v2 API
+// doesn't expose leadTimeCalculation by default, so we hit ItemCard OData. Returns
+// parsed integer days or null.
+async function bcLookupLeadTime(partNumber){
+  if(!_bcToken||!partNumber||!partNumber.trim())return null;
+  const pn=partNumber.trim().replace(/'/g,"''");
+  try{
+    const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(pn)}'&$select=No,Lead_Time_Calculation`,{
+      headers:{"Authorization":`Bearer ${_bcToken}`}
+    });
+    if(!r.ok)return null;
+    const d=await r.json();
+    const row=(d.value||[])[0];
+    return row?_bcDateFormulaToDays(row.Lead_Time_Calculation):null;
+  }catch(e){console.warn("bcLookupLeadTime error:",e);return null;}
+}
+
+// DECISION(v1.19.685): Per-vendor lead time from ItemVendorCatalog (Page 114). When a
+// BOM row has a specific bcVendorNo, prefer this over the item-level default.
+async function bcLookupItemVendorLeadTime(partNumber,vendorNo){
+  if(!_bcToken||!partNumber||!vendorNo)return null;
+  const pn=partNumber.trim().replace(/'/g,"''");
+  const vn=String(vendorNo).trim().replace(/'/g,"''");
+  if(!pn||!vn)return null;
+  try{
+    const r=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Lead_Time_Calculation`,{
+      headers:{"Authorization":`Bearer ${_bcToken}`}
+    });
+    if(!r.ok)return null;
+    const d=await r.json();
+    const row=(d.value||[])[0];
+    return row?_bcDateFormulaToDays(row.Lead_Time_Calculation):null;
+  }catch(e){console.warn("bcLookupItemVendorLeadTime error:",e);return null;}
 }
 
 async function bcLookupItems(bomItems){
@@ -14595,6 +14630,56 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         console.warn("BC pricing phase failed:",ex);
         _report.push({source:"Business Central",obtained:0,skipped:0,failed:0,total:0,error:ex.message});
         _pp({msg:`BC failed: ${ex.message||ex} — falling back to AI…`,pct:10});
+      }
+    }
+
+    // DECISION(v1.19.685): Lead-time fetch phase. Piggybacks on pricing — no separate
+    // button/call. Precedence: existing supplier source > ItemVendorCatalog > Item Card.
+    // Manual source is preserved unless forceFresh. AI fallback (Task 6) runs at the very
+    // end of this function. Scraper source (Task 7) applies later if Codale/custom scraper
+    // returns a lead time.
+    if(_bcToken){
+      const ltRows=updatedBom.filter(r=>{
+        if(r.isLaborRow||_isExcludedFromPriceCheck(r))return false;
+        if(!(r.partNumber||"").trim())return false;
+        // Supplier-sourced values are freshest; keep unless force-refresh
+        if(r.leadTimeSource==="supplier"&&!forceFresh)return false;
+        // Manual stays unless force-refresh
+        if(r.leadTimeSource==="manual"&&!forceFresh)return false;
+        // Stale check: re-fetch if updated >60d ago OR no source yet
+        const staleMs=(_pricingConfig?.defaultStaleDays||60)*24*60*60*1000;
+        const isStale=!r.leadTimeUpdatedAt||(Date.now()-r.leadTimeUpdatedAt)>staleMs;
+        return isStale||forceFresh||r.leadTimeDays==null;
+      });
+      if(ltRows.length>0){
+        _pp({msg:`Lead times: checking BC for ${ltRows.length} items…`,pct:42});
+        const ltUpdates={};
+        for(let i=0;i<ltRows.length;i++){
+          const row=ltRows[i];
+          const pn=(row.partNumber||"").trim();
+          if(!pn)continue;
+          // Find the latest version of this row from updatedBom in case BC phase changed vendor
+          const latestRow=updatedBom.find(r=>String(r.id)===String(row.id))||row;
+          const vendorNo=latestRow.bcVendorNo||null;
+          let ldDays=null,ldSource=null;
+          if(vendorNo){
+            ldDays=await bcLookupItemVendorLeadTime(pn,vendorNo);
+            if(ldDays!=null)ldSource="bc_vendor";
+          }
+          if(ldDays==null){
+            ldDays=await bcLookupLeadTime(pn);
+            if(ldDays!=null)ldSource="bc_item";
+          }
+          if(ldDays!=null){
+            ltUpdates[String(row.id)]={leadTimeDays:ldDays,leadTimeSource:ldSource,leadTimeUpdatedAt:Date.now(),leadTimeEstimated:false};
+          }
+        }
+        const ltCount=Object.keys(ltUpdates).length;
+        console.log(`[LEAD TIME] BC: ${ltCount}/${ltRows.length} rows populated from BC (${Object.values(ltUpdates).filter(u=>u.leadTimeSource==="bc_vendor").length} from ItemVendorCatalog, ${Object.values(ltUpdates).filter(u=>u.leadTimeSource==="bc_item").length} from ItemCard)`);
+        updatedBom=updatedBom.map(r=>{
+          const k=String(r.id);
+          return k in ltUpdates?{...r,...ltUpdates[k]}:r;
+        });
       }
     }
 
