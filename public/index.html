@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.690";
+const APP_VERSION="v1.19.691";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2406,6 +2406,85 @@ async function bcLookupLeadTime(partNumber){
     const row=(d.value||[])[0];
     return row?_bcDateFormulaToDays(row.Lead_Time_Calculation):null;
   }catch(e){console.warn("bcLookupLeadTime error:",e);return null;}
+}
+
+// DECISION(v1.19.691): Upsert ItemVendorCatalog with supplier-quoted lead time.
+// Safeguards:
+//   - partNumber must be non-blank (HARD REJECT — per user requirement)
+//   - vendorNo must be resolved (skip if null)
+//   - leadTimeDays must be > 0
+// Always writes an audit entry to companies/{cid}/bcLeadTimeWrites regardless of outcome.
+async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendorItemNo,leadTimeDays,projectId,uid,cid}){
+  const auditEntry={
+    writtenAt:Date.now(),
+    writtenBy:uid,
+    projectId:projectId||null,
+    vendorNo:vendorNo||null,
+    vendorName:vendorName||null,
+    itemNo:partNumber||null,
+    leadTimeDays:leadTimeDays||null,
+    previousLeadTime:null,
+    outcome:"failed",
+    error:null,
+  };
+  // HARD REJECT guard — never write a blank partNumber to BC
+  if(!partNumber||!String(partNumber).trim()){
+    auditEntry.error="blank partNumber — HARD REJECT";
+  }else if(!vendorNo){
+    auditEntry.error="vendor_no not resolved — skipped";
+  }else if(!leadTimeDays||leadTimeDays<=0){
+    auditEntry.error="leadTimeDays must be > 0 — skipped";
+  }else if(!_bcToken){
+    auditEntry.error="BC not connected — skipped";
+  }else{
+    try{
+      const pn=String(partNumber).trim().replace(/'/g,"''");
+      const vn=String(vendorNo).trim().replace(/'/g,"''");
+      const existing=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'`,{
+        headers:{"Authorization":`Bearer ${_bcToken}`}
+      });
+      let existingRec=null,etag=null;
+      if(existing.ok){
+        const d=await existing.json();
+        existingRec=(d.value||[])[0]||null;
+        if(existingRec){
+          auditEntry.previousLeadTime=_bcDateFormulaToDays(existingRec.Lead_Time_Calculation);
+          etag=existingRec["@odata.etag"]||existing.headers.get("ETag")||null;
+        }
+      }
+      const body={
+        Item_No:String(partNumber).trim(),
+        Vendor_No:String(vendorNo).trim(),
+        Lead_Time_Calculation:_daysToBcDateFormula(leadTimeDays),
+      };
+      if(vendorItemNo&&String(vendorItemNo).trim()&&String(vendorItemNo).trim()!==String(partNumber).trim()){
+        body.Vendor_Item_No=String(vendorItemNo).trim();
+      }
+      if(existingRec){
+        const patchUrl=`${BC_ODATA_BASE}/ItemVendorCatalog(Item_No='${encodeURIComponent(pn)}',Vendor_No='${encodeURIComponent(vn)}')`;
+        const pr=await fetch(patchUrl,{
+          method:"PATCH",
+          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
+          body:JSON.stringify(body),
+        });
+        if(pr.ok){auditEntry.outcome="updated";}
+        else{auditEntry.error=`PATCH failed: ${pr.status} ${await pr.text().then(t=>t.slice(0,120)).catch(()=>'')}`;}
+      }else{
+        const cr=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog`,{
+          method:"POST",
+          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+          body:JSON.stringify(body),
+        });
+        if(cr.ok){auditEntry.outcome="created";}
+        else{auditEntry.error=`POST failed: ${cr.status} ${await cr.text().then(t=>t.slice(0,120)).catch(()=>'')}`;}
+      }
+    }catch(e){auditEntry.error=e.message||String(e);}
+  }
+  // Audit always writes — even skips are logged
+  try{
+    if(cid)await fbDb.collection(`companies/${cid}/bcLeadTimeWrites`).add(auditEntry);
+  }catch(e){console.warn("bcLeadTimeWrites audit failed:",e);}
+  return auditEntry;
 }
 
 // DECISION(v1.19.685): Per-vendor lead time from ItemVendorCatalog (Page 114). When a
@@ -21823,6 +21902,34 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       })
     }));
     update({...projectRef.current,panels:updatedPanels});
+    // DECISION(v1.19.691): Write supplier lead times to BC ItemVendorCatalog (Page 114).
+    // Fires alongside the price push — same transaction semantics. Blank partNumber is a
+    // HARD REJECT. Audit trail in companies/{cid}/bcLeadTimeWrites. Non-fatal on failure.
+    let ltCreated=0,ltUpdated=0,ltSkipped=0;
+    try{
+      const cid=_appCtx.companyId;
+      if(vendorNo){
+        for(const item of (submission.lineItems||[])){
+          if(item.cannotSupply)continue;
+          if(!item.partNumber||!String(item.partNumber).trim())continue; // HARD REJECT blank partNumber
+          if(!item.leadTimeDays||item.leadTimeDays<=0)continue;
+          const result=await bcUpsertItemVendorLeadTime({
+            partNumber:item.partNumber,
+            vendorNo:vendorNo,
+            vendorName:submission.vendorName||"",
+            vendorItemNo:item.supplierPartNumber||"",
+            leadTimeDays:item.leadTimeDays,
+            projectId:projectRef.current?.id||null,
+            uid,
+            cid,
+          });
+          if(result.outcome==="created")ltCreated++;
+          else if(result.outcome==="updated")ltUpdated++;
+          else ltSkipped++;
+        }
+        if(ltCreated+ltUpdated>0)console.log(`ItemVendorCatalog writeback: ${ltCreated} created, ${ltUpdated} updated, ${ltSkipped} skipped`);
+      }
+    }catch(e){console.warn("ItemVendorCatalog writeback error:",e);}
     // Attach supplier quote PDF to BC project
     const bcNum=projectRef.current.bcProjectNumber;
     if(bcNum&&_bcToken&&submission.storageUrl){
@@ -21844,7 +21951,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const learningWarn=learningSaveWarnings.length>0
       ? `\n\n⚠ Learning database saves failed: ${learningSaveWarnings.join(", ")}. The BOM changes are applied, but ARC won't remember these for the next extraction. Try again later.`
       : '';
-    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${crossedSkipped>0?`\n${crossedSkipped} crossed item${crossedSkipped!==1?'s':''} — price pushed to supplier's PN in BC only (BOM unchanged).`:''}${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.${learningWarn}`);
+    const ltWriteback=(ltCreated+ltUpdated)>0
+      ? `\nBC ItemVendorCatalog updated for ${ltCreated+ltUpdated} item${(ltCreated+ltUpdated)!==1?'s':''} (${ltCreated} created, ${ltUpdated} updated).`
+      : '';
+    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${crossedSkipped>0?`\n${crossedSkipped} crossed item${crossedSkipped!==1?'s':''} — price pushed to supplier's PN in BC only (BOM unchanged).`:''}${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}${ltWriteback}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.${learningWarn}`);
     }catch(e){
       console.error("applyPortalPrices error:",e);
       alert("Error applying prices: "+e.message+"\nPrices may have been partially applied. Check console for details.");
