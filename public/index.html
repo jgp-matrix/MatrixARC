@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.676";
+const APP_VERSION="v1.19.677";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5504,6 +5504,12 @@ function _makeCompanionRow(parentRow,pn,relationship){
     priceDate:null,
     autoAddedCompanion:true,
     companionOfPartNumber:parentRow.partNumber||"",
+    // DECISION(v1.19.677): Companion rows inherit the parent's qty verbatim, which is
+    // correct for the common case (1 base per relay) but wrong for edge cases like
+    // "1 kit w/ 3 bases". Set suspectQty:true so the ⚠ qty badge shows on the row,
+    // prompting the user to verify — until the user confirms and edits the qty away.
+    suspectQty:true,
+    suspectQtyReason:`Auto-inherited qty from ${parentRow.partNumber||"parent item"}. Verify the companion's qty matches the drawing (e.g. 1 kit with 3 bases would need manual adjustment).`,
     y_top:(typeof parentRow.y_top==="number"?parentRow.y_top:undefined),
     y_bottom:(typeof parentRow.y_bottom==="number"?parentRow.y_bottom:undefined),
     sourcePageIdx:parentRow.sourcePageIdx,
@@ -8296,6 +8302,11 @@ function findIncompleteQuoteItems(project){
   if(!project)return[];
   const issues=[];
   const panels=project.panels||[];
+  // DECISION(v1.19.677): Align with _isBomRowFlaggedRed — also flag stale priceDate rows.
+  // Previously this function only flagged MISSING priceDate; stale-but-present dates were
+  // red in the BOM table but didn't block Send. The banner told sales "fix the red rows"
+  // but fixing stale-date reds didn't re-enable Send, which was confusing.
+  const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
   for(let pi=0;pi<panels.length;pi++){
     const pan=panels[pi];
     const bom=pan.bom||[];
@@ -8309,6 +8320,7 @@ function findIncompleteQuoteItems(project){
       if(!r.qty||+r.qty===0)reasons.push("qty");
       if(!r.unitPrice||+r.unitPrice===0)reasons.push("price");
       if(!r.priceDate)reasons.push("priced date");
+      else if((Date.now()-r.priceDate)>staleMs)reasons.push("stale price (>"+(staleMs/(24*60*60*1000))+"d)");
       if(reasons.length){
         issues.push({
           panelName:pan.name||`Panel ${pi+1}`,
@@ -8327,7 +8339,7 @@ function formatIncompleteQuoteAlert(issues){
   const shown=issues.slice(0,maxShow);
   const lines=shown.map(i=>`  • ${i.panelName} — ${i.partNumber}${i.description?" · "+i.description:""}  [missing: ${i.missing.join(", ")}]`);
   const more=issues.length>maxShow?`\n  … and ${issues.length-maxShow} more`:"";
-  return `Quote cannot be SENT — ${issues.length} item${issues.length>1?"s":""} still need${issues.length===1?"s":""} price, qty, or priced date:\n\n${lines.join("\n")}${more}\n\nFix those rows first, or use "🖨 Just Print" if you only want a hard copy for review.`;
+  return `Quote cannot be SENT — ${issues.length} item${issues.length>1?"s":""} still need${issues.length===1?"s":""} price, qty, or priced date (or have stale pricing):\n\n${lines.join("\n")}${more}\n\nFix those rows first (run Refresh Pricing for stale ones), or use "🖨 Just Print" if you only want a hard copy for review.`;
 }
 function computeProjectEffectiveStatus(project){
   if(!project)return"draft";
@@ -14066,7 +14078,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
 
   function updateBomRow(id,field,val){
-    const updated={...panel,bom:(panel.bom||[]).map(r=>r.id===id?{...r,[field]:val}:r)};
+    // DECISION(v1.19.677): When user edits qty on a row flagged with suspectQty (either
+    // from column-alignment heuristic OR from v1.19.677 companion-row auto-inherit), the
+    // user's edit is an implicit confirmation — clear the flag so the ⚠ qty badge goes
+    // away. If the new qty is still obviously wrong, flagSuspectQuantities will re-flag
+    // it on next extraction pass.
+    const updated={...panel,bom:(panel.bom||[]).map(r=>{
+      if(r.id!==id)return r;
+      const next={...r,[field]:val};
+      if(field==="qty"&&r.suspectQty){delete next.suspectQty;delete next.suspectQtyReason;}
+      return next;
+    })};
     onUpdate(updated);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
@@ -15712,7 +15734,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           )}
                           {f==="partNumber"&&row.isCorrection&&(
                             <span title={row.correctionType==='extraction'?'Extraction error corrected':row.correctionType==='formatting'?'Formatting error corrected':row.correctionType==='format'?'Format corrected':'Corrected'} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help"}}>
-                              {row.correctionType==='extraction'?'Extr. Fix':row.correctionType==='formatting'?'Frmt. Fix':row.correctionType==='format'?'Frmt. Fix':'Fixed'}
+                              {row.correctionType==='extraction'?'Extract Fix':row.correctionType==='formatting'?'Format Fix':row.correctionType==='format'?'Format Fix':'Fixed'}
                             </span>
                           )}
                           {/* DECISION(v1.19.636/639): Verification badge — suspect (red) and
