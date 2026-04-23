@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.665";
+const APP_VERSION="v1.19.666";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -8115,6 +8115,27 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
 function _isExcludedFromPriceCheck(r){
   return r.isLaborRow||r.customerSupplied||r.isContingency||/matrix\s*systems/i.test(r.bcVendorName||"")||/^job.?buyoff$/i.test(r.partNumber||"")||/crate/i.test(r.description||"");
 }
+// DECISION(v1.19.666): Rules for highlighting a BOM row RED in the table. Three conditions
+// (any one triggers red):
+//   (1) qty === 0     — row has no quantity
+//   (2) unitPrice === 0 — row has no price
+//   (3) priceDate missing OR older than _pricingConfig.defaultStaleDays (default 60 days)
+// Rules 1 & 2 use the original exclusion (labor + customerSupplied only — contingency/crate/
+// job-buyoff with qty=0 still flag red as they always have). Rule 3 uses the broader
+// _isExcludedFromPriceCheck so contingency/crate/job-buyoff aren't flagged for missing dates
+// (they legitimately don't have priceDates from BC).
+function _isBomRowFlaggedRed(r){
+  if(!r||r.isLaborRow)return false;
+  // Rules 1 & 2 — existing behavior
+  if(!r.customerSupplied&&(+r.qty===0||+r.unitPrice===0))return true;
+  // Rule 3 — NEW: missing or outdated priceDate (only for rows that should have one)
+  if(!_isExcludedFromPriceCheck(r)){
+    if(!r.priceDate)return true;
+    const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
+    if((Date.now()-r.priceDate)>staleMs)return true;
+  }
+  return false;
+}
 // DECISION(v1.19.663): Quote send gating. Walk every panel's BOM and surface any row
 // that's missing a price, qty, or priced date (excluding labor/customer-supplied/
 // contingency/crate/job-buyoff). Returns a list suitable for display in an alert so
@@ -15390,7 +15411,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     return (a.itemNo||"").localeCompare(b.itemNo||"");
                   });
                   return sortedBom.map((row,i)=>{
-                  const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":(!row.isLaborRow&&!row.customerSupplied&&(+row.qty===0||+row.unitPrice===0))?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)";
+                  // DECISION(v1.19.666): Red row = qty=0 / unitPrice=0 / priceDate missing or stale.
+                  // See _isBomRowFlaggedRed for full rules + exclusions.
+                  const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_isBomRowFlaggedRed(row)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)";
                   return(
                   <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:rowBg}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
