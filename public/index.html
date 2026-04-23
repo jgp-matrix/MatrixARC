@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.692";
+const APP_VERSION="v1.19.693";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13103,6 +13103,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const feedbackRef=useRef(null);
   const fileRef=useRef(null);
   const autoSaveTimer=useRef(null);
+  // DECISION(v1.19.693): Per-row debounce timers for manual leadTimeDays → BC writes.
+  // Separate from autoSaveTimer so the BC push fires 2s after the last keystroke on that row
+  // without interfering with Firestore saves (1.5s debounce).
+  const _leadTimeWriteTimers=useRef({});
   const panelRef=useRef(panel);
   useEffect(()=>{panelRef.current=panel;},[panel]);
   const bomEditRef=useRef({});
@@ -14357,6 +14361,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // user's edit is an implicit confirmation — clear the flag so the ⚠ qty badge goes
     // away. If the new qty is still obviously wrong, flagSuspectQuantities will re-flag
     // it on next extraction pass.
+    let editedRow=null;
     const updated={...panel,bom:(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
       const next={...r,[field]:val};
@@ -14367,11 +14372,39 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         next.leadTimeUpdatedAt=Date.now();
         next.leadTimeEstimated=false;
       }
+      editedRow=next;
       return next;
     })};
     onUpdate(updated);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
+    // DECISION(v1.19.693): Manual leadTimeDays edit → push to BC ItemVendorCatalog so the
+    // value doesn't stay client-only. Previously only the supplier-portal Apply Prices flow
+    // triggered writeback, so manual edits never landed in BC and users couldn't sync them
+    // through the regular price-sync path (which requires all items priced). Writeback is
+    // debounced 2s to avoid firing on every keystroke while the user is typing.
+    if(field==="leadTimeDays"&&editedRow&&_bcToken){
+      const row=editedRow;
+      const pn=(row.partNumber||"").trim();
+      const vNo=(row.bcVendorNo||"").trim();
+      const ld=+row.leadTimeDays;
+      const cid=_appCtx.companyId;
+      if(pn&&vNo&&ld>0&&cid&&!row.isLaborRow&&!_isExcludedFromPriceCheck(row)){
+        if(_leadTimeWriteTimers.current[id])clearTimeout(_leadTimeWriteTimers.current[id]);
+        _leadTimeWriteTimers.current[id]=setTimeout(async()=>{
+          try{
+            const result=await bcUpsertItemVendorLeadTime({
+              partNumber:pn,vendorNo:vNo,vendorName:row.bcVendorName||"",
+              vendorItemNo:row.supplierPartNumber||"",leadTimeDays:ld,
+              projectId,uid,cid,
+            });
+            console.log("[LEAD TIME] Manual edit → BC ItemVendorCatalog:",result.outcome,pn,`${ld}D`,result.error?`(${result.error})`:"");
+          }catch(e){console.warn("Manual lead time BC push failed:",e);}
+        },2000);
+      } else if(pn&&!vNo&&ld>0){
+        console.log(`[LEAD TIME] Manual edit on ${pn} (${ld}D) NOT pushed to BC — row has no bcVendorNo`);
+      }
+    }
   }
   function saveBomRow(updated){
     try{onSaveImmediate(updated);}catch(e){}
