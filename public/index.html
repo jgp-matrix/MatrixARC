@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.664";
+const APP_VERSION="v1.19.665";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -15477,15 +15477,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               <span style={{position:"absolute",top:3,right:3,fontSize:9,color:row.correctedByLibrary?C.yellow:C.teal,pointerEvents:"none",fontWeight:800}}>{row.correctedByLibrary?"🔧":"📚"}</span>
                             )}
                           </div>
+                          {/* DECISION(v1.19.665): Shortened badge labels so they don't cover
+                             the Part # text on narrow rows. Tooltips keep the full meaning. */}
                           {f==="partNumber"&&row.autoLoaded&&(
-                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>Auto-Loaded</span>
+                            <span title="Auto-loaded from a supplier portal import" style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help"}}>Auto</span>
                           )}
                           {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&(
-                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>{row.autoReplaced?"ARC crossed":"crossed item"}</span>
+                            <span title={row.autoReplaced?"ARC auto-crossed this part from a saved alternate":"Part crossed to an alternate during extraction"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help"}}>{row.autoReplaced?"ARC Cross":"Crossed"}</span>
                           )}
                           {f==="partNumber"&&row.isCorrection&&(
-                            <span style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap"}}>
-                              {row.correctionType==='extraction'?'extraction corrected':row.correctionType==='formatting'?'formatting error':row.correctionType==='format'?'format corrected':'corrected'}
+                            <span title={row.correctionType==='extraction'?'Extraction error corrected':row.correctionType==='formatting'?'Formatting error corrected':row.correctionType==='format'?'Format corrected':'Corrected'} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help"}}>
+                              {row.correctionType==='extraction'?'Extr. Fix':row.correctionType==='formatting'?'Frmt. Fix':row.correctionType==='format'?'Frmt. Fix':'Fixed'}
                             </span>
                           )}
                           {/* DECISION(v1.19.636/639): Verification badge — suspect (red) and
@@ -15497,10 +15499,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             if(!verif)return null;
                             const bcConfirmed=row.priceSource==="bc"&&row.unitPrice>0;
                             if(verif.status==="suspect"&&!bcConfirmed)return(
-                              <span title={verif.note||"Part number not recognized — may be an OCR error or invalid"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.red+"22",padding:"1px 6px",borderRadius:10}}>? not recognized</span>
+                              <span title={verif.note||"Part number not recognized — may be an OCR error or invalid"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.red+"22",padding:"1px 6px",borderRadius:10}}>? PN</span>
                             );
                             if(verif.status==="plausible"&&!bcConfirmed)return(
-                              <span title={verif.note||"Follows a valid part number pattern but not confirmed"} style={{fontSize:10,color:C.yellow,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.yellow+"22",padding:"1px 6px",borderRadius:10}}>~ unverified</span>
+                              <span title={verif.note||"Follows a valid part number pattern but not confirmed"} style={{fontSize:10,color:C.yellow,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.yellow+"22",padding:"1px 6px",borderRadius:10}}>~ PN</span>
                             );
                             return null;
                           })()}
@@ -15508,13 +15510,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                              assembly (enclosure, window kit, etc.) but qty is large. Almost always
                              a column-alignment error where qty was grabbed from a different row. */}
                           {f==="partNumber"&&row.suspectQty&&!row.isLaborRow&&(
-                            <span title={row.suspectQtyReason||"Qty looks wrong for this type of item — verify against the drawing"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.red+"33",padding:"1px 6px",borderRadius:10}}>⚠ qty looks wrong</span>
+                            <span title={row.suspectQtyReason||"Qty looks wrong for this type of item — verify against the drawing"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:C.red+"33",padding:"1px 6px",borderRadius:10}}>⚠ qty</span>
                           )}
                           {/* DECISION(v1.19.639): Snippet self-correction badge — AI re-read this
                              row in isolation and fixed at least one field. Visible so user knows
                              which rows were auto-corrected (informational, not actionable). */}
                           {f==="partNumber"&&row.snippetCorrected&&!row.isLaborRow&&(
-                            <span title="AI re-read this row in isolation and corrected it" style={{fontSize:10,color:"#6ee7b7",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#10b98122",padding:"1px 6px",borderRadius:10}}>✓ AI fixed</span>
+                            <span title="AI re-read this row in isolation and corrected it" style={{fontSize:10,color:"#6ee7b7",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#10b98122",padding:"1px 6px",borderRadius:10}}>✓ Fix</span>
                           )}
                           </div>
                           {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&!readOnly&&(()=>{
