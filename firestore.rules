@@ -77,6 +77,17 @@ service cloud.firestore {
       function canWrite() {
         return isMember() && memberRole() != 'view';
       }
+      // DECISION(v1.19.678): Owner Priority Mode server-side check.
+      // When the project's owner has explicitly set ownerLockActive=true, non-owner writes
+      // are rejected UNLESS an admin takeover is currently active and not expired.
+      // The 90s presence-based lock is client-side only (can't query projectPresence from
+      // within a project rule). See docs/superpowers/specs/2026-04-23-owner-priority-mode-design.md
+      function isOwnerPriorityLocked(project) {
+        let isProjectOwner = request.auth.uid == project.createdBy;
+        let takeover = project.ownerTakeoverActive;
+        let hasActiveTakeover = takeover != null && takeover.expiresAt > request.time.toMillis();
+        return !isProjectOwner && !hasActiveTakeover && project.ownerLockActive == true;
+      }
 
       allow read: if isMember();
       // Existing admins can update/delete; any authenticated user can create a new company they own
@@ -105,7 +116,21 @@ service cloud.firestore {
 
       match /projects/{projectId} {
         allow read: if isMember();
-        allow write: if canWrite();
+        allow create: if canWrite();
+        // DECISION(v1.19.678): Update rejected when owner priority lock is active AND the
+        // writer is not the owner AND no admin takeover is in effect. Delete remains open
+        // to any writer (destructive actions are client-gated separately; rare event).
+        allow update: if canWrite() && !isOwnerPriorityLocked(resource.data);
+        allow delete: if canWrite();
+      }
+
+      // DECISION(v1.19.678): Owner takeover audit trail — append-only log of admin overrides.
+      // Any member can READ for transparency; only the takeover-by user can CREATE their entry.
+      // Updates/deletes forbidden (immutable audit).
+      match /ownerTakeovers/{takeoverId} {
+        allow read: if isMember();
+        allow create: if isMember() && request.resource.data.takeoverBy == request.auth.uid;
+        allow update, delete: if false;
       }
 
       // DECISION(v1.19.411): Config write access — admins can write all config,
@@ -133,6 +158,27 @@ service cloud.firestore {
         allow create: if isMember();
         allow read: if isAdminMember();
         allow update, delete: if false;
+      }
+
+      // DECISION(v1.19.599): Active extraction status — team-wide visibility of who is
+      // extracting what. Members can read all; writers can only modify their own records.
+      // DECISION(v1.19.612): Any member can DELETE any doc (mutual cleanup of orphans from
+      // crashed tabs). Updates remain owner-only. These are ephemeral status markers, not
+      // user data, so cross-user deletion is safe and self-healing for ghost docs.
+      match /activeExtractions/{taskDocId} {
+        allow read: if isMember();
+        allow create: if isMember() && request.resource.data.uid == request.auth.uid;
+        allow update: if isMember() && resource.data.uid == request.auth.uid;
+        allow delete: if isMember();
+      }
+
+      // DECISION(v1.19.599): Project presence — who is currently viewing a project.
+      // Heartbeat-based; stale entries filtered client-side. Members can read all;
+      // writers can only modify their own records.
+      match /projectPresence/{presenceDocId} {
+        allow read: if isMember();
+        allow create: if isMember() && request.resource.data.uid == request.auth.uid;
+        allow update, delete: if isMember() && resource.data.uid == request.auth.uid;
       }
     }
   }
