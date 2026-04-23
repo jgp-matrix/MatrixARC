@@ -1,6 +1,24 @@
 # MatrixARC — Development Rules
 <!-- SYNC_KEY: THUNDERBOLT_2026 -->
 
+## Superpowers skills available (manual-load, local)
+Jesse Vincent's `obra/superpowers` skill pack is cloned at `C:\Users\jon\superpowers\skills\`. The Claude Code plugin system isn't available in this environment, so skills are loaded on-demand via `Read` on `C:\Users\jon\superpowers\skills\<skill-name>\SKILL.md`.
+
+**Claude should proactively offer to load a skill when a task matches:**
+- **`systematic-debugging`** — tricky reproducible bug where the cause isn't obvious. Offer before diving in.
+- **`writing-plans`** — multi-step feature work (3+ files or 30+ min estimated). Offer before writing code.
+- **`brainstorming`** — vague / exploratory feature requests; socratic questioning before committing to a design.
+- **`verification-before-completion`** — run before declaring a fix "done", especially for fixes the user explicitly asked to test.
+- **`using-git-worktrees`** — when running experimental branches in parallel with mainline work.
+
+Other skills present but lower-utility for this solo/single-file codebase: `subagent-driven-development`, `executing-plans`, `test-driven-development`, `requesting-code-review`, `receiving-code-review`, `dispatching-parallel-agents`, `finishing-a-development-branch`, `writing-skills`, `using-superpowers`.
+
+### Trigger phrases the user may use
+- **"use Superpowers"** / **"apply Superpowers"** / **"check Superpowers"** → user doesn't know or care which specific skill; Claude picks the best match for the current task from the list above, loads it, and applies it. If genuinely ambiguous, ask one clarifying question ("the task looks like a debugging problem vs. a design problem — which is it?") then proceed.
+- **"use the <skill-name> skill"** → load exactly that skill by name.
+- **"Superpowers on this"** / **"Superpower it"** → same as "use Superpowers".
+- If multiple skills apply (e.g. a multi-step feature with a bug inside), load them in sequence: plan first, then debug as issues surface.
+
 ## Project Overview
 - **App**: Firebase-hosted at https://matrix-arc.web.app
 - **Architecture**: Single-file app — `public/index.html` (~1MB, no build step) + Cloud Functions in `functions/index.js`
@@ -104,7 +122,10 @@ AI returns a classified wire list (`internal: true/false`), code filters program
 - Upload happens at end of `addFiles` after extraction/validation
 
 ### BOM Row Highlighting
-Rows with `qty=0` or `unitPrice=0` get red background.
+A row gets a red background if ANY of these are true (see `_isBomRowFlaggedRed`):
+1. `qty === 0` (excludes labor / customer-supplied)
+2. `unitPrice === 0` (excludes labor / customer-supplied)
+3. `priceDate` missing OR older than `_pricingConfig.defaultStaleDays` (default 60 days). Only applied to "priceable" rows — excludes labor, customer-supplied, contingency, job-buyoff, crate, Matrix Systems vendor.
 
 ### Connection Quality Indicator
 - Yellow "Slow Connection" or red "Offline" pill in top menu bar
