@@ -133,6 +133,15 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      // DECISION(v1.19.691): BC ItemVendorCatalog writeback audit — append-only log of lead-time
+      // writes triggered by supplier portal price-apply. Members can read; writer can create
+      // their own entries; immutable (no update/delete).
+      match /bcLeadTimeWrites/{writeId} {
+        allow read: if isMember();
+        allow create: if isMember() && request.resource.data.writtenBy == request.auth.uid;
+        allow update, delete: if false;
+      }
+
       // DECISION(v1.19.411): Config write access — admins can write all config,
       // edit-role users can write defaultBomItems and laborRates (needed for daily workflow).
       // API keys and BC environment remain admin-only via client-side guards.
