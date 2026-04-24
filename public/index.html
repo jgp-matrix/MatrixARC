@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.727";
+const APP_VERSION="v1.19.728";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16864,19 +16864,31 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       {(()=>{
                         if(row.isLaborRow)return <span style={{color:C.muted}}>—</span>;
                         const v=row.leadTimeDays;
-                        if(v==null){
-                          if(readOnly)return <span style={{color:C.muted}}>—</span>;
-                          return <input type="text" value="" placeholder="—" readOnly={readOnly}
-                            onChange={e=>{const m=e.target.value.match(/\d+/);const n=m?+m[0]:null;if(n!=null)updateBomRow(row.id,"leadTimeDays",n);}}
-                            style={{width:40,textAlign:"center",background:"transparent",border:"none",color:C.muted,fontSize:13,cursor:"text"}}/>;
-                        }
+                        if(v==null&&readOnly)return <span style={{color:C.muted}}>—</span>;
+                        // DECISION(v1.19.728): Single uncontrolled input keyed by row.id +
+                        // current value. Previously two separate controlled inputs (one with
+                        // hardcoded value="") caused typed digits to "disappear" because
+                        // React enforced the empty string before the parent state
+                        // propagated. Uncontrolled with a stable key + onBlur commit
+                        // sidesteps the React controlled-input race entirely while still
+                        // re-syncing when the value changes externally.
                         const staleMs=(_pricingConfig?.defaultStaleDays||60)*86400000;
-                        const stale=row.leadTimeUpdatedAt&&(Date.now()-row.leadTimeUpdatedAt)>staleMs;
+                        const stale=v!=null&&row.leadTimeUpdatedAt&&(Date.now()-row.leadTimeUpdatedAt)>staleMs;
                         const estim=!!row.leadTimeEstimated;
-                        return <input type="text" value={(stale?"~":"")+v+(estim?"*":"")}
-                          onChange={e=>{const m=e.target.value.match(/\d+/);const n=m?+m[0]:null;updateBomRow(row.id,"leadTimeDays",n);}}
+                        const display=v==null?"":(stale?"~":"")+v+(estim?"*":"");
+                        return <input
+                          key={`lt-${row.id}-${v??"x"}`}
+                          type="text"
+                          defaultValue={display}
+                          placeholder="—"
                           readOnly={readOnly}
-                          style={{width:40,textAlign:"center",background:"transparent",border:"none",color:estim?C.muted:C.text,fontSize:13,fontStyle:estim?"italic":"normal",cursor:readOnly?"help":"text"}}/>;
+                          onBlur={e=>{
+                            const m=e.target.value.match(/\d+/);
+                            const n=m?+m[0]:null;
+                            if((n??null)!==(v??null))updateBomRow(row.id,"leadTimeDays",n);
+                          }}
+                          onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){e.target.value=display;e.target.blur();}}}
+                          style={{width:40,textAlign:"center",background:"transparent",border:"none",color:v==null?C.muted:(estim?C.muted:C.text),fontSize:13,fontStyle:estim?"italic":"normal",cursor:readOnly?"help":"text"}}/>;
                       })()}
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,whiteSpace:"nowrap",cursor:(!row.isLaborRow&&row.unitPrice!=null)?"help":"default",...(()=>{
