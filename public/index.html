@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.725";
+const APP_VERSION="v1.19.726";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4930,8 +4930,13 @@ async function bcAddAssemblyBOMLines(parentItemNo,bomRows,onProgress,_bomPage){
 // ── SUPPLIER QUOTE IMPORT ──
 function sqExtractMfr(raw){
   if(!raw||typeof raw!=='string')return{mfr:'',partNumber:raw||''};
-  const t=raw.trim(),parts=t.split(' '),p=parts[0]||'';
-  if(/^[A-Za-z]{2,6}$/.test(p))return{mfr:p.toUpperCase(),partNumber:parts.slice(1).join(' ').trim()};
+  const t=raw.trim(),parts=t.split(/\s+/),p=parts[0]||'';
+  // DECISION(v1.19.726): Allow hyphenated mfr prefixes like "A-B" (Allen-Bradley),
+  // "PHX-CT" (Phoenix Contact), "SQ-D" (Square D). Pattern: 1-4 letters, optional
+  // -letters segment, must contain at least one letter total. Bare digits not allowed.
+  if(/^[A-Z]{1,4}(-[A-Z]{1,4})?$/i.test(p)){
+    return{mfr:p.toUpperCase(),partNumber:parts.slice(1).join(' ').trim()};
+  }
   return{mfr:'',partNumber:t};
 }
 const SQ_NOTES=[
@@ -19019,28 +19024,48 @@ ${fullText.slice(0,8000)}`;
           console.warn('BC PDF attach failed:',e);
         }
       }
-      // Add items to ARC BOM if BOM was empty
-      if(onBomUpdate&&(!panelBom||panelBom.length===0)){
+      // DECISION(v1.19.726): Update BOM rows after push — both populate empty BOMs AND
+      // refresh prices/lead times on existing matched rows. Previously only the empty
+      // case fired, so users had to run "Get New Pricing" after every quote upload to
+      // see the new prices/lead times on the BOM.
+      if(onBomUpdate){
         const now=Date.now();
         const vendorName=quoteHeader?.supplier||"";
-        // DECISION(v1.19.703): Carry leadTimeDays onto new BOM rows when BOM was empty so
-        // the Lead column populates immediately after Upload Quote.
-        const newBomRows=toUpdate.filter(i=>i.partNumber).map((i,idx)=>({
-          id:now+idx+Math.random(),
-          qty:i.qty||1,
-          partNumber:(i.partNumber||"").trim(),
-          description:(i.description||i.rawPartNumber||"").trim(),
-          manufacturer:i.mfr||i.manufacturer||"",
-          notes:"",
-          unitPrice:i.price||0,
-          priceSource:"bc",
-          priceDate:now,
-          bcPoDate:now,
-          bcVendorName:vendorName,
-          ...(i.leadTimeDays>0?{leadTimeDays:+i.leadTimeDays,leadTimeSource:"supplier",leadTimeUpdatedAt:now,leadTimeEstimated:false}:{}),
-          ...(i.supplierStockQty!=null?{leadTimeStock:{qty:+i.supplierStockQty,source:i.supplierStockSource||"Supplier",asOf:now}}:{})
-        }));
-        if(newBomRows.length>0)onBomUpdate(newBomRows);
+        const isEmpty=!panelBom||panelBom.length===0;
+        if(isEmpty){
+          // Original empty-BOM path — add new rows
+          const newBomRows=toUpdate.filter(i=>i.partNumber).map((i,idx)=>({
+            id:now+idx+Math.random(),
+            qty:i.qty||1,
+            partNumber:(i.partNumber||"").trim(),
+            description:(i.description||i.rawPartNumber||"").trim(),
+            manufacturer:i.mfr||i.manufacturer||"",
+            notes:"",
+            unitPrice:i.price||0,
+            priceSource:"bc",
+            priceDate:now,
+            bcPoDate:now,
+            bcVendorName:vendorName,
+            ...(i.leadTimeDays>0?{leadTimeDays:+i.leadTimeDays,leadTimeSource:"supplier",leadTimeUpdatedAt:now,leadTimeEstimated:false}:{}),
+            ...(i.supplierStockQty!=null?{leadTimeStock:{qty:+i.supplierStockQty,source:i.supplierStockSource||"Supplier",asOf:now}}:{})
+          }));
+          if(newBomRows.length>0)onBomUpdate({newRows:newBomRows,vendorName,now});
+        }else{
+          // BOM already populated — build a matchUpdates map keyed by normalized PN.
+          const matchUpdates={};
+          for(const i of toUpdate){
+            if(!i.partNumber)continue;
+            const npn=normPart(i.partNumber);
+            matchUpdates[npn]={
+              price:i.price!=null?+i.price:null,
+              leadTimeDays:i.leadTimeDays!=null&&i.leadTimeDays>0?+i.leadTimeDays:null,
+              stockQty:i.supplierStockQty!=null?+i.supplierStockQty:null,
+              stockSource:i.supplierStockSource||null,
+              partNumber:(i.partNumber||"").trim(),
+            };
+          }
+          onBomUpdate({matchUpdates,vendorName,now});
+        }
       }
       // Auto-close modal after successful push
       setTimeout(()=>onClose(),800);
@@ -23432,15 +23457,51 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           ,document.body)}
         </>
       )}
-      <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} bcProjectNumber={project.bcProjectNumber||null} projectId={init.id} onClose={()=>setShowSqModal(false)} onBomUpdate={(newRows)=>{
+      <SupplierQuoteImportModal show={showSqModal} uid={uid} panelBom={sqPanelBom} bcProjectNumber={project.bcProjectNumber||null} projectId={init.id} onClose={()=>setShowSqModal(false)} onBomUpdate={(payload)=>{
+        // DECISION(v1.19.726): payload now carries either {newRows} (empty-BOM case)
+        // OR {matchUpdates} (existing-BOM case — refresh price/leadTime/stock on
+        // matching rows). Backward-compat: bare-array argument still works.
         const targetPanel=(projectRef.current.panels||[]).find(p=>p.id===sqPanelId)||(projectRef.current.panels||[])[0];
         if(!targetPanel)return;
+        const newRows=Array.isArray(payload)?payload:(payload?.newRows||[]);
+        const matchUpdates=payload?.matchUpdates||null;
+        const vendorName=payload?.vendorName||"";
+        const now=payload?.now||Date.now();
         const updatedPanels=(projectRef.current.panels||[]).map(p=>{
           if(p.id!==targetPanel.id)return p;
-          return{...p,bom:[...(p.bom||[]),...newRows],status:p.status==="draft"?"extracted":p.status};
+          let nextBom=p.bom||[];
+          if(matchUpdates){
+            // Stamp price + leadTimeDays + leadTimeStock on rows whose PN matches
+            nextBom=nextBom.map(row=>{
+              if(row.isLaborRow)return row;
+              const npn=normPart(row.partNumber);
+              const u=matchUpdates[npn]||Object.values(matchUpdates).find(m=>partMatch(npn,normPart(m.partNumber)));
+              if(!u)return row;
+              const patch={};
+              if(u.price!=null&&u.price>0){
+                patch.unitPrice=u.price;
+                patch.priceSource="bc";
+                patch.priceDate=now;
+                patch.bcPoDate=now;
+                if(vendorName)patch.bcVendorName=vendorName;
+              }
+              if(u.leadTimeDays!=null&&u.leadTimeDays>0){
+                patch.leadTimeDays=u.leadTimeDays;
+                patch.leadTimeSource="supplier";
+                patch.leadTimeUpdatedAt=now;
+                patch.leadTimeEstimated=false;
+                if(u.stockQty!=null)patch.leadTimeStock={qty:u.stockQty,source:u.stockSource||"Supplier",asOf:now};
+              }
+              return Object.keys(patch).length?{...row,...patch}:row;
+            });
+          }
+          if(newRows.length){
+            nextBom=[...nextBom,...newRows];
+          }
+          return{...p,bom:nextBom,status:p.status==="draft"?"extracted":p.status};
         });
-        // DECISION(v1.19.722): Persist immediately via safeSave so the new BOM rows
-        // (with their leadTimeDays from supplier quote) survive navigation.
+        // DECISION(v1.19.722/726): Persist immediately so prices, lead times, and stock
+        // captured from the supplier quote survive navigation.
         const updatedProject={...projectRef.current,panels:updatedPanels};
         update(updatedProject);
         safeSave(uid,updatedProject).catch(e=>console.warn("safeSave after onBomUpdate failed:",e));
