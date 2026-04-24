@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.694";
+const APP_VERSION="v1.19.695";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14390,23 +14390,42 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(field==="leadTimeDays"&&editedRow&&_bcToken){
       const row=editedRow;
       const pn=(row.partNumber||"").trim();
-      const vNo=(row.bcVendorNo||"").trim();
       const ld=+row.leadTimeDays;
       const cid=_appCtx.companyId;
-      if(pn&&vNo&&ld>0&&cid&&!row.isLaborRow&&!_isExcludedFromPriceCheck(row)){
+      if(pn&&ld>0&&cid&&!row.isLaborRow&&!_isExcludedFromPriceCheck(row)){
         if(_leadTimeWriteTimers.current[id])clearTimeout(_leadTimeWriteTimers.current[id]);
         _leadTimeWriteTimers.current[id]=setTimeout(async()=>{
           try{
+            // DECISION(v1.19.695): If row lacks bcVendorNo, resolve live from BC Item Card
+            // (Purchase → Vendor No.). Caches vendor back onto the row so subsequent pushes
+            // don't re-lookup. Only skip if even BC has no default vendor on the item.
+            let vNo=(row.bcVendorNo||"").trim();
+            let vName=row.bcVendorName||"";
+            if(!vNo){
+              vNo=await bcGetItemVendorNo(pn).catch(()=>"");
+              if(vNo){
+                if(!vName)vName=await bcGetVendorName(vNo).catch(()=>"");
+                // Persist back onto the row so future pushes skip the lookup
+                const lp=latestPanelRef.current;
+                const bom2=(lp.bom||[]).map(r2=>r2.id===id?{...r2,bcVendorNo:vNo,bcVendorName:vName||r2.bcVendorName||""}:r2);
+                const u2={...lp,bom:bom2};
+                latestPanelRef.current=u2;
+                onUpdate(u2);
+                try{onSaveImmediate(u2);}catch(e){}
+              }
+            }
+            if(!vNo){
+              console.log(`[LEAD TIME] Manual edit on ${pn} (${ld}D) NOT pushed — no vendor on BC Item Card`);
+              return;
+            }
             const result=await bcUpsertItemVendorLeadTime({
-              partNumber:pn,vendorNo:vNo,vendorName:row.bcVendorName||"",
+              partNumber:pn,vendorNo:vNo,vendorName:vName||"",
               vendorItemNo:row.supplierPartNumber||"",leadTimeDays:ld,
               projectId,uid,cid,
             });
             console.log("[LEAD TIME] Manual edit → BC ItemVendorCatalog:",result.outcome,pn,`${ld}D`,result.error?`(${result.error})`:"");
           }catch(e){console.warn("Manual lead time BC push failed:",e);}
         },2000);
-      } else if(pn&&!vNo&&ld>0){
-        console.log(`[LEAD TIME] Manual edit on ${pn} (${ld}D) NOT pushed to BC — row has no bcVendorNo`);
       }
     }
   }
@@ -14746,27 +14765,53 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(pushingLeadTimes)return;
     if(!_bcToken){alert("BC not connected. Sign in to Business Central first.");return;}
     const bom=panel.bom||[];
-    const qualifying=bom.filter(r=>{
+    // DECISION(v1.19.695): Two-pass filter. First pass: rows already have bcVendorNo.
+    // Second pass: rows with PN+leadTime but no bcVendorNo → live-resolve via BC ItemCard.
+    // Older rows priced before v1.19.695 didn't store bcVendorNo — this rescues them.
+    const directlyQualifying=bom.filter(r=>{
       if(r.isLaborRow||_isExcludedFromPriceCheck(r))return false;
       const pn=(r.partNumber||"").trim();
       const vn=(r.bcVendorNo||"").trim();
       const ld=+r.leadTimeDays;
       return pn&&vn&&ld>0;
     });
-    const skipped=bom.filter(r=>{
+    const needVendorLookup=bom.filter(r=>{
       if(r.isLaborRow||_isExcludedFromPriceCheck(r))return false;
-      return !qualifying.includes(r)&&(+r.leadTimeDays>0);
+      const pn=(r.partNumber||"").trim();
+      const vn=(r.bcVendorNo||"").trim();
+      const ld=+r.leadTimeDays;
+      return pn&&!vn&&ld>0;
     });
+    setPushingLeadTimes(true);
+    // Resolve missing vendors live
+    const resolvedExtra=[];
+    const stillNoVendor=[];
+    for(const row of needVendorLookup){
+      try{
+        const vNo=await bcGetItemVendorNo((row.partNumber||"").trim());
+        if(vNo){
+          const vName=await bcGetVendorName(vNo).catch(()=>"");
+          resolvedExtra.push({...row,bcVendorNo:vNo,bcVendorName:row.bcVendorName||vName||""});
+        } else {
+          stillNoVendor.push(row);
+        }
+      }catch(e){stillNoVendor.push(row);}
+    }
+    const qualifying=[...directlyQualifying,...resolvedExtra];
     if(!qualifying.length){
-      const skipReasons=skipped.length>0?` ${skipped.length} row(s) have a lead time but couldn't be pushed (missing vendor or blank part number).`:"";
-      alert(`No rows qualify for BC push.${skipReasons}\n\nRows need: non-blank part number + resolved BC vendor + leadTimeDays > 0.`);
+      setPushingLeadTimes(false);
+      const reasons=stillNoVendor.length>0?`\n\n${stillNoVendor.length} row(s) have a lead time but no BC vendor on the Item Card (Purchase → Vendor No.). Set a default vendor in BC or submit a supplier portal quote to associate one.`:"";
+      alert(`No rows qualify for BC push.${reasons}\n\nRows need: non-blank part number + resolved BC vendor + leadTimeDays > 0.`);
       return;
     }
-    if(!window.confirm(`Push ${qualifying.length} lead time${qualifying.length>1?"s":""} to BC ItemVendorCatalog?\n\nThis will create/update per-vendor lead time records in BC so next time ARC or anyone else looks up these items, the lead time is there.${skipped.length>0?`\n\n(${skipped.length} row${skipped.length>1?"s":""} will be skipped — missing vendor or blank part number.)`:""}`))return;
-    setPushingLeadTimes(true);
+    const skippedCount=stillNoVendor.length;
+    if(!window.confirm(`Push ${qualifying.length} lead time${qualifying.length>1?"s":""} to BC ItemVendorCatalog?\n\nThis will create/update per-vendor lead time records in BC so next time ARC or anyone else looks up these items, the lead time is there.${resolvedExtra.length>0?`\n\n(${resolvedExtra.length} row${resolvedExtra.length>1?"s":""} had vendor resolved live from BC Item Card.)`:""}${skippedCount>0?`\n\n(${skippedCount} row${skippedCount>1?"s":""} will be skipped — no vendor on BC Item Card.)`:""}`)){setPushingLeadTimes(false);return;}
     const cid=_appCtx.companyId;
     let created=0,updated=0,failed=0;
     const failures=[];
+    // Also cache resolved vendors back onto the rows so future pushes / sync work
+    const resolvedIdMap={};
+    for(const r of resolvedExtra){resolvedIdMap[String(r.id)]={bcVendorNo:r.bcVendorNo,bcVendorName:r.bcVendorName};}
     for(const row of qualifying){
       try{
         const result=await bcUpsertItemVendorLeadTime({
@@ -14781,11 +14826,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         failed++;failures.push(`${row.partNumber}: ${e.message||String(e)}`);
       }
     }
+    // Persist any live-resolved vendors back to the BOM rows
+    if(Object.keys(resolvedIdMap).length>0){
+      const lp=latestPanelRef.current;
+      const bom2=(lp.bom||[]).map(r=>{
+        const u=resolvedIdMap[String(r.id)];
+        return u?{...r,...u}:r;
+      });
+      const u2={...lp,bom:bom2};
+      latestPanelRef.current=u2;
+      onUpdate(u2);
+      try{onSaveImmediate(u2);}catch(e){}
+    }
     setPushingLeadTimes(false);
     const lines=[
       `Push complete: ${created} created, ${updated} updated${failed>0?`, ${failed} failed`:""}`,
     ];
-    if(skipped.length>0)lines.push(`${skipped.length} row${skipped.length>1?"s":""} skipped (no vendor or blank PN)`);
+    if(resolvedExtra.length>0)lines.push(`${resolvedExtra.length} row${resolvedExtra.length>1?"s":""} had vendor resolved live from BC Item Card.`);
+    if(stillNoVendor.length>0)lines.push(`${stillNoVendor.length} row${stillNoVendor.length>1?"s":""} skipped — no vendor on BC Item Card.`);
     if(failures.length>0)lines.push("","Failures:",...failures.slice(0,10).map(f=>"  • "+f));
     if(failures.length>10)lines.push(`  … and ${failures.length-10} more`);
     alert(lines.join("\n"));
@@ -14868,7 +14926,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const exact=await bcLookupItem(pn);
               if(exact&&exact.unitCost!=null){
                 const vNo=await bcGetItemVendorNo(pn);
-                bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
+                bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
               }
               continue;
             }
@@ -14876,7 +14934,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             if(result.match&&result.match.unitCost!=null){
               const matchNo=result.match.number||pn;
               const vNo=await bcGetItemVendorNo(matchNo);
-              bcMap[String(row.id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
+              bcMap[String(row.id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
             } else if(result.suggestions.length>0){
               fuzzySugg[String(row.id)]=result.suggestions;
             }
@@ -14919,7 +14977,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
                 priceSource:"bc",
                 ...(hasActiveRfq||!hasPrice||!hasPpDate?{}:{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}),
-                bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||""};
+                bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
+                bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||""};
             }
             return r;
           });
