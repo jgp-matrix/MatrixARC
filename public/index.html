@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.737";
+const APP_VERSION="v1.19.738";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5292,12 +5292,27 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     const snap=await ref.get();
     if(!snap.exists){resolve();delete _panelSaveLocks[lockKey];return;}
     const proj={id:ref.id,...snap.data()};
-    let panels=(proj.panels||[]).map(p=>p.id===panelId?updatedPanel:p);
+    // DECISION(v1.19.738): Symmetric target-panel pages guard. Previously only OTHER
+    // panels were protected from zero-pages overwrite; the target panel was "trusted"
+    // unconditionally, leaving a hole where a caller handing a broken panel (transient
+    // state mid-extraction, accidental spread that drops pages, etc.) could silently
+    // wipe its drawings. Now the target is also guarded: if updatedPanel.pages is empty
+    // but Firestore already has pages on this panel, we preserve them and log a loud
+    // error for triage. Legitimate removal via `removePage` takes an explicit code path
+    // that will already have pages=[] AND drawingNo/bom cleared — this guard only
+    // misfires on accidents.
+    const existingTarget=(proj.panels||[]).find(p=>p.id===panelId);
+    let safeUpdated=updatedPanel;
+    if(existingTarget&&(existingTarget.pages||[]).length>0&&(updatedPanel.pages||[]).length===0){
+      console.error(`SAVE GUARD: refusing to wipe ${existingTarget.pages.length} pages on panel ${panelId} — preserving existing (caller stack: ${(new Error()).stack?.split('\n').slice(1,4).join(' | ')})`);
+      safeUpdated={...updatedPanel,pages:existingTarget.pages};
+    }
+    let panels=(proj.panels||[]).map(p=>p.id===panelId?safeUpdated:p);
     // If panel wasn't found in existing array, append it
-    if(!panels.some(p=>p.id===panelId))panels=[...panels,updatedPanel];
+    if(!panels.some(p=>p.id===panelId))panels=[...panels,safeUpdated];
     // SAFETY: preserve pages from Firestore if updatedPanel has none but Firestore has some
     panels=panels.map(p=>{
-      if(p.id===panelId)return p; // this is the panel we're updating — trust it
+      if(p.id===panelId)return p; // already guarded above
       const existing=(proj.panels||[]).find(ep=>ep.id===p.id);
       if(existing&&(existing.pages||[]).length>0&&(p.pages||[]).length===0){
         return{...p,pages:existing.pages}; // preserve existing pages for other panels
