@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.724";
+const APP_VERSION="v1.19.725";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4947,10 +4947,15 @@ function sqNormalize(raw){
   // to BC ItemVendorCatalog alongside prices.
   const ltRaw=raw.leadTimeDays;
   const leadTimeDays=(ltRaw==null||isNaN(+ltRaw)||+ltRaw<=0)?null:Math.round(+ltRaw);
+  // DECISION(v1.19.725): Carry supplierStockQty/Source so the Lead column tooltip can
+  // show the snapshot (e.g. Codale "24 IN SLC" → 24 in stock at Codale SLC).
+  const stkRaw=raw.supplierStockQty;
+  const supplierStockQty=(stkRaw==null||isNaN(+stkRaw)||+stkRaw<0)?null:Math.round(+stkRaw);
+  const supplierStockSource=raw.supplierStockSource||null;
   return{ln:raw.ln??null,mfr,partNumber,rawPartNumber:raw.rawPartNumber||'',description:raw.description||'',
     qty:isPriced?Number(raw.qty):null,price:isPriced?Number(raw.price):null,uom:raw.uom||'',
     extPrice:isPriced?Math.round(raw.qty*raw.price*100)/100:null,notes,isPriced,
-    extractionWarning:raw.extractionWarning||null,leadTimeDays,
+    extractionWarning:raw.extractionWarning||null,leadTimeDays,supplierStockQty,supplierStockSource,
     bcItemId:null,bcItemDescription:null,bcCurrentCost:null,matchStatus:'unmatched',priceUpdateStatus:null,approved:true};
 }
 function sqValidateLineItems(items){
@@ -13344,6 +13349,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [showUpdateBom,setShowUpdateBom]=useState(false);
   const [deleteConfirmId,setDeleteConfirmId]=useState(null);
   const [priceTooltip,setPriceTooltip]=useState(null); // {x,y,vendor,date,price,source}
+  // DECISION(v1.19.725): Floating Lead Time tooltip — like priceTooltip but shows
+  // supplier-stock snapshot when present (e.g. Codale "24 IN SLC" → 24 in SLC stock).
+  const [leadTimeTooltip,setLeadTimeTooltip]=useState(null); // {x,y,row}
   const [aiSourceTooltip,setAiSourceTooltip]=useState(null); // {x,y,sources:[{name,url,type}]}
   const aiSourceTooltipTimer=useRef(null);
   const [bcBrowserTarget,setBcBrowserTarget]=useState(null);
@@ -16813,9 +16821,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
                       {row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
                     </td>
-                    {/* DECISION(v1.19.687): Lead column — source + age in hover tooltip.
+                    {/* DECISION(v1.19.687/725): Lead column — floating hover tooltip with
+                       source + age + supplier stock snapshot (when captured from quote).
                        Editable inline; manual edit flips source to "manual" via updateBomRow. */}
-                    <td style={{padding:"3px 2px",textAlign:"center",width:48,fontSize:13,verticalAlign:"middle"}}>
+                    <td style={{padding:"3px 2px",textAlign:"center",width:48,fontSize:13,verticalAlign:"middle"}}
+                        onMouseEnter={!row.isLaborRow&&row.leadTimeDays!=null?e=>setLeadTimeTooltip({x:e.clientX,y:e.clientY,row}):undefined}
+                        onMouseMove={!row.isLaborRow&&row.leadTimeDays!=null?e=>setLeadTimeTooltip(prev=>prev?{...prev,x:e.clientX,y:e.clientY}:prev):undefined}
+                        onMouseLeave={!row.isLaborRow&&row.leadTimeDays!=null?()=>setLeadTimeTooltip(null):undefined}>
                       {(()=>{
                         if(row.isLaborRow)return <span style={{color:C.muted}}>—</span>;
                         const v=row.leadTimeDays;
@@ -16828,11 +16840,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         const staleMs=(_pricingConfig?.defaultStaleDays||60)*86400000;
                         const stale=row.leadTimeUpdatedAt&&(Date.now()-row.leadTimeUpdatedAt)>staleMs;
                         const estim=!!row.leadTimeEstimated;
-                        const srcLabels={supplier:"Supplier portal",scraper:"Web scraper",bc_vendor:"BC Item Vendor Catalog",bc_item:"BC Item Card",ai:"AI estimate — not firm",manual:"Manual entry"};
-                        const ageStr=row.leadTimeUpdatedAt?`${Math.max(0,Math.round((Date.now()-row.leadTimeUpdatedAt)/86400000))} days ago`:"unknown";
-                        const tip=`Lead time: ${v} days\nSource: ${srcLabels[row.leadTimeSource]||"Unknown"}\nUpdated: ${ageStr}${stale?" (stale — >60d)":""}`;
                         return <input type="text" value={(stale?"~":"")+v+(estim?"*":"")}
-                          title={tip}
                           onChange={e=>{const m=e.target.value.match(/\d+/);const n=m?+m[0]:null;updateBomRow(row.id,"leadTimeDays",n);}}
                           readOnly={readOnly}
                           style={{width:40,textAlign:"center",background:"transparent",border:"none",color:estim?C.muted:C.text,fontSize:13,fontStyle:estim?"italic":"normal",cursor:readOnly?"help":"text"}}/>;
@@ -17415,6 +17423,41 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       )}
       {showCpdSearch&&<CPDSearchModal query={cpdQuery} uid={uid} panel={panel} onClose={()=>setShowCpdSearch(false)} onImportBom={rows=>{const newBom=[...(panel.bom||[]),...rows];const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}setShowCpdSearch(false);setCpdQuery("");}}/>}
       {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
+      {/* DECISION(v1.19.725): Lead Time floating tooltip — shows source, age, stale flag,
+         AND supplier stock snapshot when captured (e.g. Codale "24 IN SLC" → 24 in SLC). */}
+      {leadTimeTooltip&&ReactDOM.createPortal((()=>{
+        const r=leadTimeTooltip.row;
+        const v=r.leadTimeDays;
+        const staleMs=(_pricingConfig?.defaultStaleDays||60)*86400000;
+        const stale=r.leadTimeUpdatedAt&&(Date.now()-r.leadTimeUpdatedAt)>staleMs;
+        const estim=!!r.leadTimeEstimated;
+        const srcLabels={supplier:"Supplier portal",scraper:"Web scraper",bc_vendor:"BC Item Vendor Catalog",bc_item:"BC Item Card",ai:"AI estimate — not firm",manual:"Manual entry"};
+        const srcLabel=srcLabels[r.leadTimeSource]||"Unknown";
+        const ageStr=r.leadTimeUpdatedAt?`${Math.max(0,Math.round((Date.now()-r.leadTimeUpdatedAt)/86400000))} days ago`:"unknown";
+        const stk=r.leadTimeStock; // {qty, source, asOf}
+        return <div style={{position:"fixed",left:leadTimeTooltip.x+14,top:leadTimeTooltip.y-8,zIndex:99999,pointerEvents:"none",
+          background:"#0d0d1a",border:`1px solid ${estim?"#fcd34d44":"#334155"}`,borderRadius:10,boxShadow:"0 6px 28px rgba(0,0,0,0.7)",
+          padding:"10px 14px",minWidth:200,maxWidth:300,fontSize:12,lineHeight:1.6}}>
+          <div style={{fontWeight:700,color:"#f1f5f9",marginBottom:4,fontSize:13}}>Lead Time</div>
+          <div style={{color:estim?"#fcd34d":"#22d3ee",fontWeight:700,fontSize:18,marginBottom:6}}>
+            {(stale?"~":"")+v+(estim?"*":"")}<span style={{color:"#94a3b8",fontWeight:400,fontSize:11,marginLeft:4}}>days</span>
+          </div>
+          {stk&&stk.qty!=null&&(
+            <div style={{background:"rgba(74,222,128,0.08)",border:"1px solid #4ade8044",borderRadius:6,padding:"6px 10px",marginBottom:6}}>
+              <div style={{color:"#4ade80",fontWeight:700,fontSize:13,fontVariantNumeric:"tabular-nums"}}>
+                📦 {stk.qty} in stock
+              </div>
+              <div style={{color:"#94a3b8",fontSize:10,marginTop:2}}>
+                {stk.source||"Local stock"}{stk.asOf?` · as of ${new Date(stk.asOf).toLocaleDateString("en-US",{month:"short",day:"numeric"})}`:""}
+              </div>
+            </div>
+          )}
+          <div style={{color:"#94a3b8",fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>Source</div>
+          <div style={{color:"#f1f5f9",marginBottom:6}}>{srcLabel}</div>
+          <div style={{color:"#94a3b8",fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>Updated</div>
+          <div style={{color:stale?"#f87171":"#f1f5f9"}}>{ageStr}{stale?" (stale — >60d)":""}</div>
+        </div>;
+      })(),document.body)}
       {priceTooltip&&ReactDOM.createPortal(
         <div style={{position:"fixed",left:priceTooltip.x+14,top:priceTooltip.y-8,zIndex:99999,pointerEvents:"none",
           background:"#0d0d1a",border:"1px solid #334155",borderRadius:10,boxShadow:"0 6px 28px rgba(0,0,0,0.7)",
@@ -18503,7 +18546,9 @@ Extract ALL information into this exact JSON structure. Return ONLY valid JSON, 
       "qty": 10,
       "price": 123.45,
       "uom": "E",
-      "leadTimeDays": 14
+      "leadTimeDays": 14,
+      "supplierStockQty": null,
+      "supplierStockSource": null
     }
   ]
 }
@@ -18524,6 +18569,7 @@ DISTRIBUTOR-SPECIFIC LEAD TIME PATTERNS (apply when matched, treat conservativel
    • "MM/DD/YY ESD" (e.g. "05/12/26 ESD") → Estimated Ship Date. Compute: (ESD − quoteDate in days) + 10 shipping days = leadTimeDays. If quoteDate missing, default to (ESD − today) + 10. Clamp ≥ 1.
    • If MULTIPLE patterns appear on the same line (rare), prefer the slowest one (most conservative).
 - For Codale items, also look for these markers and ignore them as not-lead-time: "N/S Item: Mfg Return Policy Applies", "**MUST ORDER QTY ##**", separator rows like "==========".
+- For Codale "## IN SLC" patterns, ALSO capture the number into supplierStockQty (e.g. "24 IN SLC" → supplierStockQty=24, supplierStockSource="Codale SLC"). Leave both null for FACTORY STOCK / ESD / non-Codale items.
 
 CODALE PART NUMBER EXTRACTION:
 - Codale's Description column starts with "MFR PARTNUMBER" (e.g. "A-B 800FP-F2 BLACK 22MM PB MOM"). The token after the manufacturer (A-B, SQD, ABB, etc.) is the part number. The UPC column is NOT the part number.
@@ -18991,7 +19037,8 @@ ${fullText.slice(0,8000)}`;
           priceDate:now,
           bcPoDate:now,
           bcVendorName:vendorName,
-          ...(i.leadTimeDays>0?{leadTimeDays:+i.leadTimeDays,leadTimeSource:"supplier",leadTimeUpdatedAt:now,leadTimeEstimated:false}:{})
+          ...(i.leadTimeDays>0?{leadTimeDays:+i.leadTimeDays,leadTimeSource:"supplier",leadTimeUpdatedAt:now,leadTimeEstimated:false}:{}),
+          ...(i.supplierStockQty!=null?{leadTimeStock:{qty:+i.supplierStockQty,source:i.supplierStockSource||"Supplier",asOf:now}}:{})
         }));
         if(newBomRows.length>0)onBomUpdate(newBomRows);
       }
@@ -22616,8 +22663,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }
       // Lead-time map — applies to the BOM row's original PN (lead time belongs to the
       // item the BOM lists, regardless of price-crossing to a supplier variant).
+      // DECISION(v1.19.725): Also carry supplierStockQty/Source for the Lead column tooltip.
       if(item.leadTimeDays!=null&&item.leadTimeDays>0){
-        leadTimeMap[normPart(item.partNumber)]={days:+item.leadTimeDays,supplierPN:item.supplierPartNumber||null};
+        leadTimeMap[normPart(item.partNumber)]={
+          days:+item.leadTimeDays,
+          supplierPN:item.supplierPartNumber||null,
+          stockQty:item.supplierStockQty!=null?+item.supplierStockQty:null,
+          stockSource:item.supplierStockSource||null,
+        };
       }
     });
     const now=Date.now();
@@ -22674,7 +22727,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           const ltKey=Object.keys(leadTimeMap).find(sk=>partMatch(nk,sk));
           if(ltKey)ltHit=leadTimeMap[ltKey];
         }
-        const ltPatch=ltHit?{leadTimeDays:ltHit.days,leadTimeSource:"supplier",leadTimeUpdatedAt:now,leadTimeEstimated:false}:{};
+        const ltPatch=ltHit?{
+          leadTimeDays:ltHit.days,
+          leadTimeSource:"supplier",
+          leadTimeUpdatedAt:now,
+          leadTimeEstimated:false,
+          ...(ltHit.stockQty!=null?{leadTimeStock:{qty:ltHit.stockQty,source:ltHit.stockSource||"Supplier",asOf:now}}:{}),
+        }:{};
         if(ltHit)leadTimeMatched++;
         // Skip if this BOM PN was crossed by the supplier (price goes to supplier's item, not this row)
         if(crossedPNs.has(nk)){crossedSkipped++;return Object.keys(ltPatch).length?{...row,...ltPatch}:row;}
