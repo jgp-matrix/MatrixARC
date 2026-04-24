@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.723";
+const APP_VERSION="v1.19.724";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -18516,6 +18516,18 @@ Rules:
 - uom: use E (each), C (per 100), M (per 1000), or empty string
 - quoteDate/expiresOn: dates in YYYY-MM-DD format or null if not found
 - leadTimeDays = lead time in CALENDAR DAYS ARO (after receipt of order). Parse from per-line column OR a single header/footer value that applies to all lines. Convert weeks→days (×7), months→days (×30). Null if not stated anywhere.
+
+DISTRIBUTOR-SPECIFIC LEAD TIME PATTERNS (apply when matched, treat conservatively):
+- **Codale** (look for "CODALE" supplier name OR Codale-style line markers): the Description column has lead-time annotations BELOW the part description, separated by "===" rows. Patterns:
+   • "## IN SLC" (e.g. "24 IN SLC", "5 IN SLC", "1 IN SLC") → in stock locally → leadTimeDays = 1
+   • "FACTORY STOCK" → leadTimeDays = 14 (typical factory ship)
+   • "MM/DD/YY ESD" (e.g. "05/12/26 ESD") → Estimated Ship Date. Compute: (ESD − quoteDate in days) + 10 shipping days = leadTimeDays. If quoteDate missing, default to (ESD − today) + 10. Clamp ≥ 1.
+   • If MULTIPLE patterns appear on the same line (rare), prefer the slowest one (most conservative).
+- For Codale items, also look for these markers and ignore them as not-lead-time: "N/S Item: Mfg Return Policy Applies", "**MUST ORDER QTY ##**", separator rows like "==========".
+
+CODALE PART NUMBER EXTRACTION:
+- Codale's Description column starts with "MFR PARTNUMBER" (e.g. "A-B 800FP-F2 BLACK 22MM PB MOM"). The token after the manufacturer (A-B, SQD, ABB, etc.) is the part number. The UPC column is NOT the part number.
+- rawPartNumber = the manufacturer + part number block (e.g. "A-B 800FP-F2"). The sqNormalize step will split mfr from PN.
 
 EXTRACTED TEXT (backup — use images as primary source):
 ${fullText.slice(0,8000)}`;
