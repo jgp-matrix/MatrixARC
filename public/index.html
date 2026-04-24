@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.698";
+const APP_VERSION="v1.19.699";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3462,35 +3462,54 @@ async function buildRfqSupplierGroups(bom){
   const now=Date.now();
   const RFQ_EXCLUDE_ITEMS=/job\s*buy.?off|crating|^crate$/i;
   const RFQ_SENT_COOLDOWN=30*24*60*60*1000; // 30 days — don't re-send within this window
-  const eligible=bom.filter(r=>{
-    if(r.isLaborRow||r.priceSource==="manual")return false;
-    // Exclude contingency items
-    if(r.isContingency||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase()))return false;
-    // Exclude items whose description matches non-RFQ categories
-    if(RFQ_EXCLUDE_ITEMS.test(r.description||"")||RFQ_EXCLUDE_ITEMS.test(r.partNumber||""))return false;
-    // Exclude items with a recent RFQ sent (within cooldown period)
-    if(r.rfqSentDate&&(now-r.rfqSentDate)<RFQ_SENT_COOLDOWN)return false;
-    // Include zero-cost items regardless of date
-    if(!r.unitPrice||r.unitPrice===0)return true;
-    // Use the same date shown in the Priced column
+  // DECISION(v1.19.699): Track WHY each row was included so we can auto-enable the
+  // "Lead Times Only" checkbox per vendor when the only issue is missing lead times.
+  // Reasons: "missingPrice" | "stalePrice" | "missingLeadTime"
+  function _eligibilityReason(r){
+    if(r.isLaborRow||r.priceSource==="manual")return null;
+    if(r.isContingency||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase()))return null;
+    if(RFQ_EXCLUDE_ITEMS.test(r.description||"")||RFQ_EXCLUDE_ITEMS.test(r.partNumber||""))return null;
+    if(r.rfqSentDate&&(now-r.rfqSentDate)<RFQ_SENT_COOLDOWN)return null;
+    // Price-based inclusion (existing)
+    if(!r.unitPrice||r.unitPrice===0)return "missingPrice";
     const isBC=r.priceSource==="bc"&&"bcPoDate"in r;
     const displayDate=isBC?r.bcPoDate:r.priceDate;
-    // Include if no date (No POs / never priced) OR if older than 60 days
-    return!displayDate||displayDate<now-RFQ_STALE_MS;
-  });
-  if(!eligible.length)return{groups:[],noItems:true};
+    if(!displayDate||displayDate<now-RFQ_STALE_MS)return "stalePrice";
+    // NEW: lead-time-based inclusion — row has good price but no lead time
+    // Exclude rows with a supplier-sourced lead time (already firm from last RFQ)
+    if(r.leadTimeDays==null&&r.leadTimeSource!=="supplier")return "missingLeadTime";
+    return null;
+  }
+  const eligibleWithReasons=[];
+  for(const r of bom){
+    const reason=_eligibilityReason(r);
+    if(reason){eligibleWithReasons.push({row:r,reason});}
+  }
+  if(!eligibleWithReasons.length)return{groups:[],noItems:true};
   // Group by vendor — use user-assigned bcVendorName first, then BC lookup
   const groupMap={};
-  for(const item of eligible){
+  for(const {row:item,reason} of eligibleWithReasons){
     let vendorName=item.bcVendorName||"";
-    let vendorNo="";
+    let vendorNo=item.bcVendorNo||"";
     if(!vendorName&&_bcToken){
       const pn=(item.partNumber||"").trim();
-      if(pn){vendorNo=await bcGetItemVendorNo(pn);vendorName=vendorNo?await bcGetVendorName(vendorNo):"";}
+      if(pn){vendorNo=vendorNo||await bcGetItemVendorNo(pn);vendorName=vendorNo?await bcGetVendorName(vendorNo):"";}
     }
     if(!vendorName)vendorName="Unknown Supplier";
-    if(!groupMap[vendorName])groupMap[vendorName]={vendorName,vendorNo,items:[]};
-    groupMap[vendorName].items.push(item);
+    if(!groupMap[vendorName]){
+      groupMap[vendorName]={vendorName,vendorNo,items:[],itemsMissingPrice:0,itemsMissingLeadTime:0,itemsStalePrice:0};
+    }
+    const grp=groupMap[vendorName];
+    grp.items.push({...item,_rfqReason:reason});
+    if(reason==="missingPrice")grp.itemsMissingPrice++;
+    else if(reason==="stalePrice")grp.itemsStalePrice++;
+    else if(reason==="missingLeadTime")grp.itemsMissingLeadTime++;
+  }
+  // DECISION(v1.19.699): For each group, compute whether it's a "lead-time-only" group
+  // (every row is in because of missingLeadTime — no price issues). Pre-populates the
+  // per-vendor "Request Lead Times Only" checkbox.
+  for(const g of Object.values(groupMap)){
+    g.defaultLeadTimeOnly=(g.itemsMissingPrice===0&&g.itemsStalePrice===0&&g.itemsMissingLeadTime>0);
   }
   const RFQ_EXCLUDE_VENDORS=/^matrix\s*systems|crate|job\s*buyoff|job\s*buy.?off/i;
   const filtered=Object.values(groupMap).filter(g=>!RFQ_EXCLUDE_VENDORS.test(g.vendorName));
@@ -9720,7 +9739,10 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
   // DECISION(v1.19.692): Per-vendor "Lead Times Only" mode. When checked, the vendor's RFQ
   // shows BC prices as reference and asks supplier to confirm lead times only. Email
   // subject + body swap to lead-time-focused wording; portal renders prices read-only.
-  const [leadTimeOnly,setLeadTimeOnly]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=false;});return m;});
+  // DECISION(v1.19.699): Auto-check when the vendor's ONLY reason for RFQ is missing
+  // lead times (all items have fresh prices) — `g.defaultLeadTimeOnly` is set in
+  // buildRfqSupplierGroups.
+  const [leadTimeOnly,setLeadTimeOnly]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=!!g.defaultLeadTimeOnly;});return m;});
   const [vendorContacts,setVendorContacts]=useState({}); // {vendorName: [{name,email,type}]}
   const [contactsLoading,setContactsLoading]=useState(true);
   const [remember,setRemember]=useState({});
@@ -10076,13 +10098,15 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                       {remember[g.vendorName]?"Default for future RFQs":"Remember for future RFQs"}
                     </label>
                     {/* DECISION(v1.19.692): Per-vendor Lead Times Only checkbox. When active,
-                       the RFQ PDF shows BC prices as reference and asks supplier for lead times only. */}
+                       the RFQ PDF shows BC prices as reference and asks supplier for lead times only.
+                       DECISION(v1.19.699): Auto-checked when g.defaultLeadTimeOnly is true (all
+                       items have fresh prices; only missing lead times). Badge shown in that case. */}
                     <label style={{display:"flex",alignItems:"center",gap:4,marginTop:3,cursor:"pointer",fontSize:10,color:leadTimeOnly[g.vendorName]?"#fcd34d":"#64748b"}}
-                      title="When checked, the RFQ asks the supplier to confirm lead times only. BC prices will be shown as reference; supplier doesn't quote prices.">
+                      title={g.defaultLeadTimeOnly?"Auto-enabled: this vendor's items all have fresh prices — only lead times are missing.":"When checked, the RFQ asks the supplier to confirm lead times only. BC prices will be shown as reference; supplier doesn't quote prices."}>
                       <input type="checkbox" checked={!!leadTimeOnly[g.vendorName]}
                         onChange={e=>setLeadTimeOnly(prev=>({...prev,[g.vendorName]:e.target.checked}))}
                         style={{accentColor:"#fcd34d",width:12,height:12,cursor:"pointer"}}/>
-                      📅 Request Lead Times Only (prices already in BC)
+                      📅 Request Lead Times Only (prices already in BC){g.defaultLeadTimeOnly&&<span style={{color:"#fcd34d",fontWeight:700}}> — auto</span>}
                     </label>
                   </div>;
                 })()}
