@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.703";
+const APP_VERSION="v1.19.704";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3469,14 +3469,18 @@ async function buildRfqSupplierGroups(bom){
     if(r.isLaborRow||r.priceSource==="manual")return null;
     if(r.isContingency||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase()))return null;
     if(RFQ_EXCLUDE_ITEMS.test(r.description||"")||RFQ_EXCLUDE_ITEMS.test(r.partNumber||""))return null;
-    if(r.rfqSentDate&&(now-r.rfqSentDate)<RFQ_SENT_COOLDOWN)return null;
-    // Price-based inclusion (existing)
-    if(!r.unitPrice||r.unitPrice===0)return "missingPrice";
-    const isBC=r.priceSource==="bc"&&"bcPoDate"in r;
-    const displayDate=isBC?r.bcPoDate:r.priceDate;
-    if(!displayDate||displayDate<now-RFQ_STALE_MS)return "stalePrice";
-    // NEW: lead-time-based inclusion — row has good price but no lead time
-    // Exclude rows with a supplier-sourced lead time (already firm from last RFQ)
+    // DECISION(v1.19.704): 30-day RFQ cooldown applies ONLY to price-based inclusion.
+    // Missing lead times are independent — a vendor may have recently quoted prices but
+    // never returned lead times, or we may be iterating on RFQs during setup/testing.
+    // Always allow missingLeadTime rows through regardless of rfqSentDate.
+    const inCooldown=r.rfqSentDate&&(now-r.rfqSentDate)<RFQ_SENT_COOLDOWN;
+    if(!inCooldown){
+      if(!r.unitPrice||r.unitPrice===0)return "missingPrice";
+      const isBC=r.priceSource==="bc"&&"bcPoDate"in r;
+      const displayDate=isBC?r.bcPoDate:r.priceDate;
+      if(!displayDate||displayDate<now-RFQ_STALE_MS)return "stalePrice";
+    }
+    // Lead-time-based inclusion — ALWAYS evaluated, regardless of cooldown
     if(r.leadTimeDays==null&&r.leadTimeSource!=="supplier")return "missingLeadTime";
     return null;
   }
