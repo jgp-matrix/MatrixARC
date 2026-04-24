@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.700";
+const APP_VERSION="v1.19.701";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -3621,9 +3621,9 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
     <tr><td style="padding:3px 12px 3px 0;color:#64748b">Response By:</td><td style="font-weight:600">${responseBy}</td></tr>
   </table>
   ${uploadUrl?`<div style="margin-bottom:24px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 20px;text-align:center">
-    <div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:6px">&#x1F4E4; Submit Your Quote Online</div>
-    <div style="font-size:12px;color:#3b82f6;margin-bottom:10px">Upload your completed quote directly to our purchasing portal — no email required.</div>
-    <a href="${uploadUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:700;font-size:13px;padding:10px 24px;border-radius:6px;text-decoration:none">Upload Quote &#x2192;</a>
+    <div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:6px">${leadTimeOnly?"&#x1F4C5; Confirm Lead Times Online":"&#x1F4E4; Submit Your Quote Online"}</div>
+    <div style="font-size:12px;color:#3b82f6;margin-bottom:10px">${leadTimeOnly?"Open the portal to enter lead times per line. No quote upload needed — you can also upload a revised quote if pricing has changed.":"Upload your completed quote directly to our purchasing portal — no email required."}</div>
+    <a href="${uploadUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:700;font-size:13px;padding:10px 24px;border-radius:6px;text-decoration:none">${leadTimeOnly?"Enter Lead Times":"Upload Quote"} &#x2192;</a>
   </div>`:""}
 
   <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -3640,9 +3640,9 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
   </table>
   <p style="margin-top:20px;color:#475569;font-size:13px">Please reply to this email or send completed pricing to <strong>purchasing@matrixpci.com</strong></p>
   ${uploadUrl?`<div style="margin-top:24px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:18px 20px;text-align:center">
-    <div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:6px">&#x1F4E4; Submit Your Quote Online</div>
-    <div style="font-size:12px;color:#3b82f6;margin-bottom:12px">Upload your completed quote directly to our purchasing portal — no email required.</div>
-    <a href="${uploadUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:700;font-size:13px;padding:10px 24px;border-radius:6px;text-decoration:none">Upload Quote &#x2192;</a>
+    <div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:6px">${leadTimeOnly?"&#x1F4C5; Confirm Lead Times Online":"&#x1F4E4; Submit Your Quote Online"}</div>
+    <div style="font-size:12px;color:#3b82f6;margin-bottom:12px">${leadTimeOnly?"Open the portal to enter lead times per line. No quote upload needed — you can also upload a revised quote if pricing has changed.":"Upload your completed quote directly to our purchasing portal — no email required."}</div>
+    <a href="${uploadUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:700;font-size:13px;padding:10px 24px;border-radius:6px;text-decoration:none">${leadTimeOnly?"Enter Lead Times":"Upload Quote"} &#x2192;</a>
     <div style="font-size:11px;color:#93c5fd;margin-top:8px">Link valid for 30 days</div>
   </div>`:""}
   </body></html>`;
@@ -29616,15 +29616,22 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
       <div style={{minHeight:"100vh",background:bg,padding:"32px 16px"}}>
         <div style={{maxWidth:1200,margin:"0 auto"}}>
           <Header/>
-          {/* DECISION(v1.19.692): Lead-time-only banner shown when ARC set leadTimeOnly=true on the RFQ. */}
+          {/* DECISION(v1.19.692): Lead-time-only banner shown when ARC set leadTimeOnly=true on the RFQ.
+             DECISION(v1.19.701): Added "Prices not accurate? Upload a revised quote →" button that
+             switches to the upload phase so the supplier can drag-drop a PDF if our BC prices are
+             stale. Flow from there is identical to a normal quote submission. */}
           {info?.leadTimeOnly&&(
             <div style={{background:"#fef9c3",border:"2px solid #fcd34d",borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:12}}>
               <span style={{fontSize:22,flexShrink:0}}>📅</span>
-              <div>
+              <div style={{flex:1}}>
                 <div style={{fontSize:15,fontWeight:700,color:"#78350f",marginBottom:3}}>Lead Time Request — prices already in BC</div>
-                <div style={{fontSize:13,color:"#78350f",lineHeight:1.5}}>
+                <div style={{fontSize:13,color:"#78350f",lineHeight:1.5,marginBottom:10}}>
                   We have current pricing on file. Please confirm lead times (in days ARO) for each item below. Prices are shown for reference only — no need to re-quote.
                 </div>
+                <button onClick={()=>setPhase('upload')}
+                  style={{background:"#fff",border:"1px solid #d97706",color:"#92400e",padding:"6px 14px",borderRadius:6,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                  💬 Prices not accurate? Upload a revised quote →
+                </button>
               </div>
             </div>
           )}
@@ -29886,6 +29893,17 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
             </tbody>
           </table>
         </div>
+        {/* DECISION(v1.19.701): If this was originally a lead-time-only request, let the
+           supplier abort the quote upload and go back to the review page (skip-upload mode). */}
+        {info?.leadTimeOnly&&(
+          <div style={{background:"#fef9c3",border:"1px solid #fcd34d",borderRadius:8,padding:"10px 14px",marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+            <div style={{fontSize:13,color:"#78350f"}}>You can upload a revised quote here if our prices are stale — or go back to just entering lead times.</div>
+            <button onClick={()=>setPhase('review')}
+              style={{background:"#fff",border:"1px solid #d97706",color:"#92400e",padding:"5px 12px",borderRadius:6,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+              ← Back to Lead Times
+            </button>
+          </div>
+        )}
         <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"28px 24px",marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
           <div style={{fontSize:15,fontWeight:700,color:dark,marginBottom:4}}>Submit Your Quote</div>
           <div style={{fontSize:14,color:muted,marginBottom:22,lineHeight:1.6}}>Upload your quote PDF below. AI will automatically extract pricing — you'll review before submitting.</div>
