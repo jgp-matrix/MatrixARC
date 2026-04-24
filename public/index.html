@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.697";
+const APP_VERSION="v1.19.698";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2449,10 +2449,11 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
       } else {
       const pn=String(partNumber).trim().replace(/'/g,"''");
       const vn=String(vendorNo).trim().replace(/'/g,"''");
-      // DECISION(v1.19.696): Fetch existing with SystemId so PATCH can use the canonical
-      // SystemId-keyed URL. Compound-key URLs (Item_No='...',Vendor_No='...') returned 404
-      // from the published Page 114 Web Service on some BC tenants.
-      const existing=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Vendor_Item_No,Lead_Time_Calculation,SystemId`,{
+      // DECISION(v1.19.698): Page 114 'ItemVendorCatalog' uses legacy NAV.* metadata which
+      // does NOT expose a SystemId property. Dropped SystemId from $select (previously
+      // caused 400 BadRequest). PATCH uses the compound-key URL form, which BC accepts
+      // once the service is actually published.
+      const existing=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Vendor_Item_No,Lead_Time_Calculation`,{
         headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}
       });
       let existingRec=null,etag=null,odataId=null;
@@ -2477,14 +2478,11 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
           body.Vendor_Item_No=String(vendorItemNo).trim();
         }
         if(existingRec){
-          // Build candidate PATCH URLs: try SystemId first (canonical for BC OData v4),
-          // then fall back to compound-key syntax, then to @odata.id if returned.
+          // DECISION(v1.19.698): Page 114 NAV.* type has no SystemId — compound-key URL is
+          // the only way to address a specific record. @odata.id fallback kept for safety.
           const patchUrls=[];
-          if(existingRec.SystemId){
-            patchUrls.push(`${BC_ODATA_BASE}/ItemVendorCatalog(${existingRec.SystemId})`);
-          }
           patchUrls.push(`${BC_ODATA_BASE}/ItemVendorCatalog(Item_No='${encodeURIComponent(pn)}',Vendor_No='${encodeURIComponent(vn)}')`);
-          if(odataId)patchUrls.push(odataId);
+          if(odataId&&!patchUrls.includes(odataId))patchUrls.push(odataId);
           let lastErr=null,ok=false;
           for(const u of patchUrls){
             try{
