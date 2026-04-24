@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.693";
+const APP_VERSION="v1.19.694";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13063,6 +13063,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [partLibrary,setPartLibrary]=useState([]);
   const [partCorrections,setPartCorrections]=useState([]);
   const [aiPricing,setAiPricing]=useState(false);
+  // DECISION(v1.19.694): "Push Lead Times to BC" button state. Runs a one-shot bulk
+  // writeback of every BOM row's leadTimeDays → BC ItemVendorCatalog. Skips rows that
+  // don't meet the safeguards (blank partNumber, no vendorNo, leadTimeDays<=0).
+  const [pushingLeadTimes,setPushingLeadTimes]=useState(false);
   const [pricingProgress,setPricingProgress]=useState(null);
   const [pricingReport,setPricingReport]=useState(null); // null=hidden, {sections:[{source,obtained,skipped,failed,items}]}
   const [bcConnecting,setBcConnecting]=useState(false);
@@ -14733,6 +14737,60 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // force-refresh semantics on every extraction — scraping Codale every time even when
   // BC had fresh PP records. Now `forceFresh` is explicit and only set by the Force
   // Refresh button.
+  // DECISION(v1.19.694): Bulk-push every qualifying BOM row's leadTimeDays to BC
+  // ItemVendorCatalog. Used when user has entered lead times manually and wants them
+  // synced to BC outside the supplier-portal Apply Prices flow (which requires all
+  // items priced). Walks panel.bom, skips excluded rows, calls bcUpsertItemVendorLeadTime
+  // for each qualifying row. Results summarized in an alert; audit entries written per row.
+  async function pushAllLeadTimesToBc(){
+    if(pushingLeadTimes)return;
+    if(!_bcToken){alert("BC not connected. Sign in to Business Central first.");return;}
+    const bom=panel.bom||[];
+    const qualifying=bom.filter(r=>{
+      if(r.isLaborRow||_isExcludedFromPriceCheck(r))return false;
+      const pn=(r.partNumber||"").trim();
+      const vn=(r.bcVendorNo||"").trim();
+      const ld=+r.leadTimeDays;
+      return pn&&vn&&ld>0;
+    });
+    const skipped=bom.filter(r=>{
+      if(r.isLaborRow||_isExcludedFromPriceCheck(r))return false;
+      return !qualifying.includes(r)&&(+r.leadTimeDays>0);
+    });
+    if(!qualifying.length){
+      const skipReasons=skipped.length>0?` ${skipped.length} row(s) have a lead time but couldn't be pushed (missing vendor or blank part number).`:"";
+      alert(`No rows qualify for BC push.${skipReasons}\n\nRows need: non-blank part number + resolved BC vendor + leadTimeDays > 0.`);
+      return;
+    }
+    if(!window.confirm(`Push ${qualifying.length} lead time${qualifying.length>1?"s":""} to BC ItemVendorCatalog?\n\nThis will create/update per-vendor lead time records in BC so next time ARC or anyone else looks up these items, the lead time is there.${skipped.length>0?`\n\n(${skipped.length} row${skipped.length>1?"s":""} will be skipped — missing vendor or blank part number.)`:""}`))return;
+    setPushingLeadTimes(true);
+    const cid=_appCtx.companyId;
+    let created=0,updated=0,failed=0;
+    const failures=[];
+    for(const row of qualifying){
+      try{
+        const result=await bcUpsertItemVendorLeadTime({
+          partNumber:row.partNumber,vendorNo:row.bcVendorNo,vendorName:row.bcVendorName||"",
+          vendorItemNo:row.supplierPartNumber||"",leadTimeDays:+row.leadTimeDays,
+          projectId,uid,cid,
+        });
+        if(result.outcome==="created")created++;
+        else if(result.outcome==="updated")updated++;
+        else{failed++;failures.push(`${row.partNumber}: ${result.error||"unknown"}`);}
+      }catch(e){
+        failed++;failures.push(`${row.partNumber}: ${e.message||String(e)}`);
+      }
+    }
+    setPushingLeadTimes(false);
+    const lines=[
+      `Push complete: ${created} created, ${updated} updated${failed>0?`, ${failed} failed`:""}`,
+    ];
+    if(skipped.length>0)lines.push(`${skipped.length} row${skipped.length>1?"s":""} skipped (no vendor or blank PN)`);
+    if(failures.length>0)lines.push("","Failures:",...failures.slice(0,10).map(f=>"  • "+f));
+    if(failures.length>10)lines.push(`  … and ${failures.length-10} more`);
+    alert(lines.join("\n"));
+  }
+
   async function runPricingOnPanel(bomOverride,panelOverride,onEpProgress,opts={}){
     const forceFresh=!!(opts&&opts.forceFresh);
     const bom=bomOverride||panel.bom||[];
@@ -15952,6 +16010,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 6px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"0 6px 6px 0",borderLeft:`1px solid ${C.accent}33`})}
                   title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Force refresh all prices — ignores stale thresholds"}>▾</button>
               </div>
+            )}
+            {/* DECISION(v1.19.694): Push Lead Times to BC — bulk writeback of every qualifying
+               row's leadTimeDays to BC ItemVendorCatalog (Page 114). Same safeguards as the
+               portal Apply Prices flow: non-blank partNumber, resolved bcVendorNo, leadTimeDays>0. */}
+            {!readOnly&&(panel.bom||[]).length>0&&(
+              <button onClick={ownerPriorityActive?_fireOwnerPriorityAlert:pushAllLeadTimesToBc}
+                disabled={pushingLeadTimes||ownerPriorityActive}
+                title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Push all rows' lead times to BC ItemVendorCatalog. Requires non-blank part number + resolved BC vendor."}
+                style={btn("#3a2800","#fcd34d",{fontSize:12,padding:"4px 12px",opacity:(pushingLeadTimes||ownerPriorityActive)?0.45:1,cursor:(pushingLeadTimes||ownerPriorityActive)?"not-allowed":"pointer",border:"1px solid #fcd34d44"})}>
+                {pushingLeadTimes?"Pushing…":"📤 Push Lead Times to BC"}
+              </button>
             )}
             {!readOnly&&(
               <button onClick={async()=>{
