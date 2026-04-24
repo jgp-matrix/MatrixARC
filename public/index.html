@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.728";
+const APP_VERSION="v1.19.729";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -14704,8 +14704,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return next;
     })};
     onUpdate(updated);
+    latestPanelRef.current=updated;
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
+    // DECISION(v1.19.729): Save latestPanelRef.current at flush time, NOT the closure
+    // snapshot. Otherwise, if another flow (SqModal Apply, supplier portal Apply, etc.)
+    // updates the panel state in the 1.5s debounce window, this timer would fire with
+    // the OLDER closure value and overwrite those external updates. Using latestPanelRef
+    // ensures last-write-wins semantics across all update sources.
+    autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(latestPanelRef.current||updated);}catch(e){}},1500);
     // DECISION(v1.19.711): Manual leadTimeDays edit → enqueue for batched BC push.
     // Replaces the per-row 2s debounce from v1.19.693. The whole queue flushes 30s after
     // the LAST edit (timer slides forward on every keystroke). Editing the same row
@@ -14977,8 +14983,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // Clearing price — no popup needed
       const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:null,priceSource:null,priceDate:null}:r);
       const updated={...panel,bom:updatedBom};onUpdate(updated);
+      latestPanelRef.current=updated;
       if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
-      autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},500);
+      // DECISION(v1.19.729): Save latestPanelRef.current at flush time (see updateBomRow comment).
+      autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(latestPanelRef.current||updated);}catch(e){}},500);
       return;
     }
     const pn=(row?.partNumber||"").trim();
@@ -15059,8 +15067,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,bcVendorName:vendorName}:r);
     const updated={...panel,bom:updatedBom};
     onUpdate(updated);
+    latestPanelRef.current=updated;
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
-    autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(e){}},1500);
+    // DECISION(v1.19.729): Save latestPanelRef.current at flush time (see updateBomRow comment).
+    autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(latestPanelRef.current||updated);}catch(e){}},1500);
     // Write vendor back to BC item card
     const pn=(row?.partNumber||"").trim();
     if(pn&&_bcToken&&vendorName){
@@ -16963,7 +16973,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>Notes</div>
                   <textarea
                     value={panel.bomNotes||""}
-                    onChange={e=>{const updated={...panel,bomNotes:e.target.value};onUpdate(updated);if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(updated);}catch(ex){}},1000);}}
+                    onChange={e=>{const updated={...panel,bomNotes:e.target.value};onUpdate(updated);latestPanelRef.current=updated;if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(latestPanelRef.current||updated);}catch(ex){}},1000);}}
                     readOnly={readOnly}
                     rows={3}
                     placeholder="Additional notes about this panel's BOM…"
