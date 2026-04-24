@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.729";
+const APP_VERSION="v1.19.730";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -22822,6 +22822,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     let matched=0;
     let crossedSkipped=0;
     let leadTimeMatched=0;
+    // DECISION(v1.19.730): Diagnostic logging — surface exactly which BOM rows match
+    // which submission line items, so misses can be traced (PN normalization, fuzzy
+    // logic, etc.). Remove once stable.
+    console.log("[PORTAL APPLY] priceMap keys:",Object.keys(priceMap),"leadTimeMap keys:",Object.keys(leadTimeMap),"crossedPNs:",[...crossedPNs]);
     const updatedPanels=(projectRef.current.panels||[]).map(panel=>({
       ...panel,
       bom:(panel.bom||[]).map(row=>{
@@ -22839,7 +22843,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           leadTimeEstimated:false,
           ...(ltHit.stockQty!=null?{leadTimeStock:{qty:ltHit.stockQty,source:ltHit.stockSource||"Supplier",asOf:now}}:{}),
         }:{};
-        if(ltHit)leadTimeMatched++;
+        if(ltHit){leadTimeMatched++;console.log("[PORTAL APPLY] LT match:",row.partNumber,"→",ltHit.days,"days");}
+        else if(!row.isLaborRow&&row.partNumber)console.log("[PORTAL APPLY] LT MISS:",row.partNumber,"normPart=",nk);
         // Skip if this BOM PN was crossed by the supplier (price goes to supplier's item, not this row)
         if(crossedPNs.has(nk)){crossedSkipped++;return Object.keys(ltPatch).length?{...row,...ltPatch}:row;}
         // Try exact normalized match first, then fuzzy contains/prefix match
@@ -23551,12 +23556,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           if(p.id!==targetPanel.id)return p;
           let nextBom=p.bom||[];
           if(matchUpdates){
+            // DECISION(v1.19.730): Diagnostic — log keys so PN normalization mismatches
+            // are visible. Remove once SqModal Push reliably stamps lead times.
+            console.log("[SQ APPLY] matchUpdates keys:",Object.keys(matchUpdates),"vendorName:",vendorName);
             // Stamp price + leadTimeDays + leadTimeStock on rows whose PN matches
             nextBom=nextBom.map(row=>{
               if(row.isLaborRow)return row;
               const npn=normPart(row.partNumber);
               const u=matchUpdates[npn]||Object.values(matchUpdates).find(m=>partMatch(npn,normPart(m.partNumber)));
-              if(!u)return row;
+              if(!u){if(!row.isLaborRow&&row.partNumber)console.log("[SQ APPLY] MISS:",row.partNumber,"normPart=",npn);return row;}
+              console.log("[SQ APPLY] HIT:",row.partNumber,"→ price=",u.price,"lead=",u.leadTimeDays);
               const patch={};
               if(u.price!=null&&u.price>0){
                 patch.unitPrice=u.price;
