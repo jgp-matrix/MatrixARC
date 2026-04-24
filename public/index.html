@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.712";
+const APP_VERSION="v1.19.713";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -903,6 +903,10 @@ const LABOR_RATE_DEFAULTS={
   holesMinPerHole:15,         // Panel holes: 15 min/hole
   hmiHoleEquivalent:25,       // 1 HMI cutout = 25 standard holes
   squareCutoutMinPerCut:180,  // Square side cutout (horn, etc.): 3 hrs each
+  // DECISION(v1.19.713): Control Panel Lead Time config — per-day crew hours
+  // (feeds laborDays calc) and lead-time batch debounce window.
+  dailyCrewHours:8,           // Productive labor hours per calendar day
+  leadTimeBatchSeconds:30,    // Debounce window for batched BC lead-time writes
 };
 let LABOR_RATES={...LABOR_RATE_DEFAULTS};
 const DOOR_DEVICE_TYPES=new Set(["pushbutton","pilot_light","selector_switch","hmi","e_stop","horn","meter"]);
@@ -1068,8 +1072,9 @@ function computeControlPanelLeadTime(panel,project){
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
   const longestItemDays=bom.reduce((m,r)=>Math.max(m,+r.leadTimeDays||0),0);
   const lab=(typeof computeLaborEstimate==="function")?computeLaborEstimate(panel):{totalHours:0};
-  const laborConfigRaw=project?.laborConfig||{};
-  const dailyCrewHours=+laborConfigRaw.dailyCrewHours||8;
+  // DECISION(v1.19.713): Daily crew hours config lives in the app-level LABOR_RATES
+  // (loaded from laborRates Firestore doc on mount). Falls back to 8 if unset.
+  const dailyCrewHours=+(typeof LABOR_RATES!=="undefined"?LABOR_RATES.dailyCrewHours:null)||+project?.laborConfig?.dailyCrewHours||8;
   const laborDays=Math.ceil((lab.totalHours||0)/dailyCrewHours);
   const productionDays=Math.max(0,Math.min(365,+panel.productionDays||0));
   const totalDays=longestItemDays+laborDays+productionDays;
@@ -9234,6 +9239,9 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
               ["holesMinPerHole","Panel Holes","min / hole"],
               ["hmiHoleEquivalent","HMI Hole Equivalent","holes per HMI cutout"],
               ["squareCutoutMinPerCut","Square Cutout","min / cutout"],
+              // DECISION(v1.19.713): Control Panel Lead Time config — feeds computeControlPanelLeadTime
+              ["dailyCrewHours","Daily Crew Hours","hrs / day (feeds ship-date calc)"],
+              ["leadTimeBatchSeconds","Lead Time Batch Window","sec (debounce for BC sync)"],
             ].map(([key,label,unit])=>(
               <div key={key} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
                 <div style={{flex:1,fontSize:12,color:C.text,fontWeight:500}}>{label}</div>
@@ -13302,6 +13310,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // See spec: docs/superpowers/specs/2026-04-24-control-panel-lead-time-design.md
   const _leadTimeBcQueue=useRef({pending:new Map(),flushTimer:null,flushing:false});
   const [pendingSyncCount,setPendingSyncCount]=useState(0);
+  // DECISION(v1.19.713): Best-effort flush on tab-hide / page-close so queued edits
+  // don't sit unflushed if the user navigates away inside the 30s window.
+  useEffect(()=>{
+    const onVis=()=>{
+      if(document.visibilityState==="hidden"&&_leadTimeBcQueue.current.pending.size>0){
+        _flushLeadTimeBcQueue().catch(()=>{});
+      }
+    };
+    document.addEventListener("visibilitychange",onVis);
+    return()=>document.removeEventListener("visibilitychange",onVis);
+  },[]);
   const panelRef=useRef(panel);
   useEffect(()=>{panelRef.current=panel;},[panel]);
   const bomEditRef=useRef({});
@@ -14596,7 +14615,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         });
         setPendingSyncCount(_leadTimeBcQueue.current.pending.size);
         if(_leadTimeBcQueue.current.flushTimer)clearTimeout(_leadTimeBcQueue.current.flushTimer);
-        const windowSec=+(_appCtx._laborConfig?.leadTimeBatchSeconds)||30;
+        const windowSec=+(typeof LABOR_RATES!=="undefined"?LABOR_RATES.leadTimeBatchSeconds:0)||30;
         _leadTimeBcQueue.current.flushTimer=setTimeout(()=>_flushLeadTimeBcQueue(),windowSec*1000);
       }
     }
@@ -14649,7 +14668,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     q.flushing=false;
     // If new edits arrived during the flush, re-arm the timer
     if(q.pending.size>0){
-      const windowSec=+(_appCtx._laborConfig?.leadTimeBatchSeconds)||30;
+      const windowSec=+(typeof LABOR_RATES!=="undefined"?LABOR_RATES.leadTimeBatchSeconds:0)||30;
       q.flushTimer=setTimeout(()=>_flushLeadTimeBcQueue(),windowSec*1000);
     }
     console.log(`[LEAD TIME BATCH] ${ok} synced to BC${failed>0?`, ${failed} failed`:""}`);
