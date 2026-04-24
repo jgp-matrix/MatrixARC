@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.704";
+const APP_VERSION="v1.19.705";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10334,21 +10334,31 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
         </div>
         <div style={{flex:1,overflowY:"auto"}}>
           {submissions.length===0&&<div style={{color:"#94a3b8",fontSize:13,textAlign:"center",padding:"30px 0"}}>No submissions yet.</div>}
-          {submissions.map(sub=>(
-            <div key={sub.id} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:8,padding:"14px 16px",marginBottom:12}}>
+          {submissions.map(sub=>{
+            // DECISION(v1.19.705): Lead-time column + button-label awareness for leadTimeOnly
+            // submissions. Prices came from BC as reference; the headline action is pushing
+            // lead times, not prices. Button and header wording reflect that.
+            const isLtOnly=!!sub.leadTimeOnly;
+            const hasAnyPrice=(sub.lineItems||[]).some(i=>i.unitPrice!=null);
+            const hasAnyLeadTime=(sub.lineItems||[]).some(i=>i.leadTimeDays!=null&&i.leadTimeDays>0);
+            const canApply=hasAnyPrice||hasAnyLeadTime;
+          return(
+            <div key={sub.id} style={{background:"#0a0a18",border:`1px solid ${isLtOnly?"#fcd34d":"#3d6090"}`,borderRadius:8,padding:"14px 16px",marginBottom:12}}>
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
-                <span style={{fontWeight:700,color:"#818cf8",fontSize:14}}>{sub.vendorName||"—"}</span>
+                <span style={{fontWeight:700,color:isLtOnly?"#fcd34d":"#818cf8",fontSize:14}}>{isLtOnly?"📅 ":""}{sub.vendorName||"—"}</span>
+                {isLtOnly&&<span style={{background:"#fef9c3",color:"#78350f",padding:"1px 6px",borderRadius:3,fontSize:10,fontWeight:700}}>LEAD TIMES</span>}
                 <span style={{fontSize:11,color:"#94a3b8"}}>{sub.rfqNum||""}</span>
                 <span style={{fontSize:11,color:"#94a3b8",marginLeft:"auto"}}>Submitted {fmtDate(sub.submittedAt)}</span>
               </div>
-              {sub.leadTimeDays!=null&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:8}}>Lead time: <strong style={{color:"#f1f5f9"}}>{sub.leadTimeDays} days ARO</strong></div>}
+              {sub.leadTimeDays!=null&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:8}}>Order-level lead time: <strong style={{color:"#f1f5f9"}}>{sub.leadTimeDays} days ARO</strong></div>}
               <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginBottom:10}}>
                 <thead>
                   <tr style={{background:"#111128"}}>
                     <th style={{padding:"5px 8px",textAlign:"left",color:"#94a3b8",fontWeight:600}}>Part #</th>
                     <th style={{padding:"5px 8px",textAlign:"left",color:"#94a3b8",fontWeight:600}}>Description</th>
                     <th style={{padding:"5px 8px",textAlign:"center",color:"#94a3b8",fontWeight:600}}>Qty</th>
-                    <th style={{padding:"5px 8px",textAlign:"right",color:"#4ade80",fontWeight:700}}>Unit Price</th>
+                    <th style={{padding:"5px 8px",textAlign:"right",color:isLtOnly?"#94a3b8":"#4ade80",fontWeight:isLtOnly?600:700}}>{isLtOnly?"Price (ref)":"Unit Price"}</th>
+                    <th style={{padding:"5px 8px",textAlign:"center",color:"#fcd34d",fontWeight:700,width:72}}>Lead</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -10360,14 +10370,22 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
                       </td>
                       <td style={{padding:"5px 8px",color:"#94a3b8",textDecoration:item.cannotSupply?"line-through":undefined}}>{item.description||"—"}</td>
                       <td style={{padding:"5px 8px",textAlign:"center",color:"#94a3b8"}}>{item.qty||1}</td>
-                      <td style={{padding:"5px 8px",textAlign:"right",color:item.cannotSupply?"#ef4444":item.unitPrice!=null?"#4ade80":"#475569",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{item.cannotSupply?"Cannot Supply":fmtPrice(item.unitPrice)}</td>
+                      <td style={{padding:"5px 8px",textAlign:"right",color:item.cannotSupply?"#ef4444":item.unitPrice!=null?(isLtOnly?"#94a3b8":"#4ade80"):"#475569",fontWeight:isLtOnly?500:700,fontStyle:isLtOnly&&item.unitPrice!=null?"italic":undefined,fontVariantNumeric:"tabular-nums"}}>{item.cannotSupply?"Cannot Supply":fmtPrice(item.unitPrice)}</td>
+                      <td style={{padding:"5px 8px",textAlign:"center",color:item.cannotSupply?"#64748b":item.leadTimeDays!=null?"#fcd34d":"#475569",fontWeight:700,fontVariantNumeric:"tabular-nums"}}
+                          title={item.leadTimeDays!=null?`Lead time: ${item.leadTimeDays} days ARO`:item.cannotSupply?"Cannot supply":"Not submitted"}>
+                        {item.cannotSupply?"—":item.leadTimeDays!=null?`${item.leadTimeDays}d`:(sub.leadTimeDays!=null?`${sub.leadTimeDays}d*`:"—")}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {isLtOnly&&(sub.lineItems||[]).some(i=>i.leadTimeDays==null&&!i.cannotSupply)&&<div style={{fontSize:10,color:"#94a3b8",marginBottom:8,fontStyle:"italic"}}>* Rows without per-line lead times will fall back to the order-level lead time shown above.</div>}
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                {(sub.lineItems||[]).some(i=>i.unitPrice!=null)&&(
-                  <button disabled={applying===sub.id} onClick={async()=>{setApplying(sub.id);await onApplyPrices(sub);setApplying(null);}} style={{background:"#0d2010",border:"1px solid #4ade80",color:"#4ade80",padding:"5px 14px",borderRadius:6,cursor:applying===sub.id?"wait":"pointer",fontSize:12,fontFamily:"inherit",fontWeight:700,opacity:applying===sub.id?0.6:1}}>{applying===sub.id?"Pushing to BC…":"✓ Apply Prices to BOM"}</button>
+                {canApply&&(
+                  <button disabled={applying===sub.id} onClick={async()=>{setApplying(sub.id);await onApplyPrices(sub);setApplying(null);}}
+                    style={{background:isLtOnly?"#3a2800":"#0d2010",border:`1px solid ${isLtOnly?"#fcd34d":"#4ade80"}`,color:isLtOnly?"#fcd34d":"#4ade80",padding:"5px 14px",borderRadius:6,cursor:applying===sub.id?"wait":"pointer",fontSize:12,fontFamily:"inherit",fontWeight:700,opacity:applying===sub.id?0.6:1}}>
+                    {applying===sub.id?"Pushing to BC…":isLtOnly?"✓ Apply Lead Times to BOM":"✓ Apply Prices to BOM"}
+                  </button>
                 )}
                 {sub.storageUrl&&<a href={sub.storageUrl} target="_blank" rel="noopener noreferrer" style={{background:"#0d1520",border:"1px solid #0284c7",color:"#38bdf8",padding:"5px 14px",borderRadius:6,fontSize:12,fontFamily:"inherit",fontWeight:600,textDecoration:"none"}}>📄 View PDF</a>}
                 {sub.fileName&&!sub.storageUrl&&<span style={{fontSize:11,color:"#94a3b8"}}>📄 {sub.fileName}</span>}
@@ -10376,7 +10394,7 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
                 <button onClick={()=>{if(confirm("DELETE this RFQ submission permanently? This cannot be undone."))fbDb.collection('rfqUploads').doc(sub.id).delete().catch(e=>console.warn("delete failed:",e));}} style={{background:"none",border:"1px solid #ef444444",color:"#ef4444",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Delete</button>
               </div>
             </div>
-          ))}
+          );})}
         </div>
         <div style={{paddingTop:12,display:"flex",gap:8,justifyContent:"flex-end"}}>
           <button onClick={onImportPdf} style={{background:"#1a1a2a",border:"1px solid #4f46e5",color:"#a5b4fc",padding:"6px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600}}>📤 Import PDF Instead</button>
