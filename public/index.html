@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.702";
+const APP_VERSION="v1.19.703";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4772,10 +4772,14 @@ function sqNormalize(raw){
   const{mfr,partNumber}=sqExtractMfr(raw.rawPartNumber||'');
   const isPriced=raw.qty!=null&&raw.price!=null&&!isNaN(raw.qty)&&!isNaN(raw.price);
   let notes='';for(const{p,n}of SQ_NOTES){if(p.test(raw.description||'')){notes=n;break;}}
+  // DECISION(v1.19.703): Carry leadTimeDays through the SQ pipeline so it can be pushed
+  // to BC ItemVendorCatalog alongside prices.
+  const ltRaw=raw.leadTimeDays;
+  const leadTimeDays=(ltRaw==null||isNaN(+ltRaw)||+ltRaw<=0)?null:Math.round(+ltRaw);
   return{ln:raw.ln??null,mfr,partNumber,rawPartNumber:raw.rawPartNumber||'',description:raw.description||'',
     qty:isPriced?Number(raw.qty):null,price:isPriced?Number(raw.price):null,uom:raw.uom||'',
     extPrice:isPriced?Math.round(raw.qty*raw.price*100)/100:null,notes,isPriced,
-    extractionWarning:raw.extractionWarning||null,
+    extractionWarning:raw.extractionWarning||null,leadTimeDays,
     bcItemId:null,bcItemDescription:null,bcCurrentCost:null,matchStatus:'unmatched',priceUpdateStatus:null,approved:true};
 }
 function sqValidateLineItems(items){
@@ -18219,7 +18223,8 @@ Extract ALL information into this exact JSON structure. Return ONLY valid JSON, 
       "description": "item description",
       "qty": 10,
       "price": 123.45,
-      "uom": "E"
+      "uom": "E",
+      "leadTimeDays": 14
     }
   ]
 }
@@ -18231,6 +18236,7 @@ Rules:
 - price = the UNIT PRICE for a single item (not extended/total price). Read carefully from the price column.
 - uom: use E (each), C (per 100), M (per 1000), or empty string
 - quoteDate/expiresOn: dates in YYYY-MM-DD format or null if not found
+- leadTimeDays = lead time in CALENDAR DAYS ARO (after receipt of order). Parse from per-line column OR a single header/footer value that applies to all lines. Convert weeks→days (×7), months→days (×30). Null if not stated anywhere.
 
 EXTRACTED TEXT (backup — use images as primary source):
 ${fullText.slice(0,8000)}`;
@@ -18620,6 +18626,39 @@ ${fullText.slice(0,8000)}`;
         }else{console.warn("bcPushPurchasePrice: no vendor resolved for",quoteHeader?.supplier);}
       }catch(e){console.warn("bcPushPurchasePrice batch error:",e);}
     }
+    // DECISION(v1.19.703): Push lead times to BC ItemVendorCatalog for every approved line
+    // that has a leadTimeDays > 0. Same safeguards as supplier-portal flow (HARD REJECT blank
+    // PN, requires resolved vendor). Audit to companies/{cid}/bcLeadTimeWrites.
+    let ltPushed=0,ltFailed=0;
+    try{
+      const cid=_appCtx.companyId;
+      let ltVendorNo=autoVendor.vendorNo||'';
+      if(!ltVendorNo&&quoteHeader?.supplier&&_bcToken){
+        try{
+          const vendors=await bcListVendors();
+          const sqName=(quoteHeader.supplier||'').toLowerCase().trim();
+          const vMatch=vendors.find(v=>v.displayName===quoteHeader.supplier)
+            ||vendors.find(v=>(v.displayName||'').toLowerCase().includes(sqName));
+          if(vMatch)ltVendorNo=vMatch.number;
+        }catch(e){/* ignored — lead-time push just gets skipped */}
+      }
+      if(ltVendorNo&&cid){
+        for(const it of toUpdate){
+          if(!it.leadTimeDays||it.leadTimeDays<=0)continue;
+          if(!it.partNumber||!String(it.partNumber).trim())continue;
+          const res=await bcUpsertItemVendorLeadTime({
+            partNumber:it.partNumber,vendorNo:ltVendorNo,vendorName:quoteHeader?.supplier||'',
+            vendorItemNo:it.rawPartNumber&&it.rawPartNumber!==it.partNumber?it.rawPartNumber:'',
+            leadTimeDays:+it.leadTimeDays,projectId:projectId||null,uid,cid,
+          });
+          if(res.outcome==="created"||res.outcome==="updated")ltPushed++;
+          else ltFailed++;
+        }
+        if(ltPushed>0)console.log(`SQ lead-time push: ${ltPushed} pushed to BC ItemVendorCatalog${ltFailed>0?`, ${ltFailed} failed`:""}`);
+      }else if(toUpdate.some(i=>i.leadTimeDays>0)){
+        console.warn("SQ lead-time push skipped — no vendor resolved for",quoteHeader?.supplier);
+      }
+    }catch(e){console.warn("SQ lead-time push error:",e);}
     const finalStatus=errors.length===0?'pushed_to_bc':'pending_review';
     await fbDb.collection('supplierQuotes').doc(quoteDocId).update({lineItems:updatedItems,status:finalStatus});
     await sqSavePushAudit(quoteDocId,quoteHeader?.supplier||'',quoteHeader?.quoteId||'',uid,auditItems);
@@ -18647,6 +18686,8 @@ ${fullText.slice(0,8000)}`;
       if(onBomUpdate&&(!panelBom||panelBom.length===0)){
         const now=Date.now();
         const vendorName=quoteHeader?.supplier||"";
+        // DECISION(v1.19.703): Carry leadTimeDays onto new BOM rows when BOM was empty so
+        // the Lead column populates immediately after Upload Quote.
         const newBomRows=toUpdate.filter(i=>i.partNumber).map((i,idx)=>({
           id:now+idx+Math.random(),
           qty:i.qty||1,
@@ -18658,7 +18699,8 @@ ${fullText.slice(0,8000)}`;
           priceSource:"bc",
           priceDate:now,
           bcPoDate:now,
-          bcVendorName:vendorName
+          bcVendorName:vendorName,
+          ...(i.leadTimeDays>0?{leadTimeDays:+i.leadTimeDays,leadTimeSource:"supplier",leadTimeUpdatedAt:now,leadTimeEstimated:false}:{})
         }));
         if(newBomRows.length>0)onBomUpdate(newBomRows);
       }
@@ -22120,23 +22162,39 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         learningSaveWarnings.push(`supplier-to-Matrix PN crossings (${crossings.length})`);
       }
     }
+    // DECISION(v1.19.703): In leadTimeOnly submissions, prices came from BC as reference
+    // values — NOT a real supplier quote. Re-applying them is a no-op at best and can
+    // clobber newer BC prices at worst. Skip all price-related writes when leadTimeOnly.
+    const leadTimeOnlySubmission=!!submission.leadTimeOnly;
     // Build normalized part# → price map (skip cannot-supply items)
     // DECISION(v1.19.449): For crossed items (supplier quotes a different PN than the BOM),
     // push the price to the SUPPLIER's part number in BC, NOT the original BOM part.
     // Skip BOM row update for crossed items — the BOM uses a different part already priced elsewhere.
     const priceMap={};
     const crossedPNs=new Set(); // original PNs that have a supplier cross — skip BOM matching for these
+    // DECISION(v1.19.703): Build parallel leadTimeMap (normalized PN → {days,supplierPN})
+    // so the BOM-row update below can apply lead times regardless of price-application mode.
+    const leadTimeMap={};
     (submission.lineItems||[]).forEach(item=>{
       if(item.cannotSupply)return;
-      if(item.unitPrice!=null&&item.partNumber){
-        const isCrossed=item.supplierPartNumber&&normPart(item.supplierPartNumber)!==normPart(item.partNumber);
+      const pn=(item.partNumber||'').trim();
+      if(!pn)return;
+      const isCrossed=item.supplierPartNumber&&normPart(item.supplierPartNumber)!==normPart(item.partNumber);
+      // Price map — skipped entirely for leadTimeOnly submissions
+      if(!leadTimeOnlySubmission&&item.unitPrice!=null){
         if(isCrossed){
-          // Price goes to the supplier's PN in BC, not the original BOM PN
           priceMap[normPart(item.supplierPartNumber)]={price:item.unitPrice,partNumber:(item.supplierPartNumber||'').trim(),uom:item.uom||'',isCrossed:true};
           crossedPNs.add(normPart(item.partNumber));
         }else{
-          priceMap[normPart(item.partNumber)]={price:item.unitPrice,partNumber:(item.partNumber||'').trim(),uom:item.uom||''};
+          priceMap[normPart(item.partNumber)]={price:item.unitPrice,partNumber:pn,uom:item.uom||''};
         }
+      }else if(!leadTimeOnlySubmission&&isCrossed){
+        crossedPNs.add(normPart(item.partNumber));
+      }
+      // Lead-time map — applies to the BOM row's original PN (lead time belongs to the
+      // item the BOM lists, regardless of price-crossing to a supplier variant).
+      if(item.leadTimeDays!=null&&item.leadTimeDays>0){
+        leadTimeMap[normPart(item.partNumber)]={days:+item.leadTimeDays,supplierPN:item.supplierPartNumber||null};
       }
     });
     const now=Date.now();
@@ -22155,34 +22213,48 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }catch(e){console.warn("Vendor lookup for portal prices failed:",e);}
     }
     if(vendorNo)_dbg("applyPortalPrices: vendor",vendorNo,submission.vendorName);
-    // Push each price (and vendor if resolved) to BC item card
-    const bcPushes=Object.values(priceMap).map(({price,partNumber})=>{
-      const patch={Unit_Cost:price};
-      if(vendorNo)patch.Vendor_No=vendorNo;
-      return bcPatchItemOData(partNumber,patch).catch(e=>console.warn("BC price push failed:",partNumber,e));
-    });
-    await Promise.all(bcPushes);
-    // Push Purchase Prices to BC (vendor, direct unit cost, starting date = priced date)
-    if(vendorNo&&_bcToken){
-      const ppResults=await Promise.all(Object.values(priceMap).map(async({price,partNumber,uom})=>{
-        try{return await bcPushPurchasePrice(partNumber,vendorNo,price,now,uom);}
-        catch(e){console.warn("BC purchase price push failed:",partNumber,e);return{ok:false,reason:'error'};}
-      }));
-      const missingItems=ppResults.filter(r=>r&&r.reason==='item_not_found').map(r=>r.itemNo);
-      if(missingItems.length>0){
-        setTimeout(()=>alert(`${missingItems.length} item${missingItems.length>1?'s':''} not found in BC:\n${missingItems.join(', ')}\n\nUse the "Upload Supplier Quote" tool in Settings to create these items in BC first, then re-apply.`),200);
+    // DECISION(v1.19.703): Skip BC price pushes in leadTimeOnly submissions.
+    if(!leadTimeOnlySubmission){
+      // Push each price (and vendor if resolved) to BC item card
+      const bcPushes=Object.values(priceMap).map(({price,partNumber})=>{
+        const patch={Unit_Cost:price};
+        if(vendorNo)patch.Vendor_No=vendorNo;
+        return bcPatchItemOData(partNumber,patch).catch(e=>console.warn("BC price push failed:",partNumber,e));
+      });
+      await Promise.all(bcPushes);
+      // Push Purchase Prices to BC (vendor, direct unit cost, starting date = priced date)
+      if(vendorNo&&_bcToken){
+        const ppResults=await Promise.all(Object.values(priceMap).map(async({price,partNumber,uom})=>{
+          try{return await bcPushPurchasePrice(partNumber,vendorNo,price,now,uom);}
+          catch(e){console.warn("BC purchase price push failed:",partNumber,e);return{ok:false,reason:'error'};}
+        }));
+        const missingItems=ppResults.filter(r=>r&&r.reason==='item_not_found').map(r=>r.itemNo);
+        if(missingItems.length>0){
+          setTimeout(()=>alert(`${missingItems.length} item${missingItems.length>1?'s':''} not found in BC:\n${missingItems.join(', ')}\n\nUse the "Upload Supplier Quote" tool in Settings to create these items in BC first, then re-apply.`),200);
+        }
       }
     }
     // Apply to BOM — priceSource:'bc', bcPoDate:now so rows don't get flagged
     // Skip crossed items — their price belongs to the supplier's PN, not the BOM row
+    // DECISION(v1.19.703): Always apply lead times to BOM rows (both normal + leadTimeOnly
+    // submissions). In leadTimeOnly mode, prices are left unchanged on BOM rows.
     let matched=0;
     let crossedSkipped=0;
+    let leadTimeMatched=0;
     const updatedPanels=(projectRef.current.panels||[]).map(panel=>({
       ...panel,
       bom:(panel.bom||[]).map(row=>{
         const nk=normPart(row.partNumber);
+        // Find lead-time hit first (works even when crossed)
+        let ltHit=leadTimeMap[nk];
+        if(!ltHit){
+          const ltKey=Object.keys(leadTimeMap).find(sk=>partMatch(nk,sk));
+          if(ltKey)ltHit=leadTimeMap[ltKey];
+        }
+        const ltPatch=ltHit?{leadTimeDays:ltHit.days,leadTimeSource:"supplier",leadTimeUpdatedAt:now,leadTimeEstimated:false}:{};
+        if(ltHit)leadTimeMatched++;
         // Skip if this BOM PN was crossed by the supplier (price goes to supplier's item, not this row)
-        if(crossedPNs.has(nk)){crossedSkipped++;return row;}
+        if(crossedPNs.has(nk)){crossedSkipped++;return Object.keys(ltPatch).length?{...row,...ltPatch}:row;}
         // Try exact normalized match first, then fuzzy contains/prefix match
         let hit=priceMap[nk];
         if(!hit){
@@ -22191,9 +22263,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         }
         if(hit&&!hit.isCrossed){
           matched++;
-          return{...row,unitPrice:hit.price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName};
+          return{...row,unitPrice:hit.price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName,...ltPatch};
         }
-        return row;
+        return Object.keys(ltPatch).length?{...row,...ltPatch,bcVendorName:submission.vendorName||row.bcVendorName}:row;
       })
     }));
     update({...projectRef.current,panels:updatedPanels});
@@ -22249,7 +22321,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const ltWriteback=(ltCreated+ltUpdated)>0
       ? `\nBC ItemVendorCatalog updated for ${ltCreated+ltUpdated} item${(ltCreated+ltUpdated)!==1?'s':''} (${ltCreated} created, ${ltUpdated} updated).`
       : '';
-    alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${crossedSkipped>0?`\n${crossedSkipped} crossed item${crossedSkipped!==1?'s':''} — price pushed to supplier's PN in BC only (BOM unchanged).`:''}${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}${ltWriteback}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.${learningWarn}`);
+    // DECISION(v1.19.703): Alert wording swaps when this was a leadTimeOnly submission —
+    // reflect that prices were intentionally left alone.
+    if(leadTimeOnlySubmission){
+      alert(`Lead times applied to ${leadTimeMatched} BOM row${leadTimeMatched!==1?'s':''}.${ltWriteback}\nPrices were not changed — this was a lead-time-only request.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — recorded.`:''}${learningWarn}`);
+    }else{
+      alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${leadTimeMatched>0?`\nLead times applied to ${leadTimeMatched} BOM row${leadTimeMatched!==1?'s':''}.`:''}${crossedSkipped>0?`\n${crossedSkipped} crossed item${crossedSkipped!==1?'s':''} — price pushed to supplier's PN in BC only (BOM unchanged).`:''}${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}${ltWriteback}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.${learningWarn}`);
+    }
     }catch(e){
       console.error("applyPortalPrices error:",e);
       alert("Error applying prices: "+e.message+"\nPrices may have been partially applied. Check console for details.");
@@ -22565,13 +22643,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
               <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,flexShrink:0}}>
-                  <span style={{fontSize:22}}>📥</span>
+                  <span style={{fontSize:22}}>{quoteReview.submission.leadTimeOnly?"📅":"📥"}</span>
                   <div>
-                    <div style={{fontSize:15,fontWeight:800,color:C.text}}>Review Supplier Quote — {quoteReview.submission.vendorName}</div>
+                    <div style={{fontSize:15,fontWeight:800,color:C.text}}>{quoteReview.submission.leadTimeOnly?"Review Lead Times — ":"Review Supplier Quote — "}{quoteReview.submission.vendorName}</div>
                     <div style={{fontSize:12,color:C.muted}}>{quoteReview.matches.length} supplier items · {quoteReview.matches.filter(m=>m.action==="apply").length} matched · {quoteReview.unmatchedBom.length} BOM items without pricing</div>
                   </div>
                   <button onClick={()=>setQuoteReview(null)} style={{marginLeft:"auto",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
                 </div>
+                {/* DECISION(v1.19.703): Lead-time-only banner — tells reviewer that prices are
+                   reference values from BC, NOT a re-quote, and will NOT be written back to BC
+                   or the BOM. Only lead times flow. */}
+                {quoteReview.submission.leadTimeOnly&&(
+                  <div style={{background:"rgba(252,211,77,0.08)",border:"1px solid #fcd34d44",borderRadius:8,padding:"10px 14px",marginBottom:10,flexShrink:0,fontSize:12,color:"#fcd34d",lineHeight:1.5}}>
+                    <strong>Lead Time Request</strong> — prices shown below are the reference values we sent to the supplier (from BC). Applying will update lead times only; BOM prices and BC Item Card costs will be left unchanged.
+                  </div>
+                )}
                 <div style={{fontSize:12,color:C.sub,marginBottom:10,lineHeight:1.6,flexShrink:0}}>
                   Review each line. Uncheck to exclude. For crossed items, toggle between "Cross & Apply" (changes BOM part#) or "Price Only" (keeps your BOM part#, updates price).
                 </div>
@@ -22581,6 +22667,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       <th style={{padding:"6px 8px",textAlign:"center",color:C.muted,fontWeight:700,width:50}}>Action</th>
                       <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700}}>Supplier Item</th>
                       <th style={{padding:"6px 8px",textAlign:"right",color:C.muted,fontWeight:700,width:70}}>Price</th>
+                      {/* DECISION(v1.19.703): Show supplier-submitted lead time per line so
+                         the reviewer can verify it before Apply Prices writes it to the BOM
+                         + BC ItemVendorCatalog. */}
+                      <th style={{padding:"6px 8px",textAlign:"center",color:C.muted,fontWeight:700,width:64}}>Lead</th>
                       <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700}}>→ BOM Match</th>
                       <th style={{padding:"6px 8px",textAlign:"left",color:C.muted,fontWeight:700,width:80}}>Status</th>
                     </tr></thead>
@@ -22605,6 +22695,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                           </td>
                           <td style={{padding:"6px 8px",textAlign:"right",fontWeight:700,color:si.unitPrice!=null?C.green:C.muted,fontVariantNumeric:"tabular-nums"}}>
                             {si.unitPrice!=null?"$"+Number(si.unitPrice).toFixed(2):si.cannotSupply?"N/A":"—"}
+                          </td>
+                          {/* DECISION(v1.19.703): Lead time cell — supplier-submitted days.
+                             Days shown in amber when present, em dash when missing. */}
+                          <td style={{padding:"6px 8px",textAlign:"center",fontWeight:700,color:si.leadTimeDays!=null?C.yellow:C.muted,fontVariantNumeric:"tabular-nums"}}
+                              title={si.leadTimeDays!=null?`Supplier-quoted lead time: ${si.leadTimeDays} days ARO`:"No lead time submitted"}>
+                            {si.leadTimeDays!=null?`${si.leadTimeDays}d`:si.cannotSupply?"N/A":"—"}
                           </td>
                           <td style={{padding:"6px 8px"}}>
                             <select value={m.bomRowId||""} onChange={e=>{
