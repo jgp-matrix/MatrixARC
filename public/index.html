@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.730";
+const APP_VERSION="v1.19.731";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -19080,10 +19080,12 @@ ${fullText.slice(0,8000)}`;
       // refresh prices/lead times on existing matched rows. Previously only the empty
       // case fired, so users had to run "Get New Pricing" after every quote upload to
       // see the new prices/lead times on the BOM.
+      console.log("[SQ HANDLEPUSH] reaching onBomUpdate gate. onBomUpdate type:",typeof onBomUpdate,"toUpdate.length:",toUpdate.length,"panelBom length:",panelBom?.length||0);
       if(onBomUpdate){
         const now=Date.now();
         const vendorName=quoteHeader?.supplier||"";
         const isEmpty=!panelBom||panelBom.length===0;
+        console.log("[SQ HANDLEPUSH] onBomUpdate firing. isEmpty:",isEmpty,"vendorName:",vendorName);
         if(isEmpty){
           // Original empty-BOM path — add new rows
           const newBomRows=toUpdate.filter(i=>i.partNumber).map((i,idx)=>({
@@ -19116,7 +19118,9 @@ ${fullText.slice(0,8000)}`;
               partNumber:(i.partNumber||"").trim(),
             };
           }
+          console.log("[SQ HANDLEPUSH] calling onBomUpdate with matchUpdates keys:",Object.keys(matchUpdates).length);
           onBomUpdate({matchUpdates,vendorName,now});
+          console.log("[SQ HANDLEPUSH] onBomUpdate returned");
         }
       }
       // Auto-close modal after successful push
@@ -23546,8 +23550,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         // DECISION(v1.19.726): payload now carries either {newRows} (empty-BOM case)
         // OR {matchUpdates} (existing-BOM case — refresh price/leadTime/stock on
         // matching rows). Backward-compat: bare-array argument still works.
+        console.log("[SQ ONBOMUPDATE] called with payload type:",Array.isArray(payload)?"array":typeof payload,"sqPanelId:",sqPanelId,"projectRef.current panels:",(projectRef.current.panels||[]).length);
         const targetPanel=(projectRef.current.panels||[]).find(p=>p.id===sqPanelId)||(projectRef.current.panels||[])[0];
-        if(!targetPanel)return;
+        if(!targetPanel){console.warn("[SQ ONBOMUPDATE] no targetPanel found, ABORTING");return;}
+        console.log("[SQ ONBOMUPDATE] targetPanel:",targetPanel.id,"bom rows:",(targetPanel.bom||[]).length);
         const newRows=Array.isArray(payload)?payload:(payload?.newRows||[]);
         const matchUpdates=payload?.matchUpdates||null;
         const vendorName=payload?.vendorName||"";
@@ -23592,8 +23598,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         // DECISION(v1.19.722/726): Persist immediately so prices, lead times, and stock
         // captured from the supplier quote survive navigation.
         const updatedProject={...projectRef.current,panels:updatedPanels};
+        const stampedRows=(updatedPanels[0]?.bom||[]).filter(r=>r.leadTimeSource==="supplier"&&r.leadTimeUpdatedAt===now).length;
+        console.log("[SQ ONBOMUPDATE] computed updatedProject. Rows with fresh supplier lead times:",stampedRows);
         update(updatedProject);
-        safeSave(uid,updatedProject).catch(e=>console.warn("safeSave after onBomUpdate failed:",e));
+        console.log("[SQ ONBOMUPDATE] called update(). About to safeSave...");
+        safeSave(uid,updatedProject).then(ok=>console.log("[SQ ONBOMUPDATE] safeSave returned:",ok)).catch(e=>console.warn("[SQ ONBOMUPDATE] safeSave FAILED:",e));
       }}/>
       {bcCountMismatch&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
