@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.701";
+const APP_VERSION="v1.19.702";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -29678,6 +29678,34 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               </div>
             </div>
           )}
+          {/* DECISION(v1.19.702): Moved auto-fill Lead Time control from below the table to
+             above the column header for discoverability — suppliers were typing lead times
+             line-by-line before noticing the fill-all helper at the bottom. */}
+          <div style={{background:"#fef9c3",border:`1px solid #fcd34d`,borderRadius:10,padding:"10px 16px",marginBottom:10,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
+            <span style={{fontSize:18}}>📋</span>
+            <div style={{flex:"1 1 220px",fontSize:13,color:"#78350f",lineHeight:1.4}}>
+              <strong>Fill all Lead Times at once</strong> — type a value and it will auto-fill any blank rows below. You can still override per line.
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime}
+                onChange={e=>setLeadTime(e.target.value)}
+                onFocus={e=>e.target.select()}
+                onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
+                onBlur={e=>{
+                  const val=e.target.value;
+                  if(val.trim()){
+                    const lineItems=info?.lineItems||[];
+                    setItemLeadTimes(prev=>{
+                      const next={...prev};
+                      lineItems.forEach((_,i)=>{if(!next[i]||next[i]==='')next[i]=val;});
+                      return next;
+                    });
+                  }
+                }}
+                style={{width:90,...inp,border:`1px solid ${(!info?.leadTimeOnly&&!leadTime.trim())?"#fca5a5":"#d97706"}`,background:"#fff"}}/>
+              <span style={{fontSize:13,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>days ARO {!info?.leadTimeOnly&&<span style={{color:"#dc2626"}}>*</span>}</span>
+            </div>
+          </div>
           <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
             <div style={{padding:"14px 20px",borderBottom:`1px solid ${border}`,display:"flex",alignItems:"center",justifyContent:"space-between",borderRadius:"10px 10px 0 0",background:card}}>
               <span style={{fontSize:14,fontWeight:700,color:dark}}>Pricing Review</span>
@@ -29828,38 +29856,9 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               </tbody>
             </table>
           </div>
-          {/* DECISION(v1.19.700): Order-level lead-time is required in normal mode but OPTIONAL
-             in leadTimeOnly mode — per-line values are mandatory there. This input still doubles
-             as a "fill empties" helper regardless of mode. */}
-          <div style={{background:card,border:`1px solid ${(!info?.leadTimeOnly&&!leadTime.trim())?"#fca5a5":border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-            <label style={{display:"block",fontSize:14,fontWeight:700,color:dark,marginBottom:4}}>
-              {info?.leadTimeOnly?"Fill All Lead Times (optional)":<>Lead Time (days ARO) <span style={{color:"#dc2626"}}>*</span></>}
-            </label>
-            <div style={{fontSize:14,color:muted,marginBottom:8}}>
-              {info?.leadTimeOnly
-                ?"Optional — enter a value here and blur the field to auto-fill any blank per-line lead times above. Per-line values are required."
-                :"Required — enter your standard lead time for this entire order. You may optionally enter different lead times per line item above to override."}
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:10}}>
-              <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime}
-                onChange={e=>setLeadTime(e.target.value)}
-                onFocus={e=>e.target.select()}
-                onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                onBlur={e=>{
-                  const val=e.target.value;
-                  if(val.trim()){
-                    const lineItems=info?.lineItems||[];
-                    setItemLeadTimes(prev=>{
-                      const next={...prev};
-                      lineItems.forEach((_,i)=>{if(!next[i]||next[i]==='')next[i]=val;});
-                      return next;
-                    });
-                  }
-                }}
-                style={{width:120,...inp,border:`1px solid ${(!info?.leadTimeOnly&&!leadTime.trim())?"#fca5a5":border}`}}/>
-              <span style={{fontSize:14,color:muted}}>calendar days after receipt of order</span>
-            </div>
-          </div>
+          {/* DECISION(v1.19.702): Order-level lead-time auto-fill control moved ABOVE the table
+             (just above the "Pricing Review" header). Removed the duplicate block that used to
+             live here. */}
           <div style={{display:"flex",gap:10}}>
             {/* DECISION(v1.19.700): Hide "Start Over" in leadTimeOnly mode — no PDF was
                uploaded so there's nothing to restart. */}
