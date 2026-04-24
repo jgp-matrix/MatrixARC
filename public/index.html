@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.707";
+const APP_VERSION="v1.19.708";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20045,6 +20045,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const bgTasks=useBgTasks();
   const activeBgTasks=Object.values(bgTasks).filter(t=>t.projectId===project.id&&t.status==="running");
   const [selectedPanelId,setSelectedPanelId]=useState(()=>(project.panels||[])[0]?.id||null);
+  // DECISION(v1.19.708): Which panel's ship-date popover is open (null = closed).
+  const [shipDatePopoverFor,setShipDatePopoverFor]=useState(null);
   // DECISION(v1.19.584): Track current panel for debug log context
   useEffect(()=>{_currentPanelId=selectedPanelId||null;},[selectedPanelId]);
   const [eqModalPanelId,setEqModalPanelId]=useState(null);
@@ -20750,11 +20752,27 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   const psp=pmk>=100?pgt:pgt/(1-pmk/100);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   const pqty=p.lineQty??p.qty??1;
+                  // DECISION(v1.19.708): Control Panel Lead Time chip — live-computed per panel.
+                  const cplt=computeControlPanelLeadTime(p,project);
+                  const cpltOverride=p.controlPanelShipDateOverride&&p.controlPanelShipDate;
+                  const effectiveDays=cpltOverride?Math.ceil((new Date(p.controlPanelShipDate).getTime()-_startOfDay(Date.now()))/_ONE_DAY_MS):cplt.leadDays;
+                  const effectiveShipDate=cpltOverride?p.controlPanelShipDate:cplt.shipDate;
+                  const overrideGap=cpltOverride?effectiveDays-cplt.leadDays:0;
+                  const chipColor=cpltOverride&&overrideGap>14?"#ef4444":cplt.hasAiLeads?"#fcd34d":cplt.noDataWarning?"#64748b":"#22d3ee";
+                  const chipBg=cpltOverride&&overrideGap>14?"#2a0a0a":cplt.hasAiLeads?"#3a2800":cplt.noDataWarning?"#1a1a2e":"#08253a";
+                  const chipTip=cplt.noDataWarning?"No lead times or production days entered — ship date estimate not meaningful":`Ship date: ${effectiveShipDate} · ${cplt.longestItemDays}d material + ${cplt.laborDays}d labor + ${cplt.productionDays}d production · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`;
                   return(
                     <div key={p.id} onClick={()=>setSelectedPanelId(p.id)}
                       style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:p.id===selectedPanelId?"#1a1a2e":"transparent",border:`1px solid ${p.id===selectedPanelId?C.accent:C.border}`,cursor:"pointer"}}>
                       <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:20,textAlign:"center"}}>{pqty}</span>
                       <span style={{fontSize:12,color:p.id===selectedPanelId?C.accent:C.sub,fontWeight:p.id===selectedPanelId?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{p.drawingNo||p.name||`Panel ${pi+1}`}</span>
+                      {/* DECISION(v1.19.708): Ship-date chip to the LEFT of the status pill.
+                          Click opens override popover (Task 4). */}
+                      <button onClick={e=>{e.stopPropagation();setShipDatePopoverFor(shipDatePopoverFor===p.id?null:p.id);}}
+                        title={chipTip}
+                        style={{background:chipBg,border:`1px solid ${chipColor}44`,borderRadius:10,color:chipColor,padding:"2px 8px",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,fontVariantNumeric:"tabular-nums",fontFamily:"inherit"}}>
+                        {cplt.noDataWarning&&!cpltOverride?"—":`${effectiveDays}d`}
+                      </button>
                       {/* DECISION(v1.19.394): Compute panel status from actual BOM state, not just the
                           pipeline-set status field. If all non-labor items have prices, show "costed" or "ready"
                           even if the pricing didn't go through runPricingOnPanel. */}
