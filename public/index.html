@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.721";
+const APP_VERSION="v1.19.722";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -22666,7 +22666,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         return Object.keys(ltPatch).length?{...row,...ltPatch,bcVendorName:submission.vendorName||row.bcVendorName}:row;
       })
     }));
-    update({...projectRef.current,panels:updatedPanels});
+    // DECISION(v1.19.722): Persist BOM lead-time + price updates to Firestore. Previously
+    // doApplyPortalPrices only updated React state via update() — changes vanished on
+    // navigation. Now safeSave fires immediately so the BOM survives a refresh.
+    const updatedProject={...projectRef.current,panels:updatedPanels};
+    update(updatedProject);
+    safeSave(uid,updatedProject).catch(e=>console.warn("safeSave after applyPortalPrices failed:",e));
     // DECISION(v1.19.691): Write supplier lead times to BC ItemVendorCatalog (Page 114).
     // Fires alongside the price push — same transaction semantics. Blank partNumber is a
     // HARD REJECT. Audit trail in companies/{cid}/bcLeadTimeWrites. Non-fatal on failure.
@@ -23350,7 +23355,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           if(p.id!==targetPanel.id)return p;
           return{...p,bom:[...(p.bom||[]),...newRows],status:p.status==="draft"?"extracted":p.status};
         });
-        update({...projectRef.current,panels:updatedPanels});
+        // DECISION(v1.19.722): Persist immediately via safeSave so the new BOM rows
+        // (with their leadTimeDays from supplier quote) survive navigation.
+        const updatedProject={...projectRef.current,panels:updatedPanels};
+        update(updatedProject);
+        safeSave(uid,updatedProject).catch(e=>console.warn("safeSave after onBomUpdate failed:",e));
       }}/>
       {bcCountMismatch&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
