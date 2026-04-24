@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.736";
+const APP_VERSION="v1.19.737";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1109,7 +1109,7 @@ function computeControlPanelLeadTime(panel,project){
   const drivers=[...bom]
     .filter(r=>(+r.leadTimeDays||0)>LEAD_DRIVER_THRESHOLD_DAYS)
     .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
-    .map(r=>({partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
+    .map(r=>({qty:+r.qty||1,partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
   return{
     shipDate:_isoDate(shipDate),
     leadDays:totalDays,
@@ -1138,10 +1138,12 @@ if(typeof window!=="undefined"){window.computeControlPanelLeadTime=computeContro
 function _formatLeadDriversNote(drivers){
   if(!drivers.length)return "";
   const anyAi=drivers.some(d=>d.source==="ai");
+  // DECISION(v1.19.737): Compact format per user — Qty · Part# · Days. Description dropped
+  // to keep the quote notes tight (the part number already identifies the item).
   const lines=drivers.map(d=>{
-    const desc=(d.description||"").trim();
+    const qty=d.qty||1;
     const aiMark=d.source==="ai"?" *":"";
-    return`Part# ${d.partNumber}${desc?" "+desc:""} = ${d.leadTimeDays} Days${aiMark}`.replace(/\s+/g," ").trim();
+    return`Qty ${qty} · Part# ${d.partNumber} = ${d.leadTimeDays} Days${aiMark}`.replace(/\s+/g," ").trim();
   });
   return`Lead Time Drivers:\n${lines.join("\n")}${anyAi?"\n* AI estimate":""}`;
 }
@@ -1151,7 +1153,7 @@ function _computePanelLeadDriversLine(panel){
   const drivers=[...rows]
     .filter(r=>(+r.leadTimeDays||0)>LEAD_DRIVER_THRESHOLD_DAYS)
     .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
-    .map(r=>({partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
+    .map(r=>({qty:+r.qty||1,partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
   return _formatLeadDriversNote(drivers);
 }
 // Back-compat wrapper: single-panel → panel line; multi-panel → aggregated across panels.
@@ -1171,7 +1173,7 @@ function _computeProjectLeadDriversLine(project){
   const drivers=[...allRows]
     .filter(r=>(+r.leadTimeDays||0)>LEAD_DRIVER_THRESHOLD_DAYS)
     .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
-    .map(r=>({partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
+    .map(r=>({qty:+r.qty||1,partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
   return _formatLeadDriversNote(drivers);
 }
 // DECISION(v1.19.718/719): Refresh the "Lead Time Drivers" block in EACH panel's bomNotes.
@@ -1181,8 +1183,10 @@ function _computeProjectLeadDriversLine(project){
 function _refreshLeadDriversInQuote(project){
   const panels=project?.panels||[];
   if(!panels.length)return project;
-  // New multi-line block: header + Part# lines + optional AI footnote
-  const newBlockRe=/Lead Time Drivers:(?:\n(?:Part#[^\n]*|\* AI estimate))+/;
+  // DECISION(v1.19.737): Block body matches either the new "Qty … Part# … = N Days" lines
+  // OR the legacy "Part# … = N Days" lines so older saved notes still get cleanly stripped
+  // and replaced on the next refresh pass.
+  const newBlockRe=/Lead Time Drivers:(?:\n(?:(?:Qty\s[^\n]*|Part#[^\n]*)|\* AI estimate))+/;
   // Legacy single-line format from v1.19.710 — cleaned up on first write
   const legacyRe=/Lead drivers[^\n]*\n?/;
   let changed=false;
@@ -1190,7 +1194,7 @@ function _refreshLeadDriversInQuote(project){
   // field. Any existing instance of the block is removed from wherever it was, and a
   // fresh version is prepended (followed by a blank line if there's other content).
   // User's hand-written notes below the block are preserved verbatim.
-  const stripBlockRe=/\n?\s*Lead Time Drivers:(?:\n(?:Part#[^\n]*|\* AI estimate))+\s*/;
+  const stripBlockRe=/\n?\s*Lead Time Drivers:(?:\n(?:(?:Qty\s[^\n]*|Part#[^\n]*)|\* AI estimate))+\s*/;
   const newPanels=panels.map(panel=>{
     const line=_computePanelLeadDriversLine(panel);
     let existing=panel.bomNotes||"";
@@ -1209,7 +1213,7 @@ function _refreshLeadDriversInQuote(project){
   let newQuote=project.quote||{};
   const qNotes=newQuote.lineNotes||"";
   let cleanedQ=qNotes;
-  if(newBlockRe.test(cleanedQ))cleanedQ=cleanedQ.replace(/\n?\s*Lead Time Drivers:(?:\n(?:Part#[^\n]*|\* AI estimate))+/,"").trim();
+  if(newBlockRe.test(cleanedQ))cleanedQ=cleanedQ.replace(/\n?\s*Lead Time Drivers:(?:\n(?:(?:Qty\s[^\n]*|Part#[^\n]*)|\* AI estimate))+/,"").trim();
   if(legacyRe.test(cleanedQ))cleanedQ=cleanedQ.replace(legacyRe,"").trim();
   if(cleanedQ!==qNotes){
     newQuote={...newQuote,lineNotes:cleanedQ};
@@ -4276,7 +4280,11 @@ async function buildQuotePdfDoc(doc,project){
     doc.setFillColor(248,250,252);doc.setDrawColor(248,250,252);
     doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,12,"FD");
     const pw=ctx.contentWidth/4;const py=ctx.y;
-    [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—"},{l:"Lead Time",v:(qp.leadTime||q.leadTime||"—")+" days"},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—"}].forEach((col,ci)=>{
+    // DECISION(v1.19.737): Auto-populate Lead Time field with the panel's computed
+    // leadDays (material + labor + production) when the user hasn't typed an override.
+    const _computedLead=(()=>{try{return computeControlPanelLeadTime(pan,project).leadDays||0;}catch(e){return 0;}})();
+    const _leadStr=qp.leadTime||q.leadTime||(_computedLead>0?String(_computedLead):"—");
+    [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—"},{l:"Lead Time",v:_leadStr+" days"},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—"}].forEach((col,ci)=>{
       const cx=ARC_DOC.margin.left+ci*pw+pw/2;
       doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
       doc.text(col.l,cx,py+4,{align:"center"});
@@ -10972,7 +10980,10 @@ function QuoteTab({project,onUpdate}){
                 </div>
                 <div>
                   <div className="qd-plabel">Lead Time</div>
-                  <div className="qd-pval">{qp.leadTime||q.leadTime||"—"} days</div>
+                  {/* DECISION(v1.19.737): Default to computed panel lead days (shipDate calc)
+                      when no override has been typed. Still overridable per-panel (qp) or
+                      project-wide (q). */}
+                  <div className="qd-pval">{(()=>{const cd=(()=>{try{return computeControlPanelLeadTime(pan,project).leadDays||0;}catch(e){return 0;}})();return qp.leadTime||q.leadTime||(cd>0?cd:"—");})()} days</div>
                 </div>
                 <div>
                   <div className="qd-plabel">Discount</div>
