@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.696";
+const APP_VERSION="v1.19.697";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2438,6 +2438,15 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
     auditEntry.error="BC not connected — skipped";
   }else{
     try{
+      // DECISION(v1.19.697): Detect when BC Page 114 'ItemVendorCatalog' Web Service isn't
+      // published at all — previously every attempt failed with a cryptic 404. Now we check
+      // the OData service document once and return an actionable error telling the BC admin
+      // to publish Page 114 as Web Service name 'ItemVendorCatalog'.
+      const allPages=await bcDiscoverODataPages().catch(()=>[]);
+      if(allPages.length>0&&!allPages.some(n=>/^ItemVendorCatalog$/i.test(n))){
+        auditEntry.error="BC Web Service 'ItemVendorCatalog' (Page 114) is not published. BC admin must publish Page 114 with service name 'ItemVendorCatalog' before lead times can sync.";
+        // Skip the rest of the try body
+      } else {
       const pn=String(partNumber).trim().replace(/'/g,"''");
       const vn=String(vendorNo).trim().replace(/'/g,"''");
       // DECISION(v1.19.696): Fetch existing with SystemId so PATCH can use the canonical
@@ -2502,6 +2511,7 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
           else{auditEntry.error=`POST failed: ${cr.status} ${await cr.text().then(t=>t.slice(0,160)).catch(()=>'')}`;}
         }
       }
+      } // close else branch for published-page check
     }catch(e){auditEntry.error=e.message||String(e);}
   }
   // Audit always writes — even skips are logged
@@ -14788,6 +14798,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   async function pushAllLeadTimesToBc(){
     if(pushingLeadTimes)return;
     if(!_bcToken){alert("BC not connected. Sign in to Business Central first.");return;}
+    // DECISION(v1.19.697): Pre-flight Web Service check. Previously every row failed with
+    // a 404 if Page 114 wasn't published — one clear error is better than N cryptic ones.
+    const allPages=await bcDiscoverODataPages().catch(()=>[]);
+    if(allPages.length>0&&!allPages.some(n=>/^ItemVendorCatalog$/i.test(n))){
+      alert("BC Web Service 'ItemVendorCatalog' (Page 114) is not published on this BC tenant.\n\nLead-time sync requires your BC admin to:\n  1. Open BC → search \"Web Services\"\n  2. Add a row with Object Type=Page, Object ID=114, Service Name=ItemVendorCatalog, Published=✓\n  3. Save\n\nOnce published, refresh ARC and try again.");
+      return;
+    }
     const bom=panel.bom||[];
     // DECISION(v1.19.695): Two-pass filter. First pass: rows already have bcVendorNo.
     // Second pass: rows with PN+leadTime but no bcVendorNo → live-resolve via BC ItemCard.
