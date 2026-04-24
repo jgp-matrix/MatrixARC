@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.699";
+const APP_VERSION="v1.19.700";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -29369,6 +29369,9 @@ function SupplierPortalPage({token}){
         // DECISION(v1.19.692): In leadTimeOnly mode, pre-populate unitPrices from
         // referencePrice so the submit captures the prices (supplier can't edit them).
         // This keeps the downstream Apply Prices flow unchanged.
+        // DECISION(v1.19.700): Skip the drag-drop upload phase entirely in leadTimeOnly
+        // mode — supplier lands directly on the review table with line items + lead-time
+        // inputs. No PDF upload needed since prices are already locked in from BC.
         if(data.leadTimeOnly&&Array.isArray(data.lineItems)){
           const prefillPrices={};
           data.lineItems.forEach((item,i)=>{
@@ -29377,6 +29380,7 @@ function SupplierPortalPage({token}){
             }
           });
           setUnitPrices(prefillPrices);
+          setPhase('review');
         }
         setLoading(false);
       })
@@ -29624,7 +29628,10 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               </div>
             </div>
           )}
-          {(unmatchedRfqCount>0||unmatchedSupplierCount>0)&&(
+          {/* DECISION(v1.19.700): In leadTimeOnly mode no PDF was uploaded, so the
+             AI-extraction validation banners don't apply. The leadTimeOnly banner above
+             provides the guidance; keep the pricing-review banner hidden in this mode. */}
+          {!info?.leadTimeOnly&&(unmatchedRfqCount>0||unmatchedSupplierCount>0)&&(
             <div style={{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:10,padding:"14px 20px",marginBottom:16,display:"flex",alignItems:"flex-start",gap:12}}>
               <span style={{fontSize:22,flexShrink:0}}>⚠️</span>
               <div>
@@ -29636,6 +29643,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               </div>
             </div>
           )}
+          {!info?.leadTimeOnly&&(
           <div style={{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:10,padding:"16px 20px",marginBottom:20,display:"flex",alignItems:"flex-start",gap:12}}>
             <span style={{fontSize:22,flexShrink:0}}>📋</span>
             <div>
@@ -29646,6 +29654,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               }
             </div>
           </div>
+          )}
           {quoteHeaderInfo&&(
             <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,padding:"16px 20px",marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
               <div style={{fontSize:14,fontWeight:700,color:dark,marginBottom:10}}>Quote Details (extracted from PDF)</div>
@@ -29812,9 +29821,18 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               </tbody>
             </table>
           </div>
-          <div style={{background:card,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
-            <label style={{display:"block",fontSize:14,fontWeight:700,color:dark,marginBottom:4}}>Lead Time (days ARO) <span style={{color:"#dc2626"}}>*</span></label>
-            <div style={{fontSize:14,color:muted,marginBottom:8}}>Required — enter your standard lead time for this entire order. You may optionally enter different lead times per line item above to override.</div>
+          {/* DECISION(v1.19.700): Order-level lead-time is required in normal mode but OPTIONAL
+             in leadTimeOnly mode — per-line values are mandatory there. This input still doubles
+             as a "fill empties" helper regardless of mode. */}
+          <div style={{background:card,border:`1px solid ${(!info?.leadTimeOnly&&!leadTime.trim())?"#fca5a5":border}`,borderRadius:10,padding:"20px 24px",marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
+            <label style={{display:"block",fontSize:14,fontWeight:700,color:dark,marginBottom:4}}>
+              {info?.leadTimeOnly?"Fill All Lead Times (optional)":<>Lead Time (days ARO) <span style={{color:"#dc2626"}}>*</span></>}
+            </label>
+            <div style={{fontSize:14,color:muted,marginBottom:8}}>
+              {info?.leadTimeOnly
+                ?"Optional — enter a value here and blur the field to auto-fill any blank per-line lead times above. Per-line values are required."
+                :"Required — enter your standard lead time for this entire order. You may optionally enter different lead times per line item above to override."}
+            </div>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime}
                 onChange={e=>setLeadTime(e.target.value)}
@@ -29831,18 +29849,22 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                     });
                   }
                 }}
-                style={{width:120,...inp,border:`1px solid ${!leadTime.trim()?"#fca5a5":border}`}}/>
+                style={{width:120,...inp,border:`1px solid ${(!info?.leadTimeOnly&&!leadTime.trim())?"#fca5a5":border}`}}/>
               <span style={{fontSize:14,color:muted}}>calendar days after receipt of order</span>
             </div>
           </div>
           <div style={{display:"flex",gap:10}}>
+            {/* DECISION(v1.19.700): Hide "Start Over" in leadTimeOnly mode — no PDF was
+               uploaded so there's nothing to restart. */}
+            {!info?.leadTimeOnly&&(
             <button onClick={()=>{setPhase('upload');setFile(null);setUnitPrices({});setAiConfidences({});setAiError(null);setItemLeadTimes({});setSupplierPartNums({});setSupplierLineNums({});setItemNotes({});setConfirmedMatches({});setQuoteHeaderInfo(null);setAllExtractedItems([]);setExtractionSummary(null);setMorePages(null);pdfRef.current=null;}}
               style={{flex:1,background:"#fff",border:`1px solid ${border}`,color:muted,padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
               ← Start Over
             </button>
+            )}
             <button onClick={handleSubmit} disabled={uploading}
-              style={{flex:3,background:accent,border:"none",color:"#fff",padding:"12px",borderRadius:8,fontSize:15,fontWeight:700,cursor:uploading?"wait":"pointer",opacity:uploading?0.7:1,fontFamily:"inherit"}}>
-              {uploading?"Submitting…":"✓ Confirm & Submit Quote"}
+              style={{flex:info?.leadTimeOnly?1:3,background:accent,border:"none",color:"#fff",padding:"12px",borderRadius:8,fontSize:15,fontWeight:700,cursor:uploading?"wait":"pointer",opacity:uploading?0.7:1,fontFamily:"inherit"}}>
+              {uploading?"Submitting…":(info?.leadTimeOnly?"✓ Confirm Lead Times":"✓ Confirm & Submit Quote")}
             </button>
           </div>
           <div style={{fontSize:13,color:muted,textAlign:"center",marginTop:8,lineHeight:1.5}}>Confirming each item is helpful, but not required.<br/>Your uploaded quote will be reviewed by the Matrix Sales Team.</div>
