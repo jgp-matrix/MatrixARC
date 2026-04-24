@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.709";
+const APP_VERSION="v1.19.710";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1098,6 +1098,60 @@ function computeControlPanelLeadTime(panel,project){
 }
 // Expose for console testing
 if(typeof window!=="undefined"){window.computeControlPanelLeadTime=computeControlPanelLeadTime;window._startOfDay=_startOfDay;window._isoDate=_isoDate;}
+
+// DECISION(v1.19.710): Lead drivers quote note — project-wide aggregation.
+// Any BOM item across all panels with leadTimeDays above the project-wide average
+// gets listed. Skip entirely if fewer than 3 priced items (average not meaningful).
+// AI-sourced entries flagged with asterisk + footnote.
+function _formatLeadDriversNote(drivers,avg){
+  if(!drivers.length)return "";
+  const anyAi=drivers.some(d=>d.source==="ai");
+  const list=drivers.map(d=>`${d.partNumber} (${d.leadTimeDays}d${d.source==="ai"?"*":""})`).join(" · ");
+  return`Lead drivers (> ${avg}d avg): ${list}${anyAi?" — *AI estimate":""}`;
+}
+function _computeProjectLeadDriversLine(project){
+  const allBom=[];
+  for(const p of (project?.panels||[])){
+    for(const r of (p.bom||[])){
+      if(!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0){
+        allBom.push(r);
+      }
+    }
+  }
+  if(allBom.length<3)return"";
+  const vals=allBom.map(r=>+r.leadTimeDays).filter(n=>n>0);
+  const avg=vals.length?vals.reduce((s,n)=>s+n,0)/vals.length:0;
+  const drivers=[...allBom]
+    .filter(r=>(+r.leadTimeDays||0)>avg)
+    .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
+    .map(r=>({partNumber:r.partNumber||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
+  return _formatLeadDriversNote(drivers,Math.round(avg*10)/10);
+}
+function _refreshLeadDriversInQuote(project){
+  const line=_computeProjectLeadDriversLine(project);
+  const existingNotes=project?.quote?.lineNotes||"";
+  // Match any line starting with "Lead drivers" — replace in place (or remove if line is empty)
+  const driversRe=/Lead drivers[^\n]*/;
+  let newNotes;
+  if(driversRe.test(existingNotes)){
+    if(line){
+      newNotes=existingNotes.replace(driversRe,line);
+    }else{
+      // Remove the line + any newline padding
+      newNotes=existingNotes.replace(/\n?\s*Lead drivers[^\n]*\n?/,"").trim();
+    }
+  }else if(line){
+    newNotes=existingNotes?`${existingNotes}\n${line}`:line;
+  }else{
+    newNotes=existingNotes;
+  }
+  if(newNotes===existingNotes)return project;
+  return{...project,quote:{...(project.quote||{}),lineNotes:newNotes}};
+}
+if(typeof window!=="undefined"){
+  window._computeProjectLeadDriversLine=_computeProjectLeadDriversLine;
+  window._refreshLeadDriversInQuote=_refreshLeadDriversInQuote;
+}
 
 // Load MSAL on demand — not at page load (avoids conflict with Firebase Microsoft auth)
 function loadMsalScript(){
@@ -21738,6 +21792,23 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   // Listen for live updates from background extraction tasks (survives navigation)
   useEffect(()=>onProjectUpdated(project.id,p=>{setProject(p);projectRef.current=p;onChange(p);}),[project.id]);
+
+  // DECISION(v1.19.710): Auto-refresh the "Lead drivers" line in quote.lineNotes whenever
+  // BOM lead times shift. Debounced 500ms so rapid edits don't thrash.
+  const _leadDriversRefreshTimer=useRef(null);
+  const _leadDriversSig=(project.panels||[]).map(p=>(p.bom||[]).filter(r=>!r.isLaborRow&&(+r.leadTimeDays||0)>0).map(r=>`${r.partNumber}:${r.leadTimeDays}:${r.leadTimeSource||""}`).join(";")).join("|");
+  useEffect(()=>{
+    if(_leadDriversRefreshTimer.current)clearTimeout(_leadDriversRefreshTimer.current);
+    _leadDriversRefreshTimer.current=setTimeout(()=>{
+      const cur=projectRef.current;
+      if(!cur)return;
+      const updated=_refreshLeadDriversInQuote(cur);
+      if(updated!==cur&&updated.quote?.lineNotes!==cur.quote?.lineNotes){
+        update(updated);
+      }
+    },500);
+    return()=>{if(_leadDriversRefreshTimer.current)clearTimeout(_leadDriversRefreshTimer.current);};
+  },[_leadDriversSig]);
 
   // DECISION(v1.19.460): Full BC sync on project open — ensures planning lines are current.
   // Debounced 2s to let BC token auto-connect. Skip if locked.
