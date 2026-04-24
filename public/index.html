@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.713";
+const APP_VERSION="v1.19.714";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1076,7 +1076,20 @@ function computeControlPanelLeadTime(panel,project){
   // (loaded from laborRates Firestore doc on mount). Falls back to 8 if unset.
   const dailyCrewHours=+(typeof LABOR_RATES!=="undefined"?LABOR_RATES.dailyCrewHours:null)||+project?.laborConfig?.dailyCrewHours||8;
   const laborDays=Math.ceil((lab.totalHours||0)/dailyCrewHours);
-  const productionDays=Math.max(0,Math.min(365,+panel.productionDays||0));
+  // DECISION(v1.19.714): productionDays derived from productionEndDate (YYYY-MM-DD).
+  // Represents post-assembly production time. If end date is before assembly complete,
+  // productionDays=0 (material+labor is binding). Legacy panel.productionDays (numeric)
+  // still read as fallback for projects saved before the date-picker change.
+  const assemblyCompleteBeforeProd=today+(longestItemDays+laborDays)*_ONE_DAY_MS;
+  let productionDays=0;
+  if(panel.productionEndDate){
+    const prodEnd=_startOfDay(new Date(panel.productionEndDate).getTime());
+    if(!isNaN(prodEnd)&&prodEnd>assemblyCompleteBeforeProd){
+      productionDays=Math.ceil((prodEnd-assemblyCompleteBeforeProd)/_ONE_DAY_MS);
+    }
+  }else if(panel.productionDays!=null){
+    productionDays=Math.max(0,Math.min(365,+panel.productionDays||0));
+  }
   const totalDays=longestItemDays+laborDays+productionDays;
   const shipDate=today+totalDays*_ONE_DAY_MS;
   // Largest contributor
@@ -13194,9 +13207,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [draftDesc,setDraftDesc]=useState(_titleStale?"":(panel.drawingDesc||""));
   const [draftRev,setDraftRev]=useState(_titleStale?"":(panel.drawingRev||""));
   const [draftShipDate,setDraftShipDate]=useState(panel.requestedShipDate||"");
-  // DECISION(v1.19.707): Production Days input — duration (not a date) representing
-  // post-assembly production time. Feeds computeControlPanelLeadTime. Clamped 0-365.
-  const [draftProductionDays,setDraftProductionDays]=useState(panel.productionDays??"");
+  // DECISION(v1.19.714): Reverted Production input to a date picker per user feedback.
+  // Stored as panel.productionEndDate (YYYY-MM-DD). At compute time we derive productionDays
+  // = max(0, productionEndDate - assemblyCompleteDate) so the SUM math still works: the
+  // "production" bucket represents any post-assembly time the production schedule adds.
+  const [draftProductionEndDate,setDraftProductionEndDate]=useState(panel.productionEndDate||"");
   const [draftLineQty,setDraftLineQty]=useState(panel.lineQty??1);
   const [bcSyncing,setBcSyncing]=useState(false);
   const [bcSyncStatus,setBcSyncStatus]=useState(null); // null | "ok" | "error"
@@ -13873,9 +13888,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   function saveTitleFields(){
     const newNo=draftNo.trim(),newDesc=draftDesc.trim(),newRev=draftRev.trim();
-    // DECISION(v1.19.707): Clamp productionDays 0-365; empty string → null (unset).
-    const prodDays=draftProductionDays===""||draftProductionDays==null?null:Math.max(0,Math.min(365,+draftProductionDays||0));
-    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionDays:prodDays};
+    // DECISION(v1.19.714): productionEndDate stored as YYYY-MM-DD string (empty = null).
+    const prodEnd=draftProductionEndDate?String(draftProductionEndDate).trim()||null:null;
+    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     // DECISION(v1.19.632) Phase 2: If user's value differs from the last AI extraction, save the
@@ -15769,18 +15784,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 onBlur={()=>saveTitleFields()}
                 style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
             </div>
-            {/* DECISION(v1.19.707): Production Days input — post-assembly duration that feeds
-               the Control Panel Lead Time compute. User gets this number from production. */}
+            {/* DECISION(v1.19.714): Production End Date (the date production tells the user
+               they expect to be done). Feeds computeControlPanelLeadTime — the software
+               derives days-post-assembly at compute time. */}
             <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
               <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}
-                   title="Days production needs AFTER panel assembly (testing, QA, shipping prep). Enter what production tells you.">Prod Days</div>
-              <input type="number" min="0" max="365" step="1" value={draftProductionDays}
-                onChange={e=>setDraftProductionDays(e.target.value)} readOnly={readOnly}
+                   title="Date production tells you they expect to be done. Feeds the Control Panel Ship Date.">Prod End Date</div>
+              <input type="date" value={draftProductionEndDate}
+                onChange={e=>setDraftProductionEndDate(e.target.value)} readOnly={readOnly}
                 onBlur={()=>saveTitleFields()}
-                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftProductionDays(panel.productionDays??"");e.target.blur();}}}
-                placeholder="—"
-                title="Days production needs AFTER panel assembly (testing, QA, shipping prep). Enter what production tells you."
-                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",fontFamily:"inherit",width:64,textAlign:"center"}}/>
+                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftProductionEndDate(panel.productionEndDate||"");e.target.blur();}}}
+                title="Date production tells you they expect to be done. Feeds the Control Panel Ship Date."
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
             </div>
           </div>
         </div>
@@ -21870,9 +21885,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     _leadDriversRefreshTimer.current=setTimeout(()=>{
       const cur=projectRef.current;
       if(!cur)return;
+      // DECISION(v1.19.714): Log the input/output so we can diagnose why the line isn't
+      // appearing when a user expects it. Quick to remove once verified in production.
+      const priced=(cur.panels||[]).flatMap(p=>(p.bom||[]).filter(r=>!r.isLaborRow&&(+r.leadTimeDays||0)>0));
+      const line=typeof _computeProjectLeadDriversLine==="function"?_computeProjectLeadDriversLine(cur):"";
+      console.log(`[LEAD DRIVERS] items-with-lead=${priced.length} line="${line}" existing-notes="${(cur.quote?.lineNotes||'').slice(0,80)}"`);
       const updated=_refreshLeadDriversInQuote(cur);
       if(updated!==cur&&updated.quote?.lineNotes!==cur.quote?.lineNotes){
+        console.log(`[LEAD DRIVERS] updating lineNotes from "${(cur.quote?.lineNotes||'').slice(0,60)}" to "${(updated.quote?.lineNotes||'').slice(0,60)}"`);
         update(updated);
+      }else{
+        console.log(`[LEAD DRIVERS] no update needed`);
       }
     },500);
     return()=>{if(_leadDriversRefreshTimer.current)clearTimeout(_leadDriversRefreshTimer.current);};
