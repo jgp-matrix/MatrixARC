@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.720";
+const APP_VERSION="v1.19.721";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -4977,6 +4977,11 @@ async function saveSupplierQuoteToFirestore(quoteData,userId,{supersedes=null,pr
     ...tokenize(quoteData.jobName),
     ...tokenize(quoteData.contactName),
   ])];
+  // DECISION(v1.19.721): Populate `userId` and `companyId` to satisfy firestore.rules
+  // for supplierQuotes update permission. Previously only `importedBy` was set, which
+  // didn't match either rule condition (userId == auth.uid OR companyId member exists),
+  // so subsequent updates from handlePush would fail with permission-denied.
+  const cid=(typeof _appCtx!=="undefined"&&_appCtx?.companyId)||null;
   await ref.set({quoteId:quoteData.quoteId||'',revision:quoteData.revision||'',supplier:quoteData.supplier||'',
     supplierLower:(quoteData.supplier||'').toLowerCase(),
     jobName:quoteData.jobName||'',contactName:quoteData.contactName||'',quoteDate:quoteData.quoteDate||null,
@@ -4984,6 +4989,7 @@ async function saveSupplierQuoteToFirestore(quoteData,userId,{supersedes=null,pr
     status:'pending_review',merchandiseTotal:Math.round(total*100)/100,lineItems,searchTokens,
     pdfUrl:null,fileName:'',supersedes:supersedes||null,supersededBy:null,
     projectId:projectId||null,bcProjectNumber:bcProjectNumber||null,
+    userId,companyId:cid,
     importedAt:firebase.firestore.FieldValue.serverTimestamp(),importedBy:userId});
   if(supersedes){
     fbDb.collection('supplierQuotes').doc(supersedes)
