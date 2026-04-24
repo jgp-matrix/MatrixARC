@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.695";
+const APP_VERSION="v1.19.696";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -2440,43 +2440,67 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
     try{
       const pn=String(partNumber).trim().replace(/'/g,"''");
       const vn=String(vendorNo).trim().replace(/'/g,"''");
-      const existing=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'`,{
-        headers:{"Authorization":`Bearer ${_bcToken}`}
+      // DECISION(v1.19.696): Fetch existing with SystemId so PATCH can use the canonical
+      // SystemId-keyed URL. Compound-key URLs (Item_No='...',Vendor_No='...') returned 404
+      // from the published Page 114 Web Service on some BC tenants.
+      const existing=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Vendor_Item_No,Lead_Time_Calculation,SystemId`,{
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}
       });
-      let existingRec=null,etag=null;
+      let existingRec=null,etag=null,odataId=null;
       if(existing.ok){
         const d=await existing.json();
         existingRec=(d.value||[])[0]||null;
         if(existingRec){
           auditEntry.previousLeadTime=_bcDateFormulaToDays(existingRec.Lead_Time_Calculation);
           etag=existingRec["@odata.etag"]||existing.headers.get("ETag")||null;
+          odataId=existingRec["@odata.id"]||existingRec["@odata.editLink"]||null;
         }
-      }
-      const body={
-        Item_No:String(partNumber).trim(),
-        Vendor_No:String(vendorNo).trim(),
-        Lead_Time_Calculation:_daysToBcDateFormula(leadTimeDays),
-      };
-      if(vendorItemNo&&String(vendorItemNo).trim()&&String(vendorItemNo).trim()!==String(partNumber).trim()){
-        body.Vendor_Item_No=String(vendorItemNo).trim();
-      }
-      if(existingRec){
-        const patchUrl=`${BC_ODATA_BASE}/ItemVendorCatalog(Item_No='${encodeURIComponent(pn)}',Vendor_No='${encodeURIComponent(vn)}')`;
-        const pr=await fetch(patchUrl,{
-          method:"PATCH",
-          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
-          body:JSON.stringify(body),
-        });
-        if(pr.ok){auditEntry.outcome="updated";}
-        else{auditEntry.error=`PATCH failed: ${pr.status} ${await pr.text().then(t=>t.slice(0,120)).catch(()=>'')}`;}
       }else{
-        const cr=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog`,{
-          method:"POST",
-          headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-          body:JSON.stringify(body),
-        });
-        if(cr.ok){auditEntry.outcome="created";}
-        else{auditEntry.error=`POST failed: ${cr.status} ${await cr.text().then(t=>t.slice(0,120)).catch(()=>'')}`;}
+        auditEntry.error=`GET existing failed: ${existing.status} ${await existing.text().then(t=>t.slice(0,120)).catch(()=>'')}`;
+      }
+      if(!auditEntry.error){
+        const body={
+          Item_No:String(partNumber).trim(),
+          Vendor_No:String(vendorNo).trim(),
+          Lead_Time_Calculation:_daysToBcDateFormula(leadTimeDays),
+        };
+        if(vendorItemNo&&String(vendorItemNo).trim()&&String(vendorItemNo).trim()!==String(partNumber).trim()){
+          body.Vendor_Item_No=String(vendorItemNo).trim();
+        }
+        if(existingRec){
+          // Build candidate PATCH URLs: try SystemId first (canonical for BC OData v4),
+          // then fall back to compound-key syntax, then to @odata.id if returned.
+          const patchUrls=[];
+          if(existingRec.SystemId){
+            patchUrls.push(`${BC_ODATA_BASE}/ItemVendorCatalog(${existingRec.SystemId})`);
+          }
+          patchUrls.push(`${BC_ODATA_BASE}/ItemVendorCatalog(Item_No='${encodeURIComponent(pn)}',Vendor_No='${encodeURIComponent(vn)}')`);
+          if(odataId)patchUrls.push(odataId);
+          let lastErr=null,ok=false;
+          for(const u of patchUrls){
+            try{
+              const pr=await fetch(u,{
+                method:"PATCH",
+                headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*","Accept":"application/json"},
+                body:JSON.stringify(body),
+              });
+              if(pr.ok){auditEntry.outcome="updated";ok=true;break;}
+              const txt=await pr.text().then(t=>t.slice(0,160)).catch(()=>'');
+              lastErr=`PATCH ${pr.status} @ ${u.replace(BC_ODATA_BASE,"")}: ${txt}`;
+              // On 404, try next URL format; on other errors, bail fast
+              if(pr.status!==404)break;
+            }catch(e){lastErr=`PATCH exception: ${e.message||String(e)}`;break;}
+          }
+          if(!ok)auditEntry.error=lastErr||"PATCH failed";
+        }else{
+          const cr=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog`,{
+            method:"POST",
+            headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","Accept":"application/json"},
+            body:JSON.stringify(body),
+          });
+          if(cr.ok){auditEntry.outcome="created";}
+          else{auditEntry.error=`POST failed: ${cr.status} ${await cr.text().then(t=>t.slice(0,160)).catch(()=>'')}`;}
+        }
       }
     }catch(e){auditEntry.error=e.message||String(e);}
   }
