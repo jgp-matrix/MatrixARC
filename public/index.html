@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.722";
+const APP_VERSION="v1.19.723";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -19264,8 +19264,10 @@ ${fullText.slice(0,8000)}`;
             <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
               <thead style={{position:"sticky",top:0,zIndex:2,background:C.card}}>
                 <tr style={{color:C.muted,borderBottom:`2px solid ${C.border}`}}>
-                  {['Ln','MFR','Part Number','BC Description','Qty','Quote $','BC $','Δ',''].map(h=>(
-                    <th key={h} style={{textAlign:['Qty','Quote $','BC $','Δ'].includes(h)?"right":"left",padding:"7px 8px",fontWeight:600,whiteSpace:"nowrap",background:C.card}}>{h}</th>
+                  {/* DECISION(v1.19.723): Lead column added so the reviewer can verify
+                     AI-extracted leadTimeDays before push to BC ItemVendorCatalog. */}
+                  {['Ln','MFR','Part Number','BC Description','Qty','Quote $','BC $','Δ','Lead',''].map(h=>(
+                    <th key={h} style={{textAlign:['Qty','Quote $','BC $','Δ','Lead'].includes(h)?"right":"left",padding:"7px 8px",fontWeight:600,whiteSpace:"nowrap",background:C.card,...(h==='Lead'?{color:'#fcd34d'}:{})}}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -19292,6 +19294,17 @@ ${fullText.slice(0,8000)}`;
                       <td style={{padding:"6px 8px",textAlign:"right",fontWeight:700,
                         color:delta==null?C.muted:delta>0?C.red:delta<0?C.green:C.muted}}>
                         {delta==null?'—':(delta>0?'+':'')+delta.toFixed(2)}
+                      </td>
+                      {/* DECISION(v1.19.723): Lead time cell — editable so the reviewer can
+                         fix AI extraction errors or fill in missing values before BC push. */}
+                      <td style={{padding:"6px 4px",textAlign:"right"}}>
+                        <input type="number" min="0" max="365" step="1"
+                          value={item.leadTimeDays??''}
+                          onChange={e=>{const v=e.target.value;const n=v===''?null:Math.max(0,Math.min(365,+v||0));setLineItems(prev=>prev.map((it,j)=>j===i?{...it,leadTimeDays:n}:it));}}
+                          onFocus={e=>e.target.select()}
+                          placeholder="—"
+                          title="Supplier-quoted lead time in days. Editable. Pushed to BC ItemVendorCatalog on Push."
+                          style={{background:"transparent",border:`1px solid ${item.leadTimeDays?"#fcd34d44":C.border}`,borderRadius:4,color:item.leadTimeDays?"#fcd34d":C.muted,fontSize:11,padding:"2px 4px",width:50,textAlign:"right",fontWeight:item.leadTimeDays?700:400,fontFamily:"inherit",fontVariantNumeric:"tabular-nums"}}/>
                       </td>
                       <td style={{padding:"6px 8px",whiteSpace:"nowrap"}}>
                         {!item.isPriced
