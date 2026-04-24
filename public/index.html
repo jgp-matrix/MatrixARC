@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.731";
+const APP_VERSION="v1.19.732";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -23597,12 +23597,33 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         });
         // DECISION(v1.19.722/726): Persist immediately so prices, lead times, and stock
         // captured from the supplier quote survive navigation.
+        // DECISION(v1.19.732): If safeSave fails (typically because Owner Priority Mode is
+        // active and another user is the owner), surface a clear actionable alert instead
+        // of a silent failure. The Firestore snapshot listener will then soft-apply the
+        // remote state which OVERWRITES the local matchUpdates — so the user thinks
+        // nothing happened. Now they get a clear next-step.
         const updatedProject={...projectRef.current,panels:updatedPanels};
         const stampedRows=(updatedPanels[0]?.bom||[]).filter(r=>r.leadTimeSource==="supplier"&&r.leadTimeUpdatedAt===now).length;
         console.log("[SQ ONBOMUPDATE] computed updatedProject. Rows with fresh supplier lead times:",stampedRows);
         update(updatedProject);
         console.log("[SQ ONBOMUPDATE] called update(). About to safeSave...");
-        safeSave(uid,updatedProject).then(ok=>console.log("[SQ ONBOMUPDATE] safeSave returned:",ok)).catch(e=>console.warn("[SQ ONBOMUPDATE] safeSave FAILED:",e));
+        safeSave(uid,updatedProject).then(ok=>{
+          console.log("[SQ ONBOMUPDATE] safeSave returned:",ok);
+          if(!ok){
+            // Firestore rejected the write — most likely cause is Owner Priority Mode.
+            const cur=projectRef.current;
+            const ownerLocked=cur?.ownerLockActive===true&&cur?.createdBy!==uid;
+            const takeoverActive=cur?.ownerTakeoverActive&&cur.ownerTakeoverActive.expiresAt>Date.now();
+            if(ownerLocked&&!takeoverActive){
+              alert(`Lead times were pushed to BC ItemVendorCatalog successfully, but the BOM in ARC could NOT be updated:\n\n${_OWNER_PRIORITY_ALERT}\n\nWORKAROUND: Once the owner releases priority, click "↻ Get New Pricing" on the BOM — it will pull the lead times from BC ItemVendorCatalog (where they were just pushed) and stamp them on the BOM rows.`);
+            }else{
+              alert(`Lead times were pushed to BC ItemVendorCatalog successfully, but the BOM in ARC could NOT be updated (save was rejected — possibly stale data or a permission issue).\n\nWORKAROUND: Click "↻ Get New Pricing" on the BOM — it will pull the lead times from BC ItemVendorCatalog and stamp them on the BOM rows.`);
+            }
+          }
+        }).catch(e=>{
+          console.warn("[SQ ONBOMUPDATE] safeSave FAILED:",e);
+          alert(`Lead times pushed to BC, but ARC save failed: ${e.message||e}\n\nClick "↻ Get New Pricing" to pull the lead times from BC.`);
+        });
       }}/>
       {bcCountMismatch&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
