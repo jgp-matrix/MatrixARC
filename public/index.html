@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.719";
+const APP_VERSION="v1.19.720";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1184,24 +1184,20 @@ function _refreshLeadDriversInQuote(project){
   // Legacy single-line format from v1.19.710 — cleaned up on first write
   const legacyRe=/Lead drivers[^\n]*\n?/;
   let changed=false;
+  // DECISION(v1.19.720): Lead Time Drivers block ALWAYS lives at the TOP of the Notes
+  // field. Any existing instance of the block is removed from wherever it was, and a
+  // fresh version is prepended (followed by a blank line if there's other content).
+  // User's hand-written notes below the block are preserved verbatim.
+  const stripBlockRe=/\n?\s*Lead Time Drivers:(?:\n(?:Part#[^\n]*|\* AI estimate))+\s*/;
   const newPanels=panels.map(panel=>{
     const line=_computePanelLeadDriversLine(panel);
     let existing=panel.bomNotes||"";
-    // Strip legacy line first so we don't leave a stale "Lead drivers (> ..): ..." behind
+    // Strip legacy single-line format first
     if(legacyRe.test(existing))existing=existing.replace(legacyRe,"").trim();
-    let next;
-    if(newBlockRe.test(existing)){
-      if(line){
-        next=existing.replace(newBlockRe,line);
-      }else{
-        // No line now — remove the whole block + surrounding whitespace
-        next=existing.replace(/\n?\s*Lead Time Drivers:(?:\n(?:Part#[^\n]*|\* AI estimate))+/,"").trim();
-      }
-    }else if(line){
-      next=existing?`${existing}\n\n${line}`:line;
-    }else{
-      next=existing;
-    }
+    // Strip any prior block wherever it was
+    if(newBlockRe.test(existing))existing=existing.replace(stripBlockRe,"").trim();
+    // Prepend fresh block if we have one
+    const next=line?(existing?`${line}\n\n${existing}`:line):existing;
     if(next===(panel.bomNotes||""))return panel;
     changed=true;
     return{...panel,bomNotes:next};
