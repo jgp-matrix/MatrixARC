@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.718";
+const APP_VERSION="v1.19.719";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1124,11 +1124,20 @@ if(typeof window!=="undefined"){window.computeControlPanelLeadTime=computeContro
 // panel-card's Notes field (panel.bomNotes) which already perpetuates to the quote.
 // This keeps the auto-note visible in the UI where users expect it and avoids
 // clobbering any quote-level lineNotes the user might set manually.
-function _formatLeadDriversNote(drivers,avg){
+// DECISION(v1.19.719): Multi-line format per user — header + one line per driver:
+//   Lead Time Drivers:
+//   Part# 0800886 TIME DELAY FUSE = 90 Days
+//   Part# 140G-G6C3-C20 BREAKER = 45 Days *
+//   * AI estimate
+function _formatLeadDriversNote(drivers){
   if(!drivers.length)return "";
   const anyAi=drivers.some(d=>d.source==="ai");
-  const list=drivers.map(d=>`${d.partNumber} (${d.leadTimeDays}d${d.source==="ai"?"*":""})`).join(" · ");
-  return`Lead drivers (> ${avg}d avg): ${list}${anyAi?" — *AI estimate":""}`;
+  const lines=drivers.map(d=>{
+    const desc=(d.description||"").trim();
+    const aiMark=d.source==="ai"?" *":"";
+    return`Part# ${d.partNumber}${desc?" "+desc:""} = ${d.leadTimeDays} Days${aiMark}`.replace(/\s+/g," ").trim();
+  });
+  return`Lead Time Drivers:\n${lines.join("\n")}${anyAi?"\n* AI estimate":""}`;
 }
 function _computePanelLeadDriversLine(panel){
   const rows=(panel?.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
@@ -1138,8 +1147,8 @@ function _computePanelLeadDriversLine(panel){
   const drivers=[...rows]
     .filter(r=>(+r.leadTimeDays||0)>avg)
     .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
-    .map(r=>({partNumber:r.partNumber||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
-  return _formatLeadDriversNote(drivers,Math.round(avg*10)/10);
+    .map(r=>({partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
+  return _formatLeadDriversNote(drivers);
 }
 // Back-compat wrapper: single-panel → panel line; multi-panel → aggregated across panels.
 function _computeProjectLeadDriversLine(project){
@@ -1160,47 +1169,53 @@ function _computeProjectLeadDriversLine(project){
   const drivers=[...allRows]
     .filter(r=>(+r.leadTimeDays||0)>avg)
     .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
-    .map(r=>({partNumber:r.partNumber||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
-  return _formatLeadDriversNote(drivers,Math.round(avg*10)/10);
+    .map(r=>({partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
+  return _formatLeadDriversNote(drivers);
 }
-// DECISION(v1.19.718): Refresh the "Lead drivers" line in EACH panel's bomNotes.
-// Existing user-entered notes are preserved — we only append/replace the single
-// "Lead drivers" line (matched via regex). bomNotes already perpetuates to the quote.
+// DECISION(v1.19.718/719): Refresh the "Lead Time Drivers" block in EACH panel's bomNotes.
+// The block = header "Lead Time Drivers:" + one or more "Part# ..." lines + optional
+// "* AI estimate" footnote. Existing user-entered notes outside the block are preserved.
+// Also strips any stale v1.19.710-era "Lead drivers (...): ..." single-line format.
 function _refreshLeadDriversInQuote(project){
   const panels=project?.panels||[];
   if(!panels.length)return project;
-  const driversRe=/Lead drivers[^\n]*/;
+  // New multi-line block: header + Part# lines + optional AI footnote
+  const newBlockRe=/Lead Time Drivers:(?:\n(?:Part#[^\n]*|\* AI estimate))+/;
+  // Legacy single-line format from v1.19.710 — cleaned up on first write
+  const legacyRe=/Lead drivers[^\n]*\n?/;
   let changed=false;
   const newPanels=panels.map(panel=>{
     const line=_computePanelLeadDriversLine(panel);
-    const existing=panel.bomNotes||"";
+    let existing=panel.bomNotes||"";
+    // Strip legacy line first so we don't leave a stale "Lead drivers (> ..): ..." behind
+    if(legacyRe.test(existing))existing=existing.replace(legacyRe,"").trim();
     let next;
-    if(driversRe.test(existing)){
+    if(newBlockRe.test(existing)){
       if(line){
-        next=existing.replace(driversRe,line);
+        next=existing.replace(newBlockRe,line);
       }else{
-        next=existing.replace(/\n?\s*Lead drivers[^\n]*\n?/,"").trim();
+        // No line now — remove the whole block + surrounding whitespace
+        next=existing.replace(/\n?\s*Lead Time Drivers:(?:\n(?:Part#[^\n]*|\* AI estimate))+/,"").trim();
       }
     }else if(line){
-      next=existing?`${existing}\n${line}`:line;
+      next=existing?`${existing}\n\n${line}`:line;
     }else{
       next=existing;
     }
-    if(next===existing)return panel;
+    if(next===(panel.bomNotes||""))return panel;
     changed=true;
     return{...panel,bomNotes:next};
   });
   if(!changed)return project;
-  // DECISION(v1.19.718): Also strip any stale "Lead drivers" line from quote.lineNotes
-  // left over from the v1.19.710 version of this feature, to avoid stale duplicates.
+  // Also strip any stale block from quote.lineNotes left over from the v1.19.710 version.
   let newQuote=project.quote||{};
   const qNotes=newQuote.lineNotes||"";
-  if(driversRe.test(qNotes)){
-    const cleaned=qNotes.replace(/\n?\s*Lead drivers[^\n]*\n?/,"").trim();
-    if(cleaned!==qNotes){
-      newQuote={...newQuote,lineNotes:cleaned};
-      return{...project,panels:newPanels,quote:newQuote};
-    }
+  let cleanedQ=qNotes;
+  if(newBlockRe.test(cleanedQ))cleanedQ=cleanedQ.replace(/\n?\s*Lead Time Drivers:(?:\n(?:Part#[^\n]*|\* AI estimate))+/,"").trim();
+  if(legacyRe.test(cleanedQ))cleanedQ=cleanedQ.replace(legacyRe,"").trim();
+  if(cleanedQ!==qNotes){
+    newQuote={...newQuote,lineNotes:cleanedQ};
+    return{...project,panels:newPanels,quote:newQuote};
   }
   return{...project,panels:newPanels};
 }
