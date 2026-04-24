@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.708";
+const APP_VERSION="v1.19.709";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20785,6 +20785,84 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     </div>
                   );
                 })}
+                {/* DECISION(v1.19.709): Ship-date override popover — rendered via portal
+                   so it floats above the Quote Summary. Click-outside closes via onMouseDown
+                   on the backdrop. */}
+                {shipDatePopoverFor&&ReactDOM.createPortal(
+                  (()=>{
+                    const pp=(project.panels||[]).find(x=>x.id===shipDatePopoverFor);
+                    if(!pp)return null;
+                    const cp=computeControlPanelLeadTime(pp,project);
+                    const curOverride=pp.controlPanelShipDateOverride&&pp.controlPanelShipDate;
+                    const laborHrs=(computeLaborEstimate(pp)||{}).totalHours||0;
+                    const dch=project.laborConfig?.dailyCrewHours||8;
+                    return(
+                      <div onMouseDown={e=>{if(e.target===e.currentTarget)setShipDatePopoverFor(null);}}
+                        style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+                        <div onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}
+                          style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"18px 22px",minWidth:340,maxWidth:440,boxShadow:"0 12px 40px rgba(0,0,0,0.6)",color:C.text,position:"relative"}}>
+                          <button onClick={()=>setShipDatePopoverFor(null)}
+                            style={{position:"absolute",top:6,right:10,background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18}}>✕</button>
+                          <div style={{fontSize:14,fontWeight:800,color:C.text,marginBottom:4}}>📦 Control Panel Ship Date</div>
+                          <div style={{fontSize:12,color:C.sub,marginBottom:2}}>{pp.drawingNo||pp.name||"Panel"}</div>
+                          <div style={{fontSize:18,fontWeight:800,color:curOverride?"#f59e0b":C.accent,marginTop:8,fontVariantNumeric:"tabular-nums"}}>
+                            {curOverride?pp.controlPanelShipDate:cp.shipDate}
+                          </div>
+                          <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
+                            {curOverride?Math.ceil((new Date(pp.controlPanelShipDate).getTime()-_startOfDay(Date.now()))/_ONE_DAY_MS):cp.leadDays} calendar days from today
+                          </div>
+                          <div style={{fontSize:12,color:C.sub,lineHeight:1.7,background:"#0a0a14",padding:"10px 12px",borderRadius:6,border:`1px solid ${C.border}44`,marginBottom:12}}>
+                            <div>📦 <strong style={{color:cp.largestContributor==="material"?"#22d3ee":C.text}}>{cp.longestItemDays}d</strong> material{cp.drivers.length?` — longest: ${cp.drivers[0].partNumber} (${cp.drivers[0].leadTimeDays}d${cp.drivers[0].source==="ai"?"*":""})`:""}</div>
+                            <div>🔧 <strong style={{color:cp.largestContributor==="labor"?"#22d3ee":C.text}}>{cp.laborDays}d</strong> labor ({Math.round(laborHrs)} hrs ÷ {dch} hrs/day)</div>
+                            <div>📦 <strong style={{color:cp.largestContributor==="production"?"#22d3ee":C.text}}>{cp.productionDays}d</strong> production</div>
+                            <div style={{marginTop:4,fontSize:11,color:C.muted,fontStyle:"italic"}}>Largest contributor: {cp.largestContributor}</div>
+                            {cp.hasAiLeads&&<div style={{marginTop:4,fontSize:11,color:"#fcd34d"}}>⚠ Includes AI-estimated lead times</div>}
+                            {cp.noDataWarning&&<div style={{marginTop:4,fontSize:11,color:"#fcd34d"}}>⚠ No inputs — estimate not meaningful</div>}
+                          </div>
+                          {curOverride&&<div style={{fontSize:11,color:"#f59e0b",marginBottom:8}}>Manual override active — computed value would be {cp.shipDate} ({cp.leadDays}d)</div>}
+                          <div style={{fontSize:11,color:C.muted,marginBottom:4,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>Override ship date</div>
+                          <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:8}}>
+                            <input type="date" defaultValue={curOverride||cp.shipDate}
+                              onKeyDown={e=>{if(e.key==="Enter"){
+                                const val=e.target.value;if(!val)return;
+                                const updatedPanel={...pp,controlPanelShipDate:val,controlPanelShipDateOverride:true};
+                                const updatedPanels=(project.panels||[]).map(x=>x.id===pp.id?updatedPanel:x);
+                                update({...project,panels:updatedPanels});
+                                saveProjectPanel(uid,project.id,pp.id,updatedPanel,true).catch(()=>{});
+                                setShipDatePopoverFor(null);
+                              }}}
+                              style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:4,color:C.text,fontSize:12,padding:"5px 10px",flex:1,fontFamily:"inherit",colorScheme:"dark"}}
+                              id={`cplt-override-${pp.id}`}/>
+                            <button onClick={()=>{
+                              const el=document.getElementById(`cplt-override-${pp.id}`);
+                              const val=el?.value;
+                              if(!val)return;
+                              const updatedPanel={...pp,controlPanelShipDate:val,controlPanelShipDateOverride:true};
+                              const updatedPanels=(project.panels||[]).map(x=>x.id===pp.id?updatedPanel:x);
+                              update({...project,panels:updatedPanels});
+                              saveProjectPanel(uid,project.id,pp.id,updatedPanel,true).catch(()=>{});
+                              setShipDatePopoverFor(null);
+                            }}
+                              style={{background:"#1e1b4b",border:`1px solid ${C.accent}`,color:C.accent,padding:"5px 12px",borderRadius:4,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                              Apply Override
+                            </button>
+                          </div>
+                          {curOverride&&<button onClick={()=>{
+                            const updatedPanel={...pp,controlPanelShipDate:null,controlPanelShipDateOverride:false};
+                            const updatedPanels=(project.panels||[]).map(x=>x.id===pp.id?updatedPanel:x);
+                            update({...project,panels:updatedPanels});
+                            saveProjectPanel(uid,project.id,pp.id,updatedPanel,true).catch(()=>{});
+                            setShipDatePopoverFor(null);
+                          }}
+                            style={{background:"none",border:"none",color:"#38bdf8",fontSize:11,cursor:"pointer",padding:"4px 0",textDecoration:"underline",fontFamily:"inherit"}}>
+                            ↩ Revert to computed ({cp.shipDate})
+                          </button>}
+                        </div>
+                      </div>
+                    );
+                  })(),
+                  document.body
+                )}
                 {(project.panels||[]).length>1&&(()=>{
                   const total=(project.panels||[]).reduce((sum,p)=>{
                     const ppr=p.pricing||{};
