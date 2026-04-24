@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.726";
+const APP_VERSION="v1.19.727";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5071,6 +5071,34 @@ async function sqRecordAiTime(uid,seconds){
 }
 // Vendor fuzzy matching for supplier → BC vendor auto-population
 // First word of supplier name is heavily weighted — e.g. "Royal - Salt Lake City" → "Royal Wholesale"
+// DECISION(v1.19.727): Fuzzy match an AI-extracted MFR code (e.g. "A-B", "HOFF",
+// "PHX-CT") against the BC Manufacturers list. Strips hyphens / spaces, tries
+// exact-on-Code first, then prefix-match on Name (e.g. "A-B" → "ALLEN BRADLEY"
+// hits because "AB" is a prefix of "ALLEN").
+function sqFuzzyMatchManufacturer(mfrCode,manufacturers){
+  if(!mfrCode||!Array.isArray(manufacturers)||!manufacturers.length)return null;
+  const norm=s=>String(s||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const want=norm(mfrCode);
+  if(!want)return null;
+  // 1. Exact normalized Code match
+  let hit=manufacturers.find(m=>norm(m.Code)===want);
+  if(hit)return hit;
+  // 2. Code starts with the wanted code or vice versa
+  hit=manufacturers.find(m=>{const c=norm(m.Code);return c.startsWith(want)||want.startsWith(c);});
+  if(hit)return hit;
+  // 3. Name initials match the wanted code (e.g. "AB" matches "ALLEN BRADLEY" → "AB")
+  hit=manufacturers.find(m=>{
+    const initials=String(m.Name||'').split(/\s+/).filter(Boolean).map(w=>w[0]).join('').toUpperCase();
+    return initials===want||initials.startsWith(want);
+  });
+  if(hit)return hit;
+  // 4. First word of Name starts with the wanted code (e.g. "HOFF" → "HOFFMAN")
+  hit=manufacturers.find(m=>{
+    const first=String(m.Name||'').split(/\s+/)[0]?.toUpperCase()||'';
+    return first.startsWith(want)||want.startsWith(first);
+  });
+  return hit||null;
+}
 function sqFuzzyMatchVendor(supplierName,vendors){
   if(!supplierName||!vendors.length)return null;
   const norm=s=>s.toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\b(inc|llc|ltd|corp|co|company|the|and)\b/g,' ').replace(/\s+/g,' ').trim();
@@ -18243,10 +18271,12 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,pro
   const [parseProgress,setParseProgress]=useState(0);
   const [parseEta,setParseEta]=useState(null);
   const [newItemIdx,setNewItemIdx]=useState(null);
-  const [newItemForm,setNewItemForm]=useState({itemNo:'',description:'',cost:'',category:'PARTS',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT'});
+  // DECISION(v1.19.727): Added `manufacturer` to the create-item form. Pre-populated
+  // from the AI-extracted MFR prefix (item.mfr) when the form opens.
+  const [newItemForm,setNewItemForm]=useState({itemNo:'',description:'',cost:'',category:'PARTS',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT',manufacturer:''});
   const [creatingItem,setCreatingItem]=useState(false);
   const [createError,setCreateError]=useState('');
-  const [bcCfg,setBcCfg]=useState({uoms:[],categories:[],vendors:[],genGroups:[],invGroups:[],loaded:false,loading:false});
+  const [bcCfg,setBcCfg]=useState({uoms:[],categories:[],vendors:[],genGroups:[],invGroups:[],manufacturers:[],loaded:false,loading:false});
   const [autoVendor,setAutoVendor]=useState({vendorNo:'',vendorName:''});
   const [showVendorPrompt,setShowVendorPrompt]=useState(null); // {vendorNo, vendorName, supplierName}
   const [precedingQuoteId,setPrecedingQuoteId]=useState(null); // docId being superseded by this upload
@@ -19087,11 +19117,14 @@ ${fullText.slice(0,8000)}`;
     }
     setBcCfg(c=>({...c,loading:true}));
     if(!_bcToken)await acquireBcToken(false);
-    const [categories,uoms,vendors,genGroups,invGroups]=await Promise.all([
+    // DECISION(v1.19.727): Load manufacturers too so the Create-New-Item form can
+    // pre-populate the MFR dropdown from the AI-extracted prefix (A-B, HOFF, etc.).
+    const [categories,uoms,vendors,genGroups,invGroups,manufacturers]=await Promise.all([
       bcListItemCategories(),bcListUnitsOfMeasure(),bcListVendors(),
       bcListGenProdPostingGroups(),bcListInventoryPostingGroups(),
+      bcFetchManufacturers().catch(()=>[]),
     ]);
-    const cfg={categories,uoms,vendors,genGroups,invGroups,loaded:true,loading:false};
+    const cfg={categories,uoms,vendors,genGroups,invGroups,manufacturers,loaded:true,loading:false};
     setBcCfg(cfg);
     return cfg;
   }
@@ -19112,7 +19145,10 @@ ${fullText.slice(0,8000)}`;
         vendorNo:newItemForm.vendor||undefined,
         genProdPostingGroup:newItemForm.genGroup||undefined,
         inventoryPostingGroup:newItemForm.invGroup||undefined,
-        manufacturerCode:bcNormalizeMfrCode(item.manufacturer)||undefined,
+        // DECISION(v1.19.727): Use form-selected manufacturer (defaults to fuzzy-matched
+        // value from the AI-extracted MFR prefix). Falls back to the legacy auto-resolved
+        // code if the form value is blank.
+        manufacturerCode:newItemForm.manufacturer||bcNormalizeMfrCode(item.manufacturer)||undefined,
       });
       // Look up the newly created item to get its GUID
       const bcItem=await bcLookupItemForQuote(created.number);
@@ -19395,7 +19431,7 @@ ${fullText.slice(0,8000)}`;
                           ?<button onClick={async()=>{
                               setNewItemIdx(i);
                               setNewItemForm(f=>({...f,itemNo:item.partNumber||'',description:item.description||item.rawPartNumber||'',
-                                cost:'',category:'PARTS',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT'}));
+                                cost:'',category:'PARTS',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT',manufacturer:''}));
                               setCreateError('');setAutoVendor({vendorNo:'',vendorName:''});
                               const cfg=await loadBcCfg();
                               const supplierName=quoteHeader?.supplier||'';
@@ -19405,6 +19441,11 @@ ${fullText.slice(0,8000)}`;
                                 const matchedNo=savedNo||(sqFuzzyMatchVendor(supplierName,cfg.vendors)?.number||'');
                                 const matchedName=cfg.vendors.find(v=>v.number===matchedNo)?.displayName||'';
                                 if(matchedNo){setAutoVendor({vendorNo:matchedNo,vendorName:matchedName});setNewItemForm(f=>({...f,vendor:matchedNo}));}
+                              }
+                              // DECISION(v1.19.727): Pre-fill manufacturer from AI-extracted MFR prefix.
+                              if(item.mfr&&cfg.manufacturers&&cfg.manufacturers.length){
+                                const m=sqFuzzyMatchManufacturer(item.mfr,cfg.manufacturers);
+                                if(m)setNewItemForm(f=>({...f,manufacturer:m.Code}));
                               }
                             }} style={{
                               background:'#0d0d1a',border:`1px solid ${C.accent}`,color:C.accent,
@@ -19436,7 +19477,7 @@ ${fullText.slice(0,8000)}`;
                             <button onClick={async()=>{
                               setNewItemIdx(i);setLinkingIdx(null);
                               setNewItemForm(f=>({...f,itemNo:item.partNumber||'',description:item.description||item.rawPartNumber||'',
-                                cost:item.price!=null?String(item.price):'',category:'PARTS',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT'}));
+                                cost:item.price!=null?String(item.price):'',category:'PARTS',uom:'EA',vendor:'',genGroup:'INVENTORY',invGroup:'RAW MAT',manufacturer:''}));
                               setCreateError('');setAutoVendor({vendorNo:'',vendorName:''});
                               const cfg=await loadBcCfg();
                               const supplierName=quoteHeader?.supplier||'';
@@ -19446,6 +19487,11 @@ ${fullText.slice(0,8000)}`;
                                 const matchedNo=savedNo||(sqFuzzyMatchVendor(supplierName,cfg.vendors)?.number||'');
                                 const matchedName=cfg.vendors.find(v=>v.number===matchedNo)?.displayName||'';
                                 if(matchedNo){setAutoVendor({vendorNo:matchedNo,vendorName:matchedName});setNewItemForm(f=>({...f,vendor:matchedNo}));}
+                              }
+                              // DECISION(v1.19.727): Pre-fill manufacturer from AI-extracted MFR prefix.
+                              if(item.mfr&&cfg.manufacturers&&cfg.manufacturers.length){
+                                const m=sqFuzzyMatchManufacturer(item.mfr,cfg.manufacturers);
+                                if(m)setNewItemForm(f=>({...f,manufacturer:m.Code}));
                               }
                             }} style={{
                               background:'#1a1a00',border:`1px solid #6060a0`,color:C.muted,
@@ -19550,6 +19596,12 @@ ${fullText.slice(0,8000)}`;
                   <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:4}}>
                     <div style={{flex:1,minWidth:160}}>{lbl("Item Category")}{sel('category',bcCfg.categories,o=>o.code,o=>o.code+(o.description?` — ${o.description}`:''))}</div>
                     <div style={{flex:1,minWidth:140}}>{lbl("Unit of Measure")}{sel('uom',bcCfg.uoms,o=>o.code,o=>o.code+(o.displayName&&o.displayName!==o.code?` — ${o.displayName}`:''))}</div>
+                    {/* DECISION(v1.19.727): Manufacturer dropdown — pre-populated by fuzzy
+                       match against AI-extracted MFR prefix (item.mfr). */}
+                    <div style={{flex:1,minWidth:160}}>
+                      {lbl(item.mfr&&newItemForm.manufacturer?`Manufacturer (matched "${item.mfr}")`:"Manufacturer")}
+                      {sel('manufacturer',bcCfg.manufacturers||[],o=>o.Code,o=>`${o.Code}${o.Name?` — ${o.Name}`:''}`)}
+                    </div>
                     <div style={{flex:1,minWidth:180}}>
                       {lbl(autoVendor.vendorNo?`Vendor (auto-matched from "${quoteHeader?.supplier||''}")`:"Vendor")}
                       {sel('vendor',bcCfg.vendors,o=>o.number,o=>`${o.displayName} (${o.number})`)}
@@ -19786,9 +19838,15 @@ ${fullText.slice(0,8000)}`;
                   {matched&&item.isPriced?<span style={{fontSize:10,fontWeight:700,color:C.green}}>Ready</span>
                   :!item.isPriced?<span style={{fontSize:10,color:C.muted}}>No price</span>
                   :<button onClick={async()=>{
-                    await loadBcCfg();
+                    const cfg=await loadBcCfg();
                     setNewItemIdx(i);
-                    setNewItemForm({itemNo:stripMfrPrefix(item.rawPartNumber||item.partNumber||"").toUpperCase(),description:(item.description||"").slice(0,100),cost:item.price||"",category:"PARTS",uom:"EA",vendor:autoVendor.vendorNo||"",genGroup:"INVENTORY",invGroup:"RAW MAT"});
+                    // DECISION(v1.19.727): Pre-fill manufacturer from AI-extracted MFR prefix.
+                    let mfrCode='';
+                    if(item.mfr&&cfg.manufacturers?.length){
+                      const m=sqFuzzyMatchManufacturer(item.mfr,cfg.manufacturers);
+                      if(m)mfrCode=m.Code;
+                    }
+                    setNewItemForm({itemNo:stripMfrPrefix(item.rawPartNumber||item.partNumber||"").toUpperCase(),description:(item.description||"").slice(0,100),cost:item.price||"",category:"PARTS",uom:"EA",vendor:autoVendor.vendorNo||"",genGroup:"INVENTORY",invGroup:"RAW MAT",manufacturer:mfrCode});
                     setCreateError("");
                     setShowImportReview(false);
                   }} style={{background:"#0d1a10",border:"1px solid #4ade8044",color:"#4ade80",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>
