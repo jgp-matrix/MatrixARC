@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.735";
+const APP_VERSION="v1.19.736";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1064,6 +1064,9 @@ function syncLaborBomRows(panel){
 // finishes) to give the soonest possible ship date.
 // Spec: docs/superpowers/specs/2026-04-24-control-panel-lead-time-design.md
 const _ONE_DAY_MS=24*60*60*1000;
+// DECISION(v1.19.736): Absolute cutoff (in days) for items that make it into the Lead
+// Time Drivers note. Anything at or below this is considered routine lead time.
+const LEAD_DRIVER_THRESHOLD_DAYS=30;
 function _startOfDay(ts){const d=new Date(ts);d.setHours(0,0,0,0);return d.getTime();}
 function _isoDate(ts){const d=new Date(ts);return d.toISOString().slice(0,10);}
 function computeControlPanelLeadTime(panel,project){
@@ -1096,12 +1099,15 @@ function computeControlPanelLeadTime(panel,project){
   let largestContributor="material",largest=longestItemDays;
   if(laborDays>largest){largestContributor="labor";largest=laborDays;}
   if(productionDays>largest){largestContributor="production";largest=productionDays;}
-  // Drivers = items above BOM average (of priced items only); skip if <3 items
+  // DECISION(v1.19.736): Drivers = BOM items with leadTimeDays > LEAD_DRIVER_THRESHOLD_DAYS
+  // (30 days). Previously used "above BOM average," which for panels with a few long-lead
+  // items and many short-lead ones listed far too many rows in the auto-generated Notes
+  // block. An absolute cutoff keeps the list focused on items that genuinely drive the
+  // schedule — the only ones worth flagging on a customer-facing quote note.
   const ldValues=bom.map(r=>+r.leadTimeDays||0).filter(n=>n>0);
   const avg=ldValues.length?ldValues.reduce((s,n)=>s+n,0)/ldValues.length:0;
-  const tooSmallForDrivers=ldValues.length<3;
-  const drivers=tooSmallForDrivers?[]:[...bom]
-    .filter(r=>(+r.leadTimeDays||0)>avg)
+  const drivers=[...bom]
+    .filter(r=>(+r.leadTimeDays||0)>LEAD_DRIVER_THRESHOLD_DAYS)
     .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
     .map(r=>({partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
   return{
@@ -1141,11 +1147,9 @@ function _formatLeadDriversNote(drivers){
 }
 function _computePanelLeadDriversLine(panel){
   const rows=(panel?.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
-  if(rows.length<3)return"";
-  const vals=rows.map(r=>+r.leadTimeDays).filter(n=>n>0);
-  const avg=vals.length?vals.reduce((s,n)=>s+n,0)/vals.length:0;
+  // DECISION(v1.19.736): Absolute threshold — only items with lead times > 30 days.
   const drivers=[...rows]
-    .filter(r=>(+r.leadTimeDays||0)>avg)
+    .filter(r=>(+r.leadTimeDays||0)>LEAD_DRIVER_THRESHOLD_DAYS)
     .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
     .map(r=>({partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
   return _formatLeadDriversNote(drivers);
@@ -1163,11 +1167,9 @@ function _computeProjectLeadDriversLine(project){
       }
     }
   }
-  if(allRows.length<3)return"";
-  const vals=allRows.map(r=>+r.leadTimeDays).filter(n=>n>0);
-  const avg=vals.length?vals.reduce((s,n)=>s+n,0)/vals.length:0;
+  // DECISION(v1.19.736): Absolute threshold — only items with lead times > 30 days.
   const drivers=[...allRows]
-    .filter(r=>(+r.leadTimeDays||0)>avg)
+    .filter(r=>(+r.leadTimeDays||0)>LEAD_DRIVER_THRESHOLD_DAYS)
     .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
     .map(r=>({partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
   return _formatLeadDriversNote(drivers);
