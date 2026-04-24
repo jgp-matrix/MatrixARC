@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.711";
+const APP_VERSION="v1.19.712";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -16325,6 +16325,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Push all rows' lead times to BC ItemVendorCatalog. Requires non-blank part number + resolved BC vendor."}
                 style={btn("#3a2800","#fcd34d",{fontSize:12,padding:"4px 12px",opacity:(pushingLeadTimes||ownerPriorityActive)?0.45:1,cursor:(pushingLeadTimes||ownerPriorityActive)?"not-allowed":"pointer",border:"1px solid #fcd34d44"})}>
                 {pushingLeadTimes?"Pushing…":"📤 Push Lead Times to BC"}
+              </button>
+            )}
+            {/* DECISION(v1.19.712): Pending-sync pill — live indicator of queued lead-time
+               edits waiting to batch-push to BC. Click to force-flush immediately. */}
+            {pendingSyncCount>0&&(
+              <button onClick={()=>_flushLeadTimeBcQueue()}
+                title={`${pendingSyncCount} lead-time edit${pendingSyncCount!==1?"s":""} queued to sync to BC. Click to sync now instead of waiting for the batch window.`}
+                style={{background:"#3a2800",border:"1px solid #fcd34d",borderRadius:10,color:"#fcd34d",padding:"4px 12px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",animation:"pulseYellow 2s ease-in-out infinite",whiteSpace:"nowrap"}}>
+                ⏳ {pendingSyncCount} pending BC sync
               </button>
             )}
             {!readOnly&&(
