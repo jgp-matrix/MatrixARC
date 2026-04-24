@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.705";
+const APP_VERSION="v1.19.706";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1053,6 +1053,51 @@ function syncLaborBomRows(panel){
   const nonLabor=(panel.bom||[]).filter(r=>!r.isLaborRow);
   return{...panel,bom:[...laborRows,...nonLabor]};
 }
+
+// DECISION(v1.19.706): Control Panel Lead Time compute. Pure function — takes panel +
+// project, returns { shipDate, leadDays, breakdown, drivers, largestContributor }.
+// All three durations sum sequentially (material arrives → labor builds → production
+// finishes) to give the soonest possible ship date.
+// Spec: docs/superpowers/specs/2026-04-24-control-panel-lead-time-design.md
+const _ONE_DAY_MS=24*60*60*1000;
+function _startOfDay(ts){const d=new Date(ts);d.setHours(0,0,0,0);return d.getTime();}
+function _isoDate(ts){const d=new Date(ts);return d.toISOString().slice(0,10);}
+function computeControlPanelLeadTime(panel,project){
+  if(!panel)return{shipDate:null,leadDays:0,longestItemDays:0,laborDays:0,productionDays:0,averageItemLeadDays:0,drivers:[],largestContributor:"material",hasAiLeads:false,noDataWarning:true};
+  const today=_startOfDay(Date.now());
+  const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
+  const longestItemDays=bom.reduce((m,r)=>Math.max(m,+r.leadTimeDays||0),0);
+  const lab=(typeof computeLaborEstimate==="function")?computeLaborEstimate(panel):{totalHours:0};
+  const laborConfigRaw=project?.laborConfig||{};
+  const dailyCrewHours=+laborConfigRaw.dailyCrewHours||8;
+  const laborDays=Math.ceil((lab.totalHours||0)/dailyCrewHours);
+  const productionDays=Math.max(0,Math.min(365,+panel.productionDays||0));
+  const totalDays=longestItemDays+laborDays+productionDays;
+  const shipDate=today+totalDays*_ONE_DAY_MS;
+  // Largest contributor
+  let largestContributor="material",largest=longestItemDays;
+  if(laborDays>largest){largestContributor="labor";largest=laborDays;}
+  if(productionDays>largest){largestContributor="production";largest=productionDays;}
+  // Drivers = items above BOM average (of priced items only); skip if <3 items
+  const ldValues=bom.map(r=>+r.leadTimeDays||0).filter(n=>n>0);
+  const avg=ldValues.length?ldValues.reduce((s,n)=>s+n,0)/ldValues.length:0;
+  const tooSmallForDrivers=ldValues.length<3;
+  const drivers=tooSmallForDrivers?[]:[...bom]
+    .filter(r=>(+r.leadTimeDays||0)>avg)
+    .sort((a,b)=>(+b.leadTimeDays||0)-(+a.leadTimeDays||0))
+    .map(r=>({partNumber:r.partNumber||"",description:r.description||"",leadTimeDays:+r.leadTimeDays,source:r.leadTimeSource||"unknown"}));
+  return{
+    shipDate:_isoDate(shipDate),
+    leadDays:totalDays,
+    longestItemDays,laborDays,productionDays,
+    averageItemLeadDays:Math.round(avg*10)/10,
+    drivers,largestContributor,
+    hasAiLeads:bom.some(r=>r.leadTimeSource==="ai"),
+    noDataWarning:longestItemDays===0&&laborDays===0&&productionDays===0,
+  };
+}
+// Expose for console testing
+if(typeof window!=="undefined"){window.computeControlPanelLeadTime=computeControlPanelLeadTime;window._startOfDay=_startOfDay;window._isoDate=_isoDate;}
 
 // Load MSAL on demand — not at page load (avoids conflict with Firebase Microsoft auth)
 function loadMsalScript(){
