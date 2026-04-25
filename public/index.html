@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.738";
+const APP_VERSION="v1.19.739";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5208,6 +5208,33 @@ async function saveProject(uid,project){
         }
       }
     }
+    // DECISION(v1.19.739): Per-page storageUrl regression guard. Parallels the fix in
+    // saveProjectPanel — see that decision block for the full failure mode. Reads the
+    // current Firestore doc once and, for every page in the incoming save that lacks
+    // storageUrl, restores it from the Firestore copy matched by id. Prevents stale UI
+    // state from clobbering URLs that a background extraction just stamped.
+    try{
+      const cur=await ref.get();
+      if(cur.exists){
+        const curPanels=cur.data().panels||[];
+        for(let i=0;i<newPanels.length;i++){
+          const np=newPanels[i];
+          const cp=curPanels.find(p=>p.id===np.id);
+          if(!cp||!(cp.pages||[]).length||!(np.pages||[]).length)continue;
+          const curById=new Map(cp.pages.map(pg=>[String(pg.id),pg]));
+          let restored=0;
+          const merged=(np.pages||[]).map(pg=>{
+            const prev=curById.get(String(pg.id));
+            if(prev&&!pg.storageUrl&&prev.storageUrl){restored++;return{...pg,storageUrl:prev.storageUrl};}
+            return pg;
+          });
+          if(restored>0){
+            console.warn(`SAVE GUARD (saveProject): restored storageUrl on ${restored} page(s) of panel ${i} — stale incoming save`);
+            newPanels[i]={...np,pages:merged};
+          }
+        }
+      }
+    }catch(e){console.warn("saveProject storageUrl guard read failed:",e.message);}
     // Update high-water marks from what we're about to save
     _saveHighWater[project.id]={panelCount:newPanels.length,panels:newPanels.map(p=>({
       pages:(p.pages||[]).length,bomItems:(p.bom||[]).filter(r=>!r.isLaborRow).length,
@@ -5306,6 +5333,28 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     if(existingTarget&&(existingTarget.pages||[]).length>0&&(updatedPanel.pages||[]).length===0){
       console.error(`SAVE GUARD: refusing to wipe ${existingTarget.pages.length} pages on panel ${panelId} — preserving existing (caller stack: ${(new Error()).stack?.split('\n').slice(1,4).join(' | ')})`);
       safeUpdated={...updatedPanel,pages:existingTarget.pages};
+    }
+    // DECISION(v1.19.739): Per-page storageUrl regression guard. An extraction running in
+    // the background uploads pages to Storage and stamps storageUrl on the Firestore copy.
+    // If, in parallel, a UI action triggers saveProjectPanel with stale React state (no
+    // storageUrl), the old "replace target panel" logic would wipe the just-stamped URLs.
+    // This is the exact failure mode that orphaned all 18 pages of PRJ402079. Now: for each
+    // incoming page that lacks storageUrl, restore it from the Firestore copy matched by id.
+    // Also restores dataUrl-less pages that regressed to having dataUrl (rare but possible).
+    if(existingTarget&&(safeUpdated.pages||[]).length>0&&(existingTarget.pages||[]).length>0){
+      const existingById=new Map(existingTarget.pages.map(pg=>[String(pg.id),pg]));
+      let restoredCount=0;
+      const mergedPages=safeUpdated.pages.map(pg=>{
+        const prev=existingById.get(String(pg.id));
+        if(!prev)return pg;
+        const patch={};
+        if(!pg.storageUrl&&prev.storageUrl){patch.storageUrl=prev.storageUrl;restoredCount++;}
+        return Object.keys(patch).length?{...pg,...patch}:pg;
+      });
+      if(restoredCount>0){
+        console.warn(`SAVE GUARD: restored storageUrl on ${restoredCount} page(s) of panel ${panelId} — incoming save had stale page state (caller stack: ${(new Error()).stack?.split('\n').slice(1,4).join(' | ')})`);
+        safeUpdated={...safeUpdated,pages:mergedPages};
+      }
     }
     let panels=(proj.panels||[]).map(p=>p.id===panelId?safeUpdated:p);
     // If panel wasn't found in existing array, append it
