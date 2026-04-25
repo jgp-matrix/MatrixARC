@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.744";
+const APP_VERSION="v1.19.745";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -10735,6 +10735,49 @@ function PoReceivedModal({project,bcProjectNumber,onClose,onDone}){
       </div>
     </div>
   ,document.body);
+}
+
+// ── SENT-QUOTE EDIT CONFIRM MODAL ──
+// DECISION(v1.19.745): Required ack before editing a quote that's already gone out.
+// Shows when/where it was sent, identifies the Project Owner, and forces a checkbox
+// affirming verification before edits unlock for the session. Continue button is
+// disabled until the checkbox is checked.
+function SentQuoteEditConfirm({ownerName,ownerEmail,sentDate,sentRev,sentTo,onCancel,onConfirm}){
+  const [verified,setVerified]=useState(false);
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(245,158,11,0.35)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+          <span style={{fontSize:24}}>⚠</span>
+          <div style={{fontSize:16,fontWeight:800,color:"#fbbf24"}}>Customer has received this Quote</div>
+        </div>
+        <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7,marginBottom:14}}>
+          <strong style={{color:"#f1f5f9"}}>Quote Rev {sentRev}</strong> was sent to <strong style={{color:"#f1f5f9"}}>{sentTo}</strong> on <strong style={{color:"#f1f5f9"}}>{sentDate}</strong>.
+          <br/><br/>
+          Edits to this quote may produce a new Quote Revision that the customer hasn't seen.
+          <strong style={{color:"#fbbf24"}}> Check with the Project Owner before proceeding.</strong>
+        </div>
+        <div style={{background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+          <div style={{fontSize:10,color:"#64748b",fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",marginBottom:3}}>Project Owner</div>
+          <div style={{fontSize:13,color:"#f1f5f9",fontWeight:600}}>{ownerName}</div>
+          {ownerEmail&&<div style={{fontSize:12,color:"#94a3b8",marginTop:1,fontFamily:"monospace"}}>{ownerEmail}</div>}
+        </div>
+        <label style={{display:"flex",alignItems:"flex-start",gap:8,padding:"10px 12px",background:"#0a0a14",border:`1px solid ${verified?"#4ade80":"#3d6090"}`,borderRadius:8,cursor:"pointer",marginBottom:16,transition:"border-color 0.15s"}}>
+          <input type="checkbox" checked={verified} onChange={e=>setVerified(e.target.checked)} style={{accentColor:"#4ade80",width:16,height:16,marginTop:1,flexShrink:0,cursor:"pointer"}}/>
+          <span style={{fontSize:12,color:verified?"#86efac":"#cbd5e1",lineHeight:1.5,fontWeight:600}}>
+            I have verified with the Project Owner{ownerEmail?` (${ownerEmail})`:""} that this edit is approved.
+          </span>
+        </label>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <button onClick={onCancel} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"8px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Cancel</button>
+          <button onClick={verified?onConfirm:undefined} disabled={!verified}
+            style={{background:verified?"#0d2010":"#1a1a2a",border:`1px solid ${verified?"#4ade80":"#3d6090"}`,color:verified?"#4ade80":"#475569",padding:"8px 20px",borderRadius:6,cursor:verified?"pointer":"not-allowed",fontSize:13,fontFamily:"inherit",fontWeight:700,opacity:verified?1:0.5}}>
+            Continue with Edits
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── PURCHASE PRICE CHECK MODAL ──
@@ -21740,14 +21783,28 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   </>);
                 })()}
                 {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
-                {project.quoteLocked&&(
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:4}}>
-                    <span style={{fontSize:12,fontWeight:700,color:"#f59e0b",background:"#3a2800",borderRadius:6,padding:"3px 10px",letterSpacing:0.5}}>QUOTE LOCKED</span>
-                    {!isReadOnly()&&<button
-                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>setShowUnlockConfirm(true)}
+                {/* DECISION(v1.19.745): Sent-quote soft-block. When the quote has been sent
+                    and the user hasn't ack'd in this session, show an amber warning banner
+                    with a button that opens the verification modal. After ack, banner flips
+                    to a green "Edits Enabled" state to make the elevated-permission status
+                    obvious. */}
+                {project.quoteSentAt&&!sentQuoteAckGiven&&!isReadOnly()&&(
+                  <div style={{marginTop:6,padding:"8px 12px",background:"#3a2800",border:"1px solid #f59e0b66",borderRadius:8,display:"flex",flexDirection:"column",gap:6}}>
+                    <div style={{fontSize:12,color:"#fbbf24",fontWeight:700}}>⚠ Customer has received this Quote</div>
+                    <div style={{fontSize:11,color:"#fcd34d",lineHeight:1.5}}>Edits to this Panel may create a new Quote Revision. Check with the Project Owner before proceeding.</div>
+                    <button
+                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>setShowSentEditConfirm(true)}
                       disabled={ownerPriorityActive}
                       title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
-                      style={{background:"none",border:"1px solid #f59e0b44",borderRadius:6,color:"#f59e0b",cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:11,padding:"2px 10px",fontWeight:600,opacity:ownerPriorityActive?0.45:1}}>Unlock</button>}
+                      style={{background:"none",border:"1px solid #f59e0b88",borderRadius:6,color:"#fbbf24",cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:11,padding:"4px 10px",fontWeight:700,opacity:ownerPriorityActive?0.45:1,alignSelf:"flex-start"}}>
+                      Verify with Project Owner & Enable Edits
+                    </button>
+                  </div>
+                )}
+                {project.quoteSentAt&&sentQuoteAckGiven&&(
+                  <div style={{marginTop:6,padding:"6px 10px",background:"#0d2010",border:"1px solid #4ade8044",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                    <span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✎ Edits enabled — next save will bump Quote Rev</span>
+                    <button onClick={()=>setSentQuoteAckGiven(false)} style={{background:"none",border:"1px solid #4ade8044",borderRadius:6,color:"#86efac",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:600}}>Re-lock</button>
                   </div>
                 )}
                 {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button
@@ -21791,6 +21848,28 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
     {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)} ownerPriorityActive={ownerPriorityActive}/>}
     {showCADLinkModal&&<CADLinkSendModal project={project} onClose={()=>setShowCADLinkModal(false)}/>}
+    {/* DECISION(v1.19.745): Sent-quote edit acknowledgment modal. Required to unlock
+        edits on a quote that's already gone to the customer. Shows the project owner's
+        contact info and demands a checkbox confirmation that the user has verified with
+        them. The Continue button is disabled until the checkbox is ticked. Per-session
+        only — re-arms whenever the project is reopened or another send happens. */}
+    {showSentEditConfirm&&ReactDOM.createPortal(
+      (()=>{
+        const ownerUid=project.createdBy;
+        const ownerViewer=ownerUid?(viewers||[]).find(v=>v.uid===ownerUid):null;
+        const ownerName=ownerViewer?.userName||(ownerViewer?.userEmail||"").split("@")[0]||"the Project Owner";
+        const ownerEmail=ownerViewer?.userEmail||"";
+        const sentDate=project.quoteSentAt?new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—";
+        const sentRev=String(project.quoteSentRev||0).padStart(2,"0");
+        const sentTo=project.quoteSentTo||"the customer";
+        return <SentQuoteEditConfirm
+          ownerName={ownerName} ownerEmail={ownerEmail}
+          sentDate={sentDate} sentRev={sentRev} sentTo={sentTo}
+          onCancel={()=>setShowSentEditConfirm(false)}
+          onConfirm={()=>{setSentQuoteAckGiven(true);setShowSentEditConfirm(false);}}
+        />;
+      })(),
+    document.body)}
     {showUnlockConfirm&&ReactDOM.createPortal(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
         <div style={{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:440,boxShadow:"0 0 40px 10px rgba(245,158,11,0.3)"}}>
@@ -22385,8 +22464,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     }
   },[autoOpenPortal,portalSubmissions.length]);
   const saveTimer=useRef(null);
-  const readOnly=isReadOnly()||!!project.quoteLocked;
-  const quoteLocked=!!project.quoteLocked;
+  // DECISION(v1.19.745): Soft-block on sent quotes. Replaces the binary `quoteLocked`
+  // hard-block. Once a quote has been sent (project.quoteSentAt set), the panel card +
+  // BOM are read-only until the user explicitly acknowledges the warning and confirms
+  // they've verified with the Project Owner. The acknowledgment is per-session — it
+  // resets whenever the project is reopened or another send happens (so a new send
+  // always re-arms the soft-block).
+  const [sentQuoteAckGiven,setSentQuoteAckGiven]=useState(false);
+  const [showSentEditConfirm,setShowSentEditConfirm]=useState(false);
+  // Reset acknowledgment on project switch or whenever a new send happens.
+  useEffect(()=>{setSentQuoteAckGiven(false);},[project.id,project.quoteSentAt]);
+  const readOnly=isReadOnly()||(!!project.quoteSentAt&&!sentQuoteAckGiven);
+  const quoteLocked=!!project.quoteSentAt&&!sentQuoteAckGiven; // back-compat alias for UI checks
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
   const didMigrate=useRef(!init.panels);
 
