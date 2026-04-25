@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.742";
+const APP_VERSION="v1.19.743";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5231,6 +5231,34 @@ function computePanelBomHash(panel){
   for(let i=0;i<str.length;i++){h=((h<<5)+h)+str.charCodeAt(i);h=h&h;}
   return String(h);
 }
+// DECISION(v1.19.743): Per-panel "Drawing Version" — bumps each time the BOM is mutated
+// from its prior saved state. Initial extraction sets v.1; manual edits, re-extraction
+// with changed output, supplier-apply, scraper-apply all bump. Re-saves with no actual
+// BOM-hash change leave the version untouched. Existing pre-v1.19.743 panels with no
+// `bomVersion` field are NOT backfilled — first mutation under the new code assigns the
+// version going forward (treated as v.1+1=v.2 per "any change from original = v.2").
+// Returns a (possibly) updated panel; safe to use in any save path.
+function _bumpBomVersionIfChanged(newPanel,existingPanel){
+  if(!newPanel)return newPanel;
+  const newCount=(newPanel.bom||[]).filter(r=>!r.isLaborRow).length;
+  const oldCount=existingPanel?(existingPanel.bom||[]).filter(r=>!r.isLaborRow).length:0;
+  // Case A — first BOM ever for this panel (initial extraction). v.1.
+  if(oldCount===0&&newCount>0&&newPanel.bomVersion==null){
+    return{...newPanel,bomVersion:1};
+  }
+  // Case B — BOM hash changed AND there was a prior BOM. Bump.
+  if(oldCount>0){
+    const oldHash=computePanelBomHash(existingPanel);
+    const newHash=computePanelBomHash(newPanel);
+    if(oldHash!==newHash){
+      const next=(existingPanel.bomVersion??1)+1;
+      return{...newPanel,bomVersion:next};
+    }
+  }
+  // Case C — no change, or no prior BOM and incoming is empty. Leave alone (no backfill).
+  return newPanel;
+}
+if(typeof window!=="undefined"){window._bumpBomVersionIfChanged=_bumpBomVersionIfChanged;}
 
 // ── FIRESTORE ──
 const _saveHighWater={}; // {projectId: {panelCount, panels:[{pages,bomItems,savedPages,savedBom,...}]}}
@@ -5292,6 +5320,22 @@ async function saveProject(uid,project){
         }
       }
     }catch(e){console.warn("saveProject storageUrl guard read failed:",e.message);}
+    // DECISION(v1.19.743): Drawing Version bump on whole-project save. Mirrors the
+    // saveProjectPanel logic — any panel whose BOM hash differs from its Firestore copy
+    // gets its bomVersion bumped (or initialized to v.1 on first BOM ever). See
+    // _bumpBomVersionIfChanged above for the rule. Reads the same Firestore doc that the
+    // storageUrl guard above already fetched if available.
+    try{
+      const cur=await ref.get();
+      if(cur.exists){
+        const curPanels=cur.data().panels||[];
+        for(let i=0;i<newPanels.length;i++){
+          const np=newPanels[i];
+          const cp=curPanels.find(p=>p.id===np.id);
+          newPanels[i]=_bumpBomVersionIfChanged(np,cp);
+        }
+      }
+    }catch(e){console.warn("saveProject bomVersion guard read failed:",e.message);}
     // Update high-water marks from what we're about to save
     _saveHighWater[project.id]={panelCount:newPanels.length,panels:newPanels.map(p=>({
       pages:(p.pages||[]).length,bomItems:(p.bom||[]).filter(r=>!r.isLaborRow).length,
@@ -5413,6 +5457,14 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
         safeUpdated={...safeUpdated,pages:mergedPages};
       }
     }
+    // DECISION(v1.19.743): Drawing Version bump. Compares the BOM hash of the incoming
+    // panel against the Firestore copy and assigns a fresh `bomVersion` when they differ.
+    // First-ever BOM extraction sets v.1; any subsequent BOM mutation (manual edit, re-
+    // extract with new output, supplier-apply, scraper-apply) bumps. Re-saves with no BOM
+    // change leave the field untouched. Existing pre-v1.19.743 panels with no version stay
+    // un-versioned until their first mutation under the new code (per user spec — "leave
+    // existing panels as-is").
+    safeUpdated=_bumpBomVersionIfChanged(safeUpdated,existingTarget);
     let panels=(proj.panels||[]).map(p=>p.id===panelId?safeUpdated:p);
     // If panel wasn't found in existing array, append it
     if(!panels.some(p=>p.id===panelId))panels=[...panels,safeUpdated];
@@ -14095,7 +14147,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
         const scanned=`Scanned ${String(d.getDate()).padStart(2,'0')}-${mon}-${String(d.getFullYear()).slice(2)}`;
         const rev=quoteRev||0;
-        const stampLabel=rev===0?`AS-QUOTED · ${scanned}`:`AS-QUOTED REV ${String(rev).padStart(2,'0')} · ${scanned}`;
+        // DECISION(v1.19.743): Stamp now includes the panel's Drawing Version (v.N).
+        // Quote Rev = customer-facing version; Drawing Version = internal BOM iteration.
+        const livePan=latestPanelRef.current||_stampPanel;
+        const dwgV=livePan?.bomVersion;
+        const dwgVStr=dwgV!=null?` · v.${dwgV}`:"";
+        const stampLabel=rev===0?`AS-QUOTED${dwgVStr} · ${scanned}`:`AS-QUOTED Q-REV ${String(rev).padStart(2,'0')}${dwgVStr} · ${scanned}`;
         const hazloc=(ctx&&'hazloc' in ctx)?!!ctx.hazloc:(latestPanelRef.current?.hazardousLocation?.found||_stampPanel.hazardousLocation?.found);
         const rightParts=[hazloc?'UL698/1203':null,_stampBcProjNo?`${_stampBcProjNo} - ${String((idx+1)*100)}`:null,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ');
         return burnStampCanvas(dataUrl,{
@@ -14235,7 +14292,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           // DECISION(v1.19.533): Stamp mode determines label and color
           const sMode=uploadOpts.stampMode||'as_quoted';
           const stampPrefix=sMode==='quote_ready'?'QUOTE READY':sMode==='ready_to_produce'?'READY TO PRODUCE':'AS-QUOTED';
-          const stampLabel=rev===0?`${stampPrefix} · ${scanned}`:`${stampPrefix} REV ${String(rev).padStart(2,'0')} · ${scanned}`;
+          // DECISION(v1.19.743): Include Drawing Version (v.N) on the BC drawing stamp.
+          const dwgV=panel?.bomVersion;
+          const dwgVStr=dwgV!=null?` · v.${dwgV}`:"";
+          const stampLabel=rev===0?`${stampPrefix}${dwgVStr} · ${scanned}`:`${stampPrefix} Q-REV ${String(rev).padStart(2,'0')}${dwgVStr} · ${scanned}`;
           imgData=await burnStampCanvas(pg.dataUrl,{
             left:stampLabel,
             center:`${i+1} of ${totalPg}`,
@@ -14256,7 +14316,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // DECISION(v1.19.533): Filename based on stamp mode — archive old versions (don't delete)
       const sMode=uploadOpts.stampMode||'as_quoted';
       const fileLabel=isProduction?'APPROVED TO PRODUCE':sMode==='quote_ready'?'QUOTE READY':sMode==='ready_to_produce'?'READY TO PRODUCE':'AS-QUOTED';
-      const fileName=`DWG-[${fileLabel}${revTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
+      // DECISION(v1.19.743): Filename now embeds the Drawing Version (DWG-vN) alongside
+      // the Quote Rev tag. Q-REV NN reflects the customer-facing quote rev; DWG-vN reflects
+      // the panel's internal BOM iteration. Together they uniquely identify each PDF.
+      const dwgVTag=panel?.bomVersion!=null?` DWG-v${panel.bomVersion}`:"";
+      const qRevTag=revTag?revTag.replace(/^ REV /,' Q-REV '):"";
+      const fileName=`DWG-[${fileLabel}${qRevTag}${dwgVTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
       setAttachPdfMsg("Uploading to BC…");
       const pdfBytes=doc.output("arraybuffer");
       // Clean up old bad-formatted files from previous code bugs
@@ -16194,6 +16259,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
           <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:2}}>DRAWINGS</div>
+          {/* DECISION(v1.19.743): Drawing Version chip — shows v.N next to the DRAWINGS
+              header. Bumps automatically when the BOM hash changes. Hidden when the panel
+              has no version yet (existing pre-v1.19.743 panels until their first edit). */}
+          {panel.bomVersion!=null&&(
+            <span title={`Drawing Version — bumps each time the BOM is changed (currently v.${panel.bomVersion})`}
+              style={{fontSize:11,fontWeight:700,color:"#a78bfa",background:"rgba(167,139,250,0.12)",border:"1px solid #a78bfa55",borderRadius:6,padding:"2px 8px",letterSpacing:0.3}}>
+              v.{panel.bomVersion}
+            </span>
+          )}
           {!readOnly&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(
             <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Re-run AI extraction on tagged BOM pages — uses region crops if defined"}
               onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{
