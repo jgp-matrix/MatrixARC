@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.739";
+const APP_VERSION="v1.19.740";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1225,6 +1225,58 @@ if(typeof window!=="undefined"){
   window._computePanelLeadDriversLine=_computePanelLeadDriversLine;
   window._computeProjectLeadDriversLine=_computeProjectLeadDriversLine;
   window._refreshLeadDriversInQuote=_refreshLeadDriversInQuote;
+}
+
+// DECISION(v1.19.740): AI lead times present → quote is not firm. Helpers to detect
+// AI-sourced lead times, auto-flip panels into "Budgetary" when the user tries to print
+// or send a quote, and offer to revert the Budgetary flag once every AI estimate has
+// been replaced with a firm (manual/supplier/BC/scraper) lead time.
+//
+// The auto-set leaves a sentinel `isBudgetaryAiAutoSet: true` on panel.pricing so we can
+// tell ARC-set budgetary apart from a user-set one — we only propose to clear the flag
+// when ARC was the one that set it. A manually-checked Budgetary box is never touched.
+function _hasAiLeadTimes(project){
+  return (project?.panels||[]).some(p=>
+    (p.bom||[]).some(r=>!r.isLaborRow&&r.leadTimeSource==="ai")
+  );
+}
+function _countAiLeadTimes(project){
+  return (project?.panels||[]).reduce((n,p)=>
+    n+(p.bom||[]).filter(r=>!r.isLaborRow&&r.leadTimeSource==="ai").length,0);
+}
+// Mark every panel as budgetary and record that ARC did it. Returns {updatedProject, changed}.
+function _markProjectBudgetaryForAiLeads(project){
+  let changed=false;
+  const panels=(project.panels||[]).map(p=>{
+    const pr=p.pricing||{};
+    if(pr.isBudgetary)return p; // user already checked it, or a previous pass already flipped it
+    changed=true;
+    return{...p,pricing:{...pr,isBudgetary:true,isBudgetaryAiAutoSet:true}};
+  });
+  return{updatedProject:changed?{...project,panels}:project,changed};
+}
+// Clear the auto-set budgetary flag (and the sentinel). Only affects panels where ARC
+// auto-set the flag — user-marked budgetary panels are left alone.
+function _clearAutoBudgetary(project){
+  let changed=false;
+  const panels=(project.panels||[]).map(p=>{
+    const pr=p.pricing||{};
+    if(!pr.isBudgetaryAiAutoSet)return p;
+    changed=true;
+    const{isBudgetaryAiAutoSet:_a,isBudgetary:_b,...rest}=pr;
+    return{...p,pricing:rest};
+  });
+  return{updatedProject:changed?{...project,panels}:project,changed};
+}
+function _hasArcAutoBudgetary(project){
+  return (project?.panels||[]).some(p=>(p.pricing||{}).isBudgetaryAiAutoSet);
+}
+if(typeof window!=="undefined"){
+  window._hasAiLeadTimes=_hasAiLeadTimes;
+  window._countAiLeadTimes=_countAiLeadTimes;
+  window._markProjectBudgetaryForAiLeads=_markProjectBudgetaryForAiLeads;
+  window._clearAutoBudgetary=_clearAutoBudgetary;
+  window._hasArcAutoBudgetary=_hasArcAutoBudgetary;
 }
 
 // Load MSAL on demand — not at page load (avoids conflict with Firebase Microsoft auth)
@@ -20249,6 +20301,25 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       alert(formatIncompleteQuoteAlert(incompleteItems));
       return;
     }
+    // DECISION(v1.19.740): AI-lead-time warning + auto-budgetary flip. If any BOM row
+    // is sourced from AI, the ship-date math is an estimate — force the quote into
+    // Budgetary mode (with an ARC-set sentinel) before the PDF is generated so the
+    // BUDGETARY banner renders. One confirm dialog gives the user a chance to cancel
+    // and replace the AI values first.
+    const aiCount=_countAiLeadTimes(project);
+    if(aiCount>0){
+      const proceed=confirm(
+        `This quote contains ${aiCount} AI-estimated lead time${aiCount>1?"s":""}.\n\n`+
+        "Sending will mark the quote as BUDGETARY until those lead times are replaced with firm values.\n\n"+
+        "OK to continue, or Cancel to review the Lead column first."
+      );
+      if(!proceed)return;
+      const{updatedProject,changed}=_markProjectBudgetaryForAiLeads(project);
+      if(changed){
+        onUpdate(updatedProject);
+        try{await safeSave(uid,updatedProject);}catch(e){console.warn("[BUDGETARY AUTO] save failed:",e);}
+      }
+    }
     if(sendMode==="new"&&!m.to.trim()){alert("Enter a recipient email.");return;}
     if(sendMode==="reply"&&!selectedThread){alert("Select an email thread to reply to.");return;}
     // DECISION(v1.19.667): Validate recipient emails before send. Catches typos like
@@ -22233,6 +22304,44 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     return()=>{if(_leadDriversRefreshTimer.current)clearTimeout(_leadDriversRefreshTimer.current);};
   },[_leadDriversSig]);
 
+  // DECISION(v1.19.740): When every AI lead time has been replaced with a firm value AND
+  // the only reason Budgetary was on was because ARC auto-flipped it (sentinel: isBudgetaryAiAutoSet),
+  // offer to clear the flag. Runs off the same signature as the lead-drivers refresh,
+  // debounced separately. Only prompts once per "transition" — we guard with a ref so the
+  // question doesn't re-fire on every keystroke inside the lead column.
+  const _budgPromptShownRef=useRef(false);
+  useEffect(()=>{
+    const cur=projectRef.current;
+    if(!cur)return;
+    const hasAi=_hasAiLeadTimes(cur);
+    const hasAutoBudg=_hasArcAutoBudgetary(cur);
+    if(hasAi){
+      // AI leads are back (user re-ran extraction, etc.) — reset the one-shot prompt gate.
+      _budgPromptShownRef.current=false;
+      return;
+    }
+    if(!hasAutoBudg)return;
+    if(_budgPromptShownRef.current)return;
+    _budgPromptShownRef.current=true;
+    // Debounce a beat so the prompt fires once per transition, not on every character.
+    const t=setTimeout(()=>{
+      const latest=projectRef.current;
+      if(!latest||_hasAiLeadTimes(latest)||!_hasArcAutoBudgetary(latest))return;
+      const ok=window.confirm(
+        "All AI-estimated lead times on this quote have been replaced with firm values.\n\n"+
+        "ARC had automatically marked the panel(s) as Budgetary because of the AI estimates.\n\n"+
+        "Remove the Budgetary flag now?"
+      );
+      if(!ok)return;
+      const{updatedProject,changed}=_clearAutoBudgetary(latest);
+      if(changed){
+        update(updatedProject);
+        safeSave(uid,updatedProject).catch(e=>console.warn("[BUDGETARY AUTO] clear save failed:",e));
+      }
+    },600);
+    return()=>clearTimeout(t);
+  },[_leadDriversSig]);
+
   // DECISION(v1.19.460): Full BC sync on project open — ensures planning lines are current.
   // Debounced 2s to let BC token auto-connect. Skip if locked.
   const bcOpenSyncRan=useRef(false);
@@ -22522,10 +22631,34 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       proj={...proj,quote:{...q,...autoFields}};
       setProject(proj);projectRef.current=proj;onChange(proj);saveProject(uid,proj);
     }
+    // DECISION(v1.19.740): AI lead times in the BOM mean the ship-date math is built on
+    // estimates. Flip every panel into Budgetary (with an auto-set sentinel) before the
+    // pre-print checklist so the quote PDF renders with the BUDGETARY banner. The user
+    // is warned about the auto-flip via a checklist entry below.
+    if(_hasAiLeadTimes(projectRef.current)){
+      const{updatedProject,changed}=_markProjectBudgetaryForAiLeads(projectRef.current);
+      if(changed){
+        setProject(updatedProject);projectRef.current=updatedProject;onChange(updatedProject);
+        safeSave(uid,updatedProject).catch(e=>console.warn("[BUDGETARY AUTO] save failed:",e));
+      }
+    }
+
     // DECISION(v1.19.487): Unified pre-print checklist — gather ALL checks at once, show single modal.
     const now=Date.now();
     const staleMs=60*24*60*60*1000;
     const issues=[];
+
+    // DECISION(v1.19.740): Show the auto-flip as a checklist entry so the user sees it.
+    // Not dismissible — informational. The print proceeds with BUDGETARY stamped.
+    const aiLeadCount=_countAiLeadTimes(projectRef.current);
+    if(aiLeadCount>0){
+      issues.push({
+        type:"ailead",
+        label:`${aiLeadCount} AI-estimated lead time${aiLeadCount>1?"s":""}`,
+        detail:"Quote auto-flagged BUDGETARY until these are replaced with firm lead times.",
+        checked:true,
+      });
+    }
 
     // Check 1: BC Sync needed?
     const bcNum=projectRef.current.bcProjectNumber;
