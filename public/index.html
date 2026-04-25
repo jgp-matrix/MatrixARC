@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.743";
+const APP_VERSION="v1.19.744";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5260,6 +5260,45 @@ function _bumpBomVersionIfChanged(newPanel,existingPanel){
 }
 if(typeof window!=="undefined"){window._bumpBomVersionIfChanged=_bumpBomVersionIfChanged;}
 
+// DECISION(v1.19.744): Quote-relevant content hash — used to detect any change that
+// should bump the project-level Quote Rev. Covers everything that appears on the printed
+// quote document or affects its math: per-panel BOM (qty, price, lead time, source, PN,
+// description, manufacturer, notes), drawing identity + version + page count, ship dates,
+// pricing config, line qty, and the entire `project.quote` blob (markup, terms, line
+// notes, contacts, addresses, etc.).
+function _computeQuoteHash(project){
+  if(!project)return"";
+  const data={
+    panels:(project.panels||[]).map(p=>({
+      drawingNo:p.drawingNo||"",
+      drawingDesc:p.drawingDesc||"",
+      drawingRev:p.drawingRev||"",
+      bomVersion:p.bomVersion??null,
+      bomNotes:p.bomNotes||"",
+      requestedShipDate:p.requestedShipDate||"",
+      productionEndDate:p.productionEndDate||"",
+      pageCount:(p.pages||[]).length,
+      lineQty:p.lineQty??1,
+      pricing:p.pricing||null,
+      bom:(p.bom||[]).filter(r=>!r.isLaborRow).map(r=>({
+        pn:(r.partNumber||"").trim(),
+        q:r.qty||0,
+        up:r.unitPrice||0,
+        ld:r.leadTimeDays??null,
+        ls:r.leadTimeSource||"",
+        d:(r.description||"").trim(),
+        m:(r.manufacturer||"").trim(),
+      })),
+    })),
+    quote:project.quote||{},
+  };
+  const str=JSON.stringify(data);
+  let h=5381;
+  for(let i=0;i<str.length;i++){h=((h<<5)+h)+str.charCodeAt(i);h=h&h;}
+  return String(h);
+}
+if(typeof window!=="undefined"){window._computeQuoteHash=_computeQuoteHash;}
+
 // ── FIRESTORE ──
 const _saveHighWater={}; // {projectId: {panelCount, panels:[{pages,bomItems,savedPages,savedBom,...}]}}
 async function saveProject(uid,project){
@@ -5293,15 +5332,20 @@ async function saveProject(uid,project){
         }
       }
     }
-    // DECISION(v1.19.739): Per-page storageUrl regression guard. Parallels the fix in
-    // saveProjectPanel — see that decision block for the full failure mode. Reads the
-    // current Firestore doc once and, for every page in the incoming save that lacks
-    // storageUrl, restores it from the Firestore copy matched by id. Prevents stale UI
-    // state from clobbering URLs that a background extraction just stamped.
+    // DECISION(v1.19.744): Consolidated single Firestore read powering THREE guards:
+    //   (1) storageUrl regression guard (v1.19.739) — restore URLs that stale incoming
+    //       saves dropped.
+    //   (2) bomVersion bump (v1.19.743) — bump per-panel Drawing Version when BOM hash
+    //       differs.
+    //   (3) quoteRev bump (v1.19.744) — bump project-level Quote Rev when ANY quote-
+    //       relevant content has changed since the last persisted state.
+    // Single ref.get() per save to keep latency low.
+    let _curDoc=null;
     try{
-      const cur=await ref.get();
-      if(cur.exists){
-        const curPanels=cur.data().panels||[];
+      _curDoc=await ref.get();
+      if(_curDoc.exists){
+        const curPanels=_curDoc.data().panels||[];
+        // (1) storageUrl regression guard
         for(let i=0;i<newPanels.length;i++){
           const np=newPanels[i];
           const cp=curPanels.find(p=>p.id===np.id);
@@ -5318,24 +5362,35 @@ async function saveProject(uid,project){
             newPanels[i]={...np,pages:merged};
           }
         }
-      }
-    }catch(e){console.warn("saveProject storageUrl guard read failed:",e.message);}
-    // DECISION(v1.19.743): Drawing Version bump on whole-project save. Mirrors the
-    // saveProjectPanel logic — any panel whose BOM hash differs from its Firestore copy
-    // gets its bomVersion bumped (or initialized to v.1 on first BOM ever). See
-    // _bumpBomVersionIfChanged above for the rule. Reads the same Firestore doc that the
-    // storageUrl guard above already fetched if available.
-    try{
-      const cur=await ref.get();
-      if(cur.exists){
-        const curPanels=cur.data().panels||[];
+        // (2) bomVersion bump
         for(let i=0;i<newPanels.length;i++){
           const np=newPanels[i];
           const cp=curPanels.find(p=>p.id===np.id);
           newPanels[i]=_bumpBomVersionIfChanged(np,cp);
         }
+        // (3) quoteRev bump — compute hash AFTER bomVersion has been applied so
+        // version changes are part of the quote-state hash. Compare to the last-
+        // persisted hash; if different, bump quoteRev and record the new hash. First
+        // save under the new logic seeds quoteRev=1 + lastQuoteHash without bumping.
+        const oldQuoteHash=_curDoc.data().lastQuoteHash;
+        const newQuoteHash=_computeQuoteHash(data);
+        if(oldQuoteHash){
+          if(newQuoteHash!==oldQuoteHash){
+            data.quoteRev=(data.quoteRev||1)+1;
+            data.lastQuoteHash=newQuoteHash;
+            console.log(`[QUOTE REV] bumped to ${data.quoteRev}`);
+          }
+        }else{
+          // First save with the new system — initialize without bumping
+          data.quoteRev=data.quoteRev||1;
+          data.lastQuoteHash=newQuoteHash;
+        }
+      }else{
+        // No prior Firestore doc (brand-new project) — seed quoteRev=1.
+        data.quoteRev=1;
+        data.lastQuoteHash=_computeQuoteHash(data);
       }
-    }catch(e){console.warn("saveProject bomVersion guard read failed:",e.message);}
+    }catch(e){console.warn("saveProject consolidated guards read failed:",e.message);}
     // Update high-water marks from what we're about to save
     _saveHighWater[project.id]={panelCount:newPanels.length,panels:newPanels.map(p=>({
       pages:(p.pages||[]).length,bomItems:(p.bom||[]).filter(r=>!r.isLaborRow).length,
@@ -5477,8 +5532,22 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
       }
       return p;
     });
-    const liveProject={...proj,panels,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
-    const stripped=JSON.parse(JSON.stringify({...liveProject,panels:panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
+    let liveProject={...proj,panels,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
+    // DECISION(v1.19.744): Quote Rev bump on per-panel save. Same logic as in saveProject —
+    // hash the quote-relevant content; if it differs from the persisted hash, bump.
+    // saveProjectPanel is the more common save path (every BOM-row edit hits it), so this
+    // is where most live-bumps actually fire.
+    const oldQuoteHash=proj.lastQuoteHash;
+    const newQuoteHash=_computeQuoteHash(liveProject);
+    if(oldQuoteHash){
+      if(newQuoteHash!==oldQuoteHash){
+        liveProject={...liveProject,quoteRev:(liveProject.quoteRev||1)+1,lastQuoteHash:newQuoteHash};
+        console.log(`[QUOTE REV] bumped to ${liveProject.quoteRev} (panel save)`);
+      }
+    }else{
+      liveProject={...liveProject,quoteRev:liveProject.quoteRev||1,lastQuoteHash:newQuoteHash};
+    }
+    const stripped=JSON.parse(JSON.stringify({...liveProject,panels:liveProject.panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
     await ref.set(stripped);
     if(!skipNotify)notifyProjectListeners(projectId,liveProject);
   }finally{resolve();delete _panelSaveLocks[lockKey];}
@@ -22463,18 +22532,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     return()=>clearTimeout(t);
   },[]);
 
-  const revBumpTimer=useRef(null);
+  // DECISION(v1.19.744): Removed the legacy lastPrintedBomHash-based auto-bump. Quote Rev
+  // is now bumped by saveProject and saveProjectPanel based on a content-hash compare
+  // against the last persisted state — every quote-relevant change ticks the rev. This
+  // function just propagates state and lets the next save fire the bump on its own.
   function update(p){
-    // Auto-bump quote revision when BOM changes after a print (debounced to avoid stacking)
-    if(p.lastPrintedBomHash){
-      const curHash=computeBomHash(p.panels);
-      if(curHash!==p.lastPrintedBomHash&&(p.quoteRev||0)===(p.quoteRevAtPrint||0)){
-        p={...p,quoteRev:(p.quoteRev||0)+1};
-        // Save the revision bump after a short delay (prevents stacking from rapid updates)
-        if(revBumpTimer.current)clearTimeout(revBumpTimer.current);
-        revBumpTimer.current=setTimeout(()=>{safeSave(uid,projectRef.current);},2000);
-      }
-    }
     lastSavedAt.current=Date.now();
     setProject(p);projectRef.current=p;onChange(p);
   }
