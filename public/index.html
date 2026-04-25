@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.740";
+const APP_VERSION="v1.19.741";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -6170,9 +6170,14 @@ const NON_BOM_PN_PATTERNS=[
   // Barcode filtering now relies on structural checks (4-field rule) — a real barcode row
   // from a title block lacks manufacturer/description so gets caught by the structural pass.
 ];
-// Description patterns that strongly indicate a SHEET TITLE (not a component description)
+// DECISION(v1.19.741): Description patterns that strongly indicate a SHEET TITLE (not a
+// component description). Removed "end cover" and "panel grounding" — both are legitimate
+// component descriptions used by Phoenix Contact, Wago, Allen-Bradley, etc. for terminal-
+// block accessories. Reported false positive: PRJ402079 had Phoenix Contact PN 3047028
+// (a real end-cover part) filtered out as a non-BOM row. Remaining patterns only match
+// strings that are unambiguously drawing/sheet artifacts and never component names.
 const NON_BOM_DESC_PATTERNS=[
-  /^(panel grounding|end cover|list of assemblies|electrical schematic diagram|schematic diagram|drawing index|sheet index|title page|cover sheet|cover page|revision block|notes page|legend page|general notes)$/i,
+  /^(list of assemblies|electrical schematic diagram|schematic diagram|drawing index|sheet index|title page|cover sheet|cover page|revision block|notes page|legend page|general notes)$/i,
   /^drawing (no|number|list|index)/i,
   /^sheet (no|number|index|list)/i,
   /^title none$/i,
@@ -6205,7 +6210,12 @@ function filterNonBomRows(bom){
       dropped.push({partNumber:pn,description:desc,reason:`Sheet identifier / drawing reference — not a component`});
       continue;
     }
-    if(NON_BOM_DESC_PATTERNS.some(re=>re.test(desc))){
+    // DECISION(v1.19.741): Description-pattern check requires the manufacturer to ALSO
+    // be missing. A real component with this description (e.g. Phoenix Contact 3047028
+    // "End cover") will always have a manufacturer; a drawing-sheet artifact won't.
+    // Guards against the PRJ402079 false-positive where a legit Phoenix Contact PN was
+    // dropped purely because its description matched a sheet-title regex.
+    if(NON_BOM_DESC_PATTERNS.some(re=>re.test(desc))&&mfr.length<2){
       dropped.push({partNumber:pn,description:desc,reason:`Description is a drawing sheet title — not a component`});
       continue;
     }
@@ -6293,7 +6303,9 @@ SPATIAL CUES to distinguish BOM from title block:
 • TITLE BLOCKS are always anchored at the BOTTOM edge, typically bottom-right corner. Anything in the lower ~15% of the page is suspect unless it's clearly part of a multi-row BOM table.
 • SHEET INDEX tables often have only 2 columns (sheet number + title) — they LACK the manufacturer and quantity columns that BOMs have. That missing-columns pattern is the dead giveaway.
 
-STRICT RULE: If you're about to emit a row where partNumber contains "=" or "+" symbols in a sheet-identifier pattern (like =XX+AXX/NN), OR where the row has no manufacturer, OR where the description is a drawing sheet title like "Panel Grounding" / "End cover" / "Electrical Schematic Diagram" / "List of Assemblies" — STOP. That row is a sheet reference, not a component. Do not emit it.
+STRICT RULE: If you're about to emit a row where partNumber contains "=" or "+" symbols in a sheet-identifier pattern (like =XX+AXX/NN), OR where the row has no manufacturer, OR where the description is unambiguously a drawing sheet title like "Electrical Schematic Diagram" / "List of Assemblies" / "Drawing Index" / "Sheet Index" / "Title Page" / "Revision Block" / "Notes" / "Legend" — STOP. That row is a sheet reference, not a component. Do not emit it.
+
+NOTE: Phrases like "End cover", "End plate", "Partition plate", "End bracket", "Panel grounding kit" CAN be legitimate component descriptions — they are common terminal-block accessories (Phoenix Contact, Wago, Allen-Bradley, etc.). If a row has a real part number and a manufacturer alongside one of these phrases, it IS a component — emit it normally. Only treat them as sheet references if the row also lacks a manufacturer or has a sheet-identifier-style part number.
 
 STEP 1 — IDENTIFY THE BOM TABLE:
 First confirm the page actually contains a BOM table (the 4-column grid defined above). If the page is a cover sheet, schematic, layout drawing, or title block only, return {"items":[],"questions":[]} with no items.
@@ -6785,7 +6797,10 @@ RULES:
         // return it as the row's "true" value. Even with the page-id fix, this belt-and-
         // suspenders rejects any obviously wrong substitution.
         const looksLikeSheetId=s=>/^=?[A-Za-z]+\d*\+[A-Za-z]+\d+\/\d+$/.test((s||"").trim());
-        const looksLikeSheetTitle=s=>/^(panel grounding|end cover|list of assemblies|electrical schematic diagram|panel layout|title page|title none|sheet overview|symbol overview|power supply)$/i.test((s||"").trim());
+        // DECISION(v1.19.741): Removed "panel grounding" and "end cover" — both are valid
+        // Phoenix Contact / Wago / AB terminal-block accessory descriptions and were causing
+        // false-positive snippet-correction rejects. See filterNonBomRows for matching fix.
+        const looksLikeSheetTitle=s=>/^(list of assemblies|electrical schematic diagram|panel layout|title page|title none|sheet overview|symbol overview|power supply)$/i.test((s||"").trim());
         // DECISION(v1.19.649): If snippet's PN matches another existing row's PN, it's
         // adjacent-row drift — the whole snippet payload is from the wrong row. Reject
         // EVERYTHING (qty, desc, mfr included) for this row. Don't try to salvage any field.
