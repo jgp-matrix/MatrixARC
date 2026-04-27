@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.750";
+const APP_VERSION="v1.19.751";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20804,7 +20804,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   </>,document.body);
 }
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -21879,11 +21879,37 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     <button onClick={()=>setSentQuoteAckGiven(false)} style={{background:"none",border:"1px solid #4ade8044",borderRadius:6,color:"#86efac",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:600}}>Re-lock</button>
                   </div>
                 )}
-                {!readOnly&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&<button
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:onPoReceived}
-                  disabled={ownerPriorityActive}
-                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
-                  style={btn("#0d1a10","#4ade80",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #4ade8044",fontWeight:700,opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>📬 PO Received</button>}
+                {!readOnly&&!project.lostAt&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&(
+                  <div style={{display:"flex",gap:6,alignItems:"stretch",width:"100%"}}>
+                    <button
+                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:onPoReceived}
+                      disabled={ownerPriorityActive}
+                      title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                      style={btn("#0d1a10","#4ade80",{fontSize:14,padding:"8px 18px",flex:1,border:"1px solid #4ade8044",fontWeight:700,opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>📬 PO Received</button>
+                    {/* DECISION(v1.19.751): Smaller "LOST" sibling button — flips the project
+                        into the Lost Projects bucket. Confirmation required. Owner-priority
+                        gate matches PO Received for consistency. */}
+                    <button
+                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{
+                        if(!confirm(`Mark "${project.name||project.bcProjectNumber||"this project"}" as LOST?\n\nIt will be removed from the active kanban and moved into the Lost Projects filter.\n\nYou can un-mark it later from the same project page.`))return;
+                        if(onMarkLost)onMarkLost();
+                      }}
+                      disabled={ownerPriorityActive}
+                      title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Mark this project as Lost"}
+                      style={btn("#1f0a0a","#ef4444",{fontSize:11,padding:"4px 10px",border:"1px solid #ef444466",fontWeight:700,letterSpacing:0.5,opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>LOST</button>
+                  </div>
+                )}
+                {!readOnly&&project.lostAt&&(
+                  <div style={{padding:"8px 14px",background:"#1f0a0a",border:"1px solid #ef444466",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                    <span style={{fontSize:12,fontWeight:700,color:"#fca5a5"}}>🗙 Marked LOST {project.lostAt?new Date(project.lostAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):""}</span>
+                    <button
+                      onClick={()=>{
+                        if(!confirm(`Un-mark "${project.name||project.bcProjectNumber||"this project"}" as LOST and return it to the active kanban?`))return;
+                        if(onUnmarkLost)onUnmarkLost();
+                      }}
+                      style={{background:"none",border:"1px solid #fca5a566",borderRadius:6,color:"#fca5a5",cursor:"pointer",fontSize:11,padding:"3px 10px",fontWeight:600}}>Un-mark Lost</button>
+                  </div>
+                )}
                 {!readOnly&&sp.bcItemNumber&&(
                   <button
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{}}
@@ -23642,6 +23668,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             onOpenSupplierQuote={(bom,panelId)=>{if(portalSubmissions.length>0){setShowPortalModal(true);}else{setSqPanelBom(bom);setSqPanelId(panelId||null);setShowSqModal(true);}}}
             pendingRfqUploads={pendingRfqUploads}
             onPoReceived={()=>setShowPoModal(true)}
+            onMarkLost={()=>{
+              const upd={...project,lostAt:Date.now(),lostBy:uid,updatedAt:Date.now()};
+              update(upd);safeSave(uid,upd);
+            }}
+            onUnmarkLost={()=>{
+              const{lostAt:_la,lostBy:_lb,...rest}=project;
+              const upd={...rest,updatedAt:Date.now()};
+              update(upd);safeSave(uid,upd);
+            }}
             relinking={relinking}
             relinkMsg={relinkMsg}
             onRelink={relinkToBC}
@@ -27315,6 +27350,16 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
   const bgTasks=useBgTasks();
 
   function groupProjects(list){
+    // DECISION(v1.19.751): "Lost" is a top-level filter, not a column. Strip lost projects
+    // out of every other view's input list so they don't clutter columns or all-views;
+    // they only show up when the user explicitly clicks the Lost filter button (handled
+    // below) or the literal "all" view (which intentionally shows everything).
+    if(groupBy==="lost"){
+      return [{label:"Lost Projects",items:list.filter(p=>!!p.lostAt)}];
+    }
+    if(groupBy!=="all"){
+      list=list.filter(p=>!p.lostAt);
+    }
     if(groupBy==="customer"){
       const map={};
       list.forEach(p=>{
@@ -27470,6 +27515,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         {filterBtn("By Date","date")}
         {filterBtn("By Project #","projectnum")}
         {filterBtn("Budgetary","budgetary")}
+        {filterBtn("Lost","lost")}
         {filterBtn("Imported","imported")}
         {filterBtn("All","all")}
         <div style={{marginLeft:8,borderLeft:`1px solid ${C.border}`,paddingLeft:8}}>
@@ -27487,7 +27533,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       )}
 
       {(()=>{
-        let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="purchasing_kanban"||groupBy==="engineering"||groupBy==="budgetary"||groupBy==="production"||forceView==="purchasing"||forceView==="engineering"||forceView==="purchasing_kanban"||!p.importedFromBC));
+        let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="purchasing_kanban"||groupBy==="engineering"||groupBy==="budgetary"||groupBy==="lost"||groupBy==="production"||forceView==="purchasing"||forceView==="engineering"||forceView==="purchasing_kanban"||!p.importedFromBC));
         // "My Projects" filter — show only projects created by or assigned to current user
         if(myProjectsOnly){
           myProjects=myProjects.filter(p=>p.createdBy===uid||p.bcSalespersonCode===(_appCtx.role&&window._arcSalespersonCache?.find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Code));
