@@ -20973,7 +20973,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 DECISION(v1.19.758): Eligibility broadened to also include anyone with
                 the granular `permissions.reviewer` flag (set in the Team & Permissions
                 modal). Admins still pass via the existing role check. */}
-            {!isReadOnly()&&(project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin"||hasPermission("reviewer"))&&(
+            {/* DECISION(v1.19.770): Designer-edit-review eligibility prefers the new
+                bcDesignerUid match (set when the project's Designer is a linked ARC
+                member). Falls back to the legacy displayName→BC code match for projects
+                created before the BC mapping cache existed. Admin + reviewer paths
+                unchanged. */}
+            {!isReadOnly()&&((project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid)||project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin"||hasPermission("reviewer"))&&(
               <div style={{display:"flex",gap:6}}>
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
@@ -21176,9 +21181,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   // doesn't import ProjectView's `iAmOwner` / `view` / `update`, so we compute
                   // owner status locally and use the existing `onUpdate` + `safeSave` plumbing
                   // already wired through props.
-                  var keys=[["bcSalesperson","bcSalespersonCode","CCS_Salesperson_Code"],["bcProjectManager","bcProjectManagerCode","Project_Manager"],["bcDesigner","bcDesignerCode","CCS_Designer"]][li];
+                  // DECISION(v1.19.770): Each row also writes a uidKey (e.g. bcDesignerUid)
+                  // resolved via window._arcUidForBcUser / _arcUidForBcSalesperson. Keeps the
+                  // ARC uid alongside the BC code so permission checks can match by identity
+                  // instead of fragile name comparisons. Legacy projects without uidKey fall
+                  // back to the existing name-match logic.
+                  var keys=[["bcSalesperson","bcSalespersonCode","CCS_Salesperson_Code","bcSalespersonUid"],["bcProjectManager","bcProjectManagerCode","Project_Manager","bcProjectManagerUid"],["bcDesigner","bcDesignerCode","CCS_Designer","bcDesignerUid"]][li];
                   var nm=project[keys[0]]||"";
-                  var codeKey=keys[1];var bcField=keys[2];
+                  var codeKey=keys[1];var bcField=keys[2];var uidKey=keys[3];
                   var iAmOwnerLocal=!project.createdBy||project.createdBy===uid;
                   // Hold-priority checkbox — only beneath the Sales column for the project owner
                   var holdEl=null;
@@ -21212,6 +21222,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         var code=e.target.value;
                         var cached=listSource.find(function(s){return s.Code===code;});
                         var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;
+                        // DECISION(v1.19.770): Resolve the ARC uid from the BC code via the
+                        // members cache. Salesperson uses _arcUidForBcSalesperson; PM and
+                        // Designer use _arcUidForBcUser (both pull from the BC /User page).
+                        // Null when no member is mapped to that code — backward compatible.
+                        var resolveUid=li===0?window._arcUidForBcSalesperson:window._arcUidForBcUser;
+                        upd[uidKey]=code&&typeof resolveUid==="function"?(resolveUid(code)||null):null;
                         // For salesperson, also update quote fields so the quote form shows the name
                         if(li===0&&cached){
                           upd.quote=Object.assign({},upd.quote||{});
@@ -26796,6 +26812,10 @@ function NewProjectModal({uid,onCreated,onClose}){
       const spName=salespersons.find(s=>s.Code===selectedSalesperson)?.Name||selectedSalesperson||"";
       const pmName=(designerList.length>0?designerList:salespersons).find(s=>s.Code===selectedPM)?.Name||selectedPM||"";
       const designerName=(designerList.length>0?designerList:salespersons).find(s=>s.Code===selectedDesigner)?.Name||selectedDesigner||"";
+      // DECISION(v1.19.770): Resolve ARC uids from BC codes via the members cache so the
+      // project record carries both identities from creation. Null when no member is mapped.
+      const _resolveUser=typeof window._arcUidForBcUser==="function"?window._arcUidForBcUser:()=>null;
+      const _resolveSales=typeof window._arcUidForBcSalesperson==="function"?window._arcUidForBcSalesperson:()=>null;
       const p=await saveProject(uid,{
         name:trimmed,
         bcProjectId:bc.id,
@@ -26805,10 +26825,13 @@ function NewProjectModal({uid,onCreated,onClose}){
         bcCustomerName:bc.customerName||selectedCustomer.displayName,
         bcSalespersonCode:selectedSalesperson||"",
         bcSalesperson:spName,
+        bcSalespersonUid:_resolveSales(selectedSalesperson)||null,
         bcProjectManager:pmName,
         bcProjectManagerCode:selectedPM||"",
+        bcProjectManagerUid:_resolveUser(selectedPM)||null,
         bcDesigner:designerName,
         bcDesignerCode:selectedDesigner||"",
+        bcDesignerUid:_resolveUser(selectedDesigner)||null,
         bcContactNo:selectedContact||"",
         bcContactName:(contactPersons.find(c=>c.number===selectedContact)||{}).displayName||"",
         bcContactEmail:(contactPersons.find(c=>c.number===selectedContact)||{}).email||"",
@@ -30135,6 +30158,27 @@ INSTRUCTIONS:
       if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();setProjects(ps=>[...ps]);fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
         // DECISION(v1.19.499): Load User list (page 774) for PM+Designer on app init
         fetch(BC_ODATA_BASE+"/User?$select=User_Name,Full_Name&$top=200",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d){window._arcDesignerCache=(d.value||[]).filter(function(u){return u.User_Name&&!/^USER_/i.test(u.User_Name)&&!/^BC\./i.test(u.User_Name);}).map(function(u){return{Code:u.User_Name,Name:u.Full_Name&&!u.Full_Name.startsWith("user_")?u.Full_Name:u.User_Name};});console.log("User list cached:",window._arcDesignerCache.length,"users");}}).catch(function(){});}}).catch(()=>{});}
+      // DECISION(v1.19.770): Cache company members on app boot so PanelListView dropdowns
+      // and the pre-review permission check can resolve `bcUserCode` / `bcSalespersonCode`
+      // → ARC uid without an extra Firestore read per render. Cache shape:
+      //   window._arcMembersCache = [{uid, email, displayName, bcUserCode, bcSalespersonCode, ...}]
+      // Helper accessors: window._arcUidForBcUser(code), window._arcUidForBcSalesperson(code).
+      if(_appCtx.companyId){
+        loadCompanyMembers(_appCtx.companyId).then(members=>{
+          window._arcMembersCache=members||[];
+          window._arcUidForBcUser=function(code){
+            if(!code)return null;
+            const m=(window._arcMembersCache||[]).find(x=>x.bcUserCode===code);
+            return m?m.uid:null;
+          };
+          window._arcUidForBcSalesperson=function(code){
+            if(!code)return null;
+            const m=(window._arcMembersCache||[]).find(x=>x.bcSalespersonCode===code);
+            return m?m.uid:null;
+          };
+          console.log("Members cached:",window._arcMembersCache.length,"members");
+        }).catch(e=>{console.warn("Members cache load failed:",e&&e.message);});
+      }
     })();
   },[user.uid]);
 
