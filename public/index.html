@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.757";
+const APP_VERSION="v1.19.758";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -1376,9 +1376,14 @@ window._arcDebug=false;
 const _dbg=(...a)=>{if(window._arcDebug)console.log(...a);};
 
 // ── APP CONTEXT ──
-let _appCtx={uid:null,companyId:null,role:null,projectsPath:null,configPath:null,company:{name:null,logoUrl:null,address:null,phone:null}};
+let _appCtx={uid:null,companyId:null,role:null,permissions:{},projectsPath:null,configPath:null,company:{name:null,logoUrl:null,address:null,phone:null}};
 function isReadOnly(){return _appCtx.role==="view";}
 function isAdmin(){return !!_appCtx.companyId&&_appCtx.role==="admin";}
+// DECISION(v1.19.758): Helper for granular permission checks. Returns true when the
+// current user has the named permission flag in companies/{cid}/members/{uid}.permissions
+// OR is an admin (admins implicitly have every permission). Add new flags by toggling
+// them in the Team & Permissions modal — no schema change needed.
+function hasPermission(name){return _appCtx.role==="admin"||!!(_appCtx.permissions&&_appCtx.permissions[name]);}
 
 // ── TOOLTIPS ──
 let _tooltipsEnabled=true; // default; loaded from Firestore after auth
@@ -21133,8 +21138,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             </div>
             {/* DECISION(v1.19.756): Approve/Return bypass `readOnly` (which is true during
                 pending review) — these buttons ARE the way to release the lock, so they
-                must stay clickable. Gated only on the reviewer's role. */}
-            {!isReadOnly()&&(project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin")&&(
+                must stay clickable. Gated only on the reviewer's role.
+                DECISION(v1.19.758): Eligibility broadened to also include anyone with
+                the granular `permissions.reviewer` flag (set in the Team & Permissions
+                modal). Admins still pass via the existing role check. */}
+            {!isReadOnly()&&(project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin"||hasPermission("reviewer"))&&(
               <div style={{display:"flex",gap:6}}>
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
@@ -21171,8 +21179,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               <div style={{fontSize:12,color:"#94a3b8"}}>PO #{project.bcPoNumber||"—"} received. Awaiting production readiness approval. Edits resume once the reviewer approves or returns the project.</div>
             </div>
             {/* DECISION(v1.19.756): Same bypass as pre-review — admins must be able to
-                approve post-review even though `readOnly` is true during pending review. */}
-            {!isReadOnly()&&_appCtx.role==="admin"&&(
+                approve post-review even though `readOnly` is true during pending review.
+                DECISION(v1.19.758): Anyone with `permissions.reviewer` can also approve
+                post-review (granted via the Team & Permissions modal). */}
+            {!isReadOnly()&&(_appCtx.role==="admin"||hasPermission("reviewer"))&&(
               <div style={{display:"flex",gap:6}}>
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
@@ -30188,6 +30198,13 @@ INSTRUCTIONS:
         _appCtx.role=profile.role;
         _appCtx.projectsPath=`companies/${profile.companyId}/projects`;
         _appCtx.configPath=`companies/${profile.companyId}/config`;
+        // DECISION(v1.19.758): Load granular per-user permissions from the member doc
+        // alongside the role. Permissions live at companies/{cid}/members/{uid}.permissions
+        // as a free-form map ({reviewer:true, ...}). Used by hasPermission() throughout.
+        try{
+          const memberDoc=await fbDb.doc(`companies/${profile.companyId}/members/${user.uid}`).get();
+          _appCtx.permissions=(memberDoc.exists&&memberDoc.data().permissions)||{};
+        }catch(e){console.warn("[PERMS] member doc fetch failed:",e);_appCtx.permissions={};}
         setCompanyId(profile.companyId);
         setUserRole(profile.role);
         try{
