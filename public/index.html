@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.754";
+const APP_VERSION="v1.19.755";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -22623,14 +22623,93 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const iAmAdminLocal=_appCtx.role==="admin";
   const iAmOwnerOrAdmin=iAmOwner||iAmAdminLocal;
   const isProjectLocked=!!(project.wonAt||project.lostAt);
+  // DECISION(v1.19.755): `editUnlocked` is a persistent unlock flag set by an owner or
+  // admin (typically in response to a Request Unlock from a teammate). When true, the
+  // Won/Lost lock is bypassed for ALL users until the owner/admin re-locks. The flag is
+  // separate from `lockOverrideSession` (which is per-tab session-only).
+  const editUnlockedForAll=!!project.editUnlocked;
   const [lockOverrideSession,setLockOverrideSession]=useState(false);
   const [showLockUnlockConfirm,setShowLockUnlockConfirm]=useState(false);
-  // Reset the session unlock whenever the lock state changes or the project switches.
-  useEffect(()=>{setLockOverrideSession(false);},[project.id,project.wonAt,project.lostAt]);
-  const lockReadOnly=isProjectLocked&&!(iAmOwnerOrAdmin&&lockOverrideSession);
+  const [showRequestUnlockModal,setShowRequestUnlockModal]=useState(false);
+  const [unlockRequestSent,setUnlockRequestSent]=useState(false);
+  // Reset the session unlock + request-sent state whenever the lock state changes or
+  // the project switches. New won/lost flip = fresh lock = clean state.
+  useEffect(()=>{setLockOverrideSession(false);setUnlockRequestSent(false);},[project.id,project.wonAt,project.lostAt,project.editUnlocked]);
+  const lockReadOnly=isProjectLocked&&!editUnlockedForAll&&!(iAmOwnerOrAdmin&&lockOverrideSession);
   const sentReadOnly=!!project.quoteSentAt&&!sentQuoteAckGiven&&!isProjectLocked;
   const readOnly=isReadOnly()||lockReadOnly||sentReadOnly;
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
+
+  // DECISION(v1.19.755): Send "Unlock requested" notification to project owner + all
+  // company admins. Non-owner/non-admin requesters trigger this from the locked banner.
+  // Also stamps `lastUnlockRequest` on the project so the owner sees who/when when they
+  // visit, and tracks the requester's uid in `unlockRequestedBy[]` so we know who to
+  // notify when the unlock is granted.
+  async function requestProjectUnlock(reason){
+    try{
+      const meName=fbAuth.currentUser?.displayName||fbAuth.currentUser?.email||"A teammate";
+      const meEmail=fbAuth.currentUser?.email||"";
+      const recipientUids=new Set();
+      if(project.createdBy)recipientUids.add(project.createdBy);
+      // Admins in the company
+      if(_appCtx.companyId){
+        try{
+          const membersSnap=await fbDb.collection(`companies/${_appCtx.companyId}/members`).get();
+          membersSnap.docs.forEach(d=>{const m=d.data();if(m.role==="admin")recipientUids.add(d.id);});
+        }catch(e){console.warn("unlock-request: member fetch failed:",e);}
+      }
+      recipientUids.delete(uid); // never notify ourselves
+      const proj=project.bcProjectNumber||project.name||"a project";
+      const note={type:"unlock_request",title:"Unlock Requested",
+        body:`${meName} is requesting edit access to ${proj}${reason?" — "+reason:""}`,
+        projectId:project.id,projectName:project.name||"",
+        fromUid:uid,fromName:meName,fromEmail:meEmail,reason:reason||"",
+        createdAt:Date.now(),read:false};
+      const writes=[];
+      recipientUids.forEach(rUid=>{writes.push(fbDb.collection(`users/${rUid}/notifications`).add(note));});
+      await Promise.all(writes);
+      // Stamp on the project so anyone viewing it sees the pending request.
+      const reqList=Array.isArray(project.unlockRequestedBy)?project.unlockRequestedBy.slice():[];
+      if(!reqList.includes(uid))reqList.push(uid);
+      const upd={...project,unlockRequestedBy:reqList,lastUnlockRequest:{by:uid,byName:meName,byEmail:meEmail,reason:reason||"",at:Date.now()},updatedAt:Date.now()};
+      update(upd);safeSave(uid,upd);
+      setUnlockRequestSent(true);
+    }catch(e){
+      console.error("[UNLOCK REQUEST] failed:",e);
+      alert("Could not send unlock request: "+(e.message||e));
+    }
+  }
+  // DECISION(v1.19.755): Owner/admin grants persistent unlock. Sets editUnlocked=true,
+  // notifies any requesters that the project is now editable, and clears the request
+  // queue. Re-locking is a separate action (button in the banner).
+  async function grantProjectUnlock(){
+    try{
+      const meName=fbAuth.currentUser?.displayName||fbAuth.currentUser?.email||"the project owner";
+      const proj=project.bcProjectNumber||project.name||"the project";
+      const requesters=Array.isArray(project.unlockRequestedBy)?project.unlockRequestedBy:[];
+      const writes=[];
+      requesters.forEach(rUid=>{
+        if(rUid===uid)return;
+        writes.push(fbDb.collection(`users/${rUid}/notifications`).add({
+          type:"unlock_granted",title:"Project Unlocked",
+          body:`${meName} unlocked ${proj}. You can now edit.`,
+          projectId:project.id,projectName:project.name||"",
+          createdAt:Date.now(),read:false,
+        }));
+      });
+      await Promise.all(writes).catch(e=>console.warn("[UNLOCK GRANT] notify failed:",e));
+      const upd={...project,editUnlocked:true,editUnlockedBy:uid,editUnlockedAt:Date.now(),unlockRequestedBy:[],updatedAt:Date.now()};
+      update(upd);safeSave(uid,upd);
+    }catch(e){
+      console.error("[UNLOCK GRANT] failed:",e);
+      alert("Could not unlock project: "+(e.message||e));
+    }
+  }
+  function relockProject(){
+    const{editUnlocked:_eu,editUnlockedBy:_eub,editUnlockedAt:_eua,...rest}=project;
+    const upd={...rest,updatedAt:Date.now()};
+    update(upd);safeSave(uid,upd);
+  }
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
   const didMigrate=useRef(!init.panels);
 
@@ -23623,22 +23702,34 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           </div>
         );
       })()}
-      {/* DECISION(v1.19.754): Won/Lost lock banner. Persists while wonAt or lostAt is
-         set. Owner/admin sees an Unlock button that toggles a session-only override; the
-         underlying outcome record (wonAt/lostAt) is never cleared by Unlock — Unlock just
-         lets the owner/admin edit the frozen project for the current tab session. Closing
-         or switching project re-arms the lock. */}
-      {isProjectLocked&&(
+      {/* DECISION(v1.19.754/755): Won/Lost lock banner. Three viewer states:
+          (a) Owner/admin, locked (default): "Unlock for Editing" button → modal with
+              session-only OR all-users options.
+          (b) Owner/admin, editUnlocked=true: green "Unlocked for All — Re-lock" banner.
+          (c) Non-owner/non-admin, locked: "Request Unlock" button + pending-request
+              indicator. After they request, they see "Request sent" + the requester
+              count from project.unlockRequestedBy.
+          Pending requests visible only to owner/admin show a sub-line with the most
+          recent requester's name + reason. */}
+      {isProjectLocked&&!editUnlockedForAll&&(
         <div style={{margin:"12px 24px 0",padding:"10px 16px",
           background:project.wonAt?"#0a1f12":"#1f0a0a",
           border:"1px solid "+(project.wonAt?"#4ade80aa":"#ef4444aa"),
-          borderRadius:8,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-          <span style={{fontSize:18}}>🔒</span>
+          borderRadius:8,display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
+          <span style={{fontSize:18,marginTop:1}}>🔒</span>
           <div style={{flex:1,minWidth:240,fontSize:13,lineHeight:1.5,color:project.wonAt?"#bbf7d0":"#fecaca"}}>
             <strong style={{color:project.wonAt?"#4ade80":"#fca5a5",letterSpacing:0.5}}>
               PROJECT LOCKED — {project.wonAt?"WON":"LOST"} {project.wonAt?new Date(project.wonAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):new Date(project.lostAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}
             </strong>
-            {" — "}all costs, BOMs, and project data are frozen. {iAmOwnerOrAdmin?(lockOverrideSession?"You've unlocked editing for this session.":"Owners and admins may unlock to edit."):"Contact the project owner or an admin to make changes."}
+            {" — "}all costs, BOMs, and project data are frozen. {iAmOwnerOrAdmin?(lockOverrideSession?"You've unlocked editing for this session.":"Unlock for editing or grant access to all users."):"Request edit access from the project owner or an admin."}
+            {/* Pending unlock requests visible to owner/admin */}
+            {iAmOwnerOrAdmin&&project.lastUnlockRequest&&(project.unlockRequestedBy||[]).length>0&&(
+              <div style={{marginTop:6,padding:"6px 10px",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:6,fontSize:12,color:"#fcd34d"}}>
+                📬 <strong>{project.lastUnlockRequest.byName||"A teammate"}</strong> requested edit access {project.lastUnlockRequest.at?"on "+new Date(project.lastUnlockRequest.at).toLocaleDateString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}
+                {project.lastUnlockRequest.reason?<><br/><span style={{color:"#fde68a",fontStyle:"italic"}}>"{project.lastUnlockRequest.reason}"</span></>:null}
+                {(project.unlockRequestedBy||[]).length>1&&<><br/>+{(project.unlockRequestedBy||[]).length-1} other request{(project.unlockRequestedBy||[]).length-1>1?"s":""}</>}
+              </div>
+            )}
           </div>
           {iAmOwnerOrAdmin&&!lockOverrideSession&&(
             <button onClick={()=>setShowLockUnlockConfirm(true)}
@@ -23648,33 +23739,113 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             <button onClick={()=>setLockOverrideSession(false)}
               style={{background:"none",border:"1px solid #94a3b866",borderRadius:6,color:"#cbd5e1",cursor:"pointer",fontSize:11,padding:"3px 10px",fontWeight:600}}>Re-lock Session</button>
           )}
+          {/* Non-owner/non-admin Request Unlock UI */}
+          {!iAmOwnerOrAdmin&&!unlockRequestSent&&!(project.unlockRequestedBy||[]).includes(uid)&&(
+            <button onClick={()=>setShowRequestUnlockModal(true)}
+              style={{background:"none",border:"1px solid #fbbf2488",borderRadius:6,color:"#fbbf24",cursor:"pointer",fontSize:12,padding:"4px 14px",fontWeight:700,letterSpacing:0.4}}>📬 Request Unlock</button>
+          )}
+          {!iAmOwnerOrAdmin&&(unlockRequestSent||(project.unlockRequestedBy||[]).includes(uid))&&(
+            <span style={{padding:"4px 12px",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:6,fontSize:11,color:"#fcd34d",fontWeight:700,letterSpacing:0.4}}>✓ Request Sent — Awaiting Owner</span>
+          )}
         </div>
       )}
-      {/* DECISION(v1.19.754): Won/Lost unlock confirm modal. Owner/admin only. */}
+      {/* Persistent (editUnlocked) unlock banner — visible to ALL users when an owner
+          or admin has granted unlock-for-all. Read-only-aware UI: owner/admin sees a
+          Re-lock button; everyone else sees just the status. */}
+      {isProjectLocked&&editUnlockedForAll&&(
+        <div style={{margin:"12px 24px 0",padding:"10px 16px",background:"#0d2010",border:"1px solid #4ade80aa",borderRadius:8,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <span style={{fontSize:18}}>🔓</span>
+          <div style={{flex:1,minWidth:240,fontSize:13,lineHeight:1.5,color:"#bbf7d0"}}>
+            <strong style={{color:"#4ade80",letterSpacing:0.5}}>EDIT ACCESS GRANTED</strong>
+            {" — "}{(()=>{const ownerViewer=(viewers||[]).find(v=>v.uid===project.editUnlockedBy);const grantedBy=ownerViewer?.userName||(ownerViewer?.userEmail||"").split("@")[0]||"the project owner";return `${grantedBy} unlocked this ${project.wonAt?"won":"lost"} project for all users${project.editUnlockedAt?" on "+new Date(project.editUnlockedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}.`;})()} Edits will bump Quote Rev and update Firestore normally.
+          </div>
+          {iAmOwnerOrAdmin&&(
+            <button onClick={relockProject}
+              style={{background:"none",border:"1px solid #4ade8088",borderRadius:6,color:"#86efac",cursor:"pointer",fontSize:12,padding:"4px 14px",fontWeight:700,letterSpacing:0.4}}>🔒 Re-lock Project</button>
+          )}
+        </div>
+      )}
+      {/* DECISION(v1.19.754/755): Won/Lost unlock confirm modal — owner/admin only.
+          Offers TWO options:
+          • "Unlock for This Session" — per-tab override, only for this user (existing).
+          • "Unlock for All Users" — sets project.editUnlocked=true, notifies any pending
+            requesters via in-app notifications, persists until owner/admin re-locks. */}
       {showLockUnlockConfirm&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-          <div style={{background:"#0d0d1a",border:"1px solid #fbbf24",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(251,191,36,0.25)"}}>
+          <div style={{background:"#0d0d1a",border:"1px solid #fbbf24",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:560,boxShadow:"0 0 40px 10px rgba(251,191,36,0.25)"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
               <span style={{fontSize:24}}>🔓</span>
-              <div style={{fontSize:16,fontWeight:800,color:"#fbbf24"}}>Unlock {project.wonAt?"Won":"Lost"} Project for Editing?</div>
+              <div style={{fontSize:16,fontWeight:800,color:"#fbbf24"}}>Unlock {project.wonAt?"Won":"Lost"} Project</div>
             </div>
-            <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7,marginBottom:18}}>
-              <strong style={{color:"#f1f5f9"}}>{project.name||project.bcProjectNumber||"This project"}</strong> is currently in a {project.wonAt?"Won":"Lost"} state and frozen.
-              <br/><br/>
-              Unlocking allows edits to BOMs, pricing, drawings, and other project data <strong>for this browser session only</strong>. The {project.wonAt?"Won":"Lost"} record is preserved — closing or reopening the project re-arms the lock.
-              <br/><br/>
-              Only project owners and admins can unlock. Edits made while unlocked will bump Quote Rev and update Firestore; the lock will be reapplied automatically when you leave.
+            <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7,marginBottom:14}}>
+              <strong style={{color:"#f1f5f9"}}>{project.name||project.bcProjectNumber||"This project"}</strong> is currently {project.wonAt?"Won":"Lost"} and frozen. The {project.wonAt?"Won":"Lost"} record is preserved either way — these options only control who can edit until re-locked.
+            </div>
+            {(project.unlockRequestedBy||[]).length>0&&project.lastUnlockRequest&&(
+              <div style={{padding:"8px 12px",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:6,marginBottom:14,fontSize:12,color:"#fcd34d",lineHeight:1.5}}>
+                📬 <strong>{project.lastUnlockRequest.byName||"A teammate"}</strong> is requesting access{project.lastUnlockRequest.reason?` — "${project.lastUnlockRequest.reason}"`:""}.
+                {(project.unlockRequestedBy||[]).length>1&&` +${(project.unlockRequestedBy||[]).length-1} other request${(project.unlockRequestedBy||[]).length-1>1?"s":""}.`}
+              </div>
+            )}
+            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:18}}>
+              <label style={{display:"flex",alignItems:"flex-start",gap:10,padding:"12px 14px",background:"#0a0a14",border:"1px solid #3d6090",borderRadius:8,cursor:"pointer"}}
+                onClick={()=>{setShowLockUnlockConfirm(false);setLockOverrideSession(true);}}>
+                <span style={{fontSize:18,marginTop:1}}>👤</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#f1f5f9",marginBottom:2}}>Unlock for This Session</div>
+                  <div style={{fontSize:11,color:"#94a3b8",lineHeight:1.5}}>Just for you, just this tab. Other users still see the project as locked. Closing or reopening re-arms the lock automatically.</div>
+                </div>
+              </label>
+              <label style={{display:"flex",alignItems:"flex-start",gap:10,padding:"12px 14px",background:"#0a1f12",border:"1px solid #4ade80aa",borderRadius:8,cursor:"pointer"}}
+                onClick={async()=>{setShowLockUnlockConfirm(false);await grantProjectUnlock();}}>
+                <span style={{fontSize:18,marginTop:1}}>👥</span>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:13,fontWeight:700,color:"#86efac",marginBottom:2}}>Unlock for All Users</div>
+                  <div style={{fontSize:11,color:"#bbf7d0",lineHeight:1.5}}>Everyone in the company can edit this project until you re-lock it. Anyone who requested access will get a notification. Use this when you want a teammate to make changes themselves.</div>
+                </div>
+              </label>
             </div>
             <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
               <button onClick={()=>setShowLockUnlockConfirm(false)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"8px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Cancel</button>
-              <button onClick={()=>{setShowLockUnlockConfirm(false);setLockOverrideSession(true);}}
-                style={{background:"#3a2800",border:"1px solid #fbbf24",color:"#fbbf24",padding:"8px 20px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
-                🔓 Unlock for This Session
-              </button>
             </div>
           </div>
         </div>
       ,document.body)}
+      {/* DECISION(v1.19.755): Request Unlock modal — non-owner/non-admin only. Asks for
+          an optional reason ("Need to fix typo in BOM" / "Customer changed quantity" /
+          etc.), then sends an in-app notification to the project owner + all admins. */}
+      {showRequestUnlockModal&&ReactDOM.createPortal(
+        (()=>{
+          const RequestUnlockBody=()=>{
+            const [reason,setReason]=React.useState("");
+            const [sending,setSending]=React.useState(false);
+            return(
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+                <div style={{background:"#0d0d1a",border:"1px solid #fbbf24",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(251,191,36,0.25)"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                    <span style={{fontSize:24}}>📬</span>
+                    <div style={{fontSize:16,fontWeight:800,color:"#fbbf24"}}>Request Unlock</div>
+                  </div>
+                  <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7,marginBottom:14}}>
+                    <strong style={{color:"#f1f5f9"}}>{project.name||project.bcProjectNumber||"This project"}</strong> is locked because it's marked {project.wonAt?"Won":"Lost"}. Send a request to the project owner and admins asking for edit access — they'll get a bell notification and can unlock the project for you to edit.
+                  </div>
+                  <label style={{display:"block",fontSize:11,fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",color:"#94a3b8",marginBottom:6}}>Reason (optional)</label>
+                  <textarea value={reason} onChange={e=>setReason(e.target.value.slice(0,300))} placeholder="e.g. Customer revised quantity on row 3" rows={3}
+                    style={{width:"100%",boxSizing:"border-box",background:"#0a0a14",border:"1px solid #3d6090",borderRadius:6,color:"#f1f5f9",fontSize:13,padding:"8px 10px",fontFamily:"inherit",resize:"vertical",marginBottom:18,outline:"none"}}/>
+                  <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                    <button onClick={()=>setShowRequestUnlockModal(false)} disabled={sending} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"8px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600,opacity:sending?0.5:1}}>Cancel</button>
+                    <button onClick={async()=>{setSending(true);await requestProjectUnlock(reason.trim());setSending(false);setShowRequestUnlockModal(false);}}
+                      disabled={sending}
+                      style={{background:"#3a2800",border:"1px solid #fbbf24",color:"#fbbf24",padding:"8px 20px",borderRadius:6,cursor:sending?"not-allowed":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700,opacity:sending?0.5:1}}>
+                      {sending?"Sending…":"📬 Send Request"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          };
+          return <RequestUnlockBody/>;
+        })(),
+      document.body)}
       {/* DECISION(v1.19.678): Owner Priority Mode — toast + banner + chime. Toast is a
          transient notification; banner persists while active; green takeover banner
          replaces the purple one while admin takeover is in effect. */}
