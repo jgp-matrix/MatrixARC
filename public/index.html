@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.755";
+const APP_VERSION="v1.19.756";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -21025,10 +21025,13 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <span style={{fontSize:20}}>📐</span>
             <div style={{flex:1,minWidth:200}}>
-              <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>PRE-QUOTE REVIEW REQUESTED</div>
-              <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Engineer/Designer: {project.bcDesigner||"—"}</div>
+              <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 PRE-QUOTE REVIEW REQUESTED — EDITS LOCKED</div>
+              <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Engineer/Designer: {project.bcDesigner||"—"}. Edits resume once the reviewer approves or returns the project.</div>
             </div>
-            {!readOnly&&(project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin")&&(
+            {/* DECISION(v1.19.756): Approve/Return bypass `readOnly` (which is true during
+                pending review) — these buttons ARE the way to release the lock, so they
+                must stay clickable. Gated only on the reviewer's role. */}
+            {!isReadOnly()&&(project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin")&&(
               <div style={{display:"flex",gap:6}}>
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
@@ -21061,10 +21064,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <span style={{fontSize:20}}>🔧</span>
             <div style={{flex:1,minWidth:200}}>
-              <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>POST-PO REVIEW IN PROGRESS</div>
-              <div style={{fontSize:12,color:"#94a3b8"}}>PO #{project.bcPoNumber||"—"} received. Awaiting production readiness approval.</div>
+              <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 POST-PO REVIEW IN PROGRESS — EDITS LOCKED</div>
+              <div style={{fontSize:12,color:"#94a3b8"}}>PO #{project.bcPoNumber||"—"} received. Awaiting production readiness approval. Edits resume once the reviewer approves or returns the project.</div>
             </div>
-            {!readOnly&&_appCtx.role==="admin"&&(
+            {/* DECISION(v1.19.756): Same bypass as pre-review — admins must be able to
+                approve post-review even though `readOnly` is true during pending review. */}
+            {!isReadOnly()&&_appCtx.role==="admin"&&(
               <div style={{display:"flex",gap:6}}>
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
@@ -22637,7 +22642,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   useEffect(()=>{setLockOverrideSession(false);setUnlockRequestSent(false);},[project.id,project.wonAt,project.lostAt,project.editUnlocked]);
   const lockReadOnly=isProjectLocked&&!editUnlockedForAll&&!(iAmOwnerOrAdmin&&lockOverrideSession);
   const sentReadOnly=!!project.quoteSentAt&&!sentQuoteAckGiven&&!isProjectLocked;
-  const readOnly=isReadOnly()||lockReadOnly||sentReadOnly;
+  // DECISION(v1.19.756): Pre-Review and Post-Review hard-block all user edits until the
+  // reviewer approves or rejects (returns the project to the Sales team). The reviewer
+  // doesn't edit BOM/pricing — they just approve/reject — so a global edit block is the
+  // right model. The Approve/Return buttons bypass `readOnly` via their own role gate.
+  // When status flips from "pending" to "approved"/"rejected"/null, edits resume.
+  const reviewReadOnly=project.preReviewStatus==="pending"||project.postReviewStatus==="pending";
+  const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly;
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
 
   // DECISION(v1.19.755): Send "Unlock requested" notification to project owner + all
