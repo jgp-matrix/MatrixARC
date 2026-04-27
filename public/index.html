@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.749";
+const APP_VERSION="v1.19.750";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -21213,20 +21213,24 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   // DECISION(v1.19.411): Designer now mapped to CCS_Designer BC field (was null).
                   // DECISION(v1.19.499): PM uses Project_Manager field (User table), not Person_Responsible (Resource table)
                   // DECISION(v1.19.749): Sales column now also hosts the "Hold priority while
-                  // away" checkbox stacked below the dropdown — owner-only, hidden in quote view.
+                  // away" checkbox stacked below the dropdown — owner-only. PanelListView
+                  // doesn't import ProjectView's `iAmOwner` / `view` / `update`, so we compute
+                  // owner status locally and use the existing `onUpdate` + `safeSave` plumbing
+                  // already wired through props.
                   var keys=[["bcSalesperson","bcSalespersonCode","CCS_Salesperson_Code"],["bcProjectManager","bcProjectManagerCode","Project_Manager"],["bcDesigner","bcDesignerCode","CCS_Designer"]][li];
                   var nm=project[keys[0]]||"";
                   var codeKey=keys[1];var bcField=keys[2];
+                  var iAmOwnerLocal=!project.createdBy||project.createdBy===uid;
                   // Hold-priority checkbox — only beneath the Sales column for the project owner
                   var holdEl=null;
-                  if(li===0&&iAmOwner&&view!=="quote"){
+                  if(li===0&&iAmOwnerLocal){
                     holdEl=React.createElement("label",{
                       style:{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.muted,cursor:"pointer",marginTop:4},
                       title:"Normally your priority lock releases 90 seconds after you close the tab. Check this to keep teammates locked out even if you step away or lose connection."
                     },
                       React.createElement("input",{type:"checkbox",checked:!!project.ownerLockActive,onChange:function(e){
                         var upd=Object.assign({},project,{ownerLockActive:e.target.checked,updatedAt:Date.now()});
-                        update(upd);
+                        onUpdate(upd);safeSave(uid,upd);
                       },style:{cursor:"pointer"}}),
                       React.createElement("span",null,"🔒 Hold priority while I'm away"),
                       project.ownerLockActive&&React.createElement("span",{style:{fontSize:10,color:"#fcd34d",fontWeight:700,background:"#3a2800",borderRadius:4,padding:"1px 6px",marginLeft:4}},"ACTIVE")
