@@ -233,7 +233,7 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.765";
+const APP_VERSION="v1.19.766";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -13804,12 +13804,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // copied panel with the same id in another project would inherit the wrong progress bar.
   const _bgTaskHere=bgTaskIsForThisProject?bgTask:null;
   const extractProgress=(_bgTaskHere?.status==="running"||_bgTaskHere?.status==="done")?{pct:_bgTaskHere.pct||0,msg:_bgTaskHere.msg}:ep.progress;
-  // Unified progress: pricing takes priority when active, then extraction, then null
-  const _showExtract=extractProgress&&(!awaitingConfirm||detecting);
-  // When aiPricing=true, guarantee a non-null value even if pricingProgress state hasn't synced yet
-  const _activePricing=aiPricing?(pricingProgress||{msg:"Getting prices…",pct:5}):pricingProgress;
-  const _rawUnified=_activePricing||(_showExtract?extractProgress:null);
-  const unifiedProgress=_rawUnified?{..._rawUnified,isError:_rawUnified.isError||_bgTaskHere?.status==="error"}:null;
+  // DECISION(v1.19.766): unifiedProgress block moved BELOW the useState declarations for
+  // `aiPricing` and `pricingProgress` (was here, ~80 lines BEFORE the declarations).
+  // The forward-reference triggered a Temporal Dead Zone error under strict transforms
+  // (caught when we tried pre-compiling JSX with @babel/preset-react). babel-standalone
+  // tolerated it via implicit var-hoisting. Block now lives just after line 13443.
   const [lightboxId,setLightboxId]=useState(null);
   const [showCompliance,setShowCompliance]=useState(false);
   const [draftName,setDraftName]=useState(panel.name||"");
@@ -13889,6 +13888,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // don't meet the safeguards (blank partNumber, no vendorNo, leadTimeDays<=0).
   const [pushingLeadTimes,setPushingLeadTimes]=useState(false);
   const [pricingProgress,setPricingProgress]=useState(null);
+  // DECISION(v1.19.766): unifiedProgress derivation — relocated here so it follows the
+  // useState declarations for aiPricing and pricingProgress. Original location was ~80
+  // lines higher, which created a TDZ violation visible under strict @babel/preset-react.
+  const _showExtract=extractProgress&&(!awaitingConfirm||detecting);
+  // When aiPricing=true, guarantee a non-null value even if pricingProgress state hasn't synced yet
+  const _activePricing=aiPricing?(pricingProgress||{msg:"Getting prices…",pct:5}):pricingProgress;
+  const _rawUnified=_activePricing||(_showExtract?extractProgress:null);
+  const unifiedProgress=_rawUnified?{..._rawUnified,isError:_rawUnified.isError||_bgTaskHere?.status==="error"}:null;
   const [pricingReport,setPricingReport]=useState(null); // null=hidden, {sections:[{source,obtained,skipped,failed,items}]}
   const [bcConnecting,setBcConnecting]=useState(false);
   const [bcError,setBcError]=useState("");
