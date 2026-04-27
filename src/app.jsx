@@ -9505,8 +9505,16 @@ function TeamModal({uid,companyId,userRole,onClose}){
   const roleBadge={admin:[C.accentDim,C.accent],edit:[C.greenDim,C.green],view:[C.border,C.muted]};
   // DECISION(v1.19.757): Tabbed Team modal — Members tab keeps the role/invite UX;
   // Permissions tab is a checkbox grid for granular permissions (Admin, Reviewer, …).
-  const [tab,setTab]=useState("members"); // "members" | "permissions"
+  // DECISION(v1.19.770): BC Mapping tab links each ARC member to a BC User (/User page
+  // User_Name) and BC Salesperson (Code). The mapping is stored ON the ARC member doc
+  // because BC has no field to hold a Firebase uid. ARC member doc is the source of
+  // truth for the ARC↔BC linkage; both systems still own their own user records.
+  const [tab,setTab]=useState("members"); // "members" | "permissions" | "bcmapping"
   const [savingPerm,setSavingPerm]=useState(""); // uid currently saving (to grey the row)
+  const [bcCachesReady,setBcCachesReady]=useState(!!(window._arcDesignerCache&&window._arcSalespersonCache));
+  const [bcCachesLoading,setBcCachesLoading]=useState(false);
+  const [autoSuggestRunning,setAutoSuggestRunning]=useState(false);
+  const [autoSuggestStats,setAutoSuggestStats]=useState(null); // {matched, skipped} | null
 
   // Toggle a single permission flag for a member. Reviewer is the first one; the
   // schema is a free-form `permissions` map so we can add more later without further
@@ -9541,11 +9549,103 @@ function TeamModal({uid,companyId,userRole,onClose}){
     setSavingPerm("");
   }
 
+  // DECISION(v1.19.770): Save BC mapping field directly to Firestore. The firestore
+  // rule whitelists bcUserCode, bcSalespersonCode, and displayName for self-edit so
+  // an admin can map themselves without a second admin. For other members, admins
+  // can write any field. We also stamp `displayName` from the BC User's Full_Name
+  // when one is selected — gives us a reliable label to show in dropdowns instead
+  // of falling back to email-derived names.
+  async function saveBcMapping(memberUid,patch){
+    if(!admin)return;
+    setSavingPerm(memberUid);
+    try{
+      const fields={...patch,updatedAt:Date.now()};
+      await fbDb.doc(`companies/${companyId}/members/${memberUid}`).update(fields);
+      setMembers(m=>m.map(x=>x.uid===memberUid?{...x,...patch}:x));
+    }catch(ex){setErr(ex.message||String(ex));}
+    setSavingPerm("");
+  }
+
+  // Load BC caches lazily when the BC Mapping tab is opened — covers the case where
+  // BC hasn't auto-connected yet (e.g. token expired). Caches are stored on `window`
+  // by bcConnect() and the project-create modal; we just read whatever is there.
+  // If still empty after a refresh attempt, the tab shows an "open Create Project
+  // modal to refresh BC caches" hint.
+  async function ensureBcCaches(){
+    if(window._arcDesignerCache&&window._arcSalespersonCache){setBcCachesReady(true);return;}
+    setBcCachesLoading(true);
+    try{
+      // Best-effort: if a global helper exists to refresh both caches, call it.
+      // Otherwise the caches will populate on next BC interaction.
+      if(typeof window._arcRefreshBcUserCaches==="function"){
+        await window._arcRefreshBcUserCaches();
+      }
+    }catch(e){/* swallow — show empty-state UI */}
+    setBcCachesReady(!!(window._arcDesignerCache&&window._arcSalespersonCache));
+    setBcCachesLoading(false);
+  }
+
+  // Auto-suggest: chain Salesperson email match → BC User name match. This is the
+  // most reliable heuristic because BC Salesperson records have E_Mail; BC User
+  // records do not. If a member's email matches a Salesperson, we can use that
+  // Salesperson's Name to find the matching BC User in `_arcDesignerCache`.
+  async function runAutoSuggest(){
+    if(!admin||autoSuggestRunning)return;
+    const sales=window._arcSalespersonCache||[];
+    const users=window._arcDesignerCache||[];
+    if(sales.length===0&&users.length===0){setErr("BC user lists not loaded — connect to BC first.");return;}
+    setAutoSuggestRunning(true);
+    setErr("");
+    let matched=0,skipped=0;
+    const updates=[];
+    for(const m of members){
+      // Skip if both already set
+      if(m.bcUserCode&&m.bcSalespersonCode){skipped++;continue;}
+      const memberEmail=(m.email||"").toLowerCase().trim();
+      const patch={};
+      // 1) Salesperson by email
+      let suggestedSalesperson=null;
+      if(!m.bcSalespersonCode&&memberEmail){
+        suggestedSalesperson=sales.find(s=>(s.E_Mail||"").toLowerCase().trim()===memberEmail);
+        if(suggestedSalesperson){patch.bcSalespersonCode=suggestedSalesperson.Code;}
+      }
+      // 2) BC User by Full_Name (use Salesperson's Name if found, else fuzzy from email local-part)
+      if(!m.bcUserCode){
+        const targetName=suggestedSalesperson?.Name||(memberEmail?memberEmail.split("@")[0].replace(/[._-]/g," "):"");
+        if(targetName){
+          const tNorm=targetName.toLowerCase().replace(/\s+/g," ").trim();
+          const matchedUser=users.find(u=>(u.Name||"").toLowerCase().replace(/\s+/g," ").trim()===tNorm);
+          if(matchedUser){
+            patch.bcUserCode=matchedUser.Code;
+            if(matchedUser.Name&&!m.displayName)patch.displayName=matchedUser.Name;
+          }
+        }
+      }
+      // 3) displayName fallback to Salesperson Name if we got one
+      if(suggestedSalesperson&&suggestedSalesperson.Name&&!m.displayName&&!patch.displayName){
+        patch.displayName=suggestedSalesperson.Name;
+      }
+      if(Object.keys(patch).length>0){updates.push({uid:m.uid,patch});matched++;}
+      else skipped++;
+    }
+    // Persist all updates in parallel
+    try{
+      await Promise.all(updates.map(u=>fbDb.doc(`companies/${companyId}/members/${u.uid}`).update({...u.patch,updatedAt:Date.now()})));
+      // Update local state
+      setMembers(prev=>prev.map(m=>{
+        const u=updates.find(x=>x.uid===m.uid);
+        return u?{...m,...u.patch}:m;
+      }));
+      setAutoSuggestStats({matched,skipped,total:members.length});
+    }catch(ex){setErr(ex.message||String(ex));}
+    setAutoSuggestRunning(false);
+  }
+
   return(<>
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
-      <div style={{...card(),width:"100%",maxWidth:tab==="permissions"?720:560,maxHeight:"85vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
+      <div style={{...card(),width:"100%",maxWidth:(tab==="permissions"||tab==="bcmapping")?820:560,maxHeight:"85vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
         <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>👥 Team & Permissions</div>
-        <div style={{fontSize:13,color:C.muted,marginBottom:14}}>Manage company workspace members and per-user permissions</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:14}}>Manage company workspace members, permissions, and BC identity mapping</div>
         {/* Tab switcher */}
         <div style={{display:"flex",gap:0,marginBottom:18,borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`,background:"#0a0a12"}}>
           <button onClick={()=>setTab("members")}
@@ -9557,6 +9657,11 @@ function TeamModal({uid,companyId,userRole,onClose}){
             style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",borderLeft:`1px solid ${C.border}`,
               background:tab==="permissions"?C.accentDim:"transparent",color:tab==="permissions"?C.accent:C.muted}}>
             Permissions
+          </button>
+          <button onClick={()=>{setTab("bcmapping");ensureBcCaches();}}
+            style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",borderLeft:`1px solid ${C.border}`,
+              background:tab==="bcmapping"?C.accentDim:"transparent",color:tab==="bcmapping"?C.accent:C.muted}}>
+            BC Mapping
           </button>
         </div>
         {loading&&<div style={{color:C.muted,fontSize:13,padding:"20px 0",textAlign:"center"}}>Loading…</div>}
@@ -9614,6 +9719,113 @@ function TeamModal({uid,companyId,userRole,onClose}){
             </div>
           </div>
         )}
+
+        {!loading&&tab==="bcmapping"&&(()=>{
+          const designerCache=window._arcDesignerCache||[];
+          const salesCache=window._arcSalespersonCache||[];
+          const cachesEmpty=designerCache.length===0&&salesCache.length===0;
+          return(
+            <div style={{marginBottom:18}}>
+              <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>
+                {admin
+                  ?"Link each ARC member to their Business Central identity. The BC User powers Designer / Project Manager assignments; the BC Salesperson powers Sales assignments. Used by project sync, permission checks, and notifications."
+                  :"View-only — only admins can edit BC mappings."}
+              </div>
+              {bcCachesLoading&&<div style={{color:C.muted,fontSize:13,padding:"8px 0"}}>Loading BC user lists…</div>}
+              {!bcCachesLoading&&cachesEmpty&&(
+                <div style={{background:C.yellowDim||"#3a2a00",border:`1px solid ${C.yellow}44`,borderRadius:8,padding:10,marginBottom:12,fontSize:12,color:C.yellow}}>
+                  ⚠ BC user lists aren't loaded yet. Open <strong>+ New Project</strong> once (it triggers BC connect) and reopen this tab.
+                </div>
+              )}
+              {admin&&!cachesEmpty&&(
+                <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:12,flexWrap:"wrap"}}>
+                  <button onClick={runAutoSuggest} disabled={autoSuggestRunning}
+                    style={btn(C.accentDim,C.accent,{fontSize:12,padding:"6px 12px",opacity:autoSuggestRunning?0.5:1,cursor:autoSuggestRunning?"wait":"pointer"})}>
+                    {autoSuggestRunning?"Matching…":"🪄 Auto-suggest from email"}
+                  </button>
+                  {autoSuggestStats&&(
+                    <span style={{fontSize:11,color:C.muted}}>
+                      Matched <strong style={{color:C.green}}>{autoSuggestStats.matched}</strong> of {autoSuggestStats.total} members ({autoSuggestStats.skipped} skipped or already mapped)
+                    </span>
+                  )}
+                </div>
+              )}
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead>
+                  <tr style={{background:"#0a0a12",borderBottom:`1px solid ${C.border}`}}>
+                    <th style={{textAlign:"left",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>ARC Member</th>
+                    <th style={{textAlign:"left",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}} title="BC /User page User_Name. Used for Designer + Project Manager dropdowns.">BC User</th>
+                    <th style={{textAlign:"left",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}} title="BC /Salesperson Code. Used for Sales dropdown.">BC Salesperson</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.map(m=>{
+                    const saving=savingPerm===m.uid;
+                    const userMatch=designerCache.find(u=>u.Code===m.bcUserCode);
+                    const salesMatch=salesCache.find(s=>s.Code===m.bcSalespersonCode);
+                    return(
+                      <tr key={m.uid} style={{borderBottom:`1px solid ${C.border}22`,opacity:saving?0.5:1}}>
+                        <td style={{padding:"8px 10px",verticalAlign:"top"}}>
+                          <div style={{fontSize:13,color:C.text,fontWeight:600}}>{m.displayName||m.email||"—"}</div>
+                          {m.displayName&&<div style={{fontSize:10,color:C.muted}}>{m.email}</div>}
+                          <div style={{fontSize:10,color:C.muted,marginTop:2}}>
+                            {m.bcUserCode||m.bcSalespersonCode
+                              ?<span style={{color:C.green}}>✓ Linked</span>
+                              :<span style={{color:C.yellow}}>○ Not linked</span>}
+                          </div>
+                        </td>
+                        <td style={{padding:"8px 10px",verticalAlign:"top"}}>
+                          <select value={m.bcUserCode||""}
+                            onChange={e=>{
+                              const code=e.target.value||null;
+                              const user=designerCache.find(u=>u.Code===code);
+                              const patch={bcUserCode:code};
+                              if(user&&user.Name&&!m.displayName)patch.displayName=user.Name;
+                              saveBcMapping(m.uid,patch);
+                            }}
+                            disabled={!admin||saving||cachesEmpty}
+                            style={{background:C.card,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 8px",fontSize:12,minWidth:180,cursor:(admin&&!saving&&!cachesEmpty)?"pointer":"not-allowed"}}>
+                            <option value="">— None —</option>
+                            {designerCache.map(u=>(
+                              <option key={u.Code} value={u.Code}>{u.Name} ({u.Code})</option>
+                            ))}
+                          </select>
+                          {m.bcUserCode&&!userMatch&&(
+                            <div style={{fontSize:10,color:C.red,marginTop:3}}>
+                              ⚠ "{m.bcUserCode}" not in current BC list
+                            </div>
+                          )}
+                        </td>
+                        <td style={{padding:"8px 10px",verticalAlign:"top"}}>
+                          <select value={m.bcSalespersonCode||""}
+                            onChange={e=>saveBcMapping(m.uid,{bcSalespersonCode:e.target.value||null})}
+                            disabled={!admin||saving||cachesEmpty}
+                            style={{background:C.card,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 8px",fontSize:12,minWidth:180,cursor:(admin&&!saving&&!cachesEmpty)?"pointer":"not-allowed"}}>
+                            <option value="">— None —</option>
+                            {salesCache.map(s=>(
+                              <option key={s.Code} value={s.Code}>{s.Name} ({s.Code})</option>
+                            ))}
+                          </select>
+                          {m.bcSalespersonCode&&!salesMatch&&(
+                            <div style={{fontSize:10,color:C.red,marginTop:3}}>
+                              ⚠ "{m.bcSalespersonCode}" not in current BC list
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{marginTop:14,padding:"8px 12px",background:"#0a0a12",borderRadius:6,fontSize:11,color:C.muted,lineHeight:1.6}}>
+                <strong style={{color:C.sub}}>What this does:</strong>
+                <br/>• <strong>BC User</strong> — when picked as Designer / Project Manager on a project, the BC code syncs to <code>CCS_Designer</code> / <code>Project_Manager</code> on the BC ProjectCard.
+                <br/>• <strong>BC Salesperson</strong> — when picked as Sales, the BC code syncs to <code>CCS_Salesperson_Code</code>.
+                <br/>• Linked ARC users get permission-aware features (e.g. Designer can edit own pre-quote review, push notifications for assigned projects).
+              </div>
+            </div>
+          );
+        })()}
 
         {!loading&&tab==="members"&&(
           <>
