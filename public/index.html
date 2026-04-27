@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.756";
+const APP_VERSION="v1.19.757";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -9892,16 +9892,119 @@ function TeamModal({uid,companyId,userRole,onClose}){
 
   const admin=userRole==="admin";
   const roleBadge={admin:[C.accentDim,C.accent],edit:[C.greenDim,C.green],view:[C.border,C.muted]};
+  // DECISION(v1.19.757): Tabbed Team modal — Members tab keeps the role/invite UX;
+  // Permissions tab is a checkbox grid for granular permissions (Admin, Reviewer, …).
+  const [tab,setTab]=useState("members"); // "members" | "permissions"
+  const [savingPerm,setSavingPerm]=useState(""); // uid currently saving (to grey the row)
+
+  // Toggle a single permission flag for a member. Reviewer is the first one; the
+  // schema is a free-form `permissions` map so we can add more later without further
+  // schema migrations. Admins write directly to Firestore (the rule allows it).
+  async function togglePermission(memberUid,key,value){
+    if(!admin)return;
+    setSavingPerm(memberUid);
+    try{
+      const target=members.find(m=>m.uid===memberUid);
+      const nextPerms={...((target&&target.permissions)||{}),[key]:!!value};
+      await fbDb.doc(`companies/${companyId}/members/${memberUid}`).update({permissions:nextPerms,updatedAt:Date.now()});
+      setMembers(m=>m.map(x=>x.uid===memberUid?{...x,permissions:nextPerms}:x));
+    }catch(ex){setErr(ex.message||String(ex));}
+    setSavingPerm("");
+  }
+
+  // Toggle the Admin checkbox — wraps the existing updateMemberRole Cloud Function.
+  // Default non-admin role is "edit" (most common for existing members) so unchecking
+  // Admin doesn't accidentally demote someone to view-only.
+  async function toggleAdmin(memberUid,checked){
+    if(!admin)return;
+    if(memberUid===uid){
+      setErr("You can't change your own admin status. Ask another admin to do it.");
+      return;
+    }
+    setSavingPerm(memberUid);
+    try{
+      const newRole=checked?"admin":"edit";
+      await fbFunctions.httpsCallable("updateMemberRole")({targetUid:memberUid,role:newRole,companyId});
+      setMembers(m=>m.map(x=>x.uid===memberUid?{...x,role:newRole}:x));
+    }catch(ex){setErr(ex.message||String(ex));}
+    setSavingPerm("");
+  }
 
   return(<>
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
-      <div style={{...card(),width:"100%",maxWidth:560,maxHeight:"80vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
-        <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>👥 Team</div>
-        <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Manage company workspace members</div>
+      <div style={{...card(),width:"100%",maxWidth:tab==="permissions"?720:560,maxHeight:"85vh",overflow:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>👥 Team & Permissions</div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:14}}>Manage company workspace members and per-user permissions</div>
+        {/* Tab switcher */}
+        <div style={{display:"flex",gap:0,marginBottom:18,borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`,background:"#0a0a12"}}>
+          <button onClick={()=>setTab("members")}
+            style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",
+              background:tab==="members"?C.accentDim:"transparent",color:tab==="members"?C.accent:C.muted}}>
+            Members
+          </button>
+          <button onClick={()=>setTab("permissions")}
+            style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",borderLeft:`1px solid ${C.border}`,
+              background:tab==="permissions"?C.accentDim:"transparent",color:tab==="permissions"?C.accent:C.muted}}>
+            Permissions
+          </button>
+        </div>
         {loading&&<div style={{color:C.muted,fontSize:13,padding:"20px 0",textAlign:"center"}}>Loading…</div>}
         {err&&<div style={{background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:10,marginBottom:12,fontSize:13,color:C.red}}>{err}</div>}
 
-        {!loading&&(
+        {!loading&&tab==="permissions"&&(
+          <div style={{marginBottom:18}}>
+            <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>
+              {admin?"Tick a checkbox to grant the corresponding permission. Changes save immediately.":"View-only — only admins can edit permissions."}
+            </div>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead>
+                <tr style={{background:"#0a0a12",borderBottom:`1px solid ${C.border}`}}>
+                  <th style={{textAlign:"left",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>User</th>
+                  <th style={{textAlign:"center",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,width:80}} title="Admin can manage team members + permissions, write all settings, override locks">Admin</th>
+                  <th style={{textAlign:"center",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,width:90}} title="Reviewer can approve/reject pre- and post-quote engineering reviews">Reviewer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {members.map(m=>{
+                  const isSelf=m.uid===uid;
+                  const isAdmin=m.role==="admin";
+                  const isReviewer=!!(m.permissions&&m.permissions.reviewer);
+                  const saving=savingPerm===m.uid;
+                  return(
+                    <tr key={m.uid} style={{borderBottom:`1px solid ${C.border}22`,opacity:saving?0.5:1}}>
+                      <td style={{padding:"8px 10px"}}>
+                        <div style={{fontSize:13,color:C.text,fontWeight:600}}>{m.email||"—"}</div>
+                        {isSelf&&<div style={{fontSize:10,color:C.muted,fontStyle:"italic"}}>(you)</div>}
+                      </td>
+                      <td style={{textAlign:"center",padding:"8px 10px"}}>
+                        <input type="checkbox" checked={isAdmin}
+                          onChange={e=>toggleAdmin(m.uid,e.target.checked)}
+                          disabled={!admin||isSelf||saving}
+                          title={isSelf?"You can't change your own admin status":(admin?"Toggle Admin role":"Admins only")}
+                          style={{cursor:(!admin||isSelf||saving)?"not-allowed":"pointer",width:16,height:16}}/>
+                      </td>
+                      <td style={{textAlign:"center",padding:"8px 10px"}}>
+                        <input type="checkbox" checked={isReviewer}
+                          onChange={e=>togglePermission(m.uid,"reviewer",e.target.checked)}
+                          disabled={!admin||saving}
+                          title={admin?"Toggle Reviewer permission":"Admins only"}
+                          style={{cursor:(!admin||saving)?"not-allowed":"pointer",width:16,height:16}}/>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{marginTop:14,padding:"8px 12px",background:"#0a0a12",borderRadius:6,fontSize:11,color:C.muted,lineHeight:1.6}}>
+              <strong style={{color:C.sub}}>Permission glossary:</strong>
+              <br/>• <strong>Admin</strong> — manage team membership, override Won/Lost locks, edit all settings.
+              <br/>• <strong>Reviewer</strong> — approve or reject pre-quote and post-PO engineering reviews.
+              <br/>More permission columns will be added as additional roles are defined.
+            </div>
+          </div>
+        )}
+
+        {!loading&&tab==="members"&&(
           <>
             {/* Members */}
             <div style={{marginBottom:20}}>
