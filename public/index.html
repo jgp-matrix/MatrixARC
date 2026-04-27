@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.746";
+const APP_VERSION="v1.19.747";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -5560,6 +5560,51 @@ async function loadProjects(uid){
 async function deleteProject(uid,id){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   await fbDb.doc(`${path}/${id}`).delete();
+}
+// DECISION(v1.19.747): Cascade-delete the project's pageImages blobs from Firebase
+// Storage. Without this, deleting a project from ARC leaves all the drawing JPEGs
+// orphaned at `pageImages/{uid}/{projectId}/...` — the audit found 16 such projects
+// with ~441MB of dead weight.
+//
+// Strategy: collect the union of uids that may have uploaded pages for this project
+// (the deleter, `project.createdBy`, plus any uid encoded in each page's storageUrl),
+// then run `listAll()` on `pageImages/{uid}/{projectId}/` for each candidate and delete
+// every blob found. Storage rules on `pageImages/{uid}/**` permit any authenticated
+// user to read+delete (`storage.rules:6-8`), so this works even when the deleter
+// wasn't the original uploader. Best-effort — never throws; failures get logged so
+// the Firestore doc deletion still succeeds.
+async function deleteProjectStorageBlobs(currentUid,projectId,project){
+  const uids=new Set();
+  if(currentUid)uids.add(currentUid);
+  if(project?.createdBy)uids.add(project.createdBy);
+  // Walk every page's storageUrl to harvest uids — handles team-member uploads.
+  for(const pan of (project?.panels||[])){
+    for(const pg of (pan?.pages||[])){
+      const url=pg?.storageUrl;
+      if(!url)continue;
+      const m=url.match(/\/o\/pageImages%2F([^%/]+)%2F/);
+      if(m&&m[1])uids.add(decodeURIComponent(m[1]));
+    }
+  }
+  if(uids.size===0)return{deleted:0,failed:0,uids:[]};
+  let deleted=0,failed=0;
+  const errors=[];
+  for(const uid of uids){
+    try{
+      const folderRef=fbStorage.ref(`pageImages/${uid}/${projectId}`);
+      const list=await folderRef.listAll();
+      for(const item of (list.items||[])){
+        try{await item.delete();deleted++;}
+        catch(e){failed++;errors.push(`${item.fullPath}: ${e.message||e}`);}
+      }
+    }catch(e){
+      // listAll failure (e.g. folder doesn't exist) is fine — just no blobs at that prefix.
+      console.log(`[CASCADE DELETE] no pageImages found at pageImages/${uid}/${projectId} (${e.code||"unknown"})`);
+    }
+  }
+  if(failed>0)console.warn(`[CASCADE DELETE] failed to delete ${failed} blob(s):`,errors.slice(0,5));
+  console.log(`[CASCADE DELETE] project ${projectId} — deleted ${deleted} pageImage blob(s) across ${uids.size} uid(s)`);
+  return{deleted,failed,uids:[...uids]};
 }
 
 // ── COPY PROJECT ──
@@ -29877,6 +29922,12 @@ INSTRUCTIONS:
         if(!skip){setDeleteConfirm(null);return;}
       }
     }
+    // DECISION(v1.19.747): Cascade-delete pageImages blobs in Storage BEFORE the
+    // Firestore doc is deleted (we still need panel.pages to know the uid path
+    // segments). Best-effort — Storage failures don't block doc deletion.
+    try{
+      await deleteProjectStorageBlobs(user.uid,deleteConfirm.id,deleteConfirm.project);
+    }catch(e){console.warn("[CASCADE DELETE] error during pageImages cleanup:",e);}
     await deleteProject(user.uid,deleteConfirm.id);
     setProjects(ps=>ps.filter(x=>x.id!==deleteConfirm.id));
     if(view==="project"&&openProject?.id===deleteConfirm.id){setView("dashboard");setOpenProject(null);}
