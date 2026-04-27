@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.752";
+const APP_VERSION="v1.19.753";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -27877,7 +27877,16 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
       <div style={{fontSize:17,fontWeight:700,color:C.green,lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{p.name}</div>
       {rfqCount>0&&<span style={{background:C.redDim,color:C.red,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",flexShrink:0}}>{rfqCount} RFQ{rfqCount>1?"S":""}</span>}
-      <div style={{flexShrink:0,fontSize:"0.75em"}}><Badge status={p.importedFromBC?"imported":st} project={p}/></div>
+      {/* DECISION(v1.19.753): When project.lostAt is set, replace the status badge with a
+          dedicated red LOST pill so the tile reads at a glance in the Lost / All views. */}
+      {p.lostAt?(
+        <span title={`Marked LOST ${new Date(p.lostAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}`}
+          style={{flexShrink:0,background:"#1f0a0a",color:"#fca5a5",border:"1px solid #ef444466",borderRadius:20,padding:"3px 12px",fontSize:11,fontWeight:800,letterSpacing:0.6,whiteSpace:"nowrap"}}>
+          🗙 LOST
+        </span>
+      ):(
+        <div style={{flexShrink:0,fontSize:"0.75em"}}><Badge status={p.importedFromBC?"imported":st} project={p}/></div>
+      )}
     </div>
     {activeTask&&(
       <div style={{marginTop:4}}>
