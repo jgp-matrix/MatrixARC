@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.747";
+const APP_VERSION="v1.19.748";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -21022,7 +21022,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             <span style={{fontSize:20}}>📐</span>
             <div style={{flex:1,minWidth:200}}>
               <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>PRE-QUOTE REVIEW REQUESTED</div>
-              <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Designer: {project.bcDesigner||"—"}</div>
+              <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Engineer/Designer: {project.bcDesigner||"—"}</div>
             </div>
             {!readOnly&&(project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin")&&(
               <div style={{display:"flex",gap:6}}>
@@ -21210,7 +21210,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 </div>
               )}
               <div style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",marginTop:4}}>
-                {["Sales","PM","Designer"].map(function(label,li){
+                {["Sales","PM","Engineer/Designer"].map(function(label,li){
                   // DECISION(v1.19.411): Designer now mapped to CCS_Designer BC field (was null).
                   // DECISION(v1.19.499): PM uses Project_Manager field (User table), not Person_Responsible (Resource table)
                   var keys=[["bcSalesperson","bcSalespersonCode","CCS_Salesperson_Code"],["bcProjectManager","bcProjectManagerCode","Project_Manager"],["bcDesigner","bcDesignerCode","CCS_Designer"]][li];
@@ -21699,10 +21699,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 {!readOnly&&(()=>{
                   const reviewStatus=project.preReviewStatus;
                   if(reviewStatus==="approved")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:C.green,padding:"4px 0"}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</div>;
-                  if(reviewStatus==="pending")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#a78bfa",padding:"4px 0",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting designer approval</div>;
+                  if(reviewStatus==="pending")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#a78bfa",padding:"4px 0",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting Engineer/Designer approval</div>;
                   return <button onClick={async()=>{
                     const designerCode=project.bcDesignerCode;
-                    if(!designerCode){alert("No Designer assigned to this project. Assign a Designer first.");return;}
+                    if(!designerCode){alert("No Engineer/Designer assigned to this project. Assign an Engineer/Designer first.");return;}
                     const hasDrawings=(project.panels||[]).some(p=>(p.pages||[]).length>0);
                     if(!hasDrawings){alert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
                     // Set review status
@@ -21751,8 +21751,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                             alert("Submitted for pre-quote review. "+designerName+" has been notified at "+designerEmail);
                           }else{alert("Submitted for review. Email notification requires Microsoft 365 sign-in.");}
                         }catch(e){console.warn("Review email failed:",e);alert("Submitted for review. Email failed: "+e.message);}
-                      }else{alert("Submitted for review. Could not find designer email — please notify "+designerName+" manually.");}
-                    }catch(e){console.warn("Review notification failed:",e);alert("Review submitted but notification failed: "+(e.message||e)+"\n\nThe project status has been updated. Please notify the designer manually.");}
+                      }else{alert("Submitted for review. Could not find Engineer/Designer email — please notify "+designerName+" manually.");}
+                    }catch(e){console.warn("Review notification failed:",e);alert("Review submitted but notification failed: "+(e.message||e)+"\n\nThe project status has been updated. Please notify the Engineer/Designer manually.");}
                   }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>;
                 })()}
                 {/* DECISION(v1.19.667): Pre-gate the Send button on the main view so sales sees
@@ -21786,7 +21786,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   if(_incompleteItems.length>0){alert(formatIncompleteQuoteAlert(_incompleteItems));return;}
                   // Gate: require pre-review approval before sending quote
                   if(project.preReviewStatus&&project.preReviewStatus!=="approved"){
-                    alert("Engineering approval required before sending quote.\n\nCurrent status: "+(project.preReviewStatus==="pending"?"Awaiting designer review":"Returned for changes")+"\n\nClick 'Send for Technical Review' to submit for review, or wait for the designer to approve.");
+                    alert("Engineering approval required before sending quote.\n\nCurrent status: "+(project.preReviewStatus==="pending"?"Awaiting Engineer/Designer review":"Returned for changes")+"\n\nClick 'Send for Technical Review' to submit for review, or wait for the Engineer/Designer to approve.");
                     return;
                   }
                   const q=project.quote||{};
@@ -26653,7 +26653,7 @@ function NewProjectModal({uid,onCreated,onClose}){
           {/* Salesperson / PM / Designer dropdowns */}
           {bcConnected&&salespersons.length>0&&(
             <div style={{display:"flex",gap:10,marginBottom:16}}>
-              {[["Salesperson",selectedSalesperson,setSelectedSalesperson,salespersons],["Project Manager",selectedPM,setSelectedPM,designerList.length>0?designerList:salespersons],["Designer",selectedDesigner,setSelectedDesigner,designerList.length>0?designerList:salespersons]].map(([label,val,setter,list])=>(
+              {[["Salesperson",selectedSalesperson,setSelectedSalesperson,salespersons],["Project Manager",selectedPM,setSelectedPM,designerList.length>0?designerList:salespersons],["Engineer/Designer",selectedDesigner,setSelectedDesigner,designerList.length>0?designerList:salespersons]].map(([label,val,setter,list])=>(
                 <div key={label} style={{flex:1}}>
                   <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4}}>{label}</div>
                   <select value={val} onChange={e=>setter(e.target.value)} style={{...inp({fontSize:12,padding:"8px 10px"})}}>
