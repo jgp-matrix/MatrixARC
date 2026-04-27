@@ -29796,14 +29796,17 @@ INSTRUCTIONS:
   const [splashPct,setSplashPct]=useState(0);
   const splashStartRef=useRef(Date.now());
   useEffect(()=>{
-    const duration=3000;
+    // DECISION(v1.19.763): Splash duration cut from 3000→600 ms and shrink from 800→250 ms.
+    // The splash is purely decorative — the React tree is rendering behind it the whole
+    // time. Faster boot animation = faster perceived app start.
+    const duration=600;
     let raf;
     function tick(){
       const elapsed=Date.now()-splashStartRef.current;
       const pct=Math.min(100,Math.round((elapsed/duration)*100));
       setSplashPct(pct);
       if(elapsed<duration){raf=requestAnimationFrame(tick);}
-      else{setSplash("shrinking");setTimeout(()=>setSplash("done"),800);}
+      else{setSplash("shrinking");setTimeout(()=>setSplash("done"),250);}
     }
     raf=requestAnimationFrame(tick);
     return()=>cancelAnimationFrame(raf);
@@ -30106,12 +30109,13 @@ INSTRUCTIONS:
           </div>
         );
       })()}
-      {/* ── SPLASH SCREEN ── */}
+      {/* ── SPLASH SCREEN ── DECISION(v1.19.763): Transitions tightened to match the
+           shorter splash window (0.5s→0.2s opacity, 0.7s→0.25s shrink/scale). */}
       {splash!=="done"&&(
         <div style={{position:"fixed",inset:0,zIndex:9999,background:C.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",
-          transition:"opacity 0.5s ease",opacity:splash==="shrinking"?0:1,pointerEvents:splash==="shrinking"?"none":"auto"}}>
+          transition:"opacity 0.2s ease",opacity:splash==="shrinking"?0:1,pointerEvents:splash==="shrinking"?"none":"auto"}}>
           <div style={{display:"flex",flexDirection:"column",alignItems:"center",
-            transition:"all 0.7s cubic-bezier(0.4,0,0.2,1)",
+            transition:"all 0.25s cubic-bezier(0.4,0,0.2,1)",
             transform:splash==="shrinking"?"translateY(-44vh) scale(0.38)":"translateY(0) scale(1)"}}>
             <img src="/corevega_logo_stacked.png" alt="CoreVega Software" style={{height:200,objectFit:"contain",marginBottom:16}}/>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:80,fontWeight:900,letterSpacing:8,marginBottom:4,lineHeight:1,color:C.accent}}>ARC</span>
