@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.758";
+const APP_VERSION="v1.19.759";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -30198,13 +30198,37 @@ INSTRUCTIONS:
         _appCtx.role=profile.role;
         _appCtx.projectsPath=`companies/${profile.companyId}/projects`;
         _appCtx.configPath=`companies/${profile.companyId}/config`;
-        // DECISION(v1.19.758): Load granular per-user permissions from the member doc
-        // alongside the role. Permissions live at companies/{cid}/members/{uid}.permissions
+        // DECISION(v1.19.758/759): Load granular per-user permissions from the member
+        // doc alongside the role. Permissions live at companies/{cid}/members/{uid}.permissions
         // as a free-form map ({reviewer:true, ...}). Used by hasPermission() throughout.
+        // Switched from one-shot get() to onSnapshot in v1.19.759 so admin-granted
+        // permission changes propagate to active sessions without requiring a refresh.
+        // Also re-syncs the role in case an admin changes it on the fly.
         try{
           const memberDoc=await fbDb.doc(`companies/${profile.companyId}/members/${user.uid}`).get();
           _appCtx.permissions=(memberDoc.exists&&memberDoc.data().permissions)||{};
         }catch(e){console.warn("[PERMS] member doc fetch failed:",e);_appCtx.permissions={};}
+        try{
+          const unsubMember=fbDb.doc(`companies/${profile.companyId}/members/${user.uid}`).onSnapshot(
+            doc=>{
+              if(!doc.exists)return;
+              const d=doc.data();
+              const newPerms=d.permissions||{};
+              const newRole=d.role||_appCtx.role;
+              const permsChanged=JSON.stringify(_appCtx.permissions||{})!==JSON.stringify(newPerms);
+              const roleChanged=_appCtx.role!==newRole;
+              _appCtx.permissions=newPerms;
+              _appCtx.role=newRole;
+              if(permsChanged||roleChanged){
+                console.log("[PERMS] live update — role:",newRole,"permissions:",newPerms);
+                setUserRole(newRole); // triggers re-render so gates update everywhere
+              }
+            },
+            err=>console.warn("[PERMS] live listener error:",err)
+          );
+          // Cache the unsubscribe on the user object so we tear down on sign-out.
+          if(typeof window!=="undefined")window._arcPermsUnsub=unsubMember;
+        }catch(e){console.warn("[PERMS] live listener setup failed:",e);}
         setCompanyId(profile.companyId);
         setUserRole(profile.role);
         try{
