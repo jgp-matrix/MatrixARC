@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.748";
+const APP_VERSION="v1.19.749";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -21148,7 +21148,6 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       {project.importedFromBC&&<Badge status="imported"/>}
                     </div>
                     <span style={{fontSize:13,color:C.muted}}>Created: {project.createdAt?new Date(project.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):project.updatedAt?new Date(project.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</span>
-                    <span style={{fontSize:11,color:C.muted}}>{(project.panels||[]).length} panel{(project.panels||[]).length!==1?"s":""}</span>
                   </div>
                 </div>
               )}
@@ -21209,40 +21208,64 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   )}
                 </div>
               )}
-              <div style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",marginTop:4}}>
+              <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap",marginTop:4}}>
                 {["Sales","PM","Engineer/Designer"].map(function(label,li){
                   // DECISION(v1.19.411): Designer now mapped to CCS_Designer BC field (was null).
                   // DECISION(v1.19.499): PM uses Project_Manager field (User table), not Person_Responsible (Resource table)
+                  // DECISION(v1.19.749): Sales column now also hosts the "Hold priority while
+                  // away" checkbox stacked below the dropdown — owner-only, hidden in quote view.
                   var keys=[["bcSalesperson","bcSalespersonCode","CCS_Salesperson_Code"],["bcProjectManager","bcProjectManagerCode","Project_Manager"],["bcDesigner","bcDesignerCode","CCS_Designer"]][li];
                   var nm=project[keys[0]]||"";
                   var codeKey=keys[1];var bcField=keys[2];
-                  if(readOnly)return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),React.createElement("span",{style:{color:C.sub}},nm||"—"));
-                  // Salesperson=Salesperson table, PM+Designer=User list
-                  var listSource=li===0?(window._arcSalespersonCache||[]):(window._arcDesignerCache||window._arcSalespersonCache||[]);
-                  var opts=[React.createElement("option",{key:"_",value:""},"—")];
-                  listSource.forEach(function(s){opts.push(React.createElement("option",{key:s.Code,value:s.Code},s.Name));});
-                  return React.createElement("div",{key:label,style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},
-                    React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),
-                    React.createElement("select",{value:project[codeKey]||"",onChange:function(e){
-                      var code=e.target.value;
-                      var cached=listSource.find(function(s){return s.Code===code;});
-                      var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;
-                      // For salesperson, also update quote fields so the quote form shows the name
-                      if(li===0&&cached){
-                        upd.quote=Object.assign({},upd.quote||{});
-                        upd.quote.salesperson=cached.Name||code;
-                        if(cached.E_Mail)upd.quote.salesEmail=cached.E_Mail;
-                        if(cached.Phone_No)upd.quote.salesPhone=cached.Phone_No;
-                      }
-                      onUpdate(upd);safeSave(uid,upd);
-                      if(bcField&&project.bcProjectNumber&&_bcToken){var patch={};patch[bcField]=code;bcPatchJobOData(project.bcProjectNumber,patch).catch(function(){});}
-                    },style:{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:150}},opts)
-                  );
+                  // Hold-priority checkbox — only beneath the Sales column for the project owner
+                  var holdEl=null;
+                  if(li===0&&iAmOwner&&view!=="quote"){
+                    holdEl=React.createElement("label",{
+                      style:{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.muted,cursor:"pointer",marginTop:4},
+                      title:"Normally your priority lock releases 90 seconds after you close the tab. Check this to keep teammates locked out even if you step away or lose connection."
+                    },
+                      React.createElement("input",{type:"checkbox",checked:!!project.ownerLockActive,onChange:function(e){
+                        var upd=Object.assign({},project,{ownerLockActive:e.target.checked,updatedAt:Date.now()});
+                        update(upd);
+                      },style:{cursor:"pointer"}}),
+                      React.createElement("span",null,"🔒 Hold priority while I'm away"),
+                      project.ownerLockActive&&React.createElement("span",{style:{fontSize:10,color:"#fcd34d",fontWeight:700,background:"#3a2800",borderRadius:4,padding:"1px 6px",marginLeft:4}},"ACTIVE")
+                    );
+                  }
+                  var rowEl;
+                  if(readOnly){
+                    rowEl=React.createElement("div",{style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},
+                      React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),
+                      React.createElement("span",{style:{color:C.sub}},nm||"—")
+                    );
+                  }else{
+                    // Salesperson=Salesperson table, PM+Designer=User list
+                    var listSource=li===0?(window._arcSalespersonCache||[]):(window._arcDesignerCache||window._arcSalespersonCache||[]);
+                    var opts=[React.createElement("option",{key:"_",value:""},"—")];
+                    listSource.forEach(function(s){opts.push(React.createElement("option",{key:s.Code,value:s.Code},s.Name));});
+                    rowEl=React.createElement("div",{style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},
+                      React.createElement("span",{style:{color:C.muted,fontWeight:600}},label+":"),
+                      React.createElement("select",{value:project[codeKey]||"",onChange:function(e){
+                        var code=e.target.value;
+                        var cached=listSource.find(function(s){return s.Code===code;});
+                        var upd=Object.assign({},project);upd[codeKey]=code;upd[keys[0]]=cached?cached.Name:code;
+                        // For salesperson, also update quote fields so the quote form shows the name
+                        if(li===0&&cached){
+                          upd.quote=Object.assign({},upd.quote||{});
+                          upd.quote.salesperson=cached.Name||code;
+                          if(cached.E_Mail)upd.quote.salesEmail=cached.E_Mail;
+                          if(cached.Phone_No)upd.quote.salesPhone=cached.Phone_No;
+                        }
+                        onUpdate(upd);safeSave(uid,upd);
+                        if(bcField&&project.bcProjectNumber&&_bcToken){var patch={};patch[bcField]=code;bcPatchJobOData(project.bcProjectNumber,patch).catch(function(){});}
+                      },style:{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:150}},opts)
+                    );
+                  }
+                  return React.createElement("div",{key:label,style:{display:"flex",flexDirection:"column",gap:0}},rowEl,holdEl);
                 })}
               </div>
               {bcSyncMsg&&<div style={{fontSize:12,color:bcSyncMsg.ok===null?C.muted:bcSyncMsg.ok?C.green:C.yellow,marginBottom:2}}>{bcSyncMsg.text}</div>}
               {relinkMsg&&<div style={{fontSize:12,color:relinkMsg.startsWith("✓")?C.green:relinkMsg.startsWith("Failed")?C.red:C.muted,marginBottom:2}}>{relinkMsg}</div>}
-              <div style={{fontSize:13,color:C.muted}}>{panels.length} panel{panels.length!==1?"s":""}</div>
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
               <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
@@ -23490,46 +23513,29 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   return(
     <>
-      {/* DECISION(v1.19.678): Owner-only "Hold priority while away" checkbox.
-         Writes project.ownerLockActive. When true, the client-side 90s-stale timeout is
-         bypassed AND Firestore rules reject non-owner writes. Default false. */}
-      {iAmOwner&&view!=="quote"&&(
-        <div style={{margin:"8px 24px 0",display:"flex",alignItems:"center",gap:10,fontSize:12,color:C.muted,flexWrap:"wrap"}}>
-          <label style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
-            <input type="checkbox"
-              checked={!!project.ownerLockActive}
-              onChange={e=>{
-                const upd={...project,ownerLockActive:e.target.checked,updatedAt:Date.now()};
-                update(upd);
+      {/* DECISION(v1.19.749): Owner-only "Hold priority while away" checkbox MOVED to
+         under the Sales dropdown on the project header (search "DECISION(v1.19.749)" in
+         this file). The watchers indicator stays here as its own slim row since it's a
+         presence/team signal independent of ownership controls. */}
+      {iAmOwner&&view!=="quote"&&(()=>{
+        const otherViewers=viewers.filter(v=>v.uid!==uid&&(Date.now()-(v.lastSeen||0))<90000);
+        if(!otherViewers.length)return null;
+        return(
+          <div style={{margin:"8px 24px 0",display:"flex",alignItems:"center",gap:10}}>
+            <span
+              title={"Watching: "+otherViewers.map(v=>v.userName||v.userEmail||"unknown").join(", ")+(chimeOnViewer?" · Chime ON (click to toggle)":" · Chime OFF (click to toggle)")}
+              onClick={()=>{
+                const next=!chimeOnViewer;
+                try{localStorage.setItem("arc_chime_on_viewer_"+uid,next?"1":"0");}catch(e){}
+                setChimeOnViewer(next);
               }}
-              style={{cursor:"pointer"}}/>
-            <span>🔒 Hold priority while I'm away</span>
-          </label>
-          <span style={{fontSize:11,color:C.muted,fontStyle:"italic"}} title="Normally your priority lock releases 90 seconds after you close the tab. Check this to keep teammates locked out even if you step away or lose connection.">(keeps lock active if tab goes idle)</span>
-          {project.ownerLockActive&&(
-            <span style={{fontSize:11,color:"#fcd34d",fontWeight:700,background:"#3a2800",borderRadius:4,padding:"1px 8px"}}>ACTIVE</span>
-          )}
-          {/* DECISION(v1.19.683): Viewers badge — shows who else is watching the project.
-             Tooltip lists names. Clickable label toggles the chime preference for future joins. */}
-          {(()=>{
-            const otherViewers=viewers.filter(v=>v.uid!==uid&&(Date.now()-(v.lastSeen||0))<90000);
-            if(!otherViewers.length)return null;
-            return(
-              <span
-                title={"Watching: "+otherViewers.map(v=>v.userName||v.userEmail||"unknown").join(", ")+(chimeOnViewer?" · Chime ON (click to toggle)":" · Chime OFF (click to toggle)")}
-                onClick={()=>{
-                  const next=!chimeOnViewer;
-                  try{localStorage.setItem("arc_chime_on_viewer_"+uid,next?"1":"0");}catch(e){}
-                  setChimeOnViewer(next);
-                }}
-                role="button"
-                style={{display:"inline-flex",alignItems:"center",gap:6,marginLeft:4,padding:"3px 10px",background:"#1e1b4b",border:"1px solid #818cf866",borderRadius:14,fontSize:11,fontWeight:600,color:"#c4b5fd",cursor:"pointer"}}>
-                👁 {otherViewers.length} watching{chimeOnViewer?" 🔔":""}
-              </span>
-            );
-          })()}
-        </div>
-      )}
+              role="button"
+              style={{display:"inline-flex",alignItems:"center",gap:6,padding:"3px 10px",background:"#1e1b4b",border:"1px solid #818cf866",borderRadius:14,fontSize:11,fontWeight:600,color:"#c4b5fd",cursor:"pointer"}}>
+              👁 {otherViewers.length} watching{chimeOnViewer?" 🔔":""}
+            </span>
+          </div>
+        );
+      })()}
       {/* DECISION(v1.19.678): Owner Priority Mode — toast + banner + chime. Toast is a
          transient notification; banner persists while active; green takeover banner
          replaces the purple one while admin takeover is in effect. */}
