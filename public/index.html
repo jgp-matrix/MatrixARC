@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.751";
+const APP_VERSION="v1.19.752";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -20812,6 +20812,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [validateMsg,setValidateMsg]=useState("");
   const [showDeleteAdminWarn,setShowDeleteAdminWarn]=useState(false);
   const [showUnlockConfirm,setShowUnlockConfirm]=useState(false);
+  // DECISION(v1.19.752): In-app confirm modals for the LOST flow — replaces the native
+  // browser confirm() popups that didn't match ARC's dark-themed UI.
+  const [showMarkLostConfirm,setShowMarkLostConfirm]=useState(false);
+  const [showUnmarkLostConfirm,setShowUnmarkLostConfirm]=useState(false);
   // DECISION(v1.19.509): Force re-render when BC caches populate (Sales/PM/Designer dropdowns)
   const [,forceUpdate]=useState(0);
   useEffect(()=>{
@@ -21890,10 +21894,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         into the Lost Projects bucket. Confirmation required. Owner-priority
                         gate matches PO Received for consistency. */}
                     <button
-                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{
-                        if(!confirm(`Mark "${project.name||project.bcProjectNumber||"this project"}" as LOST?\n\nIt will be removed from the active kanban and moved into the Lost Projects filter.\n\nYou can un-mark it later from the same project page.`))return;
-                        if(onMarkLost)onMarkLost();
-                      }}
+                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>setShowMarkLostConfirm(true)}
                       disabled={ownerPriorityActive}
                       title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Mark this project as Lost"}
                       style={btn("#1f0a0a","#ef4444",{fontSize:11,padding:"4px 10px",border:"1px solid #ef444466",fontWeight:700,letterSpacing:0.5,opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>LOST</button>
@@ -21903,10 +21904,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   <div style={{padding:"8px 14px",background:"#1f0a0a",border:"1px solid #ef444466",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
                     <span style={{fontSize:12,fontWeight:700,color:"#fca5a5"}}>🗙 Marked LOST {project.lostAt?new Date(project.lostAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):""}</span>
                     <button
-                      onClick={()=>{
-                        if(!confirm(`Un-mark "${project.name||project.bcProjectNumber||"this project"}" as LOST and return it to the active kanban?`))return;
-                        if(onUnmarkLost)onUnmarkLost();
-                      }}
+                      onClick={()=>setShowUnmarkLostConfirm(true)}
                       style={{background:"none",border:"1px solid #fca5a566",borderRadius:6,color:"#fca5a5",cursor:"pointer",fontSize:11,padding:"3px 10px",fontWeight:600}}>Un-mark Lost</button>
                   </div>
                 )}
@@ -21946,6 +21944,51 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
     {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)} ownerPriorityActive={ownerPriorityActive}/>}
     {showCADLinkModal&&<CADLinkSendModal project={project} onClose={()=>setShowCADLinkModal(false)}/>}
+    {/* DECISION(v1.19.752): Mark-LOST confirm modal. Replaces native browser confirm()
+        so it matches ARC's dark UI. Same confirmation copy as before. */}
+    {showMarkLostConfirm&&ReactDOM.createPortal(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{background:"#0d0d1a",border:"1px solid #ef4444",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:480,boxShadow:"0 0 40px 10px rgba(239,68,68,0.35)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+            <span style={{fontSize:24}}>🗙</span>
+            <div style={{fontSize:16,fontWeight:800,color:"#fca5a5"}}>Mark as LOST?</div>
+          </div>
+          <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7,marginBottom:18}}>
+            Mark <strong style={{color:"#f1f5f9"}}>{project.name||project.bcProjectNumber||"this project"}</strong> as LOST?
+            <br/><br/>
+            It will be removed from the active kanban and moved into the Lost Projects filter. You can un-mark it later from the same project page.
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>setShowMarkLostConfirm(false)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"8px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Cancel</button>
+            <button onClick={()=>{setShowMarkLostConfirm(false);if(onMarkLost)onMarkLost();}}
+              style={{background:"#1f0a0a",border:"1px solid #ef4444",color:"#fca5a5",padding:"8px 20px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
+              Mark as LOST
+            </button>
+          </div>
+        </div>
+      </div>
+    ,document.body)}
+    {/* DECISION(v1.19.752): Un-mark-LOST confirm modal — same UI family. */}
+    {showUnmarkLostConfirm&&ReactDOM.createPortal(
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{background:"#0d0d1a",border:"1px solid #fca5a5",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:480,boxShadow:"0 0 40px 10px rgba(252,165,165,0.25)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+            <span style={{fontSize:22}}>↩</span>
+            <div style={{fontSize:16,fontWeight:800,color:"#fca5a5"}}>Un-mark as LOST?</div>
+          </div>
+          <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7,marginBottom:18}}>
+            Un-mark <strong style={{color:"#f1f5f9"}}>{project.name||project.bcProjectNumber||"this project"}</strong> and return it to the active kanban?
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>setShowUnmarkLostConfirm(false)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"8px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Cancel</button>
+            <button onClick={()=>{setShowUnmarkLostConfirm(false);if(onUnmarkLost)onUnmarkLost();}}
+              style={{background:"#0d2010",border:"1px solid #4ade80",color:"#86efac",padding:"8px 20px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>
+              Un-mark Lost
+            </button>
+          </div>
+        </div>
+      </div>
+    ,document.body)}
     {/* DECISION(v1.19.745): Sent-quote edit acknowledgment modal. Required to unlock
         edits on a quote that's already gone to the customer. Shows the project owner's
         contact info and demands a checkbox confirmation that the user has verified with
