@@ -211,7 +211,7 @@ window.pdfjsReady=new Promise(res=>{
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.760";
+const APP_VERSION="v1.19.761";
 const APP_SCHEMA_VERSION=2;
 
 // ── FIREBASE CONFIG ── Replace with your MatrixARC Firebase project config
@@ -21138,8 +21138,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <span style={{fontSize:20}}>📐</span>
             <div style={{flex:1,minWidth:200}}>
-              <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 PRE-QUOTE REVIEW REQUESTED — EDITS LOCKED</div>
-              <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Engineer/Designer: {project.bcDesigner||"—"}. Edits resume once the reviewer approves or returns the project.</div>
+              {/* DECISION(v1.19.761): Banner reads differently for reviewers vs. sales. */}
+              {(_appCtx.role==="admin"||hasPermission("reviewer"))?(<>
+                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>📐 PRE-QUOTE REVIEW IN PROGRESS — REVIEWER EDIT MODE</div>
+                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Engineer/Designer: {project.bcDesigner||"—"}. You can edit BOMs, prices, and drawings before approving or returning to Sales.</div>
+              </>):(<>
+                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 PRE-QUOTE REVIEW REQUESTED — EDITS LOCKED</div>
+                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Engineer/Designer: {project.bcDesigner||"—"}. Edits resume once the reviewer approves or returns the project.</div>
+              </>)}
             </div>
             {/* DECISION(v1.19.756): Approve/Return bypass `readOnly` (which is true during
                 pending review) — these buttons ARE the way to release the lock, so they
@@ -21180,8 +21186,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <span style={{fontSize:20}}>🔧</span>
             <div style={{flex:1,minWidth:200}}>
-              <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 POST-PO REVIEW IN PROGRESS — EDITS LOCKED</div>
-              <div style={{fontSize:12,color:"#94a3b8"}}>PO #{project.bcPoNumber||"—"} received. Awaiting production readiness approval. Edits resume once the reviewer approves or returns the project.</div>
+              {/* DECISION(v1.19.761): Banner reads differently for reviewers vs. others. */}
+              {(_appCtx.role==="admin"||hasPermission("reviewer"))?(<>
+                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔧 POST-PO REVIEW IN PROGRESS — REVIEWER EDIT MODE</div>
+                <div style={{fontSize:12,color:"#94a3b8"}}>PO #{project.bcPoNumber||"—"} received. You can edit project data while validating production readiness, then approve or return.</div>
+              </>):(<>
+                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 POST-PO REVIEW IN PROGRESS — EDITS LOCKED</div>
+                <div style={{fontSize:12,color:"#94a3b8"}}>PO #{project.bcPoNumber||"—"} received. Awaiting production readiness approval. Edits resume once the reviewer approves or returns the project.</div>
+              </>)}
             </div>
             {/* DECISION(v1.19.756): Same bypass as pre-review — admins must be able to
                 approve post-review even though `readOnly` is true during pending review.
@@ -22760,12 +22772,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   useEffect(()=>{setLockOverrideSession(false);setUnlockRequestSent(false);},[project.id,project.wonAt,project.lostAt,project.editUnlocked]);
   const lockReadOnly=isProjectLocked&&!editUnlockedForAll&&!(iAmOwnerOrAdmin&&lockOverrideSession);
   const sentReadOnly=!!project.quoteSentAt&&!sentQuoteAckGiven&&!isProjectLocked;
-  // DECISION(v1.19.756): Pre-Review and Post-Review hard-block all user edits until the
-  // reviewer approves or rejects (returns the project to the Sales team). The reviewer
-  // doesn't edit BOM/pricing — they just approve/reject — so a global edit block is the
-  // right model. The Approve/Return buttons bypass `readOnly` via their own role gate.
-  // When status flips from "pending" to "approved"/"rejected"/null, edits resume.
-  const reviewReadOnly=project.preReviewStatus==="pending"||project.postReviewStatus==="pending";
+  // DECISION(v1.19.756): Pre-Review and Post-Review hard-block user edits until the
+  // reviewer approves or rejects (returns the project to the Sales team).
+  // DECISION(v1.19.761): Exempt anyone with Reviewer permission (or admin) from the
+  // review-locked state — they need to edit BOMs / prices / drawings during the review
+  // pass to implement engineering changes before approving. Sales / non-reviewer users
+  // remain blocked. Status flip out of "pending" auto-clears the lock for everyone.
+  const reviewReadOnly=(project.preReviewStatus==="pending"||project.postReviewStatus==="pending")
+                       &&!(_appCtx.role==="admin"||hasPermission("reviewer"));
   const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly;
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
 
