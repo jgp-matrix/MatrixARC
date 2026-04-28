@@ -17778,7 +17778,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               <button disabled={sendReviewBusy||!sendReviewEmail.trim()} onClick={async()=>{
                 setSendReviewBusy(true);
                 try{
-                  if(!_graphToken){throw new Error("Microsoft Graph not connected. Sign into Microsoft first.");}
+                  // DECISION(v1.19.777): Use acquireGraphToken() instead of checking the
+                  // stale global `_graphToken` directly. The previous code threw "not
+                  // connected" any time the in-memory token was missing — even when the
+                  // user already had a valid MSAL session that just needed a silent
+                  // refresh. acquireGraphToken() tries silent first then falls back to
+                  // popup, matching the pattern used everywhere else (RFQ send, quote
+                  // send, etc.). Only throw if the user actually hasn't signed in.
+                  const graphTok=await acquireGraphToken();
+                  if(!graphTok){throw new Error("Microsoft Graph not connected. Sign into Microsoft first (Settings → Microsoft 365).");}
                   const extNotes=pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).filter(n=>n.visibility==="external").map(n=>({...n,pageNum:pi+1})));
                   if(extNotes.length===0){alert("No external notes to send.");setSendReviewBusy(false);return;}
                   // Generate token
@@ -17801,7 +17809,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   const ci=_appCtx.company||{};
                   const html=buildReviewEmailHtml(project.name||"",project.bcProjectNumber||"",fbAuth.currentUser?.displayName||"Engineering",extNotes,reviewUrl,ci);
                   const subject="Engineering Review — "+(project.bcProjectNumber||project.name||"Project");
-                  await sendGraphEmail(_graphToken,sendReviewEmail.trim(),subject,html);
+                  await sendGraphEmail(graphTok,sendReviewEmail.trim(),subject,html);
                   // Save to project (direct Firestore update — project-level fields)
                   const projPath=_appCtx.projectsPath||`users/${uid}/projects`;
                   await fbDb.doc(`${projPath}/${project.id}`).update({customerReviewToken:tok,customerReviewSentAt:Date.now(),customerReviewEmail:sendReviewEmail.trim()});
