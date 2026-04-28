@@ -8344,7 +8344,13 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     if(mergedBom.length>0||hazlocResult){
       // DECISION(v1.19.607): Always set aiQuestions (including []) so stale questions clear.
       // DECISION(v1.19.644): In-memory only — consolidated save happens at end of extraction.
-      const bomSave={...latestPanel,...(mergedBom.length>0?{bom:mergedBom}:{}),aiQuestions:aiQuestions||[],engineeringQuestions:eqs,...(hazlocResult?{hazardousLocation:hazlocResult}:{}),...(extractionReport?{extractionReport}:{}),status:mergedBom.length>0?"extracted":latestPanel.status,updatedAt:Date.now()};
+      // DECISION(v1.19.789, ECO Phase 2.I): Re-extraction REPLACES the base BOM but must
+      // PRESERVE any ecoTag rows the user has already entered against this panel. Tagged
+      // rows describe deltas (add/modify/remove) — they aren't owned by extraction and must
+      // survive a fresh scan. Append them after the freshly-merged base rows.
+      const _existingEcoRows=(latestPanel.bom||[]).filter(r=>r.ecoTag);
+      const _bomWithEco=mergedBom.length>0?[...mergedBom,..._existingEcoRows]:null;
+      const bomSave={...latestPanel,...(_bomWithEco?{bom:_bomWithEco}:{}),aiQuestions:aiQuestions||[],engineeringQuestions:eqs,...(hazlocResult?{hazardousLocation:hazlocResult}:{}),...(extractionReport?{extractionReport}:{}),status:mergedBom.length>0?"extracted":latestPanel.status,updatedAt:Date.now()};
       applyInMemory(bomSave);
     }
     // Await validation (in-memory accumulation)
@@ -9265,8 +9271,68 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onOpenEditor}){
 // EcoEditor — full-screen modal for composing/reviewing one ECO. Phase 1 ships an empty
 // shell: 7 tab labels, a top-bar with state + cancel, no editing logic. Phase 2 fills in
 // the BOM editor; later phases fill in the rest.
-function EcoEditor({project,eco,uid,onClose}){
+function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
   const [tab,setTab]=useState("overview");
+  // DECISION(v1.19.789, ECO Phase 2.D-H): BOM Delta tab is the meat of Phase 2.
+  // Adding/modifying/removing rows from the ECO scope writes tagged rows directly
+  // into panel.bom; the cost recompute effect rolls deltaSell back into the ECO doc.
+  const [pickedPanelId,setPickedPanelId]=useState(()=>(project?.panels||[])[0]?.id||null);
+  const [addMode,setAddMode]=useState(null); // null | "add" | "modify" | "remove"
+  const [pickerBaseRowId,setPickerBaseRowId]=useState(null);
+  // Form state for the inline Add / Modify form
+  const [formQty,setFormQty]=useState(1);
+  const [formPN,setFormPN]=useState("");
+  const [formDesc,setFormDesc]=useState("");
+  const [formMfr,setFormMfr]=useState("");
+  const [formPrice,setFormPrice]=useState("");
+  // Live ECO doc snapshot — drives header status / running totals
+  const [liveEco,setLiveEco]=useState(eco);
+  useEffect(()=>{setLiveEco(eco);},[eco?.ecoId]);
+  useEffect(()=>{
+    if(!project?.id||!eco?.ecoId)return;
+    const path=`${ecoSubcollectionPath(uid,project.id)}/${eco.ecoId}`;
+    const unsub=fbDb.doc(path).onSnapshot(snap=>{
+      if(snap.exists)setLiveEco({ecoId:snap.id,...snap.data()});
+    },err=>console.warn("[ECO] live doc listen error:",err.message));
+    return()=>unsub();
+  },[project?.id,eco?.ecoId]);
+
+  // Phase 2.H — recompute deltaMaterialCost / deltaCost / deltaSell whenever the
+  // tagged rows on this ECO change. Persist to ECO doc + roll deltaSell into
+  // project.ecoSummary so kanban/Badge can read it without subscribing.
+  const _ecoRowsKey=(()=>{
+    const parts=[];
+    (project?.panels||[]).forEach(p=>(p.bom||[]).forEach(r=>{
+      if(r.ecoTag===eco?.ecoId)parts.push(`${r.id}:${r.qty||0}:${r.unitPrice||0}:${r.ecoOp||""}`);
+    }));
+    return parts.join("|");
+  })();
+  useEffect(()=>{
+    if(!eco?.ecoId||!project?.id)return;
+    let mat=0;
+    (project.panels||[]).forEach(p=>(p.bom||[]).forEach(r=>{
+      if(r.ecoTag===eco.ecoId&&!r.isLaborRow){
+        mat+=(+r.qty||0)*(+r.unitPrice||0);
+      }
+    }));
+    const margin=+(liveEco?.marginUsed||eco.marginUsed||40);
+    const labor=+(liveEco?.deltaLaborCost||0);
+    const expedite=+(liveEco?.expediteCost||0);
+    const cost=mat+labor;
+    const sell=margin>=100?cost+expedite:(cost/(1-margin/100))+expedite;
+    if(Math.abs(mat-(liveEco?.deltaMaterialCost||0))<0.01&&Math.abs(sell-(liveEco?.deltaSell||0))<0.01)return;
+    const path=`${ecoSubcollectionPath(uid,project.id)}/${eco.ecoId}`;
+    fbDb.doc(path).update({deltaMaterialCost:mat,deltaCost:cost,deltaSell:sell,updatedAt:Date.now(),updatedBy:uid}).catch(e=>console.warn("[ECO] cost update failed:",e.message));
+    // Roll deltaSell into project.ecoSummary[].deltaSell
+    const summary=Array.isArray(project.ecoSummary)?project.ecoSummary:[];
+    const newSummary=summary.map(s=>s.ecoId===eco.ecoId?{...s,deltaSell:sell}:s);
+    if(JSON.stringify(newSummary)!==JSON.stringify(summary)){
+      const updated={...project,ecoSummary:newSummary,updatedAt:Date.now()};
+      onUpdateProject&&onUpdateProject(updated);
+      onSaveImmediate&&onSaveImmediate(updated);
+    }
+  },[_ecoRowsKey,liveEco?.marginUsed,liveEco?.deltaLaborCost,liveEco?.expediteCost]);
+
   if(!eco)return null;
   const TABS=[
     {id:"overview",label:"Overview"},
@@ -9279,6 +9345,52 @@ function EcoEditor({project,eco,uid,onClose}){
     {id:"comments",label:"Comments"},
   ];
   const ecoLabel=`ECO ${String(eco.number).padStart(2,"0")}`;
+  const panels=project?.panels||[];
+  const pickedPanel=panels.find(p=>p.id===pickedPanelId)||panels[0]||null;
+  const baseRows=(pickedPanel?.bom||[]).filter(r=>!r.ecoTag&&!r.isLaborRow);
+  const myEcoRows=(pickedPanel?.bom||[]).filter(r=>r.ecoTag===eco.ecoId);
+
+  function resetForm(){setAddMode(null);setPickerBaseRowId(null);setFormQty(1);setFormPN("");setFormDesc("");setFormMfr("");setFormPrice("");}
+  function commitNewRow(op,baseRow){
+    if(!pickedPanel)return;
+    const rowId=`eco-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+    const qtyN=op==="remove"?-Math.abs(+baseRow?.qty||1):+formQty||1;
+    const newRow={
+      id:rowId,
+      ecoTag:eco.ecoId,
+      ecoNumber:eco.number,
+      ecoOp:op,
+      ecoModifiesBaseRowId:baseRow?baseRow.id:null,
+      qty:qtyN,
+      partNumber:op==="remove"?(baseRow?.partNumber||""):(formPN||baseRow?.partNumber||""),
+      description:op==="remove"?(baseRow?.description||""):(formDesc||baseRow?.description||""),
+      manufacturer:op==="remove"?(baseRow?.manufacturer||""):(formMfr||baseRow?.manufacturer||""),
+      unitPrice:op==="remove"?+(baseRow?.unitPrice||0):(formPrice!==""?+formPrice:(baseRow?.unitPrice??null)),
+      priceSource:op==="remove"?(baseRow?.priceSource||"manual"):(formPrice!==""?"manual":(baseRow?.priceSource||null)),
+      priceDate:Date.now(),
+      notes:"",
+      createdAt:Date.now(),
+      createdBy:uid,
+    };
+    const newBom=[...(pickedPanel.bom||[]),newRow];
+    const newPanels=panels.map(p=>p.id===pickedPanel.id?{...p,bom:newBom}:p);
+    const updated={...project,panels:newPanels,updatedAt:Date.now()};
+    onUpdateProject&&onUpdateProject(updated);
+    onSaveImmediate&&onSaveImmediate(updated);
+    resetForm();
+  }
+  function revertEcoRow(rowId){
+    if(!pickedPanel)return;
+    const newBom=(pickedPanel.bom||[]).filter(r=>r.id!==rowId);
+    const newPanels=panels.map(p=>p.id===pickedPanel.id?{...p,bom:newBom}:p);
+    const updated={...project,panels:newPanels,updatedAt:Date.now()};
+    onUpdateProject&&onUpdateProject(updated);
+    onSaveImmediate&&onSaveImmediate(updated);
+  }
+
+  const fmtMoney=n=>"$"+(+n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const inputBase={background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:5,color:C.text,fontSize:12,padding:"6px 8px",fontFamily:"inherit",outline:"none"};
+
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#0d0d1a",border:"1px solid #a855f755",borderRadius:12,width:"100%",maxWidth:1100,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 8px rgba(168,85,247,0.5),0 12px 48px rgba(0,0,0,0.7)"}}>
@@ -9286,7 +9398,7 @@ function EcoEditor({project,eco,uid,onClose}){
           <div style={{flex:1}}>
             <div style={{fontSize:11,fontWeight:700,color:"#a855f7",letterSpacing:1}}>ENGINEERING CHANGE ORDER</div>
             <div style={{fontSize:18,fontWeight:800,color:"#f1f5f9",marginTop:2}}>{formatEcoLabel(project,eco.number)}</div>
-            <div style={{fontSize:11,color:C.muted,marginTop:2}}>Status: <strong style={{color:"#a855f7",textTransform:"uppercase"}}>{eco.status||"draft"}</strong> · Created {eco.createdAt?new Date(eco.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>Status: <strong style={{color:"#a855f7",textTransform:"uppercase"}}>{liveEco?.status||eco.status||"draft"}</strong> · Created {eco.createdAt?new Date(eco.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"} · Δ Sell <strong style={{color:"#a855f7"}}>{fmtMoney(liveEco?.deltaSell||0)}</strong></div>
           </div>
           <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,padding:"4px 10px"}}>✕</button>
         </div>
@@ -9300,15 +9412,160 @@ function EcoEditor({project,eco,uid,onClose}){
           ))}
         </div>
         <div style={{flex:1,overflow:"auto",padding:"22px 26px",color:C.text,fontSize:13,lineHeight:1.6}}>
-          <div style={{padding:"40px 0",textAlign:"center",color:C.muted}}>
-            <div style={{fontSize:28,marginBottom:12,opacity:0.4}}>📐</div>
-            <div style={{fontSize:14,fontWeight:600,marginBottom:6,color:C.sub}}>{TABS.find(t=>t.id===tab)?.label} — Phase 1 shell</div>
-            <div style={{fontSize:12,maxWidth:480,margin:"0 auto",lineHeight:1.6}}>
-              The {ecoLabel} record exists ({uid&&eco.createdBy?eco.createdBy===uid?"created by you":"":""}). Phase 2 of the rollout will fill in the BOM Delta editor; subsequent phases add labor/delivery/drawings/customer review/BC sync/comments.
-              <br/><br/>
-              For now: refresh the page or close this modal — the ECO is persisted at <code style={{color:"#a855f7",fontSize:11}}>{project?.id}/ecos/{eco.ecoId||"…"}</code> and visible on the project's scope tab strip.
+          {tab==="bom"?(
+            <div>
+              {/* Panel picker — required because each panel has its own BOM */}
+              <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                <span style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Panel</span>
+                <select value={pickedPanelId||""} onChange={e=>{setPickedPanelId(e.target.value);resetForm();}} style={{...inputBase,minWidth:220}}>
+                  {panels.map(p=>(<option key={p.id} value={p.id}>{p.name||p.id}</option>))}
+                </select>
+                <span style={{fontSize:11,color:C.muted,marginLeft:"auto"}}>{baseRows.length} base rows · {myEcoRows.length} ECO rows</span>
+              </div>
+
+              {/* Action bar */}
+              {!addMode&&(
+                <div style={{display:"flex",gap:8,marginBottom:14}}>
+                  <button onClick={()=>setAddMode("add")} style={{background:"#1a0040",border:"1px solid #a855f7",color:"#a855f7",borderRadius:6,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>+ Add Row</button>
+                  <button onClick={()=>setAddMode("modify")} style={{background:"#1a1a14",border:"1px solid #fcd34d",color:"#fcd34d",borderRadius:6,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>✎ Modify Base Row</button>
+                  <button onClick={()=>setAddMode("remove")} style={{background:"#1f0a0a",border:"1px solid #f87171",color:"#f87171",borderRadius:6,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>− Remove Base Row</button>
+                </div>
+              )}
+
+              {/* Add mode — manual entry form */}
+              {addMode==="add"&&(
+                <div style={{background:"#0a0a14",border:"1px solid #a855f777",borderRadius:8,padding:14,marginBottom:14}}>
+                  <div style={{fontSize:11,fontWeight:800,color:"#a855f7",letterSpacing:0.5,textTransform:"uppercase",marginBottom:10}}>Add new row to {ecoLabel}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"60px 130px 1fr 130px 90px",gap:8,marginBottom:10}}>
+                    <input type="number" value={formQty} onChange={e=>setFormQty(e.target.value)} placeholder="Qty" style={inputBase}/>
+                    <input value={formPN} onChange={e=>setFormPN(e.target.value)} placeholder="Part #" style={inputBase}/>
+                    <input value={formDesc} onChange={e=>setFormDesc(e.target.value)} placeholder="Description" style={inputBase}/>
+                    <input value={formMfr} onChange={e=>setFormMfr(e.target.value)} placeholder="Manufacturer" style={inputBase}/>
+                    <input value={formPrice} onChange={e=>setFormPrice(e.target.value)} placeholder="Unit $" style={inputBase}/>
+                  </div>
+                  <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                    <button onClick={resetForm} style={{background:"#1e1e2e",border:`1px solid ${C.border}`,color:C.muted,padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer"}}>Cancel</button>
+                    <button onClick={()=>commitNewRow("add",null)} disabled={!formPN&&!formDesc} style={{background:formPN||formDesc?"#1a0040":"#1e1e2e",border:`1px solid ${formPN||formDesc?"#a855f7":C.border}`,color:formPN||formDesc?"#a855f7":C.muted,padding:"6px 14px",borderRadius:6,fontSize:12,cursor:formPN||formDesc?"pointer":"not-allowed",fontWeight:700}}>Add Row</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Modify / Remove — base row picker */}
+              {(addMode==="modify"||addMode==="remove")&&!pickerBaseRowId&&(
+                <div style={{background:"#0a0a14",border:`1px solid ${addMode==="remove"?"#f87171":"#fcd34d"}77`,borderRadius:8,padding:14,marginBottom:14}}>
+                  <div style={{fontSize:11,fontWeight:800,color:addMode==="remove"?"#f87171":"#fcd34d",letterSpacing:0.5,textTransform:"uppercase",marginBottom:10}}>{addMode==="modify"?"Pick base row to modify":"Pick base row to remove"}</div>
+                  <div style={{maxHeight:300,overflow:"auto",border:`1px solid ${C.border}`,borderRadius:6}}>
+                    {baseRows.length===0?<div style={{padding:14,color:C.muted,fontSize:12,textAlign:"center"}}>No base rows on this panel.</div>:baseRows.map(r=>(
+                      <div key={r.id} onClick={()=>{
+                        setPickerBaseRowId(r.id);
+                        if(addMode==="modify"){setFormQty(r.qty||1);setFormPN(r.partNumber||"");setFormDesc(r.description||"");setFormMfr(r.manufacturer||"");setFormPrice(r.unitPrice!=null?String(r.unitPrice):"");}
+                      }}
+                        style={{display:"flex",gap:10,padding:"6px 10px",borderBottom:`1px solid ${C.border}33`,cursor:"pointer",fontSize:12}}
+                        onMouseEnter={e=>e.currentTarget.style.background="#1a1a2a"}
+                        onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                        <span style={{minWidth:30,textAlign:"right",color:C.muted}}>{r.qty||1}×</span>
+                        <span style={{minWidth:140,fontFamily:"monospace",color:C.text,fontWeight:600}}>{r.partNumber||"—"}</span>
+                        <span style={{flex:1,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||""}</span>
+                        <span style={{minWidth:80,textAlign:"right",color:C.muted}}>{r.unitPrice!=null?fmtMoney(r.unitPrice):"—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{marginTop:10,display:"flex",justifyContent:"flex-end"}}>
+                    <button onClick={resetForm} style={{background:"#1e1e2e",border:`1px solid ${C.border}`,color:C.muted,padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer"}}>Cancel</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Modify — show edit form once a base row is picked */}
+              {addMode==="modify"&&pickerBaseRowId&&(()=>{
+                const baseRow=baseRows.find(r=>r.id===pickerBaseRowId);
+                if(!baseRow)return null;
+                return(
+                  <div style={{background:"#0a0a14",border:"1px solid #fcd34d77",borderRadius:8,padding:14,marginBottom:14}}>
+                    <div style={{fontSize:11,fontWeight:800,color:"#fcd34d",letterSpacing:0.5,textTransform:"uppercase",marginBottom:6}}>Modify base row</div>
+                    <div style={{fontSize:11,color:C.muted,marginBottom:10}}>Base: <span style={{fontFamily:"monospace",color:C.text}}>{baseRow.partNumber||"—"}</span> qty {baseRow.qty||1} @ {fmtMoney(baseRow.unitPrice||0)}</div>
+                    <div style={{display:"grid",gridTemplateColumns:"60px 130px 1fr 130px 90px",gap:8,marginBottom:10}}>
+                      <input type="number" value={formQty} onChange={e=>setFormQty(e.target.value)} placeholder="Qty" style={inputBase}/>
+                      <input value={formPN} onChange={e=>setFormPN(e.target.value)} placeholder="Part #" style={inputBase}/>
+                      <input value={formDesc} onChange={e=>setFormDesc(e.target.value)} placeholder="Description" style={inputBase}/>
+                      <input value={formMfr} onChange={e=>setFormMfr(e.target.value)} placeholder="Manufacturer" style={inputBase}/>
+                      <input value={formPrice} onChange={e=>setFormPrice(e.target.value)} placeholder="Unit $" style={inputBase}/>
+                    </div>
+                    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                      <button onClick={resetForm} style={{background:"#1e1e2e",border:`1px solid ${C.border}`,color:C.muted,padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer"}}>Cancel</button>
+                      <button onClick={()=>commitNewRow("modify",baseRow)} style={{background:"#1a1a14",border:"1px solid #fcd34d",color:"#fcd34d",padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer",fontWeight:700}}>Save Modification</button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Remove — confirm once a base row is picked */}
+              {addMode==="remove"&&pickerBaseRowId&&(()=>{
+                const baseRow=baseRows.find(r=>r.id===pickerBaseRowId);
+                if(!baseRow)return null;
+                return(
+                  <div style={{background:"#0a0a14",border:"1px solid #f8717177",borderRadius:8,padding:14,marginBottom:14}}>
+                    <div style={{fontSize:11,fontWeight:800,color:"#f87171",letterSpacing:0.5,textTransform:"uppercase",marginBottom:8}}>Confirm removal</div>
+                    <div style={{fontSize:12,color:C.text,marginBottom:10}}>Remove <span style={{fontFamily:"monospace",fontWeight:700}}>{baseRow.partNumber||"—"}</span> ({baseRow.description||""}) from this ECO scope. The base BOM stays intact; the ECO produces a negative-qty delta of <strong>{baseRow.qty||1}× {fmtMoney(baseRow.unitPrice||0)} = −{fmtMoney((baseRow.qty||1)*(baseRow.unitPrice||0))}</strong>.</div>
+                    <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                      <button onClick={resetForm} style={{background:"#1e1e2e",border:`1px solid ${C.border}`,color:C.muted,padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer"}}>Cancel</button>
+                      <button onClick={()=>commitNewRow("remove",baseRow)} style={{background:"#1f0a0a",border:"1px solid #f87171",color:"#f87171",padding:"6px 14px",borderRadius:6,fontSize:12,cursor:"pointer",fontWeight:700}}>Confirm Remove</button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Existing ECO rows for this panel */}
+              <div style={{marginTop:14}}>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>{ecoLabel} rows on {pickedPanel?.name||"this panel"}</div>
+                {myEcoRows.length===0?(
+                  <div style={{padding:"14px 0",color:C.muted,fontSize:12,fontStyle:"italic"}}>No changes yet — use the buttons above to add, modify, or remove rows.</div>
+                ):(
+                  <div style={{border:`1px solid ${C.border}`,borderRadius:6,overflow:"hidden"}}>
+                    {myEcoRows.map((r,i)=>{
+                      const opLabel=r.ecoOp==="modify"?"Modify":r.ecoOp==="remove"?"Remove":"Add";
+                      const opColor=r.ecoOp==="remove"?"#f87171":r.ecoOp==="modify"?"#fcd34d":"#a855f7";
+                      const ext=(+r.qty||0)*(+r.unitPrice||0);
+                      return(
+                        <div key={r.id} style={{display:"flex",gap:10,padding:"6px 10px",borderBottom:i<myEcoRows.length-1?`1px solid ${C.border}33`:"none",fontSize:12,alignItems:"center",background:i%2?"#0a0a14":"transparent"}}>
+                          <span style={{minWidth:60,fontSize:10,fontWeight:800,color:"#fff",background:opColor,padding:"2px 8px",borderRadius:10,textAlign:"center"}}>{opLabel}</span>
+                          <span style={{minWidth:40,textAlign:"right",color:C.text,fontVariantNumeric:"tabular-nums"}}>{r.qty||0}×</span>
+                          <span style={{minWidth:140,fontFamily:"monospace",color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.partNumber||"—"}</span>
+                          <span style={{flex:1,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||""}</span>
+                          <span style={{minWidth:80,textAlign:"right",color:ext<0?"#f87171":C.text,fontVariantNumeric:"tabular-nums"}}>{ext<0?"−":""}{fmtMoney(Math.abs(ext))}</span>
+                          <button onClick={()=>revertEcoRow(r.id)} title="Revert this change" style={{background:"none",border:"none",color:"#a855f7",cursor:"pointer",fontSize:14,padding:"0 4px",fontWeight:700}}>↶</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Running totals */}
+              <div style={{marginTop:18,padding:"12px 14px",background:"#0a0a14",border:"1px solid #a855f744",borderRadius:8}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:8,fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,fontWeight:700,marginBottom:4}}>
+                  <span>Δ Material</span><span>Δ Labor</span><span>Δ Cost</span><span>Δ Sell</span>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:8,fontSize:14,color:C.text,fontWeight:700,fontVariantNumeric:"tabular-nums"}}>
+                  <span>{fmtMoney(liveEco?.deltaMaterialCost||0)}</span>
+                  <span>{fmtMoney(liveEco?.deltaLaborCost||0)}</span>
+                  <span>{fmtMoney(liveEco?.deltaCost||0)}</span>
+                  <span style={{color:"#a855f7"}}>{fmtMoney(liveEco?.deltaSell||0)}</span>
+                </div>
+                <div style={{marginTop:6,fontSize:10,color:C.muted}}>Margin {liveEco?.marginUsed||40}% · Labor rate ${liveEco?.laborRateUsed||65}/hr · Phase 3 wires labor + delivery deltas</div>
+              </div>
             </div>
-          </div>
+          ):(
+            <div style={{padding:"40px 0",textAlign:"center",color:C.muted}}>
+              <div style={{fontSize:28,marginBottom:12,opacity:0.4}}>📐</div>
+              <div style={{fontSize:14,fontWeight:600,marginBottom:6,color:C.sub}}>{TABS.find(t=>t.id===tab)?.label} — coming in a later phase</div>
+              <div style={{fontSize:12,maxWidth:480,margin:"0 auto",lineHeight:1.6}}>
+                Phase 2 ships the BOM Delta editor. Labor / delivery / drawings / customer review / BC sync / comments arrive in Phases 3–6.
+                <br/><br/>
+                <code style={{color:"#a855f7",fontSize:11}}>{project?.id}/ecos/{eco.ecoId||"…"}</code>
+              </div>
+            </div>
+          )}
         </div>
         <div style={{padding:"12px 20px",borderTop:"1px solid "+C.border,display:"flex",justifyContent:"flex-end",gap:8}}>
           <button onClick={onClose} style={{background:"#1a1a2a",border:"1px solid #a855f744",color:"#a855f7",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600}}>Close</button>
@@ -13970,7 +14227,7 @@ function ScanResultsBanner({panel}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project,ownerPriorityActive}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -17487,12 +17744,29 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     const grp=_est.groups[key]||{hours:0};
                     return{id:`labor-${g.partNumber}`,isLaborRow:true,partNumber:g.partNumber,description:g.description,qty:grp.hours||0,unitPrice:_laborRate,priceSource:"bc",priceDate:Date.now(),manufacturer:"",notes:""};
                   }):[];
-                  const nonLabor=(panel.bom||[]).filter(r=>!r.isLaborRow);
+                  // DECISION(v1.19.789, ECO Phase 2.C): When `activeScope` is a specific ECO,
+                  // hide tagged rows belonging to OTHER ECOs. BASE scope shows all rows.
+                  // The horizontal separator + per-row [ECO N] badge gets injected below.
+                  const _isEcoScope=activeScope&&activeScope.type==="eco";
+                  const _scopeEcoNumber=_isEcoScope?activeScope.ecoNumber:null;
+                  const nonLabor=(panel.bom||[]).filter(r=>!r.isLaborRow).filter(r=>{
+                    if(!r.ecoTag)return true; // untagged base row always visible
+                    if(_scopeEcoNumber==null)return true; // base scope shows all tagged rows
+                    return r.ecoNumber===_scopeEcoNumber; // eco scope shows only its rows
+                  });
                   const liveBom=[..._freshLabor,...nonLabor];
                   const sortedBom=liveBom.slice().sort((a,b)=>{
                     if(a.isLaborRow&&!b.isLaborRow)return -1;
                     if(!a.isLaborRow&&b.isLaborRow)return 1;
                     if(a.isLaborRow&&b.isLaborRow)return(a.partNumber||"").localeCompare(b.partNumber||"");
+                    // ECO Phase 2.C: tagged rows always sort AFTER untagged rows.
+                    const aEco=!!a.ecoTag,bEco=!!b.ecoTag;
+                    if(!aEco&&bEco)return -1;
+                    if(aEco&&!bEco)return 1;
+                    if(aEco&&bEco){
+                      const aN=a.ecoNumber||0,bN=b.ecoNumber||0;
+                      if(aN!==bN)return aN-bN;
+                    }
                     if(!a.itemNo&&!b.itemNo)return 0;
                     if(!a.itemNo)return 1;
                     if(!b.itemNo)return -1;
@@ -17500,7 +17774,26 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     if(!isNaN(an)&&!isNaN(bn))return an-bn;
                     return (a.itemNo||"").localeCompare(b.itemNo||"");
                   });
-                  return sortedBom.map((row,i)=>{
+                  // ECO Phase 2.C: Build out array with optional separator <tr> inserted
+                  // at the boundary between untagged and tagged rows. flatMap lets us emit
+                  // the separator + the row from a single iteration.
+                  const _firstEcoIdx=sortedBom.findIndex(r=>r.ecoTag);
+                  const _hasEcoRows=_firstEcoIdx>=0;
+                  const _ecoCount=sortedBom.filter(r=>r.ecoTag).length;
+                  return sortedBom.flatMap((row,i)=>{
+                    const _ecoSep=(_hasEcoRows&&i===_firstEcoIdx)?(
+                      <tr key="eco-separator" style={{background:"#1a0040"}}>
+                        <td colSpan={13} style={{padding:"6px 12px",borderTop:"2px solid #a855f7",borderBottom:"2px solid #a855f7"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,fontWeight:800,color:"#a855f7",letterSpacing:1}}>
+                            <span>⏷ ENGINEERING CHANGE ORDERS</span>
+                            <span style={{color:C.muted,fontWeight:500,letterSpacing:0.3,fontSize:10}}>
+                              · {_ecoCount} change{_ecoCount===1?"":"s"} below
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ):null;
+                    const _rowEl=(()=>{
                   // DECISION(v1.19.666): Red row = qty=0 / unitPrice=0 / priceDate missing or stale.
                   // See _isBomRowFlaggedRed for full rules + exclusions.
                   const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_isBomRowFlaggedRed(row)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)";
@@ -17595,6 +17888,25 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           {f==="partNumber"&&row.autoLoaded&&(
                             <span title="Auto-loaded from a supplier portal import" style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help"}}>Auto</span>
                           )}
+                          {/* DECISION(v1.19.789, ECO Phase 2.C): ECO tag badge — purple
+                             pill with the ECO number + the operation kind. Click navigates
+                             into that ECO's editor for editing. */}
+                          {f==="partNumber"&&row.ecoTag&&(()=>{
+                            const opLabel=row.ecoOp==="modify"?"Mod":row.ecoOp==="remove"?"Rem":"Add";
+                            const opColor=row.ecoOp==="remove"?"#f87171":row.ecoOp==="modify"?"#fcd34d":"#a855f7";
+                            return(
+                              <span
+                                title={`ECO ${String(row.ecoNumber||0).padStart(2,"0")} · ${row.ecoOp||"add"}${row.ecoModifiesBaseRowId?" · base row "+row.ecoModifiesBaseRowId:""}\nClick to open this ECO`}
+                                onClick={()=>{
+                                  if(!onOpenEcoEditor)return;
+                                  const summary=(project?.ecoSummary||[]).find(e=>e.ecoId===row.ecoTag||e.number===row.ecoNumber);
+                                  if(summary)onOpenEcoEditor(summary);
+                                }}
+                                style={{fontSize:10,color:"#fff",fontWeight:800,marginLeft:6,whiteSpace:"nowrap",cursor:onOpenEcoEditor?"pointer":"help",background:opColor,padding:"1px 7px",borderRadius:10,letterSpacing:0.3}}>
+                                ECO {String(row.ecoNumber||0).padStart(2,"0")} · {opLabel}
+                              </span>
+                            );
+                          })()}
                           {/* DECISION(v1.19.672): Companion-part badge — identifies rows that
                              were auto-added because a secondary part number was detected on
                              the parent's BOM line (e.g. relay + socket base). */}
@@ -17820,10 +18132,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       {row.isLaborRow?"—":(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)?"Matrix":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
                     </td>
                     <td style={{padding:"3px 10px 3px 6px",textAlign:"center",width:44}}>
-                      {!readOnly&&!row.isLaborRow&&<button onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color:"#ff3333",cursor:"pointer",fontSize:18,opacity:0.6,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
+                      {!readOnly&&!row.isLaborRow&&(()=>{
+                        // DECISION(v1.19.789, ECO Phase 2.G): For ECO-tagged rows show an
+                        // ↶ revert icon (deletes only the tagged delta — base row stays).
+                        // For untagged rows keep the original ✕ destructive delete.
+                        const isEcoRow=!!row.ecoTag;
+                        const icon=isEcoRow?"↶":"✕";
+                        const color=isEcoRow?"#a855f7":"#ff3333";
+                        const tip=isEcoRow?"Revert this ECO change (base BOM unaffected)":"Delete this BOM row";
+                        return(
+                          <button title={tip} onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color,cursor:"pointer",fontSize:isEcoRow?16:18,opacity:0.65,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,fontWeight:isEcoRow?700:400}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.65}>{icon}</button>
+                        );
+                      })()}
                     </td>
                   </tr>
-                  );});
+                  );})();
+                  // ECO Phase 2.C: emit separator (when present) + row from this iteration.
+                  return _ecoSep?[_ecoSep,_rowEl]:[_rowEl];
+                  });
                 })()}
               </tbody>
             </table>
@@ -18475,22 +18801,36 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           )):<div style={{color:"#94a3b8",fontSize:11,lineHeight:1.5}}>No source links available.<br/>Re-run AI pricing to generate sources.</div>}
         </div>,document.body
       )}
-      {deleteConfirmId&&ReactDOM.createPortal(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
-          onMouseDown={e=>{if(e.target===e.currentTarget)setDeleteConfirmId(null);}}>
-          <div style={{background:"#0d0d1a",border:"1px solid #ef444466",borderRadius:10,padding:"24px 28px",width:340,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
-            <div style={{fontSize:15,fontWeight:800,color:"#f87171",marginBottom:8}}>Delete BOM Row?</div>
-            <div style={{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.5}}>
-              {(()=>{const r=(panel.bom||[]).find(x=>x.id===deleteConfirmId);return r?<><strong style={{color:"#f1f5f9",fontFamily:"monospace"}}>{r.partNumber||"(no part #)"}</strong>{r.description?<span style={{color:"#94a3b8"}}> — {r.description}</span>:null}</>:"This row";})()}
-              <span style={{display:"block",marginTop:6,color:"#94a3b8",fontSize:12}}>This cannot be undone.</span>
+      {deleteConfirmId&&(()=>{
+        // DECISION(v1.19.789, ECO Phase 2.G): Same modal handles delete (untagged) and
+        // revert (ECO-tagged) — labels + colors swap based on whether the target row
+        // carries an ecoTag. Revert removes only the delta; the base row is untouched.
+        const _row=(panel.bom||[]).find(x=>x.id===deleteConfirmId);
+        const _isEcoRow=!!(_row&&_row.ecoTag);
+        const _hue=_isEcoRow?"#a855f7":"#f87171";
+        const _bg=_isEcoRow?"#3b0764":"#450a0a";
+        const _border=_isEcoRow?"#a855f766":"#ef444466";
+        const _verb=_isEcoRow?"Revert":"Delete";
+        const _title=_isEcoRow?"Revert ECO Change?":"Delete BOM Row?";
+        const _msg=_isEcoRow?"The base BOM stays unchanged. Only this ECO delta is removed.":"This cannot be undone.";
+        return ReactDOM.createPortal(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+            onMouseDown={e=>{if(e.target===e.currentTarget)setDeleteConfirmId(null);}}>
+            <div style={{background:"#0d0d1a",border:`1px solid ${_border}`,borderRadius:10,padding:"24px 28px",width:360,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+              <div style={{fontSize:15,fontWeight:800,color:_hue,marginBottom:8}}>{_title}</div>
+              <div style={{fontSize:13,color:"#94a3b8",marginBottom:20,lineHeight:1.5}}>
+                {_row?<><strong style={{color:"#f1f5f9",fontFamily:"monospace"}}>{_row.partNumber||"(no part #)"}</strong>{_row.description?<span style={{color:"#94a3b8"}}> — {_row.description}</span>:null}</>:"This row"}
+                {_isEcoRow&&_row.ecoNumber!=null&&<span style={{display:"block",marginTop:4,color:"#a855f7",fontSize:11,fontWeight:700,letterSpacing:0.3}}>ECO {String(_row.ecoNumber).padStart(2,"0")} · {_row.ecoOp||"add"}</span>}
+                <span style={{display:"block",marginTop:6,color:"#94a3b8",fontSize:12}}>{_msg}</span>
+              </div>
+              <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+                <button onClick={()=>setDeleteConfirmId(null)} style={{background:"#1e1e2e",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}}>Cancel</button>
+                <button onClick={()=>{deleteBomRow(deleteConfirmId);setDeleteConfirmId(null);}} style={{background:_bg,border:`1px solid ${_border}`,color:_hue,borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:700}}>{_verb}</button>
+              </div>
             </div>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <button onClick={()=>setDeleteConfirmId(null)} style={{background:"#1e1e2e",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:600}}>Cancel</button>
-              <button onClick={()=>{deleteBomRow(deleteConfirmId);setDeleteConfirmId(null);}} style={{background:"#450a0a",border:"1px solid #ef444466",color:"#f87171",borderRadius:6,padding:"7px 18px",fontSize:13,cursor:"pointer",fontWeight:700}}>Delete</button>
-            </div>
-          </div>
-        </div>,document.body
-      )}
+          </div>,document.body
+        );
+      })()}
       {reExtractWarn&&ReactDOM.createPortal(
         React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onMouseDown:e=>{if(e.target===e.currentTarget)setReExtractWarn(false);}},
           React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b66",borderRadius:10,padding:"24px 28px",width:380,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}},
@@ -21333,7 +21673,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   </>,document.body);
 }
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onOpenEcoEditor}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -21990,6 +22330,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   bcUploadRef={bcUploadRef}
                   customerReviewData={customerReviewData}
                   project={project}
+                  activeScope={activeScope}
+                  onOpenEcoEditor={onOpenEcoEditor}
                 />
               ))}
             </div>
@@ -24576,6 +24918,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             ownerPriorityActive={ownerPriorityActive}
             autoOpenCustomerReview={autoOpenCustomerReview}
             onCustomerReviewOpened={onCustomerReviewOpened}
+            activeScope={activeScope}
+            onScopeChange={setActiveScope}
+            onOpenEcoEditor={(eco)=>setOpenEcoEditor(eco)}
             onBack={onBack}
             onViewQuote={handlePrintQuote}
             quotePrinting={quotePrinting}
@@ -25282,8 +25627,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         </div>
       ,document.body)}
       {/* DECISION(v1.19.785): EcoEditor modal — Phase 1 ships an empty shell. Closes by
-          clearing openEcoEditor state. */}
-      {openEcoEditor&&<EcoEditor project={project} eco={openEcoEditor} uid={uid} onClose={()=>setOpenEcoEditor(null)}/>}
+          clearing openEcoEditor state. Phase 2 wires onUpdateProject + onSaveImmediate
+          so the BOM Delta tab can mutate panels and persist. */}
+      {openEcoEditor&&<EcoEditor
+        project={project}
+        eco={openEcoEditor}
+        uid={uid}
+        onClose={()=>setOpenEcoEditor(null)}
+        onUpdateProject={(updatedProject)=>onUpdate(updatedProject)}
+        onSaveImmediate={(updatedProject)=>{try{safeSave(uid,updatedProject);}catch(e){}}}
+      />}
     </>
   );
 }
