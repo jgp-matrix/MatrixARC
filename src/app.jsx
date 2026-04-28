@@ -633,6 +633,15 @@ function computePanelSellPrice(panel){
   return Math.round(grandTotal/(1-marginPct/100)*100)/100;
 }
 
+// DECISION(v1.19.772): Cheap project-level total used by the Kanban column $ headers
+// and the Sent/Sold/Lost dashboard boxes on the main page. Mirrors the logic at the
+// quote print site (sum of computePanelSellPrice × lineQty across panels). Returns
+// 0 when the project has no panels — keeps reduce() callers safe.
+function computeProjectTotal(p){
+  if(!p||!Array.isArray(p.panels))return 0;
+  return p.panels.reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
+}
+
 // ── LABOR BOM ROWS (auto-managed, always first 3 rows) ──
 const LABOR_BOM_GROUPS=[
   {partNumber:"1012",description:"CUT",   cats:["Panel Holes","Side-Mounted Components"]},
@@ -27776,6 +27785,37 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
             style={{...inp({fontSize:13,padding:"9px 12px 9px 12px",borderRadius:8,width:"100%",boxSizing:"border-box"})}}/>
           {projectSearch&&<button onClick={()=>setProjectSearch("")} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:0}}>✕</button>}
         </div>
+        {/* DECISION(v1.19.772): Sales-funnel summary boxes — portfolio-wide, NOT
+            affected by the search/My Projects filters (those filter visibility, not the
+            company KPIs). "Sent" excludes won/lost so it represents outstanding pipeline.
+            Lost projects are still summed even though the main list hides them by default. */}
+        {(()=>{
+          const sentList=projects.filter(p=>p.quoteSentAt&&!p.wonAt&&!p.lostAt);
+          const soldList=projects.filter(p=>!!p.wonAt);
+          const lostList=projects.filter(p=>!!p.lostAt);
+          const sentTot=sentList.reduce((s,p)=>s+computeProjectTotal(p),0);
+          const soldTot=soldList.reduce((s,p)=>s+computeProjectTotal(p),0);
+          const lostTot=lostList.reduce((s,p)=>s+computeProjectTotal(p),0);
+          const box=(label,value,color,bg,count,onClick)=>(
+            <div onClick={onClick} title={onClick?`Click to view ${label}`:""}
+              style={{display:"flex",flexDirection:"column",alignItems:"flex-start",justifyContent:"center",
+                background:bg,border:`1px solid ${color}44`,borderRadius:8,padding:"6px 14px",minWidth:110,
+                cursor:onClick?"pointer":"default",transition:"transform 0.1s",
+                ...(onClick?{}:{})}}
+              onMouseEnter={onClick?e=>e.currentTarget.style.transform="translateY(-1px)":undefined}
+              onMouseLeave={onClick?e=>e.currentTarget.style.transform="translateY(0)":undefined}>
+              <div style={{fontSize:9,fontWeight:700,color:color,textTransform:"uppercase",letterSpacing:0.6,opacity:0.85}}>{label} <span style={{opacity:0.6,fontWeight:500}}>({count})</span></div>
+              <div style={{fontSize:15,fontWeight:800,color:color,marginTop:1,fontFamily:"system-ui,sans-serif"}}>{arcFmtMoney(value)}</div>
+            </div>
+          );
+          return(
+            <div style={{display:"flex",gap:8,marginLeft:"auto",alignItems:"stretch"}}>
+              {box("Total Sent",sentTot,"#38bdf8","#0c2233",sentList.length,()=>setGroupBy("status"))}
+              {box("Total Sold",soldTot,"#10b981","#052e16",soldList.length,null)}
+              {box("Total Lost",lostTot,"#ef4444","#2a0a0a",lostList.length,()=>setGroupBy("lost"))}
+            </div>
+          );
+        })()}
       </div>}
 
       {!forceView&&<div style={{display:"flex",gap:8,marginBottom:groupBy!=="imported"?8:24,flexWrap:"wrap",alignItems:"center"}}>
@@ -27847,11 +27887,21 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
                 const isDropTarget=groupBy==="customer"&&!isNoCustomer&&!!g.customerNumber&&!!dragProjectId;
                 const isOver=dropTarget===gi;
+                // DECISION(v1.19.772): Per-column $ total — sum of computeProjectTotal
+                // across the column's projects. Useful operational signal (e.g. how
+                // much $ is sitting in RFQs Send/Receive vs. Quotes Sent). Hidden when
+                // the column has no items so empty columns stay visually quiet.
+                const colTotal=g.items.reduce((s,p)=>s+computeProjectTotal(p),0);
                 return(
                 <div key={gi} style={{flex:"1 1 0",minWidth:180}}
                   onDragOver={isDropTarget?e=>{e.preventDefault();setDropTarget(gi);}:undefined}
                   onDragLeave={isDropTarget?e=>{if(!e.currentTarget.contains(e.relatedTarget))setDropTarget(null);}:undefined}
                   onDrop={isDropTarget?e=>{e.preventDefault();setDropTarget(null);if(dragProjectId)assignCustomer(dragProjectId,g.label,g.customerNumber);setDragProjectId(null);}:undefined}>
+                  {g.label&&g.items.length>0&&(
+                    <div style={{textAlign:"center",fontSize:13,fontWeight:700,color:colColor,marginBottom:6,opacity:0.95,letterSpacing:0.3,fontFamily:"system-ui,sans-serif"}}>
+                      {arcFmtMoney(colTotal)}
+                    </div>
+                  )}
                   {g.label&&<div style={{background:isOver?C.accent:colBg,color:isOver?"#fff":colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",transition:"background 0.15s,color 0.15s",outline:isDropTarget&&dragProjectId?(isOver?"2px solid "+C.accent:"2px dashed "+C.accent+"66"):"none",outlineOffset:2}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
                   <div style={{display:"flex",flexDirection:"column",gap:8,borderRadius:8,padding:isOver?"6px":"0",background:isOver?"#1e2e1e":"transparent",transition:"background 0.15s,padding 0.15s"}}>
                     {g.items.map(p=>(
