@@ -7798,7 +7798,10 @@ async function burnStampCanvas(dataUrl,overlay){
       // White semi-transparent background strip — matches drawing paper look
       ctx.fillStyle='rgba(255,255,255,0.88)';ctx.fillRect(0,0,img.width,barH);
       // DECISION(v1.19.533): Stamp color based on mode — AS-QUOTED=red, QUOTE READY=green, READY TO PRODUCE=blue
-      const stampColor=overlay.stampMode==='quote_ready'?'#16a34a':overlay.stampMode==='ready_to_produce'?'#2563eb':'#cc0000';
+      // DECISION(v1.19.782): CUSTOMER REVIEWED / APPROVED added in purple. Used when the engineer
+      // applies the customer's portal feedback back into the drawings — both customer and engineer
+      // notes/shapes are baked in, and BC + traveler PDFs use the same baked output.
+      const stampColor=overlay.stampMode==='quote_ready'?'#16a34a':overlay.stampMode==='ready_to_produce'?'#2563eb':(overlay.stampMode==='customer_reviewed'||overlay.stampMode==='customer_approved')?'#a855f7':'#cc0000';
       ctx.fillStyle=stampColor;ctx.fillRect(0,barH-1,img.width,1);
       ctx.font=`bold ${fontSize}px Arial,sans-serif`;ctx.fillStyle=stampColor;ctx.textBaseline='middle';
       const y=barH/2;const pad=Math.max(10,Math.round(img.width*0.012));
@@ -7813,8 +7816,13 @@ async function burnStampCanvas(dataUrl,overlay){
 }
 
 // DECISION(v1.19.539): Burn engineering review notes into a drawing image via canvas
-async function burnNotesCanvas(dataUrl,notes){
+async function burnNotesCanvas(dataUrl,notes,opts){
   if(!notes||!notes.length)return dataUrl;
+  // DECISION(v1.19.782): Accept an `opts.color` for the note border + header so the same
+  // function can render engineer notes (red, default) or customer notes (blue). The
+  // background tint is auto-derived from the color so callers don't have to pass both.
+  const accent=(opts&&opts.color)||'#cc0000';
+  const headerLabel=(opts&&opts.headerLabel)||null; // when set, replaces "EXT"/"INT" header
   return new Promise(resolve=>{
     const canvas=document.createElement('canvas');
     const ctx=canvas.getContext('2d');
@@ -7837,25 +7845,91 @@ async function burnNotesCanvas(dataUrl,notes){
         words.forEach(word=>{const test=line?line+' '+word:word;if(ctx.measureText(test).width>maxTextW&&line){lines.push(line);line=word;}else{line=test;}});
         if(line)lines.push(line);
         // Add signature line
-        lines.push('— '+note.initials+' '+note.date);
+        if(note.initials||note.date)lines.push('— '+(note.initials||'')+' '+(note.date||''));
         const lineH=fontSize*1.3;
         const boxH=lines.length*lineH+padY*2+fontSize+4;
-        // Background
-        ctx.fillStyle=isExt?'rgba(239,68,68,0.15)':'rgba(250,204,21,0.15)';
+        // Background — translucent tint of the accent color
+        const tintRgba=accent==='#2563eb'?'rgba(37,99,235,0.12)':accent==='#a855f7'?'rgba(168,85,247,0.12)':'rgba(239,68,68,0.15)';
+        ctx.fillStyle=isExt?tintRgba:'rgba(250,204,21,0.15)';
         ctx.fillRect(x,y,w,boxH);
         // Border
-        ctx.strokeStyle='#cc0000';ctx.lineWidth=2;
+        ctx.strokeStyle=accent;ctx.lineWidth=2;
         if(isExt){ctx.setLineDash([]);ctx.strokeRect(x,y,w,boxH);}
         else{ctx.setLineDash([6,3]);ctx.strokeRect(x,y,w,boxH);ctx.setLineDash([]);}
         // Header
-        ctx.fillStyle='#cc0000';ctx.font=`bold ${Math.round(fontSize*0.8)}px Arial,sans-serif`;
-        ctx.fillText('#'+note.number+(isExt?' EXT':' INT'),x+padX,y+padY+fontSize*0.7);
+        ctx.fillStyle=accent;ctx.font=`bold ${Math.round(fontSize*0.8)}px Arial,sans-serif`;
+        ctx.fillText('#'+note.number+(headerLabel?' '+headerLabel:(isExt?' EXT':' INT')),x+padX,y+padY+fontSize*0.7);
         // Text
         ctx.fillStyle='#1e293b';ctx.font=`${fontSize}px Arial,sans-serif`;
         lines.forEach((ln,i)=>{
           const ty=y+padY+fontSize+4+i*lineH;
           ctx.fillText(ln,x+padX,ty+fontSize*0.8);
         });
+      });
+      resolve(canvas.toDataURL('image/jpeg',0.93));
+    };
+    img.onerror=()=>resolve(dataUrl);
+    img.src=dataUrl;
+  });
+}
+
+// DECISION(v1.19.782): Burn customer-drawn shapes (lines, circles, rectangles, triangles,
+// freeform polylines) into a drawing image. Mirrors `burnNotesCanvas` but renders SVG-style
+// vector primitives. Coordinates on the shape doc are stored as percentages of the image
+// (same convention as notes) — multiply by image dimensions to get canvas coordinates.
+async function burnShapesCanvas(dataUrl,shapes,opts){
+  if(!shapes||!shapes.length)return dataUrl;
+  const accent=(opts&&opts.color)||'#2563eb';
+  return new Promise(resolve=>{
+    const canvas=document.createElement('canvas');
+    const ctx=canvas.getContext('2d');
+    const img=new Image();img.crossOrigin='anonymous';
+    img.onload=()=>{
+      canvas.width=img.width;canvas.height=img.height;
+      ctx.drawImage(img,0,0);
+      const W=img.width,H=img.height;
+      const pct=(v,axis)=>(v/100)*(axis==='x'?W:H);
+      shapes.forEach(shp=>{
+        const sw=Math.max(2,(shp.strokeWidth||2)*Math.max(1,W/1500));
+        ctx.strokeStyle=shp.color||accent;
+        ctx.lineWidth=sw;
+        ctx.lineCap='round';ctx.lineJoin='round';
+        ctx.fillStyle='transparent';
+        if(shp.type==='line'&&Array.isArray(shp.points)&&shp.points.length>=2){
+          ctx.beginPath();
+          shp.points.forEach((p,i)=>{
+            const x=pct(p.x,'x'),y=pct(p.y,'y');
+            if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+          });
+          ctx.stroke();
+        }else if(shp.type==='line'){
+          ctx.beginPath();ctx.moveTo(pct(shp.x1,'x'),pct(shp.y1,'y'));ctx.lineTo(pct(shp.x2,'x'),pct(shp.y2,'y'));ctx.stroke();
+        }else if(shp.type==='circle'){
+          ctx.beginPath();
+          // r is stored as % of image — use the smaller axis to keep circles round
+          const rPx=(shp.r/100)*Math.min(W,H);
+          ctx.arc(pct(shp.cx,'x'),pct(shp.cy,'y'),rPx,0,Math.PI*2);
+          ctx.stroke();
+        }else if(shp.type==='rect'){
+          const x1=pct(shp.x1,'x'),y1=pct(shp.y1,'y'),x2=pct(shp.x2,'x'),y2=pct(shp.y2,'y');
+          ctx.strokeRect(Math.min(x1,x2),Math.min(y1,y2),Math.abs(x2-x1),Math.abs(y2-y1));
+        }else if(shp.type==='triangle'){
+          const x1=pct(shp.x1,'x'),y1=pct(shp.y1,'y'),x2=pct(shp.x2,'x'),y2=pct(shp.y2,'y');
+          const cx=(x1+x2)/2;
+          ctx.beginPath();
+          ctx.moveTo(cx,y1);ctx.lineTo(x1,y2);ctx.lineTo(x2,y2);ctx.closePath();
+          ctx.stroke();
+        }
+        // Render the shape's optional note label near its anchor point
+        if(shp.note){
+          const ax=Array.isArray(shp.points)&&shp.points[0]?pct(shp.points[0].x,'x'):shp.cx!=null?pct(shp.cx,'x'):pct(shp.x1||0,'x');
+          const ay=(Array.isArray(shp.points)&&shp.points[0]?pct(shp.points[0].y,'y'):shp.cy!=null?pct(shp.cy,'y'):pct(shp.y1||0,'y'))-(Math.max(11,Math.round(H*0.012))+4);
+          const fz=Math.max(11,Math.round(H*0.012));
+          ctx.font=`bold ${fz}px Arial,sans-serif`;
+          const tw=ctx.measureText(shp.note).width;
+          ctx.fillStyle='rgba(255,255,255,0.92)';ctx.fillRect(ax-2,ay-fz,tw+8,fz+4);
+          ctx.fillStyle=shp.color||accent;ctx.fillText(shp.note,ax+2,ay-fz/2+fz*0.4);
+        }
       });
       resolve(canvas.toDataURL('image/jpeg',0.93));
     };
@@ -14582,6 +14656,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const {mmW,mmH}=detectSheetMm(dims.w,dims.h);
         doc.addPage([mmW,mmH],orient);
         let imgData=pg.dataUrl;
+        // DECISION(v1.19.782): Hoisted `sMode` from inside the else branch up to the
+        // for-loop body scope so the notes-baking code below it can read the same value
+        // without a TDZ error. Babel preset-react classic enforces `const` block scoping,
+        // unlike the previous in-browser babel-standalone which silently downgraded to `var`.
+        const sMode=uploadOpts.stampMode||'as_quoted';
         if(isProduction&&uploadOpts.poNumber){
           const d=new Date();
           const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
@@ -14598,8 +14677,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
           const scanned=`Scanned ${String(d.getDate()).padStart(2,'0')}-${mon}-${String(d.getFullYear()).slice(2)}`;
           // DECISION(v1.19.533): Stamp mode determines label and color
-          const sMode=uploadOpts.stampMode||'as_quoted';
-          const stampPrefix=sMode==='quote_ready'?'QUOTE READY':sMode==='ready_to_produce'?'READY TO PRODUCE':'AS-QUOTED';
+          // DECISION(v1.19.782): Added customer_reviewed / customer_approved modes for the
+          // round where customer-portal markup is baked back into the drawing. `sMode`
+          // is now declared at the for-loop body scope (above the if/else) so the
+          // post-stamp notes-baking section can read it.
+          const stampPrefix=sMode==='quote_ready'?'QUOTE READY':sMode==='ready_to_produce'?'READY TO PRODUCE':sMode==='customer_reviewed'?'CUSTOMER REVIEWED':sMode==='customer_approved'?'CUSTOMER APPROVED':'AS-QUOTED';
           // DECISION(v1.19.743): Include Drawing Version (v.N) on the BC drawing stamp.
           const dwgV=panel?.bomVersion;
           const dwgVStr=dwgV!=null?` · v.${dwgV}`:"";
@@ -14611,10 +14693,29 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             stampMode:sMode
           });
         }
-        // DECISION(v1.19.539): Burn engineering notes into the image for approved uploads
+        // DECISION(v1.19.539): Burn engineering notes into the image for approved uploads.
+        // DECISION(v1.19.782): Also bake on customer_reviewed / customer_approved modes,
+        // and (when present in uploadOpts) overlay the customer's portal notes (blue) and
+        // shapes (blue). Customer feedback is sent in via uploadOpts so the existing snapshot
+        // listener in ProjectView can supply customerReviewData.customerNotes/customerShapes
+        // without bcUpload needing to know how that data is fetched.
+        const pageNum=i+1;
         const pageNotes=pg.reviewNotes||[];
-        if(pageNotes.length>0&&(sMode==='quote_ready'||sMode==='ready_to_produce')){
+        const isApprovalMode=sMode==='quote_ready'||sMode==='ready_to_produce'||sMode==='customer_reviewed'||sMode==='customer_approved';
+        if(pageNotes.length>0&&isApprovalMode){
           imgData=await burnNotesCanvas(imgData,pageNotes);
+        }
+        if(isApprovalMode){
+          const customerNotesAll=Array.isArray(uploadOpts.customerNotes)?uploadOpts.customerNotes:[];
+          const customerNotesForPage=customerNotesAll.filter(n=>(n.pageNum||1)===pageNum);
+          if(customerNotesForPage.length>0){
+            imgData=await burnNotesCanvas(imgData,customerNotesForPage,{color:'#2563eb',headerLabel:'CUST'});
+          }
+          const customerShapesAll=Array.isArray(uploadOpts.customerShapes)?uploadOpts.customerShapes:[];
+          const customerShapesForPage=customerShapesAll.filter(s=>(s.pageNum||1)===pageNum);
+          if(customerShapesForPage.length>0){
+            imgData=await burnShapesCanvas(imgData,customerShapesForPage,{color:'#2563eb'});
+          }
         }
         doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
@@ -14622,8 +14723,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // DECISION(v1.19.375): BC file naming convention — DWG- prefix for all drawings.
       // Sorts drawings together in BC Attached Documents list.
       // DECISION(v1.19.533): Filename based on stamp mode — archive old versions (don't delete)
-      const sMode=uploadOpts.stampMode||'as_quoted';
-      const fileLabel=isProduction?'APPROVED TO PRODUCE':sMode==='quote_ready'?'QUOTE READY':sMode==='ready_to_produce'?'READY TO PRODUCE':'AS-QUOTED';
+      // DECISION(v1.19.782): Recomputed once at function level (the for-loop's local `sMode`
+      // went out of scope) — same value, but this scope-local copy keeps the filename
+      // construction below working without leaking the loop variable.
+      const fileSMode=uploadOpts.stampMode||'as_quoted';
+      const fileLabel=isProduction?'APPROVED TO PRODUCE':fileSMode==='quote_ready'?'QUOTE READY':fileSMode==='ready_to_produce'?'READY TO PRODUCE':fileSMode==='customer_reviewed'?'CUSTOMER REVIEWED':fileSMode==='customer_approved'?'CUSTOMER APPROVED':'AS-QUOTED';
       // DECISION(v1.19.743): Filename now embeds the Drawing Version (DWG-vN) alongside
       // the Quote Rev tag. Q-REV NN reflects the customer-facing quote rev; DWG-vN reflects
       // the panel's internal BOM iteration. Together they uniquely identify each PDF.
@@ -21289,8 +21393,41 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               <div style={{fontSize:14,fontWeight:800,color:"#4ade80"}}>CUSTOMER REVIEW SUBMITTED</div>
               <div style={{fontSize:12,color:"#86efac"}}>{customerReviewData.customerName||"Customer"} responded on {customerReviewData.submittedAt?new Date(customerReviewData.submittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—"}</div>
             </div>
-            <div style={{display:"flex",gap:6}}>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
               <button onClick={()=>setShowCustomerResponses(true)} style={btn("#0a2540","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8",padding:"6px 16px"})}>View Responses</button>
+              {/* DECISION(v1.19.782): "Bake & Re-upload" stamps the drawings as CUSTOMER
+                  REVIEWED (purple) with the customer's notes (blue) and shapes (blue) baked
+                  into every page. Re-uploads to BC, archiving the previous version. The
+                  baked PDF is also what flows into the production traveler later. */}
+              {((customerReviewData.customerNotes||[]).length>0||(customerReviewData.customerShapes||[]).length>0)&&(
+                <button
+                  disabled={ownerPriorityActive||!bcUploadRef?.current}
+                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Bake customer markup into the drawings + re-upload to BC"}
+                  onClick={async()=>{
+                    if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
+                    if(!bcUploadRef?.current){await arcAlert("Drawings panel not ready — open the panel first.",{kind:"warning"});return;}
+                    const ok=await arcConfirm(
+                      `Bake customer markup into the drawings and re-upload to BC?\n\nThis stamps every page CUSTOMER REVIEWED, burns the customer's notes (blue) and shapes (blue) into the image, and archives the previous version on BC.`,
+                      {kind:"info",okLabel:"Bake & Re-upload"}
+                    );
+                    if(!ok)return;
+                    try{
+                      await bcUploadRef.current({
+                        stampMode:"customer_reviewed",
+                        archiveOld:true,
+                        customerNotes:customerReviewData.customerNotes||[],
+                        customerShapes:customerReviewData.customerShapes||[],
+                      });
+                      await arcAlert("Drawings re-uploaded with customer markup.",{kind:"success"});
+                    }catch(e){
+                      console.warn("CUSTOMER REVIEWED upload failed:",e);
+                      await arcAlert("Bake failed: "+(e&&e.message?e.message:String(e)),{kind:"error"});
+                    }
+                  }}
+                  style={btn("#1a0040","#a855f7",{fontSize:13,fontWeight:700,border:"1px solid #a855f7",padding:"6px 16px",opacity:ownerPriorityActive?0.5:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>
+                  📐 Bake & Re-upload to BC
+                </button>
+              )}
               <button onClick={()=>{const upd={...project,customerReviewDismissed:true};onUpdate(upd);safeSave(uid,upd);}} style={btn("#1a1020","#94a3b8",{fontSize:12,fontWeight:600,border:"1px solid #334155",padding:"6px 12px"})}>Dismiss</button>
             </div>
           </div>
