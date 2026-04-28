@@ -14716,6 +14716,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if(customerShapesForPage.length>0){
             imgData=await burnShapesCanvas(imgData,customerShapesForPage,{color:'#2563eb'});
           }
+          // DECISION(v1.19.784): Bake engineer-drawn redline shapes (lines, circles,
+          // rectangles, triangles, polylines) onto the image alongside engineer notes.
+          // Previously only `reviewNotes` (text boxes) were baked into BC + traveler PDFs;
+          // `reviewShapes` were visible in ARC's drawing review modal but lost on upload —
+          // every approval-mode export (QUOTE READY, READY TO PRODUCE, CUSTOMER REVIEWED,
+          // APPROVED TO PRODUCE) was producing PDFs without the engineer's circles/arrows.
+          // Each shape carries its own `.color` field set at creation time, so the
+          // burnShapesCanvas default color is rarely relevant — but we don't pass an
+          // override so the helper falls back to its blue default for any shape that
+          // somehow didn't store a color.
+          const engShapesAll=Array.isArray(pg.reviewShapes)?pg.reviewShapes:[];
+          if(engShapesAll.length>0){
+            imgData=await burnShapesCanvas(imgData,engShapesAll);
+          }
         }
         doc.addImage(imgData,"JPEG",0,0,mmW,mmH,undefined,"FAST");
       }
