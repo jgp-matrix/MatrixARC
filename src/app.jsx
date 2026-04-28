@@ -21076,7 +21076,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   </>,document.body);
 }
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -21130,6 +21130,17 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     },err=>console.warn("reviewUpload listen error:",err));
     return()=>unsub();
   },[project.customerReviewToken]);
+  // DECISION(v1.19.783): Auto-open Customer Review Responses modal when navigated from a
+  // customer_review notification (bell click or email deep-link). Lives in PanelListView
+  // because that's where customerReviewData + setShowCustomerResponses live. Originally
+  // I put this in ProjectView, which crashed because customerReviewData isn't in scope
+  // there — fixed by moving the effect down here and threading the prop through.
+  useEffect(()=>{
+    if(autoOpenCustomerReview&&customerReviewData&&customerReviewData.status==="submitted"){
+      setShowCustomerResponses(true);
+      onCustomerReviewOpened&&onCustomerReviewOpened();
+    }
+  },[autoOpenCustomerReview,customerReviewData]);
   // Fetch contacts when project has a customer number
   useEffect(()=>{
     if(!project.bcCustomerNumber||!_bcToken)return;
@@ -22947,15 +22958,6 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       onPortalOpened?.();
     }
   },[autoOpenPortal,portalSubmissions.length]);
-  // DECISION(v1.19.781): Same pattern for the Customer Review Responses modal — fires
-  // when navigated from a customer_review notification (bell or email deep-link).
-  // Waits for `customerReviewData` to load (the snapshot listener earlier sets it).
-  useEffect(()=>{
-    if(autoOpenCustomerReview&&customerReviewData&&customerReviewData.status==="submitted"){
-      setShowCustomerResponses(true);
-      onCustomerReviewOpened?.();
-    }
-  },[autoOpenCustomerReview,customerReviewData]);
   const saveTimer=useRef(null);
   // DECISION(v1.19.745): Soft-block on sent quotes. Replaces the binary `quoteLocked`
   // hard-block. Once a quote has been sent (project.quoteSentAt set), the panel card +
@@ -24294,6 +24296,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             viewers={viewers}
             projectRemoteTasks={projectRemoteTasks}
             ownerPriorityActive={ownerPriorityActive}
+            autoOpenCustomerReview={autoOpenCustomerReview}
+            onCustomerReviewOpened={onCustomerReviewOpened}
             onBack={onBack}
             onViewQuote={handlePrintQuote}
             quotePrinting={quotePrinting}
