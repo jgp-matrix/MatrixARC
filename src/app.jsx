@@ -985,6 +985,130 @@ async function acquireGraphToken(){
 window._arcDebug=false;
 const _dbg=(...a)=>{if(window._arcDebug)console.log(...a);};
 
+// ── ARC DIALOG SYSTEM ──
+// DECISION(v1.19.778): Replace native browser popups (alert / confirm / prompt) with
+// in-app modals. Browser popups carry the URL ("matrix-arc.web.app says…"), can't
+// be styled, block on the main thread, and look out of place on a dark-themed app.
+//
+// Imperative API — works from anywhere (event handlers, async functions, top-level
+// code, even non-React modules). Returns a Promise:
+//   await arcAlert("Saved.")                             → undefined
+//   await arcAlert("Operation failed.", {kind:"error"})  → undefined
+//   const ok = await arcConfirm("Delete this row?")      → boolean
+//   const txt = await arcPrompt("Enter notes:")          → string | null (null=cancel)
+//
+// `kind` (info|success|warning|error) tints the icon + accent. ArcDialogHost
+// (mounted once at App root) renders the queue. Multiple rapid calls queue up and
+// resolve in order so a sequence like alert → confirm doesn't lose the second one.
+let _arcDialogQueue=[];
+const _arcDialogSubs=new Set();
+function _arcDialogPush(item){_arcDialogQueue=[..._arcDialogQueue,item];_arcDialogSubs.forEach(s=>s());}
+function _arcDialogShift(){_arcDialogQueue=_arcDialogQueue.slice(1);_arcDialogSubs.forEach(s=>s());}
+function arcAlert(message,opts){
+  return new Promise(resolve=>{
+    _arcDialogPush({type:"alert",message:String(message==null?"":message),kind:(opts&&opts.kind)||"info",title:(opts&&opts.title)||null,okLabel:(opts&&opts.okLabel)||"OK",resolve});
+  });
+}
+function arcConfirm(message,opts){
+  return new Promise(resolve=>{
+    _arcDialogPush({type:"confirm",message:String(message==null?"":message),kind:(opts&&opts.kind)||"info",title:(opts&&opts.title)||null,okLabel:(opts&&opts.okLabel)||"OK",cancelLabel:(opts&&opts.cancelLabel)||"Cancel",destructive:!!(opts&&opts.destructive),resolve});
+  });
+}
+function arcPrompt(message,opts){
+  return new Promise(resolve=>{
+    _arcDialogPush({type:"prompt",message:String(message==null?"":message),defaultValue:(opts&&opts.defaultValue)||"",placeholder:(opts&&opts.placeholder)||"",multiline:!!(opts&&opts.multiline),title:(opts&&opts.title)||null,okLabel:(opts&&opts.okLabel)||"OK",cancelLabel:(opts&&opts.cancelLabel)||"Cancel",resolve});
+  });
+}
+// Expose globally so non-React utility code (Cloud Function callers, BC helpers)
+// can call them too without importing.
+window.arcAlert=arcAlert;window.arcConfirm=arcConfirm;window.arcPrompt=arcPrompt;
+
+// ArcDialogHost — mounted once at App root. Renders the current head of the queue.
+function ArcDialogHost(){
+  const [,setTick]=useState(0);
+  const [inputValue,setInputValue]=useState("");
+  const inputRef=useRef(null);
+  useEffect(()=>{
+    const sub=()=>setTick(t=>t+1);
+    _arcDialogSubs.add(sub);
+    return()=>{_arcDialogSubs.delete(sub);};
+  },[]);
+  const item=_arcDialogQueue[0];
+  // Reset input value whenever a new prompt becomes active
+  useEffect(()=>{
+    if(item&&item.type==="prompt"){
+      setInputValue(item.defaultValue||"");
+      // Focus the input shortly after mount
+      setTimeout(()=>{try{inputRef.current&&inputRef.current.focus();inputRef.current&&inputRef.current.select&&inputRef.current.select();}catch(e){}},30);
+    }
+  },[item]);
+  if(!item)return null;
+  const KIND_COLORS={
+    info:{accent:"#38bdf8",bg:"#0c2233",border:"#38bdf844",icon:"ⓘ"},
+    success:{accent:"#10b981",bg:"#052e16",border:"#10b98144",icon:"✓"},
+    warning:{accent:"#f59e0b",bg:"#3a1f00",border:"#f59e0b44",icon:"⚠"},
+    error:{accent:"#ef4444",bg:"#2a0a0a",border:"#ef444444",icon:"⚠"},
+  };
+  const k=KIND_COLORS[item.kind]||KIND_COLORS.info;
+  function close(value){
+    const r=item.resolve;
+    _arcDialogShift();
+    r&&r(value);
+  }
+  function onOk(){
+    if(item.type==="alert")close(undefined);
+    else if(item.type==="confirm")close(true);
+    else if(item.type==="prompt")close(inputValue);
+  }
+  function onCancel(){
+    if(item.type==="confirm")close(false);
+    else if(item.type==="prompt")close(null);
+    else close(undefined);
+  }
+  function onKey(e){
+    // Enter = OK (except multiline prompts where Enter inserts a newline; use Ctrl+Enter)
+    if(e.key==="Enter"){
+      if(item.type==="prompt"&&item.multiline&&!e.ctrlKey)return;
+      e.preventDefault();onOk();
+    }
+    if(e.key==="Escape"){e.preventDefault();onCancel();}
+  }
+  // Default title per kind if caller didn't supply one
+  const titleByKind={info:"Notice",success:"Success",warning:"Warning",error:"Error"};
+  const title=item.title||(item.type==="confirm"?"Please confirm":item.type==="prompt"?"Input required":titleByKind[item.kind]||"Notice");
+  return ReactDOM.createPortal(
+    <div onKeyDown={onKey} tabIndex={-1}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:99999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div onMouseDown={e=>e.stopPropagation()}
+        style={{background:"#0d0d1a",border:`1px solid ${k.accent}66`,borderRadius:12,padding:"22px 26px",width:"100%",maxWidth:item.type==="prompt"&&item.multiline?640:480,boxShadow:`0 0 36px ${k.accent}55, 0 12px 48px rgba(0,0,0,0.7)`,fontFamily:"inherit"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
+          <div style={{width:32,height:32,borderRadius:"50%",background:k.bg,border:`1px solid ${k.border}`,display:"flex",alignItems:"center",justifyContent:"center",color:k.accent,fontSize:18,fontWeight:800}}>{k.icon}</div>
+          <div style={{fontSize:15,fontWeight:700,color:"#f1f5f9",flex:1}}>{title}</div>
+          <button onClick={onCancel} title="Close" style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>✕</button>
+        </div>
+        <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.55,marginBottom:item.type==="prompt"?10:18,whiteSpace:"pre-wrap"}}>{item.message}</div>
+        {item.type==="prompt"&&(
+          item.multiline?
+            <textarea ref={inputRef} value={inputValue} onChange={e=>setInputValue(e.target.value)} placeholder={item.placeholder}
+              style={{width:"100%",minHeight:120,background:"#0a0a14",border:"1px solid #3d6090",color:"#f1f5f9",borderRadius:6,padding:"8px 10px",fontSize:13,outline:"none",fontFamily:"inherit",resize:"vertical",marginBottom:14,boxSizing:"border-box"}}/>
+            :
+            <input ref={inputRef} value={inputValue} onChange={e=>setInputValue(e.target.value)} placeholder={item.placeholder}
+              style={{width:"100%",background:"#0a0a14",border:"1px solid #3d6090",color:"#f1f5f9",borderRadius:6,padding:"8px 10px",fontSize:13,outline:"none",fontFamily:"inherit",marginBottom:14,boxSizing:"border-box"}}/>
+        )}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          {(item.type==="confirm"||item.type==="prompt")&&(
+            <button onClick={onCancel}
+              style={{background:"transparent",color:"#94a3b8",border:"1px solid #3d6090",borderRadius:7,padding:"7px 18px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>{item.cancelLabel}</button>
+          )}
+          <button onClick={onOk} autoFocus={item.type!=="prompt"}
+            style={{background:item.destructive?"#ef4444":k.accent,color:"#fff",border:"none",borderRadius:7,padding:"7px 20px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",boxShadow:`0 0 12px ${item.destructive?"#ef4444":k.accent}55`}}>{item.okLabel}</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ── APP CONTEXT ──
 let _appCtx={uid:null,companyId:null,role:null,permissions:{},projectsPath:null,configPath:null,company:{name:null,logoUrl:null,address:null,phone:null}};
 function isReadOnly(){return _appCtx.role==="view";}
@@ -8741,7 +8865,7 @@ function _isBomRowFlaggedRed(r){
 // DECISION(v1.19.678): Owner Priority Mode — shared lock message for button tooltips + alerts.
 const _OWNER_PRIORITY_ALERT="This action is disabled while the owner is working this project. Wait until they leave, or ask an admin to Take Over.";
 const _OWNER_PRIORITY_TOOLTIP="Disabled — owner is working this project. Wait until they leave or ask an admin to Take Over.";
-function _fireOwnerPriorityAlert(){alert(_OWNER_PRIORITY_ALERT);}
+function _fireOwnerPriorityAlert(){arcAlert(_OWNER_PRIORITY_ALERT);}
 
 // DECISION(v1.19.678): Subtle chime via WebAudio — single tone, 250ms. Browsers require
 // a user interaction before audio can play, so we silently swallow errors if autoplay
@@ -9964,7 +10088,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
                     <span style={{...(() => {const rb=roleBadge[inv.role]||[C.border,C.muted];return{background:rb[0],color:rb[1]};})(),borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700}}>{inv.role}</span>
                     <span style={{fontSize:10,color:C.muted}}>{inv.invitedAt?new Date(inv.invitedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—"}</span>
                     {admin&&<button onClick={async()=>{
-                      if(!confirm("Cancel this invite?"))return;
+                      if(!(await arcConfirm("Cancel this invite?",{destructive:true,okLabel:"Cancel Invite"})))return;
                       try{await fbDb.doc(`companies/${companyId}/pendingInvites/${inv.token}`).delete();setPendingInvites(p=>p.filter(i=>i.token!==inv.token));}catch(e){setErr(e.message);}
                     }} style={{background:"none",border:`1px solid ${C.red}44`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.red,cursor:"pointer"}}>Cancel</button>}
                   </div>
@@ -10315,7 +10439,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     let graphToken=null;
     if(hasEmailVendors){
       graphToken=await acquireGraphToken();
-      if(!graphToken){setSending(false);alert("Could not get Microsoft 365 token. Make sure you are signed in to your Microsoft account.");return;}
+      if(!graphToken){setSending(false);arcAlert("Could not get Microsoft 365 token. Make sure you are signed in to your Microsoft account.");return;}
     }
     const today=_today;
     const rfqBase=_rfqBase;
@@ -10678,8 +10802,8 @@ function PoReceivedModal({project,bcProjectNumber,onClose,onDone}){
   }
 
   async function handleSubmit(){
-    if(!poNumber.trim()){alert("Please enter a PO number.");return;}
-    if(!bcProjectNumber){alert("No BC Project Number on this project. Cannot write to BC.");return;}
+    if(!poNumber.trim()){arcAlert("Please enter a PO number.");return;}
+    if(!bcProjectNumber){arcAlert("No BC Project Number on this project. Cannot write to BC.");return;}
     setSaving(true);setErrors([]);
     const errs=[];
     try{
@@ -10940,9 +11064,9 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
                 )}
                 {sub.storageUrl&&<a href={sub.storageUrl} target="_blank" rel="noopener noreferrer" style={{background:"#0d1520",border:"1px solid #0284c7",color:"#38bdf8",padding:"5px 14px",borderRadius:6,fontSize:12,fontFamily:"inherit",fontWeight:600,textDecoration:"none"}}>📄 View PDF</a>}
                 {sub.fileName&&!sub.storageUrl&&<span style={{fontSize:11,color:"#94a3b8"}}>📄 {sub.fileName}</span>}
-                <button onClick={()=>{if(confirm("Dismiss this submission? It will no longer appear here."))fbDb.collection('rfqUploads').doc(sub.id).update({status:'dismissed'}).catch(e=>console.warn("dismiss failed:",e));}} style={{marginLeft:"auto",background:"none",border:`1px solid #475569`,color:"#94a3b8",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Dismiss</button>
-                <button onClick={()=>{if(confirm("Reset this submission so the supplier can re-upload? The supplier's link will work again."))fbDb.collection('rfqUploads').doc(sub.id).update({status:'pending',submittedAt:null,lineItems:sub.lineItems?.map(item=>({partNumber:item.partNumber,description:item.description,qty:item.qty,manufacturer:item.manufacturer}))}).catch(e=>console.warn("reset failed:",e));}} style={{background:"none",border:"1px solid #f59e0b44",color:"#f59e0b",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Reset for Re-upload</button>
-                <button onClick={()=>{if(confirm("DELETE this RFQ submission permanently? This cannot be undone."))fbDb.collection('rfqUploads').doc(sub.id).delete().catch(e=>console.warn("delete failed:",e));}} style={{background:"none",border:"1px solid #ef444444",color:"#ef4444",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Delete</button>
+                <button onClick={async()=>{if(await arcConfirm("Dismiss this submission? It will no longer appear here.",{destructive:true,okLabel:"Dismiss"}))fbDb.collection('rfqUploads').doc(sub.id).update({status:'dismissed'}).catch(e=>console.warn("dismiss failed:",e));}} style={{marginLeft:"auto",background:"none",border:`1px solid #475569`,color:"#94a3b8",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Dismiss</button>
+                <button onClick={async()=>{if(await arcConfirm("Reset this submission so the supplier can re-upload? The supplier's link will work again.",{kind:"warning",okLabel:"Reset"}))fbDb.collection('rfqUploads').doc(sub.id).update({status:'pending',submittedAt:null,lineItems:sub.lineItems?.map(item=>({partNumber:item.partNumber,description:item.description,qty:item.qty,manufacturer:item.manufacturer}))}).catch(e=>console.warn("reset failed:",e));}} style={{background:"none",border:"1px solid #f59e0b44",color:"#f59e0b",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Reset for Re-upload</button>
+                <button onClick={async()=>{if(await arcConfirm("DELETE this RFQ submission permanently? This cannot be undone.",{kind:"error",destructive:true,okLabel:"Delete"}))fbDb.collection('rfqUploads').doc(sub.id).delete().catch(e=>console.warn("delete failed:",e));}} style={{background:"none",border:"1px solid #ef444444",color:"#ef4444",padding:"4px 12px",borderRadius:6,cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Delete</button>
               </div>
             </div>
           );})}
@@ -12340,8 +12464,8 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
                               if(!src&&pg.storageUrl){try{const p=await ensureDataUrl(pg);src=p.dataUrl;}catch(e){}}
                               await saveTemplateRegion(customerName,field,region,{sourceDataUrl:src});
                               setPendingRect(null);setPendingType(null);setPendingNote("");
-                              alert(`Saved as ${label} template region for customer "${customerName}". Future extractions for this customer will crop from this exact area.`);
-                            }catch(e){alert("Save failed: "+e.message);}
+                              arcAlert(`Saved as ${label} template region for customer "${customerName}". Future extractions for this customer will crop from this exact area.`);
+                            }catch(e){arcAlert("Save failed: "+e.message);}
                           }} style={{background:"rgba(167,139,250,0.18)",color:"#c4b5fd",border:"1px solid #a78bfa66",borderRadius:8,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
                             📌 {label}
                           </button>
@@ -12975,7 +13099,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   const vendorName=createVendor?((bcVendors.find(v=>v.number===createVendor)||{}).displayName||""):"";
                   // If price entered + vendor selected, prompt to push to BC Purchase Prices
                   if(createCost&&parseFloat(createCost)>0&&createVendor){
-                    const pushPrice=confirm(`The price $${parseFloat(createCost).toFixed(2)} was entered for this item.\n\nIs this price from ${vendorName||createVendor}?\n\nClick OK to save this as a Purchase Price in BC.`);
+                    const pushPrice=await arcConfirm(`The price $${parseFloat(createCost).toFixed(2)} was entered for this item.\n\nIs this price from ${vendorName||createVendor}?\n\nClick OK to save this as a Purchase Price in BC.`,{okLabel:"Save to BC"});
                     if(pushPrice){
                       bcPushPurchasePrice(created.number,createVendor,parseFloat(createCost),Date.now(),"EA")
                         .then(()=>console.log(`[BC] Purchase Price written: ${created.number} @ $${createCost} from ${vendorName}`))
@@ -13562,10 +13686,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{onSaveImmediate(updated);}catch(e){}
     setDocUploading(false);
   }
-  function removeOtherDoc(idx){
+  async function removeOtherDoc(idx){
     const doc=(panel.otherDocs||[])[idx];
     if(!doc)return;
-    if(!confirm(`Remove "${doc.name}" from the list?`))return;
+    if(!(await arcConfirm(`Remove "${doc.name}" from the list?`,{destructive:true,okLabel:"Remove"})))return;
     // Delete from BC if possible
     if(doc.bcFileName&&bcProjectNumber)bcDeleteAttachmentByName(bcProjectNumber,doc.bcFileName).catch(()=>{});
     const updated={...panel,otherDocs:(panel.otherDocs||[]).filter((_,i)=>i!==idx)};
@@ -15374,7 +15498,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const parsed=val===""?null:parseFloat(val);
     const row=(panel.bom||[]).find(r=>r.id===id);
     if(parsed!=null&&!isNaN(parsed)){
-      if(parsed<0){alert("Price cannot be negative.");return;}
+      if(parsed<0){arcAlert("Price cannot be negative.");return;}
       if(parsed>100000&&!window.confirm(`$${parsed.toLocaleString()} seems very high for a single unit. Are you sure?`))return;
     }
     if(parsed==null||isNaN(parsed)){
@@ -15528,12 +15652,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // for each qualifying row. Results summarized in an alert; audit entries written per row.
   async function pushAllLeadTimesToBc(){
     if(pushingLeadTimes)return;
-    if(!_bcToken){alert("BC not connected. Sign in to Business Central first.");return;}
+    if(!_bcToken){arcAlert("BC not connected. Sign in to Business Central first.");return;}
     // DECISION(v1.19.697): Pre-flight Web Service check. Previously every row failed with
     // a 404 if Page 114 wasn't published — one clear error is better than N cryptic ones.
     const allPages=await bcDiscoverODataPages().catch(()=>[]);
     if(allPages.length>0&&!allPages.some(n=>/^ItemVendorCatalog$/i.test(n))){
-      alert("BC Web Service 'ItemVendorCatalog' (Page 114) is not published on this BC tenant.\n\nLead-time sync requires your BC admin to:\n  1. Open BC → search \"Web Services\"\n  2. Add a row with Object Type=Page, Object ID=114, Service Name=ItemVendorCatalog, Published=✓\n  3. Save\n\nOnce published, refresh ARC and try again.");
+      arcAlert("BC Web Service 'ItemVendorCatalog' (Page 114) is not published on this BC tenant.\n\nLead-time sync requires your BC admin to:\n  1. Open BC → search \"Web Services\"\n  2. Add a row with Object Type=Page, Object ID=114, Service Name=ItemVendorCatalog, Published=✓\n  3. Save\n\nOnce published, refresh ARC and try again.");
       return;
     }
     const bom=panel.bom||[];
@@ -15573,7 +15697,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(!qualifying.length){
       setPushingLeadTimes(false);
       const reasons=stillNoVendor.length>0?`\n\n${stillNoVendor.length} row(s) have a lead time but no BC vendor on the Item Card (Purchase → Vendor No.). Set a default vendor in BC or submit a supplier portal quote to associate one.`:"";
-      alert(`No rows qualify for BC push.${reasons}\n\nRows need: non-blank part number + resolved BC vendor + leadTimeDays > 0.`);
+      arcAlert(`No rows qualify for BC push.${reasons}\n\nRows need: non-blank part number + resolved BC vendor + leadTimeDays > 0.`);
       return;
     }
     const skippedCount=stillNoVendor.length;
@@ -15618,7 +15742,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(stillNoVendor.length>0)lines.push(`${stillNoVendor.length} row${stillNoVendor.length>1?"s":""} skipped — no vendor on BC Item Card.`);
     if(failures.length>0)lines.push("","Failures:",...failures.slice(0,10).map(f=>"  • "+f));
     if(failures.length>10)lines.push(`  … and ${failures.length-10} more`);
-    alert(lines.join("\n"));
+    arcAlert(lines.join("\n"));
   }
 
   async function runPricingOnPanel(bomOverride,panelOverride,onEpProgress,opts={}){
@@ -16860,7 +16984,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   {aiPricing?"Refreshing…":"↻ Get New Pricing"}
                 </button>
                 <button disabled={aiPricing||ownerPriorityActive}
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{if(confirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item."))runPricingOnPanel(panel.bom,panel,null,{forceFresh:true});}}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{if(await arcConfirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item.",{kind:"warning",okLabel:"Refresh All"}))runPricingOnPanel(panel.bom,panel,null,{forceFresh:true});}}
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 6px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"0 6px 6px 0",borderLeft:`1px solid ${C.accent}33`})}
                   title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Force refresh all prices — ignores stale thresholds"}>▾</button>
               </div>
@@ -17441,7 +17565,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             </div>}
             {!readOnly&&<button onClick={()=>{
               const extNotes=pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).filter(n=>n.visibility==="external").map(n=>({...n,pageNum:pi+1})));
-              if(extNotes.length===0){alert("Mark at least one note as External (EXT) before sending to the customer.");return;}
+              if(extNotes.length===0){arcAlert("Mark at least one note as External (EXT) before sending to the customer.");return;}
               setSendReviewEmail(project.quote?.customerEmail||project.bcCustomerEmail||"");
               setSendReviewName(project.quote?.customer||project.bcCustomerName||"");
               setSendReviewModal(true);
@@ -17788,7 +17912,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   const graphTok=await acquireGraphToken();
                   if(!graphTok){throw new Error("Microsoft Graph not connected. Sign into Microsoft first (Settings → Microsoft 365).");}
                   const extNotes=pages.flatMap((pg,pi)=>(pg.reviewNotes||[]).filter(n=>n.visibility==="external").map(n=>({...n,pageNum:pi+1})));
-                  if(extNotes.length===0){alert("No external notes to send.");setSendReviewBusy(false);return;}
+                  if(extNotes.length===0){arcAlert("No external notes to send.");setSendReviewBusy(false);return;}
                   // Generate token
                   const tok=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
                   // Gather page URLs
@@ -17814,10 +17938,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   const projPath=_appCtx.projectsPath||`users/${uid}/projects`;
                   await fbDb.doc(`${projPath}/${project.id}`).update({customerReviewToken:tok,customerReviewSentAt:Date.now(),customerReviewEmail:sendReviewEmail.trim()});
                   setSendReviewModal(false);
-                  alert("✓ Review sent to "+sendReviewEmail.trim());
+                  arcAlert("✓ Review sent to "+sendReviewEmail.trim());
                 }catch(e){
                   console.error("Send review error:",e);
-                  alert("Failed to send: "+(e.message||e));
+                  arcAlert("Failed to send: "+(e.message||e));
                 }
                 setSendReviewBusy(false);
               }} style={{flex:1,background:"#2563eb",color:"#fff",border:"none",borderRadius:7,padding:"10px 16px",fontSize:13,fontWeight:700,cursor:"pointer",opacity:sendReviewBusy||!sendReviewEmail.trim()?0.5:1}}>
@@ -19446,7 +19570,7 @@ ${fullText.slice(0,8000)}`;
           }));
           const missingItems=ppResults.filter(r=>r&&r.reason==='item_not_found').map(r=>r.itemNo);
           if(missingItems.length>0){
-            setTimeout(()=>alert(`${missingItems.length} item${missingItems.length>1?'s':''} not found in BC:\n${missingItems.join(', ')}\n\nUse the "Upload Supplier Quote" tool in Settings to create these items in BC first, then re-push.`),200);
+            setTimeout(()=>arcAlert(`${missingItems.length} item${missingItems.length>1?'s':''} not found in BC:\n${missingItems.join(', ')}\n\nUse the "Upload Supplier Quote" tool in Settings to create these items in BC first, then re-push.`),200);
           }
           console.log("bcPushPurchasePrice: pushed for vendor",ppVendorNo,"missing:",missingItems);
         }else{console.warn("bcPushPurchasePrice: no vendor resolved for",quoteHeader?.supplier);}
@@ -19617,7 +19741,7 @@ ${fullText.slice(0,8000)}`;
       const enteredCost=newItemForm.cost!==''?parseFloat(newItemForm.cost):(item.price?parseFloat(item.price):0);
       if(enteredCost>0&&newItemForm.vendor){
         const vName=(bcCfg.vendors||[]).find(v=>v.number===newItemForm.vendor)?.displayName||newItemForm.vendor;
-        const pushPrice=confirm(`The price $${enteredCost.toFixed(2)} was entered for this item.\n\nIs this price from ${vName}?\n\nClick OK to save this as a Purchase Price in BC.`);
+        const pushPrice=await arcConfirm(`The price $${enteredCost.toFixed(2)} was entered for this item.\n\nIs this price from ${vName}?\n\nClick OK to save this as a Purchase Price in BC.`,{okLabel:"Save to BC"});
         if(pushPrice){
           bcPushPurchasePrice(created.number,newItemForm.vendor,enteredCost,Date.now(),"EA")
             .then(()=>console.log(`[BC] Purchase Price written: ${created.number} @ $${enteredCost} from ${vName}`))
@@ -20177,7 +20301,7 @@ ${fullText.slice(0,8000)}`;
                   bcPoDate:now,
                   bcVendorName:vendorName
                 }));
-                if(newRows.length>0){onBomUpdate(newRows);alert(`${newRows.length} item${newRows.length!==1?"s":""} added to BOM (not pushed to BC).`);}
+                if(newRows.length>0){onBomUpdate(newRows);arcAlert(`${newRows.length} item${newRows.length!==1?"s":""} added to BOM (not pushed to BC).`);}
                 onClose();
               }} style={btn("#1a1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>
                 Add to BOM Only
@@ -20390,16 +20514,16 @@ function CADLinkSendModal({project,onClose}){
         XL.utils.book_append_sheet(wb,ws,"BOM");
         XL.writeFile(wb,fileName,{bookType:"biff8"});
       });
-    }catch(e){alert("Download failed: "+e.message);}
+    }catch(e){arcAlert("Download failed: "+e.message);}
     setDownloading(false);
   }
 
   async function handleSend(){
-    if(!toEmail.trim()){alert("Enter a recipient email.");return;}
+    if(!toEmail.trim()){arcAlert("Enter a recipient email.");return;}
     setSending(true);
     try{
       const graphToken=await acquireGraphToken();
-      if(!graphToken){alert("Could not get Microsoft 365 token.");setSending(false);return;}
+      if(!graphToken){arcAlert("Could not get Microsoft 365 token.");setSending(false);return;}
       const XL=await ensureXLSX();
       // Build all XLS files as base64 attachments
       const attachments=panels.map((pan,i)=>{
@@ -20452,8 +20576,8 @@ function CADLinkSendModal({project,onClose}){
       const msg={subject,body:{contentType:"HTML",content:htmlBody},toRecipients:toEmail.split(/[,;]\s*/).filter(e=>e.trim()).map(e=>({emailAddress:{address:e.trim()}})),attachments};
       const r=await fetch("https://graph.microsoft.com/v1.0/me/sendMail",{method:"POST",headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},body:JSON.stringify({message:msg,saveToSentItems:true})});
       if(!r.ok){const err=await r.text();throw new Error(err);}
-      onClose();alert("CADLink BOMs sent to "+toEmail);
-    }catch(e){alert("Send failed: "+e.message);}
+      onClose();arcAlert("CADLink BOMs sent to "+toEmail);
+    }catch(e){arcAlert("Send failed: "+e.message);}
     setSending(false);
   }
 
@@ -20592,7 +20716,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
     if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
     const m=modalData;
     if(sendBlocked){
-      alert(formatIncompleteQuoteAlert(incompleteItems));
+      arcAlert(formatIncompleteQuoteAlert(incompleteItems));
       return;
     }
     // DECISION(v1.19.740): AI-lead-time warning + auto-budgetary flip. If any BOM row
@@ -20602,10 +20726,11 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
     // and replace the AI values first.
     const aiCount=_countAiLeadTimes(project);
     if(aiCount>0){
-      const proceed=confirm(
+      const proceed=await arcConfirm(
         `This quote contains ${aiCount} AI-estimated lead time${aiCount>1?"s":""}.\n\n`+
         "Sending will mark the quote as BUDGETARY until those lead times are replaced with firm values.\n\n"+
-        "OK to continue, or Cancel to review the Lead column first."
+        "OK to continue, or Cancel to review the Lead column first.",
+        {kind:"warning",okLabel:"Continue (Budgetary)"}
       );
       if(!proceed)return;
       const{updatedProject,changed}=_markProjectBudgetaryForAiLeads(project);
@@ -20614,8 +20739,8 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         try{await safeSave(uid,updatedProject);}catch(e){console.warn("[BUDGETARY AUTO] save failed:",e);}
       }
     }
-    if(sendMode==="new"&&!m.to.trim()){alert("Enter a recipient email.");return;}
-    if(sendMode==="reply"&&!selectedThread){alert("Select an email thread to reply to.");return;}
+    if(sendMode==="new"&&!m.to.trim()){arcAlert("Enter a recipient email.");return;}
+    if(sendMode==="reply"&&!selectedThread){arcAlert("Select an email thread to reply to.");return;}
     // DECISION(v1.19.667): Validate recipient emails before send. Catches typos like
     // `jon@matrixpci,com` (comma instead of dot) which would otherwise split into two
     // malformed addresses and get rejected by Graph API with a generic error.
@@ -20623,13 +20748,13 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       const emailRe=/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
       const recipients=m.to.split(/[,;]\s*/).map(e=>e.trim()).filter(Boolean);
       const bad=recipients.filter(e=>!emailRe.test(e));
-      if(recipients.length===0){alert("Enter at least one recipient email.");return;}
-      if(bad.length){alert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
+      if(recipients.length===0){arcAlert("Enter at least one recipient email.");return;}
+      if(bad.length){arcAlert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
     }
     setSending(true);
     try{
       const graphToken=await acquireGraphToken();
-      if(!graphToken){alert("Could not get Microsoft 365 token.");setSending(false);return;}
+      if(!graphToken){arcAlert("Could not get Microsoft 365 token.");setSending(false);return;}
       const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
       const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
       const jsPDF=await ensureJsPDF();
@@ -20676,15 +20801,15 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         onUpdate(upd);safeSave(uid,upd);
       }catch(saveErr){
         console.error("[QUOTE SEND] Firestore save failed after email succeeded:",saveErr);
-        alert(`⚠ Email was sent successfully to ${sentTo}, but the quote-lock record failed to save (${saveErr.message}). The quote may still appear unsent in the dashboard. Refresh and if the lock is missing, click Send again (the customer will get a duplicate — let them know).`);
+        arcAlert(`⚠ Email was sent successfully to ${sentTo}, but the quote-lock record failed to save (${saveErr.message}). The quote may still appear unsent in the dashboard. Refresh and if the lock is missing, click Send again (the customer will get a duplicate — let them know).`);
         setSending(false);
         return;
       }
       if(project.bcProjectNumber&&_bcToken){
         bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
       }
-      onClose();alert(sendMode==="reply"?"Quote sent as reply to: "+selectedThread.subject:"Quote sent to "+m.to);
-    }catch(e){alert("Send failed: "+e.message);}
+      onClose();arcAlert(sendMode==="reply"?"Quote sent as reply to: "+selectedThread.subject:"Quote sent to "+m.to);
+    }catch(e){arcAlert("Send failed: "+e.message);}
     setSending(false);
   }
 
@@ -21101,7 +21226,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✓ Approve</button>
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
-                  const notes=prompt("Notes for the salesperson (reason for return):");
+                  const notes=await arcPrompt("Notes for the salesperson (reason for return):",{multiline:true,placeholder:"What needs to be fixed?",okLabel:"Return"});
                   if(notes===null)return;
                   const upd={...project,preReviewStatus:"rejected",preReviewNotes:notes};
                   onUpdate(upd);safeSave(uid,upd);
@@ -21147,7 +21272,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✓ Approved for Production</button>
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
-                  const notes=prompt("Notes (reason for return):");
+                  const notes=await arcPrompt("Notes (reason for return):",{multiline:true,placeholder:"What needs to be fixed?",okLabel:"Return"});
                   if(notes===null)return;
                   const upd={...project,postReviewStatus:"rejected",postReviewNotes:notes};
                   onUpdate(upd);safeSave(uid,upd);
@@ -21814,9 +21939,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   if(reviewStatus==="pending")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#a78bfa",padding:"4px 0",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting Engineer/Designer approval</div>;
                   return <button onClick={async()=>{
                     const designerCode=project.bcDesignerCode;
-                    if(!designerCode){alert("No Engineer/Designer assigned to this project. Assign an Engineer/Designer first.");return;}
+                    if(!designerCode){arcAlert("No Engineer/Designer assigned to this project. Assign an Engineer/Designer first.");return;}
                     const hasDrawings=(project.panels||[]).some(p=>(p.pages||[]).length>0);
-                    if(!hasDrawings){alert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
+                    if(!hasDrawings){arcAlert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
                     // Set review status
                     const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid};
                     onUpdate(upd);safeSave(uid,upd);
@@ -21860,11 +21985,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                           if(graphToken){
                             const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p><a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
                             await sendGraphEmail(graphToken,designerEmail,`Pre-Quote Review: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
-                            alert("Submitted for pre-quote review. "+designerName+" has been notified at "+designerEmail);
-                          }else{alert("Submitted for review. Email notification requires Microsoft 365 sign-in.");}
-                        }catch(e){console.warn("Review email failed:",e);alert("Submitted for review. Email failed: "+e.message);}
-                      }else{alert("Submitted for review. Could not find Engineer/Designer email — please notify "+designerName+" manually.");}
-                    }catch(e){console.warn("Review notification failed:",e);alert("Review submitted but notification failed: "+(e.message||e)+"\n\nThe project status has been updated. Please notify the Engineer/Designer manually.");}
+                            arcAlert("Submitted for pre-quote review. "+designerName+" has been notified at "+designerEmail);
+                          }else{arcAlert("Submitted for review. Email notification requires Microsoft 365 sign-in.");}
+                        }catch(e){console.warn("Review email failed:",e);arcAlert("Submitted for review. Email failed: "+e.message);}
+                      }else{arcAlert("Submitted for review. Could not find Engineer/Designer email — please notify "+designerName+" manually.");}
+                    }catch(e){console.warn("Review notification failed:",e);arcAlert("Review submitted but notification failed: "+(e.message||e)+"\n\nThe project status has been updated. Please notify the Engineer/Designer manually.");}
                   }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>;
                 })()}
                 {/* DECISION(v1.19.667): Pre-gate the Send button on the main view so sales sees
@@ -21895,10 +22020,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:(_sendBlocked?`Send disabled — ${_incompleteItems.length} incomplete item${_incompleteItems.length>1?"s":""}. Fix red rows in the BOM.`:"")}
                   onClick={async()=>{
                   if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
-                  if(_incompleteItems.length>0){alert(formatIncompleteQuoteAlert(_incompleteItems));return;}
+                  if(_incompleteItems.length>0){arcAlert(formatIncompleteQuoteAlert(_incompleteItems));return;}
                   // Gate: require pre-review approval before sending quote
                   if(project.preReviewStatus&&project.preReviewStatus!=="approved"){
-                    alert("Engineering approval required before sending quote.\n\nCurrent status: "+(project.preReviewStatus==="pending"?"Awaiting Engineer/Designer review":"Returned for changes")+"\n\nClick 'Send for Technical Review' to submit for review, or wait for the Engineer/Designer to approve.");
+                    arcAlert("Engineering approval required before sending quote.\n\nCurrent status: "+(project.preReviewStatus==="pending"?"Awaiting Engineer/Designer review":"Returned for changes")+"\n\nClick 'Send for Technical Review' to submit for review, or wait for the Engineer/Designer to approve.");
                     return;
                   }
                   const q=project.quote||{};
@@ -22314,9 +22439,9 @@ function OwnerTakeoverModal({ownerName,onClose,onConfirm}){
           <button onClick={onClose} disabled={submitting}
             style={{background:"#1a1a2a",border:"1px solid #334155",color:"#94a3b8",padding:"7px 18px",borderRadius:6,fontSize:13,cursor:"pointer"}}>Cancel</button>
           <button onClick={async()=>{
-            if(!reason.trim()){alert("Please enter a reason.");return;}
+            if(!reason.trim()){arcAlert("Please enter a reason.");return;}
             setSubmitting(true);
-            try{await onConfirm(reason.trim());}catch(e){alert("Take over failed: "+e.message);}
+            try{await onConfirm(reason.trim());}catch(e){arcAlert("Take over failed: "+e.message);}
             setSubmitting(false);
           }} disabled={submitting||!reason.trim()}
             style={{background:"#3b0764",border:"1px solid #fcd34d",color:"#fcd34d",padding:"7px 18px",borderRadius:6,fontSize:13,fontWeight:700,cursor:"pointer",opacity:submitting||!reason.trim()?0.5:1}}>
@@ -22765,7 +22890,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       setUnlockRequestSent(true);
     }catch(e){
       console.error("[UNLOCK REQUEST] failed:",e);
-      alert("Could not send unlock request: "+(e.message||e));
+      arcAlert("Could not send unlock request: "+(e.message||e));
     }
   }
   // DECISION(v1.19.755): Owner/admin grants persistent unlock. Sets editUnlocked=true,
@@ -22791,7 +22916,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       update(upd);safeSave(uid,upd);
     }catch(e){
       console.error("[UNLOCK GRANT] failed:",e);
-      alert("Could not unlock project: "+(e.message||e));
+      arcAlert("Could not unlock project: "+(e.message||e));
     }
   }
   function relockProject(){
@@ -22956,8 +23081,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [relinking,setRelinking]=useState(false);
   const [relinkMsg,setRelinkMsg]=useState(null);
   async function relinkToBC(){
-    if(!_bcToken){alert("Connect to Business Central first.");return;}
-    if(!confirm("This will create a NEW BC project in the current environment ("+_bcConfig.env+") and re-link this project. Continue?"))return;
+    if(!_bcToken){arcAlert("Connect to Business Central first.");return;}
+    if(!(await arcConfirm("This will create a NEW BC project in the current environment ("+_bcConfig.env+") and re-link this project. Continue?",{kind:"warning",okLabel:"Re-link"})))return;
     setRelinking(true);setRelinkMsg("Creating BC project…");
     try{
       const bc=await bcCreateProject(project.name,project.bcCustomerNumber||null);
@@ -22995,10 +23120,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     try{
       const allBom=mergeBoms((projectRef.current.panels||[]).map(p=>p.bom||[]));
       const result=await buildRfqSupplierGroups(allBom);
-      if(result.noItems){setRfqLoading(false);alert("No items eligible for RFQ. Items qualify if they show 'No POs' or have a price date older than 60 days (manual-priced items are excluded).");return;}
+      if(result.noItems){setRfqLoading(false);arcAlert("No items eligible for RFQ. Items qualify if they show 'No POs' or have a price date older than 60 days (manual-priced items are excluded).");return;}
       setRfqGroups(result.groups);
       setAutoPrintRfq(true);
-    }catch(e){console.error("RFQ build error:",e);alert("Failed to build RFQ: "+(e.message||e));}
+    }catch(e){console.error("RFQ build error:",e);arcAlert("Failed to build RFQ: "+(e.message||e));}
     setRfqLoading(false);
   }
 
@@ -23007,13 +23132,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     try{
       const allBom=mergeBoms((projectRef.current.panels||[]).map(p=>p.bom||[]));
       const result=await buildRfqSupplierGroups(allBom);
-      if(result.noItems){setRfqLoading(false);alert("No items eligible for RFQ email. Items qualify if they show 'No POs' or have a price date older than 60 days.");return;}
+      if(result.noItems){setRfqLoading(false);arcAlert("No items eligible for RFQ email. Items qualify if they show 'No POs' or have a price date older than 60 days.");return;}
       const groupsWithEmail=await Promise.all(result.groups.map(async g=>{
         const email=g.vendorNo?await bcGetVendorEmail(g.vendorNo):"";
         return{...g,vendorEmail:email};
       }));
       setRfqEmailModal({groups:groupsWithEmail,projectName:projectRef.current.name||""});
-    }catch(e){console.error("RFQ email build error:",e);alert("Failed to build RFQ: "+(e.message||e));}
+    }catch(e){console.error("RFQ email build error:",e);arcAlert("Failed to build RFQ: "+(e.message||e));}
     setRfqLoading(false);
   }
 
@@ -23421,9 +23546,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           if(!bcItem){unmatchedForBc.push(row);}
         }
         if(unmatchedForBc.length>0){
-          alert(`${newBomRows.length} item${newBomRows.length!==1?"s":""} added to BOM from ${submission.vendorName||"supplier"} quote.\n\n${unmatchedForBc.length} item${unmatchedForBc.length!==1?"s":""} not found in BC — use the BC Item Browser (🔍) on each row to create them.`);
+          arcAlert(`${newBomRows.length} item${newBomRows.length!==1?"s":""} added to BOM from ${submission.vendorName||"supplier"} quote.\n\n${unmatchedForBc.length} item${unmatchedForBc.length!==1?"s":""} not found in BC — use the BC Item Browser (🔍) on each row to create them.`);
         }else{
-          alert(`${newBomRows.length} item${newBomRows.length!==1?"s":""} added to BOM from ${submission.vendorName||"supplier"} quote. All items matched in BC.`);
+          arcAlert(`${newBomRows.length} item${newBomRows.length!==1?"s":""} added to BOM from ${submission.vendorName||"supplier"} quote. All items matched in BC.`);
         }
       }
       return;
@@ -23612,7 +23737,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         }));
         const missingItems=ppResults.filter(r=>r&&r.reason==='item_not_found').map(r=>r.itemNo);
         if(missingItems.length>0){
-          setTimeout(()=>alert(`${missingItems.length} item${missingItems.length>1?'s':''} not found in BC:\n${missingItems.join(', ')}\n\nUse the "Upload Supplier Quote" tool in Settings to create these items in BC first, then re-apply.`),200);
+          setTimeout(()=>arcAlert(`${missingItems.length} item${missingItems.length>1?'s':''} not found in BC:\n${missingItems.join(', ')}\n\nUse the "Upload Supplier Quote" tool in Settings to create these items in BC first, then re-apply.`),200);
         }
       }
     }
@@ -23722,20 +23847,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // DECISION(v1.19.703): Alert wording swaps when this was a leadTimeOnly submission —
     // reflect that prices were intentionally left alone.
     if(leadTimeOnlySubmission){
-      alert(`Lead times applied to ${leadTimeMatched} BOM row${leadTimeMatched!==1?'s':''}.${ltWriteback}\nPrices were not changed — this was a lead-time-only request.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — recorded.`:''}${learningWarn}`);
+      arcAlert(`Lead times applied to ${leadTimeMatched} BOM row${leadTimeMatched!==1?'s':''}.${ltWriteback}\nPrices were not changed — this was a lead-time-only request.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — recorded.`:''}${learningWarn}`);
     }else{
-      alert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${leadTimeMatched>0?`\nLead times applied to ${leadTimeMatched} BOM row${leadTimeMatched!==1?'s':''}.`:''}${crossedSkipped>0?`\n${crossedSkipped} crossed item${crossedSkipped!==1?'s':''} — price pushed to supplier's PN in BC only (BOM unchanged).`:''}${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}${ltWriteback}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.${learningWarn}`);
+      arcAlert(`Prices applied to ${matched} BOM row${matched!==1?'s':''} and pushed to BC Item Cards.${leadTimeMatched>0?`\nLead times applied to ${leadTimeMatched} BOM row${leadTimeMatched!==1?'s':''}.`:''}${crossedSkipped>0?`\n${crossedSkipped} crossed item${crossedSkipped!==1?'s':''} — price pushed to supplier's PN in BC only (BOM unchanged).`:''}${vendorNo?`\nVendor ${submission.vendorName} set on all matched items.\nPurchase Prices updated in BC.`:''}${ltWriteback}\nBC planning lines will auto-sync in a few seconds.${cantCount>0?`\n${cantCount} item${cantCount!==1?'s':''} marked "Cannot Supply" by vendor — skipped and recorded.`:''}\nSupplier quote PDF attached to BC project.${learningWarn}`);
     }
     }catch(e){
       console.error("applyPortalPrices error:",e);
-      alert("Error applying prices: "+e.message+"\nPrices may have been partially applied. Check console for details.");
+      arcAlert("Error applying prices: "+e.message+"\nPrices may have been partially applied. Check console for details.");
     }
     // DECISION(v1.19.664): Surface import-status save failures instead of silent swallow.
     // If the status update fails, the submission may re-appear as "new" in the list even
     // though prices were applied — user needs to know.
     fbDb.collection('rfqUploads').doc(submission.id).update({status:'imported',importedAt:Date.now()}).catch(e=>{
       console.warn("rfqUploads status update failed:",e);
-      alert(`Note: could not mark the supplier submission as imported in Firestore (${e.message}). It may re-appear as "new" in the list — refresh to clear.`);
+      arcAlert(`Note: could not mark the supplier submission as imported in Firestore (${e.message}). It may re-appear as "new" in the list — refresh to clear.`);
     });
     setShowPortalModal(false);
   }
@@ -24083,17 +24208,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     const m=quoteSendModal;
                     // DECISION(v1.19.663): Guard on incomplete BOM rows.
                     const incomplete=findIncompleteQuoteItems(project);
-                    if(incomplete.length){alert(formatIncompleteQuoteAlert(incomplete));return;}
-                    if(!m.to.trim()){alert("Enter a recipient email.");return;}
+                    if(incomplete.length){arcAlert(formatIncompleteQuoteAlert(incomplete));return;}
+                    if(!m.to.trim()){arcAlert("Enter a recipient email.");return;}
                     // DECISION(v1.19.667): Email regex validation — same as QuoteSendModal.
                     {
                       const emailRe=/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
                       const recipients=m.to.split(/[,;]\s*/).map(e=>e.trim()).filter(Boolean);
                       const bad=recipients.filter(e=>!emailRe.test(e));
-                      if(bad.length){alert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
+                      if(bad.length){arcAlert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
                     }
                     const graphToken=await acquireGraphToken();
-                    if(!graphToken){alert("Could not get Microsoft 365 token.");return;}
+                    if(!graphToken){arcAlert("Could not get Microsoft 365 token.");return;}
                     const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
                     const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
                     try{
@@ -24119,8 +24244,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                         bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
                       }
                       setQuoteSendModal(null);
-                      alert("Quote sent to "+m.to+" — quote is now locked.");
-                    }catch(e){alert("Send failed: "+e.message);}
+                      arcAlert("Quote sent to "+m.to+" — quote is now locked.");
+                    }catch(e){arcAlert("Send failed: "+e.message);}
                   }} style={btn("#0c2233","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8"})}>✉ Send</button>
                 </div>
               </div>
@@ -24283,7 +24408,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                                 saveProjectPanel(uid,projectRef.current.id,panel.id,updatedPanel,true).catch(()=>{});
                               }
                               setQuoteReview(null);
-                              alert(`Item "${pn}" added to BOM. Use the 🔍 icon on the BOM row to create it in BC with the proper setup fields.`);
+                              arcAlert(`Item "${pn}" added to BOM. Use the 🔍 icon on the BOM row to create it in BC with the proper setup fields.`);
                             }} style={{background:"#0d1a10",border:"1px solid #4ade8044",color:"#4ade80",borderRadius:4,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
                               + Add to BOM
                             </button>
@@ -24555,14 +24680,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             const ownerLocked=cur?.ownerLockActive===true&&cur?.createdBy!==uid;
             const takeoverActive=cur?.ownerTakeoverActive&&cur.ownerTakeoverActive.expiresAt>Date.now();
             if(ownerLocked&&!takeoverActive){
-              alert(`Lead times were pushed to BC ItemVendorCatalog successfully, but the BOM in ARC could NOT be updated:\n\n${_OWNER_PRIORITY_ALERT}\n\nWORKAROUND: Once the owner releases priority, click "↻ Get New Pricing" on the BOM — it will pull the lead times from BC ItemVendorCatalog (where they were just pushed) and stamp them on the BOM rows.`);
+              arcAlert(`Lead times were pushed to BC ItemVendorCatalog successfully, but the BOM in ARC could NOT be updated:\n\n${_OWNER_PRIORITY_ALERT}\n\nWORKAROUND: Once the owner releases priority, click "↻ Get New Pricing" on the BOM — it will pull the lead times from BC ItemVendorCatalog (where they were just pushed) and stamp them on the BOM rows.`);
             }else{
-              alert(`Lead times were pushed to BC ItemVendorCatalog successfully, but the BOM in ARC could NOT be updated (save was rejected — possibly stale data or a permission issue).\n\nWORKAROUND: Click "↻ Get New Pricing" on the BOM — it will pull the lead times from BC ItemVendorCatalog and stamp them on the BOM rows.`);
+              arcAlert(`Lead times were pushed to BC ItemVendorCatalog successfully, but the BOM in ARC could NOT be updated (save was rejected — possibly stale data or a permission issue).\n\nWORKAROUND: Click "↻ Get New Pricing" on the BOM — it will pull the lead times from BC ItemVendorCatalog and stamp them on the BOM rows.`);
             }
           }
         }).catch(e=>{
           console.warn("[SQ ONBOMUPDATE] safeSave FAILED:",e);
-          alert(`Lead times pushed to BC, but ARC save failed: ${e.message||e}\n\nClick "↻ Get New Pricing" to pull the lead times from BC.`);
+          arcAlert(`Lead times pushed to BC, but ARC save failed: ${e.message||e}\n\nClick "↻ Get New Pricing" to pull the lead times from BC.`);
         });
       }}/>
       {bcCountMismatch&&ReactDOM.createPortal(
@@ -25405,8 +25530,8 @@ function VendorPricingSyncPanel({uid}){
   }
 
   function handleStart(){
-    if(!_bcToken){alert("Connect to Business Central first");return;}
-    if(!dkVendor.trim()&&!mouserVendor.trim()){alert("No vendor IDs set — connect to BC to auto-detect, or select manually");return;}
+    if(!_bcToken){arcAlert("Connect to Business Central first");return;}
+    if(!dkVendor.trim()&&!mouserVendor.trim()){arcAlert("No vendor IDs set — connect to BC to auto-detect, or select manually");return;}
     startVendorSync(uid,dkVendor.trim(),mouserVendor.trim());
   }
 
@@ -25645,11 +25770,11 @@ function APISetupModal({uid,onClose}){
         :[...customScrapers,{...scraper,id:Date.now().toString(36)+Math.random().toString(36).slice(2,6),createdAt:Date.now()}];
       await fbDb.doc(`${path}/customScrapers`).set({scrapers:updated});
       setCustomScrapers(updated);setEditScraper(null);
-    }catch(e){alert("Save failed: "+e.message);}
+    }catch(e){arcAlert("Save failed: "+e.message);}
     setScraperSaving(false);
   }
   async function deleteScraperConfig(id){
-    if(!confirm("Delete this scraper configuration?"))return;
+    if(!(await arcConfirm("Delete this scraper configuration?",{destructive:true,okLabel:"Delete"})))return;
     const path=_appCtx.configPath||`users/${uid}/config`;
     const updated=customScrapers.filter(s=>s.id!==id);
     await fbDb.doc(`${path}/customScrapers`).set({scrapers:updated});
@@ -26120,13 +26245,13 @@ function TemplateRegionRow({field,label,region,customerName,onCleared,onSaved}){
       await saveTemplateRegion(customerName,field,rect,{reuseContext:r.contextImage});
       setEditing(false);
       if(onSaved)await onSaved();
-    }catch(e){alert("Save failed: "+e.message);}
+    }catch(e){arcAlert("Save failed: "+e.message);}
     setSaving(false);
   }
   async function handleClear(){
     if(!window.confirm(`Clear ${label} region for ${customerName}?`))return;
     try{await deleteTemplateRegion(customerName,field);if(onCleared)await onCleared();}
-    catch(e){alert("Clear failed: "+e.message);}
+    catch(e){arcAlert("Clear failed: "+e.message);}
   }
   const hasPreview=!!(r&&r.preview);
   const hasContext=!!(r&&r.contextImage);
@@ -26250,14 +26375,14 @@ function CustomerTemplatesModal({uid,onClose}){
     setSaving(true);
     const next={...templates,[selectedCust]:{...templates[selectedCust],labelMappings:edited.labelMappings,lastUpdated:Date.now()}};
     try{await persist(next);setTemplates(next);setEdited(null);}
-    catch(e){alert("Save failed: "+e.message);}
+    catch(e){arcAlert("Save failed: "+e.message);}
     setSaving(false);
   }
   async function handleDelete(custNorm){
     if(!window.confirm(`Delete template for "${templates[custNorm]?.customerName||custNorm}"? Future extractions for this customer will start fresh.`))return;
     const next={...templates};delete next[custNorm];
     try{await persist(next);setTemplates(next);setDeleted({...deleted,[custNorm]:true});if(selectedCust===custNorm)setSelectedCust(null);}
-    catch(e){alert("Delete failed: "+e.message);}
+    catch(e){arcAlert("Delete failed: "+e.message);}
   }
   const curTemplate=selectedCust?templates[selectedCust]:null;
   const mappings=edited?edited.labelMappings:(curTemplate?.labelMappings||{drawingNo:[],drawingDesc:[],drawingRev:[]});
@@ -29454,7 +29579,7 @@ function ItemsTab({uid}){
           {mfrLookupRunning?"Running…":"Preview (Dry Run)"}
         </button>
         <button disabled={mfrLookupRunning||!mfrLookupResult} onClick={async()=>{
-          if(!confirm("This will write Manufacturer Codes to BC for all matched items. Continue?"))return;
+          if(!(await arcConfirm("This will write Manufacturer Codes to BC for all matched items. Continue?",{kind:"warning",okLabel:"Write to BC"})))return;
           setMfrLookupRunning(true);
           try{
             const matchedItems=(mfrLookupResult.results||[]).filter(r=>r.code).map(r=>({no:r.itemNo,desc:r.desc}));
@@ -29922,7 +30047,7 @@ function App({user}){
         setPushEnabled(true);
         try{localStorage.setItem('arc_push_'+user.uid,'1');}catch(e){}
       }
-    }catch(e){console.error('Push toggle error:',e);alert('Push notification error: '+e.message);}
+    }catch(e){console.error('Push toggle error:',e);arcAlert('Push notification error: '+e.message);}
     setPushLoading(false);
   }
   const [showSearch,setShowSearch]=useState(false);
@@ -30563,7 +30688,7 @@ INSTRUCTIONS:
         await bcDeleteProject(deleteConfirm.bcProjectId);
       }catch(e){
         const msg=e.message||"Unknown error";
-        const skip=confirm(`⚠ Could not delete from Business Central:\n\n${msg}\n\nDelete from ARC anyway?`);
+        const skip=await arcConfirm(`Could not delete from Business Central:\n\n${msg}\n\nDelete from ARC anyway?`,{kind:"warning",okLabel:"Delete from ARC"});
         if(!skip){setDeleteConfirm(null);return;}
       }
     }
@@ -31333,7 +31458,7 @@ function SupplierPortalPage({token}){
   },[token]);
 
   async function processFile(f){
-    if(!f||!f.type.includes("pdf")){alert("Please select a PDF file.");return;}
+    if(!f||!f.type.includes("pdf")){arcAlert("Please select a PDF file.");return;}
     setFile(f);setPhase('analyzing');setAiError(null);
     const allPrices={};const allConf={};const allLeadTimes={};const allSupplierPNs={};const allSupplierLineNums={};const collectedExtracted=[];let lastSummary=null;
     // DECISION(v1.19.664): Track if any batch reported crossRefEnriched=false so we can
@@ -31452,9 +31577,9 @@ function SupplierPortalPage({token}){
           missing.push((item.partNumber||"")+" (row "+(i+1)+")");
         }
       });
-      if(missing.length){alert("Please provide a lead time for every item:\n\n"+missing.slice(0,10).join("\n")+(missing.length>10?`\n…and ${missing.length-10} more`:""));return;}
+      if(missing.length){arcAlert("Please provide a lead time for every item:\n\n"+missing.slice(0,10).join("\n")+(missing.length>10?`\n…and ${missing.length-10} more`:""));return;}
     }else{
-      if(!leadTime.trim()){alert("Please enter the lead time in days ARO for this order before submitting.");return;}
+      if(!leadTime.trim()){arcAlert("Please enter the lead time in days ARO for this order before submitting.");return;}
     }
     setUploading(true);
     try{
@@ -31498,7 +31623,7 @@ function SupplierPortalPage({token}){
       if(storageUrl)updateData.storageUrl=storageUrl;
       await fbDb.collection('rfqUploads').doc(token).update(updateData);
       setDone(true);
-    }catch(e){alert("Submission failed: "+e.message);}
+    }catch(e){arcAlert("Submission failed: "+e.message);}
     setUploading(false);
   }
 
@@ -31948,14 +32073,15 @@ function Root(){
     });
   },[joinPayload]);
 
-  if(rfqUploadToken)return<SupplierPortalPage token={rfqUploadToken}/>;
-  if(user===undefined||!redirectDone)return(
+  if(rfqUploadToken)return(<><SupplierPortalPage token={rfqUploadToken}/><ArcDialogHost/></>);
+  if(user===undefined||!redirectDone)return(<>
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}>
       <div style={{color:C.muted,fontSize:14}}>Loading…</div>
     </div>
-  );
-  if(!user)return<LoginScreen invite={joinPayload}/>;
-  return<App user={user}/>;
+    <ArcDialogHost/>
+  </>);
+  if(!user)return(<><LoginScreen invite={joinPayload}/><ArcDialogHost/></>);
+  return(<><App user={user}/><ArcDialogHost/></>);
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<Root/>);
