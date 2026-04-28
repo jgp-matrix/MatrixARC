@@ -8582,22 +8582,22 @@ const PAGE_TYPE_DETECT_PROMPT=`Classify this page from a UL508A industrial contr
 Return ONLY a JSON object: {"types":[...]}
 
 Types (use only these values):
-"bom"       — Bill of Materials table with columns for qty, part number, description
+"bom"       — Bill of Materials / Parts List / Materials List / Components List / Item List. Any tabular list of components used in the panel. The TITLE of the table can be any of: "BILL OF MATERIALS", "BOM", "PARTS LIST", "MATERIALS LIST", "ITEM LIST", "COMPONENT LIST", "EQUIPMENT LIST" — they all classify as "bom". Identify by table STRUCTURE, not by title. Required columns: a QTY column AND a PART NUMBER column (often labeled PART NO., P/N, CAT NO., MODEL). Description column is typical. Manufacturer column (MFG, MFR, VENDOR, MAKE) is common but optional — manufacturer is often embedded in the description (e.g. "ALLEN-BRADLEY 100-C09EJ10"). Item number, unit, tags, notes columns are common extras.
 "schematic" — Electrical ladder diagram or wiring schematic: ladder rungs, wire numbers, terminal numbers, coil/contact symbols, device tags like CB1, CR1, PB1
 "backpanel" — Interior mounting plate, single front view only: DIN rails, wire duct, rows of breakers/contactors/relays/drives/PLCs/terminal blocks. NO side views, NO enclosure outline with dimensions
 "enclosure" — Enclosure/cabinet drawing. MOST RELIABLE SIGN: a side view drawn beside or below the front view. Also: overall W×H×D dimensions labeled, door cutout holes for pushbuttons/HMIs, side-panel fans or AC units, title says Enclosure/Cabinet/Door Layout
 "pid"       — Process & Instrumentation Diagram. UNIQUE SIGNS not found in schematics: two-letter ISA instrument codes (YA, HS, ZS, SA, FT, PT, LIC, PIC) inside circles paired with a tag number, OR "DI"/"DO" text inside diamond shapes, OR a box labeled "INSTRUMENT & FUNCTION LEGEND". A P&ID has NO wire numbers, NO terminal numbers, NO ladder rungs.
 
 Use [] (empty array) for the following — these are NOT BOM/schematic/backpanel/enclosure/pid:
-  • Cover sheets / title pages — large drawing title, drawing number, customer logo, date, large company name. Often has a "List of Sheets" or "Sheet Index" table listing the other pages.
-  • Revision blocks / revision history tables
-  • Drawing index / table of contents pages — a table listing sheet numbers and their titles
+  • Cover sheets / title pages — large drawing title, drawing number, customer logo, date, large company name, no component table
+  • Revision blocks / revision history tables (lists revision letters and dates, no part numbers)
+  • Drawing index / "List of Sheets" / "Sheet Index" — a table listing SHEET numbers and their TITLES (no part numbers, no qty column). This is the most common false positive — distinguish by columns: sheet-list has SHEET NO + TITLE, BOM has QTY + PART NO.
   • Pages that contain only a title block with no technical content
-  • Notes pages / general notes pages
-  • Legend pages — just a symbol key
+  • Notes pages / general notes pages — paragraphs of text, no table
+  • Legend pages — just a symbol key, no part numbers
   • Blank or nearly-blank pages
   • Pages you cannot confidently classify
-CRITICAL — the "bom" classification is ONLY for Bill of Materials tables with clear columns for QTY + PART NUMBER + DESCRIPTION + MANUFACTURER. A "List of Sheets" or "Sheet Index" table (which lists sheet numbers and titles) is NOT a BOM, even if it looks table-shaped — return [] for those.
+DECISION RULE for "bom": if the page has a multi-row table where each row describes ONE PHYSICAL COMPONENT with a part number and quantity, classify as "bom" regardless of what the table is titled. Sheet-index tables (sheet numbers + sheet titles, no part numbers) classify as [].
 
 Example: {"types":["schematic"]}`;
 
