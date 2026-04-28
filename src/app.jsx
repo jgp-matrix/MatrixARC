@@ -6386,7 +6386,18 @@ If you are about to emit qty > 10 for a row whose description matches one of the
 
 RETURN FORMAT:
 Output ONLY a valid JSON object — no markdown, no explanation. Format:
-{"items":[...],"questions":[]}
+{"items":[...],"questions":[],"noBomReason":null}
+
+When items is EMPTY, populate noBomReason with the SPECIFIC reason this page produced no rows, using ONE of these category strings:
+  • "no-table-on-page"        — page has no tabular content at all (cover, schematic, blank, notes, etc.)
+  • "sheet-index-not-bom"     — page IS a table but lists drawing sheets, not components
+  • "title-block-only"        — only the bottom-right title block has content; no BOM table above
+  • "revision-history-table"  — table is a revision/change-log, not parts
+  • "legend-or-symbol-key"    — table is a legend / key, not parts
+  • "table-too-low-quality"   — table exists but text is unreadable (image quality)
+  • "wrong-page-type"         — page looks like schematic/backpanel/enclosure with no BOM
+  • "other"                   — none of the above; explain in a short follow-up if needed
+When items has rows, omit noBomReason or set it to null.
 
 Each item in the "items" array must have exactly:
 {"itemNo":"","qty":1,"partNumber":"","description":"","manufacturer":"","notes":"","additionalPartNumbers":[],"y_top":0.0,"y_bottom":0.0,"x_left":0.0,"x_right":1.0}
@@ -6521,11 +6532,11 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
   console.log("BOM extraction response:",raw.length,"chars, stop_reason:",d.stop_reason);
   try{
     const cleaned=raw.replace(/```json|```/gi,"").trim();
-    let items=[],questions=[];
+    let items=[],questions=[],noBomReason=null;
     // Strategy 1: Try direct JSON.parse (works when AI returns clean JSON)
     try{
       const direct=JSON.parse(cleaned);
-      if(direct&&Array.isArray(direct.items)){items=direct.items;questions=direct.questions||[];console.log("BOM extraction: direct parse OK,",items.length,"items,",questions.length,"questions");}
+      if(direct&&Array.isArray(direct.items)){items=direct.items;questions=direct.questions||[];if(direct.noBomReason)noBomReason=direct.noBomReason;console.log("BOM extraction: direct parse OK,",items.length,"items,",questions.length,"questions");}
       else if(Array.isArray(direct)){items=direct;console.log("BOM extraction: direct parse bare array,",items.length,"items");}
     }catch(e1){/* not clean JSON, try extraction */}
     // Strategy 2: Find wrapper object {"items":[...],"questions":[...]}
@@ -6543,6 +6554,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
           try{
             const parsed=JSON.parse(cleaned.slice(wStart,endIdx+1));
             items=parsed.items||[];questions=parsed.questions||[];
+            if(parsed.noBomReason)noBomReason=parsed.noBomReason;
             console.log("BOM extraction: wrapper parse OK,",items.length,"items,",questions.length,"questions");
           }catch(e2){console.warn("Wrapper parse failed:",e2.message);}
         }
@@ -6556,6 +6568,9 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
         // Also try to find questions
         const qMatch=cleaned.match(/"questions"\s*:\s*(\[[\s\S]*?\])/);
         if(qMatch){try{questions=JSON.parse(qMatch[1]);}catch(qe){}}
+        // Also try to find noBomReason in the raw text even if items array parse succeeded
+        const reasonMatch=cleaned.match(/"noBomReason"\s*:\s*"([^"]+)"/);
+        if(reasonMatch&&!noBomReason)noBomReason=reasonMatch[1];
         console.log("BOM extraction: array fallback,",items.length,"items,",questions.length,"questions");
       } else {
         // Strategy 4: Truncated JSON — extract individual complete item objects
@@ -6564,9 +6579,15 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
           for(const m of itemMatches){try{items.push(JSON.parse(m[0]));}catch(e4){}}
           console.log("BOM extraction: salvaged",items.length,"items from truncated response");
         } else {
-          console.warn("No JSON found in response. Raw:",cleaned.slice(0,200));return{items:[],questions:[]};
+          console.warn("No JSON found in response. Raw:",cleaned.slice(0,200));return{items:[],questions:[],noBomReason:"parse-failure"};
         }
       }
+    }
+    // DECISION(v1.19.792): When AI returns 0 items, log the structured reason — gives
+    // us telemetry on whether the page-type detector is sending non-BOM pages through
+    // (the looser title-agnostic detector in v1.19.791 increased that risk).
+    if(!items.length){
+      console.warn(`[BOM EXTRACT] page produced 0 rows. AI reason: ${noBomReason||"not-supplied"}`);
     }
     if(!questions.length&&items.length>=3)console.warn("BOM extraction: 0 questions returned but",items.length,"items found — AI should have asked at least 3 questions");
     else if(!questions.length)console.log("BOM extraction: 0 questions returned");
@@ -6614,8 +6635,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
     }
     // DECISION(v1.19.601): User turned off extraction questions — always return empty array,
     // regardless of what the AI returned. No more "10 questions to answer" on new extractions.
-    return{items:expanded,questions:[]};
-  }catch(e){console.error("JSON parse error:",e,raw);return{items:[],questions:[]};}
+    return{items:expanded,questions:[],noBomReason:expanded.length?null:noBomReason};
+  }catch(e){console.error("JSON parse error:",e,raw);return{items:[],questions:[],noBomReason:"parse-error"};}
 }
 
 // ── PER-ROW SNIPPET SELF-CORRECTION ──
@@ -8194,6 +8215,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // Get extraction units — cropped BOM regions or full page
         const units=await getExtractionUnits(pg);
         let pageItems=[],pageQs=[];
+        let pageRejectReasons=[];
         for(const unit of units){
           const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):userNotes;
           const result=await extractBomPage(unit.dataUrl,"",notes);
@@ -8201,6 +8223,14 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
           if(qs.length)pageQs.push(...qs);
+          // DECISION(v1.19.792): Capture per-page rejection reason when extractor returns
+          // empty. Lets us see whether the looser page-type detector (v1.19.791) is sending
+          // non-BOM pages through, vs. a real extraction failure on a real BOM page.
+          if(items.length===0&&result?.noBomReason)pageRejectReasons.push(result.noBomReason);
+        }
+        if(pageItems.length===0){
+          const reason=pageRejectReasons[0]||"unknown";
+          console.warn(`[BOM EXTRACT] page "${pg.name||`Page ${pgIdx+1}`}" tagged BOM but produced 0 rows — reason: ${reason}`);
         }
         if(pageQs.length)allQuestions.push(...pageQs);
         // DECISION(v1.19.647): Also attach sourcePageId (the actual page.id). sourcePageIdx
@@ -8581,25 +8611,41 @@ async function estimatePrices(items){
 const PAGE_TYPE_DETECT_PROMPT=`Classify this page from a UL508A industrial control panel drawing set.
 Return ONLY a JSON object: {"types":[...]}
 
-Types (use only these values):
-"bom"       — Bill of Materials / Parts List / Materials List / Components List / Item List. Any tabular list of components used in the panel. The TITLE of the table can be any of: "BILL OF MATERIALS", "BOM", "PARTS LIST", "MATERIALS LIST", "ITEM LIST", "COMPONENT LIST", "EQUIPMENT LIST" — they all classify as "bom". Identify by table STRUCTURE, not by title. Required columns: a QTY column AND a PART NUMBER column (often labeled PART NO., P/N, CAT NO., MODEL). Description column is typical. Manufacturer column (MFG, MFR, VENDOR, MAKE) is common but optional — manufacturer is often embedded in the description (e.g. "ALLEN-BRADLEY 100-C09EJ10"). Item number, unit, tags, notes columns are common extras.
-"schematic" — Electrical ladder diagram or wiring schematic: ladder rungs, wire numbers, terminal numbers, coil/contact symbols, device tags like CB1, CR1, PB1
-"backpanel" — Interior mounting plate, single front view only: DIN rails, wire duct, rows of breakers/contactors/relays/drives/PLCs/terminal blocks. NO side views, NO enclosure outline with dimensions
-"enclosure" — Enclosure/cabinet drawing. MOST RELIABLE SIGN: a side view drawn beside or below the front view. Also: overall W×H×D dimensions labeled, door cutout holes for pushbuttons/HMIs, side-panel fans or AC units, title says Enclosure/Cabinet/Door Layout
-"pid"       — Process & Instrumentation Diagram. UNIQUE SIGNS not found in schematics: two-letter ISA instrument codes (YA, HS, ZS, SA, FT, PT, LIC, PIC) inside circles paired with a tag number, OR "DI"/"DO" text inside diamond shapes, OR a box labeled "INSTRUMENT & FUNCTION LEGEND". A P&ID has NO wire numbers, NO terminal numbers, NO ladder rungs.
+PRIMARY DECISION (check this FIRST):
+If the page contains a multi-row table where the rows list physical hardware items — i.e. each row has a quantity AND an alphanumeric catalog/part number AND a description of a real component (a contactor, breaker, relay, terminal block, enclosure, fan, PLC card, fuse, wire duct, etc.) — classify as "bom".
 
-Use [] (empty array) for the following — these are NOT BOM/schematic/backpanel/enclosure/pid:
-  • Cover sheets / title pages — large drawing title, drawing number, customer logo, date, large company name, no component table
-  • Revision blocks / revision history tables (lists revision letters and dates, no part numbers)
-  • Drawing index / "List of Sheets" / "Sheet Index" — a table listing SHEET numbers and their TITLES (no part numbers, no qty column). This is the most common false positive — distinguish by columns: sheet-list has SHEET NO + TITLE, BOM has QTY + PART NO.
-  • Pages that contain only a title block with no technical content
-  • Notes pages / general notes pages — paragraphs of text, no table
-  • Legend pages — just a symbol key, no part numbers
-  • Blank or nearly-blank pages
-  • Pages you cannot confidently classify
-DECISION RULE for "bom": if the page has a multi-row table where each row describes ONE PHYSICAL COMPONENT with a part number and quantity, classify as "bom" regardless of what the table is titled. Sheet-index tables (sheet numbers + sheet titles, no part numbers) classify as [].
+This is true regardless of what the table is titled. ALL of these table titles classify as "bom":
+  "BILL OF MATERIALS", "BOM", "PARTS LIST", "MATERIALS LIST", "ITEM LIST", "COMPONENT LIST", "EQUIPMENT LIST", "DEVICE LIST", "SCHEDULE", "PARTS SCHEDULE", "MATERIAL TAKEOFF", "BOQ", "PARTS", "ITEMS", or even no title at all.
 
-Example: {"types":["schematic"]}`;
+Required structure for "bom":
+  • A QTY column (numeric values, often 1, 2, 4, 12, etc.) — may also be labeled "QUANTITY", "QTY.", "EA", "EACH", "UNITS"
+  • A PART NUMBER column (alphanumeric catalog codes like "1769-L33ER", "AF26-30-11-13", "5842600") — may be labeled "PART NO.", "PART #", "P/N", "CAT NO.", "CATALOG NO.", "MODEL NO.", "ORDER NO.", "PRODUCT NO.", "STOCK NO.", "TYPE NO.", "MFG NO."
+
+Optional/common extras: ITEM number, UNIT, DESCRIPTION, MANUFACTURER (or MFG, MFR, VENDOR, MAKE — often embedded in description like "ALLEN-BRADLEY 100-C09EJ10"), TAGS, NOTES.
+
+OTHER TYPES (use only when the page is clearly one of these and NOT a BOM):
+"schematic" — Ladder diagram / wiring schematic: ladder rungs, wire numbers, terminal numbers, coil/contact symbols, device tags like CB1/CR1/PB1. Has wires connecting components.
+"backpanel" — Interior mounting plate FRONT VIEW only: DIN rails, wire duct, rows of physical components arranged on a panel. No side view, no enclosure outline with overall dimensions.
+"enclosure" — Cabinet drawing with side view alongside front view, overall W×H×D dimensions, door cutouts, fans/AC, title says "Enclosure" / "Cabinet" / "Door Layout".
+"pid" — Process & Instrumentation Diagram with ISA codes (YA, HS, FT, PT, LIC, PIC) inside circles + tag numbers, OR a box labeled "INSTRUMENT & FUNCTION LEGEND". No wire numbers.
+
+USE [] (empty types) ONLY for these clear non-content pages:
+  • Cover sheet / title page — large drawing title, customer logo, no tables of any kind
+  • "List of Sheets" / "Sheet Index" / "Drawing Index" — a table whose rows reference OTHER drawing sheets (sheet number + sheet title columns; NO part numbers, NO quantity column). This is the most important non-BOM table to recognize — the giveaway is the columns are SHEET NO. + TITLE rather than QTY + PART NO.
+  • Revision history block — lists revision letter, date, description of drawing changes; no parts.
+  • General notes page — paragraphs of text, no tables.
+  • Legend / symbol key page — just a symbol-to-meaning map, no part numbers.
+  • Truly blank or near-blank page.
+
+CRITICAL TIE-BREAKER:
+When you see a multi-row table on this page and you're trying to decide between "bom" and [], examine the columns:
+  • If columns include QTY + alphanumeric PART NUMBER → "bom"
+  • If columns are only SHEET NUMBER + TITLE → []
+The downstream pipeline will reject any page that ends up with "bom" but has no real parts to extract — so when uncertain about a table page, prefer "bom" over []. A missed BOM costs the user manual re-tagging; a false-positive BOM costs nothing (the extractor returns 0 rows and moves on).
+
+Example response: {"types":["bom"]}
+Example response: {"types":["schematic"]}
+Example response: {"types":[]}`;
 
 async function detectPageTypes(dataUrl,learningExamples=[]){
   const b64=dataUrl&&dataUrl.split(",")[1];
@@ -14882,6 +14928,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,aiDetectedTypes:info.types}:p);
         setPendingPages([...livePages]);
       },4);
+      // DECISION(v1.19.792): Safety fallback — if AI classified ALL newly-added pages
+      // as empty types, treat each one as BOM provisionally so the user isn't stuck with
+      // an "untagged" set and no extraction. Common with single-page PDFs extracted from
+      // a larger drawing set (the user already knows what they uploaded). The BOM
+      // extractor is the actual gatekeeper — it returns {items:[]} cheaply for non-BOM
+      // pages, so a false-positive default costs nothing. The user can still re-tag
+      // before clicking Proceed.
+      const allEmpty=newItems.length>0&&newItems.every(it=>!(it.types||[]).length);
+      if(allEmpty){
+        console.warn(`[PAGE TYPE] AI returned no types for ${newItems.length} page(s); defaulting all to "bom" — user can re-tag before extraction`);
+        newItems.forEach(it=>{it.types=["bom"];});
+        livePages=livePages.map(p=>{const ni=newItems.find(n=>n.id===p.id);return ni?{...p,types:["bom"]}:p;});
+        setPendingPages([...livePages]);
+      }
       // DECISION(v1.19.659): Removed the sheet-number reconciler. Sheet numbers are now
       // DERIVED from page position (idx+1 / totalPages) at render time — no AI read, no
       // reconciliation needed. See display site in PanelCard thumbnail strip.
