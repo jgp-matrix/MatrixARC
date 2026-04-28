@@ -17194,14 +17194,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               v.{panel.bomVersion}
             </span>
           )}
-          {!readOnly&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(
+          {/* DECISION(v1.19.790): Show Re-Extract whenever ANY page is tagged BOM —
+              not only when the panel already has rows. Previously the button was hidden
+              when extraction completed with 0 items (e.g. AI mis-tagged the page,
+              user fixed the tag after confirm — no rows yet, no button to retry). */}
+          {!readOnly&&((panel.bom||[]).some(r=>!r.isLaborRow)||(panel.pages||[]).some(p=>getPageTypes(p).includes("bom")))&&(
             <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Re-run AI extraction on tagged BOM pages — uses region crops if defined"}
               onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{
                 if(localStorage.getItem("_arc_skip_reextract_warn")){runExtraction();return;}
+                // Skip the warning when there are no rows yet — nothing to overwrite.
+                if(!(panel.bom||[]).some(r=>!r.isLaborRow)){runExtraction();return;}
                 setReExtractWarn(true);
               }} disabled={extracting||ownerPriorityActive}
               style={{background:"none",border:`1px solid ${C.accent}88`,color:C.accent,cursor:(extracting||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:(extracting||ownerPriorityActive)?0.45:1}}>
-              {extracting?"Extracting…":"Re-Extract Drawings"}
+              {extracting?"Extracting…":((panel.bom||[]).some(r=>!r.isLaborRow)?"Re-Extract Drawings":"Run Extraction")}
             </button>
           )}
           {pages.length>0&&<button onClick={()=>setShowDrawingReview(true)} style={{background:"none",border:"1px solid #a78bfa88",color:"#a78bfa",cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>📐 Review Drawings</button>}
