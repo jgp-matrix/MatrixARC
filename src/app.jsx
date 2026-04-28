@@ -27897,8 +27897,12 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
                   onDragOver={isDropTarget?e=>{e.preventDefault();setDropTarget(gi);}:undefined}
                   onDragLeave={isDropTarget?e=>{if(!e.currentTarget.contains(e.relatedTarget))setDropTarget(null);}:undefined}
                   onDrop={isDropTarget?e=>{e.preventDefault();setDropTarget(null);if(dragProjectId)assignCustomer(dragProjectId,g.label,g.customerNumber);setDragProjectId(null);}:undefined}>
-                  {g.label&&g.items.length>0&&(
-                    <div style={{textAlign:"center",fontSize:13,fontWeight:700,color:colColor,marginBottom:6,opacity:0.95,letterSpacing:0.3,fontFamily:"system-ui,sans-serif"}}>
+                  {/* DECISION(v1.19.773): Always render the $ row (even at $0) so all
+                      column headers align horizontally. Previously hidden when items=0,
+                      which caused empty columns (e.g. IN PROCESS) to sit higher than
+                      neighbors. Empty columns dim the value to keep visual noise low. */}
+                  {g.label&&(
+                    <div style={{textAlign:"center",fontSize:13,fontWeight:700,color:colColor,marginBottom:6,opacity:g.items.length>0?0.95:0.4,letterSpacing:0.3,fontFamily:"system-ui,sans-serif"}}>
                       {arcFmtMoney(colTotal)}
                     </div>
                   )}
