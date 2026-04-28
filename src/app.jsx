@@ -30468,6 +30468,10 @@ function App({user}){
   // URL param handler below. ProjectView reads this via the autoOpenCustomerReview prop and
   // calls back via onCustomerReviewOpened to clear the state once the modal renders.
   const [pendingCustomerReviewOpen,setPendingCustomerReviewOpen]=useState(null);
+  // DECISION(v1.19.787): Track which tab the currently-open project was opened from.
+  // Used by the tab strip to render the BACK button + return-to label on the right tab,
+  // and by the project-view rendering gate to show the project under its origin tab only.
+  const [projectOriginTab,setProjectOriginTab]=useState(null);
   const [pushEnabled,setPushEnabled]=useState(()=>{try{return localStorage.getItem('arc_push_'+user.uid)==='1';}catch(e){return false;}});
   const [pushLoading,setPushLoading]=useState(false);
   async function togglePush(){
@@ -31120,11 +31124,16 @@ INSTRUCTIONS:
     // clicked a tile in another tab. Now it only redirects to "projects" if the user
     // was on a non-project-listing tab (e.g. Items/Vendors), so the project view
     // doesn't render with no tab context.
+    // DECISION(v1.19.787): Capture origin tab so the BACK button renders on the right
+    // tab and the project view stays scoped to that tab. Other tabs render their own
+    // dashboards while the project is open (matching existing Sales-tab behavior).
     checkQuoteRevWarn(()=>{
       setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});
       setOpenProject(p);
       setView("project");
       const projectListingTabs=new Set(["projects","engineering","purchasing","production"]);
+      const origin=projectListingTabs.has(navTab)?navTab:"projects";
+      setProjectOriginTab(origin);
       if(!projectListingTabs.has(navTab))setNavTab("projects");
     });
   }
@@ -31139,7 +31148,7 @@ INSTRUCTIONS:
     window.addEventListener('arc-open-project',onOpenProject);
     return()=>window.removeEventListener('arc-open-project',onOpenProject);
   },[projects]);
-  function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");setNavTab("projects");}
+  function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");setNavTab("projects");setProjectOriginTab("projects");}
   function handleChange(p){setProjects(ps=>ps.map(x=>x.id===p.id?p:x));setOpenProject(p);}
   function handleDelete(id,name,bcProjectId,bcProjectNumber,project){setDeleteConfirm({id,name,bcProjectId,bcProjectNumber,project});}
   async function confirmDelete(deleteFromBC){
@@ -31388,14 +31397,18 @@ INSTRUCTIONS:
         {NAV_TABS.map(t=>{
           const active=navTab===t.id;
           const hasOpenProject=view==="project"&&openProject;
-          // Show "BACK TO SALES" only when sales tab is active AND viewing a project
-          const isBackBtn=t.id==="projects"&&hasOpenProject&&active;
-          // Show project name on sales tab when on another tab with project open
-          const isReturnBtn=t.id==="projects"&&hasOpenProject&&!active;
+          // DECISION(v1.19.787): Origin-aware back/return buttons. The origin tab (where
+          // the project was opened from) shows "← BACK TO {LABEL}" when active, or
+          // "← {project name}" when not active (return-to-project pill on the origin tab,
+          // visible from any other tab while a project is open).
+          const originTab=projectOriginTab||"projects";
+          const isOriginTab=t.id===originTab;
+          const isBackBtn=isOriginTab&&hasOpenProject&&active;
+          const isReturnBtn=isOriginTab&&hasOpenProject&&!active;
           return(
           <button key={t.id} onClick={()=>{
-            if(isBackBtn){checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);});return;}
-            // Switching tabs
+            if(isBackBtn){checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);});return;}
+            // Switching tabs (also handles return-to-project when clicking the origin tab)
             setNavTab(t.id);
           }}
             style={{cursor:"pointer",padding:"0 24px",
@@ -31411,7 +31424,7 @@ INSTRUCTIONS:
               marginBottom:active?"-2px":0,
               position:"relative",zIndex:active?1:0,
               transition:"color 0.15s,height 0.15s"}}>
-            {isBackBtn?"← BACK TO SALES":isReturnBtn?`← ${(openProject.name||"PROJECT").slice(0,20).toUpperCase()}`:t.label}
+            {isBackBtn?`← BACK TO ${t.label}`:isReturnBtn?`← ${(openProject.name||"PROJECT").slice(0,20).toUpperCase()}`:t.label}
           </button>);
         })}
       </div>
@@ -31419,24 +31432,20 @@ INSTRUCTIONS:
       <div style={{flex:1,paddingTop:122,display:"flex",height:"100vh",overflow:"hidden"}}>
       <div style={{flex:1,minWidth:0,overflowY:"auto"}}>
       <VendorSyncFloater onSwitchToItems={()=>{setNavTab("items");}}/>
-      {/* DECISION(v1.19.786): Tab-scoped Dashboards now hide when a project view is open
-          (`view === "project"`). The ProjectView render lives in the navTab==="projects"
-          block below, so it must be allowed to take over the screen regardless of which
-          tab the user opened the project FROM. Without this gate, opening a project from
-          the Engineering tab kept showing the Engineering Dashboard (the project view
-          block's `navTab === "projects"` check was never satisfied), so the click looked
-          like it did nothing. The earlier fix (preserving navTab on handleOpen) was right
-          in spirit but missed this rendering gate. */}
-      {view!=="project"&&navTab==="production"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
-      {view!=="project"&&navTab==="purchasing"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="purchasing_kanban"/>}
-      {view!=="project"&&navTab==="engineering"&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="engineering"/>}
-      {view!=="project"&&navTab==="items"&&<ItemsTab uid={user.uid}/>}
-      {/* When `view === "project"` we want ProjectView to render regardless of which
-          tab the user opened it from. The block below was originally gated on
-          navTab==="projects" — meaning a project opened from Engineering tab would never
-          render. We now render ProjectView whenever view==="project", and the original
-          navTab==="projects" wrapper still gates the dashboard fragment for the Sales tab. */}
-      {(navTab==="projects"||view==="project")&&<>
+      {/* DECISION(v1.19.787): Tab dashboards + project view rendering rules.
+          The simple model: project view ONLY renders under its origin tab. Other tabs
+          render their own dashboard normally. So navigating between tabs while a project
+          is open shows each tab's dashboard; clicking the origin tab's "return" pill
+          brings the project back into view.
+            renderProjectView = (view==="project" && navTab === (projectOriginTab||"projects"))
+            renderDashboardFor(tabId) = (navTab===tabId && !renderProjectView)
+          projectOriginTab tracks where the project was opened from; the back/return
+          labels in the tab strip key off the same value. */}
+      {navTab==="production"&&!(view==="project"&&(projectOriginTab||"projects")==="production")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
+      {navTab==="purchasing"&&!(view==="project"&&(projectOriginTab||"projects")==="purchasing")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="purchasing_kanban"/>}
+      {navTab==="engineering"&&!(view==="project"&&(projectOriginTab||"projects")==="engineering")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="engineering"/>}
+      {navTab==="items"&&<ItemsTab uid={user.uid}/>}
+      {navTab==="projects"&&<>
       {/* BC Connection Lost popup */}
       {bcLostAlert&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.65)",zIndex:900,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -31454,7 +31463,11 @@ INSTRUCTIONS:
           </div>
         </div>
       )}
-      {view==="dashboard"&&(
+      {/* Render Sales dashboard if view is "dashboard" OR if a project is open BUT was
+          opened from another tab (in which case Sales tab acts as a separate view —
+          the project view lives under its origin tab). Render the ProjectView only when
+          view==="project" AND (no origin or origin is Sales). */}
+      {(view==="dashboard"||(view==="project"&&projectOriginTab&&projectOriginTab!=="projects"))&&(
         <>
           {/* Company setup banner */}
           {!companyId&&!setupDismissed&&(
@@ -31467,11 +31480,9 @@ INSTRUCTIONS:
           <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks} teamViewers={teamViewers}/>
         </>
       )}
-      {view==="project"&&openProject&&(
-        <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
-        </ErrorBoundary>
-      )}
+      {/* ProjectView render moved out of the navTab==="projects" block (v1.19.787) so the
+          same component drives the project view under any origin tab. The block is closed
+          below; ProjectView renders at top-level after all tab content. */}
       {view==="aidb"&&userRole==="admin"&&(
         <AIDatabasePage uid={user.uid} onBack={()=>setView("dashboard")}/>
       )}
@@ -31501,6 +31512,15 @@ INSTRUCTIONS:
         )
       );})()}
       </>}{/* end projects tab */}
+      {/* DECISION(v1.19.787): Top-level ProjectView render — fires whenever a project is
+          open AND the current tab matches the origin tab (where the project was opened
+          from). Lives outside any navTab block so it covers all four origin tabs:
+          projects, engineering, purchasing, production. */}
+      {view==="project"&&openProject&&navTab===(projectOriginTab||"projects")&&(
+        <ErrorBoundary onBack={()=>setView("dashboard")}>
+          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
+        </ErrorBoundary>
+      )}
       </div>{/* end main content column */}
       {/* ARC AI Assistant — right slide-out panel */}
       <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
