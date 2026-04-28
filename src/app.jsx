@@ -28432,16 +28432,45 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="production"){
-      const order=["post_review","buyoff","shipping_prep","ready_pickup","inproduction"];
-      const labels={post_review:"In Post-Review",buyoff:"In-Buyoff",shipping_prep:"Prepare For Shipping",ready_pickup:"Ready For Pick-Up",inproduction:"In Production"};
+      // DECISION(v1.19.788): Production-tab column ordering + IN PURCHASING column.
+      // Chronological flow: PO received → engineering post-review → purchasing (vendor
+      // POs sent + receiving) → production (parts in hand, building) → buyoff → shipping
+      // prep → ready for pickup. Two bug fixes folded in:
+      //   1. PO-received projects were routing directly to IN PRODUCTION because the
+      //      post_review check used computeProjectEffectiveStatus, which returns
+      //      "firm_sent" for any project where quoteSent is set — shadowing the
+      //      postReviewStatus="pending" state. Now we check postReviewStatus directly.
+      //   2. New IN PURCHASING column aggregates the purchasing-stage statuses
+      //      (READY TO SEND VENDOR POs / VENDOR POs SENT) so the production team can
+      //      see what's mid-purchasing without flipping to the Purchasing tab.
+      const order=["post_review","in_purchasing","inproduction","buyoff","shipping_prep","ready_pickup"];
+      const labels={
+        post_review:"In Post-Review",
+        in_purchasing:"In Purchasing",
+        inproduction:"In Production",
+        buyoff:"In-Buyoff",
+        shipping_prep:"Prepare For Shipping",
+        ready_pickup:"Ready For Pick-Up",
+      };
       const map={};
       list.forEach(p=>{
-        const eff=computeProjectEffectiveStatus(p);
-        if(eff==="post_review"){if(!map.post_review)map.post_review=[];map.post_review.push(p);return;}
+        // Production-status overrides apply first — these are explicit late-stage states.
         if(p.productionStatus==="ready_pickup"){if(!map.ready_pickup)map.ready_pickup=[];map.ready_pickup.push(p);return;}
         if(p.productionStatus==="shipping_prep"){if(!map.shipping_prep)map.shipping_prep=[];map.shipping_prep.push(p);return;}
         if(p.productionStatus==="buyoff"){if(!map.buyoff)map.buyoff=[];map.buyoff.push(p);return;}
-        if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open"){if(!map.inproduction)map.inproduction=[];map.inproduction.push(p);}
+        // Post-review pending — engineering must approve the post-PO drawings/BOM
+        // before the project can move into purchasing.
+        if(p.postReviewStatus==="pending"){if(!map.post_review)map.post_review=[];map.post_review.push(p);return;}
+        // Purchasing stage — vendor POs in flight (Open = ready to send, purchasing =
+        // sent and awaiting receipt). Requires post-review to be approved (or absent
+        // for legacy projects pre-dating the post-review feature).
+        if((p.bcPoStatus==="Open"||p.bcPoStatus==="purchasing")&&p.postReviewStatus!=="pending"){
+          if(!map.in_purchasing)map.in_purchasing=[];map.in_purchasing.push(p);return;
+        }
+        // Production — all vendor POs received, project is being built.
+        if(p.bcPoStatus==="purchased"||p.bcPoStatus==="Completed"){
+          if(!map.inproduction)map.inproduction=[];map.inproduction.push(p);return;
+        }
       });
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
@@ -28626,8 +28655,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981"};
-                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16"};
+                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981"};
+                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16"};
                 const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColBg[g.label]||C.border):"#3d6090";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
