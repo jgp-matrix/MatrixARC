@@ -22454,7 +22454,7 @@ function OwnerTakeoverModal({ownerName,onClose,onConfirm}){
 }
 
 // ── PROJECT VIEW ──
-function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,autoOpenPortal,onPortalOpened}){
+function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,autoOpenPortal,onPortalOpened,autoOpenCustomerReview,onCustomerReviewOpened}){
   const [project,setProject]=useState(()=>migrateProject(init));
   const projectRef=useRef(migrateProject(init));
   // DECISION(v1.19.584): Track current project/panel for debug log context
@@ -22810,6 +22810,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       onPortalOpened?.();
     }
   },[autoOpenPortal,portalSubmissions.length]);
+  // DECISION(v1.19.781): Same pattern for the Customer Review Responses modal — fires
+  // when navigated from a customer_review notification (bell or email deep-link).
+  // Waits for `customerReviewData` to load (the snapshot listener earlier sets it).
+  useEffect(()=>{
+    if(autoOpenCustomerReview&&customerReviewData&&customerReviewData.status==="submitted"){
+      setShowCustomerResponses(true);
+      onCustomerReviewOpened?.();
+    }
+  },[autoOpenCustomerReview,customerReviewData]);
   const saveTimer=useRef(null);
   // DECISION(v1.19.745): Soft-block on sent quotes. Replaces the binary `quoteLocked`
   // hard-block. Once a quote has been sent (project.quoteSentAt set), the panel card +
@@ -30032,6 +30041,11 @@ function App({user}){
   const [showBellMenu,setShowBellMenu]=useState(false);
   const [notifications,setNotifications]=useState([]);
   const [pendingPortalOpen,setPendingPortalOpen]=useState(null); // projectId to auto-open portal modal
+  // DECISION(v1.19.781): Same deep-link pattern for the customer-review responses modal.
+  // Set by (a) clicking a customer_review bell notification and (b) the ?openCustomerReview=<projectId>
+  // URL param handler below. ProjectView reads this via the autoOpenCustomerReview prop and
+  // calls back via onCustomerReviewOpened to clear the state once the modal renders.
+  const [pendingCustomerReviewOpen,setPendingCustomerReviewOpen]=useState(null);
   const [pushEnabled,setPushEnabled]=useState(()=>{try{return localStorage.getItem('arc_push_'+user.uid)==='1';}catch(e){return false;}});
   const [pushLoading,setPushLoading]=useState(false);
   async function togglePush(){
@@ -30097,6 +30111,25 @@ function App({user}){
       }
     }catch(e){}
   },[companyId]);
+
+  // DECISION(v1.19.781): Auto-open Customer Review Responses modal when arriving via
+  // ?openCustomerReview=<projectId> — used by the customer-review notification email.
+  // Waits for projects to load (projects.length>0) so we can find the project doc;
+  // strips the query param after firing so a refresh doesn't re-open the modal.
+  useEffect(()=>{
+    try{
+      const p=new URLSearchParams(window.location.search);
+      const pid=p.get('openCustomerReview');
+      if(!pid||!projects||projects.length===0)return;
+      const proj=projects.find(x=>x.id===pid);
+      if(!proj)return;
+      handleOpen(proj);
+      setPendingCustomerReviewOpen(pid);
+      const url=new URL(window.location.href);
+      url.searchParams.delete('openCustomerReview');
+      window.history.replaceState({},document.title,url.pathname+(url.search?url.search:'')+url.hash);
+    }catch(e){}
+  },[projects.length]);
 
   // RFQ pending counts per project (for dashboard cards)
   const [rfqCounts,setRfqCounts]=useState({});
@@ -30171,6 +30204,12 @@ function App({user}){
     if(notif.type==='supplier_quote'&&notif.projectId){
       const proj=projects.find(p=>p.id===notif.projectId);
       if(proj){handleOpen(proj);setPendingPortalOpen(notif.projectId);}
+    }else if(notif.type==='customer_review'&&notif.projectId){
+      // DECISION(v1.19.781): Customer-review notifications now deep-link the same way
+      // as supplier-quote notifications — opens the project AND auto-opens the
+      // Customer Review Responses modal so the user lands directly on what changed.
+      const proj=projects.find(p=>p.id===notif.projectId);
+      if(proj){handleOpen(proj);setPendingCustomerReviewOpen(notif.projectId);}
     }else if(notif.type==='issue_report'){
       setShowDebugLogs(true);
     }
@@ -30995,7 +31034,7 @@ INSTRUCTIONS:
       )}
       {view==="project"&&openProject&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)}/>
+          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
         </ErrorBoundary>
       )}
       {view==="aidb"&&userRole==="admin"&&(
