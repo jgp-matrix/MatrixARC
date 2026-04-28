@@ -10910,31 +10910,43 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
 }
 
 // ── RFQ HISTORY MODAL ──
-function RfqHistoryModal({uid,onClose}){
+function RfqHistoryModal({uid,projectId,onClose}){
   const [history,setHistory]=useState(null);
   const [submissions,setSubmissions]=useState(null);
   const [tab,setTab]=useState("sent"); // "sent"|"received"
   const [expandedItems,setExpandedItems]=useState({});
+  // DECISION(v1.19.775): When `projectId` is passed, scope both lists to that project.
+  // Used by the per-project RFQ History button. The Reports modal opens this same
+  // component without `projectId` to show the cross-project view.
   useEffect(()=>{
     fbDb.collection(`users/${uid}/rfq_history`).orderBy("sentAt","desc").limit(100).get()
-      .then(snap=>{setHistory(snap.docs.map(d=>({id:d.id,...d.data()})));})
+      .then(snap=>{
+        let docs=snap.docs.map(d=>({id:d.id,...d.data()}));
+        if(projectId)docs=docs.filter(d=>d.projectId===projectId);
+        setHistory(docs);
+      })
       .catch(()=>setHistory([]));
     // DECISION(v1.19.485): Query rfqUploads with fallback — composite index may not exist.
     // Also include "pending" status and don't require specific statuses to capture all history.
     fbDb.collection('rfqUploads').where('uid','==',uid).orderBy('sentAt','desc').limit(100).get()
-      .then(snap=>{setSubmissions(snap.docs.map(d=>({id:d.id,...d.data()})));})
+      .then(snap=>{
+        let docs=snap.docs.map(d=>({id:d.id,...d.data()}));
+        if(projectId)docs=docs.filter(d=>d.projectId===projectId);
+        setSubmissions(docs);
+      })
       .catch(e=>{
         console.warn("rfqUploads ordered query failed (index may be missing):",e.message);
         // Fallback: query without ordering
         fbDb.collection('rfqUploads').where('uid','==',uid).limit(100).get()
           .then(snap=>{
-            const docs=snap.docs.map(d=>({id:d.id,...d.data()}));
+            let docs=snap.docs.map(d=>({id:d.id,...d.data()}));
             docs.sort((a,b)=>(b.sentAt||0)-(a.sentAt||0));
+            if(projectId)docs=docs.filter(d=>d.projectId===projectId);
             setSubmissions(docs);
           })
           .catch(()=>setSubmissions([]));
       });
-  },[uid]);
+  },[uid,projectId]);
   const fmtDate=ts=>ts?new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—";
   const fmtPrice=p=>p!=null?"$"+Number(p).toFixed(2):"—";
   const tabBtn=(id,label,count)=>React.createElement("button",{key:id,onClick:()=>setTab(id),style:{background:tab===id?"#1e293b":"transparent",color:tab===id?"#fff":"#94a3b8",border:tab===id?"1px solid #3b82f6":"1px solid transparent",borderRadius:6,padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}},label+(count>0?` (${count})`:""));
@@ -24089,7 +24101,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               }
             }catch(e){console.warn("[API] Failed to fetch vendors for alternate pricing:",e.message);}
           }}/>}
-          {showRfqHistory&&<RfqHistoryModal uid={uid} onClose={()=>setShowRfqHistory(false)}/>}
+          {showRfqHistory&&<RfqHistoryModal uid={uid} projectId={project.id} onClose={()=>setShowRfqHistory(false)}/>}
           {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={async(poNum)=>{
             setShowPoModal(false);
             const firstPanel=(projectRef.current.panels||[])[0];
@@ -27573,15 +27585,44 @@ function ReportsModal({uid,onClose}){
   const [records,setRecords]=useState(null);
   const [loading,setLoading]=useState(true);
   const [activeReport,setActiveReport]=useState("crossref");
+  // DECISION(v1.19.775): Reports gets a cross-project RFQ History tab. The per-project
+  // RfqHistoryModal is now scoped to its current project; the org-wide view lives here.
+  // We load both rfq_history (sent log) and rfqUploads (supplier submissions) and pair
+  // them by uploadToken so each row shows status + PDF link, same UX as the per-project
+  // modal but spanning all projects.
+  const [rfqHistory,setRfqHistory]=useState(null);
+  const [rfqSubs,setRfqSubs]=useState(null);
+  const [rfqExpanded,setRfqExpanded]=useState({});
   useEffect(()=>{
     if(!uid)return;
     fbDb.doc(`users/${uid}/config/supplierCrossRef`).get()
       .then(d=>{setRecords(d.exists?(d.data().records||[]):[]);setLoading(false);})
       .catch(()=>{setRecords([]);setLoading(false);});
+    // RFQ history (lazy-loaded once when modal opens — small enough to load up front)
+    fbDb.collection(`users/${uid}/rfq_history`).orderBy("sentAt","desc").limit(500).get()
+      .then(snap=>setRfqHistory(snap.docs.map(d=>({id:d.id,...d.data()}))))
+      .catch(()=>setRfqHistory([]));
+    fbDb.collection('rfqUploads').where('uid','==',uid).orderBy('sentAt','desc').limit(500).get()
+      .then(snap=>setRfqSubs(snap.docs.map(d=>({id:d.id,...d.data()}))))
+      .catch(()=>{
+        fbDb.collection('rfqUploads').where('uid','==',uid).limit(500).get()
+          .then(snap=>{const docs=snap.docs.map(d=>({id:d.id,...d.data()}));docs.sort((a,b)=>(b.sentAt||0)-(a.sentAt||0));setRfqSubs(docs);})
+          .catch(()=>setRfqSubs([]));
+      });
   },[uid]);
   const byVendor={};
   (records||[]).forEach(r=>{if(!byVendor[r.vendorName])byVendor[r.vendorName]=[];byVendor[r.vendorName].push(r);});
   const vendorNames=Object.keys(byVendor).sort();
+  const fmtDate=ts=>ts?new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—";
+  // Token → submission map for status / PDF lookups in the RFQ tab
+  const subByToken={};
+  (rfqSubs||[]).forEach(s=>{if(s.id)subByToken[s.id]=s;});
+  const subStatusBadge=(sub)=>{
+    if(!sub)return null;
+    const map={imported:["#4ade80","✓ Applied"],submitted:["#38bdf8","📬 Received"],dismissed:["#64748b","Dismissed"],pending:["#f59e0b","⏳ Awaiting"]};
+    const m=map[sub.status]||["#94a3b8",sub.status||"—"];
+    return React.createElement("span",{style:{fontSize:10,fontWeight:600,color:m[0],background:m[0]+"22",borderRadius:10,padding:"1px 7px"}},m[1]);
+  };
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:12,width:"100%",maxWidth:960,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
@@ -27591,6 +27632,7 @@ function ReportsModal({uid,onClose}){
         </div>
         <div style={{display:"flex",borderBottom:"1px solid #1e293b"}}>
           <button onClick={()=>setActiveReport("crossref")} style={{padding:"10px 20px",background:"none",border:"none",borderBottom:activeReport==="crossref"?"2px solid #3b82f6":"2px solid transparent",color:activeReport==="crossref"?"#60a5fa":"#64748b",cursor:"pointer",fontSize:13,fontWeight:activeReport==="crossref"?700:500}}>Supplier Part Cross-Reference</button>
+          <button onClick={()=>setActiveReport("rfq")} style={{padding:"10px 20px",background:"none",border:"none",borderBottom:activeReport==="rfq"?"2px solid #3b82f6":"2px solid transparent",color:activeReport==="rfq"?"#60a5fa":"#64748b",cursor:"pointer",fontSize:13,fontWeight:activeReport==="rfq"?700:500}}>All RFQs{rfqHistory?` (${rfqHistory.length})`:""}</button>
         </div>
         <div style={{flex:1,overflowY:"auto",padding:"16px 24px"}}>
           {activeReport==="crossref"&&(<>
@@ -27634,6 +27676,65 @@ function ReportsModal({uid,onClose}){
                 </table>
               </div>
             ))}
+          </>)}
+          {activeReport==="rfq"&&(<>
+            <div style={{fontSize:12,color:"#94a3b8",marginBottom:16,lineHeight:1.6}}>
+              All RFQ activity across every project. Each row is one send-session; click to expand vendors, view supplier-uploaded PDFs, or jump to the supplier portal.
+            </div>
+            {rfqHistory===null?(
+              <div style={{textAlign:"center",padding:40,color:"#94a3b8"}}>Loading…</div>
+            ):rfqHistory.length===0?(
+              <div style={{textAlign:"center",padding:40,color:"#94a3b8",fontSize:13}}>
+                No RFQ activity yet.<br/>
+                <span style={{fontSize:12,color:"#94a3b8"}}>RFQ history populates whenever you send a quote request to a supplier.</span>
+              </div>
+            ):rfqHistory.map(h=>{
+              const sentVendors=(h.entries||[]).filter(e=>e.sent).length;
+              const totalVendors=(h.entries||[]).length;
+              const responses=(h.entries||[]).reduce((acc,e)=>{
+                const sub=e.uploadToken?subByToken[e.uploadToken]:null;
+                if(sub&&sub.status==="submitted")acc.received++;
+                else if(sub&&sub.status==="imported")acc.applied++;
+                else if(sub&&sub.status==="dismissed")acc.dismissed++;
+                else if(e.sent)acc.awaiting++;
+                return acc;
+              },{received:0,applied:0,awaiting:0,dismissed:0});
+              const isOpen=!!rfqExpanded[h.id];
+              return(
+                <div key={h.id} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:8,padding:"12px 14px",marginBottom:10}}>
+                  <div onClick={()=>setRfqExpanded(prev=>({...prev,[h.id]:!prev[h.id]}))}
+                    style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",userSelect:"none"}}>
+                    <span style={{fontWeight:700,color:"#818cf8",fontSize:13,minWidth:120}}>{h.rfqNum||"—"}</span>
+                    <span style={{fontSize:11,color:"#94a3b8",minWidth:170}}>{fmtDate(h.sentAt)}</span>
+                    <span style={{fontSize:12,color:"#f1f5f9",fontWeight:600,flex:1,minWidth:120}}>{h.projectName||"—"}</span>
+                    <span style={{fontSize:11,color:"#94a3b8"}}>{sentVendors}/{totalVendors} vendor{totalVendors!==1?"s":""}</span>
+                    {responses.applied>0&&<span style={{fontSize:10,fontWeight:600,color:"#4ade80",background:"#4ade8022",borderRadius:10,padding:"1px 7px"}}>{responses.applied} applied</span>}
+                    {responses.received>0&&<span style={{fontSize:10,fontWeight:600,color:"#38bdf8",background:"#38bdf822",borderRadius:10,padding:"1px 7px"}}>{responses.received} received</span>}
+                    {responses.awaiting>0&&<span style={{fontSize:10,fontWeight:600,color:"#f59e0b",background:"#f59e0b22",borderRadius:10,padding:"1px 7px"}}>{responses.awaiting} awaiting</span>}
+                    <span style={{color:"#94a3b8",fontSize:14,marginLeft:6}}>{isOpen?"▴":"▾"}</span>
+                  </div>
+                  {isOpen&&(
+                    <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:10,paddingTop:8,borderTop:"1px solid #1e293b"}}>
+                      {(h.entries||[]).map((e,i)=>{
+                        const sub=e.uploadToken?subByToken[e.uploadToken]:null;
+                        return(
+                          <div key={i} style={{display:"flex",alignItems:"center",gap:8,fontSize:12,flexWrap:"wrap",padding:"3px 0"}}>
+                            <span style={{color:e.sent?"#4ade80":e.skipped?"#64748b":"#f87171",fontWeight:700,width:14,textAlign:"center",flexShrink:0}}>{e.sent?"✓":e.skipped?"–":"✗"}</span>
+                            <span style={{color:"#f1f5f9",fontWeight:600,minWidth:160}}>{e.vendorName||"—"}</span>
+                            <span style={{color:"#94a3b8",flex:1,minWidth:140}}>{e.vendorEmail||"no email"}</span>
+                            {sub&&subStatusBadge(sub)}
+                            {(e.items||[]).length>0&&<span style={{fontSize:10,color:"#94a3b8"}}>{(e.items||[]).length} item{(e.items||[]).length!==1?"s":""}</span>}
+                            {sub&&sub.storageUrl&&<a href={sub.storageUrl} target="_blank" rel="noopener noreferrer" title={sub.fileName||"Supplier-uploaded PDF"} style={{color:"#fbbf24",fontSize:10,fontWeight:700,textDecoration:"none"}}>📄 PDF</a>}
+                            {e.uploadToken&&<a href={`https://matrix-arc.web.app?rfqUpload=${e.uploadToken}`} target="_blank" rel="noopener noreferrer" style={{color:"#38bdf8",fontSize:10,fontWeight:600,textDecoration:"none"}}>Portal ↗</a>}
+                            {e.error&&<span style={{color:"#f87171",fontSize:10}} title={e.error}>⚠ failed</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </>)}
         </div>
         <div style={{padding:"12px 24px",borderTop:"1px solid #3d6090",display:"flex",justifyContent:"flex-end"}}>
