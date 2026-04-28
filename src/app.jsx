@@ -4960,20 +4960,47 @@ async function saveProject(uid,project){
       _curDoc=await ref.get();
       if(_curDoc.exists){
         const curPanels=_curDoc.data().panels||[];
-        // (1) storageUrl regression guard
+        // (1) storageUrl + reviewNotes regression guard
+        // DECISION(v1.19.776): Same pattern that protects storageUrl from stale-save
+        // overwrites is now extended to reviewNotes. When Andrew adds a note on a page
+        // while Jon's client is mid-edit on the same project, Jon's incoming save would
+        // previously have a stale `reviewNotes` array (missing Andrew's note) and wipe
+        // it. Now we merge by note `id`: incoming notes win on conflicts (so edits to
+        // the same note still apply), but any current notes whose id is missing from
+        // the incoming array are restored. Same merge applies to `reviewShapes`.
         for(let i=0;i<newPanels.length;i++){
           const np=newPanels[i];
           const cp=curPanels.find(p=>p.id===np.id);
           if(!cp||!(cp.pages||[]).length||!(np.pages||[]).length)continue;
           const curById=new Map(cp.pages.map(pg=>[String(pg.id),pg]));
-          let restored=0;
+          let restoredUrls=0,restoredNotes=0,restoredShapes=0;
           const merged=(np.pages||[]).map(pg=>{
             const prev=curById.get(String(pg.id));
-            if(prev&&!pg.storageUrl&&prev.storageUrl){restored++;return{...pg,storageUrl:prev.storageUrl};}
-            return pg;
+            if(!prev)return pg;
+            let next=pg;
+            if(!pg.storageUrl&&prev.storageUrl){restoredUrls++;next={...next,storageUrl:prev.storageUrl};}
+            // Merge reviewNotes: incoming wins per id; current-only ids are restored.
+            if(Array.isArray(prev.reviewNotes)&&prev.reviewNotes.length>0){
+              const incoming=Array.isArray(pg.reviewNotes)?pg.reviewNotes:[];
+              const incomingIds=new Set(incoming.map(n=>n&&n.id).filter(Boolean));
+              const missing=prev.reviewNotes.filter(n=>n&&n.id&&!incomingIds.has(n.id));
+              if(missing.length>0){restoredNotes+=missing.length;next={...next,reviewNotes:[...incoming,...missing]};}
+            }
+            // Same merge for reviewShapes (drawing redlines).
+            if(Array.isArray(prev.reviewShapes)&&prev.reviewShapes.length>0){
+              const incoming=Array.isArray(pg.reviewShapes)?pg.reviewShapes:[];
+              const incomingIds=new Set(incoming.map(s=>s&&s.id).filter(Boolean));
+              const missing=prev.reviewShapes.filter(s=>s&&s.id&&!incomingIds.has(s.id));
+              if(missing.length>0){restoredShapes+=missing.length;next={...next,reviewShapes:[...incoming,...missing]};}
+            }
+            return next;
           });
-          if(restored>0){
-            console.warn(`SAVE GUARD (saveProject): restored storageUrl on ${restored} page(s) of panel ${i} — stale incoming save`);
+          if(restoredUrls>0||restoredNotes>0||restoredShapes>0){
+            const parts=[];
+            if(restoredUrls>0)parts.push(`storageUrl×${restoredUrls}`);
+            if(restoredNotes>0)parts.push(`reviewNotes×${restoredNotes}`);
+            if(restoredShapes>0)parts.push(`reviewShapes×${restoredShapes}`);
+            console.warn(`SAVE GUARD (saveProject): restored ${parts.join(", ")} on panel ${i} — stale incoming save`);
             newPanels[i]={...np,pages:merged};
           }
         }
@@ -5112,18 +5139,38 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     // This is the exact failure mode that orphaned all 18 pages of PRJ402079. Now: for each
     // incoming page that lacks storageUrl, restore it from the Firestore copy matched by id.
     // Also restores dataUrl-less pages that regressed to having dataUrl (rare but possible).
+    // DECISION(v1.19.776): Same merge applied to reviewNotes + reviewShapes alongside
+    // storageUrl. Without it, two reviewers (e.g. Andrew + Jon) writing notes on the
+    // same project simultaneously would lose whichever note was overwritten by the
+    // later save. Now the later save preserves notes/shapes by id.
     if(existingTarget&&(safeUpdated.pages||[]).length>0&&(existingTarget.pages||[]).length>0){
       const existingById=new Map(existingTarget.pages.map(pg=>[String(pg.id),pg]));
-      let restoredCount=0;
+      let restoredCount=0,restoredNotes=0,restoredShapes=0;
       const mergedPages=safeUpdated.pages.map(pg=>{
         const prev=existingById.get(String(pg.id));
         if(!prev)return pg;
         const patch={};
         if(!pg.storageUrl&&prev.storageUrl){patch.storageUrl=prev.storageUrl;restoredCount++;}
+        if(Array.isArray(prev.reviewNotes)&&prev.reviewNotes.length>0){
+          const incoming=Array.isArray(pg.reviewNotes)?pg.reviewNotes:[];
+          const incomingIds=new Set(incoming.map(n=>n&&n.id).filter(Boolean));
+          const missing=prev.reviewNotes.filter(n=>n&&n.id&&!incomingIds.has(n.id));
+          if(missing.length>0){patch.reviewNotes=[...incoming,...missing];restoredNotes+=missing.length;}
+        }
+        if(Array.isArray(prev.reviewShapes)&&prev.reviewShapes.length>0){
+          const incoming=Array.isArray(pg.reviewShapes)?pg.reviewShapes:[];
+          const incomingIds=new Set(incoming.map(s=>s&&s.id).filter(Boolean));
+          const missing=prev.reviewShapes.filter(s=>s&&s.id&&!incomingIds.has(s.id));
+          if(missing.length>0){patch.reviewShapes=[...incoming,...missing];restoredShapes+=missing.length;}
+        }
         return Object.keys(patch).length?{...pg,...patch}:pg;
       });
-      if(restoredCount>0){
-        console.warn(`SAVE GUARD: restored storageUrl on ${restoredCount} page(s) of panel ${panelId} — incoming save had stale page state (caller stack: ${(new Error()).stack?.split('\n').slice(1,4).join(' | ')})`);
+      if(restoredCount>0||restoredNotes>0||restoredShapes>0){
+        const parts=[];
+        if(restoredCount>0)parts.push(`storageUrl×${restoredCount}`);
+        if(restoredNotes>0)parts.push(`reviewNotes×${restoredNotes}`);
+        if(restoredShapes>0)parts.push(`reviewShapes×${restoredShapes}`);
+        console.warn(`SAVE GUARD: restored ${parts.join(", ")} on panel ${panelId} — incoming save had stale page state (caller stack: ${(new Error()).stack?.split('\n').slice(1,4).join(' | ')})`);
         safeUpdated={...safeUpdated,pages:mergedPages};
       }
     }
@@ -17456,11 +17503,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     if(e.key==="Enter"&&newNoteText.trim()){
                       const now=new Date();const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][now.getMonth()];
                       const dateStr=String(now.getDate()).padStart(2,'0')+'-'+mon+'-'+String(now.getFullYear()).slice(2);
-                      const _dn=panel._projectDesigner||fbAuth.currentUser?.displayName||"";
+                      // DECISION(v1.19.776): Stamp the note with the ACTUAL logged-in user.
+                      // The previous code used `panel._projectDesigner` as the first fallback,
+                      // which meant every note authored by ANY user got stamped with the
+                      // project's designer name + initials (so Andrew's notes showed Jon's
+                      // initials). Now we use fbAuth.currentUser directly. Email local-part
+                      // is a fallback for users without displayName set in Firebase Auth.
+                      const _user=fbAuth.currentUser;
+                      const _email=_user?.email||"";
+                      const _dn=_user?.displayName||(_email?_email.split("@")[0].replace(/[._-]+/g," "):"");
                       const _np=_dn.trim().split(/\s+/).filter(Boolean);
                       const ini=_np.length>=2?(_np[0][0]+_np[_np.length-1][0]).toUpperCase():_np.length===1?_np[0].slice(0,2).toUpperCase():"??";
                       const totalNotesAllPages=pages.reduce((sum,p)=>(sum+(p.reviewNotes||[]).length),0);
-                      const newNote={id:'note_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),number:(totalNotesAllPages+1),x:newNotePos.x,y:newNotePos.y,text:newNoteText.trim(),author:_dn||"Designer",initials:ini,date:dateStr,createdAt:Date.now(),reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review",visibility:"internal",status:"open",responses:[]};
+                      const newNote={id:'note_'+Date.now()+'_'+Math.random().toString(36).slice(2,6),number:(totalNotesAllPages+1),x:newNotePos.x,y:newNotePos.y,text:newNoteText.trim(),author:_dn||"Designer",authorUid:_user?.uid||null,authorEmail:_email||null,initials:ini,date:dateStr,createdAt:Date.now(),reviewType:panel.postReviewStatus==="pending"?"post_review":"pre_review",visibility:"internal",status:"open",responses:[]};
                       const updatedPages=pages.map((p,i)=>i===reviewPageIdx?{...p,reviewNotes:[...(p.reviewNotes||[]),newNote]}:p);
                       onUpdate({...panel,pages:updatedPages});try{onSaveImmediate({...panel,pages:updatedPages});}catch(e){}
                       setNewNotePos(null);setNewNoteText("");
@@ -30465,7 +30520,19 @@ INSTRUCTIONS:
     action();
   }
   function handleOpen(p){
-    checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setOpenProject(p);setView("project");setNavTab("projects");});
+    // DECISION(v1.19.776): Preserve the user's current top-nav tab when they open a
+    // project from Engineering / Purchasing / Production. Previously the open handler
+    // always reset to "projects" (SALES), bouncing users back to Sales whenever they
+    // clicked a tile in another tab. Now it only redirects to "projects" if the user
+    // was on a non-project-listing tab (e.g. Items/Vendors), so the project view
+    // doesn't render with no tab context.
+    checkQuoteRevWarn(()=>{
+      setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});
+      setOpenProject(p);
+      setView("project");
+      const projectListingTabs=new Set(["projects","engineering","purchasing","production"]);
+      if(!projectListingTabs.has(navTab))setNavTab("projects");
+    });
   }
   // Listen for engineering module open-project events
   useEffect(()=>{
