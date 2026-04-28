@@ -5341,7 +5341,22 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
 async function loadProjects(uid){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const snap=await fbDb.collection(path).orderBy("updatedAt","desc").get();
-  return snap.docs.map(d=>d.data());
+  return snap.docs.map(d=>migrateProjectShape(d.data()));
+}
+
+// DECISION(v1.19.785): Lazy migration shim for projects loaded from Firestore. Anything
+// the ECO system relies on gets defaulted in memory so render code can assume the fields
+// exist. Persisted Firestore docs are unchanged; the next save through saveProject()
+// stamps the new schemaVersion + writes the defaults back. Keeps legacy projects working
+// without forcing a backfill batch job. Add additional migration logic here as schemaVersion
+// climbs further (v3 = ECO introduction).
+function migrateProjectShape(p){
+  if(!p)return p;
+  const out={...p};
+  if(out.ecoCounter==null)out.ecoCounter=0;
+  if(out.activeEcoId===undefined)out.activeEcoId=null;
+  if(!Array.isArray(out.ecoSummary))out.ecoSummary=[];
+  return out;
 }
 async function deleteProject(uid,id){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
@@ -9050,6 +9065,15 @@ function computeProjectEffectiveStatus(project){
 // Legacy wrapper — used by dashboard grouping and other callers
 function projectStatus(project){return computeProjectEffectiveStatus(project);}
 function Badge({status,project}){
+  // DECISION(v1.19.785): When a project has any non-terminal ECO active, the status pill
+  // shows the ECO label (`PRJ######-ECO##`) instead of the lifecycle status. The ECO is
+  // the most operationally relevant fact at that moment — production needs to know there's
+  // a change in flight. See plan §UI design.
+  const activeEco=computeActiveEco(project);
+  if(activeEco){
+    const label=formatEcoLabel(project,activeEco.number);
+    return<span style={{background:"#1a0040",color:"#a855f7",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",border:"1px solid #a855f755"}}>{label}</span>;
+  }
   const effectiveStatus=project?computeProjectEffectiveStatus(project):status;
   const map={
     draft:["#3d1a00","#f97316","Draft"],
@@ -9074,6 +9098,225 @@ function Badge({status,project}){
   };
   const [bg,col,label]=map[effectiveStatus]||map[status]||map.draft;
   return<span style={{background:bg,color:col,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap"}}>{label.toUpperCase()}</span>;
+}
+
+// ── ECO HELPERS ──
+// DECISION(v1.19.785): ECO subsystem foundation — Phase 1 of the plan documented at
+// docs/superpowers/plans/2026-04-28-change-orders.md. Helpers here are referenced from
+// Badge (above), EcoScopeTabs, and EcoEditor. The data model uses an `ecoSummary[]`
+// denormalized array on the project doc for fast tile/card rendering — the canonical
+// per-ECO documents live at companies/{companyId}/projects/{projectId}/ecos/{ecoId}
+// (or users/{uid}/projects/{projectId}/ecos/{ecoId} for personal projects).
+const ECO_ACTIVE_STATES=["draft","in_review","returned","sent","approved","in_production"];
+const ECO_TERMINAL_STATES=["completed","rejected","cancelled"];
+function computeActiveEco(project){
+  if(!project)return null;
+  const summary=Array.isArray(project.ecoSummary)?project.ecoSummary:[];
+  const active=summary.filter(e=>e&&ECO_ACTIVE_STATES.includes(e.status));
+  if(active.length===0)return null;
+  // Highest-numbered active ECO wins — engineer's most-recent change-order is what
+  // operations care about right now.
+  return active.reduce((a,b)=>(a.number>b.number?a:b));
+}
+function formatEcoLabel(project,ecoNumber){
+  const projNum=project?.bcProjectNumber||(project?.id?String(project.id).slice(0,9):"PRJ");
+  return `${projNum}-ECO${String(ecoNumber).padStart(2,"0")}`;
+}
+function ecoSubcollectionPath(uid,projectId){
+  // Mirrors the existing `_appCtx.projectsPath` convention. For company-shared projects
+  // the path is companies/{companyId}/projects/{projectId}/ecos; for personal projects
+  // it's users/{uid}/projects/{projectId}/ecos.
+  const base=_appCtx.projectsPath||`users/${uid}/projects`;
+  return `${base}/${projectId}/ecos`;
+}
+async function createEcoDoc(uid,project,kind){
+  // Atomic-ish: read the current ecoCounter, increment, write a new ECO doc, update
+  // project's ecoSummary. We use a Firestore transaction to avoid two engineers
+  // double-claiming the same ECO number.
+  const projPath=`${(_appCtx.projectsPath||`users/${uid}/projects`)}/${project.id}`;
+  const now=Date.now();
+  const ecoData={
+    number:0, // filled in transaction
+    status:"draft",
+    kind:kind||"customer_change",
+    title:"",
+    description:"",
+    customerReason:"",
+    customerRequestDate:now,
+    internalNotes:"",
+    createdAt:now,
+    createdBy:uid,
+    createdByName:fbAuth.currentUser?.displayName||fbAuth.currentUser?.email||"",
+    deltaMaterialCost:0,
+    deltaLaborCost:0,
+    deltaCost:0,
+    deltaSell:0,
+    expediteCost:0,
+    expediteReason:null,
+    marginUsed:_pricingConfig?.ecoDefaultMargin||40,
+    laborRateUsed:_pricingConfig?.ecoDefaultLaborRate||65,
+    comments:[],
+    schemaVersion:APP_SCHEMA_VERSION,
+    updatedAt:now,
+    updatedBy:uid,
+  };
+  const ecoColl=fbDb.collection(ecoSubcollectionPath(uid,project.id));
+  const newRef=ecoColl.doc();
+  return await fbDb.runTransaction(async tx=>{
+    const projSnap=await tx.get(fbDb.doc(projPath));
+    const cur=projSnap.exists?projSnap.data():{};
+    const nextNumber=(cur.ecoCounter||0)+1;
+    ecoData.number=nextNumber;
+    tx.set(newRef,ecoData);
+    const newSummaryEntry={
+      ecoId:newRef.id,
+      number:nextNumber,
+      status:"draft",
+      kind:ecoData.kind,
+      deltaSell:0,
+      approvedAt:null,
+      completedAt:null,
+      displayLabel:`ECO ${String(nextNumber).padStart(2,"0")}`,
+    };
+    const summary=Array.isArray(cur.ecoSummary)?[...cur.ecoSummary,newSummaryEntry]:[newSummaryEntry];
+    const projUpdate={
+      ecoCounter:nextNumber,
+      activeEcoId:newRef.id,
+      ecoSummary:summary,
+      ecoFirstCreatedAt:cur.ecoFirstCreatedAt||now,
+      updatedAt:now,
+      updatedBy:uid,
+    };
+    tx.update(fbDb.doc(projPath),projUpdate);
+    return{ecoId:newRef.id,number:nextNumber,...ecoData};
+  });
+}
+
+// EcoScopeTabs — horizontal tab strip rendered above panel cards on the Project view.
+// Phase 1 ships the visual shell + + New ECO action. Tab selection state is owned by
+// the parent (ProjectView) and passed down so PanelListView/PanelCard can eventually
+// filter their BOM rendering by `ecoTag` (Phase 2). For now selecting a tab just opens
+// the Eco Editor (read-only shell — Phase 2 puts editing in).
+function EcoScopeTabs({project,uid,activeScope,onScopeChange,onOpenEditor}){
+  const summary=Array.isArray(project?.ecoSummary)?project.ecoSummary:[];
+  const canCreateEco=
+    !!project?.bcPoStatus &&
+    (project?.createdBy===uid||_appCtx.role==="admin"||hasPermission("reviewer"));
+  const [creating,setCreating]=useState(false);
+  async function handleNewEco(){
+    if(creating)return;
+    setCreating(true);
+    try{
+      const result=await createEcoDoc(uid,project,"customer_change");
+      onScopeChange&&onScopeChange({type:"eco",ecoNumber:result.number,ecoId:result.ecoId});
+      onOpenEditor&&onOpenEditor(result);
+    }catch(e){
+      console.error("createEcoDoc failed:",e);
+      await arcAlert("Could not create ECO: "+(e&&e.message?e.message:String(e)),{kind:"error"});
+    }
+    setCreating(false);
+  }
+  function tabBg(isActive){return isActive?"#1a0040":"#0a0a14";}
+  function tabBorder(isActive){return isActive?"1px solid #a855f7":"1px solid "+C.border;}
+  function tabColor(isActive){return isActive?"#a855f7":C.muted;}
+  const baseActive=!activeScope||activeScope.type==="base";
+  return(
+    <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:14,padding:"8px 0",borderBottom:`1px solid ${C.border}33`}}>
+      <button
+        onClick={()=>onScopeChange&&onScopeChange({type:"base"})}
+        style={{background:tabBg(baseActive),color:tabColor(baseActive),border:tabBorder(baseActive),borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:0.5}}>
+        BASE
+      </button>
+      {summary.map(eco=>{
+        const isActive=activeScope?.type==="eco"&&activeScope.ecoNumber===eco.number;
+        const isTerminal=ECO_TERMINAL_STATES.includes(eco.status);
+        const isApproved=eco.status==="approved"||eco.status==="in_production"||eco.status==="completed";
+        const tag=isApproved?"✓":(isTerminal?"–":"⏳");
+        const dollarStr=eco.deltaSell?` ${eco.deltaSell>=0?"+":""}$${Math.round(Math.abs(eco.deltaSell)).toLocaleString()}`:"";
+        return(
+          <button key={eco.ecoId}
+            onClick={()=>{
+              onScopeChange&&onScopeChange({type:"eco",ecoNumber:eco.number,ecoId:eco.ecoId});
+              onOpenEditor&&onOpenEditor(eco);
+            }}
+            style={{background:tabBg(isActive),color:tabColor(isActive),border:tabBorder(isActive),borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:isActive?800:600,cursor:"pointer",letterSpacing:0.3,opacity:isTerminal&&eco.status==="cancelled"?0.5:1}}>
+            ECO {String(eco.number).padStart(2,"0")} {tag}{dollarStr}
+          </button>
+        );
+      })}
+      {canCreateEco&&(
+        <button
+          disabled={creating}
+          onClick={handleNewEco}
+          title="Create a new Engineering Change Order on this project"
+          style={{background:"transparent",color:"#a855f7",border:"1px dashed #a855f777",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:creating?"wait":"pointer",letterSpacing:0.3,opacity:creating?0.5:1}}>
+          {creating?"Creating…":"+ New ECO"}
+        </button>
+      )}
+      {!canCreateEco&&!summary.length&&(
+        <span style={{fontSize:11,color:C.muted,fontStyle:"italic",marginLeft:8}}>
+          ECOs available after PO is received
+        </span>
+      )}
+    </div>
+  );
+}
+
+// EcoEditor — full-screen modal for composing/reviewing one ECO. Phase 1 ships an empty
+// shell: 7 tab labels, a top-bar with state + cancel, no editing logic. Phase 2 fills in
+// the BOM editor; later phases fill in the rest.
+function EcoEditor({project,eco,uid,onClose}){
+  const [tab,setTab]=useState("overview");
+  if(!eco)return null;
+  const TABS=[
+    {id:"overview",label:"Overview"},
+    {id:"bom",label:"BOM Delta"},
+    {id:"labor",label:"Labor"},
+    {id:"delivery",label:"Delivery"},
+    {id:"drawings",label:"Drawings"},
+    {id:"customer",label:"Customer Review"},
+    {id:"bcsync",label:"BC Sync"},
+    {id:"comments",label:"Comments"},
+  ];
+  const ecoLabel=`ECO ${String(eco.number).padStart(2,"0")}`;
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #a855f755",borderRadius:12,width:"100%",maxWidth:1100,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 8px rgba(168,85,247,0.5),0 12px 48px rgba(0,0,0,0.7)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,padding:"16px 20px",borderBottom:"1px solid #a855f733"}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#a855f7",letterSpacing:1}}>ENGINEERING CHANGE ORDER</div>
+            <div style={{fontSize:18,fontWeight:800,color:"#f1f5f9",marginTop:2}}>{formatEcoLabel(project,eco.number)}</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>Status: <strong style={{color:"#a855f7",textTransform:"uppercase"}}>{eco.status||"draft"}</strong> · Created {eco.createdAt?new Date(eco.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,padding:"4px 10px"}}>✕</button>
+        </div>
+        <div style={{display:"flex",gap:0,padding:"0 20px",borderBottom:"1px solid "+C.border}}>
+          {TABS.map(t=>(
+            <button key={t.id}
+              onClick={()=>setTab(t.id)}
+              style={{background:tab===t.id?"#1a0040":"transparent",color:tab===t.id?"#a855f7":C.muted,border:"none",borderBottom:tab===t.id?"2px solid #a855f7":"2px solid transparent",padding:"10px 14px",fontSize:12,fontWeight:tab===t.id?700:500,cursor:"pointer",letterSpacing:0.3}}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div style={{flex:1,overflow:"auto",padding:"22px 26px",color:C.text,fontSize:13,lineHeight:1.6}}>
+          <div style={{padding:"40px 0",textAlign:"center",color:C.muted}}>
+            <div style={{fontSize:28,marginBottom:12,opacity:0.4}}>📐</div>
+            <div style={{fontSize:14,fontWeight:600,marginBottom:6,color:C.sub}}>{TABS.find(t=>t.id===tab)?.label} — Phase 1 shell</div>
+            <div style={{fontSize:12,maxWidth:480,margin:"0 auto",lineHeight:1.6}}>
+              The {ecoLabel} record exists ({uid&&eco.createdBy?eco.createdBy===uid?"created by you":"":""}). Phase 2 of the rollout will fill in the BOM Delta editor; subsequent phases add labor/delivery/drawings/customer review/BC sync/comments.
+              <br/><br/>
+              For now: refresh the page or close this modal — the ECO is persisted at <code style={{color:"#a855f7",fontSize:11}}>{project?.id}/ecos/{eco.ecoId||"…"}</code> and visible on the project's scope tab strip.
+            </div>
+          </div>
+        </div>
+        <div style={{padding:"12px 20px",borderTop:"1px solid "+C.border,display:"flex",justifyContent:"flex-end",gap:8}}>
+          <button onClick={onClose} style={{background:"#1a1a2a",border:"1px solid #a855f744",color:"#a855f7",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:12,fontWeight:600}}>Close</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
 }
 
 function EngineeringQuestionsModal({panel,uid,onUpdate,onSave,onClose,memberMap}){
@@ -22619,6 +22862,13 @@ function OwnerTakeoverModal({ownerName,onClose,onConfirm}){
 function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,autoOpenPortal,onPortalOpened,autoOpenCustomerReview,onCustomerReviewOpened}){
   const [project,setProject]=useState(()=>migrateProject(init));
   const projectRef=useRef(migrateProject(init));
+  // DECISION(v1.19.785): ECO scope tab + editor state. Phase 1 of the ECO plan
+  // (docs/superpowers/plans/2026-04-28-change-orders.md). `activeScope` controls which
+  // scope is currently rendered in the Panel Cards / Quote Summary; Phase 2 will wire
+  // this through to PanelListView so BOM rendering filters by `ecoTag`. For now the tab
+  // selection just opens the ECO Editor.
+  const [activeScope,setActiveScope]=useState({type:"base"});
+  const [openEcoEditor,setOpenEcoEditor]=useState(null); // ECO doc/object when editor open
   // DECISION(v1.19.584): Track current project/panel for debug log context
   useEffect(()=>{_currentProjectId=init&&init.id||null;addBreadcrumb('nav',`Project opened: ${init&&init.id}`);return()=>{_currentProjectId=null;_currentPanelId=null;};},[init&&init.id]);
   // DECISION(v1.19.599): Track active tasks by OTHER users on this project — used to
@@ -24303,6 +24553,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           )}
           {/* Keep legacy state-variable wired (harmless, unused by new toast flow) */}
           {false&&externalUpdate&&(<div style={{display:"none"}}/>)}
+          {/* DECISION(v1.19.785): ECO scope tabs render above PanelListView when project
+              is post-PO OR has any existing ECOs. Hidden on pre-PO projects (no ECOs are
+              valid there). EcoScopeTabs handles its own + New ECO permission gating. */}
+          {(project?.bcPoStatus||(project?.ecoSummary||[]).length>0)&&(
+            <div style={{padding:"0 24px",marginTop:8}}>
+              <EcoScopeTabs
+                project={project}
+                uid={uid}
+                activeScope={activeScope}
+                onScopeChange={setActiveScope}
+                onOpenEditor={(eco)=>setOpenEcoEditor(eco)}
+              />
+            </div>
+          )}
           <PanelListView
             project={project}
             uid={uid}
@@ -25017,6 +25281,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           </div>
         </div>
       ,document.body)}
+      {/* DECISION(v1.19.785): EcoEditor modal — Phase 1 ships an empty shell. Closes by
+          clearing openEcoEditor state. */}
+      {openEcoEditor&&<EcoEditor project={project} eco={openEcoEditor} uid={uid} onClose={()=>setOpenEcoEditor(null)}/>}
     </>
   );
 }
