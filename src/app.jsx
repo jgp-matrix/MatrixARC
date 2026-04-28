@@ -10953,7 +10953,27 @@ function RfqHistoryModal({uid,onClose}){
           {tab==="sent"&&<>
             {history===null&&<div style={{color:"#94a3b8",fontSize:13}}>Loading…</div>}
             {history&&history.length===0&&<div style={{color:"#94a3b8",fontSize:13}}>No RFQ emails sent yet.</div>}
-            {history&&history.map(h=>(
+            {/* DECISION(v1.19.774): Surface supplier-uploaded PDFs + response status
+                directly in the Sent RFQs tab. The rfqUploads doc id === entry.uploadToken,
+                so we build a token→submission map once and look up per row. Saves the user
+                from flipping to the Received Quotes tab to see what came back. PDFs are
+                already retained on rfqUploads.storageUrl across status changes
+                (submitted → imported / dismissed). */}
+            {history&&(()=>{
+              const subByToken={};
+              (submissions||[]).forEach(s=>{if(s.id)subByToken[s.id]=s;});
+              const subStatusBadge=(sub)=>{
+                if(!sub)return null;
+                const map={
+                  imported:["#4ade80","✓ Applied"],
+                  submitted:["#38bdf8","📬 Received"],
+                  dismissed:["#64748b","Dismissed"],
+                  pending:["#f59e0b","⏳ Awaiting"],
+                };
+                const m=map[sub.status]||["#94a3b8",sub.status||"—"];
+                return React.createElement("span",{style:{fontSize:10,fontWeight:600,color:m[0],background:m[0]+"22",borderRadius:10,padding:"1px 7px"}},m[1]);
+              };
+              return history.map(h=>(
               <div key={h.id} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:8,padding:"12px 14px",marginBottom:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
                   <span style={{fontWeight:700,color:"#818cf8",fontSize:13}}>{h.rfqNum}</span>
@@ -10962,13 +10982,17 @@ function RfqHistoryModal({uid,onClose}){
                 </div>
                 {h.sentFrom&&<div style={{fontSize:11,color:"#94a3b8",marginBottom:6}}>From: {h.sentFrom}</div>}
                 <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                  {(h.entries||[]).map((e,i)=>(
+                  {(h.entries||[]).map((e,i)=>{
+                    const sub=e.uploadToken?subByToken[e.uploadToken]:null;
+                    return(
                     <div key={i}>
-                      <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12}}>
+                      <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,flexWrap:"wrap"}}>
                         <span style={{color:e.sent?"#4ade80":e.skipped?"#64748b":"#f87171",fontWeight:700,width:14,textAlign:"center",flexShrink:0}}>{e.sent?"✓":e.skipped?"–":"✗"}</span>
                         <span style={{color:"#f1f5f9",fontWeight:600,minWidth:160}}>{e.vendorName}</span>
-                        <span style={{color:"#94a3b8",flex:1}}>{e.vendorEmail||"no email"}</span>
+                        <span style={{color:"#94a3b8",flex:1,minWidth:140}}>{e.vendorEmail||"no email"}</span>
+                        {sub&&subStatusBadge(sub)}
                         {(e.items||[]).length>0&&<button onClick={()=>setExpandedItems(prev=>({...prev,[h.id+"-"+i]:!prev[h.id+"-"+i]}))} style={{background:"none",border:"1px solid #3d6090",borderRadius:4,color:"#94a3b8",cursor:"pointer",fontSize:10,padding:"1px 6px"}}>{(e.items||[]).length} item{(e.items||[]).length!==1?"s":""} {expandedItems[h.id+"-"+i]?"▴":"▾"}</button>}
+                        {sub&&sub.storageUrl&&<a href={sub.storageUrl} target="_blank" rel="noopener noreferrer" title={sub.fileName||"Supplier-uploaded PDF"} style={{color:"#fbbf24",fontSize:10,fontWeight:700,textDecoration:"none"}}>📄 PDF</a>}
                         {e.uploadToken&&<a href={`https://matrix-arc.web.app?rfqUpload=${e.uploadToken}`} target="_blank" rel="noopener noreferrer" style={{color:"#38bdf8",fontSize:10,fontWeight:600,textDecoration:"none"}}>Portal ↗</a>}
                         {e.error&&<span style={{color:"#f87171",fontSize:10}} title={e.error}>⚠ failed</span>}
                       </div>
@@ -10979,10 +11003,12 @@ function RfqHistoryModal({uid,onClose}){
                         </table>
                       </div>}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
-            ))}
+            ));
+            })()}
           </>}
           {tab==="received"&&<>
             {submissions===null&&<div style={{color:"#94a3b8",fontSize:13}}>Loading…</div>}
