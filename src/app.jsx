@@ -6023,7 +6023,36 @@ function _looksLikeCompanionPn(token,primaryPn){
   // live in the notes/tag column alongside the part number and were getting misclassified
   // as companion catalog codes, creating bogus BOM rows. Real catalog codes almost always
   // have a dash (SH2B-05, 100-FA22, RH2B-ULC-DC24) OR are 7+ chars without one.
-  if(/^[A-Z]{1,3}\d{1,4}$/.test(up))return false;
+  // DECISION(v1.19.793): Broaden ref-designator rejection to 1-4 letters + 1-5 digits.
+  // Industrial BOMs use 4-letter prefixes too (VFD, MCP, HMI, RECP, RECP, MCB, FUSE, etc.)
+  // with 3-digit instance numbers. The old 1-3 letter cap was missing these.
+  if(/^[A-Z]{1,4}\d{1,5}$/.test(up))return false;
+  // DECISION(v1.19.793): Reject REF-DESIGNATOR RANGE patterns. Ovivo / Chandler-style
+  // BOMs use ranges in the TAGS column to denote one part used at multiple instances:
+  //   VFD108-VFD138        (VFD instances 108 through 138)
+  //   PLC302-PLC-452       (PLC slots 302 through 452 — note extra dash)
+  //   PLC652-PLC702        (analog input modules at PLC652 through PLC702)
+  //   MCP108-MCP138        (motor control panel range)
+  //   M214-M226            (motor range)
+  //   CR504-CR636          (control relay range)
+  //   CB202-CB245          (circuit breaker range)
+  // These all have the shape: <prefix><number>-<prefix><number> where the same prefix
+  // (or empty/dash variants) appears on both sides. Real catalog codes never have this
+  // structure — manufacturer codes don't repeat their prefix after a dash.
+  if(/^[A-Z]{1,4}\d+-[A-Z]{0,4}-?\d+$/.test(up)){
+    // Confirm the prefix is the same on both sides (or the right-hand side is just digits
+    // appended via a connector dash). If left prefix === right prefix, it's a range.
+    const m=up.match(/^([A-Z]{1,4})(\d+)-([A-Z]{0,4})-?(\d+)$/);
+    if(m){
+      const lPrefix=m[1],rPrefix=m[3];
+      // Range: same prefix on both sides, OR right side is empty (e.g. "PLC100-200")
+      if(!rPrefix||lPrefix===rPrefix)return false;
+    }
+  }
+  // DECISION(v1.19.793): Comma-separated ref designators ("CB252, CB260") sometimes get
+  // glued into a single token by the AI. Reject any token with a comma — real PNs don't
+  // contain commas.
+  if(up.includes(","))return false;
   if(!up.includes("-")&&up.length<7)return false;
   // Normalized difference check
   if(normPart(up)===normPart(primaryPn||""))return false;
@@ -6310,35 +6339,59 @@ STEP 4 — EXTRACT EVERY ROW (no skipping):
   e.g. "ABB KXTBRHEBFP, OXP10X225, OH865L10B" → three rows, each with same qty/manufacturer/notes
   First row: original description unchanged
   Each extra row: append " (sub-part)" to description
-• COMPANION PARTS (relay+base, contactor+aux, etc.) — critical: NEVER drop a second catalog code:
-  Industrial BOMs often list a primary component with a companion part on the SAME row. The
-  companion code might appear in the description, the notes/tag column, or even a separate
-  un-labeled column. You MUST capture EVERY alphanumeric catalog code on the row — do not
-  discard a second/third PN just because it's in a column you'd otherwise ignore.
+• COMPANION PARTS (relay+base, contactor+aux, etc.) — capture genuine secondary catalog codes:
+  Some BOM rows list a primary component AND a companion catalog code on the same row
+  (relay base under a relay, aux contact under a contactor). These should both appear in the
+  output. But MOST values that look "tag-like" are NOT companion catalog codes — they are
+  reference designators identifying WHERE the part installs on the panel.
 
-  Output ALL catalog codes found on the row via the "additionalPartNumbers" array on the item.
-  Each entry: {"partNumber":"...", "relationship":"base|socket|aux|accessory|other", "context":"brief snippet showing where it was"}.
+  CRITICAL — NEVER pull anything from a column titled "TAG", "TAGS", "REF", "REFERENCE",
+  "DEVICE ID", or similar into additionalPartNumbers. Whatever lives in that column is by
+  convention a reference designator, not a catalog code, no matter how alphanumeric it looks.
+  Tag-column values ALWAYS go to the "notes" field, never to "additionalPartNumbers".
 
-  Examples:
-    Row: [Qty:5] [PN:RH2B-ULC-DC24] [Desc:DPDT Ice Cube Relay] [Tag:SH2B-05]
-      → item: {partNumber:"RH2B-ULC-DC24", qty:5, description:"DPDT Ice Cube Relay",
-               additionalPartNumbers:[{partNumber:"SH2B-05", relationship:"base", context:"Tag column"}]}
+  Reference designators are panel-instance labels, NOT part numbers. They look like:
+    CB103, CB191, CR504, M214, F207, PS245, HMI252, NS256, AH802, UPS190, DB106, XF190,
+    MCP108-MCP138, MCP152-MCP179, VFD108-VFD138, VFD108-VFD-138, M214-M226, CR504-CR636,
+    CB202-CB245, CB252-CB260, PLC100, PLC302-PLC-452, PLC502-PLC602, PLC652-PLC702
+  Pattern: 1-4 letter prefix + digits, optionally followed by "-" + (same prefix +) digits
+  (a range covering multiple instances). These are NOT catalog codes; they identify where
+  the part is installed. Always go to "notes".
+
+  Output ONLY GENUINE secondary catalog codes via "additionalPartNumbers" — and only when
+  found in the DESCRIPTION column or the PART NUMBER column itself (multi-PN cells like
+  "ABB KXTBRHEBFP / OXP10X225"). Each entry: {"partNumber":"...", "relationship":"base|socket|aux|accessory|other", "context":"brief snippet showing where it was"}.
+
+  Examples — DO emit additionalPartNumbers:
+    Row: [Qty:5] [PN:RH2B-ULC-DC24] [Desc:DPDT Ice Cube Relay w/ SH2B-05 base]
+      → {partNumber:"RH2B-ULC-DC24", qty:5, description:"DPDT Ice Cube Relay",
+         additionalPartNumbers:[{partNumber:"SH2B-05", relationship:"base", context:"in description"}]}
 
     Row: [Qty:3] [PN:100-C09KJ10] [Desc:9A Contactor w/ 100-FA22 Aux]
-      → item: {partNumber:"100-C09KJ10", qty:3, description:"9A Contactor",
-               additionalPartNumbers:[{partNumber:"100-FA22", relationship:"aux", context:"in description"}]}
+      → {partNumber:"100-C09KJ10", qty:3, description:"9A Contactor",
+         additionalPartNumbers:[{partNumber:"100-FA22", relationship:"aux", context:"in description"}]}
 
-    Row with THREE codes in one cell: [Qty:2] [PN:ABB KXTBRHEBFP, OXP10X225, OH865L10B]
-      → Still emit as 3 separate items (existing rule), OR use additionalPartNumbers on a primary. Either is fine.
+    Row with multiple codes in PN cell: [Qty:2] [PN:ABB KXTBRHEBFP, OXP10X225, OH865L10B]
+      → emit as 3 separate items.
 
-  Detection rule for additionalPartNumbers: look for any alphanumeric token on the row that
-  (a) has letters AND digits, (b) is 4+ chars, (c) is distinct from the primary partNumber,
-  and (d) is NOT a ref designator (e.g. "CB1", "M2", "OL1" — single-letter prefix + small number
-  typical of tag/ID columns). Ref designators go in the "notes" field as before. Catalog codes
-  (longer, often with dashes like "SH2B-05" or "100-FA22") go in "additionalPartNumbers".
+  Examples — DO NOT emit additionalPartNumbers (these are ref designators):
+    Row: [Qty:4] [PN:1769-IQ32] [Desc:PLC Digital Input Module] [Tag:PLC302-PLC-452]
+      → {partNumber:"1769-IQ32", qty:4, description:"PLC Digital Input Module",
+         notes:"PLC302-PLC-452", additionalPartNumbers:[]}
+      The TAG column value PLC302-PLC-452 is a ref designator range, not a catalog code.
 
-  If you're uncertain whether a code is a ref designator or a catalog code: when in doubt,
-  include it in additionalPartNumbers. ARC's post-processor will de-duplicate and filter.
+    Row: [Qty:4] [PN:MS165-65] [Desc:Motor Controller, 65A] [Tag:MCP108-MCP138]
+      → {partNumber:"MS165-65", qty:4, description:"Motor Controller, 65A",
+         notes:"MCP108-MCP138", additionalPartNumbers:[]}
+
+    Row: [Qty:1] [PN:5842600] [Desc:Enclosure] [Tag:CB103]
+      → {partNumber:"5842600", qty:1, description:"Enclosure", notes:"CB103",
+         additionalPartNumbers:[]}
+
+  When uncertain: if the token looks like <letters><digits>(-<letters>?<digits>)?, treat it as
+  a ref designator and put it in notes. ONLY use additionalPartNumbers when the token is
+  unambiguously a catalog code — typically a longer alphanumeric with multiple dashes or a
+  manufacturer-prefix pattern (100-XXX, 1769-XXX, etc.).
 • Reference designators (CB1, M1, OL2, PB3, SS1…) → notes field only, never partNumber
 • Include ALL data rows even when some fields are blank — only skip: column header row, totals rows, title block text, revision block rows
 
