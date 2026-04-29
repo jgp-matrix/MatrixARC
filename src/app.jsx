@@ -18803,10 +18803,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     ):null;
                     // DECISION(v1.19.666): Red row = qty=0 / unitPrice=0 / priceDate missing or stale.
                     // See _isBomRowFlaggedRed for full rules + exclusions.
-                    // DECISION(v1.19.830): Bumped alternate-row tint from 0.015 → 0.06 alpha.
-                    // The original was barely visible against the dark theme; the new value
-                    // gives a clear zebra stripe without overpowering the row content.
-                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_isBomRowFlaggedRed(row)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.06)";
+                    // DECISION(v1.19.831): Alternate-row tint bumped to 0.10 alpha — still
+                    // soft enough to read row text against, but the zebra stripe is now
+                    // unmistakable on the dark theme.
+                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_isBomRowFlaggedRed(row)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
                     // DECISION(v1.19.828): Hoisted out of the row IIFE so the meta-row emit
                     // below can also read it. Indicates the partNumber cell has additional
                     // context (from/auto-replace, Co-Part, Cross/ARC-Cross) that should be
