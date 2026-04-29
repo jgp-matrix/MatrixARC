@@ -13661,14 +13661,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onMouseDown={e=>{backdropMdRef.current=e.target===e.currentTarget;}}
       onClick={e=>{if(backdropMdRef.current)onClose();}}>
-      <div style={{...card(),width:"100%",maxWidth:860,maxHeight:"90vh",minHeight:400,minWidth:520,display:"flex",flexDirection:"column",overflow:"auto",resize:"both"}} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
-        {/* DECISION(v1.19.810): Modal scrolls now (overflow:auto on the outer box) and
-            has CSS resize:both so the user gets a native corner grabber. Header
-            position:sticky keeps the BC Item Browser title visible while scrolling
-            past the results table. Previously overflow:hidden made the box clip its
-            top whenever content + drawing reference exceeded viewport, and the resize
-            grabber didn't show because resize requires overflow !== visible. */}
-        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14,gap:12,flexShrink:0,position:"sticky",top:-20,zIndex:5,background:C.card,paddingTop:20,marginTop:-20,paddingBottom:6}}>
+      <div style={{...card(),width:"100%",maxWidth:860,maxHeight:"90vh",minHeight:400,minWidth:520,overflow:"auto",resize:"both",position:"relative"}} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+        {/* DECISION(v1.19.811): Switched from flex column → simple block layout for the
+            modal body. Block layout reliably overflows + scrolls when content exceeds
+            maxHeight. Flex column + overflow:auto was failing to scroll on this modal
+            (likely because flex children took natural size but flex container wasn't
+            recognizing the overflow). Now: block flow, sticky header, native CSS
+            resize grabber on the modal corner. */}
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14,gap:12,position:"sticky",top:-20,zIndex:5,background:C.card,paddingTop:20,marginTop:-20,paddingBottom:6}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>BC Item Browser</div>
             {targetRow&&(targetRow.partNumber||targetRow.description)&&(
