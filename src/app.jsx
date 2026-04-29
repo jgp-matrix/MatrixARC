@@ -18805,8 +18805,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   // DECISION(v1.19.666): Red row = qty=0 / unitPrice=0 / priceDate missing or stale.
                   // See _isBomRowFlaggedRed for full rules + exclusions.
                   const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_isBomRowFlaggedRed(row)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)";
+                  // DECISION(v1.19.826): Only top-align the row when the partNumber cell actually
+                  // has secondary lines (from / auto-replace / Co-Part / Cross pills). Single-line
+                  // rows use the default middle alignment so plain-text and input cells stay on the
+                  // same baseline (top alignment exposes the intrinsic padding mismatch between
+                  // <input> and plain <td> text).
+                  const _pnHasExtraLines=row.autoAddedCompanion||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber));
                   return(
-                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:rowBg,verticalAlign:"top"}}>
+                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:rowBg,verticalAlign:_pnHasExtraLines?"top":"middle"}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
                       {i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
