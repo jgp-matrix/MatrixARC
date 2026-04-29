@@ -6091,9 +6091,13 @@ function splitCompanionParts(bom){
       const parentNote=`Companion part ${tok} auto-added as separate BOM row`;
       if(!(row.notes||"").includes(parentNote))row.notes=row.notes?(row.notes+" · "+parentNote):parentNote;
     }
-    // DECISION(v1.19.673): Second pass (safety net) — scan description AND notes for catalog
-    // codes near companion keywords, in case the AI didn't populate additionalPartNumbers.
-    const scanText=[(row.description||""),(row.notes||"")].filter(Boolean).join(" · ");
+    // DECISION(v1.19.673): Second pass (safety net) — scan description for catalog codes
+    // near companion keywords, in case the AI didn't populate additionalPartNumbers.
+    // DECISION(v1.19.794): Removed `notes` from this scan. The notes field now legitimately
+    // contains TAGS column values (ref designators) per the column-header rule. Scanning
+    // notes was pulling tag values like "VFD108-VFD138" out as companion catalog codes
+    // whenever the description contained a companion keyword like "module" or "kit".
+    const scanText=row.description||"";
     if(!scanText)continue;
     const scanLow=scanText.toLowerCase();
     if(!_COMPANION_KEYWORDS.some(k=>scanLow.includes(k)))continue;
