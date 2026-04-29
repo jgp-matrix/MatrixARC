@@ -2542,6 +2542,87 @@ async function _bcFetchItems(compId,filter,top,skip){
     inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:item.vendorNo||""
   }));
 }
+// DECISION(v1.19.797): Synonym groups for BC item search. Industrial part
+// catalogs frequently abbreviate descriptions ("NETWK SW" instead of "NETWORK SWITCH",
+// "XFMR" instead of "TRANSFORMER"). Without synonym expansion, a user searching for
+// "network" misses items stored as "NETWK SW 4 PORT" because BC's contains() is a
+// strict substring match. Each group below expands any token to all its variants when
+// building the OData filter. Add new groups as you discover catalog conventions —
+// the structure is tolerant to overlap (same token in multiple groups gets all variants).
+const BC_SEARCH_SYNONYMS=[
+  // Networking
+  ["net","network","ntwk","netwk","nwk","ethernet","ether","enet","eth"],
+  ["sw","switch","swtch","swt"],
+  ["port","ports","outlet"],
+  ["hub","hubs"],
+  ["router","rtr"],
+  ["modem"],
+  ["cable","cbl","cord"],
+  ["patch","pch"],
+  // Power / protection
+  ["xfmr","transformer","trans","xform","xfr"],
+  ["cb","breaker","brkr","circuit"],
+  ["fuse","fu"],
+  ["disc","disconnect","dsc","disc."],
+  ["relay","rly","rel"],
+  ["contactor","contctr","cont"],
+  ["overload","ovld","ol"],
+  ["mcc","mccb"],
+  ["surge","spd","tvs","arrester"],
+  // Drives / motors
+  ["vfd","drive","vsd","inverter"],
+  ["motor","mtr"],
+  ["starter","str"],
+  // PLC / control
+  ["plc","controller","ctlr","ctrl"],
+  ["hmi","panelview","operator","interface","display","screen"],
+  ["module","mod","modul","modular"],
+  ["input","inp","in"],
+  ["output","outp","out"],
+  ["analog","anlg","ai","ao"],
+  ["digital","dig","di","do","dio"],
+  ["processor","proc","cpu","logix"],
+  ["chassis","rack"],
+  // Terminals / wiring
+  ["terminal","term","tb","trm"],
+  ["block","blk","blok"],
+  ["ground","gnd","grn"],
+  ["jumper","jmp"],
+  ["lug","lugs"],
+  ["wire","wiring","wir","cond","conductor"],
+  ["duct","wireway","wirway","trough"],
+  ["din","rail"],
+  ["marker","label","lbl","tag"],
+  ["splice","splc"],
+  ["ferrule","fer"],
+  // Power supplies / UPS
+  ["ps","psu","power","supply"],
+  ["ups","battery","batt","bat"],
+  // Enclosures / mechanical
+  ["enclosure","encl","cabinet","cab","box","housing"],
+  ["panel","pnl"],
+  ["door","drs"],
+  ["window","wndw"],
+  ["fan","blower","cooler"],
+  ["heater","htr","heat"],
+  ["light","lt","led","lamp"],
+  ["pushbutton","pb","push"],
+  ["selector","sel","ss","switch"],
+  ["pilot","pl"],
+  ["horn","alarm","ah"],
+  ["receptacle","recp","outlet"],
+  // Voltage / freq references
+  ["transformer","step","stepdown"],
+  ["voltage","volt","v"],
+  ["amp","amps","ampere"],
+];
+function _bcExpandToken(t){
+  const low=t.toLowerCase();
+  for(const group of BC_SEARCH_SYNONYMS){
+    if(group.includes(low))return Array.from(new Set(group));
+  }
+  return[low];
+}
 async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   if(!query||query.trim().length<3)return{items:[],hasMore:false};
   // Auto-reacquire token if missing or recently cleared
@@ -2554,26 +2635,47 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   // BC rejects `or` across distinct fields, so we still run two queries (number, displayName)
   // and merge. Within a field the tokens are ANDed — an item matches only if it contains ALL
   // tokens in that field.
-  const tokens=query.trim().split(/[\s,]+/).map(t=>t.trim()).filter(t=>t.length>0).map(t=>t.replace(/'/g,"''"));
-  if(!tokens.length)return{items:[],hasMore:false};
-  const andOn=(fieldName)=>tokens.map(t=>`contains(${fieldName},'${t}')`).join(' and ');
+  // DECISION(v1.19.797): Each token now expands to its synonym group (network ↔ ntwk ↔ enet,
+  // switch ↔ sw, transformer ↔ xfmr, etc). Within a token group the synonyms are ORed (any
+  // variant matches), and across token groups we still AND. So "net sw" finds items whose
+  // displayName contains (net|network|ntwk|netwk|nwk|ethernet|ether|enet|eth) AND
+  // (sw|switch|swtch|swt) — covering both "NETWORK SWITCH" and "ETHERNET SW" and "NTWK SW".
+  const rawTokens=query.trim().split(/[\s,]+/).map(t=>t.trim()).filter(t=>t.length>0);
+  if(!rawTokens.length)return{items:[],hasMore:false};
+  const tokenGroups=rawTokens.map(t=>_bcExpandToken(t).map(s=>s.replace(/'/g,"''")));
+  function _andOn(fieldName){
+    return tokenGroups.map(group=>{
+      const orParts=group.map(s=>`contains(${fieldName},'${s}')`);
+      return orParts.length===1?orParts[0]:`(${orParts.join(' or ')})`;
+    }).join(' and ');
+  }
+  // Build a strict literal filter (no synonyms) for fallback in case the synonym
+  // expansion was too aggressive and missed an obvious literal hit.
+  const literalTokens=rawTokens.map(t=>t.replace(/'/g,"''"));
+  function _andOnLiteral(fieldName){
+    return literalTokens.map(t=>`contains(${fieldName},'${t}')`).join(' and ');
+  }
   try{
     if(field==="both"){
-      const [byNum,byName]=await Promise.all([
-        _bcFetchItems(compId,andOn('number'),top+1,skip),
-        _bcFetchItems(compId,andOn('displayName'),top+1,skip)
+      const [byNum,byName,litByName]=await Promise.all([
+        _bcFetchItems(compId,_andOn('number'),top+1,skip),
+        _bcFetchItems(compId,_andOn('displayName'),top+1,skip),
+        // DECISION(v1.19.797): Also fire a strict-literal pass on displayName so any item
+        // matching the user's typed words (without synonym substitution) is guaranteed to
+        // surface even if its description contains words outside our synonym groups.
+        _bcFetchItems(compId,_andOnLiteral('displayName'),top+1,skip)
       ]);
       const seen=new Set();
       const merged=[];
-      for(const item of[...(byNum||[]),...(byName||[])]){
+      for(const item of[...(byNum||[]),...(byName||[]),...(litByName||[])]){
         if(!seen.has(item.number)){seen.add(item.number);merged.push(item);}
       }
       merged.sort((a,b)=>a.number.localeCompare(b.number));
       const hasMore=merged.length>top;
-      console.log(`bcSearchItems results: ${Math.min(merged.length,top)} items (both fields, ${tokens.length} token${tokens.length>1?'s':''})`);
+      console.log(`bcSearchItems results: ${Math.min(merged.length,top)} items (both fields, ${rawTokens.length} token${rawTokens.length>1?'s':''}, synonyms: ${tokenGroups.map(g=>g.length>1?g.length+'×':'').filter(Boolean).join(',')||'none'})`);
       return{items:merged.slice(0,top),hasMore};
     }
-    const filter=field==="number"?andOn('number'):andOn('displayName');
+    const filter=field==="number"?_andOn('number'):_andOn('displayName');
     const all=await _bcFetchItems(compId,filter,top+1,skip);
     if(!all)return{items:[],hasMore:false};
     const hasMore=all.length>top;
