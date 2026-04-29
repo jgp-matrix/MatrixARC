@@ -7745,10 +7745,12 @@ async function detectZoomedPages(pagesOfType){
 
 // ── PANEL VALIDATION ──
 async function runPanelValidation(panel,onProgress,bomPromise=null){
-  let schematicPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl));
-  let backpanelPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("backpanel")&&(p.dataUrl||p.storageUrl));
-  let enclosurePages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("enclosure")&&(p.dataUrl||p.storageUrl));
-  let layoutPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("layout")&&(p.dataUrl||p.storageUrl)); // legacy
+  // ECO Phase 2.J: filter out ECO-tagged pages so the base validation never sees them.
+  const _bp=_basePages(panel);
+  let schematicPages=_bp.filter(p=>getPageTypes(p).includes("schematic")&&(p.dataUrl||p.storageUrl));
+  let backpanelPages=_bp.filter(p=>getPageTypes(p).includes("backpanel")&&(p.dataUrl||p.storageUrl));
+  let enclosurePages=_bp.filter(p=>getPageTypes(p).includes("enclosure")&&(p.dataUrl||p.storageUrl));
+  let layoutPages=_bp.filter(p=>getPageTypes(p).includes("layout")&&(p.dataUrl||p.storageUrl)); // legacy
   if(!schematicPages.length&&!backpanelPages.length&&!enclosurePages.length&&!layoutPages.length)return{validation:null,laborData:null};
   // Ensure dataUrls for pages loaded from Storage
   schematicPages=await Promise.all(schematicPages.map(ensureDataUrl));
@@ -7768,7 +7770,7 @@ async function runPanelValidation(panel,onProgress,bomPromise=null){
   const dcData=await loadDeviceClassifications(_appCtx.uid).catch(()=>({entries:[],customCategories:[]}));
   const dcHint=buildDeviceClassificationHint(dcData);
   const baseNotes=panel.extractionNotes||"";
-  const allRegionSummary=buildAllRegionSummary(panel.pages||[]);
+  const allRegionSummary=buildAllRegionSummary(_bp);
   const [schResults,bpResults,encResults,layResults]=await Promise.all([
     parallelMap(schematicPages,async pg=>{const notes=baseNotes+buildPageRegionNotes(pg)+allRegionSummary;const r=await analyzeSchematicPage(pg.dataUrl,notes,dcHint);donePages++;reportProgress();return r;},4),
     parallelMap(backpanelPages,async pg=>{const notes=baseNotes+buildPageRegionNotes(pg)+allRegionSummary;const r=await analyzeBackpanelPage(pg.dataUrl,notes);donePages++;reportProgress();return r;},4),
@@ -7894,7 +7896,7 @@ async function runComplianceReview(panel){
   const deviceSummary=Object.entries(deviceTypes).map(([t,c])=>`${t}: ${c}`).join(', ');
 
   // Gather all region annotations — especially Spec and Label regions for compliance
-  const allPages=panel.pages||[];
+  const allPages=_basePages(panel);
   const regionAnnotations=allPages.flatMap(pg=>(pg.regions||[]).filter(r=>r.note).map(r=>({page:pg.name||'Page',type:r.label||r.type,note:r.note})));
   const specRegions=regionAnnotations.filter(r=>r.type==='Spec'||r.type==='spec');
   const labelRegions=regionAnnotations.filter(r=>r.type==='Label'||r.type==='label');
@@ -8211,7 +8213,7 @@ async function burnShapesCanvas(dataUrl,shapes,opts){
 async function saveExtractionLearning(uid,projectId,panel,projectName,bcProjectNumber){
   if(!_appCtx.companyId)return;
   try{
-    const pages=panel.pages||[];
+    const pages=_basePages(panel);
     const drawingTypes=[...new Set(pages.flatMap(p=>getPageTypes(p)))].join(', ');
     const bom=panel.bom||[];
     const val=panel.validation||{};
@@ -8358,10 +8360,12 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   let latestPanel=panel;
   try{
   latestPanel={...panel};
-  const bomPages=(panel.pages||[]).filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
-  const hasSchOrLayout=(panel.pages||[]).some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&(p.dataUrl||p.storageUrl));
+  // ECO Phase 2.J: filter ECO-tagged pages out of base extraction.
+  const _bp=_basePages(panel);
+  const bomPages=_bp.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
+  const hasSchOrLayout=_bp.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&(p.dataUrl||p.storageUrl));
   const willValidate=!!_apiKey&&hasSchOrLayout;
-  const regionContext=buildRegionContext(panel.pages||[]);
+  const regionContext=buildRegionContext(_bp);
   const userNotes=(panel.extractionNotes||"")+regionContext;
   // DECISION(v1.19.644): Session 1 of the Option C consolidation. Replaced the per-stage
   // saveProjectPanel calls with in-memory state accumulation. Previously each stage (BOM
@@ -8382,7 +8386,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const hasVal=willValidate;
     const hasVerify=_apiKey;
     const hasCompliance=false; // DECISION(v1.19.530): Disabled — engineering questions feature needs attention before re-enabling
-    const hasUpload=(panel.pages||[]).some(pg=>pg.dataUrl&&!pg.storageUrl);
+    const hasUpload=_bp.some(pg=>pg.dataUrl&&!pg.storageUrl);
     // Weighted phases: BOM=40, Validation=25, Verify=10, Compliance=15, Upload=10 (last — stamp needs hazloc)
     let phases=[];
     if(hasBom)phases.push({name:"bom",weight:40});
@@ -8408,15 +8412,15 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // uses hazloc=false provisionally; if hazloc IS found later, the final stamp step
     // re-stamps with UL698/1203 included. If hazloc is not found (the common case), the
     // early stamp is the final stamp and no re-upload is needed.
-    const earlyUploadNeeded=(panel.pages||[]).filter(pg=>pg.dataUrl&&!pg.storageUrl);
+    const earlyUploadNeeded=_bp.filter(pg=>pg.dataUrl&&!pg.storageUrl);
     if(earlyUploadNeeded.length>0&&projectId){
       try{
         const earlyUrlMap={};
-        const totalPages=(panel.pages||[]).length;
+        const totalPages=_bp.length;
         await parallelMap(earlyUploadNeeded,async pg=>{
           let dataUrl=pg.dataUrl;
           if(stampFn){
-            const pgIdx=(panel.pages||[]).findIndex(p=>p.id===pg.id);
+            const pgIdx=_bp.findIndex(p=>p.id===pg.id);
             try{
               const stamped=await stampFn(dataUrl,pgIdx,totalPages,{hazloc:false});
               if(stamped&&stamped!==dataUrl){dataUrl=stamped;_dbg('EARLY STAMP OK page',pgIdx+1);}
@@ -8544,7 +8548,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     if(mergedBom.length>0){
       try{
         bgUpdate(panel.id,"Re-verifying each row…");
-        const livePages=latestPanel.pages||panel.pages||[];
+        const livePages=_basePages(latestPanel.pages?latestPanel:panel);
         const res=await selfCorrectBomRowsWithSnippets(mergedBom,livePages,(pct,msg)=>{
           phasePct("bom",0.9+pct/1000); // small boost at tail end of BOM phase
           if(msg)bgUpdate(panel.id,msg);
@@ -8911,6 +8915,11 @@ function getPageTypes(page){
   if(page.type&&page.type!=="untagged")return[page.type];
   return[];
 }
+// DECISION(v1.19.819, ECO Phase 2.J): _basePages filters out ECO-tagged drawings so
+// they don't leak into base-quote extraction/validation/UI counters. Pages tagged
+// with `ecoId` belong to a specific Engineering Change Order and are reviewed
+// inside the EcoEditor's Drawings tab — never re-extracted as part of the base.
+function _basePages(panel){return(panel?.pages||[]).filter(p=>!p.ecoId);}
 
 // ── COMPONENTS ──
 
@@ -9685,10 +9694,12 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
     onSaveImmediate&&onSaveImmediate(updated);
   }
 
-  // DECISION(v1.19.817, ECO Phase 2.J Stage 1): handleEcoFiles renders dropped
-  // PDFs/images, tags each page with ecoId/ecoNumber, persists onto panel.pages,
-  // uploads to Storage in the background, then runs extractBomPage on each.
-  // Extracted items go into component state for Stage 2 (diff/review).
+  // DECISION(v1.19.819, ECO Phase 2.J Stage 1 fix): handleEcoFiles renders dropped
+  // PDFs/images (BOM-only OR full drawing package), runs AI page-type detection
+  // (Sonnet) on each page, persists onto panel.pages with ecoId/ecoNumber tags,
+  // uploads to Storage in the background, then runs extractBomPage ONLY on pages
+  // classified as "bom". Other page types (schematic, layout, enclosure, backpanel)
+  // are preserved as audit trail but NOT extracted — Stage 2's diff is BOM-driven.
   async function handleEcoFiles(files){
     if(!pickedPanel||!files||!files.length)return;
     if(!_apiKey){setEcoExtractError("Set your Anthropic API key in Settings before uploading ECO drawings.");return;}
@@ -9727,7 +9738,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
               id:`eco-pg-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
               name:`${f.name} — p${pg}`,
               dataUrl:resized,
-              types:["bom"], // Stage 1 treats every dropped page as BOM (no page-type confirm)
+              types:[], // page-type detection runs below
               ecoId:eco.ecoId,
               ecoNumber:eco.number,
               ecoUploadedAt:Date.now(),
@@ -9742,7 +9753,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
             id:`eco-pg-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
             name:f.name,
             dataUrl:resized,
-            types:["bom"],
+            types:[],
             ecoId:eco.ecoId,
             ecoNumber:eco.number,
             ecoUploadedAt:Date.now(),
@@ -9750,12 +9761,36 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
         }
       }
       if(!newPages.length){setEcoExtracting(false);setEcoExtractMsg("");return;}
+
+      // AI page-type detection — Sonnet auto-classifies each page so a full drawing
+      // package routes correctly. No user confirmation step (per user decision 3=A);
+      // single-page BOM-only drops fall back to "bom" if the AI returns no types.
+      setEcoExtractMsg(`🤖 Detecting page types (${newPages.length} page${newPages.length===1?"":"s"})…`);
+      const learningEx=await loadPageTypeLearning(uid).catch(()=>[]);
+      let detectDone=0;
+      await parallelMap(newPages,async(pg,i)=>{
+        try{
+          const info=await detectPageTypes(pg.dataUrl,learningEx);
+          newPages[i].types=info.types||[];
+          newPages[i].aiDetectedTypes=info.types||[];
+        }catch(e){console.warn("[ECO Drawings] page-type detect failed:",pg.name,e.message);}
+        detectDone++;
+        setEcoExtractMsg(`🤖 Detecting page types — ${detectDone}/${newPages.length}…`);
+      },4);
+      // Safety fallback — single-page drops where the AI returned no types default to BOM.
+      const allEmpty=newPages.every(p=>!(p.types||[]).length);
+      if(allEmpty){
+        console.warn("[ECO Drawings] AI returned no types for any page — defaulting all to bom");
+        newPages.forEach(p=>{p.types=["bom"];});
+      }
+
       // Persist to panel.pages immediately so a refresh doesn't lose them.
       const mergedPages=[...(pickedPanel.pages||[]),...newPages];
       const newPanels=panels.map(p=>p.id===pickedPanel.id?{...p,pages:mergedPages}:p);
       let updated={...project,panels:newPanels,updatedAt:Date.now()};
       onUpdateProject&&onUpdateProject(updated);
       try{await onSaveImmediate(updated);}catch(e){console.warn("[ECO Drawings] save failed:",e.message);}
+
       // Upload to Storage in the background (don't block extraction on this).
       (async()=>{
         for(const pg of newPages){
@@ -9772,24 +9807,32 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           }catch(e){console.warn("[ECO Drawings] storage upload failed for",pg.id,e.message);}
         }
       })();
-      // Auto-extract on each new page (sequential so message stays clean).
+
+      // Auto-extract — BOM-classified pages only. Other page types (schematic / layout /
+      // enclosure / backpanel) ride along as audit trail but aren't extracted here.
+      const bomNewPages=newPages.filter(p=>(p.types||[]).includes("bom"));
       const results={};
-      for(let i=0;i<newPages.length;i++){
-        const pg=newPages[i];
-        setEcoExtractMsg(`Extracting ${pg.name} (${i+1}/${newPages.length})…`);
-        try{
-          const r=await extractBomPage(pg.dataUrl,"","");
-          const items=Array.isArray(r)?r:(r&&r.items)||[];
-          results[pg.id]=items;
-          setEcoExtractedItems(prev=>({...prev,[pg.id]:items}));
-        }catch(ex){
-          console.warn("[ECO Drawings] extract failed for",pg.name,ex.message);
-          results[pg.id]=[];
-          setEcoExtractedItems(prev=>({...prev,[pg.id]:[]}));
+      if(bomNewPages.length===0){
+        setEcoExtractMsg(`No BOM pages detected in ${newPages.length} drawing${newPages.length===1?"":"s"}. Drawings saved as ECO audit trail.`);
+      }else{
+        for(let i=0;i<bomNewPages.length;i++){
+          const pg=bomNewPages[i];
+          setEcoExtractMsg(`Extracting BOM ${pg.name} (${i+1}/${bomNewPages.length})…`);
+          try{
+            const r=await extractBomPage(pg.dataUrl,"","");
+            const items=Array.isArray(r)?r:(r&&r.items)||[];
+            results[pg.id]=items;
+            setEcoExtractedItems(prev=>({...prev,[pg.id]:items}));
+          }catch(ex){
+            console.warn("[ECO Drawings] extract failed for",pg.name,ex.message);
+            results[pg.id]=[];
+            setEcoExtractedItems(prev=>({...prev,[pg.id]:[]}));
+          }
         }
+        const totalItems=Object.values(results).reduce((s,a)=>s+a.length,0);
+        const otherCount=newPages.length-bomNewPages.length;
+        setEcoExtractMsg(`Extracted ${totalItems} item${totalItems===1?"":"s"} from ${bomNewPages.length} BOM page${bomNewPages.length===1?"":"s"}.${otherCount>0?` ${otherCount} other drawing${otherCount===1?"":"s"} attached as audit trail.`:""}`);
       }
-      const totalItems=Object.values(results).reduce((s,a)=>s+a.length,0);
-      setEcoExtractMsg(`Extracted ${totalItems} item${totalItems===1?"":"s"} from ${newPages.length} page${newPages.length===1?"":"s"}.`);
     }catch(ex){
       console.error("[ECO Drawings] handleEcoFiles error:",ex);
       setEcoExtractError(`Error: ${ex.message}`);
@@ -10198,8 +10241,8 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
                   }}>
                   <div style={{fontSize:30,marginBottom:8,opacity:0.6}}>📐</div>
                   <div style={{fontSize:13,fontWeight:700,color:"#a855f7",marginBottom:4}}>Drop revised drawings here, or click to pick</div>
-                  <div style={{fontSize:11,color:C.muted,lineHeight:1.5,maxWidth:480,margin:"0 auto"}}>
-                    PDFs and images are auto-extracted as BOMs. Pages are tagged to <strong style={{color:C.sub}}>{ecoLabel}</strong> and isolated from the base-quote drawings. Stage 2 will compute the diff against the existing BOM.
+                  <div style={{fontSize:11,color:C.muted,lineHeight:1.5,maxWidth:520,margin:"0 auto"}}>
+                    BOM-only or full drawing packages — AI auto-classifies each page, BOM pages are extracted and diffed against the existing panel BOM, other sheets ride along as audit trail. Pages are tagged to <strong style={{color:C.sub}}>{ecoLabel}</strong> and isolated from the base-quote drawings.
                   </div>
                   <input
                     ref={ecoFileInputRef}
@@ -10233,16 +10276,20 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
                   <div style={{padding:"22px 0",textAlign:"center",color:C.muted,fontSize:12,fontStyle:"italic"}}>No ECO drawings uploaded yet for this panel.</div>
                 ):(
                   <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
-                    <div style={{display:"grid",gridTemplateColumns:"60px 1fr 90px 70px 36px",gap:0,fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,padding:"6px 10px",background:"#0a0a14",borderBottom:`1px solid ${C.border}`}}>
-                      <span>Thumb</span><span>Page</span><span style={{textAlign:"right"}}>Items</span><span style={{textAlign:"right"}}>Status</span><span></span>
+                    <div style={{display:"grid",gridTemplateColumns:"60px 1fr 110px 90px 70px 36px",gap:0,fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,padding:"6px 10px",background:"#0a0a14",borderBottom:`1px solid ${C.border}`}}>
+                      <span>Thumb</span><span>Page</span><span>Type</span><span style={{textAlign:"right"}}>Items</span><span style={{textAlign:"right"}}>Status</span><span></span>
                     </div>
                     {ecoPagesOnPanel.map((pg,i)=>{
+                      const types=getPageTypes(pg);
+                      const isBom=types.includes("bom");
                       const items=ecoExtractedItems[pg.id];
                       const itemCount=items?items.length:null;
-                      const status=items==null?(ecoExtracting?"…":"saved"):items.length===0?"empty":"ready";
-                      const statusColor=status==="ready"?"#4ade80":status==="empty"?"#f59e0b":status==="…"?"#a855f7":C.muted;
+                      const typeLabel=types.length?types.map(t=>({bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",layout:"LAY",pid:"P&ID"}[t]||t)).join(" · "):"…";
+                      const typeColor=types.length===0?C.muted:isBom?"#a855f7":"#64748b";
+                      const status=!isBom?"audit":items==null?(ecoExtracting?"…":"saved"):items.length===0?"empty":"ready";
+                      const statusColor=status==="ready"?"#4ade80":status==="empty"?"#f59e0b":status==="…"?"#a855f7":status==="audit"?"#64748b":C.muted;
                       return(
-                        <div key={pg.id} style={{display:"grid",gridTemplateColumns:"60px 1fr 90px 70px 36px",gap:0,padding:"6px 10px",borderBottom:i<ecoPagesOnPanel.length-1?`1px solid ${C.border}33`:"none",fontSize:12,alignItems:"center",background:i%2?"#0a0a14":"transparent"}}>
+                        <div key={pg.id} style={{display:"grid",gridTemplateColumns:"60px 1fr 110px 90px 70px 36px",gap:0,padding:"6px 10px",borderBottom:i<ecoPagesOnPanel.length-1?`1px solid ${C.border}33`:"none",fontSize:12,alignItems:"center",background:i%2?"#0a0a14":"transparent"}}>
                           <span>
                             {pg.dataUrl||pg.storageUrl?(
                               <img src={pg.dataUrl||pg.storageUrl} alt="" style={{width:48,height:36,objectFit:"cover",borderRadius:3,border:`1px solid ${C.border}`}}/>
@@ -10251,7 +10298,8 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
                             )}
                           </span>
                           <span style={{color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={pg.name}>{pg.name}</span>
-                          <span style={{textAlign:"right",fontVariantNumeric:"tabular-nums",color:itemCount==null?C.muted:itemCount>0?C.text:"#f59e0b"}}>{itemCount==null?"—":itemCount}</span>
+                          <span style={{fontSize:10,fontWeight:700,color:typeColor,textTransform:"uppercase",letterSpacing:0.5}}>{typeLabel}</span>
+                          <span style={{textAlign:"right",fontVariantNumeric:"tabular-nums",color:!isBom?C.muted:itemCount==null?C.muted:itemCount>0?C.text:"#f59e0b"}}>{!isBom?"—":itemCount==null?"—":itemCount}</span>
                           <span style={{textAlign:"right",fontSize:10,fontWeight:700,color:statusColor,textTransform:"uppercase",letterSpacing:0.5}}>{status}</span>
                           <button onClick={()=>removeEcoPage(pg.id)} title="Remove this page from the ECO" style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:14,padding:"0 4px"}}>✕</button>
                         </div>
@@ -10355,7 +10403,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
                 )}
 
                 {/* When extraction is done but produced no diffs */}
-                {Object.keys(ecoExtractedItems).length>0&&(ecoDiff.adds.length+ecoDiff.modifies.length+ecoDiff.removes.length)===0&&!ecoExtracting&&(
+                {ecoDiff.total>0&&(ecoDiff.adds.length+ecoDiff.modifies.length+ecoDiff.removes.length)===0&&!ecoExtracting&&(
                   <div style={{marginTop:18,padding:"14px 16px",background:"rgba(74,222,128,0.06)",border:"1px solid #4ade8044",borderRadius:8,fontSize:12,color:"#86efac"}}>
                     All {ecoDiff.autoMatched} extracted item{ecoDiff.autoMatched===1?"":"s"} match the base BOM exactly — no changes detected. Drop a different drawing or close this ECO if no scope changes apply.
                   </div>
@@ -15007,7 +15055,7 @@ function ScanResultsBanner({panel}){
             <div style={{marginTop:12,paddingTop:10,borderTop:`1px dashed ${C.yellow}44`}}>
               <div style={{color:auditFlagged.length+auditMissing.length>0?"#fca5a5":"#6ee7b7",fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>🔍 Audit — self-healing verification {auditRoundsUsed>0?`(${auditRoundsUsed} pass${auditRoundsUsed>1?"es":""})`:""}</div>
               <div style={{color:"#fef3c7",fontSize:11,marginBottom:8,lineHeight:1.5}}>
-                Opus re-read the drawing{(panel.pages||[]).filter(p=>(p.types||[]).includes("bom")).length>1?"s":""} and cross-checked each extracted row. When it found issues, it applied corrections and re-verified — up to {3} rounds.
+                Opus re-read the drawing{_basePages(panel).filter(p=>(p.types||[]).includes("bom")).length>1?"s":""} and cross-checked each extracted row. When it found issues, it applied corrections and re-verified — up to {3} rounds.
               </div>
               {/* AUTO-HEALED section (green) */}
               {auditCorrectionCount>0&&(
@@ -15603,7 +15651,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const bom=panel.bom||[];
     const items=bom.filter(r=>!r.isLaborRow&&r.partNumber);
     if(!items.length)return;
-    const pgs=panel.pages||[];
+    const pgs=_basePages(panel);
     const categorized=items.map(r=>({...r,cpdCategory:r.cpdCategory||categorizePart(r.partNumber,r.description)}));
     // Log BOM immediately (no metadata yet)
     logPanelToCPD(uid,panel,categorized).then(async()=>{
@@ -15675,8 +15723,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // DECISION(v1.19.817, ECO Phase 2.J Stage 1): Pages tagged with `ecoId` are owned by
   // an ECO scope and rendered inside the EcoEditor → Drawings tab. Hide them from the
   // regular per-panel drawings view so the user only sees base-quote drawings here.
+  // pendingPages may transiently include ECO pages too (livePages preserves them so
+  // they survive a save), so filter both branches.
   const savedPages=(panel.pages||[]).filter(p=>!p.ecoId);
-  const pages=pendingPages.length>0?pendingPages:savedPages;
+  const _pendingBase=pendingPages.filter(p=>!p.ecoId);
+  const pages=_pendingBase.length>0?_pendingBase:savedPages;
   const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted};
   const SHORT={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",layout:"LAY",pid:"P&ID"};
   const bomCount=pages.filter(p=>getPageTypes(p).includes("bom")).length;
@@ -15709,7 +15760,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     let updated;
     try{
     const newItems=[];
-    let livePages=[...savedPages];
+    // ECO Phase 2.J fix: livePages starts from ALL panel pages (including ECO-tagged
+    // ones) so saving panel.pages = livePages later doesn't wipe ECO drawings owned
+    // by the EcoEditor. UI filtering happens via savedPages, not here.
+    let livePages=[...(panel.pages||[])];
     for(const f of Array.from(files)){
       const effectiveType=await _sniffFileType(f);
       if(effectiveType==="application/pdf"){
@@ -15846,6 +15900,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const uid2=fbAuth.currentUser?.uid;
     if(uid2&&Object.keys(changes).length){
       const allPages=pendingPages.length>0?pendingPages:(panel.pages||[]);
+      // page-type-learning is only saved for base pages — never for ECO drops
       for(const[pid,{aiTypes,confirmedTypes,reason}]of Object.entries(changes)){
         const pg=allPages.find(p=>p.id===pid);
         if(!pg)continue;
@@ -17772,7 +17827,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   async function validatePanel(){
     if(!_apiKey)return;
     setValidatingPanel(true);
-    const valPages=(panel.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
+    const valPages=_basePages(panel).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
     ep.start("Validating…",valPages.length*20);
     try{
       const result=await runPanelValidation(latestPanelRef.current,pct=>{ep.set(Math.round(pct*0.45),"Validating…");});
@@ -18106,7 +18161,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               not only when the panel already has rows. Previously the button was hidden
               when extraction completed with 0 items (e.g. AI mis-tagged the page,
               user fixed the tag after confirm — no rows yet, no button to retry). */}
-          {!readOnly&&((panel.bom||[]).some(r=>!r.isLaborRow)||(panel.pages||[]).some(p=>getPageTypes(p).includes("bom")))&&(
+          {!readOnly&&((panel.bom||[]).some(r=>!r.isLaborRow)||_basePages(panel).some(p=>getPageTypes(p).includes("bom")))&&(
             <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Re-run AI extraction on tagged BOM pages — uses region crops if defined"}
               onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{
                 if(localStorage.getItem("_arc_skip_reextract_warn")){runExtraction();return;}
@@ -18483,7 +18538,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {/* DECISION(v1.19.617): Also require pages — if the user deletes all drawings, the
           old extractionReport is stale and shouldn't surface concerns about a scan whose
           subject matter no longer exists. */}
-      {!extracting&&!validatingPanel&&(panel.bom||[]).length>0&&(panel.pages||[]).length>0&&<ScanResultsBanner panel={panel}/>}
+      {!extracting&&!validatingPanel&&(panel.bom||[]).length>0&&_basePages(panel).length>0&&<ScanResultsBanner panel={panel}/>}
 
       {/* BOM Table */}
       {true&&(
@@ -19643,7 +19698,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         <BCItemBrowserModal
           initialQuery={bcBrowserQuery}
           targetRow={bcBrowserTarget?(panel.bom||[]).find(r=>r.id===bcBrowserTarget)||null:null}
-          pages={panel.pages||[]}
+          pages={_basePages(panel)}
           syncError={bcBrowserTarget?bcSyncErrors[bcBrowserTarget]||null:null}
           onClose={()=>{setBcBrowserOpen(false);setBcBrowserTarget(null);setBcBrowserQuery("");}}
           onSelect={item=>{
