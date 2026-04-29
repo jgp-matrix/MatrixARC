@@ -2708,23 +2708,29 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
       // cross-field OR), then filter client-side for the remaining tokens. This guarantees
       // multi-token searches find items even when words are split across fields, and works
       // for any number of tokens without explosion of server queries.
-      // DECISION(v1.19.807): Use ItemCard OData endpoint (not /items REST) so we can
+      // DECISION(v1.19.807/808): Use ItemCard OData endpoint (not /items REST) so we can
       // search across Description, Description_2, Search_Description, No, Vendor_Item_No,
-      // Common_Item_No, Manufacturer_Code — matching BC native's multi-field search. The
-      // standard /items REST endpoint only exposes Description (as displayName), so items
-      // with "Network Switch" in Description_2 were invisible to ARC. ItemCard exposes
-      // them, and we OR the contains() across multiple fields on the same row (ItemCard
-      // accepts cross-field OR; /items did not).
+      // Common_Item_No, Manufacturer_Code — matching BC native's multi-field search.
+      // DECISION(v1.19.808): BC's ItemCard rejects `OR` across distinct fields with
+      //   501 "The 'OR' operator is not supported on distinct fields on an OData filter"
+      // so we fire ONE QUERY PER FIELD in parallel and merge the unique numbers. This
+      // costs N round-trips per primary token (one per searchable field) but BC SaaS
+      // handles them cheaply in parallel. Fields that don't exist on this tenant's
+      // ItemCard simply error out on their query and contribute 0 items — graceful
+      // degradation, no need for a metadata probe.
       const primaryIdx=literalTokens.reduce((bestI,tok,i,arr)=>tok.length>arr[bestI].length?i:bestI,0);
       const primary=literalTokens[primaryIdx];
       const others=rawTokens.map(t=>t.toLowerCase()).filter((_,i)=>i!==primaryIdx);
       const PER_TOKEN_TOP=1000;
-      // ItemCard fields where part-text-search makes sense:
       const ITEM_CARD_FIELDS=["No","Description","Description_2","Search_Description","Vendor_Item_No","Common_Item_No","Manufacturer_Code"];
-      const primaryFilter=ITEM_CARD_FIELDS.map(f=>`contains(${f},'${primary}')`).join(' or ');
-      const fetched=await _bcFetchItemsViaItemCard(primaryFilter,PER_TOKEN_TOP,0)||[];
+      const fetchedPerField=await Promise.all(
+        ITEM_CARD_FIELDS.map(f=>_bcFetchItemsViaItemCard(`contains(${f},'${primary}')`,PER_TOKEN_TOP,0))
+      );
       const candidates=new Map();
-      for(const it of fetched){if(it.number)candidates.set(it.number,it);}
+      for(const items of fetchedPerField){
+        if(!items)continue;
+        for(const it of items){if(it.number&&!candidates.has(it.number))candidates.set(it.number,it);}
+      }
       // Filter client-side: every remaining token must appear in any text-bearing field.
       // DECISION(v1.19.807): Include Description_2, Search_Description, Vendor_Item_No,
       // Common_Item_No, Manufacturer_Code in the haystack so multi-token searches don't
