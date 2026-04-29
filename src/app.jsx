@@ -13357,11 +13357,25 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
 }
 
 // ── BC ITEM BROWSER MODAL ──
+// DECISION(v1.19.813): Modal supports user-driven resize via a custom corner handle.
+// Size persists across sessions in localStorage under `arc_bcItemBrowserSize`. Default
+// is responsive (width 100% with maxWidth:860, maxHeight:90vh). Once the user resizes,
+// the explicit pixel size is honored on every subsequent open.
+const _BC_BROWSER_SIZE_KEY="arc_bcItemBrowserSize";
+function _loadBcBrowserSize(){
+  try{const s=JSON.parse(localStorage.getItem(_BC_BROWSER_SIZE_KEY)||"null");if(s&&s.w>0&&s.h>0)return s;}catch(e){}
+  return null;
+}
+function _saveBcBrowserSize(w,h){
+  try{localStorage.setItem(_BC_BROWSER_SIZE_KEY,JSON.stringify({w:Math.round(w),h:Math.round(h)}));}catch(e){}
+}
 function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError}){
   const [query,setQuery]=useState(initialQuery||"");
   const [field,setField]=useState("both");
   const [results,setResults]=useState([]);
   const [loading,setLoading]=useState(false);
+  // DECISION(v1.19.813): User-resized modal size (pixels). null means responsive defaults.
+  const [modalSize,setModalSize]=useState(()=>_loadBcBrowserSize());
   const [hasMore,setHasMore]=useState(false);
   const [skip,setSkip]=useState(0);
   const [searched,setSearched]=useState(false);
@@ -13661,7 +13675,22 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onMouseDown={e=>{backdropMdRef.current=e.target===e.currentTarget;}}
       onClick={e=>{if(backdropMdRef.current)onClose();}}>
-      <div style={{...card(),width:"100%",maxWidth:860,maxHeight:"90vh",display:"flex",flexDirection:"column",overflow:"hidden"}} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+      <div style={{
+        ...card(),
+        // DECISION(v1.19.813): Honor user-resized size (pixels) when present, fall back to
+        // responsive defaults (width:100%, maxWidth:860, maxHeight:90vh). minWidth/minHeight
+        // prevent the user from shrinking the modal smaller than the search controls need.
+        width:modalSize?modalSize.w+"px":"100%",
+        maxWidth:modalSize?"none":860,
+        height:modalSize?modalSize.h+"px":"auto",
+        maxHeight:modalSize?"none":"90vh",
+        minWidth:520,
+        minHeight:380,
+        display:"flex",
+        flexDirection:"column",
+        overflow:"hidden",
+        position:"relative"
+      }} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14,gap:12,flexShrink:0}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>BC Item Browser</div>
@@ -14159,6 +14188,39 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             </div>
           </div>
         )}
+        {/* DECISION(v1.19.813): Custom resize handle at bottom-right. Drag to set the
+            modal's pixel dimensions; size is persisted to localStorage so it sticks
+            across opens / sessions / browser restarts. Double-click resets to defaults. */}
+        <div
+          title="Drag to resize · Double-click to reset"
+          onMouseDown={e=>{
+            e.preventDefault();e.stopPropagation();
+            const modalEl=e.currentTarget.parentElement;
+            const startX=e.clientX,startY=e.clientY;
+            const rect=modalEl.getBoundingClientRect();
+            const startW=rect.width,startH=rect.height;
+            function onMove(ev){
+              const w=Math.max(520,startW+(ev.clientX-startX));
+              const h=Math.max(380,startH+(ev.clientY-startY));
+              setModalSize({w,h});
+            }
+            function onUp(){
+              window.removeEventListener('mousemove',onMove);
+              window.removeEventListener('mouseup',onUp);
+              const r=modalEl.getBoundingClientRect();
+              _saveBcBrowserSize(r.width,r.height);
+            }
+            window.addEventListener('mousemove',onMove);
+            window.addEventListener('mouseup',onUp);
+          }}
+          onDoubleClick={e=>{
+            e.preventDefault();e.stopPropagation();
+            try{localStorage.removeItem(_BC_BROWSER_SIZE_KEY);}catch(ex){}
+            setModalSize(null);
+          }}
+          style={{position:"absolute",right:0,bottom:0,width:18,height:18,cursor:"nwse-resize",userSelect:"none",zIndex:10,
+            background:"linear-gradient(135deg, transparent 0%, transparent 45%, "+C.muted+" 45%, "+C.muted+" 55%, transparent 55%, transparent 75%, "+C.muted+" 75%, "+C.muted+" 85%, transparent 85%)"}}
+        />
       </div>
     </div>,
     document.body
