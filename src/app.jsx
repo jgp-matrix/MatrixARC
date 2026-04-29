@@ -16337,6 +16337,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       };
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
+      // DECISION(v1.19.814): Apply manufacturer code from the bcItem's _mfrCode IMMEDIATELY
+      // (the v1.19.807 ItemCard search already includes Manufacturer_Code on each result).
+      // Previously the row's manufacturer was only updated by the async ItemCard re-fetch
+      // below; if that fetch failed silently or returned empty Manufacturer_Code, the
+      // BOM row kept the stale AI-extracted manufacturer (e.g. "ALLIED" lingering after
+      // the user picked a Phoenix Contact item). Now the swap-from-search at least sets
+      // the raw code synchronously; the async lookup below upgrades it to the friendly
+      // name (e.g. "PHOENIX" → "Phoenix Contact").
+      if(bcItem._mfrCode)updates.manufacturer=bcItem._mfrCode;
       // Async vendor lookup — uses latestPanelRef to avoid stale overwrites
       if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});}}})().catch(()=>{});}
       if(skipLearning){
