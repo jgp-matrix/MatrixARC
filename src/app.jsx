@@ -2748,31 +2748,12 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
         ].join(" \n ").toLowerCase();
         if(others.every(tok=>haystack.includes(tok)))merged.push(item);
       }
-      // DECISION(v1.19.799): Rank by RELEVANCE rather than item number — items whose
-      // displayName contains the user's full typed phrase score highest, then per-token
-      // hits, with item-number sort as the tiebreaker. Keeps the most relevant items
-      // on the first page even when many items match.
-      const literalLow=rawTokens.join(' ').toLowerCase();
-      const literalTokensLow=rawTokens.map(t=>t.toLowerCase());
-      function _score(item){
-        const dn=(item.displayName||"").toLowerCase();
-        const num=(item.number||"").toLowerCase();
-        let s=0;
-        if(dn.includes(literalLow))s+=100;
-        if(num.includes(literalLow))s+=80;
-        for(const t of literalTokensLow){
-          if(dn.includes(t))s+=30;
-          if(num.includes(t))s+=20;
-        }
-        return s;
-      }
-      merged.sort((a,b)=>{
-        const sa=_score(a),sb=_score(b);
-        if(sa!==sb)return sb-sa;
-        return (a.number||"").localeCompare(b.number||"");
-      });
+      // DECISION(v1.19.809): Sort matches BC native — alphabetical by item number,
+      // ascending. Reverted v1.19.799 relevance ranking since users want ARC's
+      // result order to mirror BC's items list exactly so they can compare side-by-side.
+      merged.sort((a,b)=>(a.number||"").localeCompare(b.number||""));
       const hasMore=merged.length>top;
-      console.log(`bcSearchItems: ${Math.min(merged.length,top)} items (literal AND of ${rawTokens.length} token${rawTokens.length>1?'s':''}, ranked by relevance)`);
+      console.log(`bcSearchItems: ${Math.min(merged.length,top)} items (literal AND of ${rawTokens.length} token${rawTokens.length>1?'s':''}, sorted by item number)`);
       return{items:merged.slice(0,top),hasMore};
     }
     const filter=field==="number"?_andOn('number'):_andOn('displayName');
