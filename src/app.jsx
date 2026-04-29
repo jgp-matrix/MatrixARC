@@ -10084,7 +10084,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
                 <span style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Panel</span>
                 <select value={pickedPanelId||""} onChange={e=>{setPickedPanelId(e.target.value);resetForm();}} style={{...inputBase,minWidth:220}}>
-                  {panels.map(p=>(<option key={p.id} value={p.id}>{p.name||p.id}</option>))}
+                  {panels.map(p=>(<option key={p.id} value={p.id}>{p.drawingNo?`${p.drawingNo} · ${p.name||p.id}`:(p.name||p.id)}</option>))}
                 </select>
                 <span style={{fontSize:11,color:C.muted,marginLeft:"auto"}}>{baseRows.length} base rows · {myEcoRows.length} ECO rows</span>
               </div>
@@ -10232,7 +10232,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
                   <span style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Panel</span>
                   <select value={pickedPanelId||""} onChange={e=>{setPickedPanelId(e.target.value);setEcoExtractedItems({});setEcoExtractMsg("");setEcoExtractError("");}} style={{...inputBase,minWidth:220}}>
-                    {panels.map(p=>(<option key={p.id} value={p.id}>{p.name||p.id}</option>))}
+                    {panels.map(p=>(<option key={p.id} value={p.id}>{p.drawingNo?`${p.drawingNo} · ${p.name||p.id}`:(p.name||p.id)}</option>))}
                   </select>
                   <span style={{fontSize:11,color:C.muted,marginLeft:"auto"}}>{ecoPagesOnPanel.length} ECO drawing{ecoPagesOnPanel.length===1?"":"s"} · {totalExtracted} extracted line{totalExtracted===1?"":"s"}</span>
                 </div>
