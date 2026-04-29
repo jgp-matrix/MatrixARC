@@ -5224,30 +5224,46 @@ if(typeof window!=="undefined"){window._bumpBomVersionIfChanged=_bumpBomVersionI
 // description, manufacturer, notes), drawing identity + version + page count, ship dates,
 // pricing config, line qty, and the entire `project.quote` blob (markup, terms, line
 // notes, contacts, addresses, etc.).
+// DECISION(v1.19.820): Narrowed the quote-rev hash. Previously this included
+// `bomVersion` (redundant — derived from the BOM hash), `bomNotes` (auto-rewritten
+// by the Lead Drivers refresh effect on every project open → spurious bumps),
+// `pageCount` (ECO Phase 2.J added pages tagged with `ecoId` to `panel.pages`,
+// which would tick the count without any base-BOM change), and the entire
+// `pricing` object (too wide — any new field anywhere added a difference). The
+// runaway bumps were cascading into the BC drawing-sync prompt firing on every
+// open. Hash now covers exactly the things that actually print on the quote and
+// affect customer-visible totals: drawing identity, ship dates, lineQty, the BOM
+// (PN/qty/price/lead/desc/mfr), the explicit pricing knobs that drive sell
+// price (markup/manualLaborCost/laborRate/laborHoursOverride/isBudgetary), and
+// the entire `quote` blob (terms, contacts, addresses, notes).
 function _computeQuoteHash(project){
   if(!project)return"";
   const data={
-    panels:(project.panels||[]).map(p=>({
-      drawingNo:p.drawingNo||"",
-      drawingDesc:p.drawingDesc||"",
-      drawingRev:p.drawingRev||"",
-      bomVersion:p.bomVersion??null,
-      bomNotes:p.bomNotes||"",
-      requestedShipDate:p.requestedShipDate||"",
-      productionEndDate:p.productionEndDate||"",
-      pageCount:(p.pages||[]).length,
-      lineQty:p.lineQty??1,
-      pricing:p.pricing||null,
-      bom:(p.bom||[]).filter(r=>!r.isLaborRow).map(r=>({
-        pn:(r.partNumber||"").trim(),
-        q:r.qty||0,
-        up:r.unitPrice||0,
-        ld:r.leadTimeDays??null,
-        ls:r.leadTimeSource||"",
-        d:(r.description||"").trim(),
-        m:(r.manufacturer||"").trim(),
-      })),
-    })),
+    panels:(project.panels||[]).map(p=>{
+      const pr=p.pricing||{};
+      return{
+        drawingNo:p.drawingNo||"",
+        drawingDesc:p.drawingDesc||"",
+        drawingRev:p.drawingRev||"",
+        requestedShipDate:p.requestedShipDate||"",
+        productionEndDate:p.productionEndDate||"",
+        lineQty:p.lineQty??1,
+        markup:pr.markup??null,
+        manualLaborCost:pr.manualLaborCost??null,
+        laborRate:pr.laborRate??null,
+        laborHoursOverride:pr.laborHoursOverride??null,
+        isBudgetary:!!pr.isBudgetary,
+        bom:(p.bom||[]).filter(r=>!r.isLaborRow).map(r=>({
+          pn:(r.partNumber||"").trim(),
+          q:r.qty||0,
+          up:r.unitPrice||0,
+          ld:r.leadTimeDays??null,
+          ls:r.leadTimeSource||"",
+          d:(r.description||"").trim(),
+          m:(r.manufacturer||"").trim(),
+        })),
+      };
+    }),
     quote:project.quote||{},
   };
   const str=JSON.stringify(data);
