@@ -3632,8 +3632,16 @@ async function buildRfqSupplierGroups(bom){
       const displayDate=isBC?r.bcPoDate:r.priceDate;
       if(!displayDate||displayDate<now-RFQ_STALE_MS)return "stalePrice";
     }
-    // Lead-time-based inclusion — ALWAYS evaluated, regardless of cooldown
-    if(r.leadTimeDays==null&&r.leadTimeSource!=="supplier")return "missingLeadTime";
+    // Lead-time-based inclusion — ALWAYS evaluated, regardless of cooldown.
+    // DECISION(v1.19.815): AI-estimated lead times (leadTimeSource==="ai") are treated
+    // as NOT FIRM and included in lead-time RFQs for supplier confirmation. Previously
+    // only completely-null lead times were flagged. Real-world: a vendor's RFQ would
+    // pull just the 1 row with no AI estimate at all, even though the other 7 rows had
+    // unverified AI estimates that the supplier should also confirm. Firm sources are
+    // the only ones we trust without re-asking: BC (bc_item / bc_vendor), Supplier
+    // portal submission, manual entry, web scraper.
+    const isFirmLT=r.leadTimeDays!=null&&r.leadTimeSource&&r.leadTimeSource!=="ai";
+    if(!isFirmLT)return "missingLeadTime";
     return null;
   }
   const eligibleWithReasons=[];
