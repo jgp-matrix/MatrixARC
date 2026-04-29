@@ -2641,38 +2641,29 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   const compId=await bcGetCompanyId();
   if(!compId)return{items:[],hasMore:false};
   // DECISION(v1.19.592): Tokenize on whitespace OR comma so "DUCT COVER", "DUCT,COVER",
-  // and "DUCT, COVER" all find items containing both tokens in number OR displayName.
-  // BC rejects `or` across distinct fields, so we still run two queries (number, displayName)
-  // and merge. Within a field the tokens are ANDed — an item matches only if it contains ALL
-  // tokens in that field.
-  // DECISION(v1.19.797): Each token now expands to its synonym group (network ↔ ntwk ↔ enet,
-  // switch ↔ sw, transformer ↔ xfmr, etc). Within a token group the synonyms are ORed (any
-  // variant matches), and across token groups we still AND. So "net sw" finds items whose
-  // displayName contains (net|network|ntwk|netwk|nwk|ethernet|ether|enet|eth) AND
-  // (sw|switch|swtch|swt) — covering both "NETWORK SWITCH" and "ETHERNET SW" and "NTWK SW".
+  // and "DUCT, COVER" all parse to two tokens.
   const rawTokens=query.trim().split(/[\s,]+/).map(t=>t.trim()).filter(t=>t.length>0);
   if(!rawTokens.length)return{items:[],hasMore:false};
-  // DECISION(v1.19.800): Plain literal AND across user-typed tokens, mirroring BC's
-  // native item-search semantics. Each token becomes a contains() check; all tokens
-  // must appear in the field. No synonym expansion. No semantic substitution.
+  // DECISION(v1.19.802): Cross-field AND-OR semantics, mirroring BC's native item search.
+  // Each user token must appear in EITHER displayName OR number; all tokens together must
+  // be satisfied. So "network switch" matches an item whose displayName contains "switch"
+  // and whose number contains "network", or vice versa, or one field has both.
+  // Earlier code (v1.19.800) ran two parallel queries — one ANDing all tokens in `number`,
+  // one ANDing them in `displayName` — which missed items where the words were SPLIT
+  // across fields. The original v1.19.592 comment claimed BC rejects `or` across distinct
+  // fields; that was a misdiagnosis from a malformed query. OData v4 supports it cleanly.
   const literalTokens=rawTokens.map(t=>t.replace(/'/g,"''"));
   function _andOn(fieldName){
     return literalTokens.map(t=>`contains(${fieldName},'${t}')`).join(' and ');
   }
+  function _crossFieldFilter(){
+    return literalTokens.map(t=>`(contains(number,'${t}') or contains(displayName,'${t}'))`).join(' and ');
+  }
   try{
     if(field==="both"){
-      // DECISION(v1.19.800): Two parallel queries — by item number, by displayName.
-      // BC OData rejects `or` across distinct fields in a single filter, so we fire
-      // both and merge. Both queries enforce full literal AND of all user tokens.
-      const [byNum,byName]=await Promise.all([
-        _bcFetchItems(compId,_andOn('number'),top+1,skip),
-        _bcFetchItems(compId,_andOn('displayName'),top+1,skip)
-      ]);
-      const seen=new Set();
-      const merged=[];
-      for(const item of[...(byNum||[]),...(byName||[])]){
-        if(!seen.has(item.number)){seen.add(item.number);merged.push(item);}
-      }
+      // DECISION(v1.19.802): Single cross-field query — each token must hit number OR
+      // displayName, all tokens ANDed. One round-trip instead of two.
+      const merged=await _bcFetchItems(compId,_crossFieldFilter(),top+1,skip)||[];
       // DECISION(v1.19.799): Rank by RELEVANCE rather than item number — items whose
       // displayName contains the user's full typed phrase score highest, then per-token
       // hits, with item-number sort as the tiebreaker. Keeps the most relevant items
