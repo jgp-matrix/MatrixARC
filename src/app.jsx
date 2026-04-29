@@ -2653,11 +2653,12 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   // per-token cross-field intersection pass below.
   const literalTokens=rawTokens.map(t=>t.replace(/'/g,"''"));
   function _andOn(fieldName){
-    // DECISION(v1.19.805): Always case-insensitive — wrap field in tolower() and
-    // lowercase the user's token. The single-field branch (number / displayName only)
-    // also benefits from this so behavior is uniform regardless of which "field"
-    // mode the user picks.
-    return literalTokens.map(t=>`contains(tolower(${fieldName}),'${t.toLowerCase()}')`).join(' and ');
+    // DECISION(v1.19.806): No tolower() wrappers — BC SaaS items endpoint chokes on
+    // tolower() in filter expressions (silent parser failure, returns 400 with confusing
+    // "Blocked field" error pointing at *No*). BC's contains() is already case-insensitive
+    // by default on this tenant's collation, so plain contains() works for mixed-case
+    // descriptions ("Switch" matched by lowercase 'switch' returned 33 items in testing).
+    return literalTokens.map(t=>`contains(${fieldName},'${t}')`).join(' and ');
   }
   try{
     if(field==="both"){
@@ -2667,17 +2668,19 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
       // cross-field OR), then filter client-side for the remaining tokens. This guarantees
       // multi-token searches find items even when words are split across fields, and works
       // for any number of tokens without explosion of server queries.
-      // DECISION(v1.19.805): Lowercase user tokens AND wrap BC fields in tolower()
-      // to ensure case-insensitive matching regardless of BC instance collation.
-      // Without this, items stored as "Network Switch" might not match a query of
-      // "network" if BC's contains() falls back to case-sensitive comparison.
+      // DECISION(v1.19.806): Reverted v1.19.805 tolower() — it caused BC to return 400
+      // ("The filter '*No*' is not valid for the Blocked field on the Item table"). BC's
+      // items endpoint apparently doesn't support tolower() inside contains() and silently
+      // chokes the parser. BC's contains() is case-insensitive by default on this tenant
+      // (proven by lowercase "switch" matching 33 mixed-case items), so plain contains()
+      // is sufficient. Client-side filtering still uses .toLowerCase() since that's safe.
       const primaryIdx=literalTokens.reduce((bestI,tok,i,arr)=>tok.length>arr[bestI].length?i:bestI,0);
-      const primary=literalTokens[primaryIdx].toLowerCase();
+      const primary=literalTokens[primaryIdx];
       const others=rawTokens.map(t=>t.toLowerCase()).filter((_,i)=>i!==primaryIdx);
       const PER_TOKEN_TOP=1000;
       const [primNums,primNames]=await Promise.all([
-        _bcFetchItems(compId,`contains(tolower(number),'${primary}')`,PER_TOKEN_TOP,0),
-        _bcFetchItems(compId,`contains(tolower(displayName),'${primary}')`,PER_TOKEN_TOP,0),
+        _bcFetchItems(compId,`contains(number,'${primary}')`,PER_TOKEN_TOP,0),
+        _bcFetchItems(compId,`contains(displayName,'${primary}')`,PER_TOKEN_TOP,0),
       ]);
       const candidates=new Map();
       for(const it of[...(primNums||[]),...(primNames||[])]){candidates.set(it.number,it);}
