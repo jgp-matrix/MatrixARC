@@ -2549,69 +2549,74 @@ async function _bcFetchItems(compId,filter,top,skip){
 // strict substring match. Each group below expands any token to all its variants when
 // building the OData filter. Add new groups as you discover catalog conventions —
 // the structure is tolerant to overlap (same token in multiple groups gets all variants).
+// DECISION(v1.19.799): Synonym groups are now curated to avoid SHORT AMBIGUOUS TOKENS
+// (≤3 chars unless completely unambiguous like "vfd"/"plc"/"hmi"). Substring contains()
+// makes 2-3 letter tokens flood unrelated items: "ss" matches STAINLESS, "rot" matches
+// ROTOR/PROTECT, "sel" matches WEASEL, "net" matches PLANET/MAGNET, "eth" matches METHOD.
+// That flooding pushed legitimate hits past the page-50 cutoff. Whatever the user typed
+// literally is also passed through as a strict-literal pass (see _andOnLiteral) so the
+// exact word always surfaces even if its variants aren't in the synonym list.
 const BC_SEARCH_SYNONYMS=[
   // Networking
-  ["net","network","ntwk","netwk","nwk","ethernet","ether","enet","eth"],
-  ["sw","switch","swtch","swt","selector","sel","ss","slctr","slct","slcr","limit","lmsw","lim","lmt","lsw","disconnect","disc","dsc","dsconn","dscn","disconn","toggle","tggl","rotary","rot"],
-  ["port","ports","outlet"],
+  ["network","ntwk","netwk","ethernet","enet"],
+  ["switch","swtch","selector","slctr","limit","lmsw","disconnect","disconn","dsconn","toggle","rotary"],
+  ["port","ports"],
   ["hub","hubs"],
-  ["router","rtr"],
+  ["router"],
   ["modem"],
-  ["cable","cbl","cord"],
-  ["patch","pch"],
+  ["cable","cbl"],
+  ["patch"],
   // Power / protection
-  ["xfmr","transformer","trans","xform","xfr"],
-  ["cb","breaker","brkr","circuit"],
-  ["fuse","fu"],
-  ["disc","disconnect","dsc","disc."],
-  ["relay","rly","rel"],
-  ["contactor","contctr","cont"],
-  ["overload","ovld","ol"],
-  ["mcc","mccb"],
-  ["surge","spd","tvs","arrester"],
+  ["xfmr","transformer","xform"],
+  ["breaker","brkr","mccb"],
+  ["fuse","fuses"],
+  ["relay","rly"],
+  ["contactor","contctr"],
+  ["overload","ovld"],
+  ["surge","arrester"],
   // Drives / motors
-  ["vfd","drive","vsd","inverter"],
+  ["vfd","drive","inverter"],
   ["motor","mtr"],
-  ["starter","str"],
+  ["starter"],
   // PLC / control
-  ["plc","controller","ctlr","ctrl"],
-  ["hmi","panelview","operator","interface","display","screen"],
-  ["module","mod","modul","modular"],
-  ["input","inp","in"],
-  ["output","outp","out"],
-  ["analog","anlg","ai","ao"],
-  ["digital","dig","di","do","dio"],
-  ["processor","proc","cpu","logix"],
+  ["plc","controller","ctlr"],
+  ["hmi","panelview","operator","display","screen"],
+  ["module","modul","modular"],
+  ["input","inputs"],
+  ["output","outputs"],
+  ["analog"],
+  ["digital"],
+  ["processor","logix"],
   ["chassis","rack"],
   // Terminals / wiring
-  ["terminal","term","tb","trm"],
-  ["block","blk","blok"],
-  ["ground","gnd","grn"],
-  ["jumper","jmp"],
+  ["terminal","term"],
+  ["block","blocks"],
+  ["ground","gnd","grnd"],
+  ["jumper"],
   ["lug","lugs"],
-  ["wire","wiring","wir","cond","conductor"],
+  ["wire","wiring","conductor"],
   ["duct","wireway","wirway","trough"],
-  ["din","rail"],
-  ["marker","label","lbl","tag"],
-  ["splice","splc"],
-  ["ferrule","fer"],
+  ["rail","rails"],
+  ["marker","label","tag"],
+  ["splice"],
+  ["ferrule"],
   // Power supplies / UPS
-  ["ps","psu","power","supply"],
-  ["ups","battery","batt","bat"],
+  ["psu","supply"],
+  ["ups","battery"],
   // Enclosures / mechanical
-  ["enclosure","encl","cabinet","cab","box","housing"],
-  ["panel","pnl"],
-  ["door","drs"],
+  ["enclosure","encl","cabinet","housing"],
+  ["panel"],
+  ["door","doors"],
   ["window","wndw"],
-  ["fan","blower","cooler"],
-  ["heater","htr","heat"],
-  ["light","lt","led","lamp"],
-  ["pushbutton","pb","push"],
-  ["pilot","pl"],
-  ["horn","alarm","ah"],
+  ["fan","blower"],
+  ["heater","htr"],
+  ["light","lamp"],
+  ["pushbutton","push"],
+  ["pilot"],
+  ["horn","alarm"],
   ["receptacle","recp","outlet"],
   // Voltage / freq references
-  ["voltage","volt","v"],
+  ["voltage","volts"],
   ["amp","amps","ampere"],
 ];
 function _bcExpandToken(t){
@@ -2660,12 +2665,15 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   }
   try{
     if(field==="both"){
+      // DECISION(v1.19.799): Bigger fetches per stream (top*3) so we can rank locally.
+      // The synonym-expanded query can return many tangentially-related items; if we
+      // only ever pull `top` from each stream and merge, the user's literal word is
+      // sometimes outside the slice. Pulling more lets us rank-and-trim properly.
       const [byNum,byName,litByName]=await Promise.all([
-        _bcFetchItems(compId,_andOn('number'),top+1,skip),
-        _bcFetchItems(compId,_andOn('displayName'),top+1,skip),
-        // DECISION(v1.19.797): Also fire a strict-literal pass on displayName so any item
-        // matching the user's typed words (without synonym substitution) is guaranteed to
-        // surface even if its description contains words outside our synonym groups.
+        _bcFetchItems(compId,_andOn('number'),Math.max(top+1,top*3),skip),
+        _bcFetchItems(compId,_andOn('displayName'),Math.max(top+1,top*3),skip),
+        // DECISION(v1.19.797): Strict-literal pass on displayName so any item matching the
+        // user's typed words (without synonym substitution) is guaranteed to surface.
         _bcFetchItems(compId,_andOnLiteral('displayName'),top+1,skip)
       ]);
       const seen=new Set();
@@ -2673,9 +2681,30 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
       for(const item of[...(byNum||[]),...(byName||[]),...(litByName||[])]){
         if(!seen.has(item.number)){seen.add(item.number);merged.push(item);}
       }
-      merged.sort((a,b)=>a.number.localeCompare(b.number));
+      // DECISION(v1.19.799): Rank by RELEVANCE, not by item number. Items whose name
+      // contains the user's literal typed phrase get top score; literal-word matches
+      // beat synonym matches; alphabetical-by-number is the final tiebreaker.
+      const literalLow=rawTokens.join(' ').toLowerCase();
+      const literalTokensLow=rawTokens.map(t=>t.toLowerCase());
+      function _score(item){
+        const dn=(item.displayName||"").toLowerCase();
+        const num=(item.number||"").toLowerCase();
+        let s=0;
+        if(dn.includes(literalLow))s+=100;        // exact phrase in name
+        if(num.includes(literalLow))s+=80;         // exact phrase in number
+        for(const t of literalTokensLow){
+          if(dn.includes(t))s+=30;                  // each literal token in name
+          if(num.includes(t))s+=20;                 // each literal token in number
+        }
+        return s;
+      }
+      merged.sort((a,b)=>{
+        const sa=_score(a),sb=_score(b);
+        if(sa!==sb)return sb-sa;
+        return (a.number||"").localeCompare(b.number||"");
+      });
       const hasMore=merged.length>top;
-      console.log(`bcSearchItems results: ${Math.min(merged.length,top)} items (both fields, ${rawTokens.length} token${rawTokens.length>1?'s':''}, synonyms: ${tokenGroups.map(g=>g.length>1?g.length+'×':'').filter(Boolean).join(',')||'none'})`);
+      console.log(`bcSearchItems results: ${Math.min(merged.length,top)} items (both fields, ${rawTokens.length} token${rawTokens.length>1?'s':''}, synonyms: ${tokenGroups.map(g=>g.length>1?g.length+'×':'').filter(Boolean).join(',')||'none'}, ranked by relevance)`);
       return{items:merged.slice(0,top),hasMore};
     }
     const filter=field==="number"?_andOn('number'):_andOn('displayName');
