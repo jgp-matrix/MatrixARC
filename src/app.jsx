@@ -9730,7 +9730,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
         const isPdf=t==="application/pdf"||ext.endsWith(".pdf");
         const isImg=t.startsWith("image/")||/\.(png|jpe?g|gif|webp|bmp)$/i.test(ext);
         if(isPdf){
-          await window.pdfjsReady;
+          await window.pdfjsReady();
           const pdfjs=window._pdfjs;
           const buf=await f.arrayBuffer();
           const pdf=await pdfjs.getDocument({data:buf}).promise;
