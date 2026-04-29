@@ -13661,14 +13661,8 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onMouseDown={e=>{backdropMdRef.current=e.target===e.currentTarget;}}
       onClick={e=>{if(backdropMdRef.current)onClose();}}>
-      <div style={{...card(),width:"100%",maxWidth:860,maxHeight:"90vh",minHeight:400,minWidth:520,overflow:"auto",resize:"both",position:"relative"}} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
-        {/* DECISION(v1.19.811): Switched from flex column → simple block layout for the
-            modal body. Block layout reliably overflows + scrolls when content exceeds
-            maxHeight. Flex column + overflow:auto was failing to scroll on this modal
-            (likely because flex children took natural size but flex container wasn't
-            recognizing the overflow). Now: block flow, sticky header, native CSS
-            resize grabber on the modal corner. */}
-        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14,gap:12,position:"sticky",top:-20,zIndex:5,background:C.card,paddingTop:20,marginTop:-20,paddingBottom:6}}>
+      <div style={{...card(),width:"100%",maxWidth:860,maxHeight:"90vh",display:"flex",flexDirection:"column",overflow:"hidden"}} onMouseDown={e=>e.stopPropagation()} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14,gap:12,flexShrink:0}}>
           <div style={{flex:1,minWidth:0}}>
             <div style={{fontSize:18,fontWeight:700,marginBottom:4}}>BC Item Browser</div>
             {targetRow&&(targetRow.partNumber||targetRow.description)&&(
@@ -13946,12 +13940,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             </div>
           </div>
         )}
-        <div style={{borderRadius:8,border:`1px solid ${C.border}`,overflow:"hidden"}}>
-          {/* DECISION(v1.19.810): No more inner-table flex:1+overflow:auto. The MODAL
-              scrolls now (overflow:auto on the outer box), so the table flows naturally
-              and the user scrolls the whole modal — header (sticky) → results →
-              drawing reference. Eliminates double-scroll confusion and ensures the
-              "BC Item Browser" title stays reachable even with large result sets. */}
+        <div style={{flex:1,minHeight:0,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
+          {/* DECISION(v1.19.801): minHeight:0 is the flexbox magic that makes flex:1 +
+              overflow:auto actually scroll instead of pushing the parent past maxHeight.
+              Without it, when results were large, the table forced the modal taller than
+              the viewport and the user couldn't scroll the modal. With it, the table
+              takes only its allotted flex space and scrolls internally. */}
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead style={{position:"sticky",top:0,zIndex:1}}>
               <tr style={{background:"#0a0a12"}}>
