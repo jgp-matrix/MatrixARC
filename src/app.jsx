@@ -19062,7 +19062,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         )}
                       </td>
                     ))}
-                    <td style={{padding:"3px 5px",textAlign:"right",width:110}}>
+                    <td style={{padding:"3px 5px 3px 14px",textAlign:"right",width:110}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
                         {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>LABOR</span>}
                         {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
