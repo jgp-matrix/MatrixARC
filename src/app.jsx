@@ -18802,7 +18802,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   // See _isBomRowFlaggedRed for full rules + exclusions.
                   const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_isBomRowFlaggedRed(row)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.015)";
                   return(
-                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:rowBg}}>
+                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:rowBg,verticalAlign:"top"}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
                       {i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
