@@ -2552,7 +2552,7 @@ async function _bcFetchItems(compId,filter,top,skip){
 const BC_SEARCH_SYNONYMS=[
   // Networking
   ["net","network","ntwk","netwk","nwk","ethernet","ether","enet","eth"],
-  ["sw","switch","swtch","swt"],
+  ["sw","switch","swtch","swt","selector","sel","ss","slctr","slct","slcr","limit","lmsw","lim","lmt","lsw","disconnect","disc","dsc","dsconn","dscn","disconn","toggle","tggl","rotary","rot"],
   ["port","ports","outlet"],
   ["hub","hubs"],
   ["router","rtr"],
@@ -2607,21 +2607,24 @@ const BC_SEARCH_SYNONYMS=[
   ["heater","htr","heat"],
   ["light","lt","led","lamp"],
   ["pushbutton","pb","push"],
-  ["selector","sel","ss","switch"],
   ["pilot","pl"],
   ["horn","alarm","ah"],
   ["receptacle","recp","outlet"],
   // Voltage / freq references
-  ["transformer","step","stepdown"],
   ["voltage","volt","v"],
   ["amp","amps","ampere"],
 ];
 function _bcExpandToken(t){
   const low=t.toLowerCase();
+  // DECISION(v1.19.798): Union ALL groups that contain this token, not just the first.
+  // Many concepts overlap — "switch" is both in the SW group and historically the
+  // SELECTOR group. Returning only the first match silently dropped the variants in
+  // any later group. Now we union every group's variants when the token appears.
+  const out=new Set([low]);
   for(const group of BC_SEARCH_SYNONYMS){
-    if(group.includes(low))return Array.from(new Set(group));
+    if(group.includes(low))group.forEach(v=>out.add(v));
   }
-  return[low];
+  return Array.from(out);
 }
 async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   if(!query||query.trim().length<3)return{items:[],hasMore:false};
@@ -13287,7 +13290,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const debounceRef=useRef(null);
   const searchIdRef=useRef(0);
   const enrichIdRef=useRef(0);
-  const PAGE=25;
+  // DECISION(v1.19.798): Increased page size from 25 to 50. With BC items sorted
+  // alphabetically by item number, common search terms (e.g. "switch") return many
+  // hits and the most-searched-for item often sits past row 25 alphabetically. The
+  // user noticed this when searching "switch" wasn't surfacing item 1084159 in the
+  // initial result page. Larger first page reduces friction; "Load More" still works.
+  const PAGE=50;
   const [showCreate,setShowCreate]=useState(false);
   const [createNumber,setCreateNumber]=useState(initialQuery||"");
   const [createName,setCreateName]=useState(targetRow&&targetRow.description?targetRow.description:"");
