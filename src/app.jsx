@@ -18949,19 +18949,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             <span title="AI re-read this row in isolation and corrected it" style={{fontSize:10,color:"#6ee7b7",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#10b98122",padding:"1px 6px",borderRadius:10}}>✓ Fix</span>
                           )}
                           </div>
-                          {/* DECISION(v1.19.821): Second-line meta row for partNumber cell.
-                             Renders when the row is a companion-part OR was crossed to an
-                             alternate. Holds the Co-Part pill, Cross/ARC-Cross pill, "from: X"
-                             label, and the auto-replace checkbox — keeping all of this off the
-                             inline part-number row so long PNs aren't truncated. */}
-                          {f==="partNumber"&&(row.autoAddedCompanion||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)))&&(()=>{
-                            const isCross=row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber);
-                            const alt=isCross&&!readOnly?alternates.find(a=>a.originalPN===row.crossedFrom):null;
+                          {/* DECISION(v1.19.822): Two separate meta rows under the partNumber.
+                             Row A: from / auto-replace (only when crossed). Row B: pills
+                             (Co-Part, Cross/ARC-Cross) on their own line below — keeps long
+                             part numbers from being truncated AND keeps the meta layout tidy
+                             when both pills appear together. */}
+                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&(()=>{
+                            const alt=!readOnly?alternates.find(a=>a.originalPN===row.crossedFrom):null;
                             return(
-                              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,paddingLeft:2,flexWrap:"wrap"}}>
-                                {isCross&&(
-                                  <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:C.red}}>{row.crossedFrom}</span></span>
-                                )}
+                              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,paddingLeft:2}}>
+                                <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:C.red}}>{row.crossedFrom}</span></span>
                                 {alt&&(
                                   <label style={{display:"flex",alignItems:"center",gap:3,fontSize:10,color:C.muted,cursor:"pointer"}}>
                                     <input type="checkbox" checked={alt.autoReplace||false}
@@ -18970,6 +18967,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                                     auto-replace
                                   </label>
                                 )}
+                              </div>
+                            );
+                          })()}
+                          {f==="partNumber"&&(row.autoAddedCompanion||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)))&&(()=>{
+                            const isCross=row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber);
+                            return(
+                              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:3,paddingLeft:2}}>
                                 {row.autoAddedCompanion&&(
                                   <span title={`Auto-added companion part — identified on the same BOM line as ${row.companionOfPartNumber||"another part"}. Verify qty and details.`} style={{fontSize:10,color:"#fb923c",fontWeight:700,whiteSpace:"nowrap",cursor:"help",background:"#fb923c22",padding:"1px 6px",borderRadius:10}}>🔗 Co-Part</span>
                                 )}
