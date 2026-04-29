@@ -19104,7 +19104,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     {/* DECISION(v1.19.687/725): Lead column — floating hover tooltip with
                        source + age + supplier stock snapshot (when captured from quote).
                        Editable inline; manual edit flips source to "manual" via updateBomRow. */}
-                    <td style={{padding:"3px 2px",textAlign:"center",width:48,fontSize:13,verticalAlign:"middle"}}
+                    <td style={{padding:"3px 2px",textAlign:"center",width:48,fontSize:13}}
                         onMouseEnter={!row.isLaborRow&&row.leadTimeDays!=null?e=>setLeadTimeTooltip({x:e.clientX,y:e.clientY,row}):undefined}
                         onMouseMove={!row.isLaborRow&&row.leadTimeDays!=null?e=>setLeadTimeTooltip(prev=>prev?{...prev,x:e.clientX,y:e.clientY}:prev):undefined}
                         onMouseLeave={!row.isLaborRow&&row.leadTimeDays!=null?()=>setLeadTimeTooltip(null):undefined}>
