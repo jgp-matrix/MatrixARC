@@ -2644,26 +2644,55 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   // and "DUCT, COVER" all parse to two tokens.
   const rawTokens=query.trim().split(/[\s,]+/).map(t=>t.trim()).filter(t=>t.length>0);
   if(!rawTokens.length)return{items:[],hasMore:false};
-  // DECISION(v1.19.802): Cross-field AND-OR semantics, mirroring BC's native item search.
-  // Each user token must appear in EITHER displayName OR number; all tokens together must
-  // be satisfied. So "network switch" matches an item whose displayName contains "switch"
-  // and whose number contains "network", or vice versa, or one field has both.
-  // Earlier code (v1.19.800) ran two parallel queries — one ANDing all tokens in `number`,
-  // one ANDing them in `displayName` — which missed items where the words were SPLIT
-  // across fields. The original v1.19.592 comment claimed BC rejects `or` across distinct
-  // fields; that was a misdiagnosis from a malformed query. OData v4 supports it cleanly.
+  // DECISION(v1.19.803): Reverted v1.19.802's single cross-field query — BC OData's
+  // /items endpoint does in fact reject `or` across distinct fields (the v1.19.592
+  // comment was correct). Single-token "switch" returned 0 items because BC sent back
+  // an error for `(contains(number,'switch') or contains(displayName,'switch'))`.
+  // Back to two parallel queries that AND tokens within a single field, then merge.
+  // Multi-token cases where words are split across fields are handled by an additional
+  // per-token cross-field intersection pass below.
   const literalTokens=rawTokens.map(t=>t.replace(/'/g,"''"));
   function _andOn(fieldName){
     return literalTokens.map(t=>`contains(${fieldName},'${t}')`).join(' and ');
   }
-  function _crossFieldFilter(){
-    return literalTokens.map(t=>`(contains(number,'${t}') or contains(displayName,'${t}'))`).join(' and ');
-  }
   try{
     if(field==="both"){
-      // DECISION(v1.19.802): Single cross-field query — each token must hit number OR
-      // displayName, all tokens ANDed. One round-trip instead of two.
-      const merged=await _bcFetchItems(compId,_crossFieldFilter(),top+1,skip)||[];
+      const queries=[
+        _bcFetchItems(compId,_andOn('number'),top+1,skip),
+        _bcFetchItems(compId,_andOn('displayName'),top+1,skip),
+      ];
+      // DECISION(v1.19.803): For multi-token searches we also fetch — per token —
+      // the union of (number contains token) ∪ (displayName contains token), then
+      // intersect those sets. This catches items where the tokens are SPLIT across
+      // fields (e.g. number "ETH-NW-1042" + displayName "SWITCH 4-PORT" matches
+      // "network switch"). Single-token searches skip this — the two main queries
+      // already cover them.
+      let intersectedSet=null;
+      if(rawTokens.length>1){
+        const perTokenSets=await Promise.all(literalTokens.map(async tok=>{
+          const [nums,names]=await Promise.all([
+            _bcFetchItems(compId,`contains(number,'${tok}')`,200,0),
+            _bcFetchItems(compId,`contains(displayName,'${tok}')`,200,0),
+          ]);
+          const map=new Map();
+          for(const it of[...(nums||[]),...(names||[])]){map.set(it.number,it);}
+          return map;
+        }));
+        // Intersect — start with smallest set for efficiency
+        perTokenSets.sort((a,b)=>a.size-b.size);
+        intersectedSet=new Map();
+        if(perTokenSets[0]){
+          for(const[num,item]of perTokenSets[0]){
+            if(perTokenSets.every(s=>s.has(num)))intersectedSet.set(num,item);
+          }
+        }
+      }
+      const [byNum,byName]=await Promise.all(queries);
+      const seen=new Set();
+      const merged=[];
+      for(const item of[...(byNum||[]),...(byName||[]),...(intersectedSet?Array.from(intersectedSet.values()):[])]){
+        if(!seen.has(item.number)){seen.add(item.number);merged.push(item);}
+      }
       // DECISION(v1.19.799): Rank by RELEVANCE rather than item number — items whose
       // displayName contains the user's full typed phrase score highest, then per-token
       // hits, with item-number sort as the tiebreaker. Keeps the most relevant items
