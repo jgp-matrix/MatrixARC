@@ -18812,7 +18812,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   // <input> and plain <td> text).
                   const _pnHasExtraLines=row.autoAddedCompanion||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber));
                   return(
-                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none",background:rowBg,verticalAlign:_pnHasExtraLines?"top":"middle"}}>
+                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
                       {i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
@@ -18959,40 +18959,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             <span title="AI re-read this row in isolation and corrected it" style={{fontSize:10,color:"#6ee7b7",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#10b98122",padding:"1px 6px",borderRadius:10}}>✓ Fix</span>
                           )}
                           </div>
-                          {/* DECISION(v1.19.822): Two separate meta rows under the partNumber.
-                             Row A: from / auto-replace (only when crossed). Row B: pills
-                             (Co-Part, Cross/ARC-Cross) on their own line below — keeps long
-                             part numbers from being truncated AND keeps the meta layout tidy
-                             when both pills appear together. */}
-                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&(()=>{
-                            const alt=!readOnly?alternates.find(a=>a.originalPN===row.crossedFrom):null;
-                            return(
-                              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,paddingLeft:2}}>
-                                <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:C.red}}>{row.crossedFrom}</span></span>
-                                {alt&&(
-                                  <label style={{display:"flex",alignItems:"center",gap:3,fontSize:10,color:C.muted,cursor:"pointer"}}>
-                                    <input type="checkbox" checked={alt.autoReplace||false}
-                                      onChange={e=>setAltAutoReplace(uid,row.crossedFrom,e.target.checked).then(alts=>setAlternates([...alts])).catch(()=>{})}
-                                      style={{accentColor:C.accent,width:10,height:10,cursor:"pointer"}}/>
-                                    auto-replace
-                                  </label>
-                                )}
-                              </div>
-                            );
-                          })()}
-                          {f==="partNumber"&&(row.autoAddedCompanion||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)))&&(()=>{
-                            const isCross=row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber);
-                            return(
-                              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:3,paddingLeft:2}}>
-                                {row.autoAddedCompanion&&(
-                                  <span title={`Auto-added companion part — identified on the same BOM line as ${row.companionOfPartNumber||"another part"}. Verify qty and details.`} style={{fontSize:10,color:"#fb923c",fontWeight:700,whiteSpace:"nowrap",cursor:"help",background:"#fb923c22",padding:"1px 6px",borderRadius:10}}>🔗 Co-Part</span>
-                                )}
-                                {isCross&&(
-                                  <span title={row.autoReplaced?"ARC auto-crossed this part from a saved alternate":"Part crossed to an alternate during extraction"} style={{fontSize:10,color:C.red,fontWeight:700,whiteSpace:"nowrap",cursor:"help",background:C.red+"22",padding:"1px 6px",borderRadius:10}}>{row.autoReplaced?"ARC Cross":"Crossed"}</span>
-                                )}
-                              </div>
-                            );
-                          })()}
+                          {/* DECISION(v1.19.828): Meta content (from/auto-replace + Co-Part/ARC
+                             Cross pills) moved OUT of the partNumber cell and into a dedicated
+                             follow-up <tr> rendered after this data row — keeps the data row
+                             single-line so vertical alignment is consistent across plain-text
+                             and input cells. See "_metaTr" emit at the row return below. */}
                           {f==="partNumber"&&!row.isLaborRow&&!row.isCrossed&&!readOnly&&(()=>{
                             const pn=(row.partNumber||"").trim();
                             const avail=pn?alternates.filter(a=>a.originalPN===pn):[];
@@ -19180,8 +19151,47 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     </td>
                   </tr>
                   );})();
-                  // ECO Phase 2.C: emit separator (when present) + row from this iteration.
-                  return _ecoSep?[_ecoSep,_rowEl]:[_rowEl];
+                  // DECISION(v1.19.828): Meta sub-row — only emitted when the partNumber has
+                  // additional context (crossed-from + auto-replace, or pills). Renders below
+                  // the data row, padded under the partNumber column, so the data row itself
+                  // stays single-line and aligned cleanly with the rest of the columns.
+                  const _metaTr=_pnHasExtraLines?(()=>{
+                    const isCross=row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber);
+                    const alt=isCross&&!readOnly?alternates.find(a=>a.originalPN===row.crossedFrom):null;
+                    return(
+                      <tr key={row.id+"-meta"} style={{background:rowBg,borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none"}}>
+                        <td colSpan={3}/>
+                        <td colSpan={2} style={{padding:"0 5px 6px 38px"}}>
+                          {isCross&&(
+                            <div style={{display:"flex",alignItems:"center",gap:6}}>
+                              <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:C.red}}>{row.crossedFrom}</span></span>
+                              {alt&&(
+                                <label style={{display:"flex",alignItems:"center",gap:3,fontSize:10,color:C.muted,cursor:"pointer"}}>
+                                  <input type="checkbox" checked={alt.autoReplace||false}
+                                    onChange={e=>setAltAutoReplace(uid,row.crossedFrom,e.target.checked).then(alts=>setAlternates([...alts])).catch(()=>{})}
+                                    style={{accentColor:C.accent,width:10,height:10,cursor:"pointer"}}/>
+                                  auto-replace
+                                </label>
+                              )}
+                            </div>
+                          )}
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginTop:isCross?3:0}}>
+                            {row.autoAddedCompanion&&(
+                              <span title={`Auto-added companion part — identified on the same BOM line as ${row.companionOfPartNumber||"another part"}. Verify qty and details.`} style={{fontSize:10,color:"#fb923c",fontWeight:700,whiteSpace:"nowrap",cursor:"help",background:"#fb923c22",padding:"1px 6px",borderRadius:10}}>🔗 Co-Part</span>
+                            )}
+                            {isCross&&(
+                              <span title={row.autoReplaced?"ARC auto-crossed this part from a saved alternate":"Part crossed to an alternate during extraction"} style={{fontSize:10,color:C.red,fontWeight:700,whiteSpace:"nowrap",cursor:"help",background:C.red+"22",padding:"1px 6px",borderRadius:10}}>{row.autoReplaced?"ARC Cross":"Crossed"}</span>
+                            )}
+                          </div>
+                        </td>
+                        <td colSpan={8}/>
+                      </tr>
+                    );
+                  })():null;
+                  // ECO Phase 2.C: emit separator (when present) + row + optional meta sub-row.
+                  const _emitted=[_rowEl];
+                  if(_metaTr)_emitted.push(_metaTr);
+                  return _ecoSep?[_ecoSep,..._emitted]:_emitted;
                   });
                 })()}
               </tbody>
