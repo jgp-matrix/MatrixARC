@@ -18911,15 +18911,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               </span>
                             );
                           })()}
-                          {/* DECISION(v1.19.672): Companion-part badge — identifies rows that
-                             were auto-added because a secondary part number was detected on
-                             the parent's BOM line (e.g. relay + socket base). */}
-                          {f==="partNumber"&&row.autoAddedCompanion&&(
-                            <span title={`Auto-added companion part — identified on the same BOM line as ${row.companionOfPartNumber||"another part"}. Verify qty and details.`} style={{fontSize:10,color:"#fb923c",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#fb923c22",padding:"1px 6px",borderRadius:10}}>🔗 Co-Part</span>
-                          )}
-                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&(
-                            <span title={row.autoReplaced?"ARC auto-crossed this part from a saved alternate":"Part crossed to an alternate during extraction"} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help"}}>{row.autoReplaced?"ARC Cross":"Crossed"}</span>
-                          )}
+                          {/* DECISION(v1.19.821): Co-Part and ARC Cross/Crossed pills moved
+                             out of the inline part-number row — they were truncating long part
+                             numbers in the column. Both pills now render on the second line
+                             next to "from: …" / "auto-replace" (see block below). */}
                           {f==="partNumber"&&row.isCorrection&&(
                             <span title={row.correctionType==='extraction'?'Extraction error corrected':row.correctionType==='formatting'?'Formatting error corrected':row.correctionType==='format'?'Format corrected':'Corrected'} style={{fontSize:10,color:C.red,fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help"}}>
                               {row.correctionType==='extraction'?'Extract Fix':row.correctionType==='formatting'?'Format Fix':row.correctionType==='format'?'Format Fix':'Fixed'}
@@ -18954,11 +18949,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             <span title="AI re-read this row in isolation and corrected it" style={{fontSize:10,color:"#6ee7b7",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#10b98122",padding:"1px 6px",borderRadius:10}}>✓ Fix</span>
                           )}
                           </div>
-                          {f==="partNumber"&&row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)&&!readOnly&&(()=>{
-                            const alt=alternates.find(a=>a.originalPN===row.crossedFrom);
+                          {/* DECISION(v1.19.821): Second-line meta row for partNumber cell.
+                             Renders when the row is a companion-part OR was crossed to an
+                             alternate. Holds the Co-Part pill, Cross/ARC-Cross pill, "from: X"
+                             label, and the auto-replace checkbox — keeping all of this off the
+                             inline part-number row so long PNs aren't truncated. */}
+                          {f==="partNumber"&&(row.autoAddedCompanion||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)))&&(()=>{
+                            const isCross=row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber);
+                            const alt=isCross&&!readOnly?alternates.find(a=>a.originalPN===row.crossedFrom):null;
                             return(
-                              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,paddingLeft:2}}>
-                                <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:C.red}}>{row.crossedFrom}</span></span>
+                              <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2,paddingLeft:2,flexWrap:"wrap"}}>
+                                {isCross&&(
+                                  <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:C.red}}>{row.crossedFrom}</span></span>
+                                )}
                                 {alt&&(
                                   <label style={{display:"flex",alignItems:"center",gap:3,fontSize:10,color:C.muted,cursor:"pointer"}}>
                                     <input type="checkbox" checked={alt.autoReplace||false}
@@ -18966,6 +18969,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                                       style={{accentColor:C.accent,width:10,height:10,cursor:"pointer"}}/>
                                     auto-replace
                                   </label>
+                                )}
+                                {row.autoAddedCompanion&&(
+                                  <span title={`Auto-added companion part — identified on the same BOM line as ${row.companionOfPartNumber||"another part"}. Verify qty and details.`} style={{fontSize:10,color:"#fb923c",fontWeight:700,whiteSpace:"nowrap",cursor:"help",background:"#fb923c22",padding:"1px 6px",borderRadius:10}}>🔗 Co-Part</span>
+                                )}
+                                {isCross&&(
+                                  <span title={row.autoReplaced?"ARC auto-crossed this part from a saved alternate":"Part crossed to an alternate during extraction"} style={{fontSize:10,color:C.red,fontWeight:700,whiteSpace:"nowrap",cursor:"help",background:C.red+"22",padding:"1px 6px",borderRadius:10}}>{row.autoReplaced?"ARC Cross":"Crossed"}</span>
                                 )}
                               </div>
                             );
