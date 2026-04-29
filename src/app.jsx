@@ -18708,7 +18708,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <col style={{width:42}}/><col style={{width:42}}/><col style={{width:42}}/>
                 <col style={{width:"18%"}}/><col style={{width:28}}/><col style={{width:"22%"}}/>
                 <col style={{width:"10%"}}/><col style={{width:"11%"}}/>
-                <col style={{width:82}}/><col style={{width:72}}/><col style={{width:48}}/><col style={{width:60}}/><col style={{width:40}}/>
+                {/* DECISION(v1.19.825): Unit $ column was 82px which couldn't fit the BC/ARC AI/M
+                    source pill + "$" + price input — the pill overflowed left into the supplier
+                    column. Widened to 116px and trimmed Ext $ to 64 to keep total table width
+                    similar. */}
+                <col style={{width:116}}/><col style={{width:64}}/><col style={{width:48}}/><col style={{width:60}}/><col style={{width:40}}/>
               </colgroup>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
@@ -19062,7 +19066,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         )}
                       </td>
                     ))}
-                    <td style={{padding:"3px 5px 3px 14px",textAlign:"right",width:110}}>
+                    <td style={{padding:"3px 5px 3px 8px",textAlign:"right",width:110}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
                         {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>LABOR</span>}
                         {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
