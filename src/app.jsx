@@ -2542,6 +2542,46 @@ async function _bcFetchItems(compId,filter,top,skip){
     inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:item.vendorNo||""
   }));
 }
+
+// DECISION(v1.19.807): ItemCard OData v4 search — exposes Description_2, Search_Description,
+// Vendor_Item_No, Common_Item_No that the standard /items REST endpoint hides. BC's native
+// item list searches all of these; users searching "Network Switch" expect to find items
+// where "Network" is in Description_2 or Vendor_Item_No while Description has just "Switch"
+// or vice-versa. This function fetches ItemCard rows and maps them to the same shape the
+// rest of ARC expects.
+async function _bcFetchItemsViaItemCard(filter,top,skip){
+  const blockedFilter=filter?`(${filter}) and Blocked eq false`:`Blocked eq false`;
+  const url=`${BC_ODATA_BASE}/ItemCard?$filter=${blockedFilter}&$top=${top}&$skip=${skip}&$orderby=No`;
+  console.log("bcSearchItems URL (ItemCard):",url);
+  let r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  if(r.status===401){
+    _bcToken=await acquireBcToken(false)||null;
+    if(!_bcToken)return null;
+    r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  }
+  if(!r.ok){console.warn("bcSearchItems(ItemCard) failed:",r.status,await r.text());return null;}
+  const d=await r.json();
+  return(d.value||[]).map(item=>({
+    // ItemCard uses BC field names (Pascal_Case with underscores). Map to the canonical
+    // shape that ARC's UI expects: lowercase camelCase. displayName falls back to
+    // Description_2 when Description is empty (the very case that motivated this switch).
+    number:item.No||"",
+    displayName:(item.Description||"").trim()||(item.Description_2||"").trim()||(item.Search_Description||"").trim(),
+    unitCost:item.Unit_Cost??null,
+    unitPrice:item.Unit_Price??null,
+    inventory:item.Inventory||0,
+    lastModifiedDateTime:item.Last_Date_Modified||"",
+    vendorNo:item.Vendor_No||"",
+    // Keep the raw text fields so multi-token client-side filtering can check them too.
+    // Without this, an item whose only "switch" hit is in Vendor_Item_No would fail
+    // client-side filtering after the primary "network" pass narrowed via Description.
+    _desc2:item.Description_2||"",
+    _searchDesc:item.Search_Description||"",
+    _vendorItemNo:item.Vendor_Item_No||"",
+    _commonItemNo:item.Common_Item_No||"",
+    _mfrCode:item.Manufacturer_Code||""
+  }));
+}
 // DECISION(v1.19.800): Reverted to BC-native search behavior. Synonym groups + semantic
 // expansion (v1.19.797–.799) was over-engineered — it surfaced items the user did NOT
 // type ("switch" returning selectors/disconnects/rotary), violated multi-term search
@@ -2668,28 +2708,39 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
       // cross-field OR), then filter client-side for the remaining tokens. This guarantees
       // multi-token searches find items even when words are split across fields, and works
       // for any number of tokens without explosion of server queries.
-      // DECISION(v1.19.806): Reverted v1.19.805 tolower() — it caused BC to return 400
-      // ("The filter '*No*' is not valid for the Blocked field on the Item table"). BC's
-      // items endpoint apparently doesn't support tolower() inside contains() and silently
-      // chokes the parser. BC's contains() is case-insensitive by default on this tenant
-      // (proven by lowercase "switch" matching 33 mixed-case items), so plain contains()
-      // is sufficient. Client-side filtering still uses .toLowerCase() since that's safe.
+      // DECISION(v1.19.807): Use ItemCard OData endpoint (not /items REST) so we can
+      // search across Description, Description_2, Search_Description, No, Vendor_Item_No,
+      // Common_Item_No, Manufacturer_Code — matching BC native's multi-field search. The
+      // standard /items REST endpoint only exposes Description (as displayName), so items
+      // with "Network Switch" in Description_2 were invisible to ARC. ItemCard exposes
+      // them, and we OR the contains() across multiple fields on the same row (ItemCard
+      // accepts cross-field OR; /items did not).
       const primaryIdx=literalTokens.reduce((bestI,tok,i,arr)=>tok.length>arr[bestI].length?i:bestI,0);
       const primary=literalTokens[primaryIdx];
       const others=rawTokens.map(t=>t.toLowerCase()).filter((_,i)=>i!==primaryIdx);
       const PER_TOKEN_TOP=1000;
-      const [primNums,primNames]=await Promise.all([
-        _bcFetchItems(compId,`contains(number,'${primary}')`,PER_TOKEN_TOP,0),
-        _bcFetchItems(compId,`contains(displayName,'${primary}')`,PER_TOKEN_TOP,0),
-      ]);
+      // ItemCard fields where part-text-search makes sense:
+      const ITEM_CARD_FIELDS=["No","Description","Description_2","Search_Description","Vendor_Item_No","Common_Item_No","Manufacturer_Code"];
+      const primaryFilter=ITEM_CARD_FIELDS.map(f=>`contains(${f},'${primary}')`).join(' or ');
+      const fetched=await _bcFetchItemsViaItemCard(primaryFilter,PER_TOKEN_TOP,0)||[];
       const candidates=new Map();
-      for(const it of[...(primNums||[]),...(primNames||[])]){candidates.set(it.number,it);}
-      // Filter client-side: every remaining token must appear in number OR displayName
+      for(const it of fetched){if(it.number)candidates.set(it.number,it);}
+      // Filter client-side: every remaining token must appear in any text-bearing field.
+      // DECISION(v1.19.807): Include Description_2, Search_Description, Vendor_Item_No,
+      // Common_Item_No, Manufacturer_Code in the haystack so multi-token searches don't
+      // miss items where one word lives in a different field than another.
       const merged=[];
       for(const item of candidates.values()){
-        const dn=(item.displayName||"").toLowerCase();
-        const num=(item.number||"").toLowerCase();
-        if(others.every(tok=>dn.includes(tok)||num.includes(tok)))merged.push(item);
+        const haystack=[
+          item.displayName||"",
+          item.number||"",
+          item._desc2||"",
+          item._searchDesc||"",
+          item._vendorItemNo||"",
+          item._commonItemNo||"",
+          item._mfrCode||""
+        ].join(" \n ").toLowerCase();
+        if(others.every(tok=>haystack.includes(tok)))merged.push(item);
       }
       // DECISION(v1.19.799): Rank by RELEVANCE rather than item number — items whose
       // displayName contains the user's full typed phrase score highest, then per-token
