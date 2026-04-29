@@ -1,5 +1,5 @@
 
-const {useState,useEffect,useRef,useCallback}=React;
+const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
 // ── JOKE ENGINE — no repeat jokes per user, shuffled queue, persisted in localStorage ──
 const _ARC_JOKES=[
@@ -9575,6 +9575,12 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
   const [ecoDragActive,setEcoDragActive]=useState(false);
   const [ecoExtractedItems,setEcoExtractedItems]=useState({}); // {pageId: items[]}
   const [ecoExtractError,setEcoExtractError]=useState("");
+  const [ecoApplying,setEcoApplying]=useState(false);
+  // DECISION(v1.19.818, ECO Phase 2.J Stage 2): per-diff-key selection state.
+  // Keys are stable: "add:<normPN>", "modify:<normPN>", "remove:<baseRowId>".
+  // Selection flips when user toggles checkbox; defaults are computed in the diff
+  // memo so adding/modifying default checked, remove defaults unchecked.
+  const [diffSelections,setDiffSelections]=useState({});
   const ecoFileInputRef=useRef(null);
   // Live ECO doc snapshot — drives header status / running totals
   const [liveEco,setLiveEco]=useState(eco);
@@ -9798,6 +9804,195 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
     onUpdateProject&&onUpdateProject(updated);
     onSaveImmediate&&onSaveImmediate(updated);
     setEcoExtractedItems(prev=>{const n={...prev};delete n[pageId];return n;});
+  }
+
+  // DECISION(v1.19.818, ECO Phase 2.J Stage 2): Compute the diff between extracted
+  // ECO drawings and the existing base BOM on the picked panel.
+  // Match policy:
+  //   • Match by normPart(partNumber) — strips spaces/dashes/dots, uppercases.
+  //   • Identical PN + qty → AUTO-MATCHED, hidden from review (per user decision 5).
+  //   • PN matches, qty differs → MODIFY (per user decision 4).
+  //   • PN in extract, not in base → ADD.
+  //   • PN in base, not in extract → REMOVE (defaults unchecked — partial revisions
+  //     don't necessarily mean removal of items not on the new sheet).
+  const ecoDiff=useMemo(()=>{
+    if(!pickedPanel)return{adds:[],modifies:[],removes:[],autoMatched:0,total:0};
+    // Aggregate extracted items across all pages (sum qty per normPN).
+    const extractMap=new Map(); // normPN → {qty, partNumber, description, manufacturer, unitPrice, sources:[]}
+    Object.entries(ecoExtractedItems).forEach(([pageId,items])=>{
+      (items||[]).forEach(it=>{
+        const pn=(it.partNumber||"").trim();
+        const np=normPart(pn);
+        if(!np)return;
+        const qty=+it.qty||0;
+        if(qty<=0)return;
+        const cur=extractMap.get(np);
+        if(cur){
+          cur.qty+=qty;
+          if(!cur.description&&it.description)cur.description=it.description;
+          if(!cur.manufacturer&&it.manufacturer)cur.manufacturer=it.manufacturer;
+          if(it.unitPrice!=null&&cur.unitPrice==null)cur.unitPrice=+it.unitPrice;
+          cur.sources.push(pageId);
+        }else{
+          extractMap.set(np,{
+            qty,
+            partNumber:pn,
+            description:it.description||"",
+            manufacturer:it.manufacturer||"",
+            unitPrice:it.unitPrice!=null?+it.unitPrice:null,
+            sources:[pageId],
+          });
+        }
+      });
+    });
+    // Build base BOM map from picked panel — ignore labor + ECO-tagged rows.
+    const baseRowsForDiff=(pickedPanel.bom||[]).filter(r=>!r.isLaborRow&&!r.ecoTag);
+    const baseMap=new Map(); // normPN → {qty, row}
+    baseRowsForDiff.forEach(r=>{
+      const np=normPart(r.partNumber||"");
+      if(!np)return;
+      const cur=baseMap.get(np);
+      if(cur)cur.qty+=(+r.qty||0);
+      else baseMap.set(np,{qty:+r.qty||0,row:r});
+    });
+    const adds=[],modifies=[],removes=[];
+    let autoMatched=0;
+    extractMap.forEach((ext,np)=>{
+      const base=baseMap.get(np);
+      if(!base){
+        adds.push({key:`add:${np}`,np,extracted:ext});
+      }else{
+        if(base.qty===ext.qty){
+          autoMatched++;
+        }else{
+          modifies.push({key:`modify:${np}`,np,extracted:ext,baseRow:base.row,baseQty:base.qty});
+        }
+      }
+    });
+    baseMap.forEach((base,np)=>{
+      if(!extractMap.has(np)){
+        removes.push({key:`remove:${base.row.id}`,np,baseRow:base.row,baseQty:base.qty});
+      }
+    });
+    return{adds,modifies,removes,autoMatched,total:extractMap.size};
+  },[pickedPanel?.id,pickedPanel?.bom,ecoExtractedItems,eco?.ecoId]);
+
+  // Initialize default selections any time the diff key set changes:
+  // adds + modifies default ON, removes default OFF.
+  const _diffKeys=useMemo(()=>(
+    [...ecoDiff.adds,...ecoDiff.modifies,...ecoDiff.removes].map(d=>d.key).join("|")
+  ),[ecoDiff]);
+  useEffect(()=>{
+    setDiffSelections(prev=>{
+      const next={...prev};
+      ecoDiff.adds.forEach(d=>{if(next[d.key]===undefined)next[d.key]=true;});
+      ecoDiff.modifies.forEach(d=>{if(next[d.key]===undefined)next[d.key]=true;});
+      ecoDiff.removes.forEach(d=>{if(next[d.key]===undefined)next[d.key]=false;});
+      return next;
+    });
+  },[_diffKeys]);
+
+  const selectedCounts=useMemo(()=>{
+    const a=ecoDiff.adds.filter(d=>diffSelections[d.key]).length;
+    const m=ecoDiff.modifies.filter(d=>diffSelections[d.key]).length;
+    const r=ecoDiff.removes.filter(d=>diffSelections[d.key]).length;
+    return{adds:a,modifies:m,removes:r,total:a+m+r};
+  },[ecoDiff,diffSelections]);
+
+  // DECISION(v1.19.818, ECO Phase 2.J Stage 3): Apply Selected — commit the
+  // accepted diffs as ECO-tagged rows on panel.bom, mirroring the manual
+  // Add/Modify/Remove flow in the BOM Delta tab. After commit:
+  //   • Tagged pages stay on panel.pages (a record of what triggered the ECO).
+  //   • In-memory `ecoExtractedItems` is cleared (review session is closed).
+  //   • Diff selections are cleared.
+  function applyEcoDiff(){
+    if(!pickedPanel)return;
+    if(selectedCounts.total===0)return;
+    setEcoApplying(true);
+    try{
+      const newRows=[];
+      const baseStamp=Date.now();
+      let n=0;
+      function mkId(){n++;return`eco-${baseStamp}-${n}-${Math.random().toString(36).slice(2,5)}`;}
+      ecoDiff.adds.forEach(d=>{
+        if(!diffSelections[d.key])return;
+        newRows.push({
+          id:mkId(),
+          ecoTag:eco.ecoId,
+          ecoNumber:eco.number,
+          ecoOp:"add",
+          ecoModifiesBaseRowId:null,
+          ecoSource:"drawing",
+          qty:d.extracted.qty,
+          partNumber:d.extracted.partNumber,
+          description:d.extracted.description||"",
+          manufacturer:d.extracted.manufacturer||"",
+          unitPrice:d.extracted.unitPrice!=null?+d.extracted.unitPrice:null,
+          priceSource:d.extracted.unitPrice!=null?"manual":null,
+          priceDate:Date.now(),
+          notes:"",
+          createdAt:Date.now(),
+          createdBy:uid,
+        });
+      });
+      ecoDiff.modifies.forEach(d=>{
+        if(!diffSelections[d.key])return;
+        // Net qty delta: extracted - base. Could be negative if extracted has fewer.
+        const deltaQty=d.extracted.qty-d.baseQty;
+        newRows.push({
+          id:mkId(),
+          ecoTag:eco.ecoId,
+          ecoNumber:eco.number,
+          ecoOp:"modify",
+          ecoModifiesBaseRowId:d.baseRow.id,
+          ecoSource:"drawing",
+          qty:deltaQty,
+          partNumber:d.extracted.partNumber||d.baseRow.partNumber,
+          description:d.extracted.description||d.baseRow.description||"",
+          manufacturer:d.extracted.manufacturer||d.baseRow.manufacturer||"",
+          unitPrice:d.extracted.unitPrice!=null?+d.extracted.unitPrice:(d.baseRow.unitPrice??null),
+          priceSource:d.extracted.unitPrice!=null?"manual":(d.baseRow.priceSource||null),
+          priceDate:Date.now(),
+          notes:`Drawing revised qty ${d.baseQty} → ${d.extracted.qty}`,
+          createdAt:Date.now(),
+          createdBy:uid,
+        });
+      });
+      ecoDiff.removes.forEach(d=>{
+        if(!diffSelections[d.key])return;
+        newRows.push({
+          id:mkId(),
+          ecoTag:eco.ecoId,
+          ecoNumber:eco.number,
+          ecoOp:"remove",
+          ecoModifiesBaseRowId:d.baseRow.id,
+          ecoSource:"drawing",
+          qty:-Math.abs(d.baseQty||0),
+          partNumber:d.baseRow.partNumber||"",
+          description:d.baseRow.description||"",
+          manufacturer:d.baseRow.manufacturer||"",
+          unitPrice:d.baseRow.unitPrice??null,
+          priceSource:d.baseRow.priceSource||"manual",
+          priceDate:Date.now(),
+          notes:"Removed per revised drawing",
+          createdAt:Date.now(),
+          createdBy:uid,
+        });
+      });
+      const newBom=[...(pickedPanel.bom||[]),...newRows];
+      const newPanels=panels.map(p=>p.id===pickedPanel.id?{...p,bom:newBom}:p);
+      const updated={...project,panels:newPanels,updatedAt:Date.now()};
+      onUpdateProject&&onUpdateProject(updated);
+      try{onSaveImmediate&&onSaveImmediate(updated);}catch(e){console.warn("[ECO Drawings] apply save failed:",e.message);}
+      // Reset transient review state. Tagged pages stay as the audit trail.
+      setEcoExtractedItems({});
+      setDiffSelections({});
+      setEcoExtractMsg(`Committed ${newRows.length} ECO row${newRows.length===1?"":"s"} to BOM Delta. Pages remain attached as audit trail.`);
+    }catch(ex){
+      console.error("[ECO Drawings] applyEcoDiff error:",ex);
+      setEcoExtractError(`Apply failed: ${ex.message}`);
+    }
+    setEcoApplying(false);
   }
 
   const fmtMoney=n=>"$"+(+n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -10065,11 +10260,106 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
                   </div>
                 )}
 
-                {/* Stage 2 placeholder */}
-                <div style={{marginTop:18,padding:"12px 14px",background:"#0a0a14",border:"1px solid #a855f744",borderRadius:8,fontSize:11,color:C.muted,lineHeight:1.6}}>
-                  <div style={{fontSize:10,fontWeight:800,color:"#a855f7",letterSpacing:0.5,textTransform:"uppercase",marginBottom:4}}>Coming in Stage 2</div>
-                  Diff computation against the base BOM. Items with matching qty + part # will auto-match (no review needed). Only changes (qty/PN deltas, additions, removals) will be shown for confirmation, then committed as ECO-tagged rows on the BOM Delta tab.
-                </div>
+                {/* Diff review UI — ECO Phase 2.J Stage 2 + 3 */}
+                {(ecoDiff.adds.length+ecoDiff.modifies.length+ecoDiff.removes.length)>0&&(
+                  <div style={{marginTop:18}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                      <span style={{fontSize:12,fontWeight:800,color:"#a855f7",letterSpacing:0.5,textTransform:"uppercase"}}>Diff vs base BOM</span>
+                      <span style={{fontSize:11,color:C.muted}}>
+                        {ecoDiff.autoMatched} auto-matched · {ecoDiff.adds.length} add{ecoDiff.adds.length===1?"":"s"} · {ecoDiff.modifies.length} modif{ecoDiff.modifies.length===1?"y":"ies"} · {ecoDiff.removes.length} remov{ecoDiff.removes.length===1?"al":"als"}
+                      </span>
+                    </div>
+
+                    {/* ADDS */}
+                    {ecoDiff.adds.length>0&&(
+                      <div style={{marginBottom:12,border:"1px solid #a855f744",borderRadius:6,overflow:"hidden"}}>
+                        <div style={{padding:"6px 10px",background:"#1a0040",fontSize:10,fontWeight:800,color:"#a855f7",letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}>
+                          <span>Add ({ecoDiff.adds.length})</span>
+                          <button onClick={()=>{const all=ecoDiff.adds.every(d=>diffSelections[d.key]);setDiffSelections(prev=>{const n={...prev};ecoDiff.adds.forEach(d=>n[d.key]=!all);return n;});}} style={{background:"none",border:"none",color:"#a855f7",cursor:"pointer",fontSize:10,marginLeft:"auto",fontWeight:700,letterSpacing:0.5}}>{ecoDiff.adds.every(d=>diffSelections[d.key])?"Deselect all":"Select all"}</button>
+                        </div>
+                        {ecoDiff.adds.map((d,i)=>(
+                          <label key={d.key} style={{display:"flex",gap:10,padding:"6px 10px",borderBottom:i<ecoDiff.adds.length-1?`1px solid ${C.border}33`:"none",fontSize:12,alignItems:"center",background:i%2?"#0a0a14":"transparent",cursor:"pointer"}}>
+                            <input type="checkbox" checked={!!diffSelections[d.key]} onChange={e=>setDiffSelections(prev=>({...prev,[d.key]:e.target.checked}))} style={{accentColor:"#a855f7"}}/>
+                            <span style={{minWidth:36,textAlign:"right",color:C.text,fontVariantNumeric:"tabular-nums",fontWeight:700}}>+{d.extracted.qty}×</span>
+                            <span style={{minWidth:140,fontFamily:"monospace",color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.extracted.partNumber||"—"}</span>
+                            <span style={{flex:1,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.extracted.description||""}</span>
+                            <span style={{minWidth:90,textAlign:"right",color:C.muted,fontSize:10}}>{d.extracted.manufacturer||""}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* MODIFIES */}
+                    {ecoDiff.modifies.length>0&&(
+                      <div style={{marginBottom:12,border:"1px solid #fcd34d44",borderRadius:6,overflow:"hidden"}}>
+                        <div style={{padding:"6px 10px",background:"#1a1a14",fontSize:10,fontWeight:800,color:"#fcd34d",letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}>
+                          <span>Modify ({ecoDiff.modifies.length})</span>
+                          <button onClick={()=>{const all=ecoDiff.modifies.every(d=>diffSelections[d.key]);setDiffSelections(prev=>{const n={...prev};ecoDiff.modifies.forEach(d=>n[d.key]=!all);return n;});}} style={{background:"none",border:"none",color:"#fcd34d",cursor:"pointer",fontSize:10,marginLeft:"auto",fontWeight:700,letterSpacing:0.5}}>{ecoDiff.modifies.every(d=>diffSelections[d.key])?"Deselect all":"Select all"}</button>
+                        </div>
+                        {ecoDiff.modifies.map((d,i)=>{
+                          const delta=d.extracted.qty-d.baseQty;
+                          return(
+                            <label key={d.key} style={{display:"flex",gap:10,padding:"6px 10px",borderBottom:i<ecoDiff.modifies.length-1?`1px solid ${C.border}33`:"none",fontSize:12,alignItems:"center",background:i%2?"#0a0a14":"transparent",cursor:"pointer"}}>
+                              <input type="checkbox" checked={!!diffSelections[d.key]} onChange={e=>setDiffSelections(prev=>({...prev,[d.key]:e.target.checked}))} style={{accentColor:"#fcd34d"}}/>
+                              <span style={{minWidth:90,textAlign:"right",color:C.text,fontVariantNumeric:"tabular-nums"}}>{d.baseQty} → <strong style={{color:delta>0?"#4ade80":"#f87171"}}>{d.extracted.qty}</strong></span>
+                              <span style={{minWidth:140,fontFamily:"monospace",color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.extracted.partNumber||"—"}</span>
+                              <span style={{flex:1,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.extracted.description||d.baseRow.description||""}</span>
+                              <span style={{minWidth:60,textAlign:"right",color:delta>0?"#4ade80":"#f87171",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{delta>0?"+":""}{delta}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* REMOVES */}
+                    {ecoDiff.removes.length>0&&(
+                      <div style={{marginBottom:12,border:"1px solid #f8717144",borderRadius:6,overflow:"hidden"}}>
+                        <div style={{padding:"6px 10px",background:"#1f0a0a",fontSize:10,fontWeight:800,color:"#f87171",letterSpacing:0.5,textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}>
+                          <span>Remove ({ecoDiff.removes.length})</span>
+                          <span style={{fontSize:9,fontWeight:600,color:C.muted,textTransform:"none",letterSpacing:0,fontStyle:"italic"}}>only check if upload is the complete revised BOM</span>
+                          <button onClick={()=>{const all=ecoDiff.removes.every(d=>diffSelections[d.key]);setDiffSelections(prev=>{const n={...prev};ecoDiff.removes.forEach(d=>n[d.key]=!all);return n;});}} style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:10,marginLeft:"auto",fontWeight:700,letterSpacing:0.5}}>{ecoDiff.removes.every(d=>diffSelections[d.key])?"Deselect all":"Select all"}</button>
+                        </div>
+                        {ecoDiff.removes.map((d,i)=>(
+                          <label key={d.key} style={{display:"flex",gap:10,padding:"6px 10px",borderBottom:i<ecoDiff.removes.length-1?`1px solid ${C.border}33`:"none",fontSize:12,alignItems:"center",background:i%2?"#0a0a14":"transparent",cursor:"pointer"}}>
+                            <input type="checkbox" checked={!!diffSelections[d.key]} onChange={e=>setDiffSelections(prev=>({...prev,[d.key]:e.target.checked}))} style={{accentColor:"#f87171"}}/>
+                            <span style={{minWidth:36,textAlign:"right",color:"#f87171",fontVariantNumeric:"tabular-nums",fontWeight:700}}>−{d.baseQty}×</span>
+                            <span style={{minWidth:140,fontFamily:"monospace",color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.baseRow.partNumber||"—"}</span>
+                            <span style={{flex:1,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{d.baseRow.description||""}</span>
+                            <span style={{minWidth:90,textAlign:"right",color:C.muted,fontSize:10}}>{d.baseRow.manufacturer||""}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Apply bar */}
+                    <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:"#0a0a14",border:"1px solid #a855f744",borderRadius:8,marginTop:8}}>
+                      <span style={{fontSize:11,color:C.muted}}>
+                        Selected: <strong style={{color:"#a855f7"}}>{selectedCounts.adds}</strong> add · <strong style={{color:"#fcd34d"}}>{selectedCounts.modifies}</strong> modify · <strong style={{color:"#f87171"}}>{selectedCounts.removes}</strong> remove
+                      </span>
+                      <span style={{flex:1}}/>
+                      <button
+                        disabled={selectedCounts.total===0||ecoApplying}
+                        onClick={applyEcoDiff}
+                        style={{
+                          background:selectedCounts.total>0&&!ecoApplying?"#1a0040":"#1e1e2e",
+                          border:`1px solid ${selectedCounts.total>0&&!ecoApplying?"#a855f7":C.border}`,
+                          color:selectedCounts.total>0&&!ecoApplying?"#a855f7":C.muted,
+                          padding:"7px 18px",borderRadius:6,fontSize:12,fontWeight:700,
+                          cursor:selectedCounts.total>0&&!ecoApplying?"pointer":"not-allowed",
+                          letterSpacing:0.3,
+                        }}>
+                        {ecoApplying?"Applying…":`Apply Selected (${selectedCounts.total})`}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* When extraction is done but produced no diffs */}
+                {Object.keys(ecoExtractedItems).length>0&&(ecoDiff.adds.length+ecoDiff.modifies.length+ecoDiff.removes.length)===0&&!ecoExtracting&&(
+                  <div style={{marginTop:18,padding:"14px 16px",background:"rgba(74,222,128,0.06)",border:"1px solid #4ade8044",borderRadius:8,fontSize:12,color:"#86efac"}}>
+                    All {ecoDiff.autoMatched} extracted item{ecoDiff.autoMatched===1?"":"s"} match the base BOM exactly — no changes detected. Drop a different drawing or close this ECO if no scope changes apply.
+                  </div>
+                )}
               </div>
             );
           })():(
