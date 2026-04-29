@@ -2657,41 +2657,28 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   }
   try{
     if(field==="both"){
-      const queries=[
-        _bcFetchItems(compId,_andOn('number'),top+1,skip),
-        _bcFetchItems(compId,_andOn('displayName'),top+1,skip),
-      ];
-      // DECISION(v1.19.803): For multi-token searches we also fetch — per token —
-      // the union of (number contains token) ∪ (displayName contains token), then
-      // intersect those sets. This catches items where the tokens are SPLIT across
-      // fields (e.g. number "ETH-NW-1042" + displayName "SWITCH 4-PORT" matches
-      // "network switch"). Single-token searches skip this — the two main queries
-      // already cover them.
-      let intersectedSet=null;
-      if(rawTokens.length>1){
-        const perTokenSets=await Promise.all(literalTokens.map(async tok=>{
-          const [nums,names]=await Promise.all([
-            _bcFetchItems(compId,`contains(number,'${tok}')`,200,0),
-            _bcFetchItems(compId,`contains(displayName,'${tok}')`,200,0),
-          ]);
-          const map=new Map();
-          for(const it of[...(nums||[]),...(names||[])]){map.set(it.number,it);}
-          return map;
-        }));
-        // Intersect — start with smallest set for efficiency
-        perTokenSets.sort((a,b)=>a.size-b.size);
-        intersectedSet=new Map();
-        if(perTokenSets[0]){
-          for(const[num,item]of perTokenSets[0]){
-            if(perTokenSets.every(s=>s.has(num)))intersectedSet.set(num,item);
-          }
-        }
-      }
-      const [byNum,byName]=await Promise.all(queries);
-      const seen=new Set();
+      // DECISION(v1.19.804): Pick the LONGEST token as the BC server-side filter (longer
+      // tokens tend to be rarer, narrowing the candidate set). Fetch all items containing
+      // that token in number OR displayName (two parallel queries since BC rejects
+      // cross-field OR), then filter client-side for the remaining tokens. This guarantees
+      // multi-token searches find items even when words are split across fields, and works
+      // for any number of tokens without explosion of server queries.
+      const primaryIdx=literalTokens.reduce((bestI,tok,i,arr)=>tok.length>arr[bestI].length?i:bestI,0);
+      const primary=literalTokens[primaryIdx];
+      const others=rawTokens.map(t=>t.toLowerCase()).filter((_,i)=>i!==primaryIdx);
+      const PER_TOKEN_TOP=1000;
+      const [primNums,primNames]=await Promise.all([
+        _bcFetchItems(compId,`contains(number,'${primary}')`,PER_TOKEN_TOP,0),
+        _bcFetchItems(compId,`contains(displayName,'${primary}')`,PER_TOKEN_TOP,0),
+      ]);
+      const candidates=new Map();
+      for(const it of[...(primNums||[]),...(primNames||[])]){candidates.set(it.number,it);}
+      // Filter client-side: every remaining token must appear in number OR displayName
       const merged=[];
-      for(const item of[...(byNum||[]),...(byName||[]),...(intersectedSet?Array.from(intersectedSet.values()):[])]){
-        if(!seen.has(item.number)){seen.add(item.number);merged.push(item);}
+      for(const item of candidates.values()){
+        const dn=(item.displayName||"").toLowerCase();
+        const num=(item.number||"").toLowerCase();
+        if(others.every(tok=>dn.includes(tok)||num.includes(tok)))merged.push(item);
       }
       // DECISION(v1.19.799): Rank by RELEVANCE rather than item number — items whose
       // displayName contains the user's full typed phrase score highest, then per-token
