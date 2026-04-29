@@ -2542,13 +2542,15 @@ async function _bcFetchItems(compId,filter,top,skip){
     inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:item.vendorNo||""
   }));
 }
-// DECISION(v1.19.797): Synonym groups for BC item search. Industrial part
-// catalogs frequently abbreviate descriptions ("NETWK SW" instead of "NETWORK SWITCH",
-// "XFMR" instead of "TRANSFORMER"). Without synonym expansion, a user searching for
-// "network" misses items stored as "NETWK SW 4 PORT" because BC's contains() is a
-// strict substring match. Each group below expands any token to all its variants when
-// building the OData filter. Add new groups as you discover catalog conventions —
-// the structure is tolerant to overlap (same token in multiple groups gets all variants).
+// DECISION(v1.19.800): Reverted to BC-native search behavior. Synonym groups + semantic
+// expansion (v1.19.797–.799) was over-engineered — it surfaced items the user did NOT
+// type ("switch" returning selectors/disconnects/rotary), violated multi-term search
+// intent, and didn't actually match BC's own item-search results. The simpler rule:
+// substring AND across user-typed tokens, with relevance ranking that surfaces literal
+// hits first. The synonym table is preserved (unused) in case we re-enable it as an
+// opt-in "broader search" toggle later. The substring match already handles the user's
+// fuzziness need: typing "net" matches "NETWORK" / "ETHERNET" / "MAGNET" via contains();
+// "port" matches "PORT" / "PORTS" / "IMPORT" / "EXPORT". No semantic expansion needed.
 // DECISION(v1.19.799): Synonym groups are now curated to avoid SHORT AMBIGUOUS TOKENS
 // (≤3 chars unless completely unambiguous like "vfd"/"plc"/"hmi"). Substring contains()
 // makes 2-3 letter tokens flood unrelated items: "ss" matches STAINLESS, "rot" matches
@@ -2650,51 +2652,42 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   // (sw|switch|swtch|swt) — covering both "NETWORK SWITCH" and "ETHERNET SW" and "NTWK SW".
   const rawTokens=query.trim().split(/[\s,]+/).map(t=>t.trim()).filter(t=>t.length>0);
   if(!rawTokens.length)return{items:[],hasMore:false};
-  const tokenGroups=rawTokens.map(t=>_bcExpandToken(t).map(s=>s.replace(/'/g,"''")));
-  function _andOn(fieldName){
-    return tokenGroups.map(group=>{
-      const orParts=group.map(s=>`contains(${fieldName},'${s}')`);
-      return orParts.length===1?orParts[0]:`(${orParts.join(' or ')})`;
-    }).join(' and ');
-  }
-  // Build a strict literal filter (no synonyms) for fallback in case the synonym
-  // expansion was too aggressive and missed an obvious literal hit.
+  // DECISION(v1.19.800): Plain literal AND across user-typed tokens, mirroring BC's
+  // native item-search semantics. Each token becomes a contains() check; all tokens
+  // must appear in the field. No synonym expansion. No semantic substitution.
   const literalTokens=rawTokens.map(t=>t.replace(/'/g,"''"));
-  function _andOnLiteral(fieldName){
+  function _andOn(fieldName){
     return literalTokens.map(t=>`contains(${fieldName},'${t}')`).join(' and ');
   }
   try{
     if(field==="both"){
-      // DECISION(v1.19.799): Bigger fetches per stream (top*3) so we can rank locally.
-      // The synonym-expanded query can return many tangentially-related items; if we
-      // only ever pull `top` from each stream and merge, the user's literal word is
-      // sometimes outside the slice. Pulling more lets us rank-and-trim properly.
-      const [byNum,byName,litByName]=await Promise.all([
-        _bcFetchItems(compId,_andOn('number'),Math.max(top+1,top*3),skip),
-        _bcFetchItems(compId,_andOn('displayName'),Math.max(top+1,top*3),skip),
-        // DECISION(v1.19.797): Strict-literal pass on displayName so any item matching the
-        // user's typed words (without synonym substitution) is guaranteed to surface.
-        _bcFetchItems(compId,_andOnLiteral('displayName'),top+1,skip)
+      // DECISION(v1.19.800): Two parallel queries — by item number, by displayName.
+      // BC OData rejects `or` across distinct fields in a single filter, so we fire
+      // both and merge. Both queries enforce full literal AND of all user tokens.
+      const [byNum,byName]=await Promise.all([
+        _bcFetchItems(compId,_andOn('number'),top+1,skip),
+        _bcFetchItems(compId,_andOn('displayName'),top+1,skip)
       ]);
       const seen=new Set();
       const merged=[];
-      for(const item of[...(byNum||[]),...(byName||[]),...(litByName||[])]){
+      for(const item of[...(byNum||[]),...(byName||[])]){
         if(!seen.has(item.number)){seen.add(item.number);merged.push(item);}
       }
-      // DECISION(v1.19.799): Rank by RELEVANCE, not by item number. Items whose name
-      // contains the user's literal typed phrase get top score; literal-word matches
-      // beat synonym matches; alphabetical-by-number is the final tiebreaker.
+      // DECISION(v1.19.799): Rank by RELEVANCE rather than item number — items whose
+      // displayName contains the user's full typed phrase score highest, then per-token
+      // hits, with item-number sort as the tiebreaker. Keeps the most relevant items
+      // on the first page even when many items match.
       const literalLow=rawTokens.join(' ').toLowerCase();
       const literalTokensLow=rawTokens.map(t=>t.toLowerCase());
       function _score(item){
         const dn=(item.displayName||"").toLowerCase();
         const num=(item.number||"").toLowerCase();
         let s=0;
-        if(dn.includes(literalLow))s+=100;        // exact phrase in name
-        if(num.includes(literalLow))s+=80;         // exact phrase in number
+        if(dn.includes(literalLow))s+=100;
+        if(num.includes(literalLow))s+=80;
         for(const t of literalTokensLow){
-          if(dn.includes(t))s+=30;                  // each literal token in name
-          if(num.includes(t))s+=20;                 // each literal token in number
+          if(dn.includes(t))s+=30;
+          if(num.includes(t))s+=20;
         }
         return s;
       }
@@ -2704,7 +2697,7 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
         return (a.number||"").localeCompare(b.number||"");
       });
       const hasMore=merged.length>top;
-      console.log(`bcSearchItems results: ${Math.min(merged.length,top)} items (both fields, ${rawTokens.length} token${rawTokens.length>1?'s':''}, synonyms: ${tokenGroups.map(g=>g.length>1?g.length+'×':'').filter(Boolean).join(',')||'none'}, ranked by relevance)`);
+      console.log(`bcSearchItems: ${Math.min(merged.length,top)} items (literal AND of ${rawTokens.length} token${rawTokens.length>1?'s':''}, ranked by relevance)`);
       return{items:merged.slice(0,top),hasMore};
     }
     const filter=field==="number"?_andOn('number'):_andOn('displayName');
