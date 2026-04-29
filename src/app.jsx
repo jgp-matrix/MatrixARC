@@ -9564,6 +9564,18 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
   const [formDesc,setFormDesc]=useState("");
   const [formMfr,setFormMfr]=useState("");
   const [formPrice,setFormPrice]=useState("");
+  // DECISION(v1.19.817, ECO Phase 2.J Stage 1): Drawings tab — drop zone state.
+  // ECO-tagged pages live on `panel.pages` with `ecoId`/`ecoNumber` flags so they
+  // survive a refresh, but are hidden from the regular drawings view via filter
+  // in PanelCard. Auto-extraction runs on each new page (no page-type confirm,
+  // per user decision). Extracted items live in component state until Stage 2's
+  // diff/review UI commits them via "Apply Selected".
+  const [ecoExtracting,setEcoExtracting]=useState(false);
+  const [ecoExtractMsg,setEcoExtractMsg]=useState("");
+  const [ecoDragActive,setEcoDragActive]=useState(false);
+  const [ecoExtractedItems,setEcoExtractedItems]=useState({}); // {pageId: items[]}
+  const [ecoExtractError,setEcoExtractError]=useState("");
+  const ecoFileInputRef=useRef(null);
   // Live ECO doc snapshot — drives header status / running totals
   const [liveEco,setLiveEco]=useState(eco);
   useEffect(()=>{setLiveEco(eco);},[eco?.ecoId]);
@@ -9665,6 +9677,127 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
     const updated={...project,panels:newPanels,updatedAt:Date.now()};
     onUpdateProject&&onUpdateProject(updated);
     onSaveImmediate&&onSaveImmediate(updated);
+  }
+
+  // DECISION(v1.19.817, ECO Phase 2.J Stage 1): handleEcoFiles renders dropped
+  // PDFs/images, tags each page with ecoId/ecoNumber, persists onto panel.pages,
+  // uploads to Storage in the background, then runs extractBomPage on each.
+  // Extracted items go into component state for Stage 2 (diff/review).
+  async function handleEcoFiles(files){
+    if(!pickedPanel||!files||!files.length)return;
+    if(!_apiKey){setEcoExtractError("Set your Anthropic API key in Settings before uploading ECO drawings.");return;}
+    setEcoExtractError("");
+    setEcoExtracting(true);
+    setEcoExtractMsg("Reading files…");
+    const newPages=[];
+    try{
+      for(const f of Array.from(files)){
+        const t=(f.type||"").toLowerCase();
+        const ext=(f.name||"").toLowerCase();
+        const isPdf=t==="application/pdf"||ext.endsWith(".pdf");
+        const isImg=t.startsWith("image/")||/\.(png|jpe?g|gif|webp|bmp)$/i.test(ext);
+        if(isPdf){
+          await window.pdfjsReady;
+          const pdfjs=window._pdfjs;
+          const buf=await f.arrayBuffer();
+          const pdf=await pdfjs.getDocument({data:buf}).promise;
+          for(let pg=1;pg<=pdf.numPages;pg++){
+            setEcoExtractMsg(`${f.name} p${pg}/${pdf.numPages}`);
+            const page=await pdf.getPage(pg);
+            const vp=page.getViewport({scale:4.0});
+            const canvas=document.createElement("canvas");
+            canvas.width=vp.width;canvas.height=vp.height;
+            await page.render({canvasContext:canvas.getContext("2d"),viewport:vp}).promise;
+            let srcCanvas=canvas;
+            if(canvas.height>canvas.width){
+              const rot=document.createElement("canvas");rot.width=canvas.height;rot.height=canvas.width;
+              const rctx=rot.getContext("2d");rctx.translate(0,rot.height);rctx.rotate(-Math.PI/2);rctx.drawImage(canvas,0,0);
+              canvas.width=0;canvas.height=0;srcCanvas=rot;
+            }
+            const dataUrl=srcCanvas.toDataURL("image/jpeg",0.95);
+            srcCanvas.width=0;srcCanvas.height=0;
+            const resized=await resizeImage(dataUrl,3800);
+            newPages.push({
+              id:`eco-pg-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+              name:`${f.name} — p${pg}`,
+              dataUrl:resized,
+              types:["bom"], // Stage 1 treats every dropped page as BOM (no page-type confirm)
+              ecoId:eco.ecoId,
+              ecoNumber:eco.number,
+              ecoUploadedAt:Date.now(),
+            });
+          }
+        }else if(isImg){
+          setEcoExtractMsg(f.name);
+          const reader=new FileReader();
+          const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
+          const resized=await resizeImage(dataUrl,3800);
+          newPages.push({
+            id:`eco-pg-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+            name:f.name,
+            dataUrl:resized,
+            types:["bom"],
+            ecoId:eco.ecoId,
+            ecoNumber:eco.number,
+            ecoUploadedAt:Date.now(),
+          });
+        }
+      }
+      if(!newPages.length){setEcoExtracting(false);setEcoExtractMsg("");return;}
+      // Persist to panel.pages immediately so a refresh doesn't lose them.
+      const mergedPages=[...(pickedPanel.pages||[]),...newPages];
+      const newPanels=panels.map(p=>p.id===pickedPanel.id?{...p,pages:mergedPages}:p);
+      let updated={...project,panels:newPanels,updatedAt:Date.now()};
+      onUpdateProject&&onUpdateProject(updated);
+      try{await onSaveImmediate(updated);}catch(e){console.warn("[ECO Drawings] save failed:",e.message);}
+      // Upload to Storage in the background (don't block extraction on this).
+      (async()=>{
+        for(const pg of newPages){
+          try{
+            const url=await uploadPageImage(uid,project.id,pg.id,pg.dataUrl);
+            const latest=Array.isArray(project.panels)?project:project;
+            const newPanels2=(latest.panels||[]).map(p=>{
+              if(p.id!==pickedPanel.id)return p;
+              return{...p,pages:(p.pages||[]).map(x=>x.id===pg.id?{...x,storageUrl:url}:x)};
+            });
+            const updated2={...latest,panels:newPanels2,updatedAt:Date.now()};
+            onUpdateProject&&onUpdateProject(updated2);
+            try{await onSaveImmediate(updated2);}catch(e){}
+          }catch(e){console.warn("[ECO Drawings] storage upload failed for",pg.id,e.message);}
+        }
+      })();
+      // Auto-extract on each new page (sequential so message stays clean).
+      const results={};
+      for(let i=0;i<newPages.length;i++){
+        const pg=newPages[i];
+        setEcoExtractMsg(`Extracting ${pg.name} (${i+1}/${newPages.length})…`);
+        try{
+          const r=await extractBomPage(pg.dataUrl,"","");
+          const items=Array.isArray(r)?r:(r&&r.items)||[];
+          results[pg.id]=items;
+          setEcoExtractedItems(prev=>({...prev,[pg.id]:items}));
+        }catch(ex){
+          console.warn("[ECO Drawings] extract failed for",pg.name,ex.message);
+          results[pg.id]=[];
+          setEcoExtractedItems(prev=>({...prev,[pg.id]:[]}));
+        }
+      }
+      const totalItems=Object.values(results).reduce((s,a)=>s+a.length,0);
+      setEcoExtractMsg(`Extracted ${totalItems} item${totalItems===1?"":"s"} from ${newPages.length} page${newPages.length===1?"":"s"}.`);
+    }catch(ex){
+      console.error("[ECO Drawings] handleEcoFiles error:",ex);
+      setEcoExtractError(`Error: ${ex.message}`);
+    }
+    setEcoExtracting(false);
+  }
+  function removeEcoPage(pageId){
+    if(!pickedPanel)return;
+    const newPages=(pickedPanel.pages||[]).filter(p=>p.id!==pageId);
+    const newPanels=panels.map(p=>p.id===pickedPanel.id?{...p,pages:newPages}:p);
+    const updated={...project,panels:newPanels,updatedAt:Date.now()};
+    onUpdateProject&&onUpdateProject(updated);
+    onSaveImmediate&&onSaveImmediate(updated);
+    setEcoExtractedItems(prev=>{const n={...prev};delete n[pageId];return n;});
   }
 
   const fmtMoney=n=>"$"+(+n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -9834,12 +9967,117 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
                 <div style={{marginTop:6,fontSize:10,color:C.muted}}>Margin {liveEco?.marginUsed||40}% · Labor rate ${liveEco?.laborRateUsed||65}/hr · Phase 3 wires labor + delivery deltas</div>
               </div>
             </div>
-          ):(
+          ):tab==="drawings"?(()=>{
+            // ECO Phase 2.J Stage 1 — drop revised drawings, auto-extract, pages tagged
+            // with ecoId so they're scoped to this ECO. Stage 2 wires the diff/review UI.
+            const ecoPagesOnPanel=(pickedPanel?.pages||[]).filter(p=>p.ecoId===eco.ecoId);
+            const totalExtracted=Object.values(ecoExtractedItems).reduce((s,a)=>s+(a?.length||0),0);
+            return(
+              <div>
+                {/* Panel picker — same pattern as BOM Delta tab */}
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
+                  <span style={{fontSize:11,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>Panel</span>
+                  <select value={pickedPanelId||""} onChange={e=>{setPickedPanelId(e.target.value);setEcoExtractedItems({});setEcoExtractMsg("");setEcoExtractError("");}} style={{...inputBase,minWidth:220}}>
+                    {panels.map(p=>(<option key={p.id} value={p.id}>{p.name||p.id}</option>))}
+                  </select>
+                  <span style={{fontSize:11,color:C.muted,marginLeft:"auto"}}>{ecoPagesOnPanel.length} ECO drawing{ecoPagesOnPanel.length===1?"":"s"} · {totalExtracted} extracted line{totalExtracted===1?"":"s"}</span>
+                </div>
+
+                {/* Drop zone */}
+                <div
+                  onDragEnter={e=>{e.preventDefault();e.stopPropagation();setEcoDragActive(true);}}
+                  onDragOver={e=>{e.preventDefault();e.stopPropagation();setEcoDragActive(true);}}
+                  onDragLeave={e=>{e.preventDefault();e.stopPropagation();setEcoDragActive(false);}}
+                  onDrop={e=>{e.preventDefault();e.stopPropagation();setEcoDragActive(false);if(!ecoExtracting)handleEcoFiles(e.dataTransfer.files);}}
+                  onClick={()=>!ecoExtracting&&ecoFileInputRef.current?.click()}
+                  style={{
+                    border:`2px dashed ${ecoDragActive?"#a855f7":"#a855f755"}`,
+                    background:ecoDragActive?"rgba(168,85,247,0.10)":"rgba(168,85,247,0.04)",
+                    borderRadius:10,
+                    padding:"28px 18px",
+                    textAlign:"center",
+                    cursor:ecoExtracting?"wait":"pointer",
+                    opacity:ecoExtracting?0.7:1,
+                    transition:"all 0.15s",
+                    marginBottom:14,
+                  }}>
+                  <div style={{fontSize:30,marginBottom:8,opacity:0.6}}>📐</div>
+                  <div style={{fontSize:13,fontWeight:700,color:"#a855f7",marginBottom:4}}>Drop revised drawings here, or click to pick</div>
+                  <div style={{fontSize:11,color:C.muted,lineHeight:1.5,maxWidth:480,margin:"0 auto"}}>
+                    PDFs and images are auto-extracted as BOMs. Pages are tagged to <strong style={{color:C.sub}}>{ecoLabel}</strong> and isolated from the base-quote drawings. Stage 2 will compute the diff against the existing BOM.
+                  </div>
+                  <input
+                    ref={ecoFileInputRef}
+                    type="file"
+                    accept="application/pdf,image/*"
+                    multiple
+                    style={{display:"none"}}
+                    onChange={e=>{const fs=e.target.files;if(fs&&fs.length)handleEcoFiles(fs);e.target.value="";}}
+                  />
+                </div>
+
+                {/* Status / error line */}
+                {(ecoExtracting||ecoExtractMsg||ecoExtractError)&&(
+                  <div style={{
+                    padding:"8px 12px",
+                    background:ecoExtractError?"rgba(248,113,113,0.08)":"rgba(168,85,247,0.06)",
+                    border:`1px solid ${ecoExtractError?"#f8717155":"#a855f733"}`,
+                    borderRadius:6,
+                    fontSize:12,
+                    color:ecoExtractError?"#f87171":C.sub,
+                    marginBottom:14,
+                    display:"flex",alignItems:"center",gap:8,
+                  }}>
+                    {ecoExtracting&&<span className="spin" style={{display:"inline-block",width:12,height:12,border:"2px solid #a855f755",borderTopColor:"#a855f7",borderRadius:"50%"}}/>}
+                    <span>{ecoExtractError||ecoExtractMsg||"Working…"}</span>
+                  </div>
+                )}
+
+                {/* Uploaded ECO pages list */}
+                {ecoPagesOnPanel.length===0?(
+                  <div style={{padding:"22px 0",textAlign:"center",color:C.muted,fontSize:12,fontStyle:"italic"}}>No ECO drawings uploaded yet for this panel.</div>
+                ):(
+                  <div style={{border:`1px solid ${C.border}`,borderRadius:8,overflow:"hidden"}}>
+                    <div style={{display:"grid",gridTemplateColumns:"60px 1fr 90px 70px 36px",gap:0,fontSize:10,color:C.muted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,padding:"6px 10px",background:"#0a0a14",borderBottom:`1px solid ${C.border}`}}>
+                      <span>Thumb</span><span>Page</span><span style={{textAlign:"right"}}>Items</span><span style={{textAlign:"right"}}>Status</span><span></span>
+                    </div>
+                    {ecoPagesOnPanel.map((pg,i)=>{
+                      const items=ecoExtractedItems[pg.id];
+                      const itemCount=items?items.length:null;
+                      const status=items==null?(ecoExtracting?"…":"saved"):items.length===0?"empty":"ready";
+                      const statusColor=status==="ready"?"#4ade80":status==="empty"?"#f59e0b":status==="…"?"#a855f7":C.muted;
+                      return(
+                        <div key={pg.id} style={{display:"grid",gridTemplateColumns:"60px 1fr 90px 70px 36px",gap:0,padding:"6px 10px",borderBottom:i<ecoPagesOnPanel.length-1?`1px solid ${C.border}33`:"none",fontSize:12,alignItems:"center",background:i%2?"#0a0a14":"transparent"}}>
+                          <span>
+                            {pg.dataUrl||pg.storageUrl?(
+                              <img src={pg.dataUrl||pg.storageUrl} alt="" style={{width:48,height:36,objectFit:"cover",borderRadius:3,border:`1px solid ${C.border}`}}/>
+                            ):(
+                              <div style={{width:48,height:36,background:"#1a1a2a",borderRadius:3,border:`1px solid ${C.border}`}}/>
+                            )}
+                          </span>
+                          <span style={{color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={pg.name}>{pg.name}</span>
+                          <span style={{textAlign:"right",fontVariantNumeric:"tabular-nums",color:itemCount==null?C.muted:itemCount>0?C.text:"#f59e0b"}}>{itemCount==null?"—":itemCount}</span>
+                          <span style={{textAlign:"right",fontSize:10,fontWeight:700,color:statusColor,textTransform:"uppercase",letterSpacing:0.5}}>{status}</span>
+                          <button onClick={()=>removeEcoPage(pg.id)} title="Remove this page from the ECO" style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:14,padding:"0 4px"}}>✕</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Stage 2 placeholder */}
+                <div style={{marginTop:18,padding:"12px 14px",background:"#0a0a14",border:"1px solid #a855f744",borderRadius:8,fontSize:11,color:C.muted,lineHeight:1.6}}>
+                  <div style={{fontSize:10,fontWeight:800,color:"#a855f7",letterSpacing:0.5,textTransform:"uppercase",marginBottom:4}}>Coming in Stage 2</div>
+                  Diff computation against the base BOM. Items with matching qty + part # will auto-match (no review needed). Only changes (qty/PN deltas, additions, removals) will be shown for confirmation, then committed as ECO-tagged rows on the BOM Delta tab.
+                </div>
+              </div>
+            );
+          })():(
             <div style={{padding:"40px 0",textAlign:"center",color:C.muted}}>
               <div style={{fontSize:28,marginBottom:12,opacity:0.4}}>📐</div>
               <div style={{fontSize:14,fontWeight:600,marginBottom:6,color:C.sub}}>{TABS.find(t=>t.id===tab)?.label} — coming in a later phase</div>
               <div style={{fontSize:12,maxWidth:480,margin:"0 auto",lineHeight:1.6}}>
-                Phase 2 ships the BOM Delta editor. Labor / delivery / drawings / customer review / BC sync / comments arrive in Phases 3–6.
+                Phase 2 ships the BOM Delta editor + Drawings drop zone. Labor / delivery / customer review / BC sync / comments arrive in Phases 3–6.
                 <br/><br/>
                 <code style={{color:"#a855f7",fontSize:11}}>{project?.id}/ecos/{eco.ecoId||"…"}</code>
               </div>
@@ -15144,7 +15382,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // Keep latestPanelRef current so async closures always have fresh panel data
   latestPanelRef.current=panel;
 
-  const savedPages=panel.pages||[];
+  // DECISION(v1.19.817, ECO Phase 2.J Stage 1): Pages tagged with `ecoId` are owned by
+  // an ECO scope and rendered inside the EcoEditor → Drawings tab. Hide them from the
+  // regular per-panel drawings view so the user only sees base-quote drawings here.
+  const savedPages=(panel.pages||[]).filter(p=>!p.ecoId);
   const pages=pendingPages.length>0?pendingPages:savedPages;
   const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted};
   const SHORT={bom:"BOM",schematic:"SCH",backpanel:"BP",enclosure:"ENC",layout:"LAY",pid:"P&ID"};
