@@ -533,6 +533,32 @@ function computeLaborEstimate(panel){
 
   // Legacy fallback: no laborData
   if(!ld){
+    // DECISION(v1.19.816): Manual labor entry fallback. When the panel has no schematic
+    // data (laborData null), check for `_manualLabor` rows in panel.bom — these are the
+    // CUT/LAYOUT/WIRE rows the user typed hours into via the BOM table for budgetary
+    // quoting on BOM-only panels. Emit them as labor estimate lines using categories
+    // that the existing GDEF/bcPatchLaborPlanningLines filters already bucket correctly
+    // (Panel Holes → CUT, Device Mounting → LAYOUT, Wire Time → WIRE). All downstream
+    // code (Panel Summary, Quote builder, BC sync) sees this estimate transparently.
+    const manualLabor=(panel.bom||[]).filter(r=>r.isLaborRow&&r._manualLabor&&(+r.qty||0)>0);
+    if(manualLabor.length){
+      const CAT_MAP={CUT:"Panel Holes",LAYOUT:"Device Mounting",WIRE:"Wire Time"};
+      const lines=manualLabor.map(r=>{
+        const desc=(r.description||"").toUpperCase();
+        const category=CAT_MAP[desc]||r.description||"Manual Labor";
+        const hours=+r.qty||0;
+        const rate=+r.unitPrice||laborRate;
+        return{category,qty:hours,unit:"hr",rate,hours,cost:hours*rate};
+      });
+      const groups={};
+      manualLabor.forEach(r=>{
+        const key=(r.description||"").toLowerCase();
+        if(key)groups[key]={hours:+r.qty||0,cost:(+r.qty||0)*(+r.unitPrice||laborRate)};
+      });
+      const totalHours=lines.reduce((s,l)=>s+l.hours,0);
+      const totalCost=lines.reduce((s,l)=>s+l.cost,0);
+      return{lines,groups,totalCost,totalHours,inputs:{},hasLayoutData:false,isLegacy:false,isOverride:false,isManual:true};
+    }
     const wireCount=panel.validation?.wireCount||0;
     if(!wireCount)return{lines:[],totalCost:0,totalHours:0,inputs:{},hasLayoutData:false,isLegacy:true,isOverride:false};
     const hrs=computeFallbackLaborHours(wireCount);
@@ -653,12 +679,14 @@ function buildLaborBomRows(panel){
   if(!est.lines.length||!est.groups)return[];
   // DECISION(v1.19.439): Use groups from computeLaborEstimate — single source of truth.
   // No separate calculation — BOM rows reference the same values as Panel Summary.
+  // DECISION(v1.19.816): Preserve `_manualLabor` flag when est is the manual fallback
+  // (BOM-only panel where the user typed hours into the BOM table).
   const laborRate=panel.pricing?.laborRate??45;
   const groupMap={cut:est.groups.cut,layout:est.groups.layout,wire:est.groups.wire};
   return LABOR_BOM_GROUPS.map(g=>{
     const key=g.description.toLowerCase();
     const grp=groupMap[key]||{hours:0};
-    return{id:`labor-${g.partNumber}`,isLaborRow:true,partNumber:g.partNumber,description:g.description,qty:grp.hours||0,unitPrice:laborRate,priceSource:"bc",priceDate:Date.now(),manufacturer:"",notes:""};
+    return{id:`labor-${g.partNumber}`,isLaborRow:true,_manualLabor:!!est.isManual,partNumber:g.partNumber,description:g.description,qty:grp.hours||0,unitPrice:laborRate,priceSource:est.isManual?"manual":"bc",priceDate:Date.now(),manufacturer:"",notes:""};
   });
 }
 function syncLaborBomRows(panel){
@@ -18091,14 +18119,33 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               <tbody>
                 {(()=>{
                   // DECISION(v1.19.443): Compute labor BOM rows directly from computeLaborEstimate —
-                  // same source as the Panel Summary sidebar. Never read labor rows from panel.bom.
+                  // same source as the Panel Summary sidebar.
+                  // DECISION(v1.19.816): For BOM-only panels (no schematic → no _est.groups),
+                  // synthesize the 3 LABOR_BOM_GROUPS rows with `_manualLabor:true` so the
+                  // user can manually enter hours per category for budgetary quoting. The
+                  // qty input is editable for these rows (see readOnly check below);
+                  // amount is still non-editable (rate × hrs computed). Hours are stored
+                  // in panel.bom on edit; computeLaborEstimate's manual-labor fallback
+                  // sums them, which feeds Panel Summary, Quote totals, and BC sync.
                   const _est=computeLaborEstimate(panel);
                   const _laborRate=panel.pricing?.laborRate??45;
-                  const _freshLabor=(_est.groups)?LABOR_BOM_GROUPS.map(g=>{
-                    const key=g.description.toLowerCase();
-                    const grp=_est.groups[key]||{hours:0};
-                    return{id:`labor-${g.partNumber}`,isLaborRow:true,partNumber:g.partNumber,description:g.description,qty:grp.hours||0,unitPrice:_laborRate,priceSource:"bc",priceDate:Date.now(),manufacturer:"",notes:""};
-                  }):[];
+                  const _freshLabor=_est.groups
+                    ?LABOR_BOM_GROUPS.map(g=>{
+                      const key=g.description.toLowerCase();
+                      const grp=_est.groups[key]||{hours:0};
+                      return{id:`labor-${g.partNumber}`,isLaborRow:true,_manualLabor:!!_est.isManual,partNumber:g.partNumber,description:g.description,qty:grp.hours||0,unitPrice:_laborRate,priceSource:_est.isManual?"manual":"bc",priceDate:Date.now(),manufacturer:"",notes:""};
+                    })
+                    :LABOR_BOM_GROUPS.map(g=>{
+                      // BOM-only panel with NO manual entries yet — show 0-qty editable rows.
+                      const stored=(panel.bom||[]).find(r=>r.isLaborRow&&r.partNumber===g.partNumber);
+                      return{
+                        id:`labor-${g.partNumber}`,isLaborRow:true,_manualLabor:true,
+                        partNumber:g.partNumber,description:g.description,
+                        qty:stored?+stored.qty||0:0,
+                        unitPrice:_laborRate,priceSource:"manual",priceDate:Date.now(),
+                        manufacturer:"",notes:""
+                      };
+                    });
                   // DECISION(v1.19.789, ECO Phase 2.C): When `activeScope` is a specific ECO,
                   // hide tagged rows belonging to OTHER ECOs. BASE scope shows all rows.
                   // The horizontal separator + per-row [ECO N] badge gets injected below.
@@ -18373,13 +18420,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           )}
                           </div>
                         ):(
-                          <input defaultValue={row[f]||""} key={row.id+"-"+f+"-"+(row[f]??"")} readOnly={readOnly||row.isLaborRow}
+                          <input defaultValue={row[f]||""} key={row.id+"-"+f+"-"+(row[f]??"")} readOnly={readOnly||(row.isLaborRow&&!row._manualLabor)}
                             onBlur={e=>{
                               e.target.style.borderColor="transparent";
                               if(autoSaveTimer.current){clearTimeout(autoSaveTimer.current);autoSaveTimer.current=null;}
                               const val=e.target.value;
                               if(val===String(row[f]||""))return;
-                              const updatedBom=(panel.bom||[]).map(r=>r.id===row.id?{...r,[f]:val}:r);
+                              // DECISION(v1.19.816): Upsert — manual labor rows are synthesized
+                              // by the renderer and may not be in panel.bom yet on first edit.
+                              // Insert if missing so the entered value persists.
+                              const exists=(panel.bom||[]).some(r=>r.id===row.id);
+                              const updatedBom=exists
+                                ?(panel.bom||[]).map(r=>r.id===row.id?{...r,[f]:val}:r)
+                                :[{...row,[f]:val},...(panel.bom||[])];
                               const updated={...panel,bom:updatedBom};
                               onUpdate(updated);
                               saveBomRow(updated);
