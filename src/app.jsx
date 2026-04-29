@@ -13884,7 +13884,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             </div>
           </div>
         )}
-        <div style={{flex:1,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
+        <div style={{flex:1,minHeight:0,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
+          {/* DECISION(v1.19.801): minHeight:0 is the flexbox magic that makes flex:1 +
+              overflow:auto actually scroll instead of pushing the parent past maxHeight.
+              Without it, when results were large, the table forced the modal taller than
+              the viewport and the user couldn't scroll the modal. With it, the table
+              takes only its allotted flex space and scrolls internally. */}
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead style={{position:"sticky",top:0,zIndex:1}}>
               <tr style={{background:"#0a0a12"}}>
@@ -14058,9 +14063,11 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             {loading?"Loading…":"Load More"}
           </button>
         )}
-        {/* Drawing reference — full-width strip at bottom */}
+        {/* Drawing reference — full-width strip at bottom.
+            DECISION(v1.19.801): flexShrink:0 prevents the strip from interacting with the
+            flex:1 results table and causing the modal to overflow the viewport. */}
         {bomPages.length>0&&(
-          <div style={{borderTop:`1px solid ${C.border}`,marginTop:10}}>
+          <div style={{borderTop:`1px solid ${C.border}`,marginTop:10,flexShrink:0}}>
             <div style={{padding:"6px 10px",display:"flex",alignItems:"center",gap:10}}>
               <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.5}}>DRAWING REFERENCE</span>
               {locating&&<span style={{fontSize:11,color:C.yellow,animation:"pulse 1s ease-in-out infinite"}}>🔍 Scanning for {targetRow?.partNumber||initialQuery}…</span>}
