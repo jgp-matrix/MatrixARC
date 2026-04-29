@@ -16025,10 +16025,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(_bcToken){setTimeout(()=>{setBcBrowserTarget(newId);setBcBrowserQuery("");setBcBrowserOpen(true);},300);}
   }
   // DECISION(v1.19.404): BOM row deletion requires confirmation — previously one-click permanent delete.
+  // DECISION(v1.19.796): Removed the redundant native window.confirm. The ARC delete modal
+  // (deleteConfirmId state — see Delete BOM Row? / Revert ECO Change? portal modal) already
+  // gates the call to deleteBomRow. The native popup was a duplicate confirmation users had
+  // to click through after already confirming in-app.
   function deleteBomRow(id){
-    const row=(panel.bom||[]).find(r=>r.id===id);
-    const desc=row?`${row.partNumber||""}${row.description?" — "+row.description.slice(0,40):""}`.trim()||"this row":"this row";
-    if(!window.confirm(`Delete BOM row "${desc}"? This cannot be undone.`))return;
     const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
   }
