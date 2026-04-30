@@ -9445,15 +9445,10 @@ function computeProjectEffectiveStatus(project){
 // Legacy wrapper — used by dashboard grouping and other callers
 function projectStatus(project){return computeProjectEffectiveStatus(project);}
 function Badge({status,project}){
-  // DECISION(v1.19.785): When a project has any non-terminal ECO active, the status pill
-  // shows the ECO label (`PRJ######-ECO##`) instead of the lifecycle status. The ECO is
-  // the most operationally relevant fact at that moment — production needs to know there's
-  // a change in flight. See plan §UI design.
-  const activeEco=computeActiveEco(project);
-  if(activeEco){
-    const label=formatEcoLabel(project,activeEco.number);
-    return<span style={{background:"#1a0040",color:"#a855f7",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",border:"1px solid #a855f755"}}>{label}</span>;
-  }
+  // DECISION(v1.19.858, ECO Stage A): Status pill ALWAYS shows the lifecycle
+  // status — the ECO label is now rendered separately next to the project
+  // number on the tile, so the pill doesn't need to double-duty as the ECO
+  // indicator. The previous "PRJ######-ECO##" override is removed.
   const effectiveStatus=project?computeProjectEffectiveStatus(project):status;
   const map={
     draft:["#3d1a00","#f97316","Draft"],
@@ -30883,17 +30878,32 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const bcDisconnected=p.bcEnv&&p.bcEnv!==_bcConfig.env;
   const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
   const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",budgetary_sent:"SENT",firm_sent:"SENT"};
+  // DECISION(v1.19.858, ECO Stage A): Tiles for projects with an active draft
+  // ECO get a red border + reddish-tinted background so they read at a glance
+  // as "change order in flight". The ECO label (e.g. ECO 02) is rendered
+  // inline next to the bcProjectNumber (replacing the override that used to
+  // hijack the status pill).
+  const _activeEcoTile=computeActiveEco(p);
+  const _hasActiveEcoTile=!!_activeEcoTile;
+  const _ecoLabelInline=_activeEcoTile?` · ECO ${String(_activeEcoTile.number||0).padStart(2,"0")}`:"";
+  const _idleBorderColor=_hasActiveEcoTile?"#ef4444":"#4a5080";
+  const _idleHoverColor=_hasActiveEcoTile?"#fca5a5":(C.accent+"99");
+  const _tileBg=_hasActiveEcoTile?"#1f0a0a":undefined;
   return(
   <div className="fade-in" onClick={()=>onOpen(p)}
     draggable={isDraggable||false}
     onDragStart={onDragStart}
     onDragEnd={onDragEnd}
-    style={{...card({padding:"4px 10px"}),border:"1px solid #4a5080",cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column",gap:1}}
-    onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent+"99";e.currentTarget.style.transform="translateY(-2px)";}}
-    onMouseLeave={e=>{e.currentTarget.style.borderColor="#4a5080";e.currentTarget.style.transform="none";}}>
+    style={{...card({padding:"4px 10px"}),...(_tileBg?{background:_tileBg}:{}),border:`1px solid ${_idleBorderColor}`,cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column",gap:1}}
+    onMouseEnter={e=>{e.currentTarget.style.borderColor=_idleHoverColor;e.currentTarget.style.transform="translateY(-2px)";}}
+    onMouseLeave={e=>{e.currentTarget.style.borderColor=_idleBorderColor;e.currentTarget.style.transform="none";}}>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
       {customerLogo&&<img src={customerLogo} alt="" style={{width:22,height:22,objectFit:"contain",borderRadius:3,background:"#fff",padding:2,flexShrink:0}} onError={e=>e.target.style.display="none"}/>}
-      <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>{p.bcProjectNumber||"–"}{bcDisconnected&&<span style={{fontSize:9,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={"Linked to "+p.bcEnv}>⚠</span>}</div>
+      <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>
+        {p.bcProjectNumber||"–"}
+        {_hasActiveEcoTile&&<span style={{color:"#fca5a5",fontWeight:800,letterSpacing:0.3}}>{_ecoLabelInline}</span>}
+        {bcDisconnected&&<span style={{fontSize:9,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={"Linked to "+p.bcEnv}>⚠</span>}
+      </div>
       <div style={{fontSize:14,color:C.text,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,visibility:p.bcCustomerName?"visible":"hidden"}}>{p.bcCustomerName||"–"}</div>
       {(()=>{
         // DECISION(v1.19.602): If a teammate is in this project right now, replace the
