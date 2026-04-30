@@ -17394,25 +17394,117 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const _activeEcoId=_isEcoEditMode?activeScope.ecoId:null;
   const _activeEcoNumber=_isEcoEditMode?(activeScope.ecoNumber||0):0;
   function _ecoTagForEdit(row){
-    // Returns a partial { ecoTag, ecoNumber, ecoOp, ecoOriginal } to spread into
-    // the row's update — or null when no ECO transformation is needed.
+    // DECISION(v1.19.872, ECO delta-row model): With the delta-row architecture,
+    // base BOM rows are READ-ONLY in ECO scope — every ECO change becomes its own
+    // tagged row below the CHANGE ORDER separator. So this helper now only
+    // returns a tag for rows ALREADY tagged in this ECO (pass-through to keep
+    // existing fields stable). Untagged rows shouldn't reach this helper because
+    // the inputs are readOnly when _isBaseRowInEcoScope is true. Left in place as
+    // a belt-and-suspenders safety net so any path that does fire on a base row
+    // becomes a no-op rather than mutating it.
     if(!_isEcoEditMode)return null;
-    if(row.isLaborRow)return null; // labor rows aren't ECO-tagged at the row level
-    if(row.ecoTag===_activeEcoId)return null; // already tagged for this ECO; pass-through
-    return{
+    if(row.isLaborRow)return null;
+    if(row.ecoTag===_activeEcoId)return null;
+    return null;
+  }
+  // True when row is the original/frozen BOM in active ECO scope. Used to gate
+  // input readOnly + delete/BC buttons. Untagged rows + rows tagged by a prior
+  // approved ECO are both readonly here (only THIS ECO's tagged rows are mutable).
+  const _isBaseRowInEcoScope=(row)=>{
+    if(!_isEcoEditMode)return false;
+    if(!row||row.isLaborRow)return false;
+    if(row.ecoTag===_activeEcoId)return false;
+    return true;
+  };
+  // Create a new ECO 'modify' row linked to a base row. Base row stays intact.
+  // qty on the modify row is a SIGNED DELTA (e.g., +1 means add one more, -1
+  // means subtract one). Other fields are pre-populated from base for context;
+  // user edits them inline if a replacement is intended.
+  function modifyBaseRowInEco(baseRowId){
+    if(!_isEcoEditMode)return;
+    const src=latestPanelRef.current||panel;
+    const base=(src.bom||[]).find(r=>r.id===baseRowId);
+    if(!base||base.isLaborRow)return;
+    // If a modify row already exists for this base in this ECO, no-op.
+    const existing=(src.bom||[]).find(r=>r.ecoTag===_activeEcoId&&r.ecoModifiesBaseRowId===baseRowId);
+    if(existing)return;
+    const newId=Date.now()+Math.random();
+    const newRow={
+      id:newId,
       ecoTag:_activeEcoId,
       ecoNumber:_activeEcoNumber,
       ecoOp:"modify",
-      ecoOriginal:row.ecoOriginal||{
-        qty:row.qty,
-        unitPrice:row.unitPrice,
-        partNumber:row.partNumber||"",
-        description:row.description||"",
-        manufacturer:row.manufacturer||"",
-        leadTimeDays:row.leadTimeDays??null,
-        leadTimeSource:row.leadTimeSource||"",
+      ecoModifiesBaseRowId:baseRowId,
+      ecoCreatedAt:Date.now(),
+      qty:0,
+      partNumber:base.partNumber||"",
+      description:base.description||"",
+      manufacturer:base.manufacturer||"",
+      unitPrice:null,
+      leadTimeDays:null,
+      leadTimeSource:undefined,
+      notes:"",
+      ecoOriginal:{
+        qty:base.qty,
+        unitPrice:base.unitPrice,
+        partNumber:base.partNumber||"",
+        description:base.description||"",
+        manufacturer:base.manufacturer||"",
+        leadTimeDays:base.leadTimeDays??null,
+        leadTimeSource:base.leadTimeSource||"",
       },
     };
+    const updated={...src,bom:[...(src.bom||[]),newRow]};
+    latestPanelRef.current=updated;
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+  }
+  // Create a new ECO 'remove' row linked to a base row. Base row stays intact;
+  // the remove row carries enough fields to render struck-through with the
+  // original values. If a modify row already exists for this base, flip its op
+  // to 'remove' instead of stacking duplicate ECO entries.
+  function removeBaseRowInEco(baseRowId){
+    if(!_isEcoEditMode)return;
+    const src=latestPanelRef.current||panel;
+    const base=(src.bom||[]).find(r=>r.id===baseRowId);
+    if(!base||base.isLaborRow)return;
+    const existing=(src.bom||[]).find(r=>r.ecoTag===_activeEcoId&&r.ecoModifiesBaseRowId===baseRowId);
+    if(existing){
+      if(existing.ecoOp==="remove")return;
+      const updated={...src,bom:(src.bom||[]).map(r=>r.id===existing.id?{...r,ecoOp:"remove"}:r)};
+      latestPanelRef.current=updated;
+      onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+      return;
+    }
+    const newId=Date.now()+Math.random();
+    const newRow={
+      id:newId,
+      ecoTag:_activeEcoId,
+      ecoNumber:_activeEcoNumber,
+      ecoOp:"remove",
+      ecoModifiesBaseRowId:baseRowId,
+      ecoCreatedAt:Date.now(),
+      qty:base.qty,
+      partNumber:base.partNumber||"",
+      description:base.description||"",
+      manufacturer:base.manufacturer||"",
+      unitPrice:base.unitPrice,
+      leadTimeDays:base.leadTimeDays,
+      leadTimeSource:base.leadTimeSource||"",
+      ecoOriginal:{
+        qty:base.qty,
+        unitPrice:base.unitPrice,
+        partNumber:base.partNumber||"",
+        description:base.description||"",
+        manufacturer:base.manufacturer||"",
+        leadTimeDays:base.leadTimeDays??null,
+        leadTimeSource:base.leadTimeSource||"",
+      },
+    };
+    const updated={...src,bom:[...(src.bom||[]),newRow]};
+    latestPanelRef.current=updated;
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
   }
 
   function updateBomRow(id,field,val){
@@ -17560,43 +17652,30 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // gates the call to deleteBomRow. The native popup was a duplicate confirmation users had
   // to click through after already confirming in-app.
   function deleteBomRow(id){
-    // ECO Stage B: in ECO scope, deletes turn into ecoOp:"remove" tags so the
-    // BASE row stays present (BASE view still sees it). For rows that were
-    // ADDED in this same ECO (ecoOp:"add"), we fall through to the physical
-    // delete — that's a "revert the add" semantically.
+    // DECISION(v1.19.872, ECO delta-row model): In ECO scope:
+    //   • Row tagged for THIS ECO → physical delete (revert the ECO change).
+    //     Base row was never touched, so it remains intact automatically.
+    //   • Untagged BASE row → create a new ECO 'remove' delta row linked to it
+    //     (delegates to removeBaseRowInEco). Base row stays 100% intact.
+    //   • Row tagged by a prior approved ECO → ignored (read-only here).
     if(_isEcoEditMode){
       const row=(panel.bom||[]).find(r=>r.id===id);
       if(row){
-        const isOwnEcoAdd=row.ecoTag===_activeEcoId&&row.ecoOp==="add";
-        if(!isOwnEcoAdd){
-          // Mark as remove (preserves the BASE row visually + drops a tagged
-          // entry in the ECO scope). If the row is already tagged for this
-          // ECO with a different op (e.g., 'modify'), flip to 'remove' but
-          // keep ecoOriginal so we know what's being removed.
-          const updated={...panel,bom:(panel.bom||[]).map(r=>{
-            if(r.id!==id)return r;
-            return{
-              ...r,
-              ecoTag:_activeEcoId,
-              ecoNumber:_activeEcoNumber,
-              ecoOp:"remove",
-              ecoOriginal:r.ecoOriginal||{
-                qty:r.qty,
-                unitPrice:r.unitPrice,
-                partNumber:r.partNumber||"",
-                description:r.description||"",
-                manufacturer:r.manufacturer||"",
-                leadTimeDays:r.leadTimeDays??null,
-                leadTimeSource:r.leadTimeSource||"",
-              },
-            };
-          })};
+        if(row.ecoTag===_activeEcoId){
+          // Revert: physical delete. Base row (if any) is unaffected.
+          const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
           onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
           return;
         }
+        if(!row.ecoTag){
+          removeBaseRowInEco(id);
+          return;
+        }
+        // Tagged by a prior approved ECO — read-only in this scope.
+        return;
       }
     }
-    // Default — physical delete (BASE scope or reverting a same-ECO add).
+    // BASE scope — physical delete (existing behavior).
     const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
   }
@@ -19546,6 +19625,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     // context (from/auto-replace, Co-Part, Cross/ARC-Cross) that should be
                     // rendered as a separate sub-row beneath the data row.
                     const _pnHasExtraLines=row.autoAddedCompanion||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber));
+                    // DECISION(v1.19.872, ECO delta-row model): in ECO scope, base
+                    // (untagged) rows are READ-ONLY — every change is a separate
+                    // tagged row below the CHANGE ORDER separator. Inputs, BC
+                    // lookup, and inline browse ('🔍') are all disabled for these
+                    // rows; the row instead surfaces a ✎ Modify affordance in the
+                    // action column. Rows tagged for prior approved ECOs are also
+                    // read-only here.
+                    const _baseLockedInEco=_isBaseRowInEcoScope(row);
                     const _rowEl=(()=>{
                   return(
                   <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg,textDecoration:_rowTextDecoration,opacity:_rowOpacity}}>
@@ -19561,7 +19648,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"]].map(([f,w,mode])=>(
                       f==="_bc"?(
                         <td key="_bc" style={{padding:"3px 2px",width:32,textAlign:"center"}}>
-                          {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
+                          {!readOnly&&!_baseLockedInEco&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
                             <button data-tip="Auto-match this part number in Business Central — click to find the best match or open the item browser" title="Fuzzy BC lookup" onClick={async()=>{
                               const pn=(row.partNumber||"").trim();
                               if(!pn)return;
@@ -19581,15 +19668,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         {mode==="fit"?(
                           <div>
                           <div style={{display:"flex",alignItems:"center"}}>
-                          {f==="partNumber"&&!readOnly&&!row.isLaborRow&&_bcToken&&(
+                          {f==="partNumber"&&!readOnly&&!_baseLockedInEco&&!row.isLaborRow&&_bcToken&&(
                             <button data-tip="Search and select a replacement part number from the Business Central catalog" title="Browse BC items" onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
                               style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"2px 4px",lineHeight:1,opacity:0.85,flexShrink:0,filter:"brightness(1.8)"}}
                               onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
                           )}
                           <div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>
                             <span style={{visibility:"hidden",whiteSpace:"pre",fontSize:13,fontFamily:"inherit",padding:"5px 20px 5px 7px",display:"block",pointerEvents:"none"}}>{row[f]||"\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"}</span>
-                            <input value={row[f]||""} readOnly={readOnly||row.isLaborRow}
-                              onChange={e=>!row.isLaborRow&&updateBomRow(row.id,f,e.target.value)}
+                            <input value={row[f]||""} readOnly={readOnly||row.isLaborRow||_baseLockedInEco}
+                              onChange={e=>!row.isLaborRow&&!_baseLockedInEco&&updateBomRow(row.id,f,e.target.value)}
                               onBlur={e=>{
                                 e.target.style.borderColor="transparent";
                                 const val=e.target.value;
@@ -19715,7 +19802,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                              follow-up <tr> rendered after this data row — keeps the data row
                              single-line so vertical alignment is consistent across plain-text
                              and input cells. See "_metaTr" emit at the row return below. */}
-                          {f==="partNumber"&&!row.isLaborRow&&!row.isCrossed&&!readOnly&&(()=>{
+                          {f==="partNumber"&&!row.isLaborRow&&!row.isCrossed&&!readOnly&&!_baseLockedInEco&&(()=>{
                             const pn=(row.partNumber||"").trim();
                             const avail=pn?alternates.filter(a=>a.originalPN===pn):[];
                             if(!avail.length)return null;
@@ -19737,7 +19824,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               </div>
                             );
                           })()}
-                          {f==="partNumber"&&row.suggestedPartNumber&&!row.partNumber&&!readOnly&&(
+                          {f==="partNumber"&&row.suggestedPartNumber&&!row.partNumber&&!readOnly&&!_baseLockedInEco&&(
                             <div style={{display:"flex",alignItems:"center",gap:4,marginTop:3,paddingLeft:2,flexWrap:"nowrap",maxWidth:"100%",overflow:"hidden"}}>
                               <span style={{fontSize:10,color:C.teal}}>📚</span>
                               <span style={{fontSize:11,color:C.teal,fontWeight:700}}>{row.suggestedPartNumber}</span>
@@ -19745,7 +19832,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               <button onClick={()=>dismissSuggestion(row.id)} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer",lineHeight:1}}>✕</button>
                             </div>
                           )}
-                          {f==="partNumber"&&bcFuzzySuggestions[row.id]&&!readOnly&&(
+                          {f==="partNumber"&&bcFuzzySuggestions[row.id]&&!readOnly&&!_baseLockedInEco&&(
                             <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto",maxWidth:"100%",minWidth:0,boxSizing:"border-box"}}>
                               <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
                                 <div style={{fontSize:10,color:C.accent,fontWeight:700,flex:1}}>BC FUZZY MATCHES</div>
@@ -19767,8 +19854,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           )}
                           </div>
                         ):(
-                          <input defaultValue={row[f]||""} key={row.id+"-"+f+"-"+(row[f]??"")} readOnly={readOnly||(row.isLaborRow&&!row._manualLabor)}
+                          <input defaultValue={row[f]||""} key={row.id+"-"+f+"-"+(row[f]??"")} readOnly={readOnly||(row.isLaborRow&&!row._manualLabor)||_baseLockedInEco}
                             onBlur={e=>{
+                              if(_baseLockedInEco)return;
                               e.target.style.borderColor="transparent";
                               if(autoSaveTimer.current){clearTimeout(autoSaveTimer.current);autoSaveTimer.current=null;}
                               const val=e.target.value;
@@ -19822,7 +19910,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         <div style={{display:"inline-flex",alignItems:"center",gap:0,marginLeft:"auto"}}>
                         {row.isLaborRow?<span style={{color:C.muted,fontSize:13,minWidth:70,textAlign:"right"}}>— auto</span>:<>
                         <span style={{color:C.muted,fontSize:13,lineHeight:1}}>$</span>
-                        <input type="text" inputMode="decimal" readOnly={readOnly}
+                        <input type="text" inputMode="decimal" readOnly={readOnly||_baseLockedInEco}
                           defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
                           key={row.id+"-"+(row.priceSource||"")+(row.unitPrice??"")}
                           placeholder="—"
@@ -19870,7 +19958,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           type="text"
                           defaultValue={display}
                           placeholder="—"
-                          readOnly={readOnly}
+                          readOnly={readOnly||_baseLockedInEco}
                           onFocus={e=>e.target.select()}
                           onBlur={e=>{
                             const m=e.target.value.match(/\d+/);
@@ -19903,9 +19991,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     </td>
                     <td style={{padding:"3px 10px 3px 6px",textAlign:"center",width:44}}>
                       {!readOnly&&!row.isLaborRow&&(()=>{
-                        // DECISION(v1.19.789, ECO Phase 2.G): For ECO-tagged rows show an
-                        // ↶ revert icon (deletes only the tagged delta — base row stays).
-                        // For untagged rows keep the original ✕ destructive delete.
+                        // DECISION(v1.19.872, ECO delta-row model):
+                        //   • Untagged BASE row in ECO scope → ✎ Modify (creates a
+                        //     linked ECO modify delta row below the separator) +
+                        //     ✕ Remove (creates a linked ECO remove row).
+                        //   • Row tagged for THIS ECO → ↶ revert (physical delete;
+                        //     base row was never touched, so it remains intact).
+                        //   • Untagged BASE row in BASE scope → ✕ destructive delete.
+                        if(_baseLockedInEco){
+                          return(
+                            <div style={{display:"inline-flex",alignItems:"center",gap:2}}>
+                              <button title="Modify this BOM row in this ECO (creates a linked change row below)" onClick={()=>modifyBaseRowInEco(row.id)} style={{background:"none",border:"none",color:"#fcd34d",cursor:"pointer",fontSize:14,opacity:0.75,padding:"0",width:22,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,fontWeight:700}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.75}>✎</button>
+                              <button title="Remove this BOM row in this ECO (creates a linked remove row below)" onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:16,opacity:0.65,padding:"0",width:22,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.65}>✕</button>
+                            </div>
+                          );
+                        }
                         const isEcoRow=!!row.ecoTag;
                         const icon=isEcoRow?"↶":"✕";
                         const color=isEcoRow?"#a855f7":"#ff3333";
@@ -20611,17 +20711,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         </div>,document.body
       )}
       {deleteConfirmId&&(()=>{
-        // DECISION(v1.19.789, ECO Phase 2.G): Same modal handles delete (untagged) and
-        // revert (ECO-tagged) — labels + colors swap based on whether the target row
-        // carries an ecoTag. Revert removes only the delta; the base row is untouched.
+        // DECISION(v1.19.872, ECO delta-row model): Three modes share this modal.
+        //   1. Untagged BASE row in BASE scope → destructive Delete (red).
+        //   2. Row tagged for THIS ECO (ECO row) → Revert (purple): drops only the
+        //      delta row; base BOM is untouched.
+        //   3. Untagged BASE row in ECO scope → Remove in ECO (red/orange): creates
+        //      a linked ECO 'remove' delta row below the separator. Base row stays.
         const _row=(panel.bom||[]).find(x=>x.id===deleteConfirmId);
         const _isEcoRow=!!(_row&&_row.ecoTag);
-        const _hue=_isEcoRow?"#a855f7":"#f87171";
-        const _bg=_isEcoRow?"#3b0764":"#450a0a";
-        const _border=_isEcoRow?"#a855f766":"#ef444466";
-        const _verb=_isEcoRow?"Revert":"Delete";
-        const _title=_isEcoRow?"Revert ECO Change?":"Delete BOM Row?";
-        const _msg=_isEcoRow?"The base BOM stays unchanged. Only this ECO delta is removed.":"This cannot be undone.";
+        const _isBaseInEco=!!(_row&&_isEcoEditMode&&!_row.ecoTag&&!_row.isLaborRow);
+        const _hue=_isEcoRow?"#a855f7":_isBaseInEco?"#fb923c":"#f87171";
+        const _bg=_isEcoRow?"#3b0764":_isBaseInEco?"#431407":"#450a0a";
+        const _border=_isEcoRow?"#a855f766":_isBaseInEco?"#fb923c66":"#ef444466";
+        const _verb=_isEcoRow?"Revert":_isBaseInEco?"Remove in ECO":"Delete";
+        const _title=_isEcoRow?"Revert ECO Change?":_isBaseInEco?"Remove from BOM in ECO?":"Delete BOM Row?";
+        const _msg=_isEcoRow?"The base BOM stays unchanged. Only this ECO delta is removed.":_isBaseInEco?"The base BOM stays intact. A 'remove' change row is added below the CHANGE ORDER separator.":"This cannot be undone.";
         return ReactDOM.createPortal(
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
             onMouseDown={e=>{if(e.target===e.currentTarget)setDeleteConfirmId(null);}}>
