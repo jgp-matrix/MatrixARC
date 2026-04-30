@@ -33884,6 +33884,13 @@ async function bcFetchVendorMap(){
 }
 
 let _bcManufacturers = null; // [{Code, Name}]
+// DECISION(v1.19.901): Manufacturer code denylist — misspellings or duplicates
+// that exist in BC but should never appear in ARC dropdowns. Codes are
+// case-insensitive. SEIMENS is a misspelling of SIEMENS (the canonical entry
+// also lives in BC). To clean up the BC entry permanently the admin needs
+// to delete it from BC's Manufacturer table; this denylist hides it in the
+// meantime and prevents new ARC selections of the bad code.
+const _BAD_MFR_CODES=new Set(["SEIMENS"]);
 async function bcFetchManufacturers(){
   if(_bcManufacturers)return _bcManufacturers;
   if(!_bcToken)return[];
@@ -33900,7 +33907,10 @@ async function bcFetchManufacturers(){
   // Merge: BC codes + any BC_MFR_MAP codes not yet in BC
   const mfrNames=Object.fromEntries(BC_MFR_MAP.map(m=>[m.code,m.terms[0].split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ')]));
   BC_MFR_MAP.forEach(m=>{if(!bcCodes.has(m.code))bcCodes.set(m.code,mfrNames[m.code]||m.code);});
-  _bcManufacturers=Array.from(bcCodes.entries()).map(([Code,Name])=>({Code,Name})).sort((a,b)=>a.Code.localeCompare(b.Code));
+  // Filter out denylisted codes (case-insensitive).
+  const filtered=Array.from(bcCodes.entries()).filter(([Code])=>!_BAD_MFR_CODES.has((Code||"").toUpperCase()));
+  if(filtered.length<bcCodes.size)console.log(`bcFetchManufacturers: hid ${bcCodes.size-filtered.length} denylisted code(s) (${[..._BAD_MFR_CODES].join(", ")})`);
+  _bcManufacturers=filtered.map(([Code,Name])=>({Code,Name})).sort((a,b)=>a.Code.localeCompare(b.Code));
   return _bcManufacturers;
 }
 
