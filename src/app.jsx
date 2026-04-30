@@ -17087,6 +17087,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // DECISION(v1.19.376): Price confirmation popup — when user manually enters a price,
   // ask if it's confirmed (push to BC Purchase Price + Item Card) or budgetary (BOM only, no BC update, no priceDate).
   const [priceConfirmPending,setPriceConfirmPending]=useState(null); // {id, partNumber, price, row}
+  // DECISION(v1.19.903): Counter that bumps when a price-confirm popup is
+  // dismissed without saving. Included in the price input's `key` so the
+  // input remounts and visually resets to the saved defaultValue — without
+  // this, the user's typed-but-discarded value lingered in the input,
+  // misleading them into thinking the price had saved (Noah's "price keeps
+  // reverting" report).
+  const [priceInputResetTick,setPriceInputResetTick]=useState(0);
   const [showSnapshots,setShowSnapshots]=useState(false);
   const [snapshots,setSnapshots]=useState([]);
   const [snapshotsLoading,setSnapshotsLoading]=useState(false);
@@ -21425,7 +21432,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         <span style={{color:C.muted,fontSize:13,lineHeight:1}}>$</span>
                         <input type="text" inputMode="decimal" readOnly={readOnly}
                           defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
-                          key={row.id+"-"+(row.priceSource||"")+(row.unitPrice??"")}
+                          key={row.id+"-"+(row.priceSource||"")+(row.unitPrice??"")+"-"+priceInputResetTick}
                           placeholder="—"
                           style={{background:"transparent",border:"1px solid transparent",borderRadius:5,padding:"5px 2px 5px 0",color:C.text,fontSize:13,outline:"none",textAlign:"right",width:70,minWidth:50}}
                           onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;e.target.select();}}
@@ -22297,9 +22304,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 </button>
               </div>
             </div>
-            <button onClick={()=>setPriceConfirmPending(null)}
-              style={{padding:"7px 14px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontSize:12,cursor:"pointer"}}>
-              Cancel
+            {/* DECISION(v1.19.903): Renamed Cancel → Discard with destructive
+                styling so it's clear the change is being thrown away. Bumps
+                priceInputResetTick to force the price input to remount and
+                show the saved value — fixes Noah's "I changed it but it
+                reverted" symptom (the change was already discarded; the
+                input just lied because of the uncontrolled defaultValue). */}
+            <button onClick={()=>{setPriceConfirmPending(null);setPriceInputResetTick(t=>t+1);}}
+              style={{padding:"7px 14px",background:"#2a0a0a",border:`1px solid ${C.red}66`,borderRadius:6,color:C.red,fontSize:12,cursor:"pointer",fontWeight:600}}>
+              ✕ Discard Change
             </button>
           </div>
         </div>
