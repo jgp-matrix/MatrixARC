@@ -9593,21 +9593,84 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
   const canCreateEco=
     (project?.createdBy===uid||_appCtx.role==="admin"||hasPermission("reviewer"));
   const [creating,setCreating]=useState(false);
-  // DECISION(v1.19.834, ECO Stage A.5): + New ECO no longer opens the standalone
-  // EcoEditor modal. The redesign uses the same Items tab + scope toggle to track
-  // ECO edits in place. Tab clicks just call onScopeChange.
+  // DECISION(v1.19.840, ECO Stage A.6): + New ECO on a Won/Lost-locked project
+  // requires the owner/admin to unlock first. The flow:
+  //   1. Detect Won/Lost lock (project.wonAt OR project.lostAt set, no active unlock).
+  //   2. If locked + user is owner/admin: show unlock confirmation modal explaining
+  //      the cascade (project flips back to Sales kanban, BC status forced to Quote,
+  //      review states reset, ECO created).
+  //   3. If locked + user is NOT owner/admin: alert pointing them at Request Unlock.
+  //   4. On confirm: bundle the unlock state changes + ECO creation into a single
+  //      save so they land atomically. BC API status flip is deferred to Stage D
+  //      (we set bcStatusForcedToQuote here; sync layer handles the API call).
+  //   5. If project is not locked: proceed with normal createEcoDoc.
   async function handleNewEco(){
-    console.log("[ECO] + New ECO clicked. creating=",creating,"project.id=",project?.id,"bcPoStatus=",project?.bcPoStatus);
+    console.log("[ECO] + New ECO clicked. creating=",creating,"project.id=",project?.id,"wonAt=",project?.wonAt,"lostAt=",project?.lostAt);
     if(creating){console.log("[ECO] already creating — skipped");return;}
+    const isLocked=!!(project?.wonAt||project?.lostAt);
+    const alreadyUnlocked=!!project?.editUnlocked||!!project?.ecoEditUnlocked;
+    const userIsOwner=!project?.createdBy||project?.createdBy===uid;
+    const userIsAdmin=_appCtx.role==="admin";
+    const userCanUnlock=userIsOwner||userIsAdmin;
+    let needsUnlock=false;
+    if(isLocked&&!alreadyUnlocked){
+      if(!userCanUnlock){
+        await arcAlert(
+          "This project is "+(project.wonAt?"Won":"Lost")+" and locked. Only the project owner or an admin can start an ECO on a locked project — use the 'Request Unlock' button under the BASE tab to ask for access.",
+          {kind:"warning"}
+        );
+        return;
+      }
+      needsUnlock=true;
+      const ok=await arcConfirm(
+        "Start an ECO on this Won project?\n\n"+
+        "This reopens the project for editing the change order:\n"+
+        "  • Project flips back to the Sales kanban for the ECO round.\n"+
+        "  • BC project status will be flipped to 'Quote' (full sync deferred to Stage D).\n"+
+        "  • Pre-Review / Quote Send / Post-Review states reset so the ECO goes through the normal flow.\n"+
+        "  • BASE BOM stays read-only — only the ECO scope is editable.\n\n"+
+        "When the last draft ECO is approved or cancelled, the project re-locks automatically.\n\nProceed?",
+        {kind:"warning",okLabel:"Unlock + Start ECO"}
+      );
+      if(!ok){console.log("[ECO] unlock cancelled");return;}
+    }
     setCreating(true);
     try{
+      // Bundle the unlock state writes onto the project doc BEFORE creating the ECO.
+      // createEcoDoc updates the project too; we want the unlock fields present for
+      // its transaction's optimistic concurrency. Single save here then ECO creation.
+      if(needsUnlock){
+        const now=Date.now();
+        const projPath=`${(_appCtx.projectsPath||`users/${uid}/projects`)}/${project.id}`;
+        const unlockUpdate={
+          ecoEditUnlocked:true,
+          ecoEditUnlockedAt:now,
+          ecoEditUnlockedBy:uid,
+          bcStatusForcedToQuote:true,
+          bcStatusForcedToQuoteAt:now,
+          // Reset the workflow states so Sales pushes the ECO through the normal flow
+          preReviewStatus:null,
+          postReviewStatus:null,
+          quoteSentAt:null,
+          quoteSentRev:null,
+          quoteSentTo:null,
+          // Clear bcPoStatus so the kanban routes the project back to Sales — wonAt
+          // stays set as a history marker. The Won state is restored when PO Received
+          // fires again at the end of the ECO round.
+          bcPoStatus:null,
+          updatedAt:now,
+          updatedBy:uid,
+        };
+        console.log("[ECO] applying unlock state changes:",unlockUpdate);
+        await fbDb.doc(projPath).update(unlockUpdate);
+      }
       console.log("[ECO] calling createEcoDoc…");
       const result=await createEcoDoc(uid,project,"customer_change");
       console.log("[ECO] createEcoDoc returned:",result);
       onScopeChange&&onScopeChange({type:"eco",ecoNumber:result.number,ecoId:result.ecoId});
       console.log("[ECO] onScopeChange called");
     }catch(e){
-      console.error("[ECO] createEcoDoc failed:",e);
+      console.error("[ECO] handleNewEco failed:",e);
       try{await arcAlert("Could not create ECO: "+(e&&e.message?e.message:String(e)),{kind:"error"});}
       catch(_){console.error("[ECO] arcAlert also failed:",_);}
     }
@@ -23461,7 +23524,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   onBaseUnlock={onBaseUnlock}
                   baseScopeReadOnly={baseScopeReadOnly}
                 />
-                {/* Compact PROJECT LOCKED indicator — replaces the big banner. */}
+                {/* Compact PROJECT LOCKED / UNLOCKED-FOR-ECO indicator — replaces the
+                    big banners. Two states:
+                      • Locked: red/green pill with Won/Lost date + unlock controls
+                      • Unlocked for ECO: orange pill noting the project is reopened
+                        for ECO rework (Sales, Pre-Review, Quote Send, Post-Review,
+                        PO cost adjustment) until the last draft ECO closes. */}
                 {isProjectLocked&&!editUnlockedForAll&&(
                   <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:project.wonAt?"#86efac":"#fca5a5"}}>
                     <span style={{fontSize:12}}>🔒</span>
@@ -23487,6 +23555,13 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     {iAmOwnerOrAdmin&&project.lastUnlockRequest&&(project.unlockRequestedBy||[]).length>0&&(
                       <span style={{fontSize:10,color:"#fcd34d",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:5,padding:"2px 8px",fontWeight:600}}>📬 {project.lastUnlockRequest.byName||"A teammate"} requesting access{(project.unlockRequestedBy||[]).length>1?` (+${(project.unlockRequestedBy||[]).length-1})`:""}</span>
                     )}
+                  </div>
+                )}
+                {isProjectLocked&&project.ecoEditUnlocked&&(
+                  <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:"#fde68a"}}>
+                    <span style={{fontSize:12}}>🔓</span>
+                    <strong style={{color:"#f59e0b",letterSpacing:0.4}}>UNLOCKED FOR ECO</strong>
+                    <span style={{color:"#fde68a"}}>· project is back in Sales for change-order rework. ECO scope edits flow through Pre-Review → Quote Send → Post-Review → PO cost adjustment. Auto re-locks when the last draft ECO closes.</span>
                   </div>
                 )}
                 {/* ECO scope inline hint — only when ECOs exist on the project. */}
@@ -24879,7 +24954,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // admin (typically in response to a Request Unlock from a teammate). When true, the
   // Won/Lost lock is bypassed for ALL users until the owner/admin re-locks. The flag is
   // separate from `lockOverrideSession` (which is per-tab session-only).
-  const editUnlockedForAll=!!project.editUnlocked;
+  // DECISION(v1.19.840, ECO Stage A.6): ecoEditUnlocked=true bypasses the Won/Lost
+  // lock for ECO-scope work. Owner/admin sets the flag when starting an ECO; it
+  // gets cleared when the last draft ECO closes. Treated the same as the persistent
+  // editUnlocked flag for read-only computation.
+  const editUnlockedForAll=!!project.editUnlocked||!!project.ecoEditUnlocked;
   const [lockOverrideSession,setLockOverrideSession]=useState(false);
   const [showLockUnlockConfirm,setShowLockUnlockConfirm]=useState(false);
   const [showRequestUnlockModal,setShowRequestUnlockModal]=useState(false);
@@ -26010,9 +26089,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           button. Same lock-unlock controls; same modals; just doesn't push the
           page down anymore. See `isProjectLocked` rendering inside PanelListView. */}
       {/* Persistent (editUnlocked) unlock banner — visible to ALL users when an owner
-          or admin has granted unlock-for-all. Read-only-aware UI: owner/admin sees a
-          Re-lock button; everyone else sees just the status. */}
-      {isProjectLocked&&editUnlockedForAll&&(
+          or admin has granted unlock-for-all via the Lock-Unlock modal. Read-only-aware
+          UI: owner/admin sees a Re-lock button; everyone else sees just the status.
+          DECISION(v1.19.840, ECO Stage A.6): Suppress this big banner when the unlock
+          comes from ecoEditUnlocked — the compact line in PanelListView header conveys
+          the ECO unlock state inline so we don't push the page down twice. */}
+      {isProjectLocked&&editUnlockedForAll&&!project.ecoEditUnlocked&&(
         <div style={{margin:"12px 24px 0",padding:"10px 16px",background:"#0d2010",border:"1px solid #4ade80aa",borderRadius:8,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
           <span style={{fontSize:18}}>🔓</span>
           <div style={{flex:1,minWidth:240,fontSize:13,lineHeight:1.5,color:"#bbf7d0"}}>
