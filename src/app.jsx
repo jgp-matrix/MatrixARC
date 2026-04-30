@@ -9771,31 +9771,55 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
       }]);
       onScopeChange&&onScopeChange({type:"eco",ecoNumber:result.number,ecoId:result.ecoId});
       console.log("[ECO] onScopeChange called");
-      // DECISION(v1.19.854, ECO Stage A): Fire `bcAddEcoTask` for each panel so
+      // DECISION(v1.19.862, ECO Stage A): Fire `bcAddEcoTask` for each panel so
       // BC has a dedicated task slot for this ECO's planning lines. Slot scheme
-      // is `20{panelIdx}3{ecoNumber-1}` per the original ECO plan (so ECO 1 panel
-      // 1 = 20130, ECO 2 panel 1 = 20131, etc.). Failures are logged but don't
-      // block the ARC ECO creation — the queue/retry layer can pick this up
-      // later (Stage D will add a proper sync). When BC is offline / token is
-      // missing, this is a no-op.
-      if(project.bcProjectNumber&&_bcToken&&result.number>=1&&result.number<=10){
-        const panels=project.panels||[];
+      // is `20{panelIdx}3{ecoNumber-1}`. Track per-panel success/failure and
+      // surface a summary alert to the user — silent failures here were
+      // confusing previously.
+      const panels=project.panels||[];
+      const _bcResults={created:[],failed:[],skipped:null};
+      console.log(`[ECO] starting BC task cascade — bcProjectNumber=${project.bcProjectNumber}, _bcToken=${!!_bcToken}, ecoNumber=${result.number}, panelCount=${panels.length}`);
+      if(!project.bcProjectNumber){
+        _bcResults.skipped="no-bc-project-number";
+        console.warn("[ECO] BC task cascade SKIPPED — project has no bcProjectNumber");
+      }else if(!_bcToken){
+        _bcResults.skipped="no-bc-token";
+        console.warn("[ECO] BC task cascade SKIPPED — BC token missing (was online when gate was passed?)");
+      }else if(result.number<1||result.number>10){
+        _bcResults.skipped="eco-out-of-range";
+        console.warn(`[ECO] BC task cascade SKIPPED — ECO number ${result.number} outside 1-10 range`);
+      }else if(panels.length===0){
+        _bcResults.skipped="no-panels";
+        console.warn("[ECO] BC task cascade SKIPPED — project has no panels");
+      }else{
         for(let i=0;i<panels.length;i++){
           const pan=panels[i];
           const panelName=pan.drawingNo||pan.name||`Panel ${i+1}`;
           try{
             const taskNo=await bcAddEcoTask(project.bcProjectNumber,i+1,result.number,panelName);
+            _bcResults.created.push({panelIdx:i+1,taskNo});
             console.log(`[ECO] BC task ${taskNo} created for panel ${i+1} (ECO ${result.number})`);
           }catch(taskErr){
-            console.warn(`[ECO] bcAddEcoTask failed for panel ${i+1} (ECO ${result.number}):`,taskErr&&taskErr.message?taskErr.message:taskErr);
+            const errMsg=taskErr&&taskErr.message?taskErr.message:String(taskErr);
+            _bcResults.failed.push({panelIdx:i+1,error:errMsg});
+            console.error(`[ECO] bcAddEcoTask FAILED for panel ${i+1} (ECO ${result.number}):`,errMsg);
           }
         }
-      }else if(!project.bcProjectNumber){
-        console.log("[ECO] no bcProjectNumber on project — skipping BC task creation");
-      }else if(!_bcToken){
-        console.log("[ECO] BC offline (no token) — skipping BC task creation. Queue retry deferred to Stage D.");
-      }else if(result.number>10){
-        console.warn(`[ECO] ECO number ${result.number} exceeds BC slot capacity (max 10 per panel). BC task creation skipped.`);
+      }
+      // Summary alert — let the user know exactly what landed in BC.
+      const _ecoLabel=`ECO ${String(result.number).padStart(2,"0")}`;
+      if(_bcResults.skipped){
+        const skipReason={"no-bc-project-number":"project isn't linked to a BC project",
+          "no-bc-token":"BC connection dropped between the gate check and task creation",
+          "eco-out-of-range":`ECO number ${result.number} is outside the 1-10 BC slot range`,
+          "no-panels":"project has no panels"}[_bcResults.skipped]||_bcResults.skipped;
+        await arcAlert(`${_ecoLabel} created in ARC, but BC task creation was SKIPPED — ${skipReason}.`,{kind:"warning"});
+      }else if(_bcResults.failed.length>0&&_bcResults.created.length===0){
+        await arcAlert(`${_ecoLabel} created in ARC, but ALL ${_bcResults.failed.length} BC task creations failed.\n\nFirst error: ${_bcResults.failed[0].error}\n\nSee browser console for full details.`,{kind:"error"});
+      }else if(_bcResults.failed.length>0){
+        await arcAlert(`${_ecoLabel} created. BC tasks: ${_bcResults.created.length} succeeded, ${_bcResults.failed.length} failed. See console for failures.`,{kind:"warning"});
+      }else if(_bcResults.created.length>0){
+        console.log(`[ECO] ${_ecoLabel} fully created — ${_bcResults.created.length} BC tasks: ${_bcResults.created.map(c=>c.taskNo).join(", ")}`);
       }
     }catch(e){
       console.error("[ECO] handleNewEco failed:",e);
