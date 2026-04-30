@@ -31125,7 +31125,13 @@ function NewProjectModal({uid,onCreated,onClose}){
             </div>
           )}
           {/* Contact Person dropdown */}
-          {selectedCustomer&&contactPersons.length>0&&(
+          {/* DECISION(v1.19.892): Show whenever a customer is selected — even if
+              that customer has no contacts on file in BC yet. Previous gate
+              `contactPersons.length>0` hid the block entirely (and with it the
+              "+ New Contact" button), forcing users to create the project first
+              and add the contact afterwards. Now the empty-state shows the
+              dropdown with a helper message and the inline create-contact path. */}
+          {selectedCustomer&&(
             <div style={{marginBottom:16}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
                 <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>Contact Person</div>
@@ -31155,10 +31161,13 @@ function NewProjectModal({uid,onCreated,onClose}){
                   </div>
                 </div>
               ):(
-                <select value={selectedContact} onChange={e=>setSelectedContact(e.target.value)} style={{...inp({fontSize:12,padding:"8px 10px"})}}>
-                  <option value="">— Select Contact Person —</option>
-                  {contactPersons.map(c=><option key={c.number} value={c.number}>{c.displayName}{c.email?" ("+c.email+")":""}</option>)}
-                </select>
+                <>
+                  <select value={selectedContact} onChange={e=>setSelectedContact(e.target.value)} disabled={contactPersons.length===0} style={{...inp({fontSize:12,padding:"8px 10px"}),opacity:contactPersons.length===0?0.6:1}}>
+                    <option value="">{contactPersons.length===0?"— No contacts on file — click + New Contact —":"— Select Contact Person —"}</option>
+                    {contactPersons.map(c=><option key={c.number} value={c.number}>{c.displayName}{c.email?" ("+c.email+")":""}</option>)}
+                  </select>
+                  {contactPersons.length===0&&<div style={{fontSize:11,color:C.muted,marginTop:4,fontStyle:"italic"}}>This customer has no contacts in BC yet — add one with <strong>+ New Contact</strong> above.</div>}
+                </>
               )}
             </div>
           )}
