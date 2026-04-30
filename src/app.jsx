@@ -9858,6 +9858,31 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
       if(!ok){console.log("[ECO] unlock cancelled");return;}
     }
     setCreating(true);
+    // DECISION(v1.19.874, ECO delta-row): Hoist the optimistic local merge to
+    // fire BEFORE any async work — the user clicked + New ECO and expects the
+    // BASE tab to lock + grey out instantly. Without this, the parent project
+    // state only updated after the unlock Firestore write + createEcoDoc
+    // round-trip (200-800ms), so the BASE-locked styling lagged visibly. The
+    // post-create merge below adds the new ecoSummary entry once we have the
+    // ecoId/number.
+    if(onLocalProjectUpdate&&needsUnlock){
+      const _nowOpt=Date.now();
+      onLocalProjectUpdate({
+        ecoEditUnlocked:true,
+        ecoEditUnlockedAt:_nowOpt,
+        ecoEditUnlockedBy:uid,
+        bcStatusForcedToQuote:true,
+        bcStatusForcedToQuoteAt:_nowOpt,
+        preReviewStatus:null,
+        postReviewStatus:null,
+        quoteSentAt:null,
+        quoteSentRev:null,
+        quoteSentTo:null,
+        bcPoStatus:null,
+        updatedAt:_nowOpt,
+        updatedBy:uid,
+      });
+    }
     try{
       // Bundle the unlock state writes onto the project doc BEFORE creating the ECO.
       // createEcoDoc updates the project too; we want the unlock fields present for
