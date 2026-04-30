@@ -25396,6 +25396,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   // rows (qty=0 for modify, sign=-1 for remove) and skipped ECO
                   // labor entirely — caused a $1,950 mismatch on PRJ402064 (30hrs ×
                   // $65 ECO labor) between the Quote Summary and the printed quote.
+                  // DECISION(v1.19.887): keep `ppr` in scope — line 25430 references
+                  // ppr.isBudgetary for the BUDGETARY pill. v1.19.886 dropped it
+                  // along with the local price calc and broke the site.
+                  const ppr=p.pricing||{};
                   const psp=computePanelSellPrice(p);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   const pqty=p.lineQty??p.qty??1;
