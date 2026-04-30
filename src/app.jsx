@@ -9583,7 +9583,13 @@ if(typeof window!=="undefined"){window._deleteEcoDoc=deleteEcoDoc;}
 // filter their BOM rendering by `ecoTag` (Phase 2). For now selecting a tab just opens
 // the Eco Editor (read-only shell — Phase 2 puts editing in).
 function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBaseUnlock,baseScopeReadOnly}){
-  const summary=Array.isArray(project?.ecoSummary)?project.ecoSummary:[];
+  // DECISION(v1.19.841, ECO Stage A): Optimistic-hide ECO IDs that were just
+  // deleted in this tab. Without this, the tab stays visible until the project
+  // doc's onSnapshot listener delivers the updated ecoSummary (~500ms-1s later).
+  // Once the snapshot arrives and the ECO is gone from project.ecoSummary, the
+  // entry naturally disappears regardless of local state.
+  const [_pendingDeletedIds,_setPendingDeletedIds]=useState(()=>new Set());
+  const summary=(Array.isArray(project?.ecoSummary)?project.ecoSummary:[]).filter(e=>!_pendingDeletedIds.has(e.ecoId));
   // DECISION(v1.19.836, ECO Stage A): Temporarily lifted the bcPoStatus gate so
   // ECO functionality can be tested on projects without a received PO. The
   // intent is still that ECOs apply to PO'd projects (change orders against an
@@ -9690,10 +9696,14 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
     );
     if(!ok)return;
     setDeleting(true);
+    const ecoIdBeingDeleted=activeScope.ecoId;
     try{
-      console.log("[ECO] deleting",activeScope.ecoId);
-      await deleteEcoDoc(uid,project,activeScope.ecoId);
+      console.log("[ECO] deleting",ecoIdBeingDeleted);
+      await deleteEcoDoc(uid,project,ecoIdBeingDeleted);
       console.log("[ECO] deleted; switching scope back to BASE");
+      // Optimistically hide the tab now — the snapshot listener will catch up
+      // shortly with the persisted ecoSummary.
+      _setPendingDeletedIds(prev=>{const n=new Set(prev);n.add(ecoIdBeingDeleted);return n;});
       onScopeChange&&onScopeChange({type:"base"});
     }catch(e){
       console.error("[ECO] deleteEcoDoc failed:",e);
