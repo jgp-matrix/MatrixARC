@@ -23345,73 +23345,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           </div>
         )}
         <div style={{maxWidth:1400,margin:"0 auto"}}>
-          {/* DECISION(v1.19.845, ECO Stage A): EcoScopeTabs as the top-of-card
-              tab strip. The compact PROJECT LOCKED / UNLOCKED-FOR-ECO indicator
-              and the active-ECO scope hint render directly below the tabs. */}
-          <div style={{marginBottom:14}}>
-            <EcoScopeTabs
-              project={project}
-              uid={uid}
-              activeScope={activeScope}
-              onScopeChange={onScopeChange}
-              baseUnlocked={baseUnlocked}
-              onBaseUnlock={onBaseUnlock}
-              baseScopeReadOnly={baseScopeReadOnly}
-            />
-            {isProjectLocked&&!editUnlockedForAll&&(
-              <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:project.wonAt?"#86efac":"#fca5a5"}}>
-                <span style={{fontSize:12}}>🔒</span>
-                <strong style={{color:project.wonAt?"#4ade80":"#fca5a5",letterSpacing:0.4}}>
-                  PROJECT LOCKED — {project.wonAt?"WON":"LOST"} {project.wonAt?new Date(project.wonAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):new Date(project.lostAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}
-                </strong>
-                <span style={{color:project.wonAt?"#bbf7d0":"#fecaca"}}>· all costs, BOMs, and project data are frozen.</span>
-                {iAmOwnerOrAdmin&&!lockOverrideSession&&(
-                  <button onClick={onShowLockUnlockConfirm}
-                    style={{background:"none",border:"1px solid "+(project.wonAt?"#4ade8088":"#fca5a588"),borderRadius:5,color:project.wonAt?"#86efac":"#fca5a5",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:700,letterSpacing:0.4}}>🔓 Unlock for Editing</button>
-                )}
-                {iAmOwnerOrAdmin&&lockOverrideSession&&(
-                  <button onClick={()=>onSetLockOverrideSession&&onSetLockOverrideSession(false)}
-                    style={{background:"none",border:"1px solid #94a3b866",borderRadius:5,color:"#cbd5e1",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:600}}>Re-lock Session</button>
-                )}
-                {!iAmOwnerOrAdmin&&!unlockRequestSent&&!(project.unlockRequestedBy||[]).includes(uid)&&(
-                  <button onClick={onShowRequestUnlockModal}
-                    style={{background:"none",border:"1px solid #fbbf2488",borderRadius:5,color:"#fbbf24",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:700,letterSpacing:0.4}}>📬 Request Unlock</button>
-                )}
-                {!iAmOwnerOrAdmin&&(unlockRequestSent||(project.unlockRequestedBy||[]).includes(uid))&&(
-                  <span style={{padding:"2px 8px",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:5,fontSize:10,color:"#fcd34d",fontWeight:700,letterSpacing:0.4}}>✓ Request Sent</span>
-                )}
-                {iAmOwnerOrAdmin&&project.lastUnlockRequest&&(project.unlockRequestedBy||[]).length>0&&(
-                  <span style={{fontSize:10,color:"#fcd34d",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:5,padding:"2px 8px",fontWeight:600}}>📬 {project.lastUnlockRequest.byName||"A teammate"} requesting access{(project.unlockRequestedBy||[]).length>1?` (+${(project.unlockRequestedBy||[]).length-1})`:""}</span>
-                )}
-              </div>
-            )}
-            {isProjectLocked&&project.ecoEditUnlocked&&(
-              <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:"#fde68a"}}>
-                <span style={{fontSize:12}}>🔓</span>
-                <strong style={{color:"#f59e0b",letterSpacing:0.4}}>UNLOCKED FOR ECO</strong>
-                <span style={{color:"#fde68a"}}>· project is back in Sales for change-order rework. ECO scope edits flow through Pre-Review → Quote Send → Post-Review → PO cost adjustment. Auto re-locks when the last draft ECO closes.</span>
-              </div>
-            )}
-            {(project?.ecoSummary||[]).length>0&&(()=>{
-              const isEcoScope=activeScope?.type==="eco";
-              if(!isEcoScope)return null;
-              const ecoNum=String(activeScope.ecoNumber||0).padStart(2,"0");
-              if(activeEcoIsCurrentDraft){
-                return(
-                  <div style={{background:"#1a0040",border:"1px solid #a855f777",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#e9d5ff",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
-                    <span style={{fontSize:12}}>🟣</span>
-                    <span><strong style={{color:"#a855f7"}}>EDITING ECO {ecoNum}</strong> — changes here are tracked. Switch to BASE to see the original.</span>
-                  </div>
-                );
-              }
-              return(
-                <div style={{background:"#0a0a14",border:"1px solid #94a3b833",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#94a3b8",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
-                  <span style={{fontSize:12}}>👁</span>
-                  <span><strong style={{color:"#cbd5e1"}}>Viewing ECO {ecoNum}</strong> (read-only) — not the active draft.</span>
-                </div>
-              );
-            })()}
-          </div>
+          {/* DECISION(v1.19.846, ECO Stage A): EcoScopeTabs MOVED to just above the
+              first panel card (search "EcoScopeTabs panels-strip" in this file). */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
             <div>
               {editingName?(
@@ -23641,6 +23576,74 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               ))}
             </div>
           )}
+          {/* DECISION(v1.19.846, ECO Stage A): EcoScopeTabs panels-strip — sits
+              just above the first panel card (Panel Card Line 1). The compact
+              PROJECT LOCKED / UNLOCKED-FOR-ECO indicator and active-ECO scope
+              hint render directly below the tabs, then panel cards begin. */}
+          <div style={{marginBottom:8}}>
+            <EcoScopeTabs
+              project={project}
+              uid={uid}
+              activeScope={activeScope}
+              onScopeChange={onScopeChange}
+              baseUnlocked={baseUnlocked}
+              onBaseUnlock={onBaseUnlock}
+              baseScopeReadOnly={baseScopeReadOnly}
+            />
+            {isProjectLocked&&!editUnlockedForAll&&(
+              <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:project.wonAt?"#86efac":"#fca5a5"}}>
+                <span style={{fontSize:12}}>🔒</span>
+                <strong style={{color:project.wonAt?"#4ade80":"#fca5a5",letterSpacing:0.4}}>
+                  PROJECT LOCKED — {project.wonAt?"WON":"LOST"} {project.wonAt?new Date(project.wonAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):new Date(project.lostAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}
+                </strong>
+                <span style={{color:project.wonAt?"#bbf7d0":"#fecaca"}}>· all costs, BOMs, and project data are frozen.</span>
+                {iAmOwnerOrAdmin&&!lockOverrideSession&&(
+                  <button onClick={onShowLockUnlockConfirm}
+                    style={{background:"none",border:"1px solid "+(project.wonAt?"#4ade8088":"#fca5a588"),borderRadius:5,color:project.wonAt?"#86efac":"#fca5a5",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:700,letterSpacing:0.4}}>🔓 Unlock for Editing</button>
+                )}
+                {iAmOwnerOrAdmin&&lockOverrideSession&&(
+                  <button onClick={()=>onSetLockOverrideSession&&onSetLockOverrideSession(false)}
+                    style={{background:"none",border:"1px solid #94a3b866",borderRadius:5,color:"#cbd5e1",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:600}}>Re-lock Session</button>
+                )}
+                {!iAmOwnerOrAdmin&&!unlockRequestSent&&!(project.unlockRequestedBy||[]).includes(uid)&&(
+                  <button onClick={onShowRequestUnlockModal}
+                    style={{background:"none",border:"1px solid #fbbf2488",borderRadius:5,color:"#fbbf24",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:700,letterSpacing:0.4}}>📬 Request Unlock</button>
+                )}
+                {!iAmOwnerOrAdmin&&(unlockRequestSent||(project.unlockRequestedBy||[]).includes(uid))&&(
+                  <span style={{padding:"2px 8px",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:5,fontSize:10,color:"#fcd34d",fontWeight:700,letterSpacing:0.4}}>✓ Request Sent</span>
+                )}
+                {iAmOwnerOrAdmin&&project.lastUnlockRequest&&(project.unlockRequestedBy||[]).length>0&&(
+                  <span style={{fontSize:10,color:"#fcd34d",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:5,padding:"2px 8px",fontWeight:600}}>📬 {project.lastUnlockRequest.byName||"A teammate"} requesting access{(project.unlockRequestedBy||[]).length>1?` (+${(project.unlockRequestedBy||[]).length-1})`:""}</span>
+                )}
+              </div>
+            )}
+            {isProjectLocked&&project.ecoEditUnlocked&&(
+              <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:"#fde68a"}}>
+                <span style={{fontSize:12}}>🔓</span>
+                <strong style={{color:"#f59e0b",letterSpacing:0.4}}>UNLOCKED FOR ECO</strong>
+                <span style={{color:"#fde68a"}}>· project is back in Sales for change-order rework. ECO scope edits flow through Pre-Review → Quote Send → Post-Review → PO cost adjustment. Auto re-locks when the last draft ECO closes.</span>
+              </div>
+            )}
+            {(project?.ecoSummary||[]).length>0&&(()=>{
+              const isEcoScope=activeScope?.type==="eco";
+              if(!isEcoScope)return null;
+              const ecoNum=String(activeScope.ecoNumber||0).padStart(2,"0");
+              if(activeEcoIsCurrentDraft){
+                return(
+                  <div style={{background:"#1a0040",border:"1px solid #a855f777",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#e9d5ff",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                    <span style={{fontSize:12}}>🟣</span>
+                    <span><strong style={{color:"#a855f7"}}>EDITING ECO {ecoNum}</strong> — changes here are tracked. Switch to BASE to see the original.</span>
+                  </div>
+                );
+              }
+              return(
+                <div style={{background:"#0a0a14",border:"1px solid #94a3b833",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#94a3b8",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                  <span style={{fontSize:12}}>👁</span>
+                  <span><strong style={{color:"#cbd5e1"}}>Viewing ECO {ecoNum}</strong> (read-only) — not the active draft.</span>
+                </div>
+              );
+            })()}
+          </div>
           {panels.length===0?(
             <div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
               <div style={{fontSize:52,marginBottom:16,opacity:0.3}}>🗂️</div>
