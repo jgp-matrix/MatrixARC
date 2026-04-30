@@ -9645,7 +9645,13 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
   // Once the snapshot arrives and the ECO is gone from project.ecoSummary, the
   // entry naturally disappears regardless of local state.
   const [_pendingDeletedIds,_setPendingDeletedIds]=useState(()=>new Set());
-  const summary=(Array.isArray(project?.ecoSummary)?project.ecoSummary:[]).filter(e=>!_pendingDeletedIds.has(e.ecoId));
+  // DECISION(v1.19.861, ECO Stage A): Mirror of the delete optimism for create
+  // — newly-created ECOs get added to a pending-list so the tab appears
+  // immediately. The Firestore snapshot delivers the persisted ecoSummary
+  // shortly after, at which point the pending entry deduplicates against it.
+  const [_pendingNewEcos,_setPendingNewEcos]=useState(()=>[]);
+  const _baseSummary=(Array.isArray(project?.ecoSummary)?project.ecoSummary:[]).filter(e=>!_pendingDeletedIds.has(e.ecoId));
+  const summary=[..._baseSummary,..._pendingNewEcos.filter(pe=>!_baseSummary.some(s=>s.ecoId===pe.ecoId))];
   // DECISION(v1.19.836, ECO Stage A): Temporarily lifted the bcPoStatus gate so
   // ECO functionality can be tested on projects without a received PO. The
   // intent is still that ECOs apply to PO'd projects (change orders against an
@@ -9750,6 +9756,19 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
       console.log("[ECO] calling createEcoDoc…");
       const result=await createEcoDoc(uid,project,"customer_change");
       console.log("[ECO] createEcoDoc returned:",result);
+      // Optimistically insert the new ECO into the tab strip so the tab
+      // appears instantly — the snapshot listener catches up shortly after.
+      _setPendingNewEcos(prev=>[...prev,{
+        ecoId:result.ecoId,
+        number:result.number,
+        status:"draft",
+        kind:result.kind||"customer_change",
+        deltaSell:0,
+        approvedAt:null,
+        completedAt:null,
+        createdAt:Date.now(),
+        displayLabel:`ECO ${String(result.number).padStart(2,"0")}`,
+      }]);
       onScopeChange&&onScopeChange({type:"eco",ecoNumber:result.number,ecoId:result.ecoId});
       console.log("[ECO] onScopeChange called");
       // DECISION(v1.19.854, ECO Stage A): Fire `bcAddEcoTask` for each panel so
