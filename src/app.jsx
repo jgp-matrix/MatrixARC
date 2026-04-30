@@ -4745,10 +4745,13 @@ async function buildQuotePdfDoc(doc,project){
     // DECISION(v1.19.890, Stage E PDF): Crate auto-detect line. Renders
     // immediately under the NOTES box. Detection rule per user spec —
     // partNumber contains "CRATE" OR description starts with "CRATE".
+    // DECISION(v1.19.891): ASCII only — jsPDF helvetica mangles ✓/○/→/Σ/Δ
+    // glyphs (Unicode beyond Latin-1) into garbled multi-byte sequences with
+    // weird inter-letter spacing. Web (qd-li-notes) keeps the rich glyphs.
     arcDocCheckBreak(ctx,4);
     doc.setFontSize(7);doc.setFont("helvetica","bold");
     if(_hasCratePdf){doc.setTextColor(22,163,74);}else{doc.setTextColor(120,120,128);}
-    doc.text(_hasCratePdf?"✓ Includes ISPM 15 Certified Crate":"Crate Not Included",ARC_DOC.margin.left+3,ctx.y+2);
+    doc.text(_hasCratePdf?"Includes ISPM 15 Certified Crate":"Crate Not Included",ARC_DOC.margin.left+3,ctx.y+2);
     ctx.y+=4;
     doc.setTextColor(...ARC_DOC.colors.black);
 
@@ -4765,6 +4768,7 @@ async function buildQuotePdfDoc(doc,project){
     // DECISION(v1.19.890, Stage E PDF): Auto-populated ECO change detail block —
     // descriptions only (no per-line costs), labor combined into total hrs,
     // sell-side roll-up at the bottom. Mirrors the QuoteView block.
+    // DECISION(v1.19.891): ASCII labels — "->" instead of →, no glyphs.
     if(_panHasEcoPdf&&_panChangeDetailsPdf){
       const cd=_panChangeDetailsPdf;
       const partsArr=cd.parts;
@@ -4776,29 +4780,29 @@ async function buildQuotePdfDoc(doc,project){
         arcDocCheckBreak(ctx,blockH);
         // Header
         doc.setFontSize(5.5);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
-        doc.text(_activeEcoLabelPdf+" — CHANGES",ARC_DOC.margin.left+3,ctx.y+2.5);ctx.y+=headerH;
+        doc.text(_activeEcoLabelPdf+" - CHANGES",ARC_DOC.margin.left+3,ctx.y+2.5);ctx.y+=headerH;
         // Per-row lines
         doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
         for(const p of partsArr){
           let line="";
-          if(p.op==="add")line="+ Added: "+p.qty+" × "+(p.partNumber||"(no part #)")+(p.description?" · "+p.description.slice(0,60):"");
-          else if(p.op==="remove")line="× Removed: "+p.qty+" × "+(p.partNumber||"(no part #)")+(p.description?" · "+p.description.slice(0,60):"");
+          if(p.op==="add")line="+ Added: "+p.qty+" x "+(p.partNumber||"(no part #)")+(p.description?" - "+p.description.slice(0,60):"");
+          else if(p.op==="remove")line="X Removed: "+p.qty+" x "+(p.partNumber||"(no part #)")+(p.description?" - "+p.description.slice(0,60):"");
           else if(p.op==="modify"){
             const changes=[];
-            if(p.qtyDelta!==0)changes.push("qty "+p.origQty+" → "+p.newQty);
-            if(p.pnChanged)changes.push("part # "+(p.origPartNumber||"-")+" → "+(p.partNumber||"-"));
+            if(p.qtyDelta!==0)changes.push("qty "+p.origQty+" -> "+p.newQty);
+            if(p.pnChanged)changes.push("part # "+(p.origPartNumber||"-")+" -> "+(p.partNumber||"-"));
             if(p.descChanged&&!p.pnChanged)changes.push("description updated");
-            line="○ Modified: "+(p.partNumber||p.origPartNumber||"(no part #)")+(changes.length?" · "+changes.join(" · "):"");
+            line="* Modified: "+(p.partNumber||p.origPartNumber||"(no part #)")+(changes.length?" - "+changes.join(" - "):"");
           }
           doc.text(line.slice(0,160),ARC_DOC.margin.left+5,ctx.y+1.5);ctx.y+=rowH;
         }
         if(cd.laborHrs!==0){
-          doc.text("Σ Labor: "+cd.laborHrs+" hrs",ARC_DOC.margin.left+5,ctx.y+1.5);ctx.y+=rowH;
+          doc.text("Labor: "+cd.laborHrs+" hrs",ARC_DOC.margin.left+5,ctx.y+1.5);ctx.y+=rowH;
         }
         // Roll-up sell-side total
         doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
         const sgn=_panEcoDeltaPdf>=0?"+":"-";
-        doc.text(_activeEcoLabelPdf+" Δ: "+sgn+arcFmtMoney(Math.abs(_panEcoDeltaPdf)),ARC_DOC.W-ARC_DOC.margin.right-2,ctx.y+2,{align:"right"});
+        doc.text(_activeEcoLabelPdf+" Net Change: "+sgn+arcFmtMoney(Math.abs(_panEcoDeltaPdf)),ARC_DOC.W-ARC_DOC.margin.right-2,ctx.y+2,{align:"right"});
         ctx.y+=rowH+2;
         doc.setTextColor(...ARC_DOC.colors.black);
       }
@@ -4844,12 +4848,13 @@ async function buildQuotePdfDoc(doc,project){
       doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
       doc.text(col.l,cx,py+4,{align:"center"});
       if(col.eco){
-        // Stacked BASE / ECO Δ / NEW for Unit Price (ci=1) and Total Price (ci=3)
+        // Stacked BASE / ECO Net / NEW for Unit Price (ci=1) and Total Price (ci=3)
+        // DECISION(v1.19.891): "Net" instead of Δ — see ASCII-only PDF note above.
         const mult=col.times||1;
         doc.setFontSize(6);doc.setFont("helvetica","normal");doc.setTextColor(120,120,128);
         doc.text("BASE: "+arcFmtMoney(_panBaseSellPdf*mult),cx,py+8,{align:"center"});
         doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
-        doc.text(_activeEcoLabelPdf+" Δ: "+_signedFmt(_panEcoDeltaPdf*mult),cx,py+11.5,{align:"center"});
+        doc.text(_activeEcoLabelPdf+" Net: "+_signedFmt(_panEcoDeltaPdf*mult),cx,py+11.5,{align:"center"});
         doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
         doc.text(col.v,cx,py+16,{align:"center"});
       }else{
