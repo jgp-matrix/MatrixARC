@@ -9599,16 +9599,36 @@ async function deleteEcoDoc(uid,project,ecoId){
       const pages=Array.isArray(panel.pages)?panel.pages.filter(p=>p.ecoTag!==ecoId):panel.pages;
       return{...panel,bom,pages};
     }):cur.panels;
+    // DECISION(v1.19.860, ECO Stage A): When ECOs are deleted, wipe the
+    // counter history so numbering "forgets" the deleted entry. Counter is
+    // re-anchored to the max remaining ECO number — so deleting all of them
+    // resets to 0 (next ECO is 01), and deleting the latest entry rolls back
+    // to the previous high. Approved/sent ECOs would normally be considered
+    // permanent audit records, but per Firestore rules only draft+returned
+    // ECOs can be deleted by a writer in the first place, so this can't
+    // accidentally clobber an approved-and-shipped change order's number.
+    const _maxRemaining=summary.reduce((m,e)=>Math.max(m,+e.number||0),0);
     const projUpdate={
       ecoSummary:summary,
+      ecoCounter:_maxRemaining,
       activeEcoId:cur.activeEcoId===ecoId?null:cur.activeEcoId,
       panels,
       updatedAt:Date.now(),
       updatedBy:uid,
     };
+    // Clear ecoFirstCreatedAt + unlock state when the last ECO is deleted —
+    // the project goes back to its non-ECO baseline.
+    if(summary.length===0){
+      projUpdate.ecoFirstCreatedAt=null;
+      projUpdate.ecoEditUnlocked=false;
+      projUpdate.ecoEditUnlockedAt=null;
+      projUpdate.ecoEditUnlockedBy=null;
+      projUpdate.bcStatusForcedToQuote=false;
+      projUpdate.bcStatusForcedToQuoteAt=null;
+    }
     tx.update(fbDb.doc(projPath),projUpdate);
     tx.delete(fbDb.doc(ecoPath));
-    return{deleted:true,remainingCount:summary.length};
+    return{deleted:true,remainingCount:summary.length,nextEcoNumber:_maxRemaining+1};
   });
 }
 if(typeof window!=="undefined"){window._deleteEcoDoc=deleteEcoDoc;}
