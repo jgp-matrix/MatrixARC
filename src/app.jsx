@@ -19398,16 +19398,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{onSaveImmediate(updated);}catch(e){}
     setPriceConfirmPending(null);
     // Push to BC Item Card
+    // DECISION(v1.19.904): Previously re-fetched the BC item AFTER the PATCH
+    // and used `bcItem.unitCost ?? price` to mutate the row a second time.
+    // That re-read could return a STALE value (BC hadn't propagated the PATCH
+    // yet, the Unit_Cost field was effectively read-only due to costing-method
+    // settings, or the patch silently no-op'd) — and the stale value would
+    // overwrite the user's typed price. Caused Noah's "I changed Item 29 but
+    // it keeps reverting" report. Now: push to BC, flip priceSource → "bc"
+    // on the existing row WITHOUT touching unitPrice. The user's typed value
+    // is the source of truth; BC sync is a side effect.
     if(partNumber&&_bcToken){
       try{
         await bcPatchItemOData(partNumber,{Unit_Cost:price});
-        const bcItem=await bcLookupItem(partNumber);
-        if(bcItem){
-          const confirmedCost=bcItem.unitCost??price;
-          const cur=panelRef.current;
-          const bom2=(cur.bom||[]).map(r=>r.id===id?{...r,unitPrice:confirmedCost,priceSource:"bc",priceDate:now,bcVendorName:vendorName||r.bcVendorName}:r);
-          const u2={...cur,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}
-        }
+        const cur=panelRef.current;
+        const bom2=(cur.bom||[]).map(r=>r.id===id?{...r,priceSource:"bc",priceDate:now,bcVendorName:vendorName||r.bcVendorName}:r);
+        const u2={...cur,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}
       }catch(e){console.warn("BC unit cost update failed:",partNumber,e);}
       // Push to Purchase Price card if vendor provided
       if(vendorName){
