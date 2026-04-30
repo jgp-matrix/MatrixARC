@@ -9788,14 +9788,12 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
     }
     setDeleting(false);
   }
-  // DECISION(v1.19.845, ECO Stage A): Tab-styled buttons. Active tab gets the
-  // accent-purple background + bottom edge merging with the content area below
-  // (no bottom border — the container's borderBottom line passes behind it).
-  // Inactive tabs keep the dim background and a full border so they read as
-  // separate navigation pills.
-  function tabBg(isActive){return isActive?"#1a0040":"#0a0a14";}
-  function tabBorder(isActive){return isActive?"1px solid #a855f7":"1px solid "+C.border;}
-  function tabColor(isActive){return isActive?"#a855f7":C.muted;}
+  // DECISION(v1.19.856, ECO Stage A): Active tab uses bright green so it pops
+  // against the rest of the project header. Inactive tabs keep the dim
+  // background and muted text so they read as separate navigation pills.
+  function tabBg(isActive){return isActive?"#0d2010":"#0a0a14";}
+  function tabBorder(isActive){return isActive?"1px solid #4ade80":"1px solid "+C.border;}
+  function tabColor(isActive){return isActive?"#4ade80":C.muted;}
   // Tab-shape radius — rounded top only.
   const _tabRadius="8px 8px 0 0";
   const baseActive=!activeScope||activeScope.type==="base";
