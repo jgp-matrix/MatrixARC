@@ -4613,6 +4613,27 @@ async function buildQuotePdfDoc(doc,project){
     const qp=(q.panelOverrides||{})[pan.id]||{};
     const panBom=pan.bom||[];
 
+    // DECISION(v1.19.890, Stage E PDF): Mirror the on-screen QuoteView ECO
+    // breakdown in the printed PDF. Without this, the PDF customer-facing
+    // output (which is what actually goes to the customer) doesn't show
+    // BASE / ECO Δ / NEW pricing, the auto-populated change detail block,
+    // crate detection, or the totals split — they only existed on screen.
+    const _draftEcosPdf=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
+    const _activeEcoPdf=_draftEcosPdf.slice(-1)[0]||null;
+    const _activeEcoLabelPdf=_activeEcoPdf?`ECO ${String(_activeEcoPdf.number||0).padStart(2,"0")}`:null;
+    const _panEcoIdPdf=_activeEcoPdf?_activeEcoPdf.ecoId:null;
+    const _panEcoNumPdf=_activeEcoPdf?_activeEcoPdf.number||0:0;
+    const _panHasEcoPdf=!!_activeEcoPdf&&panBom.some(r=>_matchesEco(r,_panEcoIdPdf,_panEcoNumPdf));
+    const _panBaseSellPdf=_panHasEcoPdf?computeBasePanelSellPrice(pan):0;
+    const _panEcoDeltaPdf=_panHasEcoPdf?computeEcoSellDelta(pan,_panEcoIdPdf,_panEcoNumPdf):0;
+    const _panChangeDetailsPdf=_panHasEcoPdf?computeEcoChangeDetails(pan,_panEcoIdPdf,_panEcoNumPdf):null;
+    const _hasCratePdf=panBom.some(r=>{
+      if(r.isLaborRow)return false;
+      const pn=(r.partNumber||"").toString();
+      const dsc=(r.description||"").toString().trim();
+      return /crate/i.test(pn)||/^crate/i.test(dsc);
+    });
+
     // DECISION(v1.19.331): Pre-estimate full line item height (header+specs+notes+crosses+pricing)
     // and call arcDocCheckBreak so the entire box starts on a new page if it won't fit.
     // Without this, the box spans pages and the roundedRect border only draws on the start page,
@@ -4624,7 +4645,10 @@ async function buildQuotePdfDoc(doc,project){
     const estSpecH=Math.ceil(6/2)*4.5; // 6 spec items in 2 cols
     const estNotesH=(pan.bomNotes?8:0)+(qp.lineNotes?5:0);
     const estDocsH=((pan.pages||[]).length+(pan.otherDocs||[]).length)>0?6:0;
-    const estH=7+8+estSpecH+estNotesH+estCrossH+estDocsH+14+4; // header+title+specs+notes+crosses+docs+pricing+padding
+    const estCrateH=4; // always renders — crate auto-detect line
+    const estEcoChangeH=_panHasEcoPdf&&_panChangeDetailsPdf?(4+(_panChangeDetailsPdf.parts.length+(_panChangeDetailsPdf.laborHrs?1:0)+1)*2.5+2):0;
+    const estPricingH=_panHasEcoPdf?20:14; // breakdown adds ~6mm to pricing row
+    const estH=7+8+estSpecH+estNotesH+estCrateH+estCrossH+estDocsH+estPricingH+estEcoChangeH+4;
     arcDocCheckBreak(ctx,estH);
     const lineItemStartY=ctx.y;
     const lineItemStartPage=ctx.pageNum;
@@ -4718,6 +4742,16 @@ async function buildQuotePdfDoc(doc,project){
       ctx.y+=nH+1.5;
     }
 
+    // DECISION(v1.19.890, Stage E PDF): Crate auto-detect line. Renders
+    // immediately under the NOTES box. Detection rule per user spec —
+    // partNumber contains "CRATE" OR description starts with "CRATE".
+    arcDocCheckBreak(ctx,4);
+    doc.setFontSize(7);doc.setFont("helvetica","bold");
+    if(_hasCratePdf){doc.setTextColor(22,163,74);}else{doc.setTextColor(120,120,128);}
+    doc.text(_hasCratePdf?"✓ Includes ISPM 15 Certified Crate":"Crate Not Included",ARC_DOC.margin.left+3,ctx.y+2);
+    ctx.y+=4;
+    doc.setTextColor(...ARC_DOC.colors.black);
+
     // Quote Notes (compact — inside bordered box)
     if(qp.lineNotes){
       doc.setFontSize(5.5);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.brand);
@@ -4726,6 +4760,48 @@ async function buildQuotePdfDoc(doc,project){
       arcDocCheckBreak(ctx,qnLines.length*qnlh+2);
       qnLines.forEach(function(ql,qi){doc.text(ql,ARC_DOC.margin.left+2,ctx.y+qi*qnlh);});
       ctx.y+=qnLines.length*2.5+1.5;
+    }
+
+    // DECISION(v1.19.890, Stage E PDF): Auto-populated ECO change detail block —
+    // descriptions only (no per-line costs), labor combined into total hrs,
+    // sell-side roll-up at the bottom. Mirrors the QuoteView block.
+    if(_panHasEcoPdf&&_panChangeDetailsPdf){
+      const cd=_panChangeDetailsPdf;
+      const partsArr=cd.parts;
+      const hasContent=partsArr.length>0||cd.laborHrs!==0;
+      if(hasContent){
+        const headerH=3.5,rowH=2.5;
+        const rowsCount=partsArr.length+(cd.laborHrs!==0?1:0);
+        const blockH=headerH+rowsCount*rowH+rowH+2;
+        arcDocCheckBreak(ctx,blockH);
+        // Header
+        doc.setFontSize(5.5);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
+        doc.text(_activeEcoLabelPdf+" — CHANGES",ARC_DOC.margin.left+3,ctx.y+2.5);ctx.y+=headerH;
+        // Per-row lines
+        doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+        for(const p of partsArr){
+          let line="";
+          if(p.op==="add")line="+ Added: "+p.qty+" × "+(p.partNumber||"(no part #)")+(p.description?" · "+p.description.slice(0,60):"");
+          else if(p.op==="remove")line="× Removed: "+p.qty+" × "+(p.partNumber||"(no part #)")+(p.description?" · "+p.description.slice(0,60):"");
+          else if(p.op==="modify"){
+            const changes=[];
+            if(p.qtyDelta!==0)changes.push("qty "+p.origQty+" → "+p.newQty);
+            if(p.pnChanged)changes.push("part # "+(p.origPartNumber||"-")+" → "+(p.partNumber||"-"));
+            if(p.descChanged&&!p.pnChanged)changes.push("description updated");
+            line="○ Modified: "+(p.partNumber||p.origPartNumber||"(no part #)")+(changes.length?" · "+changes.join(" · "):"");
+          }
+          doc.text(line.slice(0,160),ARC_DOC.margin.left+5,ctx.y+1.5);ctx.y+=rowH;
+        }
+        if(cd.laborHrs!==0){
+          doc.text("Σ Labor: "+cd.laborHrs+" hrs",ARC_DOC.margin.left+5,ctx.y+1.5);ctx.y+=rowH;
+        }
+        // Roll-up sell-side total
+        doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
+        const sgn=_panEcoDeltaPdf>=0?"+":"-";
+        doc.text(_activeEcoLabelPdf+" Δ: "+sgn+arcFmtMoney(Math.abs(_panEcoDeltaPdf)),ARC_DOC.W-ARC_DOC.margin.right-2,ctx.y+2,{align:"right"});
+        ctx.y+=rowH+2;
+        doc.setTextColor(...ARC_DOC.colors.black);
+      }
     }
 
     // DECISION(v1.19.330): Crossed items render INSIDE the bordered box (between docs and pricing).
@@ -4748,22 +4824,40 @@ async function buildQuotePdfDoc(doc,project){
     }
 
     // Pricing row — INSIDE the bordered box
-    arcDocCheckBreak(ctx,14);
+    // DECISION(v1.19.890, Stage E PDF): when this panel has ECO changes the
+    // Unit Price + Total Price cells show stacked BASE → ECO Δ → NEW values
+    // so the customer can see how the change order moved the price. Box
+    // height bumps from 12mm to 18mm in that case. Other cells stay single.
+    const _ecoStack=_panHasEcoPdf;
+    const boxH=_ecoStack?18:12;
+    arcDocCheckBreak(ctx,boxH+2);
     doc.setFillColor(248,250,252);doc.setDrawColor(248,250,252);
-    doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,12,"FD");
+    doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,boxH,"FD");
     const pw=ctx.contentWidth/4;const py=ctx.y;
     // DECISION(v1.19.737): Auto-populate Lead Time field with the panel's computed
     // leadDays (material + labor + production) when the user hasn't typed an override.
     const _computedLead=(()=>{try{return computeControlPanelLeadTime(pan,project).leadDays||0;}catch(e){return 0;}})();
     const _leadStr=qp.leadTime||q.leadTime||(_computedLead>0?String(_computedLead):"—");
-    [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—"},{l:"Lead Time",v:_leadStr+" days"},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—"}].forEach((col,ci)=>{
+    const _signedFmt=n=>(n>=0?"+":"-")+arcFmtMoney(Math.abs(n));
+    [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—",eco:_ecoStack},{l:"Lead Time",v:_leadStr+" days"},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—",eco:_ecoStack,times:panQty}].forEach((col,ci)=>{
       const cx=ARC_DOC.margin.left+ci*pw+pw/2;
       doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
       doc.text(col.l,cx,py+4,{align:"center"});
-      doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...(ci===4?ARC_DOC.colors.brand:ARC_DOC.colors.black));
-      doc.text(col.v,cx,py+9,{align:"center"});
+      if(col.eco){
+        // Stacked BASE / ECO Δ / NEW for Unit Price (ci=1) and Total Price (ci=3)
+        const mult=col.times||1;
+        doc.setFontSize(6);doc.setFont("helvetica","normal");doc.setTextColor(120,120,128);
+        doc.text("BASE: "+arcFmtMoney(_panBaseSellPdf*mult),cx,py+8,{align:"center"});
+        doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
+        doc.text(_activeEcoLabelPdf+" Δ: "+_signedFmt(_panEcoDeltaPdf*mult),cx,py+11.5,{align:"center"});
+        doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
+        doc.text(col.v,cx,py+16,{align:"center"});
+      }else{
+        doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
+        doc.text(col.v,cx,py+(_ecoStack?13:9),{align:"center"});
+      }
     });
-    ctx.y=py+13;
+    ctx.y=py+boxH+1;
     // Draw border around entire line item (header + specs + notes + crosses + pricing)
     if(ctx.pageNum===lineItemStartPage){
       doc.setDrawColor(...ARC_DOC.colors.lightGrey);doc.setLineWidth(0.3);
@@ -4783,19 +4877,40 @@ async function buildQuotePdfDoc(doc,project){
   arcDocText(ctx,"Budgetary quotes are provided for planning purposes only and do not represent a firm or binding price. Firm quoted prices are valid for 30 days from the date of issue unless otherwise noted. All prices are subject to change without notice and do not constitute a binding contract until a purchase order is accepted and confirmed by Matrix Systems. Lead times and material availability are estimated and subject to supplier confirmation at time of order.",{fontSize:7.5,italic:true,color:ARC_DOC.colors.grey,gap:4});
 
   // ── TOTALS BOX ──
+  // DECISION(v1.19.890, Stage E PDF): Split Subtotal into BASE Subtotal +
+  // ECO N when any panel carries ECO rows. Mirrors the QuoteView totals
+  // layout — Total stays at BASE + ECO since computePanelSellPrice already
+  // includes ECO contributions.
   const totalPrice=panels.reduce((s,pan)=>computePanelSellPrice(pan)*(pan.lineQty??1)+s,0);
-  arcDocCheckBreak(ctx,25);
+  const _draftTotalsPdf=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
+  const _activeTotalsPdf=_draftTotalsPdf.slice(-1)[0]||null;
+  const _activeTotalsIdPdf=_activeTotalsPdf?_activeTotalsPdf.ecoId:null;
+  const _activeTotalsNumPdf=_activeTotalsPdf?_activeTotalsPdf.number||0:0;
+  const _activeTotalsLabelPdf=_activeTotalsPdf?`ECO ${String(_activeTotalsPdf.number||0).padStart(2,"0")}`:null;
+  const _hasEcoTotalsPdf=!!_activeTotalsPdf&&panels.some(pan=>(pan.bom||[]).some(r=>_matchesEco(r,_activeTotalsIdPdf,_activeTotalsNumPdf)));
+  const _baseSubtotalPdf=_hasEcoTotalsPdf?panels.reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0):totalPrice;
+  const _ecoSubtotalPdf=_hasEcoTotalsPdf?panels.reduce((s,pan)=>s+computeEcoSellDelta(pan,_activeTotalsIdPdf,_activeTotalsNumPdf)*(pan.lineQty??1),0):0;
+  const _signedFmtPdf=n=>(n>=0?"+":"-")+arcFmtMoney(Math.abs(n));
+  arcDocCheckBreak(ctx,_hasEcoTotalsPdf?32:25);
   const bx=ARC_DOC.W-ARC_DOC.margin.right-60;const bw=60;
   const isNonTaxable=/nontax|non.?tax/i.test(q.taxAreaCode||"");
-  [{l:"Subtotal",v:arcFmtMoney(totalPrice),bold:false},{l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false},{l:"Total",v:arcFmtMoney(totalPrice),bold:true}].forEach((row,ri)=>{
+  const totalsRows=_hasEcoTotalsPdf
+    ?[{l:"Subtotal",v:arcFmtMoney(_baseSubtotalPdf),bold:false,eco:false},{l:_activeTotalsLabelPdf,v:_signedFmtPdf(_ecoSubtotalPdf),bold:false,eco:true},{l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false,eco:false},{l:"Total",v:arcFmtMoney(totalPrice),bold:true,eco:false}]
+    :[{l:"Subtotal",v:arcFmtMoney(totalPrice),bold:false,eco:false},{l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false,eco:false},{l:"Total",v:arcFmtMoney(totalPrice),bold:true,eco:false}];
+  totalsRows.forEach((row,ri)=>{
     const ry=ctx.y+ri*7;
     if(row.bold){doc.setDrawColor(...ARC_DOC.colors.black);doc.setLineWidth(0.5);doc.line(bx,ry,bx+bw,ry);}
-    doc.setFontSize(row.bold?12:9);doc.setFont("helvetica",row.bold?"bold":"normal");doc.setTextColor(...ARC_DOC.colors.black);
+    doc.setFontSize(row.bold?12:9);doc.setFont("helvetica",row.bold?"bold":(row.eco?"bold":"normal"));
+    if(row.eco)doc.setTextColor(168,85,247);
+    else doc.setTextColor(...ARC_DOC.colors.black);
     doc.text(row.l,bx+2,ry+5);
-    doc.setTextColor(...(row.bold?ARC_DOC.colors.brand:ARC_DOC.colors.black));
+    if(row.bold)doc.setTextColor(...ARC_DOC.colors.brand);
+    else if(row.eco)doc.setTextColor(168,85,247);
+    else doc.setTextColor(...ARC_DOC.colors.black);
     doc.text(row.v,bx+bw-2,ry+5,{align:"right"});
   });
-  ctx.y+=24;
+  ctx.y+=totalsRows.length*7+3;
+  doc.setTextColor(...ARC_DOC.colors.black);
   if(isBudg){
     doc.setFontSize(11);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.red);
     doc.text("BUDGETARY",bx+bw/2,ctx.y,{align:"center"});ctx.y+=6;
