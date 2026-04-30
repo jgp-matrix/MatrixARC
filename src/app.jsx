@@ -30169,7 +30169,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       const map={};
       list.forEach(p=>{
         // ECO Stage A.6: active ECO unlock keeps the project out of Purchasing tabs.
-        if(p.ecoEditUnlocked)return;
+        if(p.ecoEditUnlocked||(Array.isArray(p.ecoSummary)&&p.ecoSummary.some(e=>e&&e.status==="draft")))return;
         if(p.bcPoStatus==="purchasing"){if(!map.inprocess)map.inprocess=[];map.inprocess.push(p);}
         else if(p.bcPoStatus==="Open"){if(!map.tobepurchased)map.tobepurchased=[];map.tobepurchased.push(p);}
         else if(p.bcPoStatus==="purchased"||p.bcPoStatus==="Completed"){if(!map.completed)map.completed=[];map.completed.push(p);}
@@ -30205,7 +30205,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         // project belongs in Sales kanban (groupBy="status") for the duration. The
         // late-stage productionStatus/postReviewStatus fields stay intact so they're
         // restored once the ECO round closes (Stage F handles the auto-relock).
-        if(p.ecoEditUnlocked)return;
+        if(p.ecoEditUnlocked||(Array.isArray(p.ecoSummary)&&p.ecoSummary.some(e=>e&&e.status==="draft")))return;
         // Production-status overrides apply first — these are explicit late-stage states.
         if(p.productionStatus==="ready_pickup"){if(!map.ready_pickup)map.ready_pickup=[];map.ready_pickup.push(p);return;}
         if(p.productionStatus==="shipping_prep"){if(!map.shipping_prep)map.shipping_prep=[];map.shipping_prep.push(p);return;}
@@ -30242,7 +30242,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       const map={};
       list.forEach(p=>{
         // ECO Stage A.6: active ECO unlock excludes from purchasing kanban.
-        if(p.ecoEditUnlocked)return;
+        if(p.ecoEditUnlocked||(Array.isArray(p.ecoSummary)&&p.ecoSummary.some(e=>e&&e.status==="draft")))return;
         if(p.bcPoStatus==="Open"){if(!map.send_po)map.send_po=[];map.send_po.push(p);}
         else if(p.bcPoStatus==="purchasing"){if(!map.po_sent)map.po_sent=[];map.po_sent.push(p);}
         else if((p.bcPoStatus==="purchased"||p.bcPoStatus==="Completed")&&p.postReviewStatus!=="approved"){if(!map.ready_prod)map.ready_prod=[];map.ready_prod.push(p);}
@@ -30251,13 +30251,22 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
     }
     if(groupBy==="status"){
       // DECISION(v1.19.510): Use computeProjectEffectiveStatus for column routing — single source of truth
+      // DECISION(v1.19.843, ECO Stage A.6): Projects with an active draft ECO OR
+      // ecoEditUnlocked flag are routed back into the Sales kanban for the change-
+      // order rework, even if bcPoStatus is still "Open"/"purchasing" from the
+      // original Won state. Without this carve-out, ECO-rework projects fall
+      // through into a no-man's-land (excluded from both Sales AND Production).
       const order=["draft","in_progress","process_rfq","evc","pre_review","quotes_sent"];
       const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQs Send/Receive",evc:"Ready To Review/Send",pre_review:"In Pre-Review",quotes_sent:"Quotes Sent"};
       const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc:"evc",pre_review:"pre_review",extracted:"evc",validated:"evc",costed:"evc",quoted:"evc",pushed_to_bc:"evc",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
       const map={};
       list.forEach(p=>{
-        if(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")return;
-        const st=computeProjectEffectiveStatus(p);
+        const _hasActiveEco=p.ecoEditUnlocked||(Array.isArray(p.ecoSummary)&&p.ecoSummary.some(e=>e&&e.status==="draft"));
+        if((p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")&&!_hasActiveEco)return;
+        // Projects with active ECOs route to "in_progress" so Sales picks them
+        // up for the change-order pass. Once the ECO is approved, the project
+        // re-locks and routes back to Active/Production normally.
+        const st=_hasActiveEco?"in_progress":computeProjectEffectiveStatus(p);
         const col=statusToCol[st]||"draft";
         if(!map[col])map[col]=[];
         map[col].push(p);
@@ -30271,8 +30280,12 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return [{label:null,items:list.filter(p=>p.importedFromBC)}];
     }
     if(groupBy==="active"){
-      // ECO Stage A.6: ecoEditUnlocked projects are in Sales rework, not Active.
-      return [{label:"Open Orders (Purchasing)",items:list.filter(p=>p.bcPoStatus==="Open"&&!p.ecoEditUnlocked)}];
+      // ECO Stage A.6: projects with the ecoEditUnlocked flag OR an active draft
+      // ECO are in Sales rework, not Active. Belt-and-suspenders coverage handles
+      // both flow paths: post-v1.19.840 unlocks set the flag explicitly; pre-flow
+      // ECOs may exist on projects whose flag wasn't set, but their ecoSummary
+      // still reveals an active draft.
+      return [{label:"Open Orders (Purchasing)",items:list.filter(p=>p.bcPoStatus==="Open"&&!p.ecoEditUnlocked&&!(Array.isArray(p.ecoSummary)&&p.ecoSummary.some(e=>e&&e.status==="draft")))}];
     }
     if(groupBy==="purchasing"){
       return [{label:"Open Orders (In Production)",items:list.filter(p=>p.bcPoStatus==="purchasing")}];
