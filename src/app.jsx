@@ -1773,13 +1773,16 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   // Try the modern Project_ prefix first; on a 400 with the "'Project_No' does
   // not exist" signature, retry with Job_. Mirrors the proven fallback used by
   // bcCreatePanelTaskStructure / bcSyncPanelTaskDescriptions.
+  // DECISION(v1.19.864, ECO Stage A): Dropped the Indentation field — this
+  // tenant's NAV.ProjectTaskLines doesn't expose it. bcCreatePanelTaskStructure
+  // (the working BASE-task creator) doesn't set it either, so it's not
+  // required for tasks to land correctly in the BC project tree.
   function buildBody(prefix){
     return{
       [`${prefix}_No`]:projectNumber,
       [`${prefix}_Task_No`]:taskNo,
       Description:`ECO ${ecoNumber} - Change Order for ${panelName}`,
-      [`${prefix}_Task_Type`]:"Posting",
-      Indentation:2
+      [`${prefix}_Task_Type`]:"Posting"
     };
   }
   async function postTask(prefix){
