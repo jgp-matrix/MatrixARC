@@ -9493,60 +9493,58 @@ async function estimatePrices(items){
 const PAGE_TYPE_DETECT_PROMPT=`Classify this page from a UL508A industrial control panel drawing set.
 Return ONLY a JSON object: {"types":[...]}
 
-The page's classification is determined by its DOMINANT visual content — what the page is primarily showing. Drawing pages (schematics, layouts, enclosures, P&IDs) often include small reference tables like a "Door Devices" callout or component legend; that does NOT make them BOMs. The BOM type is reserved for pages whose ENTIRE PURPOSE is to enumerate parts.
+Decide the PURPOSE of this page. Is it a drawing of something (electrical schematic, panel layout, enclosure, P&ID), or is it a table that enumerates parts to order, or is it a non-content page?
 
-CHECK DRAWING TYPES FIRST:
+DRAWING TYPES (the page's PURPOSE is to depict something):
 
-"schematic" — Electrical schematic / ladder diagram. Visual cues:
+"schematic" — Electrical schematic / ladder diagram. Strong cues:
   • Vertical power rails (L1/L2 or L+/L-) with horizontal rungs between them.
-  • Wire numbers labeling individual conductors (e.g. 100, 101, 200, X1, X2).
-  • Device reference designators (CR1, CB2, PB3, M1) and coil/contact symbols.
-  • Lots of interconnection lines between components.
-  Has a small panel-summary table on it? Still "schematic". The dominant content is the ladder.
+  • Wire numbers labeling conductors (100, 101, 200, X1, X2 …) and device tags (CR1, CB2, PB3, M1).
+  • Coil / contact symbols, interconnection lines between components.
+  A schematic page may have a small panel-summary table or component callout list on the side — that does NOT make it a BOM. If the page's purpose is to depict the ladder, pick "schematic".
 
-"backpanel" — Interior mounting plate FRONT view (one view only, no side view). Visual cues:
-  • Rectangular outline = the back panel.
-  • DIN rails (long thin horizontal/vertical strips) and wire duct (hatched channels).
+"backpanel" — Interior mounting plate FRONT view (one view only). Strong cues:
+  • Rectangular boundary = the back panel.
+  • DIN rails (thin horizontal/vertical strips) and wire duct (hatched channels).
   • Components drawn to scale and positioned spatially on the panel.
-  • Item-number callouts pointing to each component, often with a sidebar legend.
-  Has a sidebar device legend? Still "backpanel". The dominant content is the layout.
+  • Item-number callouts on each component, optionally with a sidebar legend mapping number → device.
+  A device legend on the side does NOT make it a BOM. If the page's purpose is the panel layout, pick "backpanel".
 
-"enclosure" — Cabinet/enclosure drawing. Visual cues:
-  • Front view AND side view shown together (or front + door view).
-  • Overall W × H × D dimensions called out.
-  • Door cutouts for HMIs, pushbuttons, pilot lights.
-  • Title typically reads "Enclosure", "Cabinet", "Door Layout", "Outline & Mounting".
-  Has a door-device list table? Still "enclosure". The dominant content is the cabinet drawing.
+"enclosure" — Cabinet drawing. Strong cues:
+  • Front view AND side view together (or front + door), overall W × H × D dimensions.
+  • Door cutouts for HMIs, pushbuttons, pilot lights; nameplate locations.
+  • Title typically "Enclosure", "Cabinet", "Door Layout", "Outline & Mounting".
+  A door-device list does NOT make it a BOM if the page's purpose is the cabinet drawing.
 
-"pid" — Process & Instrumentation Diagram. Visual cues:
-  • ISA-style instrument bubbles — circles with two-letter codes inside (FT, PT, LIC, PIC, YA, HS) and tag numbers below.
-  • Process flow lines connecting equipment and instruments.
-  • Or a dedicated "INSTRUMENT & FUNCTION LEGEND" box.
+"pid" — Process & Instrumentation Diagram. Strong cues:
+  • ISA-style instrument bubbles — circles with two-letter codes (FT, PT, LIC, PIC, YA, HS) and tag numbers.
+  • Process flow lines connecting instruments and equipment, or a dedicated "INSTRUMENT & FUNCTION LEGEND" box.
   • NO ladder rungs, NO wire numbers.
 
-"bom" — Bill of Materials. The page's DOMINANT content (>50% of page area) is a multi-row table whose rows enumerate physical hardware items. Required columns:
-  • QTY column (numeric: 1, 2, 4, 12 …) — labels: QTY, QUANTITY, QTY., EA, EACH, UNITS.
-  • PART NUMBER column (alphanumeric catalog codes: "1769-L33ER", "AF26-30-11-13", "5842600") — labels: PART NO., PART #, P/N, CAT NO., CATALOG NO., MODEL NO., ORDER NO., PRODUCT NO., STOCK NO., TYPE NO., MFG NO.
-  Common extras: ITEM #, UNIT, DESCRIPTION, MANUFACTURER (or MFG, MFR, VENDOR, MAKE — often embedded in description like "ALLEN-BRADLEY 100-C09EJ10"), TAGS, NOTES.
-  Allowed titles: "BILL OF MATERIALS", "BOM", "PARTS LIST", "MATERIALS LIST", "ITEM LIST", "COMPONENT LIST", "EQUIPMENT LIST", "DEVICE LIST", "SCHEDULE", "PARTS SCHEDULE", "MATERIAL TAKEOFF", "BOQ", or even no title at all.
-  If the page is mostly a drawing with a sidebar table, it is NOT a BOM — pick the drawing type instead.
+TABLE TYPE (the page's PURPOSE is to enumerate parts to order):
 
-USE [] (empty types) for non-content pages:
-  • Cover sheet / title page — large drawing title, customer logo, no parts tables.
-  • "List of Sheets" / "Sheet Index" / "Drawing Index" — a table whose rows reference OTHER drawing sheets. The giveaway columns are SHEET NO. + TITLE, not QTY + PART NO. CRITICAL: never classify a sheet index as "bom".
-  • Revision history block — lists revision letter, date, description of drawing changes.
-  • General notes page — paragraphs of text, no tables.
-  • Legend / symbol key page — symbol-to-meaning map only.
+"bom" — Bill of Materials. The PURPOSE of the page is to list parts. Required:
+  • A multi-row table where each row is a physical hardware item (contactor, breaker, relay, terminal, fan, PLC card, fuse, duct, enclosure, etc.).
+  • A QTY column (numeric: 1, 2, 4, 12 …) — labels: QTY, QUANTITY, QTY., EA, EACH, UNITS.
+  • A PART NUMBER column (alphanumeric catalog codes: "1769-L33ER", "AF26-30-11-13", "5842600") — labels: PART NO., PART #, P/N, CAT NO., CATALOG NO., MODEL NO., ORDER NO., PRODUCT NO., STOCK NO., TYPE NO., MFG NO.
+  Common extras: ITEM #, UNIT, DESCRIPTION, MANUFACTURER (or MFG / MFR / VENDOR / MAKE — often embedded in description like "ALLEN-BRADLEY 100-C09EJ10"), TAGS, NOTES.
+  Allowed titles: "BILL OF MATERIALS", "BOM", "PARTS LIST", "MATERIALS LIST", "ITEM LIST", "COMPONENT LIST", "EQUIPMENT LIST", "DEVICE LIST", "SCHEDULE", "PARTS SCHEDULE", "MATERIAL TAKEOFF", "BOQ", or NO title at all.
+  The table can occupy most or only part of the page (with surrounding notes / title block / footer). What matters is that the page's PURPOSE is to enumerate orderable parts — not to depict a drawing.
+
+NON-CONTENT TYPES — return [] (empty array):
+  • Cover sheet / title page — large drawing title block, customer logo, no parts tables.
+  • "List of Sheets" / "Sheet Index" / "Drawing Index" — table whose rows reference OTHER drawing sheets. The columns are SHEET NO. + TITLE, NOT QTY + PART NUMBER. NEVER classify a sheet index as "bom".
+  • Revision history block — table of revision letter / date / description of drawing changes (no parts).
+  • General notes page — paragraphs of text only.
+  • Legend / symbol key — symbol-to-meaning map.
   • Truly blank or near-blank page.
 
 DECISION ORDER:
-  1. Page is mostly a ladder diagram with wire numbers → "schematic".
-  2. Page is mostly a panel layout (DIN rails, wire duct, scaled components) → "backpanel".
-  3. Page has front + side cabinet views with overall dimensions → "enclosure".
-  4. Page is mostly an ISA-style P&ID → "pid".
-  5. Page is mostly (>50% area) a parts table with QTY + PART NUMBER columns and is NOT a sheet index → "bom".
-  6. Sheet Index, revision page, cover sheet, notes, legend, blank → [].
-  7. When uncertain, look at the DOMINANT visual content of the page. A drawing with a small reference table is the drawing type, NOT a BOM.
+  1. Is this page primarily depicting a drawing (ladder rungs, panel layout with DIN rails, cabinet views, P&ID flow)? → pick the matching drawing type. A side-table callout does not change this.
+  2. Otherwise, is this page primarily a parts table (QTY + PART NUMBER columns, rows = physical items)? → "bom".
+  3. Otherwise, is it a sheet index, cover, revision block, notes, legend, blank? → [].
+  4. CRITICAL: a sheet index (SHEET NO. + TITLE columns) is NEVER "bom". A drawing with a small reference table is NEVER "bom".
+  5. When you genuinely can't tell whether a page is a drawing or a parts table — re-examine for the QTY + alphanumeric-PART-NUMBER signature. If the rows are catalog codes and quantities, it's "bom". If the rows are sheet titles or symbol descriptions, it's [].
 
 Example response: {"types":["schematic"]}
 Example response: {"types":["backpanel"]}
