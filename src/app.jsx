@@ -1806,16 +1806,17 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   return taskNo;
 }
 
-// DECISION(v1.19.870, ECO Stage A): Seed the standard 5 Planning Lines under
-// a freshly-created ECO task so its structure matches a normal panel task:
+// DECISION(v1.19.871, ECO Stage A): Seed the standard Planning Lines under a
+// freshly-created ECO task so its structure matches a normal panel task:
 //   10000  Billable / Item     "PROGRESS BILLING"  Quantity = 1, Unit_Price = 0
-//   20000  Budget   / Resource R0020 "ENGINEERING"  Quantity = 0 (HR)
 //   30000  Budget   / Resource R0020 "CUT"          Quantity = 0 (HR)
 //   40000  Budget   / Resource R0020 "LAYOUT"       Quantity = 0 (HR)
 //   50000  Budget   / Resource R0020 "WIRE"         Quantity = 0 (HR)
-// Lines 60000+ get appended later as ECO BOM tags land — Stage D wires that
-// part. Sell price + labor hours default to 0; they're updated by the same
-// BC sync flow that maintains BASE planning lines.
+// (Line 20000 ENGINEERING removed v1.19.871 — engineering time goes on the
+// quote as a separate quote-line, not a BC planning line.) Lines 60000+ get
+// appended later as ECO BOM tags land — Stage D wires that part. Sell price
+// + labor hours default to 0; updated by the same BC sync flow that
+// maintains BASE planning lines.
 async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNumber, panelName){
   if(ecoNumber<1||ecoNumber>10)throw new Error(`ECO number must be 1–10 (got ${ecoNumber})`);
   const n=panelIndex;
@@ -1844,9 +1845,6 @@ async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNum
     {[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:10000,Planning_Date:today,
       Line_Type:"Billable",Type:"Item",No:"PROGRESS BILLING",
       Description:ecoDesc,Quantity:1,Unit_Price:0,Location_Code:"MAIN"},
-    {[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:20000,Planning_Date:today,
-      Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"ENGINEERING",
-      Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"},
     {[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:30000,Planning_Date:today,
       Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"CUT",
       Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"},
@@ -1964,11 +1962,12 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   //
   // Line structure:
   //   10000  Billable / Item  "PROGRESS BILLING"   unit price = panel sell price, qty = panel.lineQty
-  //   20000  Budget  / R0020  "ENGINEERING"         qty = 0 (not yet tracked in ARC — future build-out)
   //   30000  Budget  / R0020  "CUT"                 qty = CUT hours from ARC labor estimate
   //   40000  Budget  / R0020  "LAYOUT"              qty = LAYOUT hours from ARC labor estimate
   //   50000  Budget  / R0020  "WIRE"                qty = WIRE hours from ARC labor estimate
   //   60000+ Budget  / Item   BOM rows              starting at 60000, step 10000, non-labor non-crossed rows
+  // (Line 20000 ENGINEERING removed v1.19.871 — engineering time goes on the
+  // quote as a separate quote-line, not a BC planning line.)
 
   const n=panelIndex;
   const base=20000+n*100;
@@ -2046,10 +2045,8 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
     Description:`${panel.drawingNo||pfx} Rev ${rev} - ${panelDesc} [${lineQty}]`,
     Quantity:lineQty,Unit_Price:sellPrice,Location_Code:"MAIN"});
 
-  // 20000 — Engineering (Budget, qty=0 until ARC tracks engineering hours)
-  lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:20000,Planning_Date:today,
-    Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"ENGINEERING",
-    Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
+  // (Line 20000 ENGINEERING removed v1.19.871 — engineering time goes on the
+  // quote as a separate quote-line, not a BC planning line.)
 
   // Labor hours from ARC
   const laborEst=computeLaborEstimate(panel);
