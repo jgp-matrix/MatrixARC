@@ -699,15 +699,25 @@ function computeEcoMaterialDelta(panel,ecoId){
 // quote form — BASE-only sell price (panel without any ECO rows) and per-ECO
 // sell delta (full panel minus panel without that ECO). Both run through
 // computePanelSellPrice so margin / labor / contingency are applied once.
+// DECISION(v1.19.885): Match rows by ecoId OR ecoNumber. Mirrors the same
+// fallback bcSyncEcoPanelPlanningLines uses — covers the case where rows
+// were tagged under an older ecoId (e.g. ECO was deleted and re-created so
+// the doc-id changed but the ecoNumber stayed the same).
+function _matchesEco(row,ecoId,ecoNumber){
+  if(!row||!row.ecoTag)return false;
+  if(ecoId&&row.ecoTag===ecoId)return true;
+  if(ecoNumber&&row.ecoNumber===ecoNumber)return true;
+  return false;
+}
 function computeBasePanelSellPrice(panel){
   if(!panel)return 0;
   const clone={...panel,bom:(panel.bom||[]).filter(r=>!r.ecoTag)};
   return computePanelSellPrice(clone);
 }
-function computeEcoSellDelta(panel,ecoId){
-  if(!panel||!ecoId)return 0;
+function computeEcoSellDelta(panel,ecoId,ecoNumber){
+  if(!panel||(!ecoId&&!ecoNumber))return 0;
   const full=computePanelSellPrice(panel);
-  const without={...panel,bom:(panel.bom||[]).filter(r=>r.ecoTag!==ecoId)};
+  const without={...panel,bom:(panel.bom||[]).filter(r=>!_matchesEco(r,ecoId,ecoNumber))};
   return full-computePanelSellPrice(without);
 }
 // Structured change detail for the quote form per-line ECO breakdown. Returns
@@ -715,9 +725,9 @@ function computeEcoSellDelta(panel,ecoId){
 // summed across CUT/LAYOUT/WIRE for the given ECO. Sell-side dollar amounts
 // are NOT included — caller renders descriptions only and the bottom-line
 // roll-up uses computeEcoSellDelta.
-function computeEcoChangeDetails(panel,ecoId){
-  if(!panel||!ecoId)return{parts:[],laborHrs:0};
-  const rows=(panel.bom||[]).filter(r=>r.ecoTag===ecoId);
+function computeEcoChangeDetails(panel,ecoId,ecoNumber){
+  if(!panel||(!ecoId&&!ecoNumber))return{parts:[],laborHrs:0};
+  const rows=(panel.bom||[]).filter(r=>_matchesEco(r,ecoId,ecoNumber));
   const parts=[];
   let laborHrs=0;
   for(const r of rows){
@@ -13822,11 +13832,15 @@ function QuoteTab({project,onUpdate}){
               // DECISION(v1.19.884, Quote Form ECO Stage E): Per-panel ECO
               // breakdown only shows when THIS panel has rows tagged for the
               // active draft ECO. Others stay in the legacy single-row view.
+              // DECISION(v1.19.885): Use the same ecoId-OR-ecoNumber fallback
+              // as bcSyncEcoPanelPlanningLines — covers stale ecoTag IDs from
+              // recreated ECOs.
               const _panEcoId=_activeEcoForLine?_activeEcoForLine.ecoId:null;
-              const _panHasActiveEco=!!_panEcoId&&panBom.some(r=>r.ecoTag===_panEcoId);
+              const _panEcoNumber=_activeEcoForLine?_activeEcoForLine.number||0:0;
+              const _panHasActiveEco=!!_activeEcoForLine&&panBom.some(r=>_matchesEco(r,_panEcoId,_panEcoNumber));
               const _panBaseSell=_panHasActiveEco?computeBasePanelSellPrice(pan):0;
-              const _panEcoSellDelta=_panHasActiveEco?computeEcoSellDelta(pan,_panEcoId):0;
-              const _panChangeDetails=_panHasActiveEco?computeEcoChangeDetails(pan,_panEcoId):null;
+              const _panEcoSellDelta=_panHasActiveEco?computeEcoSellDelta(pan,_panEcoId,_panEcoNumber):0;
+              const _panChangeDetails=_panHasActiveEco?computeEcoChangeDetails(pan,_panEcoId,_panEcoNumber):null;
               const _fmtMoneySigned=(n)=>(n>=0?"+":"-")+"$"+Math.abs(Math.round(n)).toLocaleString("en-US");
               return(
               <div key={pan.id||pi} style={{marginBottom:12}}>
@@ -14009,13 +14023,14 @@ function QuoteTab({project,onUpdate}){
             const _draftEcosTotals=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
             const _activeEcoTotals=_draftEcosTotals.slice(-1)[0]||null;
             const _activeEcoIdTotals=_activeEcoTotals?_activeEcoTotals.ecoId:null;
+            const _activeEcoNumberTotals=_activeEcoTotals?_activeEcoTotals.number||0:0;
             const _activeEcoLabelTotals=_activeEcoTotals?`ECO ${String(_activeEcoTotals.number||0).padStart(2,"0")}`:null;
-            const _hasAnyEcoChanges=!!_activeEcoIdTotals&&(project.panels||[]).some(pan=>(pan.bom||[]).some(r=>r.ecoTag===_activeEcoIdTotals));
+            const _hasAnyEcoChanges=!!_activeEcoTotals&&(project.panels||[]).some(pan=>(pan.bom||[]).some(r=>_matchesEco(r,_activeEcoIdTotals,_activeEcoNumberTotals)));
             const _baseSubtotal=_hasAnyEcoChanges
               ?(project.panels||[]).reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0)
               :totalPrice;
             const _ecoSubtotal=_hasAnyEcoChanges
-              ?(project.panels||[]).reduce((s,pan)=>s+computeEcoSellDelta(pan,_activeEcoIdTotals)*(pan.lineQty??1),0)
+              ?(project.panels||[]).reduce((s,pan)=>s+computeEcoSellDelta(pan,_activeEcoIdTotals,_activeEcoNumberTotals)*(pan.lineQty??1),0)
               :0;
             const _fmtSigned=(n)=>(n>=0?"+":"-")+"$"+Math.abs(Math.round(n)).toLocaleString("en-US");
             return(
