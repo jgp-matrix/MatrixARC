@@ -1806,6 +1806,76 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   return taskNo;
 }
 
+// DECISION(v1.19.870, ECO Stage A): Seed the standard 5 Planning Lines under
+// a freshly-created ECO task so its structure matches a normal panel task:
+//   10000  Billable / Item     "PROGRESS BILLING"  Quantity = 1, Unit_Price = 0
+//   20000  Budget   / Resource R0020 "ENGINEERING"  Quantity = 0 (HR)
+//   30000  Budget   / Resource R0020 "CUT"          Quantity = 0 (HR)
+//   40000  Budget   / Resource R0020 "LAYOUT"       Quantity = 0 (HR)
+//   50000  Budget   / Resource R0020 "WIRE"         Quantity = 0 (HR)
+// Lines 60000+ get appended later as ECO BOM tags land — Stage D wires that
+// part. Sell price + labor hours default to 0; they're updated by the same
+// BC sync flow that maintains BASE planning lines.
+async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNumber, panelName){
+  if(ecoNumber<1||ecoNumber>10)throw new Error(`ECO number must be 1–10 (got ${ecoNumber})`);
+  const n=panelIndex;
+  const base=20000+n*100;
+  const taskNo=String(base+30+(ecoNumber-1));
+  const allPages=await bcDiscoverODataPages();
+  const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p))||null;
+  if(!planPage)throw new Error("bcCreateEcoTaskPlanningSkeleton: No project planning lines OData page found");
+  // Probe field names — Project_No vs Job_No (legacy NAV)
+  let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
+  if(window._bcPlanFieldsCache&&window._bcPlanFieldsCache[`${BC_ODATA_BASE}::${planPage}`]){
+    const c=window._bcPlanFieldsCache[`${BC_ODATA_BASE}::${planPage}`];
+    FP_NO=c.FP_NO;FP_TASK_NO=c.FP_TASK_NO;
+  }else{
+    try{
+      const pr=await fetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(pr.ok){
+        const pd=await pr.json();const rec=(pd.value||[])[0];
+        if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}
+      }
+    }catch(_){}
+  }
+  const today=new Date().toISOString().split('T')[0];
+  const ecoDesc=`ECO ${ecoNumber} - ${panelName||"Change Order"}`;
+  const lines=[
+    {[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:10000,Planning_Date:today,
+      Line_Type:"Billable",Type:"Item",No:"PROGRESS BILLING",
+      Description:ecoDesc,Quantity:1,Unit_Price:0,Location_Code:"MAIN"},
+    {[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:20000,Planning_Date:today,
+      Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"ENGINEERING",
+      Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"},
+    {[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:30000,Planning_Date:today,
+      Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"CUT",
+      Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"},
+    {[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:40000,Planning_Date:today,
+      Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"LAYOUT",
+      Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"},
+    {[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:50000,Planning_Date:today,
+      Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"WIRE",
+      Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"},
+  ];
+  let created=0,failed=0;const errors=[];
+  for(const line of lines){
+    const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
+      method:"POST",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+      body:JSON.stringify(line)
+    });
+    if(r.ok){created++;console.log(`bcCreateEcoTaskPlanningSkeleton: line ${line.Line_No} created on task ${taskNo}`);}
+    else{
+      const txt=await r.text();
+      failed++;errors.push(`line ${line.Line_No}: ${r.status} ${txt}`);
+      console.warn(`bcCreateEcoTaskPlanningSkeleton: line ${line.Line_No} POST failed (${r.status}):`,txt);
+    }
+  }
+  if(failed>0)throw new Error(`bcCreateEcoTaskPlanningSkeleton: ${failed} of ${lines.length} lines failed: ${errors[0]}`);
+  return{taskNo,created};
+}
+if(typeof window!=="undefined"){window._bcCreateEcoTaskPlanningSkeleton=bcCreateEcoTaskPlanningSkeleton;}
+
 // DECISION(v1.19.867, ECO Stage A): Delete a single ECO task line in BC. Used
 // by the ARC ECO delete flow so dropping an ECO in ARC also tears down its
 // BC task slot — keeps ARC and BC in sync. Field-name probe + fallback
@@ -9866,6 +9936,19 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
             const taskNo=await bcAddEcoTask(project.bcProjectNumber,i+1,result.number,panelName);
             _bcResults.created.push({panelIdx:i+1,taskNo});
             console.log(`[ECO] BC task ${taskNo} created for panel ${i+1} (ECO ${result.number})`);
+            // ECO Stage A (v1.19.870): seed the standard 5 Planning Lines under
+            // the new ECO task (10000 PROGRESS BILLING + 20000-50000 labor),
+            // matching the BASE panel-task structure. Failures here log a
+            // warning but don't abort the cascade — the task itself was
+            // created successfully and Stage D's BC sync will populate the
+            // lines later as edits land.
+            try{
+              const skel=await bcCreateEcoTaskPlanningSkeleton(project.bcProjectNumber,i+1,result.number,panelName);
+              console.log(`[ECO] BC planning skeleton seeded on task ${skel.taskNo} (${skel.created} lines)`);
+            }catch(plErr){
+              const plMsg=plErr&&plErr.message?plErr.message:String(plErr);
+              console.warn(`[ECO] bcCreateEcoTaskPlanningSkeleton failed on task ${taskNo}:`,plMsg);
+            }
           }catch(taskErr){
             const errMsg=taskErr&&taskErr.message?taskErr.message:String(taskErr);
             _bcResults.failed.push({panelIdx:i+1,error:errMsg});
@@ -19696,11 +19779,26 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               // DECISION(v1.19.816): Upsert — manual labor rows are synthesized
                               // by the renderer and may not be in panel.bom yet on first edit.
                               // Insert if missing so the entered value persists.
-                              const exists=(panel.bom||[]).some(r=>r.id===row.id);
+                              // ECO Stage B (v1.19.870): Use latestPanelRef + apply
+                              // _ecoTagForEdit so qty / etc. edits in ECO scope tag
+                              // the row instead of writing the untagged BASE value.
+                              const _src=latestPanelRef.current||panel;
+                              const exists=(_src.bom||[]).some(r=>r.id===row.id);
                               const updatedBom=exists
-                                ?(panel.bom||[]).map(r=>r.id===row.id?{...r,[f]:val}:r)
-                                :[{...row,[f]:val},...(panel.bom||[])];
-                              const updated={...panel,bom:updatedBom};
+                                ?(_src.bom||[]).map(r=>{
+                                  if(r.id!==row.id)return r;
+                                  const next={...r,[f]:val};
+                                  const _ecoTag=_ecoTagForEdit(r);
+                                  if(_ecoTag)Object.assign(next,_ecoTag);
+                                  return next;
+                                })
+                                :[(()=>{
+                                  const next={...row,[f]:val};
+                                  const _ecoTag=_ecoTagForEdit(row);
+                                  if(_ecoTag)Object.assign(next,_ecoTag);
+                                  return next;
+                                })(),...(_src.bom||[])];
+                              const updated={..._src,bom:updatedBom};
                               onUpdate(updated);
                               saveBomRow(updated);
                               if(f==="partNumber"&&val.trim()){
