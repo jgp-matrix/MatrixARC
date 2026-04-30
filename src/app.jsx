@@ -7384,6 +7384,20 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
   if(!b64){console.warn("extractBomPage: skipping — empty or invalid dataUrl");return[];}
   const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
   const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
+  // DECISION(v1.19.896, Region Learning Phase 3): Pull cross-project region examples
+  // and prepend as multimodal context. The user's past curation work (BOM table
+  // labels, column observations, "ignore this section" notes, etc.) compounds
+  // across projects via this pathway.
+  let regionLearningParts=[];
+  try{
+    const uid=fbAuth.currentUser?.uid;
+    if(uid){
+      const examples=await loadRegionLearning(uid);
+      // Prefer examples tagged as BOM since this is BOM extraction
+      const bomFirst=[...examples.filter(e=>e.type==="bom"),...examples.filter(e=>e.type!=="bom"&&e.type!=="ignore")];
+      regionLearningParts=buildRegionLearningContext(bomFirst,{pageTypeContext:"bom",maxExamples:3});
+    }
+  }catch(e){console.warn("[REGION LEARNING] load failed for extractBomPage:",e.message);}
   // DECISION(v1.19.623): Restored Opus + thinking per CLAUDE.md spec ("BOM extraction | Opus + thinking").
   // Was accidentally switched to Sonnet in an earlier edit. Opus's stronger visual reasoning is
   // what made BOM extraction reliable historically (qty + description integrity). Sonnet was
@@ -7397,6 +7411,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
       max_tokens:16000,
       thinking:{type:"enabled",budget_tokens:4000},
       messages:[{role:"user",content:[
+        ...regionLearningParts,
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
         {type:"text",text:BOM_PROMPT+feedbackSection+notesSection}
       ]}]
@@ -8306,6 +8321,136 @@ function buildLearningHint(examples){
     return `- AI detected [${ai}] → user confirmed [${conf}]${reason}`;
   });
   return`\n\nLearning from past corrections by this user:\n${lines.join("\n")}\nApply these patterns when classifying.`;
+}
+
+// ── REGION LEARNING (v1.19.896) ──
+// Cross-project user-curated region examples. When a user draws + labels a region
+// on any project's drawing, the example (label/type/note + cropped thumbnail
+// + AI structural analysis) is saved here. Subsequent extractions on OTHER
+// projects retrieve the most relevant examples and feed them to the AI as
+// multimodal context — so the user's curation work compounds across projects.
+let _regionLearningCache=null;
+function _rlPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/region_learning";}
+async function loadRegionLearning(uid){
+  if(_regionLearningCache)return _regionLearningCache;
+  try{const d=await fbDb.doc(_rlPath(uid)).get();_regionLearningCache=d.exists?(d.data().examples||[]):[];}
+  catch(e){_regionLearningCache=[];}
+  return _regionLearningCache;
+}
+async function saveRegionLearningEntry(uid,entry){
+  const examples=await loadRegionLearning(uid);
+  // Sliding window: keep the 30 most recent examples to bound the doc size
+  // (Firestore single-doc cap is 1MB; thumbnails at ≤100KB give headroom).
+  examples.push({...entry,savedAt:Date.now()});
+  while(examples.length>30)examples.shift();
+  _regionLearningCache=examples;
+  await fbDb.doc(_rlPath(uid)).set({examples}).catch(e=>console.warn("[REGION LEARNING] save failed:",e.message));
+  return entry;
+}
+async function deleteRegionLearningEntry(uid,exampleId){
+  const examples=(await loadRegionLearning(uid)).filter(e=>e.id!==exampleId);
+  _regionLearningCache=examples;
+  await fbDb.doc(_rlPath(uid)).set({examples}).catch(e=>console.warn("[REGION LEARNING] delete failed:",e.message));
+}
+async function updateRegionLearningEntry(uid,exampleId,patch){
+  const examples=(await loadRegionLearning(uid)).map(e=>e.id===exampleId?{...e,...patch,updatedAt:Date.now()}:e);
+  _regionLearningCache=examples;
+  await fbDb.doc(_rlPath(uid)).set({examples}).catch(e=>console.warn("[REGION LEARNING] update failed:",e.message));
+}
+// Crop a normalized region from a page image, downscale to maxWidth, return JPEG base64 data URL.
+async function cropRegionToBase64(pageDataUrl,region,maxWidth=800){
+  if(!pageDataUrl||!region)return null;
+  return new Promise((resolve)=>{
+    const img=new Image();
+    img.crossOrigin="anonymous";
+    img.onload=()=>{
+      try{
+        const cropX=Math.max(0,(region.x||0)*img.width);
+        const cropY=Math.max(0,(region.y||0)*img.height);
+        const cropW=Math.max(1,(region.w||0)*img.width);
+        const cropH=Math.max(1,(region.h||0)*img.height);
+        const scale=Math.min(1,maxWidth/cropW);
+        const outW=Math.max(1,Math.round(cropW*scale));
+        const outH=Math.max(1,Math.round(cropH*scale));
+        const canvas=document.createElement("canvas");
+        canvas.width=outW;canvas.height=outH;
+        const ctx=canvas.getContext("2d");
+        ctx.drawImage(img,cropX,cropY,cropW,cropH,0,0,outW,outH);
+        resolve(canvas.toDataURL("image/jpeg",0.7));
+      }catch(e){console.warn("[REGION LEARNING] crop failed:",e.message);resolve(null);}
+    };
+    img.onerror=()=>resolve(null);
+    img.src=pageDataUrl;
+  });
+}
+// Phase 2: AI analysis of a region's content. Background Haiku call returns a
+// structured summary (column headers / row count / signature phrase) so future
+// extraction prompts can reference what to look for.
+async function analyzeRegionForLearning(croppedDataUrl,region){
+  if(!_apiKey||!croppedDataUrl)return null;
+  const b64=croppedDataUrl.split(",")[1];
+  if(!b64)return null;
+  const prompt=`Analyze this cropped region from a UL508A control panel drawing. The user labeled this region as "${region.label||region.type}"${region.note?` with note: "${region.note}"`:""}.
+
+Return ONLY JSON of this shape:
+{
+  "columnHeaders": [...],     // if region is a table — list the column names exactly as they appear; otherwise []
+  "rowCount": number,         // if region is a table — estimated count of data rows; otherwise 0
+  "structuralSummary": "...", // 1-2 sentence description of what's in the region
+  "signaturePhrase": "..."    // short phrase (≤12 words) that captures what makes this region recognizable on similar drawings
+}
+
+Examples:
+- BOM table → {"columnHeaders":["ITEM","QTY","PART NO","DESCRIPTION","MFG"],"rowCount":24,"structuralSummary":"Standard BOM table with 5 columns; rows enumerate physical hardware items.","signaturePhrase":"5-column BOM with MFG column"}
+- Door device list → {"columnHeaders":["TAG","DESCRIPTION","QTY"],"rowCount":12,"structuralSummary":"Door device callout listing 12 items by TAG.","signaturePhrase":"door device list with TAG column"}
+- Title block → {"columnHeaders":[],"rowCount":0,"structuralSummary":"Drawing title block with project number, drawing number, revision, scale, date.","signaturePhrase":"title block — std drawing identification"}`;
+  try{
+    const raw=await apiCall({
+      model:"claude-haiku-4-5",
+      max_tokens:300,
+      messages:[{role:"user",content:[
+        {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
+        {type:"text",text:prompt}
+      ]}]
+    });
+    const m=raw.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
+    if(!m)return null;
+    return JSON.parse(m[0]);
+  }catch(e){console.warn("[REGION LEARNING] analyze failed:",e.message);return null;}
+}
+// Phase 3: build the multimodal hint payload for an AI call. Returns an array
+// of content parts ({image|text}) ready to splice into a messages[] entry.
+// Picks up to maxExamples examples, prioritizing matches by pageTypeContext +
+// label, then by recency. Each example contributes a thumbnail + a text caption.
+function buildRegionLearningContext(examples,opts){
+  if(!examples||!examples.length)return[];
+  const{pageTypeContext,maxExamples=4}=opts||{};
+  let pool=examples.slice();
+  // Priority 1: same pageTypeContext (recent first)
+  const pri1=pool.filter(e=>e.pageTypeContext&&pageTypeContext&&e.pageTypeContext===pageTypeContext).reverse();
+  // Priority 2: any examples (recent first), excluding ones already in pri1
+  const pri1Ids=new Set(pri1.map(e=>e.id));
+  const pri2=pool.filter(e=>!pri1Ids.has(e.id)).reverse();
+  const ordered=[...pri1,...pri2].slice(0,maxExamples);
+  if(!ordered.length)return[];
+  const parts=[{type:"text",text:`\nPAST REGION ANNOTATIONS FROM THIS USER (use these as visual + structural patterns — apply the same extraction approach when you see similar layouts on this drawing):\n`}];
+  for(const e of ordered){
+    if(e.thumbnail){
+      const b64=e.thumbnail.split(",")[1];
+      if(b64)parts.push({type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}});
+    }
+    const lines=[];
+    lines.push(`Label: ${e.label||e.type||"region"}`);
+    if(e.note)lines.push(`User note: "${e.note}"`);
+    if(e.aiAnalysis){
+      if(e.aiAnalysis.signaturePhrase)lines.push(`Signature: ${e.aiAnalysis.signaturePhrase}`);
+      if(e.aiAnalysis.columnHeaders&&e.aiAnalysis.columnHeaders.length)lines.push(`Columns: ${e.aiAnalysis.columnHeaders.join(", ")}`);
+      if(e.aiAnalysis.structuralSummary)lines.push(`Structure: ${e.aiAnalysis.structuralSummary}`);
+    }
+    parts.push({type:"text",text:lines.join(" · ")});
+  }
+  parts.push({type:"text",text:`(End of region annotations — apply patterns above when classifying / extracting this page.)`});
+  return parts;
 }
 
 // ── DEVICE CLASSIFICATION LEARNING ──
@@ -9557,6 +9702,18 @@ async function detectPageTypes(dataUrl,learningExamples=[]){
   if(!b64||!_apiKey)return{types:[]};
   try{
     const hint=buildLearningHint(learningExamples);
+    // DECISION(v1.19.896, Region Learning Phase 3): Region examples as multimodal
+    // context — particularly helpful for distinguishing BOM tables from sheet
+    // indices on similar drawing styles, since the AI sees thumbnails of past
+    // user-curated regions.
+    let regionParts=[];
+    try{
+      const uid=fbAuth.currentUser?.uid;
+      if(uid){
+        const examples=await loadRegionLearning(uid);
+        regionParts=buildRegionLearningContext(examples,{maxExamples:3});
+      }
+    }catch(e){/* non-blocking */}
     const raw=await apiCall({
       // DECISION(v1.19.650): Switched page-type detection from Haiku to Sonnet. Haiku
       // mis-tagged cover pages and drawing-index pages as "bom", which poisoned extraction
@@ -9566,6 +9723,7 @@ async function detectPageTypes(dataUrl,learningExamples=[]){
       model:"claude-sonnet-4-6",
       max_tokens:100,
       messages:[{role:"user",content:[
+        ...regionParts,
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
         {type:"text",text:PAGE_TYPE_DETECT_PROMPT+hint}
       ]}]
@@ -11707,6 +11865,21 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   // Labor rates state (admin only)
   const [laborRates,setLaborRates]=useState(()=>({...LABOR_RATES}));
 
+  // Region Learning state (Phase 4 admin UI)
+  const [regionLearning,setRegionLearning]=useState([]);
+  const [regionLearningLoading,setRegionLearningLoading]=useState(false);
+  useEffect(()=>{
+    let cancelled=false;
+    setRegionLearningLoading(true);
+    loadRegionLearning(uid).then(list=>{if(!cancelled)setRegionLearning(list||[]);}).catch(()=>{}).finally(()=>{if(!cancelled)setRegionLearningLoading(false);});
+    return()=>{cancelled=true;};
+  },[uid]);
+  async function pruneRegionLearning(exampleId){
+    if(!await arcConfirm("Delete this region example? It will no longer influence future extractions.",{kind:"warning",okLabel:"Delete"}))return;
+    await deleteRegionLearningEntry(uid,exampleId);
+    setRegionLearning(prev=>prev.filter(e=>e.id!==exampleId));
+  }
+
   // Logo upload (admin + company only)
   const canUploadLogo=!!(_appCtx.companyId&&_appCtx.role==="admin");
   const [logoUrl,setLogoUrl]=useState(null);
@@ -12025,6 +12198,48 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             </button>}
           </div>
         )}
+
+        {/* ── REGION LEARNING (v1.19.896) ── */}
+        {/* DECISION: Cross-project user-curated region examples. Shows the
+            sliding-window of saved region annotations (up to 30) with
+            thumbnails, label, note, and the AI's structural analysis. Admin
+            can prune to keep the active learning set focused. */}
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Region Learning</label>
+          <div style={{fontSize:11,color:C.muted,marginBottom:12,lineHeight:1.5}}>Regions you draw on drawings (BOM tables, device callouts, etc.) become reusable examples for future extractions. The AI sees these thumbnails + your notes when it classifies new pages.</div>
+          {regionLearningLoading?(
+            <div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>Loading…</div>
+          ):regionLearning.length===0?(
+            <div style={{fontSize:12,color:C.muted,fontStyle:"italic",padding:"10px 12px",background:"#0a0a14",border:`1px dashed ${C.border}`,borderRadius:6,textAlign:"center"}}>No region examples yet — draw a region with a label/note on any drawing to start building this list.</div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:320,overflowY:"auto"}}>
+              {regionLearning.slice().reverse().map(e=>(
+                <div key={e.id} style={{display:"flex",gap:10,padding:8,background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:6,alignItems:"flex-start"}}>
+                  <div style={{flexShrink:0,width:90,height:60,background:"#000",borderRadius:4,overflow:"hidden",border:`1px solid ${C.border}`}}>
+                    {e.thumbnail?(
+                      <img src={e.thumbnail} alt={e.label||"region"} style={{width:"100%",height:"100%",objectFit:"contain",background:"#fff"}}/>
+                    ):(
+                      <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:10}}>no thumb</div>
+                    )}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3,flexWrap:"wrap"}}>
+                      <span style={{fontSize:11,fontWeight:700,color:C.accent,padding:"1px 6px",background:C.accentDim,borderRadius:3}}>{e.label||e.type||"region"}</span>
+                      {e.pageTypeContext&&<span style={{fontSize:10,color:C.muted}}>on {e.pageTypeContext}</span>}
+                      {e.sourceCustomer&&<span style={{fontSize:10,color:C.muted}}>· {e.sourceCustomer}</span>}
+                      <span style={{fontSize:10,color:C.muted,marginLeft:"auto"}}>{e.savedAt?new Date(e.savedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):""}</span>
+                    </div>
+                    {e.note&&<div style={{fontSize:11,color:C.text,marginBottom:3,fontStyle:"italic"}}>"{e.note}"</div>}
+                    {e.aiAnalysis?.signaturePhrase&&<div style={{fontSize:10,color:C.sub,marginBottom:2}}>{e.aiAnalysis.signaturePhrase}</div>}
+                    {e.aiAnalysis?.columnHeaders&&e.aiAnalysis.columnHeaders.length>0&&<div style={{fontSize:10,color:C.muted}}>Cols: {e.aiAnalysis.columnHeaders.join(", ")}</div>}
+                  </div>
+                  <button onClick={()=>pruneRegionLearning(e.id)} title="Delete this example" style={{flexShrink:0,background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,padding:"2px 6px",opacity:0.7}} onMouseEnter={ev=>ev.target.style.opacity=1} onMouseLeave={ev=>ev.target.style.opacity=0.7}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {regionLearning.length>0&&<div style={{fontSize:10,color:C.muted,marginTop:6,fontStyle:"italic"}}>{regionLearning.length} of 30 examples saved · oldest auto-prune after 30</div>}
+        </div>
 
         {/* ── UI PREFERENCES ── */}
         <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:4}}>
@@ -14887,6 +15102,55 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
     if(onRegionsChange&&pg)onRegionsChange(pg.id,newRegions);
   }
 
+  // DECISION(v1.19.896, Region Learning): Fire-and-forget capture of user-drawn
+  // regions to the cross-project learning DB. Skips low-signal regions (type
+  // "ignore" / "other" with no note). Crops the region from the page image,
+  // saves to users/{uid}/config/region_learning, then kicks off a background
+  // Haiku analysis to extract column headers / signature phrase. Capture is
+  // entirely async — the editor UI never blocks on it.
+  async function _captureRegionForLearning(region,opts){
+    try{
+      const uid=fbAuth.currentUser?.uid;
+      if(!uid||!region)return;
+      // Skip low-signal regions
+      const skipTypes=new Set(["ignore","other"]);
+      if(skipTypes.has(region.type)&&!(region.note||"").trim())return;
+      // Need the page image to crop
+      let dataUrl=pg?.dataUrl;
+      if(!dataUrl&&pg){
+        try{const ensured=await ensureDataUrl(pg);dataUrl=ensured?.dataUrl;}catch(_){}
+      }
+      if(!dataUrl)return;
+      const thumbnail=await cropRegionToBase64(dataUrl,region,800);
+      if(!thumbnail)return;
+      const pageTypeContext=(pg?.types||[])[0]||null;
+      const entry={
+        id:region.id,
+        label:region.label||region.type,
+        type:region.type,
+        note:region.note||"",
+        pageTypeContext,
+        thumbnail,
+        regionBox:{x:region.x,y:region.y,w:region.w,h:region.h},
+        sourceCustomer:customerName||null,
+        sourcePageName:pg?.name||null,
+        ...(opts?.update?{updatedAt:Date.now()}:{}),
+      };
+      // Either update an existing entry (if region.id already learned) or insert.
+      const existing=await loadRegionLearning(uid);
+      if(existing.some(e=>e.id===region.id)){
+        await updateRegionLearningEntry(uid,region.id,entry);
+      }else{
+        await saveRegionLearningEntry(uid,entry);
+      }
+      // Phase 2: background Haiku analysis (don't block).
+      analyzeRegionForLearning(thumbnail,region).then(analysis=>{
+        if(analysis)return updateRegionLearningEntry(uid,region.id,{aiAnalysis:analysis});
+      }).catch(()=>{});
+      console.log(`[REGION LEARNING] captured "${entry.label}" from ${pg?.name||"page"}`);
+    }catch(e){console.warn("[REGION LEARNING] capture failed:",e.message);}
+  }
+
   // Get normalized coords from mouse event relative to image
   function getNormCoords(e){
     if(!imgRef.current)return null;
@@ -14930,6 +15194,7 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
       type:pendingType,label:regionTypeShort[pendingType]||pendingType,note:note.trim()||""};
     saveRegions([...regions,region]);
     setPendingRect(null);setPendingType(null);setPendingNote("");
+    _captureRegionForLearning(region);
   }
 
   function startEditRegion(rid){
@@ -14940,12 +15205,18 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
 
   function saveEditRegion(){
     if(!editingRegion)return;
+    const updatedRegion=regions.find(r=>r.id===editingRegion);
+    const merged=updatedRegion?{...updatedRegion,note:editNote.trim()||""}:null;
     saveRegions(regions.map(r=>r.id===editingRegion?{...r,note:editNote.trim()||""}:r));
     setEditingRegion(null);setEditNote("");
+    if(merged)_captureRegionForLearning(merged,{update:true});
   }
 
   function changeRegionType(rid,newType){
+    const orig=regions.find(r=>r.id===rid);
+    const merged=orig?{...orig,type:newType,label:regionTypeShort[newType]||newType}:null;
     saveRegions(regions.map(r=>r.id===rid?{...r,type:newType,label:regionTypeShort[newType]||newType}:r));
+    if(merged)_captureRegionForLearning(merged,{update:true});
   }
 
   function deleteRegion(rid){
