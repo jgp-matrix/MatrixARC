@@ -9550,8 +9550,13 @@ async function createEcoDoc(uid,project,kind){
 // the Eco Editor (read-only shell — Phase 2 puts editing in).
 function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBaseUnlock}){
   const summary=Array.isArray(project?.ecoSummary)?project.ecoSummary:[];
+  // DECISION(v1.19.836, ECO Stage A): Temporarily lifted the bcPoStatus gate so
+  // ECO functionality can be tested on projects without a received PO. The
+  // intent is still that ECOs apply to PO'd projects (change orders against an
+  // awarded scope), but the gate will be reinstated after the new ECO model
+  // is fully validated. See `(project?.bcPoStatus||...)` conditional in
+  // ProjectView for the matching tab-render gate.
   const canCreateEco=
-    !!project?.bcPoStatus &&
     (project?.createdBy===uid||_appCtx.role==="admin"||hasPermission("reviewer"));
   const [creating,setCreating]=useState(false);
   // DECISION(v1.19.834, ECO Stage A.5): + New ECO no longer opens the standalone
@@ -26070,7 +26075,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           {/* DECISION(v1.19.785): ECO scope tabs render above PanelListView when project
               is post-PO OR has any existing ECOs. Hidden on pre-PO projects (no ECOs are
               valid there). EcoScopeTabs handles its own + New ECO permission gating. */}
-          {(project?.bcPoStatus||(project?.ecoSummary||[]).length>0)&&(
+          {/* DECISION(v1.19.836, ECO Stage A): Tab strip render gate also lifted
+              for testing — paired with the bcPoStatus relaxation in EcoScopeTabs.
+              Now renders on every project where the user could create an ECO. */}
+          {(true)&&(
             <div style={{padding:"0 24px",marginTop:8}}>
               <EcoScopeTabs
                 project={project}
