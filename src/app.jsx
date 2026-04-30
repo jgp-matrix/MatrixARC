@@ -19398,21 +19398,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{onSaveImmediate(updated);}catch(e){}
     setPriceConfirmPending(null);
     // Push to BC Item Card
-    // DECISION(v1.19.904): Previously re-fetched the BC item AFTER the PATCH
-    // and used `bcItem.unitCost ?? price` to mutate the row a second time.
-    // That re-read could return a STALE value (BC hadn't propagated the PATCH
-    // yet, the Unit_Cost field was effectively read-only due to costing-method
-    // settings, or the patch silently no-op'd) — and the stale value would
-    // overwrite the user's typed price. Caused Noah's "I changed Item 29 but
-    // it keeps reverting" report. Now: push to BC, flip priceSource → "bc"
-    // on the existing row WITHOUT touching unitPrice. The user's typed value
-    // is the source of truth; BC sync is a side effect.
+    // DECISION(v1.19.904 → v1.19.905): Two iterations needed to fully fix
+    // Noah's "price keeps reverting" report:
+    //   v1.19.904 — removed the post-PATCH re-read that was overwriting the
+    //               row with a stale BC value. Helped immediately, BUT…
+    //   v1.19.905 — flipping priceSource → "bc" made the row eligible for
+    //               the 5-minute BC PurchasePrice poll (line ~17274), which
+    //               re-overwrote the typed value with BC's stale wrong cost
+    //               every 5 min. Now: keep priceSource = "manual" so the
+    //               poll's `priceSource === "bc"` filter skips the row.
+    //               BC push remains a side effect. priceDate + bcVendorName
+    //               are still stamped so the user has audit context.
     if(partNumber&&_bcToken){
       try{
         await bcPatchItemOData(partNumber,{Unit_Cost:price});
-        const cur=panelRef.current;
-        const bom2=(cur.bom||[]).map(r=>r.id===id?{...r,priceSource:"bc",priceDate:now,bcVendorName:vendorName||r.bcVendorName}:r);
-        const u2={...cur,bom:bom2};onUpdate(u2);try{onSaveImmediate(u2);}catch(e){}
+        // Don't mutate unitPrice or priceSource here — the row was already
+        // saved with the user's value as "manual" in the first update.
+        // Just no-op on success; on failure the catch logs and the row
+        // still has the user's typed price.
       }catch(e){console.warn("BC unit cost update failed:",partNumber,e);}
       // Push to Purchase Price card if vendor provided
       if(vendorName){
