@@ -9987,6 +9987,11 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
       }
       // Summary alert — let the user know exactly what landed in BC.
       const _ecoLabel=`ECO ${String(result.number).padStart(2,"0")}`;
+      // DECISION(v1.19.876): Surface per-panel BC failure details inline in the
+      // alert (panel index + the BC error message) instead of just pointing
+      // users at the browser console. The console line is still emitted as a
+      // backstop for stack traces.
+      const _formatFailures=(failures)=>failures.map(f=>`  • Panel ${f.panelIdx}: ${f.error}`).join("\n");
       if(_bcResults.skipped){
         const skipReason={"no-bc-project-number":"project isn't linked to a BC project",
           "no-bc-token":"BC connection dropped between the gate check and task creation",
@@ -9994,9 +9999,9 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
           "no-panels":"project has no panels"}[_bcResults.skipped]||_bcResults.skipped;
         await arcAlert(`${_ecoLabel} created in ARC, but BC task creation was SKIPPED — ${skipReason}.`,{kind:"warning"});
       }else if(_bcResults.failed.length>0&&_bcResults.created.length===0){
-        await arcAlert(`${_ecoLabel} created in ARC, but ALL ${_bcResults.failed.length} BC task creations failed.\n\nFirst error: ${_bcResults.failed[0].error}\n\nSee browser console for full details.`,{kind:"error"});
+        await arcAlert(`${_ecoLabel} created in ARC, but ALL ${_bcResults.failed.length} BC task creations failed.\n\n${_formatFailures(_bcResults.failed)}`,{kind:"error"});
       }else if(_bcResults.failed.length>0){
-        await arcAlert(`${_ecoLabel} created. BC tasks: ${_bcResults.created.length} succeeded, ${_bcResults.failed.length} failed. See console for failures.`,{kind:"warning"});
+        await arcAlert(`${_ecoLabel} created. BC tasks: ${_bcResults.created.length} succeeded, ${_bcResults.failed.length} failed.\n\n${_formatFailures(_bcResults.failed)}`,{kind:"warning"});
       }else if(_bcResults.created.length>0){
         console.log(`[ECO] ${_ecoLabel} fully created — ${_bcResults.created.length} BC tasks: ${_bcResults.created.map(c=>c.taskNo).join(", ")}`);
       }
