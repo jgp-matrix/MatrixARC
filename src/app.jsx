@@ -24581,7 +24581,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // scope is currently rendered in the Panel Cards / Quote Summary; Phase 2 will wire
   // this through to PanelListView so BOM rendering filters by `ecoTag`. For now the tab
   // selection just opens the ECO Editor.
-  const [activeScope,setActiveScope]=useState({type:"base"});
+  // DECISION(v1.19.844, ECO Stage A): When a project is opened, default the
+  // active scope to its current draft ECO if one exists — Sales is reworking the
+  // change order, that's where they expect to land. The most recent draft entry
+  // wins. If no draft exists (project is in a clean BASE state, or all ECOs are
+  // approved/cancelled), default to BASE as before.
+  const [activeScope,setActiveScope]=useState(()=>{
+    const summary=Array.isArray(init?.ecoSummary)?init.ecoSummary:[];
+    const draftEco=summary.filter(e=>e&&e.status==="draft").slice(-1)[0];
+    if(draftEco)return{type:"eco",ecoNumber:draftEco.number,ecoId:draftEco.ecoId};
+    return{type:"base"};
+  });
   const [openEcoEditor,setOpenEcoEditor]=useState(null); // ECO doc/object when editor open (LEGACY — to be retired in Stage G)
   // DECISION(v1.19.834, ECO Stage A): per-session admin unlock for BASE editing.
   // When any ECO exists, BASE rows become read-only — admins can flip this on
