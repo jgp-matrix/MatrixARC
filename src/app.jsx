@@ -9772,7 +9772,7 @@ if(typeof window!=="undefined"){window._deleteEcoDoc=deleteEcoDoc;}
 // the parent (ProjectView) and passed down so PanelListView/PanelCard can eventually
 // filter their BOM rendering by `ecoTag` (Phase 2). For now selecting a tab just opens
 // the Eco Editor (read-only shell — Phase 2 puts editing in).
-function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBaseUnlock,baseScopeReadOnly}){
+function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdate,baseUnlocked,onBaseUnlock,baseScopeReadOnly}){
   // DECISION(v1.19.841, ECO Stage A): Optimistic-hide ECO IDs that were just
   // deleted in this tab. Without this, the tab stays visible until the project
   // doc's onSnapshot listener delivers the updated ecoSummary (~500ms-1s later).
@@ -9903,6 +9903,46 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
         createdAt:Date.now(),
         displayLabel:`ECO ${String(result.number).padStart(2,"0")}`,
       }]);
+      // DECISION(v1.19.873, ECO delta-row): Optimistically merge the unlock state +
+      // new ECO into the parent's local project state so BASE-locked styling
+      // and ecoSummary-derived gating apply IMMEDIATELY (without waiting for
+      // a page refresh). Mirrors the unlockUpdate written above to Firestore
+      // plus the new ecoSummary entry from createEcoDoc.
+      if(onLocalProjectUpdate){
+        const _now=Date.now();
+        const _newEcoEntry={
+          ecoId:result.ecoId,
+          number:result.number,
+          status:"draft",
+          kind:result.kind||"customer_change",
+          deltaSell:0,
+          approvedAt:null,
+          completedAt:null,
+          createdAt:_now,
+        };
+        const _existingSummary=Array.isArray(project.ecoSummary)?project.ecoSummary:[];
+        const _mergedSummary=_existingSummary.some(e=>e&&e.ecoId===result.ecoId)
+          ?_existingSummary
+          :[..._existingSummary,_newEcoEntry];
+        onLocalProjectUpdate({
+          ecoSummary:_mergedSummary,
+          ...(needsUnlock?{
+            ecoEditUnlocked:true,
+            ecoEditUnlockedAt:_now,
+            ecoEditUnlockedBy:uid,
+            bcStatusForcedToQuote:true,
+            bcStatusForcedToQuoteAt:_now,
+            preReviewStatus:null,
+            postReviewStatus:null,
+            quoteSentAt:null,
+            quoteSentRev:null,
+            quoteSentTo:null,
+            bcPoStatus:null,
+            updatedAt:_now,
+            updatedBy:uid,
+          }:{}),
+        });
+      }
       onScopeChange&&onScopeChange({type:"eco",ecoNumber:result.number,ecoId:result.ecoId});
       console.log("[ECO] onScopeChange called");
       // DECISION(v1.19.862, ECO Stage A): Fire `bcAddEcoTask` for each panel so
@@ -10027,6 +10067,22 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
       // Optimistically hide the tab now — the snapshot listener will catch up
       // shortly with the persisted ecoSummary.
       _setPendingDeletedIds(prev=>{const n=new Set(prev);n.add(ecoIdBeingDeleted);return n;});
+      // DECISION(v1.19.873, ECO delta-row): Optimistically merge the
+      // post-delete state back into the parent project so BASE unlocks
+      // immediately when the last draft is gone. Mirrors what deleteEcoDoc
+      // writes to Firestore.
+      if(onLocalProjectUpdate){
+        const _existingSummary=Array.isArray(project.ecoSummary)?project.ecoSummary:[];
+        const _mergedSummary=_existingSummary.filter(e=>e&&e.ecoId!==ecoIdBeingDeleted);
+        const _hasAnyDraftLeft=_mergedSummary.some(e=>e&&e.status==="draft");
+        const partial={ecoSummary:_mergedSummary};
+        if(!_hasAnyDraftLeft){
+          partial.ecoEditUnlocked=false;
+          partial.ecoEditUnlockedAt=null;
+          partial.ecoEditUnlockedBy=null;
+        }
+        onLocalProjectUpdate(partial);
+      }
       onScopeChange&&onScopeChange({type:"base"});
       // Surface BC delete failures (non-blocking).
       if(_bcDelResults.failed.length>0){
@@ -17506,8 +17562,138 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
   }
+  // DECISION(v1.19.873, ECO delta-row model): Redirect a single field edit on an
+  // untagged BASE row in ECO scope onto a linked ECO 'modify' row. The base row
+  // is NEVER mutated — every change is tracked as a separate row below the
+  // CHANGE ORDER separator. qty stores as a SIGNED DELTA (newVal - baseVal);
+  // text/price fields store as REPLACEMENT values. Returns true if redirected
+  // (caller should NOT also mutate the base), false otherwise.
+  function _redirectEditToEco(baseRowId,field,val){
+    if(!_isEcoEditMode)return false;
+    const src=latestPanelRef.current||panel;
+    const base=(src.bom||[]).find(r=>r.id===baseRowId);
+    if(!base||base.isLaborRow)return false;
+    if(base.ecoTag===_activeEcoId)return false; // already an ECO row → caller handles directly
+    if(base.ecoTag)return false; // tagged by a prior approved ECO → not editable here
+    const existing=(src.bom||[]).find(r=>r.ecoTag===_activeEcoId&&r.ecoModifiesBaseRowId===baseRowId);
+    let bom=src.bom||[];
+    const baseQty=Number(base.qty)||0;
+    if(field==="qty"){
+      const newQty=Number(val);
+      if(!isFinite(newQty)){
+        // unparseable — bail without writing
+        return true;
+      }
+      const delta=newQty-baseQty;
+      if(existing){
+        if(delta===0){
+          // No change vs base — drop the modify row entirely. (Other field
+          // edits on this row are lost; that's intentional since qty=0
+          // delta with no other change means "no ECO impact".)
+          const hasOtherChanges=existing.partNumber!==(base.partNumber||"")||existing.description!==(base.description||"")||existing.manufacturer!==(base.manufacturer||"")||existing.unitPrice!=null;
+          if(!hasOtherChanges){
+            bom=bom.filter(r=>r.id!==existing.id);
+          }else{
+            bom=bom.map(r=>r.id===existing.id?{...r,qty:delta}:r);
+          }
+        }else{
+          bom=bom.map(r=>r.id===existing.id?{...r,qty:delta}:r);
+        }
+      }else if(delta!==0){
+        const newId=Date.now()+Math.random();
+        bom=[...bom,{
+          id:newId,
+          ecoTag:_activeEcoId,
+          ecoNumber:_activeEcoNumber,
+          ecoOp:"modify",
+          ecoModifiesBaseRowId:baseRowId,
+          ecoCreatedAt:Date.now(),
+          qty:delta,
+          partNumber:base.partNumber||"",
+          description:base.description||"",
+          manufacturer:base.manufacturer||"",
+          unitPrice:null,
+          leadTimeDays:null,
+          leadTimeSource:undefined,
+          notes:"",
+          ecoOriginal:{
+            qty:base.qty,
+            unitPrice:base.unitPrice,
+            partNumber:base.partNumber||"",
+            description:base.description||"",
+            manufacturer:base.manufacturer||"",
+            leadTimeDays:base.leadTimeDays??null,
+            leadTimeSource:base.leadTimeSource||"",
+          },
+        }];
+      }
+    }else{
+      // Text / price field — store as replacement value on the modify row.
+      const newVal=val;
+      const sameAsBase=String(newVal??"")===String(base[field]??"");
+      if(existing){
+        if(sameAsBase){
+          // Edit reverts the field back to base — clear the ECO override.
+          const updates={...existing};
+          if(field==="unitPrice")updates[field]=null;
+          else updates[field]=base[field]||"";
+          // If after this revert the modify row has no effective changes, drop it
+          const hasQtyDelta=Number(updates.qty)!==0;
+          const hasPnChange=String(updates.partNumber||"")!==String(base.partNumber||"");
+          const hasDescChange=String(updates.description||"")!==String(base.description||"");
+          const hasMfrChange=String(updates.manufacturer||"")!==String(base.manufacturer||"");
+          const hasPriceChange=updates.unitPrice!=null;
+          if(!hasQtyDelta&&!hasPnChange&&!hasDescChange&&!hasMfrChange&&!hasPriceChange){
+            bom=bom.filter(r=>r.id!==existing.id);
+          }else{
+            bom=bom.map(r=>r.id===existing.id?updates:r);
+          }
+        }else{
+          bom=bom.map(r=>r.id===existing.id?{...r,[field]:newVal}:r);
+        }
+      }else if(!sameAsBase){
+        const newId=Date.now()+Math.random();
+        bom=[...bom,{
+          id:newId,
+          ecoTag:_activeEcoId,
+          ecoNumber:_activeEcoNumber,
+          ecoOp:"modify",
+          ecoModifiesBaseRowId:baseRowId,
+          ecoCreatedAt:Date.now(),
+          qty:0, // no qty change yet
+          partNumber:base.partNumber||"",
+          description:base.description||"",
+          manufacturer:base.manufacturer||"",
+          unitPrice:null,
+          leadTimeDays:null,
+          leadTimeSource:undefined,
+          notes:"",
+          [field]:newVal,
+          ecoOriginal:{
+            qty:base.qty,
+            unitPrice:base.unitPrice,
+            partNumber:base.partNumber||"",
+            description:base.description||"",
+            manufacturer:base.manufacturer||"",
+            leadTimeDays:base.leadTimeDays??null,
+            leadTimeSource:base.leadTimeSource||"",
+          },
+        }];
+      }
+    }
+    const updated={...src,bom};
+    latestPanelRef.current=updated;
+    onUpdate(updated);
+    try{onSaveImmediate(updated);}catch(e){}
+    return true;
+  }
 
   function updateBomRow(id,field,val){
+    // DECISION(v1.19.873, ECO delta-row model): If we're in active ECO scope and the
+    // edited row is an untagged BASE row, redirect the change onto a linked ECO
+    // 'modify' delta row instead of mutating the base. The base row is preserved
+    // intact above the CHANGE ORDER separator; the delta row appears below it.
+    if(_redirectEditToEco(id,field,val))return;
     // DECISION(v1.19.677): When user edits qty on a row flagged with suspectQty (either
     // from column-alignment heuristic OR from v1.19.677 companion-row auto-inherit), the
     // user's edit is an implicit confirmation — clear the flag so the ⚠ qty badge goes
@@ -17844,14 +18030,57 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   function applyBcItem(bomRowId,bcItem){
     const row=(latestPanelRef.current.bom||[]).find(r=>r.id===bomRowId);
     if(!row)return;
-    if(bcItem._customerSupplied&&!bcItem.number){commitBcItem(bomRowId,bcItem,false);return;}
+    // DECISION(v1.19.873, ECO delta-row): if this is a base row in active ECO
+    // scope, redirect the BC apply onto a linked ECO 'modify' delta row. Spawn
+    // (or reuse) the modify row, then operate on its id so commitBcItem +
+    // its async fetches all target the ECO row instead of the base.
+    let targetId=bomRowId;
+    if(_isBaseRowInEcoScope(row)){
+      const src=latestPanelRef.current||panel;
+      const existing=(src.bom||[]).find(r=>r.ecoTag===_activeEcoId&&r.ecoModifiesBaseRowId===bomRowId);
+      if(existing){
+        targetId=existing.id;
+      }else{
+        const newId=Date.now()+Math.random();
+        const newRow={
+          id:newId,
+          ecoTag:_activeEcoId,
+          ecoNumber:_activeEcoNumber,
+          ecoOp:"modify",
+          ecoModifiesBaseRowId:bomRowId,
+          ecoCreatedAt:Date.now(),
+          qty:0,
+          partNumber:row.partNumber||"",
+          description:row.description||"",
+          manufacturer:row.manufacturer||"",
+          unitPrice:null,
+          leadTimeDays:null,
+          leadTimeSource:undefined,
+          notes:"",
+          ecoOriginal:{
+            qty:row.qty,
+            unitPrice:row.unitPrice,
+            partNumber:row.partNumber||"",
+            description:row.description||"",
+            manufacturer:row.manufacturer||"",
+            leadTimeDays:row.leadTimeDays??null,
+            leadTimeSource:row.leadTimeSource||"",
+          },
+        };
+        const updated={...src,bom:[...(src.bom||[]),newRow]};
+        latestPanelRef.current=updated;
+        onUpdate(updated);
+        targetId=newId;
+      }
+    }
+    if(bcItem._customerSupplied&&!bcItem.number){commitBcItem(targetId,bcItem,false);return;}
     const origPN=(row.crossedFrom||row.partNumber||"").trim();
     const newPN=bcItem.number;
     const isCrossing=origPN&&origPN!==newPN;
     if(isCrossing){
-      setCrossOrCorrectPending({bomRowId,bcItem,origPN,newPN});
+      setCrossOrCorrectPending({bomRowId:targetId,bcItem,origPN,newPN});
     }else{
-      commitBcItem(bomRowId,bcItem,false);
+      commitBcItem(targetId,bcItem,false);
     }
   }
   // DECISION(v1.19.376): Manual price entry shows a confirmation popup asking if the cost is
@@ -19590,6 +19819,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   const _firstEcoIdx=sortedBom.findIndex(r=>r.ecoTag);
                   const _hasEcoRows=_firstEcoIdx>=0;
                   const _ecoCount=sortedBom.filter(r=>r.ecoTag).length;
+                  // DECISION(v1.19.873, ECO delta-row): in ECO scope, ALWAYS show the
+                  // CHANGE ORDER separator so the user knows where their changes will
+                  // land. When no ECO rows exist yet we render it after the last
+                  // untagged row (i.e., at the end of the table). When ECO rows exist
+                  // we render it at the first ECO row index as before.
+                  const _emitTrailingEcoSep=_isEcoScope&&!_hasEcoRows;
+                  const _lastUntaggedIdx=_emitTrailingEcoSep?sortedBom.length-1:-1;
                   return sortedBom.flatMap((row,i)=>{
                     const _ecoSep=(_hasEcoRows&&i===_firstEcoIdx)?(
                       <tr key="eco-separator" style={{background:"#1a0040"}}>
@@ -19598,6 +19834,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             <span>⏷ ENGINEERING CHANGE ORDERS</span>
                             <span style={{color:C.muted,fontWeight:500,letterSpacing:0.3,fontSize:10}}>
                               · {_ecoCount} change{_ecoCount===1?"":"s"} below
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ):null;
+                    const _trailingEcoSep=(_emitTrailingEcoSep&&i===_lastUntaggedIdx)?(
+                      <tr key="eco-separator-empty" style={{background:"#1a0040"}}>
+                        <td colSpan={13} style={{padding:"6px 12px",borderTop:"2px solid #a855f7",borderBottom:"1px dashed #a855f766"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,fontWeight:800,color:"#a855f7",letterSpacing:1}}>
+                            <span>⏷ ENGINEERING CHANGE ORDERS</span>
+                            <span style={{color:C.muted,fontWeight:500,letterSpacing:0.3,fontSize:10}}>
+                              · no changes yet — edit qty / description above, or use 🔍 to swap parts
                             </span>
                           </div>
                         </td>
@@ -19648,7 +19896,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"]].map(([f,w,mode])=>(
                       f==="_bc"?(
                         <td key="_bc" style={{padding:"3px 2px",width:32,textAlign:"center"}}>
-                          {!readOnly&&!_baseLockedInEco&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
+                          {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
                             <button data-tip="Auto-match this part number in Business Central — click to find the best match or open the item browser" title="Fuzzy BC lookup" onClick={async()=>{
                               const pn=(row.partNumber||"").trim();
                               if(!pn)return;
@@ -19668,7 +19916,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         {mode==="fit"?(
                           <div>
                           <div style={{display:"flex",alignItems:"center"}}>
-                          {f==="partNumber"&&!readOnly&&!_baseLockedInEco&&!row.isLaborRow&&_bcToken&&(
+                          {f==="partNumber"&&!readOnly&&!row.isLaborRow&&_bcToken&&(
                             <button data-tip="Search and select a replacement part number from the Business Central catalog" title="Browse BC items" onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
                               style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"2px 4px",lineHeight:1,opacity:0.85,flexShrink:0,filter:"brightness(1.8)"}}
                               onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
@@ -19676,25 +19924,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           <div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>
                             <span style={{visibility:"hidden",whiteSpace:"pre",fontSize:13,fontFamily:"inherit",padding:"5px 20px 5px 7px",display:"block",pointerEvents:"none"}}>{row[f]||"\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"}</span>
                             <input value={row[f]||""} readOnly={readOnly||row.isLaborRow||_baseLockedInEco}
+                              title={_baseLockedInEco?"Use the BC Item Browser (🔍) to change "+f+" — base BOM is preserved; an ECO modify row will be created":undefined}
                               onChange={e=>!row.isLaborRow&&!_baseLockedInEco&&updateBomRow(row.id,f,e.target.value)}
                               onBlur={e=>{
                                 e.target.style.borderColor="transparent";
                                 const val=e.target.value;
-                                // ECO Stage B fix: pull from the freshest panel
-                                // ref (latestPanelRef.current) — `panel` from
-                                // the closure may be stale before React
-                                // re-renders after the onChange's
-                                // updateBomRow call, which would clobber the
-                                // ecoTag/ecoOriginal that onChange just set.
-                                // Apply _ecoTagForEdit again as a belt-and-
-                                // suspenders for the same race.
+                                // DECISION(v1.19.873, ECO delta-row): for base rows in ECO scope
+                                // _redirectEditToEco has already routed onChange's value to a
+                                // linked modify row; nothing left to persist on the base row
+                                // itself. Skip the save path entirely so we don't accidentally
+                                // mutate the base.
+                                if(_isBaseRowInEcoScope(row)){
+                                  return;
+                                }
                                 const _src=latestPanelRef.current||panel;
                                 const updatedBom=(_src.bom||[]).map(r=>{
                                   if(r.id!==row.id)return r;
-                                  const next={...r,[f]:val};
-                                  const _ecoTag=_ecoTagForEdit(r);
-                                  if(_ecoTag)Object.assign(next,_ecoTag);
-                                  return next;
+                                  return{...r,[f]:val};
                                 });
                                 saveBomRow({..._src,bom:updatedBom});
                                 if(f==="partNumber"&&val.trim()){
@@ -19802,7 +20048,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                              follow-up <tr> rendered after this data row — keeps the data row
                              single-line so vertical alignment is consistent across plain-text
                              and input cells. See "_metaTr" emit at the row return below. */}
-                          {f==="partNumber"&&!row.isLaborRow&&!row.isCrossed&&!readOnly&&!_baseLockedInEco&&(()=>{
+                          {f==="partNumber"&&!row.isLaborRow&&!row.isCrossed&&!readOnly&&(()=>{
                             const pn=(row.partNumber||"").trim();
                             const avail=pn?alternates.filter(a=>a.originalPN===pn):[];
                             if(!avail.length)return null;
@@ -19824,7 +20070,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               </div>
                             );
                           })()}
-                          {f==="partNumber"&&row.suggestedPartNumber&&!row.partNumber&&!readOnly&&!_baseLockedInEco&&(
+                          {f==="partNumber"&&row.suggestedPartNumber&&!row.partNumber&&!readOnly&&(
                             <div style={{display:"flex",alignItems:"center",gap:4,marginTop:3,paddingLeft:2,flexWrap:"nowrap",maxWidth:"100%",overflow:"hidden"}}>
                               <span style={{fontSize:10,color:C.teal}}>📚</span>
                               <span style={{fontSize:11,color:C.teal,fontWeight:700}}>{row.suggestedPartNumber}</span>
@@ -19832,7 +20078,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               <button onClick={()=>dismissSuggestion(row.id)} style={{fontSize:11,color:C.muted,background:"none",border:"none",cursor:"pointer",lineHeight:1}}>✕</button>
                             </div>
                           )}
-                          {f==="partNumber"&&bcFuzzySuggestions[row.id]&&!readOnly&&!_baseLockedInEco&&(
+                          {f==="partNumber"&&bcFuzzySuggestions[row.id]&&!readOnly&&(
                             <div style={{marginTop:4,background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:6,padding:6,maxHeight:140,overflow:"auto",maxWidth:"100%",minWidth:0,boxSizing:"border-box"}}>
                               <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
                                 <div style={{fontSize:10,color:C.accent,fontWeight:700,flex:1}}>BC FUZZY MATCHES</div>
@@ -19854,19 +20100,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           )}
                           </div>
                         ):(
-                          <input defaultValue={row[f]||""} key={row.id+"-"+f+"-"+(row[f]??"")} readOnly={readOnly||(row.isLaborRow&&!row._manualLabor)||_baseLockedInEco}
+                          <input defaultValue={row[f]||""} key={row.id+"-"+f+"-"+(row[f]??"")} readOnly={readOnly||(row.isLaborRow&&!row._manualLabor)}
                             onBlur={e=>{
-                              if(_baseLockedInEco)return;
                               e.target.style.borderColor="transparent";
                               if(autoSaveTimer.current){clearTimeout(autoSaveTimer.current);autoSaveTimer.current=null;}
                               const val=e.target.value;
                               if(val===String(row[f]||""))return;
+                              // DECISION(v1.19.873, ECO delta-row): redirect base-row edits in
+                              // ECO scope to a linked modify row (qty stored as delta, text as
+                              // replacement). Snap the input back so the base row visually
+                              // stays at its original value.
+                              if(_redirectEditToEco(row.id,f,val)){
+                                e.target.value=String(row[f]||"");
+                                return;
+                              }
                               // DECISION(v1.19.816): Upsert — manual labor rows are synthesized
                               // by the renderer and may not be in panel.bom yet on first edit.
                               // Insert if missing so the entered value persists.
-                              // ECO Stage B (v1.19.870): Use latestPanelRef + apply
-                              // _ecoTagForEdit so qty / etc. edits in ECO scope tag
-                              // the row instead of writing the untagged BASE value.
                               const _src=latestPanelRef.current||panel;
                               const exists=(_src.bom||[]).some(r=>r.id===row.id);
                               const updatedBom=exists
@@ -19910,7 +20160,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         <div style={{display:"inline-flex",alignItems:"center",gap:0,marginLeft:"auto"}}>
                         {row.isLaborRow?<span style={{color:C.muted,fontSize:13,minWidth:70,textAlign:"right"}}>— auto</span>:<>
                         <span style={{color:C.muted,fontSize:13,lineHeight:1}}>$</span>
-                        <input type="text" inputMode="decimal" readOnly={readOnly||_baseLockedInEco}
+                        <input type="text" inputMode="decimal" readOnly={readOnly}
                           defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
                           key={row.id+"-"+(row.priceSource||"")+(row.unitPrice??"")}
                           placeholder="—"
@@ -19958,7 +20208,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           type="text"
                           defaultValue={display}
                           placeholder="—"
-                          readOnly={readOnly||_baseLockedInEco}
+                          readOnly={readOnly}
                           onFocus={e=>e.target.select()}
                           onBlur={e=>{
                             const m=e.target.value.match(/\d+/);
@@ -19991,25 +20241,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     </td>
                     <td style={{padding:"3px 10px 3px 6px",textAlign:"center",width:44}}>
                       {!readOnly&&!row.isLaborRow&&(()=>{
-                        // DECISION(v1.19.872, ECO delta-row model):
-                        //   • Untagged BASE row in ECO scope → ✎ Modify (creates a
-                        //     linked ECO modify delta row below the separator) +
-                        //     ✕ Remove (creates a linked ECO remove row).
-                        //   • Row tagged for THIS ECO → ↶ revert (physical delete;
-                        //     base row was never touched, so it remains intact).
-                        //   • Untagged BASE row in BASE scope → ✕ destructive delete.
-                        if(_baseLockedInEco){
-                          return(
-                            <div style={{display:"inline-flex",alignItems:"center",gap:2}}>
-                              <button title="Modify this BOM row in this ECO (creates a linked change row below)" onClick={()=>modifyBaseRowInEco(row.id)} style={{background:"none",border:"none",color:"#fcd34d",cursor:"pointer",fontSize:14,opacity:0.75,padding:"0",width:22,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,fontWeight:700}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.75}>✎</button>
-                              <button title="Remove this BOM row in this ECO (creates a linked remove row below)" onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color:"#f87171",cursor:"pointer",fontSize:16,opacity:0.65,padding:"0",width:22,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.65}>✕</button>
-                            </div>
-                          );
-                        }
+                        // DECISION(v1.19.789, ECO Phase 2.G): For ECO-tagged rows show an
+                        // ↶ revert icon (deletes only the tagged delta — base row stays).
+                        // For untagged rows the existing ✕ destructive delete is used in
+                        // BASE scope; in ECO scope deleteBomRow routes to the delta-row
+                        // 'remove' creator instead, leaving the base BOM intact.
                         const isEcoRow=!!row.ecoTag;
                         const icon=isEcoRow?"↶":"✕";
                         const color=isEcoRow?"#a855f7":"#ff3333";
-                        const tip=isEcoRow?"Revert this ECO change (base BOM unaffected)":"Delete this BOM row";
+                        const tip=isEcoRow?"Revert this ECO change (base BOM unaffected)":(_baseLockedInEco?"Remove this BOM row in this ECO (base stays intact)":"Delete this BOM row");
                         return(
                           <button title={tip} onClick={()=>setDeleteConfirmId(row.id)} style={{background:"none",border:"none",color,cursor:"pointer",fontSize:isEcoRow?16:18,opacity:0.65,padding:"0",width:24,height:24,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1,fontWeight:isEcoRow?700:400}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.65}>{icon}</button>
                         );
@@ -20057,6 +20297,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   // ECO Phase 2.C: emit separator (when present) + row + optional meta sub-row.
                   const _emitted=[_rowEl];
                   if(_metaTr)_emitted.push(_metaTr);
+                  if(_trailingEcoSep)_emitted.push(_trailingEcoSep);
                   return _ecoSep?[_ecoSep,..._emitted]:_emitted;
                   });
                 })()}
@@ -23586,7 +23827,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   </>,document.body);
 }
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -24201,6 +24442,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               uid={uid}
               activeScope={activeScope}
               onScopeChange={onScopeChange}
+              onLocalProjectUpdate={onLocalProjectUpdate}
               baseUnlocked={baseUnlocked}
               onBaseUnlock={onBaseUnlock}
               baseScopeReadOnly={baseScopeReadOnly}
@@ -25903,6 +26145,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // Listen for live updates from background extraction tasks (survives navigation)
   useEffect(()=>onProjectUpdated(project.id,p=>{setProject(p);projectRef.current=p;onChange(p);}),[project.id]);
 
+  // DECISION(v1.19.873, ECO delta-row): optimistic local merge for child
+  // components that write directly to Firestore (e.g., EcoScopeTabs's
+  // createEcoDoc cascade). Without this, the BASE-locked styling and
+  // ecoSummary-derived gating wouldn't reflect new ECOs until the next
+  // page refresh, since the projects array is loaded once on mount with no
+  // onSnapshot. Mirrors what onProjectUpdated does for background tasks.
+  const handleLocalProjectUpdate=(partial)=>{
+    setProject(p=>{
+      const next={...p,...partial};
+      projectRef.current=next;
+      onChange&&onChange(next);
+      return next;
+    });
+  };
+
   // DECISION(v1.19.710): Auto-refresh the "Lead drivers" line in quote.lineNotes whenever
   // BOM lead times shift. Debounced 500ms so rapid edits don't thrash.
   const _leadDriversRefreshTimer=useRef(null);
@@ -27039,6 +27296,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             onCustomerReviewOpened={onCustomerReviewOpened}
             activeScope={activeScope}
             onScopeChange={setActiveScope}
+            onLocalProjectUpdate={handleLocalProjectUpdate}
             onOpenEcoEditor={(eco)=>setOpenEcoEditor(eco)}
             baseUnlocked={baseUnlocked}
             onBaseUnlock={setBaseUnlocked}
