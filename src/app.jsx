@@ -2395,8 +2395,52 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
     }
   }
 
-  console.log(`bcSyncEcoPlanningLines task ${taskNo}: ${created} created, ${updated} updated, ${skipped} unchanged, ${deleted} deleted${failedRows.length?`, ${failedRows.length} FAILED`:""}`,failedRows);
-  return{taskNo,created,updated,skipped,deleted,total:lines.length,failed:failedRows};
+  // DECISION(v1.19.881, ECO labor split Phase 3): PATCH the ECO task's labor
+  // lines (30000 CUT / 40000 LAYOUT / 50000 WIRE) with current ECO labor
+  // hours. The skeleton (bcCreateEcoTaskPlanningSkeleton) seeded them at
+  // qty=0; we PATCH only when the desired qty differs from BC's current
+  // value. Hours are rounded UP per category (matching BASE labor sync at
+  // line ~2062) and multiplied by lineQty so multi-unit panel lines scale
+  // ECO labor too.
+  let laborUpdated=0,laborSkipped=0;
+  try{
+    const ecoLaborTotals=computeEcoLaborForActiveEco(panel,ecoId);
+    const laborLineMap=[
+      {lineNo:30000,hrs:ecoLaborTotals.cutHrs},
+      {lineNo:40000,hrs:ecoLaborTotals.layoutHrs},
+      {lineNo:50000,hrs:ecoLaborTotals.wireHrs},
+    ];
+    const laborFilter=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}' and (Line_No eq 30000 or Line_No eq 40000 or Line_No eq 50000)`;
+    const lr=await fetch(laborFilter,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const existingLabor=lr.ok?(await lr.json()).value||[]:[];
+    const existingLaborByLineNo=Object.fromEntries(existingLabor.map(l=>[l.Line_No,l]));
+    for(const {lineNo:ln,hrs} of laborLineMap){
+      const desiredQty=Math.ceil(hrs)*lineQty;
+      const existing=existingLaborByLineNo[ln];
+      if(!existing){
+        // Skeleton not seeded for this ECO — log and skip. The ECO would have
+        // been created before bcCreateEcoTaskPlanningSkeleton existed; user
+        // can re-create the ECO or manually add lines in BC.
+        console.warn(`bcSyncEcoPlanningLines: labor line ${ln} missing on task ${taskNo} — skeleton not seeded`);
+        continue;
+      }
+      if(Math.abs((existing.Quantity||0)-desiredQty)<=0.001){laborSkipped++;continue;}
+      await sleep(200);
+      const pr=await patchLine(ln,{Quantity:desiredQty},existing["@odata.etag"]);
+      if(pr.ok||pr.status===204){
+        laborUpdated++;
+        console.log(`bcSyncEcoPlanningLines task ${taskNo}: labor line ${ln} → ${desiredQty}h`);
+      }else{
+        const txt=await pr.text();
+        failedRows.push({partNumber:"",description:`ECO ${ecoNumber} labor line ${ln}`,rowId:null,lineNo:ln,error:txt});
+      }
+    }
+  }catch(eLabor){
+    console.warn(`bcSyncEcoPlanningLines: labor sync failed for task ${taskNo}:`,eLabor);
+  }
+
+  console.log(`bcSyncEcoPlanningLines task ${taskNo}: BOM ${created} created, ${updated} updated, ${skipped} unchanged, ${deleted} deleted; LABOR ${laborUpdated} updated, ${laborSkipped} unchanged${failedRows.length?`, ${failedRows.length} FAILED`:""}`,failedRows);
+  return{taskNo,created,updated,skipped,deleted,laborUpdated,laborSkipped,total:lines.length,failed:failedRows};
 }
 
 async function bcCreateProject(displayName, customerNumber){
@@ -20053,7 +20097,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     })
                     :LABOR_BOM_GROUPS.map(g=>{
                       // BOM-only panel with NO manual entries yet — show 0-qty editable rows.
-                      const stored=(panel.bom||[]).find(r=>r.isLaborRow&&r.partNumber===g.partNumber);
+                      // DECISION(v1.19.881): filter `!r.ecoTag` so the synthesized
+                      // BASE labor row doesn't pick up an ECO labor row's qty
+                      // (both have the same partNumber, e.g. "1012" CUT).
+                      // Without this, editing ECO labor would mirror into the
+                      // BASE labor row above the CHANGE ORDER separator.
+                      const stored=(panel.bom||[]).find(r=>r.isLaborRow&&!r.ecoTag&&r.partNumber===g.partNumber);
                       return{
                         id:`labor-${g.partNumber}`,isLaborRow:true,_manualLabor:true,
                         partNumber:g.partNumber,description:g.description,
