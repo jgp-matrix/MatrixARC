@@ -13875,6 +13875,19 @@ function QuoteTab({project,onUpdate}){
                   {pan.bomNotes&&<div className="qd-li-notes">
                     <span>NOTES: </span>{pan.bomNotes}
                   </div>}
+                  {/* DECISION(v1.19.888): Auto-detected crate status. Scans the
+                      panel's BOM for a row whose description or partNumber
+                      matches /crat(e|ing)/i. Pattern matches addBomRow's
+                      tail-row test (line ~17550) so what counts as a "crate"
+                      stays in sync with the BOM table's tail-section. */}
+                  {(()=>{
+                    const _hasCrate=(panBom||[]).some(r=>!r.isLaborRow&&(/crat(e|ing)/i.test((r.description||"").trim())||/crat(e|ing)/i.test((r.partNumber||"").trim())));
+                    return(
+                      <div className="qd-li-notes" style={{borderLeftColor:_hasCrate?"#16a34a":"#94a3b8"}}>
+                        <span style={{color:_hasCrate?"#16a34a":"#475569",fontWeight:700}}>{_hasCrate?"✓ Includes ISPM 15 Certified Crate":"Crate Not Included"}</span>
+                      </div>
+                    );
+                  })()}
                   <div className="qd-li-notes" style={{borderLeftColor:"#3b82f6"}}>
                     <span>QUOTE NOTES: </span>
                     <textarea value={qp.lineNotes||""} onChange={e=>setQP({lineNotes:e.target.value})} placeholder="Additional quote-specific notes…" rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
@@ -17443,8 +17456,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       console.log("syncPlanningLinesToBC: hash unchanged, skipping sync");
       return;
     }
-    // Guard: all non-labor BOM rows (including auto-replaced) must have a BC or manual price
-    const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&r.priceSource!=="bc"&&r.priceSource!=="manual");
+    // Guard: all non-labor BOM rows (including auto-replaced) must have a BC or manual price.
+    // DECISION(v1.19.888): Skip rows with no partNumber from the unpriced check —
+    // bcSyncPanelPlanningLines / bcSyncEcoPanelPlanningLines both ignore empty
+    // partNumber rows, so a freshly-added blank "+ Add Row" placeholder
+    // shouldn't block the auto-sync. The user fills the partNumber via BC
+    // Browser → commitBcItem stamps priceSource → sync proceeds.
+    const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual");
     if(unpriced.length){setUnpricedAlert(unpriced);return;}
     setBcSyncing(true);setBcSyncStatus(null);setSyncFailedAlert(null);
     // DECISION(v1.19.599): Mirror BC sync status to team-wide bus so teammates see "X is syncing to BC".
