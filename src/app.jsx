@@ -2071,8 +2071,13 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
     Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"WIRE",
     Quantity:Math.ceil(wireHrs)*lineQty,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"});
 
-  // 60000+ — ALL BOM items (non-labor; isCrossed rows ARE the replacement parts and must be included)
-  const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow);
+  // 60000+ — BASE BOM items (non-labor, untagged; isCrossed rows ARE the
+  // replacement parts and must be included).
+  // DECISION(v1.19.879, ECO Stage D): ECO-tagged rows are EXCLUDED from the
+  // BASE task — they're routed to the ECO task slot 20N3{eco-1} via
+  // bcSyncEcoPanelPlanningLines (called from syncPlanningLinesToBC after
+  // this BASE sync completes).
+  const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.ecoTag);
   let lineNo=60000;
   for(const row of bomRows){
     const desc=(row.description||"").slice(0,100);
@@ -2192,6 +2197,145 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
 
   console.log(`bcSyncPlanningLines: ${created} created, ${updated} updated, ${skipped} unchanged, ${deleted} deleted${failedRows.length?`, ${failedRows.length} FAILED`:""}`,failedRows);
   return{created,updated,skipped,deleted,total:lines.length,failed:failedRows};
+}
+
+// DECISION(v1.19.879, ECO Stage D): Sync ECO-tagged BOM rows for a single
+// (panel, ECO) pair to the ECO task slot 20N3{ecoNumber-1}. Mirrors the
+// incremental diff strategy of bcSyncPanelPlanningLines but only operates
+// on lines 60000+ — the standard skeleton lines (10000 PROGRESS BILLING
+// + 30/40/50000 CUT/LAYOUT/WIRE) are pre-seeded by
+// bcCreateEcoTaskPlanningSkeleton when the ECO is created. Each ECO row
+// becomes one BC planning line; qty is the SIGNED DELTA (modify rows
+// already store delta; add rows store absolute new qty). 'remove' rows
+// are skipped — handled by Stage D follow-up if needed.
+async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber, ecoId, panel, projectName){
+  if(ecoNumber<1||ecoNumber>10)throw new Error(`bcSyncEcoPanelPlanningLines: ECO number must be 1-10 (got ${ecoNumber})`);
+  const n=panelIndex;
+  const base=20000+n*100;
+  const taskNo=String(base+30+(ecoNumber-1));
+
+  const allPages=await bcDiscoverODataPages();
+  const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p))||null;
+  if(!planPage)throw new Error("bcSyncEcoPanelPlanningLines: No Project Planning Lines OData page found");
+
+  // Reuse field-name detection cache populated by bcSyncPanelPlanningLines.
+  // If the user hasn't run a base sync yet on this session, default to
+  // Project_No / Project_Task_No (same defaults as the base flow).
+  let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
+  const cacheKey=`${BC_ODATA_BASE}::${planPage}`;
+  if(window._bcPlanFieldsCache&&window._bcPlanFieldsCache[cacheKey]){
+    FP_NO=window._bcPlanFieldsCache[cacheKey].FP_NO;
+    FP_TASK_NO=window._bcPlanFieldsCache[cacheKey].FP_TASK_NO;
+  }
+
+  // Filter to THIS ECO's tagged BOM rows. We accept either ecoTag or
+  // ecoNumber match so projects that lost the ecoId reference (legacy
+  // data) still find their rows.
+  const ecoRows=(panel.bom||[]).filter(r=>{
+    if(r.isLaborRow)return false;
+    if(ecoId&&r.ecoTag===ecoId)return true;
+    if(r.ecoNumber===ecoNumber&&r.ecoTag)return true;
+    return false;
+  });
+
+  // Build BC lines starting at 60000. Skip rows with no part number, no qty
+  // delta, or 'remove' op (those are user-managed in BC for now).
+  const today=new Date().toISOString().split('T')[0];
+  const lineQty=panel.lineQty??1;
+  const lines=[];
+  let lineNo=60000;
+  for(const row of ecoRows){
+    if(row.ecoOp==="remove")continue;
+    if(!row.partNumber||!row.partNumber.trim())continue;
+    const qtyEffective=Number(row.qty)||0;
+    if(qtyEffective===0)continue;
+    const opTag=row.ecoOp==="add"?"add":"mod";
+    const desc=`[ECO ${ecoNumber} ${opTag}] ${(row.description||"").slice(0,80)}`.slice(0,100);
+    lines.push({
+      [FP_NO]:projectNumber,
+      [FP_TASK_NO]:taskNo,
+      Line_No:lineNo,
+      Planning_Date:today,
+      Line_Type:"Budget",
+      Type:"Item",
+      No:row.partNumber.trim(),
+      Description:desc,
+      Quantity:qtyEffective*lineQty,
+      Unit_Cost:row.unitPrice||0,
+      Location_Code:"MAIN",
+      _row:row,
+    });
+    lineNo+=10000;
+  }
+
+  // Fetch existing 60000+ lines for this ECO task
+  const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}' and Line_No ge 60000`;
+  const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  const existingLines=gr.ok?(await gr.json()).value||[]:[];
+  const existingByLineNo=Object.fromEntries(existingLines.map(l=>[l.Line_No,l]));
+
+  const sleep=ms=>new Promise(res=>setTimeout(res,ms));
+  const failedRows=[];
+  let created=0,updated=0,deleted=0,skipped=0;
+  const desiredLineNos=new Set(lines.map(l=>l.Line_No));
+
+  async function postLine(payload){
+    for(let attempt=0;attempt<4;attempt++){
+      const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      if(r.status!==429)return r;
+      if(attempt===3)return r;
+      await sleep(1000*Math.pow(2,attempt));
+    }
+  }
+  async function patchLine(lineNo,fields,etag){
+    const url=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${lineNo})`;
+    for(let attempt=0;attempt<4;attempt++){
+      const r=await fetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(fields)});
+      if(r.status!==429)return r;
+      if(attempt===3)return r;
+      await sleep(1000*Math.pow(2,attempt));
+    }
+  }
+
+  for(const line of lines){
+    const {_row,...payload}=line;
+    const existing=existingByLineNo[line.Line_No];
+    if(existing){
+      const noChanged=existing.No!==(payload.No||"");
+      const descChanged=existing.Description!==(payload.Description||"");
+      const qtyChanged=Math.abs((existing.Quantity||0)-(payload.Quantity||0))>0.001;
+      const costChanged=Math.abs((existing.Unit_Cost||0)-(payload.Unit_Cost||0))>0.001;
+      if(!noChanged&&!descChanged&&!qtyChanged&&!costChanged){skipped++;continue;}
+      await sleep(300);
+      const patch={};
+      if(noChanged)patch.No=payload.No||"";
+      if(descChanged)patch.Description=payload.Description||"";
+      if(qtyChanged)patch.Quantity=payload.Quantity||0;
+      if(costChanged)patch.Unit_Cost=payload.Unit_Cost||0;
+      const pr=await patchLine(line.Line_No,patch,existing["@odata.etag"]);
+      if(pr.ok||pr.status===204){updated++;}
+      else{const txt=await pr.text();
+        if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt});}
+    }else{
+      await sleep(300);
+      const r=await postLine(payload);
+      if(r.ok){created++;}
+      else{const txt=await r.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt});}
+    }
+  }
+
+  // Delete BC lines that are no longer referenced by ARC (e.g. row reverted)
+  for(const ex of existingLines){
+    if(!desiredLineNos.has(ex.Line_No)){
+      await sleep(100);
+      const delUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${ex.Line_No})`;
+      const dr=await fetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
+      if(dr.ok||dr.status===204){deleted++;console.log(`bcSyncEcoPlanningLines: DELETED orphan line ${ex.Line_No}`);}
+    }
+  }
+
+  console.log(`bcSyncEcoPlanningLines task ${taskNo}: ${created} created, ${updated} updated, ${skipped} unchanged, ${deleted} deleted${failedRows.length?`, ${failedRows.length} FAILED`:""}`,failedRows);
+  return{taskNo,created,updated,skipped,deleted,total:lines.length,failed:failedRows};
 }
 
 async function bcCreateProject(displayName, customerNumber){
@@ -15970,6 +16114,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [panelCollapsed,setPanelCollapsed]=useState(false);
   const bcAutoSyncTimer=useRef(null);
   const bcPrevSyncCount=useRef(-1);
+  // DECISION(v1.19.879, ECO Stage D): Track an ECO-row "fingerprint" so the
+  // BC auto-sync useEffect also fires when a tagged row's qty/price/op
+  // changes (the bcCount-increase guard alone misses qty edits on existing
+  // ECO modify rows since priceSource is unchanged).
+  const bcPrevEcoSig=useRef("");
   const [draftNoWarn,setDraftNoWarn]=useState(false);
   const draftNoWarnTimer=useRef(null);
   const pricingClearTimer=useRef(null);
@@ -16915,22 +17064,46 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setAttachingPdf(false);
   }
 
-  // Auto-sync to BC when BC-confirmed item count INCREASES (user priced something) — debounced 3s
-  // Only auto-syncs when ALL non-labor rows are already priced (bc or manual) — avoids triggering on initial extraction
+  // DECISION(v1.19.879, ECO Stage D): Compute an ECO-row fingerprint that changes
+  // whenever ANY tagged row is added, edited, or removed. The bcCount-based
+  // BASE trigger only fires when a NEW BC-priced row appears (count goes up),
+  // which misses qty/price edits to existing ECO modify rows AND removals
+  // (count would go down). The fingerprint catches all three cases.
+  const _ecoSig=JSON.stringify(
+    (panel.bom||[])
+      .filter(r=>r.ecoTag&&!r.isLaborRow)
+      .map(r=>`${r.id}|${r.qty||0}|${r.partNumber||""}|${r.unitPrice??"x"}|${r.ecoOp||""}`)
+  );
+
+  // Auto-sync to BC when BC-confirmed item count INCREASES (user priced something)
+  // OR when an ECO row's content changes — debounced 3s. BASE trigger requires
+  // all non-labor rows to be priced (avoids firing during initial extraction);
+  // the ECO trigger bypasses that gate since ECO rows inherit base pricing.
   useEffect(()=>{
     if(!bcProjectNumber||readOnly)return;
     const bom=panel.bom||[];
     const bcCount=bom.filter(r=>r.priceSource==='bc').length;
-    if(bcPrevSyncCount.current===-1){bcPrevSyncCount.current=bcCount;return;}
-    if(bcCount<=bcPrevSyncCount.current){bcPrevSyncCount.current=bcCount;return;}
+    const ecoChanged=_ecoSig!==bcPrevEcoSig.current;
+    if(bcPrevSyncCount.current===-1){
+      bcPrevSyncCount.current=bcCount;
+      bcPrevEcoSig.current=_ecoSig;
+      return;
+    }
+    bcPrevEcoSig.current=_ecoSig;
+    const bcCountIncreased=bcCount>bcPrevSyncCount.current;
+    if(!bcCountIncreased&&!ecoChanged){bcPrevSyncCount.current=bcCount;return;}
     bcPrevSyncCount.current=bcCount;
-    // Only auto-sync if all non-labor rows are priced — otherwise it's still initial pricing
-    const unpriced=bom.filter(r=>!r.isLaborRow&&r.priceSource!=="bc"&&r.priceSource!=="manual");
-    if(unpriced.length>0)return;
+    // BASE trigger requires all non-labor rows priced. ECO trigger does not —
+    // the user is intentionally adding/editing tagged rows and they inherit
+    // pricing from their base row at creation time.
+    if(bcCountIncreased&&!ecoChanged){
+      const unpriced=bom.filter(r=>!r.isLaborRow&&r.priceSource!=="bc"&&r.priceSource!=="manual");
+      if(unpriced.length>0)return;
+    }
     if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);
     bcAutoSyncTimer.current=setTimeout(()=>syncPlanningLinesToBC(),3000);
     return()=>{if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);};
-  },[JSON.stringify((panel.bom||[]).map(r=>r.id+'|'+r.priceSource))]);
+  },[JSON.stringify((panel.bom||[]).map(r=>r.id+'|'+r.priceSource)),_ecoSig]);
 
   // DECISION(v1.19.452): Auto-sync sell price to BC line 10000 whenever material/labor costs change.
   // Previously only updated on markup change or full sync — missed BOM price edits, BC poll updates,
@@ -16970,9 +17143,43 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     try{
       if(!_bcToken){await acquireBcToken(true);}
       if(!_bcToken)throw new Error("Could not connect to Business Central");
-      const result=await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel,projectName);
-      // Always sync task descriptions so existing projects get updated
-      bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,panel,projectName).catch(e=>console.warn("task desc sync failed:",e));
+      // DECISION(v1.19.879, ECO Stage D): When the user is editing inside an
+      // ECO scope, the BASE BOM is locked — its rows can't have changed, so
+      // re-syncing the BASE task is wasted work and risks touching planning
+      // lines tied to existing POs. Skip the BASE sync entirely; only push
+      // the ECO task(s) below. In BASE scope, behavior is unchanged.
+      const _inEcoScope=activeScope?.type==="eco";
+      let result={created:0,updated:0,skipped:0,deleted:0,total:0,failed:[]};
+      if(!_inEcoScope){
+        result=await bcSyncPanelPlanningLines(bcProjectNumber,idx+1,panel,projectName);
+        // Always sync task descriptions so existing projects get updated
+        bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,panel,projectName).catch(e=>console.warn("task desc sync failed:",e));
+      }else{
+        console.log("syncPlanningLinesToBC: in ECO scope — skipping BASE task sync, only pushing ECO task(s)");
+      }
+      // DECISION(v1.19.879, ECO Stage D): After the (optional) BASE task sync,
+      // walk panel.bom for any ECO-tagged rows and push each ECO's lines to its
+      // own task slot 20N3{eco-1} (created by bcAddEcoTask). Failures here
+      // accumulate into result.failed so the existing failure modal surfaces
+      // them — same path the BASE flow uses.
+      const _ecoTagged=(panel.bom||[]).filter(r=>r.ecoTag&&!r.isLaborRow);
+      const _ecosByKey=new Map();
+      for(const r of _ecoTagged){
+        const num=r.ecoNumber||0;
+        const key=`${num}|${r.ecoTag||""}`;
+        if(num>=1&&num<=10&&!_ecosByKey.has(key))_ecosByKey.set(key,{number:num,id:r.ecoTag});
+      }
+      for(const eco of _ecosByKey.values()){
+        try{
+          const ecoResult=await bcSyncEcoPanelPlanningLines(bcProjectNumber,idx+1,eco.number,eco.id,panel,projectName);
+          if(ecoResult.failed&&ecoResult.failed.length>0){
+            result.failed=(result.failed||[]).concat(ecoResult.failed);
+          }
+        }catch(eEco){
+          console.warn(`syncPlanningLinesToBC: ECO ${eco.number} task sync failed:`,eEco);
+          result.failed=(result.failed||[]).concat([{partNumber:"",description:`ECO ${eco.number} task sync`,rowId:null,lineNo:0,error:eEco&&eEco.message?eEco.message:String(eEco)}]);
+        }
+      }
       if(result.failed&&result.failed.length>0){
         setBcSyncStatus("error");
         setSyncFailedAlert(result.failed);
