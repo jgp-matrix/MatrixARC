@@ -6087,8 +6087,23 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     const existingTarget=(proj.panels||[]).find(p=>p.id===panelId);
     let safeUpdated=updatedPanel;
     if(existingTarget&&(existingTarget.pages||[]).length>0&&(updatedPanel.pages||[]).length===0){
-      console.error(`SAVE GUARD: refusing to wipe ${existingTarget.pages.length} pages on panel ${panelId} — preserving existing (caller stack: ${(new Error()).stack?.split('\n').slice(1,4).join(' | ')})`);
-      safeUpdated={...updatedPanel,pages:existingTarget.pages};
+      // DECISION(v1.19.893): Detect intentional removal vs stale-state accident.
+      // Legitimate removePage cascade-clears drawingNo + bom + status="draft" along
+      // with pages=[]. Stale-state accidents leave those fields populated. Allow
+      // the wipe only when the cleared-state markers match — otherwise preserve.
+      // Previous implementation (v1.19.738) blanket-refused every zero-pages save,
+      // which broke the user-facing "delete all drawings to re-scan" flow: pages
+      // were restored from Firestore on next load.
+      const _isIntentionalWipe=
+        (updatedPanel.status==="draft"||!updatedPanel.status)&&
+        ((updatedPanel.drawingNo||"")==="")&&
+        ((updatedPanel.bom||[]).length===0);
+      if(_isIntentionalWipe){
+        console.log(`saveProjectPanel: intentional removal detected — wiping ${existingTarget.pages.length} pages on panel ${panelId}`);
+      }else{
+        console.error(`SAVE GUARD: refusing to wipe ${existingTarget.pages.length} pages on panel ${panelId} — drawingNo="${updatedPanel.drawingNo||""}" status="${updatedPanel.status||""}" bom=${(updatedPanel.bom||[]).length} (caller stack: ${(new Error()).stack?.split('\n').slice(1,4).join(' | ')})`);
+        safeUpdated={...updatedPanel,pages:existingTarget.pages};
+      }
     }
     // DECISION(v1.19.739): Per-page storageUrl regression guard. An extraction running in
     // the background uploads pages to Storage and stamps storageUrl on the Firestore copy.
@@ -9478,40 +9493,65 @@ async function estimatePrices(items){
 const PAGE_TYPE_DETECT_PROMPT=`Classify this page from a UL508A industrial control panel drawing set.
 Return ONLY a JSON object: {"types":[...]}
 
-PRIMARY DECISION (check this FIRST):
-If the page contains a multi-row table where the rows list physical hardware items — i.e. each row has a quantity AND an alphanumeric catalog/part number AND a description of a real component (a contactor, breaker, relay, terminal block, enclosure, fan, PLC card, fuse, wire duct, etc.) — classify as "bom".
+The page's classification is determined by its DOMINANT visual content — what the page is primarily showing. Drawing pages (schematics, layouts, enclosures, P&IDs) often include small reference tables like a "Door Devices" callout or component legend; that does NOT make them BOMs. The BOM type is reserved for pages whose ENTIRE PURPOSE is to enumerate parts.
 
-This is true regardless of what the table is titled. ALL of these table titles classify as "bom":
-  "BILL OF MATERIALS", "BOM", "PARTS LIST", "MATERIALS LIST", "ITEM LIST", "COMPONENT LIST", "EQUIPMENT LIST", "DEVICE LIST", "SCHEDULE", "PARTS SCHEDULE", "MATERIAL TAKEOFF", "BOQ", "PARTS", "ITEMS", or even no title at all.
+CHECK DRAWING TYPES FIRST:
 
-Required structure for "bom":
-  • A QTY column (numeric values, often 1, 2, 4, 12, etc.) — may also be labeled "QUANTITY", "QTY.", "EA", "EACH", "UNITS"
-  • A PART NUMBER column (alphanumeric catalog codes like "1769-L33ER", "AF26-30-11-13", "5842600") — may be labeled "PART NO.", "PART #", "P/N", "CAT NO.", "CATALOG NO.", "MODEL NO.", "ORDER NO.", "PRODUCT NO.", "STOCK NO.", "TYPE NO.", "MFG NO."
+"schematic" — Electrical schematic / ladder diagram. Visual cues:
+  • Vertical power rails (L1/L2 or L+/L-) with horizontal rungs between them.
+  • Wire numbers labeling individual conductors (e.g. 100, 101, 200, X1, X2).
+  • Device reference designators (CR1, CB2, PB3, M1) and coil/contact symbols.
+  • Lots of interconnection lines between components.
+  Has a small panel-summary table on it? Still "schematic". The dominant content is the ladder.
 
-Optional/common extras: ITEM number, UNIT, DESCRIPTION, MANUFACTURER (or MFG, MFR, VENDOR, MAKE — often embedded in description like "ALLEN-BRADLEY 100-C09EJ10"), TAGS, NOTES.
+"backpanel" — Interior mounting plate FRONT view (one view only, no side view). Visual cues:
+  • Rectangular outline = the back panel.
+  • DIN rails (long thin horizontal/vertical strips) and wire duct (hatched channels).
+  • Components drawn to scale and positioned spatially on the panel.
+  • Item-number callouts pointing to each component, often with a sidebar legend.
+  Has a sidebar device legend? Still "backpanel". The dominant content is the layout.
 
-OTHER TYPES (use only when the page is clearly one of these and NOT a BOM):
-"schematic" — Ladder diagram / wiring schematic: ladder rungs, wire numbers, terminal numbers, coil/contact symbols, device tags like CB1/CR1/PB1. Has wires connecting components.
-"backpanel" — Interior mounting plate FRONT VIEW only: DIN rails, wire duct, rows of physical components arranged on a panel. No side view, no enclosure outline with overall dimensions.
-"enclosure" — Cabinet drawing with side view alongside front view, overall W×H×D dimensions, door cutouts, fans/AC, title says "Enclosure" / "Cabinet" / "Door Layout".
-"pid" — Process & Instrumentation Diagram with ISA codes (YA, HS, FT, PT, LIC, PIC) inside circles + tag numbers, OR a box labeled "INSTRUMENT & FUNCTION LEGEND". No wire numbers.
+"enclosure" — Cabinet/enclosure drawing. Visual cues:
+  • Front view AND side view shown together (or front + door view).
+  • Overall W × H × D dimensions called out.
+  • Door cutouts for HMIs, pushbuttons, pilot lights.
+  • Title typically reads "Enclosure", "Cabinet", "Door Layout", "Outline & Mounting".
+  Has a door-device list table? Still "enclosure". The dominant content is the cabinet drawing.
 
-USE [] (empty types) ONLY for these clear non-content pages:
-  • Cover sheet / title page — large drawing title, customer logo, no tables of any kind
-  • "List of Sheets" / "Sheet Index" / "Drawing Index" — a table whose rows reference OTHER drawing sheets (sheet number + sheet title columns; NO part numbers, NO quantity column). This is the most important non-BOM table to recognize — the giveaway is the columns are SHEET NO. + TITLE rather than QTY + PART NO.
-  • Revision history block — lists revision letter, date, description of drawing changes; no parts.
+"pid" — Process & Instrumentation Diagram. Visual cues:
+  • ISA-style instrument bubbles — circles with two-letter codes inside (FT, PT, LIC, PIC, YA, HS) and tag numbers below.
+  • Process flow lines connecting equipment and instruments.
+  • Or a dedicated "INSTRUMENT & FUNCTION LEGEND" box.
+  • NO ladder rungs, NO wire numbers.
+
+"bom" — Bill of Materials. The page's DOMINANT content (>50% of page area) is a multi-row table whose rows enumerate physical hardware items. Required columns:
+  • QTY column (numeric: 1, 2, 4, 12 …) — labels: QTY, QUANTITY, QTY., EA, EACH, UNITS.
+  • PART NUMBER column (alphanumeric catalog codes: "1769-L33ER", "AF26-30-11-13", "5842600") — labels: PART NO., PART #, P/N, CAT NO., CATALOG NO., MODEL NO., ORDER NO., PRODUCT NO., STOCK NO., TYPE NO., MFG NO.
+  Common extras: ITEM #, UNIT, DESCRIPTION, MANUFACTURER (or MFG, MFR, VENDOR, MAKE — often embedded in description like "ALLEN-BRADLEY 100-C09EJ10"), TAGS, NOTES.
+  Allowed titles: "BILL OF MATERIALS", "BOM", "PARTS LIST", "MATERIALS LIST", "ITEM LIST", "COMPONENT LIST", "EQUIPMENT LIST", "DEVICE LIST", "SCHEDULE", "PARTS SCHEDULE", "MATERIAL TAKEOFF", "BOQ", or even no title at all.
+  If the page is mostly a drawing with a sidebar table, it is NOT a BOM — pick the drawing type instead.
+
+USE [] (empty types) for non-content pages:
+  • Cover sheet / title page — large drawing title, customer logo, no parts tables.
+  • "List of Sheets" / "Sheet Index" / "Drawing Index" — a table whose rows reference OTHER drawing sheets. The giveaway columns are SHEET NO. + TITLE, not QTY + PART NO. CRITICAL: never classify a sheet index as "bom".
+  • Revision history block — lists revision letter, date, description of drawing changes.
   • General notes page — paragraphs of text, no tables.
-  • Legend / symbol key page — just a symbol-to-meaning map, no part numbers.
+  • Legend / symbol key page — symbol-to-meaning map only.
   • Truly blank or near-blank page.
 
-CRITICAL TIE-BREAKER:
-When you see a multi-row table on this page and you're trying to decide between "bom" and [], examine the columns:
-  • If columns include QTY + alphanumeric PART NUMBER → "bom"
-  • If columns are only SHEET NUMBER + TITLE → []
-The downstream pipeline will reject any page that ends up with "bom" but has no real parts to extract — so when uncertain about a table page, prefer "bom" over []. A missed BOM costs the user manual re-tagging; a false-positive BOM costs nothing (the extractor returns 0 rows and moves on).
+DECISION ORDER:
+  1. Page is mostly a ladder diagram with wire numbers → "schematic".
+  2. Page is mostly a panel layout (DIN rails, wire duct, scaled components) → "backpanel".
+  3. Page has front + side cabinet views with overall dimensions → "enclosure".
+  4. Page is mostly an ISA-style P&ID → "pid".
+  5. Page is mostly (>50% area) a parts table with QTY + PART NUMBER columns and is NOT a sheet index → "bom".
+  6. Sheet Index, revision page, cover sheet, notes, legend, blank → [].
+  7. When uncertain, look at the DOMINANT visual content of the page. A drawing with a small reference table is the drawing type, NOT a BOM.
 
-Example response: {"types":["bom"]}
 Example response: {"types":["schematic"]}
+Example response: {"types":["backpanel"]}
+Example response: {"types":["enclosure"]}
+Example response: {"types":["bom"]}
 Example response: {"types":[]}`;
 
 async function detectPageTypes(dataUrl,learningExamples=[]){
