@@ -11929,6 +11929,31 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   // Labor rates state (admin only)
   const [laborRates,setLaborRates]=useState(()=>({...LABOR_RATES}));
 
+  // Manufacturer Denylist state (admin-managed list of bad codes)
+  const [mfrDenylist,setMfrDenylist]=useState([]);
+  const [mfrDenylistLoading,setMfrDenylistLoading]=useState(false);
+  const [newMfrCodeInput,setNewMfrCodeInput]=useState("");
+  useEffect(()=>{
+    let cancelled=false;
+    setMfrDenylistLoading(true);
+    loadMfrDenylist(uid).then(list=>{if(!cancelled)setMfrDenylist(list||[]);}).catch(()=>{}).finally(()=>{if(!cancelled)setMfrDenylistLoading(false);});
+    return()=>{cancelled=true;};
+  },[uid]);
+  async function addMfrDenylistCode(){
+    const code=(newMfrCodeInput||"").toUpperCase().trim();
+    if(!code)return;
+    if(mfrDenylist.includes(code)){setNewMfrCodeInput("");return;}
+    const next=[...mfrDenylist,code];
+    setMfrDenylist(next);
+    setNewMfrCodeInput("");
+    await saveMfrDenylist(uid,next);
+  }
+  async function removeMfrDenylistCode(code){
+    const next=mfrDenylist.filter(c=>c!==code);
+    setMfrDenylist(next);
+    await saveMfrDenylist(uid,next);
+  }
+
   // Region Learning state (Phase 4 admin UI)
   const [regionLearning,setRegionLearning]=useState([]);
   const [regionLearningLoading,setRegionLearningLoading]=useState(false);
@@ -12262,6 +12287,38 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             </button>}
           </div>
         )}
+
+        {/* ── MANUFACTURER DENYLIST (v1.19.902) ── */}
+        {/* DECISION: Admin-managed list of BC manufacturer codes that should
+            never appear in ARC dropdowns. Use for misspellings (e.g. SEIMENS),
+            duplicates, or retired manufacturers that BC still has in its
+            table. Filter is unioned with the hardcoded _BAD_MFR_CODES set
+            and applied inside bcFetchManufacturers. */}
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Manufacturer Denylist</label>
+          <div style={{fontSize:11,color:C.muted,marginBottom:10,lineHeight:1.5}}>BC manufacturer codes hidden from ARC dropdowns. Use for misspellings (e.g. <code style={{color:C.text}}>SEIMENS</code>) or duplicates. Codes are case-insensitive. The canonical fix is to delete the entry in BC; this is a safety net.</div>
+          <div style={{display:"flex",gap:6,marginBottom:10}}>
+            <input value={newMfrCodeInput} onChange={e=>setNewMfrCodeInput(e.target.value.toUpperCase())} placeholder="e.g. SEIMENS"
+              onKeyDown={e=>{if(e.key==="Enter")addMfrDenylistCode();}}
+              style={{...inp({fontSize:12,padding:"6px 10px",fontFamily:"monospace"}),flex:1}}/>
+            <button onClick={addMfrDenylistCode} disabled={!newMfrCodeInput.trim()} style={btn(C.accent,"#fff",{fontSize:12,padding:"6px 14px",opacity:newMfrCodeInput.trim()?1:0.5})}>+ Add</button>
+          </div>
+          {mfrDenylistLoading?(
+            <div style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>Loading…</div>
+          ):mfrDenylist.length===0?(
+            <div style={{fontSize:11,color:C.muted,fontStyle:"italic",padding:"8px 10px",background:"#0a0a14",border:`1px dashed ${C.border}`,borderRadius:6,textAlign:"center"}}>No user-added denylist entries. Hardcoded defaults (SEIMENS) still apply.</div>
+          ):(
+            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+              {mfrDenylist.map(code=>(
+                <div key={code} style={{display:"inline-flex",alignItems:"center",gap:4,padding:"4px 4px 4px 10px",background:"#3a1f00",border:"1px solid #fbbf2466",borderRadius:14,fontSize:12,fontFamily:"monospace",color:"#fbbf24",fontWeight:700}}>
+                  <span>{code}</span>
+                  <button onClick={()=>removeMfrDenylistCode(code)} title="Remove from denylist" style={{background:"none",border:"none",color:"#fbbf24",cursor:"pointer",fontSize:14,padding:"0 2px",opacity:0.7,lineHeight:1}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.7}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{fontSize:10,color:C.muted,marginTop:6,fontStyle:"italic"}}>Changes apply to dropdowns on next BC manufacturer fetch (cache invalidates automatically).</div>
+        </div>
 
         {/* ── REGION LEARNING (v1.19.896) ── */}
         {/* DECISION: Cross-project user-curated region examples. Shows the
@@ -33886,11 +33943,31 @@ async function bcFetchVendorMap(){
 let _bcManufacturers = null; // [{Code, Name}]
 // DECISION(v1.19.901): Manufacturer code denylist — misspellings or duplicates
 // that exist in BC but should never appear in ARC dropdowns. Codes are
-// case-insensitive. SEIMENS is a misspelling of SIEMENS (the canonical entry
-// also lives in BC). To clean up the BC entry permanently the admin needs
-// to delete it from BC's Manufacturer table; this denylist hides it in the
-// meantime and prevents new ARC selections of the bad code.
+// case-insensitive. The HARDCODED set holds known-bad codes that should ALWAYS
+// be hidden (survives any user mistake in the UI denylist). The Firestore
+// list (loaded async; see _mfrDenylistCache below) lets admins add more via
+// the Configuration modal without a code change. The two sets are unioned at
+// filter time. To clean up a bad code permanently the admin should also
+// delete it from BC's Manufacturer table — the denylist is a safety net,
+// not a substitute for fixing BC.
 const _BAD_MFR_CODES=new Set(["SEIMENS"]);
+let _mfrDenylistCache=null;
+function _mfrDenylistPath(uid){return(_appCtx.configPath||`users/${uid}/config`)+"/mfrDenylist";}
+async function loadMfrDenylist(uid){
+  if(_mfrDenylistCache)return _mfrDenylistCache;
+  try{
+    const d=await fbDb.doc(_mfrDenylistPath(uid)).get();
+    _mfrDenylistCache=d.exists?(d.data().codes||[]):[];
+  }catch(e){_mfrDenylistCache=[];}
+  return _mfrDenylistCache;
+}
+async function saveMfrDenylist(uid,codes){
+  const cleaned=Array.from(new Set((codes||[]).map(c=>(c||"").toUpperCase().trim()).filter(Boolean))).sort();
+  _mfrDenylistCache=cleaned;
+  _bcManufacturers=null; // invalidate manufacturer cache so next bcFetchManufacturers pulls fresh + re-filters
+  await fbDb.doc(_mfrDenylistPath(uid)).set({codes:cleaned}).catch(e=>console.warn("[MFR DENYLIST] save failed:",e.message));
+  return cleaned;
+}
 async function bcFetchManufacturers(){
   if(_bcManufacturers)return _bcManufacturers;
   if(!_bcToken)return[];
@@ -33907,9 +33984,13 @@ async function bcFetchManufacturers(){
   // Merge: BC codes + any BC_MFR_MAP codes not yet in BC
   const mfrNames=Object.fromEntries(BC_MFR_MAP.map(m=>[m.code,m.terms[0].split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ')]));
   BC_MFR_MAP.forEach(m=>{if(!bcCodes.has(m.code))bcCodes.set(m.code,mfrNames[m.code]||m.code);});
-  // Filter out denylisted codes (case-insensitive).
-  const filtered=Array.from(bcCodes.entries()).filter(([Code])=>!_BAD_MFR_CODES.has((Code||"").toUpperCase()));
-  if(filtered.length<bcCodes.size)console.log(`bcFetchManufacturers: hid ${bcCodes.size-filtered.length} denylisted code(s) (${[..._BAD_MFR_CODES].join(", ")})`);
+  // Filter out denylisted codes (case-insensitive). Union of hardcoded
+  // _BAD_MFR_CODES and the user-managed Firestore denylist (admin-edited via
+  // Configuration → Manufacturer Denylist).
+  const userList=_mfrDenylistCache||[];
+  const denied=new Set([..._BAD_MFR_CODES,...userList.map(c=>(c||"").toUpperCase())]);
+  const filtered=Array.from(bcCodes.entries()).filter(([Code])=>!denied.has((Code||"").toUpperCase()));
+  if(filtered.length<bcCodes.size)console.log(`bcFetchManufacturers: hid ${bcCodes.size-filtered.length} denylisted code(s) (${[...denied].join(", ")})`);
   _bcManufacturers=filtered.map(([Code,Name])=>({Code,Name})).sort((a,b)=>a.Code.localeCompare(b.Code));
   return _bcManufacturers;
 }
@@ -35080,7 +35161,7 @@ INSTRUCTIONS:
       } else {
         _appCtx.projectsPath=`users/${user.uid}/projects`;
       }
-      await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid),loadDefaultBomItems(user.uid),loadLaborRates(user.uid)]);
+      await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid),loadDefaultBomItems(user.uid),loadLaborRates(user.uid),loadMfrDenylist(user.uid)]);
       fbDb.doc(`users/${user.uid}/config/profile`).get().then(d=>{if(d.exists)setUserFirstName(d.data().firstName||"");}).catch(()=>{});
       // Load company members → uid→name map for project ownership display
       if(profile?.companyId){
