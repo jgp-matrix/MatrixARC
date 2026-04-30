@@ -22884,7 +22884,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   </>,document.body);
 }
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onOpenEcoEditor}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -23433,6 +23433,56 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   }
                   return React.createElement("div",{key:label,style:{display:"flex",flexDirection:"column",gap:0}},rowEl,holdEl);
                 })}
+              </div>
+              {/* DECISION(v1.19.838, ECO Stage A): EcoScopeTabs moved INTO the project
+                  card header — sits right under the "Hold priority while I'm away"
+                  checkbox row so it doesn't push the entire page down. Compact layout. */}
+              <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}33`}}>
+                <EcoScopeTabs
+                  project={project}
+                  uid={uid}
+                  activeScope={activeScope}
+                  onScopeChange={onScopeChange}
+                  baseUnlocked={baseUnlocked}
+                  onBaseUnlock={onBaseUnlock}
+                />
+                {(project?.ecoSummary||[]).length>0&&(()=>{
+                  const isEcoScope=activeScope?.type==="eco";
+                  if(!isEcoScope){
+                    if(baseScopeReadOnly){
+                      return(
+                        <div style={{background:"#1a1a14",border:"1px solid #fcd34d44",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#fde68a",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                          <span style={{fontSize:12}}>🔒</span>
+                          <span><strong style={{color:"#fcd34d"}}>BASE locked</strong> — viewing original BOM. Switch to an ECO tab to see/edit changes.</span>
+                        </div>
+                      );
+                    }
+                    if(baseUnlocked){
+                      return(
+                        <div style={{background:"#1a0c00",border:"1px solid #f59e0b66",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#fde68a",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                          <span style={{fontSize:12}}>🔓</span>
+                          <span><strong style={{color:"#f59e0b"}}>BASE unlocked for this session</strong> — edits will modify the original BOM.</span>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }
+                  const ecoNum=String(activeScope.ecoNumber||0).padStart(2,"0");
+                  if(activeEcoIsCurrentDraft){
+                    return(
+                      <div style={{background:"#1a0040",border:"1px solid #a855f777",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#e9d5ff",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                        <span style={{fontSize:12}}>🟣</span>
+                        <span><strong style={{color:"#a855f7"}}>EDITING ECO {ecoNum}</strong> — changes here are tracked. Switch to BASE to see the original.</span>
+                      </div>
+                    );
+                  }
+                  return(
+                    <div style={{background:"#0a0a14",border:"1px solid #94a3b833",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#94a3b8",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                      <span style={{fontSize:12}}>👁</span>
+                      <span><strong style={{color:"#cbd5e1"}}>Viewing ECO {ecoNum}</strong> (read-only) — not the active draft.</span>
+                    </div>
+                  );
+                })()}
               </div>
               {bcSyncMsg&&<div style={{fontSize:12,color:bcSyncMsg.ok===null?C.muted:bcSyncMsg.ok?C.green:C.yellow,marginBottom:2}}>{bcSyncMsg.text}</div>}
               {relinkMsg&&<div style={{fontSize:12,color:relinkMsg.startsWith("✓")?C.green:relinkMsg.startsWith("Failed")?C.red:C.muted,marginBottom:2}}>{relinkMsg}</div>}
@@ -26147,63 +26197,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           {/* DECISION(v1.19.785): ECO scope tabs render above PanelListView when project
               is post-PO OR has any existing ECOs. Hidden on pre-PO projects (no ECOs are
               valid there). EcoScopeTabs handles its own + New ECO permission gating. */}
-          {/* DECISION(v1.19.836, ECO Stage A): Tab strip render gate also lifted
-              for testing — paired with the bcPoStatus relaxation in EcoScopeTabs.
-              Now renders on every project where the user could create an ECO. */}
-          {(true)&&(
-            <div style={{padding:"0 24px",marginTop:8}}>
-              <EcoScopeTabs
-                project={project}
-                uid={uid}
-                activeScope={activeScope}
-                onScopeChange={setActiveScope}
-                baseUnlocked={baseUnlocked}
-                onBaseUnlock={setBaseUnlocked}
-              />
-              {/* DECISION(v1.19.834, ECO Stage A.4): Scope banner shows the user
-                  what mode they're in. Renders only when ECOs exist (otherwise
-                  there's no scope ambiguity). */}
-              {(project?.ecoSummary||[]).length>0&&(()=>{
-                const isEcoScope=activeScope?.type==="eco";
-                if(!isEcoScope){
-                  // BASE scope with ECOs present
-                  if(_baseScopeReadOnly){
-                    return(
-                      <div style={{background:"#1a1a14",border:"1px solid #fcd34d44",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#fde68a",display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                        <span style={{fontSize:14}}>🔒</span>
-                        <span><strong style={{color:"#fcd34d"}}>BASE locked</strong> — viewing original BOM only. ECOs exist on this project; switch to an ECO tab to see/edit changes.</span>
-                      </div>
-                    );
-                  }
-                  if(baseUnlocked){
-                    return(
-                      <div style={{background:"#1a0c00",border:"1px solid #f59e0b66",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#fde68a",display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                        <span style={{fontSize:14}}>🔓</span>
-                        <span><strong style={{color:"#f59e0b"}}>BASE unlocked for this session</strong> — your edits will modify the original BOM. Use only when changes legitimately belong on BASE rather than under an ECO.</span>
-                      </div>
-                    );
-                  }
-                  return null;
-                }
-                // ECO scope
-                const ecoNum=String(activeScope.ecoNumber||0).padStart(2,"0");
-                if(_activeEcoIsCurrentDraft){
-                  return(
-                    <div style={{background:"#1a0040",border:"1px solid #a855f777",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#e9d5ff",display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                      <span style={{fontSize:14}}>🟣</span>
-                      <span><strong style={{color:"#a855f7"}}>EDITING ECO {ecoNum}</strong> — changes here are tracked. The original BASE is preserved; switch to BASE to see it.</span>
-                    </div>
-                  );
-                }
-                return(
-                  <div style={{background:"#0a0a14",border:"1px solid #94a3b833",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#94a3b8",display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                    <span style={{fontSize:14}}>👁</span>
-                    <span><strong style={{color:"#cbd5e1"}}>Viewing ECO {ecoNum}</strong> (read-only) — this ECO is not the active draft. Open the active draft to make changes.</span>
-                  </div>
-                );
-              })()}
-            </div>
-          )}
+          {/* DECISION(v1.19.838, ECO Stage A): EcoScopeTabs moved INTO PanelListView's
+              project-card header (just under the "Hold priority while I'm away" row)
+              so the scope toggle no longer pushes the entire page down. The render
+              that used to live here was relocated; PanelListView reads the same
+              state via props. */}
           <PanelListView
             project={project}
             uid={uid}
@@ -26216,6 +26214,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             activeScope={activeScope}
             onScopeChange={setActiveScope}
             onOpenEcoEditor={(eco)=>setOpenEcoEditor(eco)}
+            baseUnlocked={baseUnlocked}
+            onBaseUnlock={setBaseUnlocked}
+            baseScopeReadOnly={_baseScopeReadOnly}
+            activeEcoIsCurrentDraft={!!_activeEcoIsCurrentDraft}
             onBack={onBack}
             onViewQuote={handlePrintQuote}
             quotePrinting={quotePrinting}
