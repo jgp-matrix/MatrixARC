@@ -10888,11 +10888,12 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
         detectDone++;
         setEcoExtractMsg(`🤖 Detecting page types — ${detectDone}/${newPages.length}…`);
       },4);
-      // Safety fallback — single-page drops where the AI returned no types default to BOM.
+      // DECISION(v1.19.895): No more force-default to BOM when AI returns empty —
+      // that mis-tagged drawings as BOM. Leave them untagged; user explicitly
+      // tags before extraction.
       const allEmpty=newPages.every(p=>!(p.types||[]).length);
       if(allEmpty){
-        console.warn("[ECO Drawings] AI returned no types for any page — defaulting all to bom");
-        newPages.forEach(p=>{p.types=["bom"];});
+        console.warn("[ECO Drawings] AI returned no types for any page — leaving untagged.");
       }
 
       // Persist to panel.pages immediately so a refresh doesn't lose them.
@@ -17101,22 +17102,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         done++;
         const msg=`🤖 Detecting page types — ${done}/${newItems.length}…`;
         setDetectProgress(msg);bgUpdate(panel.id,msg);
+        // DECISION(v1.19.895): Per-page diagnostic log so we can see exactly
+        // what the AI returned. Helps trace BOM-bias vs empty-types issues.
+        console.log(`[PAGE TYPE] ${item.name}: types=${JSON.stringify(info.types)}`);
         livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,aiDetectedTypes:info.types}:p);
         setPendingPages([...livePages]);
       },4);
       // DECISION(v1.19.792): Safety fallback — if AI classified ALL newly-added pages
       // as empty types, treat each one as BOM provisionally so the user isn't stuck with
-      // an "untagged" set and no extraction. Common with single-page PDFs extracted from
-      // a larger drawing set (the user already knows what they uploaded). The BOM
-      // extractor is the actual gatekeeper — it returns {items:[]} cheaply for non-BOM
-      // pages, so a false-positive default costs nothing. The user can still re-tag
-      // before clicking Proceed.
+      // an "untagged" set and no extraction.
+      // DECISION(v1.19.895): The v1.19.792 default-to-BOM behavior caused Noah's
+      // drawings (schematics that AI returned [] for) to all force-tag as "bom"
+      // and run extraction on. Leave them untagged instead so the user explicitly
+      // tags them before extraction. Surface a console warning so the failure
+      // mode is visible in logs.
       const allEmpty=newItems.length>0&&newItems.every(it=>!(it.types||[]).length);
       if(allEmpty){
-        console.warn(`[PAGE TYPE] AI returned no types for ${newItems.length} page(s); defaulting all to "bom" — user can re-tag before extraction`);
-        newItems.forEach(it=>{it.types=["bom"];});
-        livePages=livePages.map(p=>{const ni=newItems.find(n=>n.id===p.id);return ni?{...p,types:["bom"]}:p;});
-        setPendingPages([...livePages]);
+        console.warn(`[PAGE TYPE] AI returned no types for ${newItems.length} page(s) — leaving untagged. User must tag manually before extraction.`);
       }
       // DECISION(v1.19.659): Removed the sheet-number reconciler. Sheet numbers are now
       // DERIVED from page position (idx+1 / totalPages) at render time — no AI read, no
