@@ -5373,13 +5373,25 @@ async function saveProject(uid,project){
         // version changes are part of the quote-state hash. Compare to the last-
         // persisted hash; if different, bump quoteRev and record the new hash. First
         // save under the new logic seeds quoteRev=1 + lastQuoteHash without bumping.
+        // DECISION(v1.19.850, ECO Stage A): Suppress quote-rev bumps entirely while
+        // a draft ECO is active. The quote rev tracks revisions of the BASE quote
+        // sent to the customer; during an ECO round the customer is reviewing the
+        // change order, not a new revision of the BASE. Once the ECO closes
+        // (Stage F auto-relock) bumps resume normally. Hash is still recorded so
+        // the next post-ECO save compares cleanly.
+        const _hasActiveEcoSP=!!data.ecoEditUnlocked||(Array.isArray(data.ecoSummary)&&data.ecoSummary.some(e=>e&&e.status==="draft"));
         const oldQuoteHash=_curDoc.data().lastQuoteHash;
         const newQuoteHash=_computeQuoteHash(data);
         if(oldQuoteHash){
-          if(newQuoteHash!==oldQuoteHash){
+          if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSP){
             data.quoteRev=(data.quoteRev||1)+1;
             data.lastQuoteHash=newQuoteHash;
             console.log(`[QUOTE REV] bumped to ${data.quoteRev}`);
+          }else if(newQuoteHash!==oldQuoteHash&&_hasActiveEcoSP){
+            // Hash diff detected but suppressed — refresh persisted hash anyway so
+            // post-ECO saves don't see a stale baseline.
+            data.lastQuoteHash=newQuoteHash;
+            console.log("[QUOTE REV] suppressed — active ECO in flight");
           }
         }else{
           // First save with the new system — initialize without bumping
@@ -5558,12 +5570,19 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     // hash the quote-relevant content; if it differs from the persisted hash, bump.
     // saveProjectPanel is the more common save path (every BOM-row edit hits it), so this
     // is where most live-bumps actually fire.
+    // DECISION(v1.19.850, ECO Stage A): Bumps suppressed while a draft ECO is
+    // active — see saveProject for the rationale. Hash is still refreshed so
+    // the post-ECO save sees a clean baseline.
+    const _hasActiveEcoSPP=!!liveProject.ecoEditUnlocked||(Array.isArray(liveProject.ecoSummary)&&liveProject.ecoSummary.some(e=>e&&e.status==="draft"));
     const oldQuoteHash=proj.lastQuoteHash;
     const newQuoteHash=_computeQuoteHash(liveProject);
     if(oldQuoteHash){
-      if(newQuoteHash!==oldQuoteHash){
+      if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSPP){
         liveProject={...liveProject,quoteRev:(liveProject.quoteRev||1)+1,lastQuoteHash:newQuoteHash};
         console.log(`[QUOTE REV] bumped to ${liveProject.quoteRev} (panel save)`);
+      }else if(newQuoteHash!==oldQuoteHash&&_hasActiveEcoSPP){
+        liveProject={...liveProject,lastQuoteHash:newQuoteHash};
+        console.log("[QUOTE REV] suppressed (panel save) — active ECO in flight");
       }
     }else{
       liveProject={...liveProject,quoteRev:liveProject.quoteRev||1,lastQuoteHash:newQuoteHash};
