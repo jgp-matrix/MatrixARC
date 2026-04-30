@@ -233,9 +233,24 @@ let _apiKey=null;
 // DECISION(v1.19.410): Load API key from user config first, then fall back to company config.
 // This ensures new team members get the shared API key without needing admin to set it per-user.
 async function loadApiKey(uid){
-  try{const d=await fbDb.doc(`users/${uid}/config/api`).get();if(d.exists&&d.data().key){_apiKey=d.data().key;console.log("API key loaded from user config");}}catch(e){console.warn("loadApiKey user config failed:",e.message);}
-  if(!_apiKey&&_appCtx.configPath){
-    try{const cd=await fbDb.doc(`${_appCtx.configPath}/api`).get();if(cd.exists&&cd.data().key){_apiKey=cd.data().key;console.log("API key loaded from company config");}}catch(e){console.warn("loadApiKey company config failed:",e.message);}
+  // DECISION(v1.19.899, was v1.19.410): When the user is a member of a company,
+  // the COMPANY-level API key wins — it's the shop-wide source of truth that
+  // admins update when keys rotate or credits are topped up. The previous
+  // priority (user-level first) caused Noah's stale personal key to override
+  // the recently-rotated company key, so his AI calls hit an exhausted account
+  // while admins on the new key worked fine. Solo users (no _appCtx.configPath)
+  // still fall through to the user-level key.
+  if(_appCtx.configPath){
+    try{
+      const cd=await fbDb.doc(`${_appCtx.configPath}/api`).get();
+      if(cd.exists&&cd.data().key){_apiKey=cd.data().key;console.log("API key loaded from company config (preferred)");}
+    }catch(e){console.warn("loadApiKey company config failed:",e.message);}
+  }
+  if(!_apiKey){
+    try{
+      const d=await fbDb.doc(`users/${uid}/config/api`).get();
+      if(d.exists&&d.data().key){_apiKey=d.data().key;console.log("API key loaded from user config (fallback)");}
+    }catch(e){console.warn("loadApiKey user config failed:",e.message);}
   }
   if(!_apiKey)console.warn("API key not found — extraction, pricing, and AI features will be disabled. Set the key in Settings.");
 }
@@ -1521,15 +1536,54 @@ function categorizePart(partNumber,description){
   return'Other';
 }
 
+// DECISION(v1.19.899): Global "API credits exhausted" latch. When the Anthropic
+// API returns the credit-balance-too-low 400, we set this flag so subsequent
+// calls fail fast (no point hammering the API) and surface ONE blocking modal
+// to the user. Without this latch, downstream code paths (detectPageTypes,
+// extractBomPage, runPanelValidation, etc.) silently catch the error and
+// return empty results — the user sees "all empty types" or "no BOM rows"
+// with no idea the API account is out of money. The flag clears on page
+// refresh; the admin tops up at https://console.anthropic.com/settings/billing.
+let _apiCreditExhausted=false;
+let _apiCreditAlertShown=false;
+function _isCreditError(msg){
+  return /credit balance is too low|insufficient.*(credit|balance)/i.test(String(msg||""));
+}
+function _trippedApiCreditExhausted(message){
+  if(_apiCreditExhausted)return;
+  _apiCreditExhausted=true;
+  console.error("[API CREDITS] Anthropic API account is out of credits — all AI calls disabled until refresh.");
+  // Remote log so admins see this in Debug Logs.
+  try{
+    if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+      window.logDebugEntry({severity:"error",source:"apiCall",message:"Anthropic API credits exhausted",extra:{apiMessage:message}});
+    }
+  }catch(_){}
+  // Show ONE blocking modal (best-effort — arcAlert may not be available pre-mount).
+  if(!_apiCreditAlertShown&&typeof arcAlert==="function"){
+    _apiCreditAlertShown=true;
+    setTimeout(()=>{
+      arcAlert(
+        "🛑 Anthropic API: out of credits\n\nThe Anthropic API account that powers AI extraction has run out of credits. All AI features (page-type detection, BOM extraction, validation, lead-time estimates, etc.) will fail until the account is topped up.\n\nFix: an admin needs to add credits at https://console.anthropic.com/settings/billing — then refresh this page.",
+        {kind:"error",okLabel:"OK"}
+      ).catch(()=>{});
+    },50);
+  }
+}
 async function apiCall(body){
   if(!_apiKey)throw new Error("API key not set. Open Settings and add your Anthropic key.");
+  if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
   const r=await fetch("https://api.anthropic.com/v1/messages",{
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
     body:JSON.stringify({model:"claude-opus-4-6",...body})
   });
   const d=await r.json();
-  if(!r.ok){console.error("API ERROR:",r.status,d.error?.type,d.error?.message);throw new Error(d.error?.message||"API error");}
+  if(!r.ok){
+    console.error("API ERROR:",r.status,d.error?.type,d.error?.message);
+    if(_isCreditError(d.error?.message))_trippedApiCreditExhausted(d.error?.message);
+    throw new Error(d.error?.message||"API error");
+  }
   return d.content?.[0]?.text||"";
 }
 
@@ -7379,6 +7433,9 @@ function buildAllRegionSummary(pages){
 }
 
 async function extractBomPage(dataUrl,feedback="",userNotes=""){
+  // DECISION(v1.19.899): Fail fast if the global credit-exhausted latch is set —
+  // see _trippedApiCreditExhausted near apiCall.
+  if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
   const small=await resizeForAnalysis(dataUrl,2400); // BOM needs higher res for small text / character accuracy
   const b64=small&&small.split(",")[1];
   if(!b64){console.warn("extractBomPage: skipping — empty or invalid dataUrl");return[];}
