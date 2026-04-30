@@ -1766,21 +1766,39 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   const allPages=await bcDiscoverODataPages();
   const taskPage=allPages.find(p=>/^project.?task/i.test(p))||allPages.find(p=>/job.?task/i.test(p))||null;
   if(!taskPage)throw new Error("bcAddEcoTask: No project task OData page found");
-  const useProj=taskPage&&/^project/i.test(taskPage);
 
-  const body={
-    [useProj?"Project_No":"Job_No"]:projectNumber,
-    [useProj?"Project_Task_No":"Job_Task_No"]:taskNo,
-    Description:`ECO ${ecoNumber} - Change Order for ${panelName}`,
-    [useProj?"Project_Task_Type":"Job_Task_Type"]:"Posting",
-    Indentation:2
-  };
-  const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
-    method:"POST",
-    headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-    body:JSON.stringify(body)
-  });
-  if(!r.ok)throw new Error(`bcAddEcoTask: task ${taskNo} failed (${r.status}): ${await r.text()}`);
+  // DECISION(v1.19.863, ECO Stage A): Field-name probe + fallback. The page is
+  // named ProjectTaskLines on this tenant but the underlying NAV.ProjectTaskLines
+  // type still uses the legacy Job_No / Job_Task_No / Job_Task_Type field names.
+  // Try the modern Project_ prefix first; on a 400 with the "'Project_No' does
+  // not exist" signature, retry with Job_. Mirrors the proven fallback used by
+  // bcCreatePanelTaskStructure / bcSyncPanelTaskDescriptions.
+  function buildBody(prefix){
+    return{
+      [`${prefix}_No`]:projectNumber,
+      [`${prefix}_Task_No`]:taskNo,
+      Description:`ECO ${ecoNumber} - Change Order for ${panelName}`,
+      [`${prefix}_Task_Type`]:"Posting",
+      Indentation:2
+    };
+  }
+  async function postTask(prefix){
+    const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
+      method:"POST",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+      body:JSON.stringify(buildBody(prefix))
+    });
+    if(r.ok)return{ok:true};
+    const txt=await r.text();
+    return{ok:false,status:r.status,text:txt};
+  }
+  // First try Project_ prefix
+  let res=await postTask("Project");
+  if(!res.ok&&res.status===400&&/'Project_No' does not exist/i.test(res.text||"")){
+    console.log(`bcAddEcoTask: Project_No rejected, retrying with Job_No for task ${taskNo}`);
+    res=await postTask("Job");
+  }
+  if(!res.ok)throw new Error(`bcAddEcoTask: task ${taskNo} failed (${res.status}): ${res.text}`);
   console.log(`bcAddEcoTask: ECO ${ecoNumber} task ${taskNo} created for panel ${panelIndex}`);
   return taskNo;
 }
