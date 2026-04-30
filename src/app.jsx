@@ -540,7 +540,11 @@ function computeLaborEstimate(panel){
     // that the existing GDEF/bcPatchLaborPlanningLines filters already bucket correctly
     // (Panel Holes → CUT, Device Mounting → LAYOUT, Wire Time → WIRE). All downstream
     // code (Panel Summary, Quote builder, BC sync) sees this estimate transparently.
-    const manualLabor=(panel.bom||[]).filter(r=>r.isLaborRow&&r._manualLabor&&(+r.qty||0)>0);
+    // DECISION(v1.19.880, ECO labor split): Exclude ECO-tagged labor rows from
+    // the BASE labor estimate. ECO labor is purely additive on top of base
+    // labor (e.g., 2 hrs to re-run 5 wires for the change). It surfaces in
+    // the Panel Summary's ECO breakdown section, not in the BASE total.
+    const manualLabor=(panel.bom||[]).filter(r=>r.isLaborRow&&r._manualLabor&&!r.ecoTag&&(+r.qty||0)>0);
     if(manualLabor.length){
       const CAT_MAP={CUT:"Panel Holes",LAYOUT:"Device Mounting",WIRE:"Wire Time"};
       const lines=manualLabor.map(r=>{
@@ -641,15 +645,72 @@ function isPanelBudgetary(panel){
   return !bom.every(r=>r.priceSource==='bc');
 }
 
+// DECISION(v1.19.880, ECO labor split): ECO labor is tracked as tagged labor
+// rows in panel.bom (id format: `labor-eco-{ecoId}-{partNumber}`). One row per
+// LABOR_BOM_GROUPS category per ECO. qty is the SIGNED DELTA hours (additive
+// to BASE labor). These helpers sum ECO labor for the Panel Summary breakdown
+// and roll up to computePanelSellPrice so quote totals reflect ECO work.
+function computeEcoLaborForActiveEco(panel,ecoId){
+  if(!panel||!ecoId)return{cutHrs:0,layoutHrs:0,wireHrs:0,totalHrs:0,totalCost:0,rows:[]};
+  const rate=panel.pricing?.laborRate??45;
+  const rows=(panel.bom||[]).filter(r=>r.isLaborRow&&r.ecoTag===ecoId);
+  let cutHrs=0,layoutHrs=0,wireHrs=0;
+  for(const r of rows){
+    const desc=(r.description||"").toUpperCase();
+    const h=Number(r.qty)||0;
+    if(desc==="CUT")cutHrs+=h;
+    else if(desc==="LAYOUT")layoutHrs+=h;
+    else if(desc==="WIRE")wireHrs+=h;
+  }
+  const totalHrs=cutHrs+layoutHrs+wireHrs;
+  return{cutHrs,layoutHrs,wireHrs,totalHrs,totalCost:totalHrs*rate,rows};
+}
+function computeAllEcoLaborTotal(panel){
+  if(!panel)return{totalHrs:0,totalCost:0};
+  const rate=panel.pricing?.laborRate??45;
+  const rows=(panel.bom||[]).filter(r=>r.isLaborRow&&r.ecoTag);
+  let totalHrs=0;
+  for(const r of rows)totalHrs+=Number(r.qty)||0;
+  return{totalHrs,totalCost:totalHrs*rate};
+}
+// DECISION(v1.19.880, ECO labor split): Material delta for a single ECO —
+// sum of (qty * unitPrice) over its tagged BOM rows. ECO modify rows store
+// qty as signed delta (1 → 2 = +1); ECO add rows store full positive qty;
+// ECO remove rows are SUBTRACTED (their qty is the original base qty).
+function computeEcoMaterialDelta(panel,ecoId){
+  if(!panel||!ecoId)return 0;
+  return (panel.bom||[])
+    .filter(r=>!r.isLaborRow&&r.ecoTag===ecoId)
+    .reduce((s,r)=>{
+      const sign=r.ecoOp==="remove"?-1:1;
+      return s+sign*(r.unitPrice||0)*(Number(r.qty)||0);
+    },0);
+}
 function computePanelSellPrice(panel){
   const pr=panel.pricing||{};
   const laborEst=computeLaborEstimate(panel);
   // DECISION(v1.19.314): Do NOT filter out isCrossed items here. Crossed items ARE the replacements
   // (the new part that replaced the old one). Filtering them out excluded replacement costs from the sell price.
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow);
-  const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+  // DECISION(v1.19.880, ECO labor split): For BASE rows keep the historical
+  // `qty || 1` default. For ECO-tagged rows use the exact qty (a modify
+  // row's qty=0 means "no qty change, only other fields") and SUBTRACT for
+  // ecoOp:"remove" so removed items reduce the panel total instead of
+  // double-counting.
+  const materialCost=bom.reduce((s,r)=>{
+    if(r.ecoTag){
+      const sign=r.ecoOp==="remove"?-1:1;
+      return s+sign*(r.unitPrice||0)*(Number(r.qty)||0);
+    }
+    return s+(r.unitPrice||0)*(r.qty||1);
+  },0);
   // Contingency costs are now BOM line items (BOM CONTINGENCY, WIRE & CONSUMABLES) — included in materialCost
-  const laborCost=laborEst.totalHours>0?laborEst.totalCost:(pr.manualLaborCost||0);
+  // DECISION(v1.19.880, ECO labor split): laborEst now excludes ECO-tagged labor
+  // rows. Add the ECO labor delta on top so the quoted sell price still reflects
+  // total work (BASE labor + ECO labor across all draft ECOs).
+  const baseLaborCost=laborEst.totalHours>0?laborEst.totalCost:(pr.manualLaborCost||0);
+  const ecoLabor=computeAllEcoLaborTotal(panel);
+  const laborCost=baseLaborCost+ecoLabor.totalCost;
   const grandTotal=materialCost+laborCost;
   // DECISION(v1.19.399): Use MARGIN formula, not markup.
   // Margin: sellPrice = cost / (1 - margin%). At 30% margin, $100 cost → $142.86 sell.
@@ -17069,9 +17130,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // BASE trigger only fires when a NEW BC-priced row appears (count goes up),
   // which misses qty/price edits to existing ECO modify rows AND removals
   // (count would go down). The fingerprint catches all three cases.
+  // DECISION(v1.19.880, ECO labor split): includes labor rows too so ECO
+  // labor edits also trigger the BC sync (Phase 3 will wire labor lines to
+  // the ECO task).
   const _ecoSig=JSON.stringify(
     (panel.bom||[])
-      .filter(r=>r.ecoTag&&!r.isLaborRow)
+      .filter(r=>r.ecoTag)
       .map(r=>`${r.id}|${r.qty||0}|${r.partNumber||""}|${r.unitPrice??"x"}|${r.ecoOp||""}`)
   );
 
@@ -17671,9 +17735,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // True when row is the original/frozen BOM in active ECO scope. Used to gate
   // input readOnly + delete/BC buttons. Untagged rows + rows tagged by a prior
   // approved ECO are both readonly here (only THIS ECO's tagged rows are mutable).
+  // DECISION(v1.19.880, ECO labor split): also covers BASE labor rows (untagged
+  // isLaborRow). They render alongside ECO labor rows but only the latter are
+  // editable in ECO scope.
   const _isBaseRowInEcoScope=(row)=>{
     if(!_isEcoEditMode)return false;
-    if(!row||row.isLaborRow)return false;
+    if(!row)return false;
     if(row.ecoTag===_activeEcoId)return false;
     return true;
   };
@@ -20010,6 +20077,35 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       .filter(e=>(e.status==="approved"||e.status==="in_production"||e.status==="completed")&&e.number<(_scopeEcoNumber||Infinity))
                       .map(e=>e.ecoId)
                   );
+                  // DECISION(v1.19.880, ECO labor split): Synthesize 3 ECO labor
+                  // rows (CUT/LAYOUT/WIRE) for the active ECO. Stored only when
+                  // edited (qty>0); upserted into panel.bom on first edit. They
+                  // render under the CHANGE ORDER separator alongside ECO BOM
+                  // rows. ecoOp:"add" because ECO labor is purely additive on
+                  // top of base labor.
+                  const _ecoFreshLabor=(_isEcoScope&&_scopeEcoId&&_isEcoEditMode)
+                    ?LABOR_BOM_GROUPS.map(g=>{
+                      const ecoLaborId=`labor-eco-${_scopeEcoId}-${g.partNumber}`;
+                      const stored=(panel.bom||[]).find(r=>r.id===ecoLaborId);
+                      return{
+                        id:ecoLaborId,
+                        isLaborRow:true,
+                        _manualLabor:true,
+                        partNumber:g.partNumber,
+                        description:g.description,
+                        qty:stored?+stored.qty||0:0,
+                        unitPrice:_laborRate,
+                        priceSource:"manual",
+                        priceDate:Date.now(),
+                        manufacturer:"",
+                        notes:"",
+                        ecoTag:_scopeEcoId,
+                        ecoNumber:_scopeEcoNumber,
+                        ecoOp:"add",
+                        ecoCreatedAt:stored?.ecoCreatedAt||Date.now(),
+                      };
+                    })
+                    :[];
                   const nonLabor=(panel.bom||[]).filter(r=>!r.isLaborRow).filter(r=>{
                     if(!r.ecoTag)return true; // untagged base row visible in every scope
                     if(!_isEcoScope)return false; // BASE scope hides tagged rows
@@ -20017,18 +20113,26 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     if(_approvedPriorEcoIds.has(r.ecoTag))return true; // baked-in approved priors
                     return false; // tagged by a different draft / cancelled — hidden
                   });
-                  const liveBom=[..._freshLabor,...nonLabor];
+                  const liveBom=[..._freshLabor,..._ecoFreshLabor,...nonLabor];
                   const sortedBom=liveBom.slice().sort((a,b)=>{
-                    if(a.isLaborRow&&!b.isLaborRow)return -1;
-                    if(!a.isLaborRow&&b.isLaborRow)return 1;
-                    if(a.isLaborRow&&b.isLaborRow)return(a.partNumber||"").localeCompare(b.partNumber||"");
-                    // ECO Phase 2.C: tagged rows always sort AFTER untagged rows.
+                    // DECISION(v1.19.880, ECO labor split): sort BASE labor
+                    // first (untagged isLaborRow), then BASE BOM, then ECO
+                    // rows (labor first within each ECO, then BOM).
+                    const aIsBaseLabor=a.isLaborRow&&!a.ecoTag;
+                    const bIsBaseLabor=b.isLaborRow&&!b.ecoTag;
+                    if(aIsBaseLabor&&!bIsBaseLabor)return -1;
+                    if(!aIsBaseLabor&&bIsBaseLabor)return 1;
+                    if(aIsBaseLabor&&bIsBaseLabor)return(a.partNumber||"").localeCompare(b.partNumber||"");
                     const aEco=!!a.ecoTag,bEco=!!b.ecoTag;
                     if(!aEco&&bEco)return -1;
                     if(aEco&&!bEco)return 1;
                     if(aEco&&bEco){
                       const aN=a.ecoNumber||0,bN=b.ecoNumber||0;
                       if(aN!==bN)return aN-bN;
+                      // Within an ECO: labor first, then BOM
+                      if(a.isLaborRow&&!b.isLaborRow)return -1;
+                      if(!a.isLaborRow&&b.isLaborRow)return 1;
+                      if(a.isLaborRow&&b.isLaborRow)return(a.partNumber||"").localeCompare(b.partNumber||"");
                     }
                     if(!a.itemNo&&!b.itemNo)return 0;
                     if(!a.itemNo)return 1;
@@ -24804,12 +24908,30 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             const laborRate=pr.laborRate??45;
             const laborEst=computeLaborEstimate(sp);
             const hasAutoLabor=laborEst.totalHours>0;
-            const laborCost=hasAutoLabor?laborEst.totalCost:(pr.manualLaborCost||0);
+            const baseLaborCost=hasAutoLabor?laborEst.totalCost:(pr.manualLaborCost||0);
             const bom=sp.bom||[];
             const pricedCount=bom.filter(r=>r.unitPrice!=null).length;
-            // DECISION(v1.19.419): Exclude labor rows from material cost — match computePanelSellPrice.
-            // Previously included labor rows in matCost, causing Panel Summary to diverge from BC line 10000.
-            const matCost=bom.filter(r=>!r.isLaborRow).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+            // DECISION(v1.19.880, ECO labor split): Split material into BASE (untagged)
+            // and per-ECO deltas so the Panel Summary breakdown shows BASE as a
+            // reference + ECO contribution + NEW TOTAL when in ECO scope.
+            const baseMatCost=bom.filter(r=>!r.isLaborRow&&!r.ecoTag).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
+            const inEcoSummaryScope=activeScope?.type==="eco"&&activeScope?.ecoId;
+            const activeEcoIdForSummary=inEcoSummaryScope?activeScope.ecoId:null;
+            const activeEcoNumberForSummary=inEcoSummaryScope?activeScope.ecoNumber||0:0;
+            const ecoMatDelta=activeEcoIdForSummary?computeEcoMaterialDelta(sp,activeEcoIdForSummary):0;
+            const ecoLabor=activeEcoIdForSummary?computeEcoLaborForActiveEco(sp,activeEcoIdForSummary):{totalHrs:0,totalCost:0,cutHrs:0,layoutHrs:0,wireHrs:0};
+            // matCost is the legacy combined value (BASE + all ECOs) used by the
+            // current display when NOT in ECO scope. computePanelSellPrice mirrors
+            // this logic so the legacy display matches the quote total.
+            const matCost=bom.filter(r=>!r.isLaborRow).reduce((s,r)=>{
+              if(r.ecoTag){
+                const sign=r.ecoOp==="remove"?-1:1;
+                return s+sign*(r.unitPrice||0)*(Number(r.qty)||0);
+              }
+              return s+(r.unitPrice||0)*(r.qty||1);
+            },0);
+            const allEcoLabor=computeAllEcoLaborTotal(sp);
+            const laborCost=baseLaborCost+allEcoLabor.totalCost;
             const grandTotal=matCost+laborCost;
             const sellPrice=markup>=100?grandTotal:grandTotal/(1-markup/100);
             const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
@@ -24838,9 +24960,21 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               </div>
 
               {/* Pricing Summary */}
+              {/* DECISION(v1.19.880, ECO labor split): scope-aware breakdown.
+                  In ECO scope, render 3 sections (BASE reference, ECO N delta,
+                  NEW TOTAL) so the user sees the change-order math at a glance.
+                  In BASE scope (or when no active ECO), render the legacy
+                  single-section view unchanged. */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"12px 14px"}}>
-                <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginBottom:10}}>PRICING SUMMARY</div>
-                {[
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                  <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7}}>PRICING SUMMARY</div>
+                  {inEcoSummaryScope&&(
+                    <span style={{background:"#3b0764",color:"#a855f7",borderRadius:10,padding:"1px 8px",fontSize:10,fontWeight:800,letterSpacing:0.4}}>
+                      ECO {String(activeEcoNumberForSummary).padStart(2,"0")}
+                    </span>
+                  )}
+                </div>
+                {!inEcoSummaryScope&&([
                   ["Materials",fmt(matCost),"#fff",null,null],
                   hasAutoLabor?["Labor",fmt(laborCost),"#fff",null,null]:["Labor",null,"#fff",laborCost,"manualLaborCost"],
                   ["Total",fmt(grandTotal),"#fff",null,null],
@@ -24856,7 +24990,40 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       )}
                     </div>
                   </div>
-                ))}
+                )))}
+                {inEcoSummaryScope&&(()=>{
+                  const baseSubtotal=baseMatCost+baseLaborCost;
+                  const ecoSubtotal=ecoMatDelta+ecoLabor.totalCost;
+                  const fmtSigned=(n)=>(n>=0?"+":"-")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
+                  const fmtPlain=(n)=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
+                  const ecoColor="#a855f7";
+                  const dimColor="#64748b";
+                  const row=(label,val,labelColor,valColor,bold)=>(
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:5,fontSize:13}}>
+                      <span style={{color:labelColor}}>{label}</span>
+                      <span style={{color:valColor,fontWeight:bold?700:400,fontVariantNumeric:"tabular-nums"}}>{val}</span>
+                    </div>
+                  );
+                  return(<>
+                    {/* BASE reference (dimmed) */}
+                    <div style={{fontSize:9,color:dimColor,fontWeight:700,letterSpacing:0.6,marginBottom:4}}>BASE (REFERENCE)</div>
+                    {row("Materials",fmtPlain(baseMatCost),dimColor,dimColor,false)}
+                    {row("Labor",fmtPlain(baseLaborCost),dimColor,dimColor,false)}
+                    {row("Subtotal",fmtPlain(baseSubtotal),dimColor,dimColor,true)}
+                    {/* ECO delta (accent) */}
+                    <div style={{fontSize:9,color:ecoColor,fontWeight:700,letterSpacing:0.6,marginTop:10,marginBottom:4}}>ECO {String(activeEcoNumberForSummary).padStart(2,"0")} CHANGES</div>
+                    {row("Materials Δ",fmtSigned(ecoMatDelta),C.muted,ecoColor,false)}
+                    {row("Labor Δ",fmtSigned(ecoLabor.totalCost)+(ecoLabor.totalHrs?` (${ecoLabor.totalHrs}h)`:""),C.muted,ecoColor,false)}
+                    {row("Subtotal",fmtSigned(ecoSubtotal),ecoColor,ecoColor,true)}
+                    {/* NEW TOTAL */}
+                    <div style={{borderTop:"1px solid "+C.muted+"33",marginTop:10,paddingTop:8,marginBottom:4}}>
+                      <div style={{fontSize:9,color:"#fff",fontWeight:700,letterSpacing:0.6,marginBottom:4}}>NEW TOTAL</div>
+                    </div>
+                    {row("Materials",fmtPlain(baseMatCost+ecoMatDelta),"#fff","#fff",false)}
+                    {row("Labor",fmtPlain(baseLaborCost+ecoLabor.totalCost),"#fff","#fff",false)}
+                    {row("Total",fmtPlain(grandTotal),"#fff","#fff",true)}
+                  </>);
+                })()}
                 <div style={{borderTop:"1px solid #fff",paddingTop:10,marginTop:4,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:14}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{color:C.sub,fontSize:13}}>Margin</span>
