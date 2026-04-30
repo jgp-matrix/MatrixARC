@@ -9556,6 +9556,10 @@ async function createEcoDoc(uid,project,kind){
       deltaSell:0,
       approvedAt:null,
       completedAt:null,
+      // DECISION(v1.19.857, ECO Stage A): Persist `createdAt` on the summary entry
+      // so quote rendering can display when each ECO was started without
+      // round-tripping through the ECO subcollection doc.
+      createdAt:now,
       displayLabel:`ECO ${String(nextNumber).padStart(2,"0")}`,
     };
     const summary=Array.isArray(cur.ecoSummary)?[...cur.ecoSummary,newSummaryEntry]:[newSummaryEntry];
@@ -13169,6 +13173,16 @@ function QuoteTab({project,onUpdate}){
               const qp=(q.panelOverrides||{})[pan.id]||{};
               const setQP=(updates)=>{const po={...(q.panelOverrides||{}),[pan.id]:{...qp,...updates}};setQ({panelOverrides:po});};
               const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
+              // DECISION(v1.19.857, ECO Stage A): Surface the most recent draft
+              // ECO on the printed quote line. ECO label + start date appears
+              // next to the Part #, and a placeholder note row is added to the
+              // line item's notes block (details fill-in is a later stage).
+              const _draftEcosForLine=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
+              const _activeEcoForLine=_draftEcosForLine.slice(-1)[0]||null;
+              const _activeEcoLabel=_activeEcoForLine?`ECO ${String(_activeEcoForLine.number||0).padStart(2,"0")}`:null;
+              const _activeEcoStartedFmt=_activeEcoForLine&&_activeEcoForLine.createdAt
+                ?new Date(_activeEcoForLine.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})
+                :null;
               return(
               <div key={pan.id||pi} style={{marginBottom:12}}>
               {/* Main line item box — kept together on one page */}
@@ -13176,6 +13190,11 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-li-hdr">
                 <span className="qd-li-num">Line {pi+1}</span>
                 <span className="qd-li-part">Part #: {pan.drawingNo||qp.panelId||pan.name||`Panel ${pi+1}`}</span>
+                {_activeEcoLabel&&(
+                  <span style={{marginLeft:14,fontSize:13,fontWeight:700,color:"#4ade80",letterSpacing:0.4}}>
+                    {_activeEcoLabel}{_activeEcoStartedFmt?` · ${_activeEcoStartedFmt}`:""}
+                  </span>
+                )}
               </div>
               <div className="qd-li-body">
                 <div>
@@ -13201,6 +13220,12 @@ function QuoteTab({project,onUpdate}){
                     <span>QUOTE NOTES: </span>
                     <textarea value={qp.lineNotes||""} onChange={e=>setQP({lineNotes:e.target.value})} placeholder="Additional quote-specific notes…" rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
                   </div>
+                  {_activeEcoLabel&&(
+                    <div className="qd-li-notes" style={{borderLeftColor:"#4ade80"}}>
+                      <span style={{color:"#4ade80",fontWeight:700}}>{_activeEcoLabel}: </span>
+                      <textarea value={qp.ecoNotes||""} onChange={e=>setQP({ecoNotes:e.target.value})} placeholder={`Details of the ${_activeEcoLabel} change order — what changed, why, customer reason, etc.`} rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
+                    </div>
+                  )}
                 </div>
               </div>
 
