@@ -510,6 +510,15 @@ const LABOR_RATE_DEFAULTS={
   leadTimeBatchSeconds:30,    // Debounce window for batched BC lead-time writes
 };
 let LABOR_RATES={...LABOR_RATE_DEFAULTS};
+// DECISION(v1.19.882): ECO change-order labor bills at a higher hourly rate
+// than BASE shop labor (rush/non-recurring premium). Falls back here when
+// `panel.pricing.ecoLaborRate` isn't set per-panel; per-panel overrides go in
+// the Panel Summary's LABOR box `$/hr` input while in ECO scope (see
+// PanelSummary render).
+const ECO_LABOR_RATE_DEFAULT=65;
+function _getEcoLaborRate(panel){
+  return panel?.pricing?.ecoLaborRate??ECO_LABOR_RATE_DEFAULT;
+}
 const DOOR_DEVICE_TYPES=new Set(["pushbutton","pilot_light","selector_switch","hmi","e_stop","horn","meter"]);
 
 // ── LABOR ESTIMATION (centralized) ──
@@ -652,7 +661,7 @@ function isPanelBudgetary(panel){
 // and roll up to computePanelSellPrice so quote totals reflect ECO work.
 function computeEcoLaborForActiveEco(panel,ecoId){
   if(!panel||!ecoId)return{cutHrs:0,layoutHrs:0,wireHrs:0,totalHrs:0,totalCost:0,rows:[]};
-  const rate=panel.pricing?.laborRate??45;
+  const rate=_getEcoLaborRate(panel);
   const rows=(panel.bom||[]).filter(r=>r.isLaborRow&&r.ecoTag===ecoId);
   let cutHrs=0,layoutHrs=0,wireHrs=0;
   for(const r of rows){
@@ -667,7 +676,7 @@ function computeEcoLaborForActiveEco(panel,ecoId){
 }
 function computeAllEcoLaborTotal(panel){
   if(!panel)return{totalHrs:0,totalCost:0};
-  const rate=panel.pricing?.laborRate??45;
+  const rate=_getEcoLaborRate(panel);
   const rows=(panel.bom||[]).filter(r=>r.isLaborRow&&r.ecoTag);
   let totalHrs=0;
   for(const r of rows)totalHrs+=Number(r.qty)||0;
@@ -20132,6 +20141,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   // render under the CHANGE ORDER separator alongside ECO BOM
                   // rows. ecoOp:"add" because ECO labor is purely additive on
                   // top of base labor.
+                  // DECISION(v1.19.882): ECO labor uses _getEcoLaborRate (default
+                  // $65/hr, overridable via panel.pricing.ecoLaborRate) — distinct
+                  // from BASE _laborRate so change-order work bills at the
+                  // higher rush/non-recurring rate.
+                  const _ecoLaborRate=_getEcoLaborRate(panel);
                   const _ecoFreshLabor=(_isEcoScope&&_scopeEcoId&&_isEcoEditMode)
                     ?LABOR_BOM_GROUPS.map(g=>{
                       const ecoLaborId=`labor-eco-${_scopeEcoId}-${g.partNumber}`;
@@ -20143,7 +20157,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         partNumber:g.partNumber,
                         description:g.description,
                         qty:stored?+stored.qty||0:0,
-                        unitPrice:_laborRate,
+                        unitPrice:_ecoLaborRate,
                         priceSource:"manual",
                         priceDate:Date.now(),
                         manufacturer:"",
