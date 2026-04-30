@@ -9582,7 +9582,7 @@ if(typeof window!=="undefined"){window._deleteEcoDoc=deleteEcoDoc;}
 // the parent (ProjectView) and passed down so PanelListView/PanelCard can eventually
 // filter their BOM rendering by `ecoTag` (Phase 2). For now selecting a tab just opens
 // the Eco Editor (read-only shell — Phase 2 puts editing in).
-function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBaseUnlock}){
+function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBaseUnlock,baseScopeReadOnly}){
   const summary=Array.isArray(project?.ecoSummary)?project.ecoSummary:[];
   // DECISION(v1.19.836, ECO Stage A): Temporarily lifted the bcPoStatus gate so
   // ECO functionality can be tested on projects without a received PO. The
@@ -9655,9 +9655,16 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
     <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:14,padding:"8px 0",borderBottom:`1px solid ${C.border}33`}}>
       <button
         onClick={()=>onScopeChange&&onScopeChange({type:"base"})}
+        title={
+          baseScopeReadOnly
+            ?"BASE locked — viewing original BOM only. ECOs exist on this project; switch to an ECO tab to see/edit changes."
+            :baseUnlocked
+              ?"BASE unlocked for this session — your edits will modify the original BOM. Use only when changes legitimately belong on BASE rather than under an ECO."
+              :"View the original BOM (BASE)"
+        }
         style={{background:tabBg(baseActive),color:tabColor(baseActive),border:tabBorder(baseActive),borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:0.5,display:"flex",alignItems:"center",gap:6}}>
-        {showLockIcon&&<span title="BASE editing locked while ECOs exist" style={{fontSize:11}}>🔒</span>}
-        {ecosExist&&baseUnlocked&&<span title="BASE temporarily unlocked for this session" style={{fontSize:11}}>🔓</span>}
+        {showLockIcon&&<span style={{fontSize:11}}>🔒</span>}
+        {ecosExist&&baseUnlocked&&<span style={{fontSize:11}}>🔓</span>}
         BASE
       </button>
       {ecosExist&&userCanUnlock&&!baseUnlocked&&(
@@ -22884,7 +22891,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   </>,document.body);
 }
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -23434,9 +23441,16 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   return React.createElement("div",{key:label,style:{display:"flex",flexDirection:"column",gap:0}},rowEl,holdEl);
                 })}
               </div>
-              {/* DECISION(v1.19.838, ECO Stage A): EcoScopeTabs moved INTO the project
-                  card header — sits right under the "Hold priority while I'm away"
-                  checkbox row so it doesn't push the entire page down. Compact layout. */}
+              {/* DECISION(v1.19.839, ECO Stage A): Project-card header scope strip.
+                  - EcoScopeTabs sits right under "Hold priority while I'm away".
+                  - BASE-locked status is conveyed via a tooltip on the BASE button
+                    itself (no separate banner — saves vertical space).
+                  - Project-locked (Won/Lost) shows as a compact one-line indicator
+                    just under the BASE button — replaces the old big banner that
+                    used to live in ProjectView. Click → existing unlock modal.
+                  - ECO scope hint (active draft / read-only ECO) stays as a small
+                    inline banner since it changes per scope and the user needs to
+                    see at a glance whether edits will be tracked. */}
               <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}33`}}>
                 <EcoScopeTabs
                   project={project}
@@ -23445,28 +23459,40 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   onScopeChange={onScopeChange}
                   baseUnlocked={baseUnlocked}
                   onBaseUnlock={onBaseUnlock}
+                  baseScopeReadOnly={baseScopeReadOnly}
                 />
+                {/* Compact PROJECT LOCKED indicator — replaces the big banner. */}
+                {isProjectLocked&&!editUnlockedForAll&&(
+                  <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:project.wonAt?"#86efac":"#fca5a5"}}>
+                    <span style={{fontSize:12}}>🔒</span>
+                    <strong style={{color:project.wonAt?"#4ade80":"#fca5a5",letterSpacing:0.4}}>
+                      PROJECT LOCKED — {project.wonAt?"WON":"LOST"} {project.wonAt?new Date(project.wonAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):new Date(project.lostAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}
+                    </strong>
+                    <span style={{color:project.wonAt?"#bbf7d0":"#fecaca"}}>· all costs, BOMs, and project data are frozen.</span>
+                    {iAmOwnerOrAdmin&&!lockOverrideSession&&(
+                      <button onClick={onShowLockUnlockConfirm}
+                        style={{background:"none",border:"1px solid "+(project.wonAt?"#4ade8088":"#fca5a588"),borderRadius:5,color:project.wonAt?"#86efac":"#fca5a5",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:700,letterSpacing:0.4}}>🔓 Unlock for Editing</button>
+                    )}
+                    {iAmOwnerOrAdmin&&lockOverrideSession&&(
+                      <button onClick={()=>onSetLockOverrideSession&&onSetLockOverrideSession(false)}
+                        style={{background:"none",border:"1px solid #94a3b866",borderRadius:5,color:"#cbd5e1",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:600}}>Re-lock Session</button>
+                    )}
+                    {!iAmOwnerOrAdmin&&!unlockRequestSent&&!(project.unlockRequestedBy||[]).includes(uid)&&(
+                      <button onClick={onShowRequestUnlockModal}
+                        style={{background:"none",border:"1px solid #fbbf2488",borderRadius:5,color:"#fbbf24",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:700,letterSpacing:0.4}}>📬 Request Unlock</button>
+                    )}
+                    {!iAmOwnerOrAdmin&&(unlockRequestSent||(project.unlockRequestedBy||[]).includes(uid))&&(
+                      <span style={{padding:"2px 8px",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:5,fontSize:10,color:"#fcd34d",fontWeight:700,letterSpacing:0.4}}>✓ Request Sent</span>
+                    )}
+                    {iAmOwnerOrAdmin&&project.lastUnlockRequest&&(project.unlockRequestedBy||[]).length>0&&(
+                      <span style={{fontSize:10,color:"#fcd34d",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:5,padding:"2px 8px",fontWeight:600}}>📬 {project.lastUnlockRequest.byName||"A teammate"} requesting access{(project.unlockRequestedBy||[]).length>1?` (+${(project.unlockRequestedBy||[]).length-1})`:""}</span>
+                    )}
+                  </div>
+                )}
+                {/* ECO scope inline hint — only when ECOs exist on the project. */}
                 {(project?.ecoSummary||[]).length>0&&(()=>{
                   const isEcoScope=activeScope?.type==="eco";
-                  if(!isEcoScope){
-                    if(baseScopeReadOnly){
-                      return(
-                        <div style={{background:"#1a1a14",border:"1px solid #fcd34d44",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#fde68a",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
-                          <span style={{fontSize:12}}>🔒</span>
-                          <span><strong style={{color:"#fcd34d"}}>BASE locked</strong> — viewing original BOM. Switch to an ECO tab to see/edit changes.</span>
-                        </div>
-                      );
-                    }
-                    if(baseUnlocked){
-                      return(
-                        <div style={{background:"#1a0c00",border:"1px solid #f59e0b66",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#fde68a",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
-                          <span style={{fontSize:12}}>🔓</span>
-                          <span><strong style={{color:"#f59e0b"}}>BASE unlocked for this session</strong> — edits will modify the original BOM.</span>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }
+                  if(!isEcoScope)return null; // BASE state communicated via BASE button tooltip + lock icon; no separate banner.
                   const ecoNum=String(activeScope.ecoNumber||0).padStart(2,"0");
                   if(activeEcoIsCurrentDraft){
                     return(
@@ -25978,44 +26004,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               count from project.unlockRequestedBy.
           Pending requests visible only to owner/admin show a sub-line with the most
           recent requester's name + reason. */}
-      {isProjectLocked&&!editUnlockedForAll&&(
-        <div style={{margin:"12px 24px 0",padding:"10px 16px",
-          background:project.wonAt?"#0a1f12":"#1f0a0a",
-          border:"1px solid "+(project.wonAt?"#4ade80aa":"#ef4444aa"),
-          borderRadius:8,display:"flex",alignItems:"flex-start",gap:12,flexWrap:"wrap"}}>
-          <span style={{fontSize:18,marginTop:1}}>🔒</span>
-          <div style={{flex:1,minWidth:240,fontSize:13,lineHeight:1.5,color:project.wonAt?"#bbf7d0":"#fecaca"}}>
-            <strong style={{color:project.wonAt?"#4ade80":"#fca5a5",letterSpacing:0.5}}>
-              PROJECT LOCKED — {project.wonAt?"WON":"LOST"} {project.wonAt?new Date(project.wonAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):new Date(project.lostAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}
-            </strong>
-            {" — "}all costs, BOMs, and project data are frozen. {iAmOwnerOrAdmin?(lockOverrideSession?"You've unlocked editing for this session.":"Unlock for editing or grant access to all users."):"Request edit access from the project owner or an admin."}
-            {/* Pending unlock requests visible to owner/admin */}
-            {iAmOwnerOrAdmin&&project.lastUnlockRequest&&(project.unlockRequestedBy||[]).length>0&&(
-              <div style={{marginTop:6,padding:"6px 10px",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:6,fontSize:12,color:"#fcd34d"}}>
-                📬 <strong>{project.lastUnlockRequest.byName||"A teammate"}</strong> requested edit access {project.lastUnlockRequest.at?"on "+new Date(project.lastUnlockRequest.at).toLocaleDateString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}
-                {project.lastUnlockRequest.reason?<><br/><span style={{color:"#fde68a",fontStyle:"italic"}}>"{project.lastUnlockRequest.reason}"</span></>:null}
-                {(project.unlockRequestedBy||[]).length>1&&<><br/>+{(project.unlockRequestedBy||[]).length-1} other request{(project.unlockRequestedBy||[]).length-1>1?"s":""}</>}
-              </div>
-            )}
-          </div>
-          {iAmOwnerOrAdmin&&!lockOverrideSession&&(
-            <button onClick={()=>setShowLockUnlockConfirm(true)}
-              style={{background:"none",border:"1px solid "+(project.wonAt?"#4ade8088":"#fca5a588"),borderRadius:6,color:project.wonAt?"#86efac":"#fca5a5",cursor:"pointer",fontSize:12,padding:"4px 14px",fontWeight:700,letterSpacing:0.4}}>🔓 Unlock for Editing</button>
-          )}
-          {iAmOwnerOrAdmin&&lockOverrideSession&&(
-            <button onClick={()=>setLockOverrideSession(false)}
-              style={{background:"none",border:"1px solid #94a3b866",borderRadius:6,color:"#cbd5e1",cursor:"pointer",fontSize:11,padding:"3px 10px",fontWeight:600}}>Re-lock Session</button>
-          )}
-          {/* Non-owner/non-admin Request Unlock UI */}
-          {!iAmOwnerOrAdmin&&!unlockRequestSent&&!(project.unlockRequestedBy||[]).includes(uid)&&(
-            <button onClick={()=>setShowRequestUnlockModal(true)}
-              style={{background:"none",border:"1px solid #fbbf2488",borderRadius:6,color:"#fbbf24",cursor:"pointer",fontSize:12,padding:"4px 14px",fontWeight:700,letterSpacing:0.4}}>📬 Request Unlock</button>
-          )}
-          {!iAmOwnerOrAdmin&&(unlockRequestSent||(project.unlockRequestedBy||[]).includes(uid))&&(
-            <span style={{padding:"4px 12px",background:"rgba(251,191,36,0.10)",border:"1px solid #fbbf2466",borderRadius:6,fontSize:11,color:"#fcd34d",fontWeight:700,letterSpacing:0.4}}>✓ Request Sent — Awaiting Owner</span>
-          )}
-        </div>
-      )}
+      {/* DECISION(v1.19.839, ECO Stage A): The big PROJECT LOCKED banner that used
+          to live here was relocated into PanelListView's project-card header (next
+          to the EcoScopeTabs) as a compact one-line indicator under the BASE
+          button. Same lock-unlock controls; same modals; just doesn't push the
+          page down anymore. See `isProjectLocked` rendering inside PanelListView. */}
       {/* Persistent (editUnlocked) unlock banner — visible to ALL users when an owner
           or admin has granted unlock-for-all. Read-only-aware UI: owner/admin sees a
           Re-lock button; everyone else sees just the status. */}
@@ -26218,6 +26211,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             onBaseUnlock={setBaseUnlocked}
             baseScopeReadOnly={_baseScopeReadOnly}
             activeEcoIsCurrentDraft={!!_activeEcoIsCurrentDraft}
+            isProjectLocked={isProjectLocked}
+            editUnlockedForAll={editUnlockedForAll}
+            iAmOwnerOrAdmin={iAmOwnerOrAdmin}
+            lockOverrideSession={lockOverrideSession}
+            onShowLockUnlockConfirm={()=>setShowLockUnlockConfirm(true)}
+            onSetLockOverrideSession={setLockOverrideSession}
+            onShowRequestUnlockModal={()=>setShowRequestUnlockModal(true)}
+            unlockRequestSent={unlockRequestSent}
             onBack={onBack}
             onViewQuote={handlePrintQuote}
             quotePrinting={quotePrinting}
