@@ -25250,9 +25250,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // The `activeEcoIsCurrentDraft` calc also flags whether the user is editing
   // the live working ECO so banners and edit pathways can render correctly.
   const _ecoSummaryForReadOnly=Array.isArray(project.ecoSummary)?project.ecoSummary:[];
-  const _ecosExist=_ecoSummaryForReadOnly.length>0;
+  const _ecosExist=_ecoSummaryForReadOnly.length>0||(activeScope?.type==="eco"&&!!activeScope?.ecoId);
   const _activeDraftEco=_ecoSummaryForReadOnly.filter(e=>e.status==="draft").slice(-1)[0]||null;
-  const _activeEcoIsCurrentDraft=activeScope?.type==="eco"&&_activeDraftEco&&activeScope.ecoId===_activeDraftEco.ecoId;
+  // DECISION(v1.19.865, ECO Stage A): When the user just clicked + New ECO, the
+  // optimistic activeScope flips to the new ECO immediately but Firestore's
+  // onSnapshot delivers the persisted ecoSummary ~500ms-1s later. During that
+  // gap, _activeDraftEco still points to whatever was latest BEFORE the new
+  // ECO and the strict ecoId match makes activeEcoIsCurrentDraft = false →
+  // panels grey out and edits go read-only on a tab the user just opened.
+  // Loosen the check: the active scope is the current draft when its
+  // ecoNumber is >= the highest draft number we know about (so a freshly
+  // created ECO whose number outranks the last persisted one passes).
+  const _maxDraftNum=_ecoSummaryForReadOnly.filter(e=>e.status==="draft").reduce((m,e)=>Math.max(m,+e.number||0),0);
+  const _activeEcoIsCurrentDraft=activeScope?.type==="eco"&&(
+    (_activeDraftEco&&activeScope.ecoId===_activeDraftEco.ecoId)||
+    ((activeScope.ecoNumber||0)>=_maxDraftNum)
+  );
   const _baseScopeReadOnly=(activeScope?.type==="base")&&_ecosExist&&!baseUnlocked;
   const _ecoScopeReadOnly=(activeScope?.type==="eco")&&!_activeEcoIsCurrentDraft;
   const _ecoScopeReadOnlyReason=_baseScopeReadOnly
