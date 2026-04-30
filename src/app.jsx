@@ -17310,7 +17310,47 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     return f.type||"";
   }
   async function addFiles(files){
-    _dbg("ADDFILES: start, files="+files.length+", apiKey="+(!!_apiKey));
+    // DECISION(v1.19.897, addFiles bulletproofing): Loud diagnostic logging at
+    // entry. Captures every context field that can cause silent failures
+    // (missing API key, missing companyId, readOnly project, owner-priority
+    // lock, file-format unknown). Console output goes into the browser log
+    // for downstream triage.
+    const _files=Array.from(files||[]);
+    console.log("[ADDFILES] start",{
+      projectId,panelId:panel?.id,uid,
+      fileCount:_files.length,
+      fileNames:_files.map(f=>`${f.name} (${f.type||"no-type"}, ${f.size}b)`),
+      apiKeyLoaded:!!_apiKey,
+      companyId:_appCtx.companyId||null,
+      configPath:_appCtx.configPath||null,
+      role:_appCtx.role||null,
+      readOnly:!!readOnly,
+      ownerPriorityActive:!!ownerPriorityActive,
+      activeScope:activeScope?.type||"base",
+    });
+    if(!_files.length){
+      console.warn("[ADDFILES] aborted — no files");
+      return;
+    }
+    if(!_apiKey){
+      // Blocking error — silent "complete" was the v1.19.792 behavior that
+      // caused Noah's drops to disappear into the void. Now surface a modal
+      // and bail before bgStart fires so the progress chip doesn't lie.
+      console.error("[ADDFILES] aborted — API key not loaded");
+      try{
+        await arcAlert(
+          "AI extraction is unavailable — the Anthropic API key isn't loaded for this user. Drawings were NOT processed.\n\nFix: open Settings → API Key. If you're a team member, ask the company admin to save the key once (it auto-shares with the team via company config).",
+          {kind:"error",okLabel:"OK"}
+        );
+      }catch(_){}
+      return;
+    }
+    if(readOnly){
+      console.error("[ADDFILES] aborted — panel is read-only");
+      try{await arcAlert("This project is read-only. Drawings can't be added until the project is unlocked.",{kind:"warning"});}catch(_){}
+      return;
+    }
+    _dbg("ADDFILES: start, files="+_files.length+", apiKey="+(!!_apiKey));
     setProcessing(true);setErr("");
     bgStart(panel.id, panel.name||("Panel "+(idx+1)), projectId);
     let updated;
@@ -17320,45 +17360,73 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // ones) so saving panel.pages = livePages later doesn't wipe ECO drawings owned
     // by the EcoEditor. UI filtering happens via savedPages, not here.
     let livePages=[...(panel.pages||[])];
-    for(const f of Array.from(files)){
+    // DECISION(v1.19.897): Track per-file outcomes so we can surface a clear
+    // breakdown when nothing landed. Previously the silent "Complete" path
+    // (newItems.length===0) gave the user no clue whether the files were
+    // ignored, failed PDF render, or had an unsupported type.
+    const fileOutcomes=[];
+    for(const f of _files){
       const effectiveType=await _sniffFileType(f);
       if(effectiveType==="application/pdf"){
-        await window.pdfjsReady();
-        const pdfjs=window._pdfjs;
-        const buf=await f.arrayBuffer();
-        const pdf=await pdfjs.getDocument({data:buf}).promise;
-        for(let pg=1;pg<=pdf.numPages;pg++){
-          setProcessingMsg(`${f.name} p${pg}/${pdf.numPages}`);
-          const page=await pdf.getPage(pg);
-          const vp=page.getViewport({scale:4.0});
-          const canvas=document.createElement("canvas");
-          canvas.width=vp.width;canvas.height=vp.height;
-          await page.render({canvasContext:canvas.getContext("2d"),viewport:vp}).promise;
-          let srcCanvas=canvas;
-          if(canvas.height>canvas.width){
-            const rot=document.createElement("canvas");rot.width=canvas.height;rot.height=canvas.width;
-            const rctx=rot.getContext("2d");rctx.translate(0,rot.height);rctx.rotate(-Math.PI/2);rctx.drawImage(canvas,0,0);
-            canvas.width=0;canvas.height=0;srcCanvas=rot;
+        try{
+          await window.pdfjsReady();
+          const pdfjs=window._pdfjs;
+          const buf=await f.arrayBuffer();
+          const pdf=await pdfjs.getDocument({data:buf}).promise;
+          if(!pdf.numPages){
+            fileOutcomes.push({name:f.name,result:"pdf-zero-pages"});
+            console.warn(`[ADDFILES] ${f.name} — PDF reports 0 pages, skipping`);
+            continue;
           }
-          const dataUrl=srcCanvas.toDataURL("image/jpeg",0.95);
-          srcCanvas.width=0;srcCanvas.height=0;
+          let pageCount=0;
+          for(let pg=1;pg<=pdf.numPages;pg++){
+            setProcessingMsg(`${f.name} p${pg}/${pdf.numPages}`);
+            const page=await pdf.getPage(pg);
+            const vp=page.getViewport({scale:4.0});
+            const canvas=document.createElement("canvas");
+            canvas.width=vp.width;canvas.height=vp.height;
+            await page.render({canvasContext:canvas.getContext("2d"),viewport:vp}).promise;
+            let srcCanvas=canvas;
+            if(canvas.height>canvas.width){
+              const rot=document.createElement("canvas");rot.width=canvas.height;rot.height=canvas.width;
+              const rctx=rot.getContext("2d");rctx.translate(0,rot.height);rctx.rotate(-Math.PI/2);rctx.drawImage(canvas,0,0);
+              canvas.width=0;canvas.height=0;srcCanvas=rot;
+            }
+            const dataUrl=srcCanvas.toDataURL("image/jpeg",0.95);
+            srcCanvas.width=0;srcCanvas.height=0;
+            const resized=await resizeImage(dataUrl,3800);
+            const item={id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,types:[]};
+            newItems.push(item);
+            livePages=[...livePages,item];
+            setPendingPages([...livePages]);
+            pageCount++;
+          }
+          fileOutcomes.push({name:f.name,result:`pdf-${pageCount}-pages`});
+        }catch(pdfErr){
+          fileOutcomes.push({name:f.name,result:"pdf-error",error:pdfErr.message});
+          console.error(`[ADDFILES] ${f.name} — PDF processing failed:`,pdfErr);
+        }
+      } else if(effectiveType&&effectiveType.startsWith("image/")){
+        try{
+          setProcessingMsg(f.name);
+          const reader=new FileReader();
+          const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
           const resized=await resizeImage(dataUrl,3800);
-          const item={id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,types:[]};
+          const item={id:Date.now()+Math.random(),name:f.name,dataUrl:resized,types:[]};
           newItems.push(item);
           livePages=[...livePages,item];
           setPendingPages([...livePages]);
+          fileOutcomes.push({name:f.name,result:"image-ok"});
+        }catch(imgErr){
+          fileOutcomes.push({name:f.name,result:"image-error",error:imgErr.message});
+          console.error(`[ADDFILES] ${f.name} — image processing failed:`,imgErr);
         }
-      } else if(effectiveType&&effectiveType.startsWith("image/")){
-        setProcessingMsg(f.name);
-        const reader=new FileReader();
-        const dataUrl=await new Promise(r=>{reader.onload=e=>r(e.target.result);reader.readAsDataURL(f);});
-        const resized=await resizeImage(dataUrl,3800);
-        const item={id:Date.now()+Math.random(),name:f.name,dataUrl:resized,types:[]};
-        newItems.push(item);
-        livePages=[...livePages,item];
-        setPendingPages([...livePages]);
+      } else {
+        fileOutcomes.push({name:f.name,result:"unsupported-type",effectiveType:effectiveType||"(none)"});
+        console.warn(`[ADDFILES] ${f.name} — unsupported type "${effectiveType||"(none)"}", skipping`);
       }
     }
+    console.log("[ADDFILES] file outcomes:",fileOutcomes);
     setProcessing(false);setProcessingMsg("");
     if(_apiKey&&newItems.length){
       // Load learning examples once before detection
@@ -17414,28 +17482,42 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     // Pause for user to review detected page types before extraction begins
     pendingNewItemsRef.current=newItems;
-    if(!_apiKey){
-      // No extraction possible — just save. Show clear message.
-      updated={...panel,pages:livePages};
-      onUpdate(updated);setPendingPages([]);
-      try{await onSaveImmediate(updated);}catch(e){}
-      bgDone(panel.id,"⚠ No API key — set in Settings to enable extraction");
-      console.warn("ADDFILES: _apiKey is null — extraction skipped. Set API key in Settings.");
-    }else if(newItems.length>0){
+    if(newItems.length>0){
       bgUpdate(panel.id,"Awaiting confirmation…");
       setAwaitingConfirm(true);
       // DECISION(v1.19.589): Persist pendingPages + awaitingConfirm to module-scope cache so
       // navigating out of the project and back doesn't silently lose the user's dropped drawings.
       // PanelCard's mount useEffect restores from this cache.
       pendingPagesSet(panel.id,{pages:livePages,newItems,awaiting:true});
-    }else if(files&&files.length>0){
-      // DECISION(v1.19.584): Files were dropped but none were recognized as PDF/image.
-      // Common cause: drag from Outlook/Teams/other app that doesn't set file MIME correctly.
-      // Surface a clear, actionable message instead of a silent "Complete".
-      bgDone(panel.id,"⚠ Couldn't read the file — save it to disk first, then drag from File Explorer");
-      setErr("Couldn't read that file. If it came from an email or chat app, save it to your Desktop first, then drag it in from File Explorer.");
     }else{
-      bgDone(panel.id,"Complete");
+      // DECISION(v1.19.897): No drawings landed. Build a per-file breakdown
+      // from fileOutcomes and surface a blocking modal so the user knows
+      // EXACTLY why nothing happened — replaces the silent "Complete" /
+      // "Couldn't read the file" chip path that left Noah staring at a
+      // 100%-progress bar with no drawings imported.
+      const counts={ok:0,unsupported:0,pdfErr:0,imgErr:0,zeroPages:0};
+      for(const o of fileOutcomes){
+        if(o.result==="image-ok"||/^pdf-\d+-pages$/.test(o.result))counts.ok++;
+        else if(o.result==="unsupported-type")counts.unsupported++;
+        else if(o.result==="pdf-error")counts.pdfErr++;
+        else if(o.result==="image-error")counts.imgErr++;
+        else if(o.result==="pdf-zero-pages")counts.zeroPages++;
+      }
+      const lines=[];
+      lines.push(`No drawings were imported from the ${_files.length} file(s) you dropped.`);
+      lines.push("");
+      lines.push("Per-file breakdown:");
+      for(const o of fileOutcomes){
+        if(o.result==="image-ok")lines.push(`  ✓ ${o.name} — ok`);
+        else if(/^pdf-\d+-pages$/.test(o.result))lines.push(`  ✓ ${o.name} — ${o.result.replace("pdf-","").replace("-pages"," pages imported")}`);
+        else if(o.result==="unsupported-type")lines.push(`  ✗ ${o.name} — unsupported file type "${o.effectiveType}". Drag PDFs or images (JPG/PNG/GIF) only.`);
+        else if(o.result==="pdf-zero-pages")lines.push(`  ✗ ${o.name} — PDF appears to have 0 pages.`);
+        else if(o.result==="pdf-error")lines.push(`  ✗ ${o.name} — couldn't render PDF: ${o.error||"unknown"}`);
+        else if(o.result==="image-error")lines.push(`  ✗ ${o.name} — couldn't read image: ${o.error||"unknown"}`);
+      }
+      if(counts.unsupported>0)lines.push("","If a file came from an email/chat app, save it to your Desktop first then drag from File Explorer (some apps strip the MIME type).");
+      bgDone(panel.id,counts.ok>0?"Complete":"⚠ Nothing imported — see alert");
+      try{await arcAlert(lines.join("\n"),{kind:counts.ok>0?"warning":"error"});}catch(_){}
     }
     }catch(ex){
       console.error("addFiles error:",ex);
