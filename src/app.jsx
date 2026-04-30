@@ -25390,13 +25390,13 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {(project.panels||[]).map((p,pi)=>{
-                  const ppr=p.pricing||{};
-                  const pmk=ppr.markup??30;
-                  const ple=computeLaborEstimate(p);
-                  const plc=ple.totalHours>0?ple.totalCost:(ppr.manualLaborCost||0);
-                  const pmat=(p.bom||[]).filter(r=>!r.isLaborRow).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-                  const pgt=pmat+plc;
-                  const psp=pmk>=100?pgt:pgt/(1-pmk/100);
+                  // DECISION(v1.19.886): Use computePanelSellPrice directly so the
+                  // in-app QUOTE SUMMARY always matches the printed Quote. The
+                  // prior local material+labor calc didn't handle ECO-tagged
+                  // rows (qty=0 for modify, sign=-1 for remove) and skipped ECO
+                  // labor entirely — caused a $1,950 mismatch on PRJ402064 (30hrs ×
+                  // $65 ECO labor) between the Quote Summary and the printed quote.
+                  const psp=computePanelSellPrice(p);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   const pqty=p.lineQty??p.qty??1;
                   // DECISION(v1.19.708): Control Panel Lead Time chip — live-computed per panel.
@@ -25511,15 +25511,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   document.body
                 )}
                 {(project.panels||[]).length>1&&(()=>{
-                  const total=(project.panels||[]).reduce((sum,p)=>{
-                    const ppr=p.pricing||{};
-                    const pmk=ppr.markup??30;
-                    const ple=computeLaborEstimate(p);
-                    const plc=ple.totalHours>0?ple.totalCost:(ppr.manualLaborCost||0);
-                    const pmat=(p.bom||[]).filter(r=>!r.isLaborRow).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-                    const mg=ppr.markup??30;
-                    return sum+(mg>=100?(pmat+plc):(pmat+plc)/(1-mg/100))*(p.lineQty??p.qty??1);
-                  },0);
+                  // DECISION(v1.19.886): PROJECT TOTAL also routed through
+                  // computePanelSellPrice for consistency with the printed
+                  // Quote and the per-panel rows above.
+                  const total=(project.panels||[]).reduce((sum,p)=>sum+computePanelSellPrice(p)*(p.lineQty??p.qty??1),0);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   return(
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",marginTop:4,borderTop:"1px solid #fff"}}>
