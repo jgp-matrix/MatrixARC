@@ -26410,25 +26410,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           to the EcoScopeTabs) as a compact one-line indicator under the BASE
           button. Same lock-unlock controls; same modals; just doesn't push the
           page down anymore. See `isProjectLocked` rendering inside PanelListView. */}
-      {/* Persistent (editUnlocked) unlock banner — visible to ALL users when an owner
-          or admin has granted unlock-for-all via the Lock-Unlock modal. Read-only-aware
-          UI: owner/admin sees a Re-lock button; everyone else sees just the status.
-          DECISION(v1.19.840, ECO Stage A.6): Suppress this big banner when the unlock
-          comes from ecoEditUnlocked — the compact line in PanelListView header conveys
-          the ECO unlock state inline so we don't push the page down twice. */}
-      {isProjectLocked&&editUnlockedForAll&&!project.ecoEditUnlocked&&(
-        <div style={{margin:"12px 24px 0",padding:"10px 16px",background:"#0d2010",border:"1px solid #4ade80aa",borderRadius:8,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-          <span style={{fontSize:18}}>🔓</span>
-          <div style={{flex:1,minWidth:240,fontSize:13,lineHeight:1.5,color:"#bbf7d0"}}>
-            <strong style={{color:"#4ade80",letterSpacing:0.5}}>EDIT ACCESS GRANTED</strong>
-            {" — "}{(()=>{const ownerViewer=(viewers||[]).find(v=>v.uid===project.editUnlockedBy);const grantedBy=ownerViewer?.userName||(ownerViewer?.userEmail||"").split("@")[0]||"the project owner";return `${grantedBy} unlocked this ${project.wonAt?"won":"lost"} project for all users${project.editUnlockedAt?" on "+new Date(project.editUnlockedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}.`;})()} Edits will bump Quote Rev and update Firestore normally.
-          </div>
-          {iAmOwnerOrAdmin&&(
-            <button onClick={relockProject}
-              style={{background:"none",border:"1px solid #4ade8088",borderRadius:6,color:"#86efac",cursor:"pointer",fontSize:12,padding:"4px 14px",fontWeight:700,letterSpacing:0.4}}>🔒 Re-lock Project</button>
-          )}
-        </div>
-      )}
+      {/* DECISION(v1.19.866, ECO Stage A): EDIT ACCESS GRANTED banner removed
+          per user request. The unlock state is already conveyed by the
+          compact PROJECT LOCKED / UNLOCKED FOR ECO indicator under the
+          EcoScopeTabs strip — the big banner here was redundant. The
+          relockProject function and the unlock confirm modal still exist;
+          they just no longer surface a top-of-page banner. */}
       {/* DECISION(v1.19.754/755): Won/Lost unlock confirm modal — owner/admin only.
           Offers TWO options:
           • "Unlock for This Session" — per-tab override, only for this user (existing).
