@@ -23513,70 +23513,21 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               {bcSyncMsg&&<div style={{fontSize:12,color:bcSyncMsg.ok===null?C.muted:bcSyncMsg.ok?C.green:C.yellow,marginBottom:2}}>{bcSyncMsg.text}</div>}
               {relinkMsg&&<div style={{fontSize:12,color:relinkMsg.startsWith("✓")?C.green:relinkMsg.startsWith("Failed")?C.red:C.muted,marginBottom:2}}>{relinkMsg}</div>}
             </div>
-            {/* DECISION(v1.19.847, ECO Stage A): When an active draft ECO is the
-                scope AND BASE hasn't been unlocked, grey out the project-level
-                action buttons (Add Panel / CADLink / Copy / Transfer / Delete)
-                — those affect BASE structure and shouldn't be touched while in
-                an ECO scope. Overlay a single button "ACTIVE ECO ## — UNLOCK
-                BASE" that triggers the same admin-unlock flow that previously
-                lived in EcoScopeTabs. The Admin Unlock affordance was removed
-                from the tab strip per user request. */}
-            {(()=>{
-              const _hasActiveEco=activeScope?.type==="eco"&&activeEcoIsCurrentDraft;
-              const _ecoLabel=_hasActiveEco?`ECO ${String(activeScope.ecoNumber||0).padStart(2,"0")}`:null;
-              const _ecosExist=Array.isArray(project?.ecoSummary)&&project.ecoSummary.length>0;
-              const _showOverlay=_hasActiveEco&&_ecosExist&&!baseUnlocked;
-              const _userCanUnlock=_appCtx.role==="admin"||(!project.createdBy||project.createdBy===uid);
-              return(
-                <div style={{position:"relative"}}>
-                  <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",opacity:_showOverlay?0.25:1,pointerEvents:_showOverlay?"none":"auto",filter:_showOverlay?"grayscale(0.5)":"none"}}>
-                    <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
-                    {panels.some(p=>(p.bom||[]).some(r=>!r.isLaborRow))&&(
-                      <button onClick={()=>setShowCADLinkModal(true)} style={btn("#0d1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>📦 Send CADLink BOM's</button>
-                    )}
-                    {!readOnly&&onCopy&&(
-                      <button onClick={onCopy} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⧉ Copy</button>
-                    )}
-                    {!readOnly&&onTransfer&&(
-                      <button onClick={onTransfer} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⇄ Transfer</button>
-                    )}
-                    {!readOnly&&onDelete&&(
-                      <button onClick={()=>{if(isAdmin())onDelete();else setShowDeleteAdminWarn(true);}} style={btn(C.redDim,C.red,{border:`1px solid ${C.red}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>🗑 Delete</button>
-                    )}
-                  </div>
-                  {_showOverlay&&(
-                    <div style={{position:"absolute",inset:0,zIndex:10,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-                      <button
-                        onClick={async()=>{
-                          if(!_userCanUnlock){
-                            await arcAlert("Only the project owner or an admin can unlock BASE while an ECO is in progress.",{kind:"warning"});
-                            return;
-                          }
-                          const ok=await arcConfirm(
-                            `Unlock BASE for this session?\n\nYou're currently in ${_ecoLabel}. Unlocking BASE temporarily lets you edit project-level actions (Add Panel, Copy, Transfer, Delete) without leaving the ECO scope. The buttons re-lock automatically when this session ends or when you click Re-lock.`,
-                            {kind:"warning",okLabel:"Unlock BASE for session"}
-                          );
-                          if(ok)onBaseUnlock&&onBaseUnlock(true);
-                        }}
-                        title="Unlock BASE-level project actions for this session"
-                        style={{pointerEvents:"auto",background:"#1a0040",color:"#a855f7",border:"1.5px solid #a855f7",borderRadius:8,padding:"10px 22px",fontSize:13,fontWeight:800,letterSpacing:0.5,cursor:"pointer",boxShadow:"0 0 24px rgba(168,85,247,0.45)",whiteSpace:"nowrap"}}>
-                        ACTIVE {_ecoLabel} — 🔓 UNLOCK BASE
-                      </button>
-                    </div>
-                  )}
-                  {_hasActiveEco&&_ecosExist&&baseUnlocked&&(
-                    <div style={{marginTop:6,display:"flex",justifyContent:"flex-end"}}>
-                      <button
-                        onClick={()=>onBaseUnlock&&onBaseUnlock(false)}
-                        title="Re-lock BASE-level actions"
-                        style={{background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px",fontSize:10,fontWeight:600,cursor:"pointer",letterSpacing:0.3}}>
-                        🔒 Re-lock BASE
-                      </button>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
+              {panels.some(p=>(p.bom||[]).some(r=>!r.isLaborRow))&&(
+                <button onClick={()=>setShowCADLinkModal(true)} style={btn("#0d1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>📦 Send CADLink BOM's</button>
+              )}
+              {!readOnly&&onCopy&&(
+                <button onClick={onCopy} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⧉ Copy</button>
+              )}
+              {!readOnly&&onTransfer&&(
+                <button onClick={onTransfer} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⇄ Transfer</button>
+              )}
+              {!readOnly&&onDelete&&(
+                <button onClick={()=>{if(isAdmin())onDelete();else setShowDeleteAdminWarn(true);}} style={btn(C.redDim,C.red,{border:`1px solid ${C.red}44`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>🗑 Delete</button>
+              )}
+            </div>
             {/* DECISION(v1.19.602): Viewer list lives BELOW the button row so it can't push the Delete button out of alignment. Right-aligned to sit under the action buttons. */}
             {(viewers||[]).filter(v=>v.uid!==uid).length>0&&(
               <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",flexWrap:"wrap",gap:10,marginTop:6,fontSize:11,color:C.muted}}>
@@ -24078,7 +24029,49 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               </div>
 
               {/* Action buttons */}
-              <div style={{display:"flex",flexDirection:"column",gap:6,marginTop:4,paddingTop:8,borderTop:`1px solid ${C.border}33`}}>
+              {/* DECISION(v1.19.847, ECO Stage A): When viewing BASE while a
+                  draft ECO is active (and BASE hasn't been admin-unlocked), grey
+                  out the entire Quote Summary action-button stack and overlay an
+                  "ACTIVE ECO ## — UNLOCK BASE" button. Click → confirm → admin
+                  unlock for the session. Once unlocked, buttons return to full
+                  opacity and a small Re-lock affordance appears beneath. */}
+              <div style={{position:"relative"}}>
+              {(()=>{
+                const _draftEcos=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
+                const _latestDraft=_draftEcos.slice(-1)[0]||null;
+                const _onBase=!activeScope||activeScope.type==="base";
+                const _showOverlay=_onBase&&!!_latestDraft&&!baseUnlocked;
+                if(!_showOverlay)return null;
+                const _userCanUnlock=_appCtx.role==="admin"||(!project.createdBy||project.createdBy===uid);
+                const _ecoLabel=`ECO ${String(_latestDraft.number||0).padStart(2,"0")}`;
+                return(
+                  <div style={{position:"absolute",inset:0,zIndex:10,display:"flex",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                    <button
+                      onClick={async()=>{
+                        if(!_userCanUnlock){
+                          await arcAlert("Only the project owner or an admin can unlock BASE while an ECO is in progress.",{kind:"warning"});
+                          return;
+                        }
+                        const ok=await arcConfirm(
+                          `Unlock BASE for this session?\n\nYou're currently on BASE while ${_ecoLabel} is in progress. The Quote Summary actions are locked because they apply to BASE — running them now would push BASE through Sales workflow without the ECO going through. Unlock only if you really need to act on BASE during the ECO round.`,
+                          {kind:"warning",okLabel:"Unlock BASE for session"}
+                        );
+                        if(ok)onBaseUnlock&&onBaseUnlock(true);
+                      }}
+                      title="Unlock BASE Quote Summary actions for this session"
+                      style={{pointerEvents:"auto",background:"#1a0040",color:"#a855f7",border:"1.5px solid #a855f7",borderRadius:8,padding:"10px 18px",fontSize:12,fontWeight:800,letterSpacing:0.5,cursor:"pointer",boxShadow:"0 0 24px rgba(168,85,247,0.45)",whiteSpace:"nowrap",textAlign:"center",lineHeight:1.3}}>
+                      ACTIVE {_ecoLabel}<br/>🔓 UNLOCK BASE
+                    </button>
+                  </div>
+                );
+              })()}
+              <div style={(()=>{
+                const _draftEcos=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
+                const _latestDraft=_draftEcos.slice(-1)[0]||null;
+                const _onBase=!activeScope||activeScope.type==="base";
+                const _greyed=_onBase&&!!_latestDraft&&!baseUnlocked;
+                return{display:"flex",flexDirection:"column",gap:6,marginTop:4,paddingTop:8,borderTop:`1px solid ${C.border}33`,opacity:_greyed?0.25:1,pointerEvents:_greyed?"none":"auto",filter:_greyed?"grayscale(0.5)":"none"};
+              })()}>
                 {(()=>{
                   const now=Date.now();
                   const RFQ_EXPIRED_MS=5*24*60*60*1000; // 5 days
@@ -24291,6 +24284,24 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     🔄 Update BOM in BC (Item# {sp.bcItemNumber})
                   </button>
                 )}
+              </div>
+              {/* Re-lock affordance when admin has unlocked BASE for this session. */}
+              {(()=>{
+                const _draftEcos=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
+                const _latestDraft=_draftEcos.slice(-1)[0]||null;
+                const _onBase=!activeScope||activeScope.type==="base";
+                if(!_onBase||!_latestDraft||!baseUnlocked)return null;
+                return(
+                  <div style={{marginTop:6,display:"flex",justifyContent:"flex-end"}}>
+                    <button
+                      onClick={()=>onBaseUnlock&&onBaseUnlock(false)}
+                      title="Re-lock BASE Quote Summary actions"
+                      style={{background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 10px",fontSize:10,fontWeight:600,cursor:"pointer",letterSpacing:0.3}}>
+                      🔒 Re-lock BASE
+                    </button>
+                  </div>
+                );
+              })()}
               </div>
               </div>
             </>);
