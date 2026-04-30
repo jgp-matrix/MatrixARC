@@ -5236,34 +5236,45 @@ if(typeof window!=="undefined"){window._bumpBomVersionIfChanged=_bumpBomVersionI
 // (PN/qty/price/lead/desc/mfr), the explicit pricing knobs that drive sell
 // price (markup/manualLaborCost/laborRate/laborHoursOverride/isBudgetary), and
 // the entire `quote` blob (terms, contacts, addresses, notes).
-// DECISION(v1.19.852, ECO Stage A): Hash narrowed further per user request:
-// quote rev should bump ONLY when BOM Part #'s change, BOM Qty's change (rows
-// added/removed/edited), or Labor settings change (rate/hours-override/manual
-// cost/lineQty). Everything else — unitPrice updates from BC, lead-time
-// refreshes, description/manufacturer/notes edits, markup tweaks, drawing
-// rev/desc/no edits, ship-date changes, isBudgetary toggles, quote terms /
-// contacts / line notes — does NOT bump. Those are operational metadata that
-// shouldn't show up to the customer as a new revision.
+// DECISION(v1.19.853, ECO Stage A): Reverted v1.19.852's narrow hash. The user
+// confirmed all the previously-included fields are valid bump triggers — the
+// real issue was that opening a project was triggering bumps via spurious
+// saves, which is now addressed by the ECO suppression in saveProject /
+// saveProjectPanel (v1.19.850). Hash is back to the v1.19.820 shape: narrow
+// enough that bomNotes / bomVersion / pageCount / whole-pricing don't drift it
+// (those caused the original runaway bumps), broad enough that any real
+// quote-affecting change (unit price, lead time, description, manufacturer,
+// drawing identity, ship dates, markup, budgetary, quote terms / contacts)
+// is captured.
 function _computeQuoteHash(project){
   if(!project)return"";
   const data={
     panels:(project.panels||[]).map(p=>{
       const pr=p.pricing||{};
       return{
-        // Panel-level qty (number of identical panels) is part of "Qty"
+        drawingNo:p.drawingNo||"",
+        drawingDesc:p.drawingDesc||"",
+        drawingRev:p.drawingRev||"",
+        requestedShipDate:p.requestedShipDate||"",
+        productionEndDate:p.productionEndDate||"",
         lineQty:p.lineQty??1,
-        // Labor knobs that change the customer-visible labor calculation
+        markup:pr.markup??null,
         manualLaborCost:pr.manualLaborCost??null,
         laborRate:pr.laborRate??null,
         laborHoursOverride:pr.laborHoursOverride??null,
-        // BOM: only Part # + Qty per row. Adding/removing rows = different
-        // hash (array length + content). Editing PN or Qty = different hash.
+        isBudgetary:!!pr.isBudgetary,
         bom:(p.bom||[]).filter(r=>!r.isLaborRow).map(r=>({
           pn:(r.partNumber||"").trim(),
           q:r.qty||0,
+          up:r.unitPrice||0,
+          ld:r.leadTimeDays??null,
+          ls:r.leadTimeSource||"",
+          d:(r.description||"").trim(),
+          m:(r.manufacturer||"").trim(),
         })),
       };
     }),
+    quote:project.quote||{},
   };
   const str=JSON.stringify(data);
   let h=5381;
