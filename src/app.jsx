@@ -1806,6 +1806,52 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   return taskNo;
 }
 
+// DECISION(v1.19.867, ECO Stage A): Delete a single ECO task line in BC. Used
+// by the ARC ECO delete flow so dropping an ECO in ARC also tears down its
+// BC task slot — keeps ARC and BC in sync. Field-name probe + fallback
+// matches the bcAddEcoTask creator so this works on legacy NAV.ProjectTaskLines
+// tenants where the page is named "ProjectTaskLines" but uses Job_ prefix.
+//
+// projectNumber : BC project number
+// panelIndex    : 1-based
+// ecoNumber     : 1-based (1-10)
+// Returns: taskNo on success, throws on error. 404 (not found) is treated as
+// success — the task may already have been deleted, or never created.
+async function bcDeleteEcoTask(projectNumber, panelIndex, ecoNumber){
+  if(ecoNumber<1||ecoNumber>10)throw new Error(`ECO number must be 1–10 (got ${ecoNumber})`);
+  const n=panelIndex;
+  const base=20000+n*100;
+  const taskNo=String(base+30+(ecoNumber-1));
+  const allPages=await bcDiscoverODataPages();
+  const taskPage=allPages.find(p=>/^project.?task/i.test(p))||allPages.find(p=>/job.?task/i.test(p))||null;
+  if(!taskPage)throw new Error("bcDeleteEcoTask: No project task OData page found");
+  // Probe field names — use Project_No first, fall back to Job_No
+  let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
+  try{
+    const pr=await fetch(`${BC_ODATA_BASE}/${taskPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(pr.ok){
+      const pd=await pr.json();const rec=(pd.value||[])[0];
+      if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}
+    }
+  }catch(_){}
+  async function deleteTask(){
+    const url=`${BC_ODATA_BASE}/${taskPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}')`;
+    const r=await fetch(url,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
+    return{ok:r.ok||r.status===204||r.status===404,status:r.status,text:r.ok||r.status===204||r.status===404?"":await r.text()};
+  }
+  let res=await deleteTask();
+  // Probe-fallback if Project_No was wrong: swap and retry
+  if(!res.ok&&FP_NO==="Project_No"&&res.status===400&&/'Project_No' does not exist/i.test(res.text||"")){
+    console.log(`bcDeleteEcoTask: Project_No rejected, retrying with Job_No for task ${taskNo}`);
+    FP_NO="Job_No";FP_TASK_NO="Job_Task_No";
+    res=await deleteTask();
+  }
+  if(!res.ok)throw new Error(`bcDeleteEcoTask: task ${taskNo} failed (${res.status}): ${res.text}`);
+  console.log(`bcDeleteEcoTask: ECO ${ecoNumber} task ${taskNo} deleted for panel ${panelIndex}`);
+  return taskNo;
+}
+if(typeof window!=="undefined"){window._bcDeleteEcoTask=bcDeleteEcoTask;}
+
 async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, projectName){
   // PATCHes the description fields on the four task lines for a specific panel
   // (Begin-Total 20N00, Posting 20N10, Engineering 20N20, End-Total 20N99)
@@ -9857,8 +9903,9 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
   async function handleDeleteEco(){
     if(deleting||!activeScope||activeScope.type!=="eco"||!activeScope.ecoId)return;
     const ecoLabel=`ECO ${String(activeScope.ecoNumber||0).padStart(2,"0")}`;
+    const ecoNumber=activeScope.ecoNumber||0;
     const ok=await arcConfirm(
-      `Delete ${ecoLabel}?\n\nThis removes the ECO from this project entirely. Any drawings or BOM changes attached to it will also be removed. Cannot be undone.`,
+      `Delete ${ecoLabel}?\n\nThis removes the ECO from this project entirely. Any drawings or BOM changes attached to it will also be removed. The corresponding BC Project Tasks will also be deleted. Cannot be undone.`,
       {kind:"warning",okLabel:`Delete ${ecoLabel}`}
     );
     if(!ok)return;
@@ -9866,12 +9913,52 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
     const ecoIdBeingDeleted=activeScope.ecoId;
     try{
       console.log("[ECO] deleting",ecoIdBeingDeleted);
+      // DECISION(v1.19.867, ECO Stage A): Delete BC tasks BEFORE the ARC
+      // Firestore delete. If BC fails, surface the error and abort so ARC
+      // and BC stay consistent. 404s are treated as success inside
+      // bcDeleteEcoTask (task may already be missing). Failures from BC
+      // are non-blocking for the UX though — we proceed with ARC delete
+      // anyway after warning the user, since BC orphans are recoverable
+      // (manual cleanup) but a stuck ARC ECO is more disruptive.
+      const _bcDelResults={deleted:[],failed:[],skipped:null};
+      if(!project.bcProjectNumber){
+        _bcDelResults.skipped="no-bc-project-number";
+      }else if(!_bcToken){
+        _bcDelResults.skipped="no-bc-token";
+      }else if(ecoNumber<1||ecoNumber>10){
+        _bcDelResults.skipped="eco-out-of-range";
+      }else{
+        const panels=project.panels||[];
+        for(let i=0;i<panels.length;i++){
+          try{
+            const taskNo=await bcDeleteEcoTask(project.bcProjectNumber,i+1,ecoNumber);
+            _bcDelResults.deleted.push({panelIdx:i+1,taskNo});
+            console.log(`[ECO] BC task ${taskNo} deleted for panel ${i+1} (${ecoLabel})`);
+          }catch(taskErr){
+            const errMsg=taskErr&&taskErr.message?taskErr.message:String(taskErr);
+            _bcDelResults.failed.push({panelIdx:i+1,error:errMsg});
+            console.error(`[ECO] bcDeleteEcoTask FAILED for panel ${i+1} (${ecoLabel}):`,errMsg);
+          }
+        }
+      }
+      // Now delete from ARC.
       await deleteEcoDoc(uid,project,ecoIdBeingDeleted);
       console.log("[ECO] deleted; switching scope back to BASE");
       // Optimistically hide the tab now — the snapshot listener will catch up
       // shortly with the persisted ecoSummary.
       _setPendingDeletedIds(prev=>{const n=new Set(prev);n.add(ecoIdBeingDeleted);return n;});
       onScopeChange&&onScopeChange({type:"base"});
+      // Surface BC delete failures (non-blocking).
+      if(_bcDelResults.failed.length>0){
+        await arcAlert(`${ecoLabel} deleted from ARC. ${_bcDelResults.deleted.length} of ${_bcDelResults.deleted.length+_bcDelResults.failed.length} BC tasks deleted; ${_bcDelResults.failed.length} failed.\n\nFirst error: ${_bcDelResults.failed[0].error}\n\nManual BC cleanup may be required for the failed slots.`,{kind:"warning"});
+      }else if(_bcDelResults.skipped){
+        const reason={"no-bc-project-number":"project isn't linked to BC",
+          "no-bc-token":"BC connection dropped",
+          "eco-out-of-range":`ECO number ${ecoNumber} outside the 1-10 BC slot range`}[_bcDelResults.skipped]||_bcDelResults.skipped;
+        await arcAlert(`${ecoLabel} deleted from ARC, but BC task cleanup was SKIPPED — ${reason}.`,{kind:"warning"});
+      }else if(_bcDelResults.deleted.length>0){
+        console.log(`[ECO] ${ecoLabel} fully deleted — ${_bcDelResults.deleted.length} BC tasks removed: ${_bcDelResults.deleted.map(d=>d.taskNo).join(", ")}`);
+      }
     }catch(e){
       console.error("[ECO] deleteEcoDoc failed:",e);
       try{await arcAlert("Could not delete ECO: "+(e&&e.message?e.message:String(e)),{kind:"error"});}
