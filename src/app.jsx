@@ -17470,6 +17470,29 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(row.ecoTag===_activeEcoId)return false;
     return true;
   };
+  // DECISION(v1.19.878, ECO delta-row): Pricing/lead-time/vendor fields are
+  // copied from the base row onto the new ECO row at creation time so the
+  // row is "self-contained" and doesn't get flagged as needing a fresh BC
+  // pricing fetch. Without these, the BC sync background check would see
+  // priceSource:undefined and queue it for the "BC Purchase Price Updates"
+  // confirmation modal on next project open. Quote totals computed against
+  // the modify row therefore show correct prices immediately, even if the
+  // user only changed qty.
+  function _inheritPricingFromBase(base){
+    return{
+      unitPrice:base.unitPrice??null,
+      priceSource:base.priceSource||undefined,
+      priceDate:base.priceDate??null,
+      bcPoDate:base.bcPoDate??null,
+      bcVendorName:base.bcVendorName||"",
+      bcVendorNo:base.bcVendorNo||"",
+      supplierPartNumber:base.supplierPartNumber||"",
+      leadTimeDays:base.leadTimeDays??null,
+      leadTimeSource:base.leadTimeSource||undefined,
+      leadTimeUpdatedAt:base.leadTimeUpdatedAt??null,
+      leadTimeEstimated:!!base.leadTimeEstimated,
+    };
+  }
   // Create a new ECO 'modify' row linked to a base row. Base row stays intact.
   // qty on the modify row is a SIGNED DELTA (e.g., +1 means add one more, -1
   // means subtract one). Other fields are pre-populated from base for context;
@@ -17494,9 +17517,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       partNumber:base.partNumber||"",
       description:base.description||"",
       manufacturer:base.manufacturer||"",
-      unitPrice:null,
-      leadTimeDays:null,
-      leadTimeSource:undefined,
+      ..._inheritPricingFromBase(base),
       notes:"",
       ecoOriginal:{
         qty:base.qty,
@@ -17542,9 +17563,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       partNumber:base.partNumber||"",
       description:base.description||"",
       manufacturer:base.manufacturer||"",
-      unitPrice:base.unitPrice,
-      leadTimeDays:base.leadTimeDays,
-      leadTimeSource:base.leadTimeSource||"",
+      ..._inheritPricingFromBase(base),
       ecoOriginal:{
         qty:base.qty,
         unitPrice:base.unitPrice,
@@ -17585,10 +17604,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const delta=newQty-baseQty;
       if(existing){
         if(delta===0){
-          // No change vs base — drop the modify row entirely. (Other field
-          // edits on this row are lost; that's intentional since qty=0
-          // delta with no other change means "no ECO impact".)
-          const hasOtherChanges=existing.partNumber!==(base.partNumber||"")||existing.description!==(base.description||"")||existing.manufacturer!==(base.manufacturer||"")||existing.unitPrice!=null;
+          // No change vs base — drop the modify row entirely if no other
+          // overrides are in play. Pricing/lead-time fields are inherited
+          // from base on row creation, so we compare AGAINST base values
+          // (not against null/undefined) to detect a real override.
+          const hasOtherChanges=
+            existing.partNumber!==(base.partNumber||"")||
+            existing.description!==(base.description||"")||
+            existing.manufacturer!==(base.manufacturer||"")||
+            (existing.unitPrice??null)!==(base.unitPrice??null);
           if(!hasOtherChanges){
             bom=bom.filter(r=>r.id!==existing.id);
           }else{
@@ -17610,9 +17634,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           partNumber:base.partNumber||"",
           description:base.description||"",
           manufacturer:base.manufacturer||"",
-          unitPrice:null,
-          leadTimeDays:null,
-          leadTimeSource:undefined,
+          ..._inheritPricingFromBase(base),
           notes:"",
           ecoOriginal:{
             qty:base.qty,
@@ -17631,16 +17653,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const sameAsBase=String(newVal??"")===String(base[field]??"");
       if(existing){
         if(sameAsBase){
-          // Edit reverts the field back to base — clear the ECO override.
+          // Edit reverts the field back to base — clear the ECO override by
+          // restoring the base value (so the field re-aligns with base).
           const updates={...existing};
-          if(field==="unitPrice")updates[field]=null;
+          if(field==="unitPrice")updates[field]=base.unitPrice??null;
           else updates[field]=base[field]||"";
           // If after this revert the modify row has no effective changes, drop it
           const hasQtyDelta=Number(updates.qty)!==0;
           const hasPnChange=String(updates.partNumber||"")!==String(base.partNumber||"");
           const hasDescChange=String(updates.description||"")!==String(base.description||"");
           const hasMfrChange=String(updates.manufacturer||"")!==String(base.manufacturer||"");
-          const hasPriceChange=updates.unitPrice!=null;
+          const hasPriceChange=(updates.unitPrice??null)!==(base.unitPrice??null);
           if(!hasQtyDelta&&!hasPnChange&&!hasDescChange&&!hasMfrChange&&!hasPriceChange){
             bom=bom.filter(r=>r.id!==existing.id);
           }else{
@@ -17662,9 +17685,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           partNumber:base.partNumber||"",
           description:base.description||"",
           manufacturer:base.manufacturer||"",
-          unitPrice:null,
-          leadTimeDays:null,
-          leadTimeSource:undefined,
+          ..._inheritPricingFromBase(base),
           notes:"",
           [field]:newVal,
           ecoOriginal:{
@@ -18051,9 +18072,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           partNumber:row.partNumber||"",
           description:row.description||"",
           manufacturer:row.manufacturer||"",
-          unitPrice:null,
-          leadTimeDays:null,
-          leadTimeSource:undefined,
+          ..._inheritPricingFromBase(row),
           notes:"",
           ecoOriginal:{
             qty:row.qty,
