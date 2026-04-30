@@ -7175,6 +7175,13 @@ async function callRemoveTeamMember(targetUid,companyId){
 async function callUpdateMemberRole(targetUid,role,companyId){
   return(await fbFunctions.httpsCallable("updateMemberRole")({targetUid,role,companyId})).data;
 }
+// DECISION(v1.19.899): Admin-invoked wipe of all team members' user-level
+// Anthropic API keys. Forces every member onto the company-level key on next
+// loadApiKey, eliminating stale personal-key overrides. Returns
+// {cleared, skipped, totalMembers, errors}.
+async function callResetTeamApiKeys(companyId){
+  return(await fbFunctions.httpsCallable("resetTeamApiKeys")({companyId})).data;
+}
 
 // ── BOM EXTRACTION PROMPT ──
 const BOM_PROMPT=`You are an expert at reading UL508A industrial electrical control panel drawings.
@@ -30270,6 +30277,26 @@ function APISetupModal({uid,onClose}){
             <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:1,opacity:loading||!key.trim()?0.5:1,fontSize:12})}>{saved?"✓ Saved":"Save Key"}</button>
           </div>
           {apiTestMsg&&<div style={{fontSize:12,color:apiTestMsg.ok?C.green:C.red,marginTop:6,padding:"6px 10px",background:apiTestMsg.ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",border:`1px solid ${apiTestMsg.ok?"rgba(34,197,94,0.25)":"rgba(239,68,68,0.25)"}`,borderRadius:6}}>{apiTestMsg.text}</div>}
+          {/* DECISION(v1.19.899): Admin-only "Reset team API keys" button.
+              Wipes every team member's users/{uid}/config/api doc via Cloud
+              Function so they all fall back to the company-level key on next
+              load. Use after rotating the company key — eliminates stale
+              personal-key overrides that were causing AI calls to hit an
+              exhausted Anthropic billing account. */}
+          {_appCtx.companyId&&_appCtx.role==="admin"&&(
+            <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+              <button onClick={async()=>{
+                if(!await arcConfirm("Reset every team member's personal API key? They will all fall back to this company-level key.\n\nUse after rotating the key. Members keep no per-user override.",{kind:"warning",okLabel:"Reset Team Keys"}))return;
+                try{
+                  const result=await callResetTeamApiKeys(_appCtx.companyId);
+                  await arcAlert(`Cleared ${result.cleared} stale per-user API key${result.cleared===1?"":"s"}.\n${result.skipped} member${result.skipped===1?"":"s"} had no override.\n\nTeam members must hard-refresh to pick up the company key.`,{kind:"success"});
+                }catch(e){await arcAlert("Reset failed: "+(e.message||"unknown error"),{kind:"error"});}
+              }} style={btn("#3a1f00","#fbbf24",{width:"100%",fontSize:11,padding:"6px 10px",border:"1px solid #fbbf2444"})}>
+                ⚠ Reset Team API Keys (force all members onto company key)
+              </button>
+              <div style={{fontSize:10,color:C.muted,marginTop:4,fontStyle:"italic",textAlign:"center"}}>Wipes per-user overrides via Cloud Function. Members refresh to pick up new key.</div>
+            </div>
+          )}
         </div>
 
         {/* BC Environment */}
