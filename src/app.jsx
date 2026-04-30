@@ -9543,6 +9543,40 @@ async function createEcoDoc(uid,project,kind){
   });
 }
 
+// DECISION(v1.19.837, ECO Stage A): Delete an ECO. Removes the subcollection doc,
+// removes the entry from project.ecoSummary, clears `activeEcoId` if it pointed at
+// this ECO. Stripping any rows tagged with this ecoId from panel.bom is layered in
+// Stage B once edit interception writes such rows; for Stage A there are no tagged
+// rows yet (Stage 0 cleanup wiped the legacy ones). Used by the "Delete ECO"
+// button on the ECO scope and for cleanup of test ECOs.
+async function deleteEcoDoc(uid,project,ecoId){
+  const projPath=`${(_appCtx.projectsPath||`users/${uid}/projects`)}/${project.id}`;
+  const ecoPath=`${ecoSubcollectionPath(uid,project.id)}/${ecoId}`;
+  return await fbDb.runTransaction(async tx=>{
+    const projSnap=await tx.get(fbDb.doc(projPath));
+    const cur=projSnap.exists?projSnap.data():{};
+    const summary=Array.isArray(cur.ecoSummary)?cur.ecoSummary.filter(e=>e.ecoId!==ecoId):[];
+    // Strip any ecoTag rows belonging to this ECO from every panel's BOM
+    // (defensive — Stage B+ writes such rows; Stage A shouldn't have any).
+    const panels=Array.isArray(cur.panels)?cur.panels.map(panel=>{
+      const bom=Array.isArray(panel.bom)?panel.bom.filter(r=>r.ecoTag!==ecoId):panel.bom;
+      const pages=Array.isArray(panel.pages)?panel.pages.filter(p=>p.ecoTag!==ecoId):panel.pages;
+      return{...panel,bom,pages};
+    }):cur.panels;
+    const projUpdate={
+      ecoSummary:summary,
+      activeEcoId:cur.activeEcoId===ecoId?null:cur.activeEcoId,
+      panels,
+      updatedAt:Date.now(),
+      updatedBy:uid,
+    };
+    tx.update(fbDb.doc(projPath),projUpdate);
+    tx.delete(fbDb.doc(ecoPath));
+    return{deleted:true,remainingCount:summary.length};
+  });
+}
+if(typeof window!=="undefined"){window._deleteEcoDoc=deleteEcoDoc;}
+
 // EcoScopeTabs — horizontal tab strip rendered above panel cards on the Project view.
 // Phase 1 ships the visual shell + + New ECO action. Tab selection state is owned by
 // the parent (ProjectView) and passed down so PanelListView/PanelCard can eventually
@@ -9580,10 +9614,36 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
     setCreating(false);
     console.log("[ECO] handleNewEco finished");
   }
+  // DECISION(v1.19.837, ECO Stage A): Delete ECO action. Visible only when an
+  // ECO is the active scope. Confirmation prompt; on success scope flips back
+  // to BASE and the parent project doc removes the entry from ecoSummary.
+  const [deleting,setDeleting]=useState(false);
+  async function handleDeleteEco(){
+    if(deleting||!activeScope||activeScope.type!=="eco"||!activeScope.ecoId)return;
+    const ecoLabel=`ECO ${String(activeScope.ecoNumber||0).padStart(2,"0")}`;
+    const ok=await arcConfirm(
+      `Delete ${ecoLabel}?\n\nThis removes the ECO from this project entirely. Any drawings or BOM changes attached to it will also be removed. Cannot be undone.`,
+      {kind:"warning",okLabel:`Delete ${ecoLabel}`}
+    );
+    if(!ok)return;
+    setDeleting(true);
+    try{
+      console.log("[ECO] deleting",activeScope.ecoId);
+      await deleteEcoDoc(uid,project,activeScope.ecoId);
+      console.log("[ECO] deleted; switching scope back to BASE");
+      onScopeChange&&onScopeChange({type:"base"});
+    }catch(e){
+      console.error("[ECO] deleteEcoDoc failed:",e);
+      try{await arcAlert("Could not delete ECO: "+(e&&e.message?e.message:String(e)),{kind:"error"});}
+      catch(_){}
+    }
+    setDeleting(false);
+  }
   function tabBg(isActive){return isActive?"#1a0040":"#0a0a14";}
   function tabBorder(isActive){return isActive?"1px solid #a855f7":"1px solid "+C.border;}
   function tabColor(isActive){return isActive?"#a855f7":C.muted;}
   const baseActive=!activeScope||activeScope.type==="base";
+  const activeEcoLabel=activeScope?.type==="eco"?`ECO ${String(activeScope.ecoNumber||0).padStart(2,"0")}`:null;
   // DECISION(v1.19.834, ECO Stage A.1): When any ECO exists on the project, BASE
   // becomes read-only by default — admins can unlock for the current session via
   // a button next to the BASE tab. Lock state lives in ProjectView so PanelCard
@@ -9649,6 +9709,18 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
         <span style={{fontSize:11,color:C.muted,fontStyle:"italic",marginLeft:8}}>
           ECOs available after PO is received
         </span>
+      )}
+      {/* DECISION(v1.19.837, ECO Stage A): Delete-ECO button — visible only when
+          an ECO is the active scope. Pushed to the far right of the tab strip
+          via marginLeft:auto so it doesn't crowd the scope toggles. */}
+      {activeEcoLabel&&canCreateEco&&(
+        <button
+          disabled={deleting}
+          onClick={handleDeleteEco}
+          title={`Delete ${activeEcoLabel} from this project`}
+          style={{marginLeft:"auto",background:"transparent",color:"#f87171",border:"1px solid #f8717177",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:deleting?"wait":"pointer",letterSpacing:0.3,opacity:deleting?0.5:1}}>
+          {deleting?"Deleting…":`🗑 Delete ${activeEcoLabel}`}
+        </button>
       )}
     </div>
   );
