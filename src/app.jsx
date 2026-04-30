@@ -9558,16 +9558,22 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
   // EcoEditor modal. The redesign uses the same Items tab + scope toggle to track
   // ECO edits in place. Tab clicks just call onScopeChange.
   async function handleNewEco(){
-    if(creating)return;
+    console.log("[ECO] + New ECO clicked. creating=",creating,"project.id=",project?.id,"bcPoStatus=",project?.bcPoStatus);
+    if(creating){console.log("[ECO] already creating — skipped");return;}
     setCreating(true);
     try{
+      console.log("[ECO] calling createEcoDoc…");
       const result=await createEcoDoc(uid,project,"customer_change");
+      console.log("[ECO] createEcoDoc returned:",result);
       onScopeChange&&onScopeChange({type:"eco",ecoNumber:result.number,ecoId:result.ecoId});
+      console.log("[ECO] onScopeChange called");
     }catch(e){
-      console.error("createEcoDoc failed:",e);
-      await arcAlert("Could not create ECO: "+(e&&e.message?e.message:String(e)),{kind:"error"});
+      console.error("[ECO] createEcoDoc failed:",e);
+      try{await arcAlert("Could not create ECO: "+(e&&e.message?e.message:String(e)),{kind:"error"});}
+      catch(_){console.error("[ECO] arcAlert also failed:",_);}
     }
     setCreating(false);
+    console.log("[ECO] handleNewEco finished");
   }
   function tabBg(isActive){return isActive?"#1a0040":"#0a0a14";}
   function tabBorder(isActive){return isActive?"1px solid #a855f7":"1px solid "+C.border;}
