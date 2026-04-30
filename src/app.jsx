@@ -13875,13 +13875,19 @@ function QuoteTab({project,onUpdate}){
                   {pan.bomNotes&&<div className="qd-li-notes">
                     <span>NOTES: </span>{pan.bomNotes}
                   </div>}
-                  {/* DECISION(v1.19.888): Auto-detected crate status. Scans the
-                      panel's BOM for a row whose description or partNumber
-                      matches /crat(e|ing)/i. Pattern matches addBomRow's
-                      tail-row test (line ~17550) so what counts as a "crate"
-                      stays in sync with the BOM table's tail-section. */}
+                  {/* DECISION(v1.19.889): Auto-detected crate status. Per user
+                      spec: partNumber CONTAINS "CRATE" (anywhere, case-insensitive)
+                      OR description STARTS WITH "CRATE". Tighter than the v1.19.888
+                      pass which used /crat(e|ing)/i and also caught descriptions
+                      with "crate" mid-string (e.g. "wood crate"). Excludes labor
+                      rows. */}
                   {(()=>{
-                    const _hasCrate=(panBom||[]).some(r=>!r.isLaborRow&&(/crat(e|ing)/i.test((r.description||"").trim())||/crat(e|ing)/i.test((r.partNumber||"").trim())));
+                    const _hasCrate=(panBom||[]).some(r=>{
+                      if(r.isLaborRow)return false;
+                      const pn=(r.partNumber||"").toString();
+                      const desc=(r.description||"").toString().trim();
+                      return /crate/i.test(pn)||/^crate/i.test(desc);
+                    });
                     return(
                       <div className="qd-li-notes" style={{borderLeftColor:_hasCrate?"#16a34a":"#94a3b8"}}>
                         <span style={{color:_hasCrate?"#16a34a":"#475569",fontWeight:700}}>{_hasCrate?"✓ Includes ISPM 15 Certified Crate":"Crate Not Included"}</span>
