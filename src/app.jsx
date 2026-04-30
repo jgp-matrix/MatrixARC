@@ -23619,32 +23619,19 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 )}
               </div>
             )}
-            {isProjectLocked&&project.ecoEditUnlocked&&(
-              <div style={{marginTop:6,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:11,color:"#fde68a"}}>
-                <span style={{fontSize:12}}>🔓</span>
-                <strong style={{color:"#f59e0b",letterSpacing:0.4}}>UNLOCKED FOR ECO</strong>
-                <span style={{color:"#fde68a"}}>· project is back in Sales for change-order rework. ECO scope edits flow through Pre-Review → Quote Send → Post-Review → PO cost adjustment. Auto re-locks when the last draft ECO closes.</span>
+            {/* DECISION(v1.19.851, ECO Stage A): Removed two redundant banners
+                ("🔓 UNLOCKED FOR ECO …" and "🟣 EDITING ECO ## …"). The state
+                is already conveyed by the active tab + the ACTIVE ECO ## —
+                UNLOCK BASE overlay button on the Quote Summary. Saves vertical
+                space. The "👁 Viewing ECO ## (read-only)" banner stays — it's
+                rare and meaningfully different (admin viewing a non-active
+                draft). */}
+            {(project?.ecoSummary||[]).length>0&&activeScope?.type==="eco"&&!activeEcoIsCurrentDraft&&(
+              <div style={{background:"#0a0a14",border:"1px solid #94a3b833",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#94a3b8",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
+                <span style={{fontSize:12}}>👁</span>
+                <span><strong style={{color:"#cbd5e1"}}>Viewing ECO {String(activeScope.ecoNumber||0).padStart(2,"0")}</strong> (read-only) — not the active draft.</span>
               </div>
             )}
-            {(project?.ecoSummary||[]).length>0&&(()=>{
-              const isEcoScope=activeScope?.type==="eco";
-              if(!isEcoScope)return null;
-              const ecoNum=String(activeScope.ecoNumber||0).padStart(2,"0");
-              if(activeEcoIsCurrentDraft){
-                return(
-                  <div style={{background:"#1a0040",border:"1px solid #a855f777",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#e9d5ff",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
-                    <span style={{fontSize:12}}>🟣</span>
-                    <span><strong style={{color:"#a855f7"}}>EDITING ECO {ecoNum}</strong> — changes here are tracked. Switch to BASE to see the original.</span>
-                  </div>
-                );
-              }
-              return(
-                <div style={{background:"#0a0a14",border:"1px solid #94a3b833",borderRadius:6,padding:"5px 10px",fontSize:11,color:"#94a3b8",display:"flex",alignItems:"center",gap:6,marginTop:6}}>
-                  <span style={{fontSize:12}}>👁</span>
-                  <span><strong style={{color:"#cbd5e1"}}>Viewing ECO {ecoNum}</strong> (read-only) — not the active draft.</span>
-                </div>
-              );
-            })()}
           </div>
           {panels.length===0?(
             <div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
