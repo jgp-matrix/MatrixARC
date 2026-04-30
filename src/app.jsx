@@ -9642,6 +9642,27 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
   async function handleNewEco(){
     console.log("[ECO] + New ECO clicked. creating=",creating,"project.id=",project?.id,"wonAt=",project?.wonAt,"lostAt=",project?.lostAt);
     if(creating){console.log("[ECO] already creating — skipped");return;}
+    // DECISION(v1.19.855, ECO Stage A): BC connection is required to create an
+    // ECO. The ECO needs a corresponding BC task line for purchasing/accounting
+    // tracking; without a live token we'd silently skip task creation and end
+    // up with ARC and BC desynced. Block creation entirely and tell the user
+    // to reconnect BC first.
+    if(!project?.bcProjectNumber){
+      await arcAlert("This project isn't linked to a BC project. ECOs require a BC project number — re-link the project to BC first.",{kind:"warning"});
+      return;
+    }
+    if(!_bcToken){
+      const reconnect=await arcConfirm(
+        "BC is offline. ECO creation requires a live BC connection so we can add the corresponding BC task line. Try reconnecting now?",
+        {kind:"warning",okLabel:"Reconnect BC"}
+      );
+      if(!reconnect)return;
+      try{await acquireBcToken(true);}catch(_){/* swallowed below */}
+      if(!_bcToken){
+        await arcAlert("Still offline. Connect to Business Central from the toolbar, then click + New ECO again.",{kind:"error"});
+        return;
+      }
+    }
     const isLocked=!!(project?.wonAt||project?.lostAt);
     const alreadyUnlocked=!!project?.editUnlocked||!!project?.ecoEditUnlocked;
     const userIsOwner=!project?.createdBy||project?.createdBy===uid;
@@ -9811,13 +9832,17 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
         const isActive=activeScope?.type==="eco"&&activeScope.ecoNumber===eco.number;
         const isTerminal=ECO_TERMINAL_STATES.includes(eco.status);
         const isApproved=eco.status==="approved"||eco.status==="in_production"||eco.status==="completed";
-        const tag=isApproved?"✓":(isTerminal?"–":"⏳");
+        // DECISION(v1.19.855, ECO Stage A): Tag emoji on the ECO tab — only the
+        // ✓ check (approved) and – dash (terminal/cancelled) remain. The
+        // hourglass for draft was visual noise; an unmarked tab implies "in
+        // progress" and is cleaner.
+        const tag=isApproved?" ✓":(isTerminal?" –":"");
         const dollarStr=eco.deltaSell?` ${eco.deltaSell>=0?"+":""}$${Math.round(Math.abs(eco.deltaSell)).toLocaleString()}`:"";
         return(
           <button key={eco.ecoId}
             onClick={()=>onScopeChange&&onScopeChange({type:"eco",ecoNumber:eco.number,ecoId:eco.ecoId})}
             style={{background:tabBg(isActive),color:tabColor(isActive),border:tabBorder(isActive),borderBottom:isActive?"1px solid "+tabBg(true):tabBorder(false),borderRadius:_tabRadius,padding:"7px 14px",fontSize:12,fontWeight:isActive?800:600,cursor:"pointer",letterSpacing:0.3,opacity:isTerminal&&eco.status==="cancelled"?0.5:1,marginBottom:-1,position:"relative",zIndex:isActive?2:1}}>
-            ECO {String(eco.number).padStart(2,"0")} {tag}{dollarStr}
+            ECO {String(eco.number).padStart(2,"0")}{tag}{dollarStr}
           </button>
         );
       })}
