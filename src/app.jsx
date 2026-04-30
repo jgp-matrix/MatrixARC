@@ -24225,13 +24225,20 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700,opacity:_sendBlocked?0.45:1,cursor:_sendBlocked?"not-allowed":"pointer"})}>{ownerPriorityActive?"✉ Send (blocked — owner working)":(_incompleteItems.length>0?"✉ Send (blocked — "+_incompleteItems.length+" incomplete)":"✉ "+(project.quoteSentAt?"Resend":"Send")+" / Print Quote — Rev "+String(project.quoteRev||0).padStart(2,"0"))}</button>
                   </>);
                 })()}
-                {project.quoteSentAt&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
+                {/* DECISION(v1.19.849, ECO Stage A): Suppress all "Customer has
+                    received this Quote" warnings when an active ECO is in flight.
+                    The project is back in Sales > In Process for change-order
+                    rework; the original quote-sent state doesn't apply during
+                    that round and would only confuse the user. The unlock
+                    cascade clears quoteSentAt for new ECOs; this gate is the
+                    belt-and-suspenders for any project that still has it set. */}
+                {project.quoteSentAt&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
                 {/* DECISION(v1.19.745): Sent-quote soft-block. When the quote has been sent
                     and the user hasn't ack'd in this session, show an amber warning banner
                     with a button that opens the verification modal. After ack, banner flips
                     to a green "Edits Enabled" state to make the elevated-permission status
                     obvious. */}
-                {project.quoteSentAt&&!sentQuoteAckGiven&&!isReadOnly()&&(
+                {project.quoteSentAt&&!sentQuoteAckGiven&&!isReadOnly()&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&(
                   <div style={{marginTop:6,padding:"8px 12px",background:"#3a2800",border:"1px solid #f59e0b66",borderRadius:8,display:"flex",flexDirection:"column",gap:6}}>
                     <div style={{fontSize:12,color:"#fbbf24",fontWeight:700}}>⚠ Customer has received this Quote</div>
                     <div style={{fontSize:11,color:"#fcd34d",lineHeight:1.5}}>Edits to this Panel may create a new Quote Revision. Check with the Project Owner before proceeding.</div>
@@ -24244,7 +24251,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     </button>
                   </div>
                 )}
-                {project.quoteSentAt&&sentQuoteAckGiven&&(
+                {project.quoteSentAt&&sentQuoteAckGiven&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&(
                   <div style={{marginTop:6,padding:"6px 10px",background:"#0d2010",border:"1px solid #4ade8044",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                     <span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✎ Edits enabled — next save will bump Quote Rev</span>
                     <button onClick={()=>setSentQuoteAckGiven(false)} style={{background:"none",border:"1px solid #4ade8044",borderRadius:6,color:"#86efac",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:600}}>Re-lock</button>
@@ -25215,6 +25222,51 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       safeSave(uid,projectRef.current||init).catch(e=>console.warn("ECO legacy save failed:",e));
     }
   },[]);
+
+  // DECISION(v1.19.849, ECO Stage A): Backfill the unlock-cascade state for any
+  // project that has a draft ECO but is missing `ecoEditUnlocked`. This catches
+  // ECOs that were created before v1.19.840 introduced the unlock cascade
+  // (PRJ402065 specifically, but works generally). Without this, the project is
+  // half-locked: the kanban routes correctly via the ecoSummary fallback, but
+  // the quote-sent banners + workflow state still reflect the original Won
+  // state, which doesn't match the Sales-rework reality. Idempotent — runs
+  // once per project that needs it, then the flag prevents re-triggering.
+  const didEcoUnlockBackfill=useRef(false);
+  useEffect(()=>{
+    if(didEcoUnlockBackfill.current)return;
+    const _project=projectRef.current||init;
+    if(!_project)return;
+    const _hasDraft=Array.isArray(_project.ecoSummary)&&_project.ecoSummary.some(e=>e&&e.status==="draft");
+    if(!_hasDraft)return;
+    if(_project.ecoEditUnlocked)return; // already backfilled
+    // Only owner/admin can perform the backfill
+    const _userIsOwner=!_project.createdBy||_project.createdBy===uid;
+    const _userIsAdmin=_appCtx.role==="admin";
+    if(!_userIsOwner&&!_userIsAdmin)return;
+    didEcoUnlockBackfill.current=true;
+    console.log("[ECO BACKFILL] applying unlock cascade for project",_project.id,"— draft ECOs exist but ecoEditUnlocked is unset");
+    const now=Date.now();
+    const updated={
+      ..._project,
+      ecoEditUnlocked:true,
+      ecoEditUnlockedAt:now,
+      ecoEditUnlockedBy:uid,
+      bcStatusForcedToQuote:true,
+      bcStatusForcedToQuoteAt:now,
+      preReviewStatus:null,
+      postReviewStatus:null,
+      quoteSentAt:null,
+      quoteSentRev:null,
+      quoteSentTo:null,
+      bcPoStatus:null,
+      updatedAt:now,
+      updatedBy:uid,
+    };
+    setProject(updated);
+    projectRef.current=updated;
+    onChange&&onChange(updated);
+    safeSave(uid,updated).catch(e=>console.warn("[ECO BACKFILL] save failed:",e));
+  },[project.id]);
 
   // Listen for live updates from background extraction tasks (survives navigation)
   useEffect(()=>onProjectUpdated(project.id,p=>{setProject(p);projectRef.current=p;onChange(p);}),[project.id]);
