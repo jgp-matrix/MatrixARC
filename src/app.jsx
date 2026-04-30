@@ -9979,9 +9979,10 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
               console.warn(`[ECO] bcCreateEcoTaskPlanningSkeleton failed on task ${taskNo}:`,plMsg);
             }
           }catch(taskErr){
-            const errMsg=taskErr&&taskErr.message?taskErr.message:String(taskErr);
-            _bcResults.failed.push({panelIdx:i+1,error:errMsg});
-            console.error(`[ECO] bcAddEcoTask FAILED for panel ${i+1} (ECO ${result.number}):`,errMsg);
+            const rawMsg=taskErr&&taskErr.message?taskErr.message:String(taskErr);
+            const errMsg=rawMsg&&rawMsg.trim()?rawMsg:"(no error message returned)";
+            _bcResults.failed.push({panelIdx:i+1,panelName,error:errMsg});
+            console.error(`[ECO] bcAddEcoTask FAILED for panel ${i+1} "${panelName}" (ECO ${result.number}):`,errMsg);
           }
         }
       }
@@ -9991,7 +9992,7 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
       // alert (panel index + the BC error message) instead of just pointing
       // users at the browser console. The console line is still emitted as a
       // backstop for stack traces.
-      const _formatFailures=(failures)=>failures.map(f=>`  • Panel ${f.panelIdx}: ${f.error}`).join("\n");
+      const _formatFailures=(failures)=>failures.map(f=>`  • Panel ${f.panelIdx}${f.panelName?` (${f.panelName})`:""}: ${f.error}`).join("\n");
       if(_bcResults.skipped){
         const skipReason={"no-bc-project-number":"project isn't linked to a BC project",
           "no-bc-token":"BC connection dropped between the gate check and task creation",
