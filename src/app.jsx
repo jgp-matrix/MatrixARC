@@ -695,6 +695,57 @@ function computeEcoMaterialDelta(panel,ecoId){
       return s+sign*(r.unitPrice||0)*(Number(r.qty)||0);
     },0);
 }
+// DECISION(v1.19.884, Quote Form ECO Stage E): Sell-side helpers for the
+// quote form — BASE-only sell price (panel without any ECO rows) and per-ECO
+// sell delta (full panel minus panel without that ECO). Both run through
+// computePanelSellPrice so margin / labor / contingency are applied once.
+function computeBasePanelSellPrice(panel){
+  if(!panel)return 0;
+  const clone={...panel,bom:(panel.bom||[]).filter(r=>!r.ecoTag)};
+  return computePanelSellPrice(clone);
+}
+function computeEcoSellDelta(panel,ecoId){
+  if(!panel||!ecoId)return 0;
+  const full=computePanelSellPrice(panel);
+  const without={...panel,bom:(panel.bom||[]).filter(r=>r.ecoTag!==ecoId)};
+  return full-computePanelSellPrice(without);
+}
+// Structured change detail for the quote form per-line ECO breakdown. Returns
+// a list of part-level entries (add / modify / remove) + total labor hours
+// summed across CUT/LAYOUT/WIRE for the given ECO. Sell-side dollar amounts
+// are NOT included — caller renders descriptions only and the bottom-line
+// roll-up uses computeEcoSellDelta.
+function computeEcoChangeDetails(panel,ecoId){
+  if(!panel||!ecoId)return{parts:[],laborHrs:0};
+  const rows=(panel.bom||[]).filter(r=>r.ecoTag===ecoId);
+  const parts=[];
+  let laborHrs=0;
+  for(const r of rows){
+    if(r.isLaborRow){laborHrs+=Number(r.qty)||0;continue;}
+    if(r.ecoOp==="add"){
+      parts.push({op:"add",qty:Number(r.qty)||0,partNumber:r.partNumber||"",description:r.description||""});
+    }else if(r.ecoOp==="remove"){
+      parts.push({op:"remove",qty:Number(r.qty)||0,partNumber:r.partNumber||"",description:r.description||""});
+    }else if(r.ecoOp==="modify"){
+      const orig=r.ecoOriginal||{};
+      const qtyDelta=Number(r.qty)||0;
+      const origQty=Number(orig.qty)||0;
+      const newQty=origQty+qtyDelta;
+      const pnChanged=(r.partNumber||"")!==(orig.partNumber||"");
+      const descChanged=(r.description||"")!==(orig.description||"");
+      parts.push({
+        op:"modify",
+        partNumber:r.partNumber||"",
+        origPartNumber:orig.partNumber||"",
+        description:r.description||"",
+        origDescription:orig.description||"",
+        origQty,newQty,qtyDelta,
+        pnChanged,descChanged,
+      });
+    }
+  }
+  return{parts,laborHrs};
+}
 function computePanelSellPrice(panel){
   const pr=panel.pricing||{};
   const laborEst=computeLaborEstimate(panel);
@@ -13768,6 +13819,15 @@ function QuoteTab({project,onUpdate}){
               const _activeEcoStartedFmt=_activeEcoForLine&&_activeEcoForLine.createdAt
                 ?new Date(_activeEcoForLine.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})
                 :null;
+              // DECISION(v1.19.884, Quote Form ECO Stage E): Per-panel ECO
+              // breakdown only shows when THIS panel has rows tagged for the
+              // active draft ECO. Others stay in the legacy single-row view.
+              const _panEcoId=_activeEcoForLine?_activeEcoForLine.ecoId:null;
+              const _panHasActiveEco=!!_panEcoId&&panBom.some(r=>r.ecoTag===_panEcoId);
+              const _panBaseSell=_panHasActiveEco?computeBasePanelSellPrice(pan):0;
+              const _panEcoSellDelta=_panHasActiveEco?computeEcoSellDelta(pan,_panEcoId):0;
+              const _panChangeDetails=_panHasActiveEco?computeEcoChangeDetails(pan,_panEcoId):null;
+              const _fmtMoneySigned=(n)=>(n>=0?"+":"-")+"$"+Math.abs(Math.round(n)).toLocaleString("en-US");
               return(
               <div key={pan.id||pi} style={{marginBottom:12}}>
               {/* Main line item box — kept together on one page */}
@@ -13809,12 +13869,77 @@ function QuoteTab({project,onUpdate}){
                     <div className="qd-li-notes" style={{borderLeftColor:"#4ade80"}}>
                       <span style={{color:"#4ade80",fontWeight:700}}>{_activeEcoLabel}: </span>
                       <textarea value={qp.ecoNotes||""} onChange={e=>setQP({ecoNotes:e.target.value})} placeholder={`Details of the ${_activeEcoLabel} change order — what changed, why, customer reason, etc.`} rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
+                      {/* DECISION(v1.19.884, Quote Form ECO Stage E): Auto-populated
+                          change detail block — descriptions only (no per-line costs
+                          per user spec; sell-side roll-up at the bottom is the only
+                          dollar figure here). Glyphs: + add (green), ○ modify (yellow),
+                          × remove (red), Σ labor (purple). */}
+                      {_panHasActiveEco&&_panChangeDetails&&(_panChangeDetails.parts.length>0||_panChangeDetails.laborHrs>0)&&(
+                        <div style={{marginTop:8,paddingTop:8,borderTop:"1px dashed #4ade8044",fontSize:12,color:"#334155",lineHeight:1.6}}>
+                          <div style={{fontSize:9,fontWeight:800,letterSpacing:0.6,color:"#a855f7",marginBottom:6,textTransform:"uppercase"}}>{_activeEcoLabel} — Changes</div>
+                          {_panChangeDetails.parts.map((p,i)=>{
+                            if(p.op==="add"){
+                              return(
+                                <div key={i} style={{fontFamily:"monospace",fontSize:12}}>
+                                  <span style={{color:"#16a34a",fontWeight:700,display:"inline-block",width:18}}>+</span>
+                                  <span style={{color:"#475569"}}>Added: </span>
+                                  <strong>{p.qty}</strong>
+                                  <span style={{color:"#94a3b8"}}> × </span>
+                                  <strong>{p.partNumber||"(no part #)"}</strong>
+                                  {p.description?<span style={{color:"#475569"}}> · {p.description}</span>:null}
+                                </div>
+                              );
+                            }
+                            if(p.op==="remove"){
+                              return(
+                                <div key={i} style={{fontFamily:"monospace",fontSize:12}}>
+                                  <span style={{color:"#dc2626",fontWeight:700,display:"inline-block",width:18}}>×</span>
+                                  <span style={{color:"#475569"}}>Removed: </span>
+                                  <strong>{p.qty}</strong>
+                                  <span style={{color:"#94a3b8"}}> × </span>
+                                  <strong>{p.partNumber||"(no part #)"}</strong>
+                                  {p.description?<span style={{color:"#475569"}}> · {p.description}</span>:null}
+                                </div>
+                              );
+                            }
+                            // modify — describe what changed
+                            const changes=[];
+                            if(p.qtyDelta!==0)changes.push(`qty ${p.origQty} → ${p.newQty}`);
+                            if(p.pnChanged)changes.push(`part # ${p.origPartNumber||"—"} → ${p.partNumber||"—"}`);
+                            if(p.descChanged&&!p.pnChanged)changes.push("description updated");
+                            return(
+                              <div key={i} style={{fontFamily:"monospace",fontSize:12}}>
+                                <span style={{color:"#ca8a04",fontWeight:700,display:"inline-block",width:18}}>○</span>
+                                <span style={{color:"#475569"}}>Modified: </span>
+                                <strong>{p.partNumber||p.origPartNumber||"(no part #)"}</strong>
+                                {changes.length?<span style={{color:"#475569"}}> · {changes.join(" · ")}</span>:null}
+                              </div>
+                            );
+                          })}
+                          {_panChangeDetails.laborHrs!==0&&(
+                            <div style={{fontFamily:"monospace",fontSize:12}}>
+                              <span style={{color:"#a855f7",fontWeight:700,display:"inline-block",width:18}}>Σ</span>
+                              <span style={{color:"#475569"}}>Labor: </span>
+                              <strong>{_panChangeDetails.laborHrs}</strong>
+                              <span style={{color:"#475569"}}> hrs</span>
+                            </div>
+                          )}
+                          <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #e2e8f0",textAlign:"right",fontWeight:800,color:"#a855f7",fontSize:13}}>
+                            {_activeEcoLabel} Δ:&nbsp; {_fmtMoneySigned(_panEcoSellDelta)}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               </div>
 
               {/* Pricing Row */}
+              {/* DECISION(v1.19.884, Quote Form ECO Stage E): when this panel
+                  has ECO changes the Unit Price + Total Price cells expand
+                  into a 3-row stack (BASE → ECO Δ → NEW) so the customer can
+                  see exactly how the change order moved the price. Other
+                  cells stay single-row. */}
               <div className="qd-li-pricing">
                 <div>
                   <div className="qd-plabel">Quantity</div>
@@ -13822,7 +13947,15 @@ function QuoteTab({project,onUpdate}){
                 </div>
                 <div>
                   <div className="qd-plabel">Unit Price</div>
-                  <div className="qd-pval">{panHasSell?fmtMoney(panSell):"—"}</div>
+                  {_panHasActiveEco?(
+                    <div>
+                      <div style={{fontSize:11,color:"#94a3b8",fontWeight:500,lineHeight:1.5}}>BASE: <span style={{color:"#475569"}}>{fmtMoney(_panBaseSell)}</span></div>
+                      <div style={{fontSize:11,color:"#a855f7",fontWeight:600,lineHeight:1.5}}>{_activeEcoLabel} Δ: {_fmtMoneySigned(_panEcoSellDelta)}</div>
+                      <div className="qd-pval" style={{marginTop:2}}>{panHasSell?fmtMoney(panSell):"—"}</div>
+                    </div>
+                  ):(
+                    <div className="qd-pval">{panHasSell?fmtMoney(panSell):"—"}</div>
+                  )}
                 </div>
                 <div>
                   <div className="qd-plabel">Lead Time</div>
@@ -13837,7 +13970,15 @@ function QuoteTab({project,onUpdate}){
                 </div>
                 <div>
                   <div className="qd-plabel">Total Price</div>
-                  <div className={"qd-pval qd-total-val"}>{panHasSell?fmtMoney(panSell*panQty):"—"}</div>
+                  {_panHasActiveEco?(
+                    <div>
+                      <div style={{fontSize:11,color:"#94a3b8",fontWeight:500,lineHeight:1.5}}>BASE: <span style={{color:"#475569"}}>{fmtMoney(_panBaseSell*panQty)}</span></div>
+                      <div style={{fontSize:11,color:"#a855f7",fontWeight:600,lineHeight:1.5}}>{_activeEcoLabel} Δ: {_fmtMoneySigned(_panEcoSellDelta*panQty)}</div>
+                      <div className={"qd-pval qd-total-val"} style={{marginTop:2}}>{panHasSell?fmtMoney(panSell*panQty):"—"}</div>
+                    </div>
+                  ):(
+                    <div className={"qd-pval qd-total-val"}>{panHasSell?fmtMoney(panSell*panQty):"—"}</div>
+                  )}
                 </div>
               </div>
               </div>
@@ -13860,6 +14001,23 @@ function QuoteTab({project,onUpdate}){
           {(()=>{
             const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
             const hasTotalPrice=totalPrice>0;
+            // DECISION(v1.19.884, Quote Form ECO Stage E): When any panel
+            // carries rows for the active draft ECO, split the Subtotal into
+            // BASE Subtotal + ECO Subtotal so the customer can see the
+            // change-order contribution. Otherwise render today's
+            // Subtotal/Tax/Total layout unchanged.
+            const _draftEcosTotals=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
+            const _activeEcoTotals=_draftEcosTotals.slice(-1)[0]||null;
+            const _activeEcoIdTotals=_activeEcoTotals?_activeEcoTotals.ecoId:null;
+            const _activeEcoLabelTotals=_activeEcoTotals?`ECO ${String(_activeEcoTotals.number||0).padStart(2,"0")}`:null;
+            const _hasAnyEcoChanges=!!_activeEcoIdTotals&&(project.panels||[]).some(pan=>(pan.bom||[]).some(r=>r.ecoTag===_activeEcoIdTotals));
+            const _baseSubtotal=_hasAnyEcoChanges
+              ?(project.panels||[]).reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0)
+              :totalPrice;
+            const _ecoSubtotal=_hasAnyEcoChanges
+              ?(project.panels||[]).reduce((s,pan)=>s+computeEcoSellDelta(pan,_activeEcoIdTotals)*(pan.lineQty??1),0)
+              :0;
+            const _fmtSigned=(n)=>(n>=0?"+":"-")+"$"+Math.abs(Math.round(n)).toLocaleString("en-US");
             return(
           <div style={{breakInside:"avoid",pageBreakInside:"avoid"}}>
           <div style={{padding:"8px 44px",fontSize:11,color:"#475569",lineHeight:1.6,fontStyle:"italic",borderTop:"2px solid #0f172a",marginTop:8}}>
@@ -13867,7 +14025,8 @@ function QuoteTab({project,onUpdate}){
           </div>
           <div className="qd-totals-bar">
             <div className="qd-totals-box">
-              <div className="qd-totals-row"><span>Subtotal</span><span>{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
+              <div className="qd-totals-row"><span>Subtotal</span><span>{hasTotalPrice?fmtMoney(_baseSubtotal):"—"}</span></div>
+              {_hasAnyEcoChanges&&<div className="qd-totals-row" style={{color:"#a855f7",fontWeight:700}}><span>{_activeEcoLabelTotals}</span><span>{_fmtSigned(_ecoSubtotal)}</span></div>}
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
               {isProjectBudgetary&&<div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>BUDGETARY</div>}
