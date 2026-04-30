@@ -9411,6 +9411,14 @@ function computeProjectEffectiveStatus(project){
   if(!project)return"draft";
   const panels=project.panels||[];
   if(!panels.length)return project.status||"draft";
+  // DECISION(v1.19.859, ECO Stage A): Active ECO short-circuits status to
+  // "in_progress" so kanban routing AND the Badge agree. Without this,
+  // projects with an active draft ECO route to In Process (because of the
+  // ECO carve-out in the Sales kanban routing) but their pill still shows
+  // their underlying state (e.g. "evc"/READY) — confusing to the user.
+  // Pulled to the top so it overrides every other state computation below.
+  const _hasActiveEco=!!project.ecoEditUnlocked||(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"));
+  if(_hasActiveEco)return"in_progress";
   const isBudgetary=panels.some(pan=>(pan.pricing||{}).isBudgetary);
   const quoteSent=!!project.quoteSentAt;
   const hasBom=panels.some(pan=>(pan.bom||[]).some(r=>!r.isLaborRow));
