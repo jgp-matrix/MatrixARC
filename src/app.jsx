@@ -5754,47 +5754,14 @@ function migrateProjectShape(p){
   if(out.ecoCounter==null)out.ecoCounter=0;
   if(out.activeEcoId===undefined)out.activeEcoId=null;
   if(!Array.isArray(out.ecoSummary))out.ecoSummary=[];
-  // DECISION(v1.19.834, ECO Stage 0): One-time cleanup of legacy Phase 2 ECO data.
-  // The original Phase 2 BOM Delta tab created tagged rows (ecoTag/ecoOp) on
-  // panel.bom plus stored ECOs in a subcollection. The redesign uses the same
-  // tag fields but with a different model (in-place modify with `ecoOriginal`).
-  // For projects that were tested under the old model (PRJ402064 specifically,
-  // but this runs against any project with legacy fields), strip the old data
-  // so the new flow starts clean. Idempotent — once a project has no tagged
-  // rows / pages and no ecoSummary entries, this is a no-op.
-  let _ecoCleanupApplied=false;
-  if(Array.isArray(out.panels)){
-    out.panels=out.panels.map(panel=>{
-      const newBom=Array.isArray(panel.bom)?panel.bom.filter(r=>!r.ecoTag):panel.bom;
-      const bomChanged=Array.isArray(panel.bom)&&newBom.length!==panel.bom.length;
-      let newPages=panel.pages;
-      let pagesChanged=false;
-      if(Array.isArray(panel.pages)){
-        newPages=panel.pages.map(pg=>{
-          if(!pg.ecoTag&&!pg.ecoId&&pg.ecoNumber==null&&pg.ecoUploadedAt==null)return pg;
-          pagesChanged=true;
-          const{ecoTag:_a,ecoId:_b,ecoNumber:_c,ecoUploadedAt:_d,aiDetectedTypes:_e,...rest}=pg;
-          return rest;
-        });
-      }
-      if(bomChanged||pagesChanged){
-        _ecoCleanupApplied=true;
-        return{...panel,bom:newBom,pages:newPages};
-      }
-      return panel;
-    });
-  }
-  // If we stripped tagged rows/pages OR the project still has ecoSummary entries
-  // pointing at orphaned subcollection ECO docs from Phase 2, reset project-level
-  // ECO state so the new model starts fresh.
-  if(_ecoCleanupApplied||(Array.isArray(out.ecoSummary)&&out.ecoSummary.length>0&&!out._ecoLegacyMigrated)){
-    if(_ecoCleanupApplied||out.ecoSummary.length>0){
-      out.ecoCounter=0;
-      out.ecoSummary=[];
-      out.activeEcoId=null;
-      out._ecoLegacyMigrated=true;
-    }
-  }
+  // DECISION(v1.19.875): The Stage 0 legacy-ECO cleanup that lived here was
+  // DELETED. It stripped every ecoTag-bearing BOM row + wiped ecoSummary on
+  // every project load if `_ecoLegacyMigrated` wasn't set. That flag was set
+  // on the in-memory copy but never persisted back to Firestore, so the
+  // cleanup re-fired on every refresh and silently destroyed live ECO work
+  // (the symptom the user hit: ECO disappeared from the tab strip after a
+  // page refresh). The one-time migration target (PRJ402064) was already
+  // cleaned long ago. Removing the block prevents further data loss.
   return out;
 }
 async function deleteProject(uid,id){
