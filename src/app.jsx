@@ -9704,6 +9704,32 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBase
       console.log("[ECO] createEcoDoc returned:",result);
       onScopeChange&&onScopeChange({type:"eco",ecoNumber:result.number,ecoId:result.ecoId});
       console.log("[ECO] onScopeChange called");
+      // DECISION(v1.19.854, ECO Stage A): Fire `bcAddEcoTask` for each panel so
+      // BC has a dedicated task slot for this ECO's planning lines. Slot scheme
+      // is `20{panelIdx}3{ecoNumber-1}` per the original ECO plan (so ECO 1 panel
+      // 1 = 20130, ECO 2 panel 1 = 20131, etc.). Failures are logged but don't
+      // block the ARC ECO creation — the queue/retry layer can pick this up
+      // later (Stage D will add a proper sync). When BC is offline / token is
+      // missing, this is a no-op.
+      if(project.bcProjectNumber&&_bcToken&&result.number>=1&&result.number<=10){
+        const panels=project.panels||[];
+        for(let i=0;i<panels.length;i++){
+          const pan=panels[i];
+          const panelName=pan.drawingNo||pan.name||`Panel ${i+1}`;
+          try{
+            const taskNo=await bcAddEcoTask(project.bcProjectNumber,i+1,result.number,panelName);
+            console.log(`[ECO] BC task ${taskNo} created for panel ${i+1} (ECO ${result.number})`);
+          }catch(taskErr){
+            console.warn(`[ECO] bcAddEcoTask failed for panel ${i+1} (ECO ${result.number}):`,taskErr&&taskErr.message?taskErr.message:taskErr);
+          }
+        }
+      }else if(!project.bcProjectNumber){
+        console.log("[ECO] no bcProjectNumber on project — skipping BC task creation");
+      }else if(!_bcToken){
+        console.log("[ECO] BC offline (no token) — skipping BC task creation. Queue retry deferred to Stage D.");
+      }else if(result.number>10){
+        console.warn(`[ECO] ECO number ${result.number} exceeds BC slot capacity (max 10 per panel). BC task creation skipped.`);
+      }
     }catch(e){
       console.error("[ECO] handleNewEco failed:",e);
       try{await arcAlert("Could not create ECO: "+(e&&e.message?e.message:String(e)),{kind:"error"});}
