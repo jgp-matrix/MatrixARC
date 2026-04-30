@@ -511,13 +511,13 @@ const LABOR_RATE_DEFAULTS={
 };
 let LABOR_RATES={...LABOR_RATE_DEFAULTS};
 // DECISION(v1.19.882): ECO change-order labor bills at a higher hourly rate
-// than BASE shop labor (rush/non-recurring premium). Falls back here when
-// `panel.pricing.ecoLaborRate` isn't set per-panel; per-panel overrides go in
-// the Panel Summary's LABOR box `$/hr` input while in ECO scope (see
-// PanelSummary render).
+// than BASE shop labor (rush/non-recurring premium). Cascade:
+//   1. `panel.pricing.ecoLaborRate` (per-panel override, set via Panel Summary)
+//   2. `_pricingConfig.ecoDefaultLaborRate` (global default, Configuration modal)
+//   3. ECO_LABOR_RATE_DEFAULT constant (hard fallback when config hasn't loaded)
 const ECO_LABOR_RATE_DEFAULT=65;
 function _getEcoLaborRate(panel){
-  return panel?.pricing?.ecoLaborRate??ECO_LABOR_RATE_DEFAULT;
+  return panel?.pricing?.ecoLaborRate??_pricingConfig?.ecoDefaultLaborRate??ECO_LABOR_RATE_DEFAULT;
 }
 const DOOR_DEVICE_TYPES=new Set(["pushbutton","pilot_light","selector_switch","hmi","e_stop","horn","meter"]);
 
@@ -1228,12 +1228,16 @@ function setTooltipsEnabled(v){
 }
 
 // ── PRICING CONFIG (loaded from Firestore) ──
-let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60};
+// DECISION(v1.19.883): ecoDefaultLaborRate added to the config schema (default
+// $65/hr — change-order rush rate, distinct from BASE shop labor at $45). The
+// rate cascades: panel.pricing.ecoLaborRate (per-panel override) → this
+// global config → ECO_LABOR_RATE_DEFAULT constant.
+let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65};
 async function loadPricingConfig(uid){
   try{
     const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
     const d=await fbDb.doc(path).get();
-    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60};}
+    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65};}
   }catch(e){}
 }
 async function savePricingConfig(uid,cfg){
@@ -11467,6 +11471,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   const [codaleStaleDays,setCodaleStaleDays]=useState(_pricingConfig.codaleStaleDays??30);
   const [bcStaleDays,setBcStaleDays]=useState(_pricingConfig.bcStaleDays??60);
   const [defaultStaleDays,setDefaultStaleDays]=useState(_pricingConfig.defaultStaleDays??60);
+  const [ecoDefaultLaborRate,setEcoDefaultLaborRate]=useState(_pricingConfig.ecoDefaultLaborRate??65);
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
 
@@ -11586,7 +11591,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   async function save(){
     setSaving(true);
     await Promise.all([
-      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays}),
+      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate}),
       saveDefaultBomItems(uid,defaultItems),
       isAdmin()?saveLaborRates(uid,laborRates):Promise.resolve()
     ]);
@@ -11623,6 +11628,20 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             <span style={{color:C.muted,fontSize:14}}>%</span>
           </div>
           <div style={{fontSize:11,color:C.muted,marginTop:4}}>Hidden buffer added to budgetary sell price (default 20%)</div>
+        </div>
+
+        {/* DECISION(v1.19.883): ECO labor default rate. Distinct from BASE shop
+            labor since change-order work is rush / non-recurring. Applies to
+            CUT/LAYOUT/WIRE hours entered under any ECO's CHANGE ORDER section
+            unless the panel sets `pricing.ecoLaborRate` to override. */}
+        <div style={{marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>ECO Labor Rate</label>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{color:C.muted,fontSize:14}}>$</span>
+            <input type="number" min="0" step="1" value={ecoDefaultLaborRate} onChange={e=>setEcoDefaultLaborRate(Math.max(0,+e.target.value||0))} style={{...inp(),width:140,textAlign:"right"}}/>
+            <span style={{color:C.muted,fontSize:14}}>/hr</span>
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Default hourly rate billed for ECO change-order CUT/LAYOUT/WIRE hours (default $65). Distinct from the BASE labor rate set per-panel in the Panel Summary.</div>
         </div>
 
         {/* ── PRICING REFRESH THRESHOLDS ── */}
