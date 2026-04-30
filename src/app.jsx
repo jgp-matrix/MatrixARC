@@ -17293,6 +17293,48 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setReExtracting(false);
   }
 
+  // DECISION(v1.19.868, ECO Stage B): Edit interception. When the user is in
+  // an active draft ECO scope, BOM mutations get re-routed to ECO-tagged
+  // operations instead of mutating the BASE row directly:
+  //   • Field edit on an untagged row → tag as `ecoOp:'modify'`, capture
+  //     pre-edit values in `ecoOriginal` (yellow border + "was X" markers).
+  //   • Field edit on a row already tagged for THIS ECO → pass-through (just
+  //     update the field; existing ecoOp/ecoOriginal preserved). This covers
+  //     editing an ECO-add row (stays 'add') or further-tweaking a modify.
+  //   • + Add Row → new row born with `ecoTag` + `ecoOp:'add'` (purple).
+  //   • ✕ Delete on a BASE row → mark as `ecoOp:'remove'` (red strikethrough);
+  //     row stays in panel.bom so BASE view still shows it intact.
+  //   • ✕ Delete on a row added in THIS ECO → physical delete (revert).
+  // BASE scope edits behave exactly as before — ECO interception is gated on
+  // `_isEcoEditMode`. Stage F handles auto-relock on ECO close.
+  const _ecoSummaryPC=Array.isArray(project?.ecoSummary)?project.ecoSummary:[];
+  const _maxDraftNumPC=_ecoSummaryPC.filter(e=>e&&e.status==="draft").reduce((m,e)=>Math.max(m,+e.number||0),0);
+  const _activeEcoIsCurrentDraftPC=activeScope?.type==="eco"&&((activeScope.ecoNumber||0)>=_maxDraftNumPC);
+  const _isEcoEditMode=activeScope?.type==="eco"&&!!activeScope?.ecoId&&_activeEcoIsCurrentDraftPC;
+  const _activeEcoId=_isEcoEditMode?activeScope.ecoId:null;
+  const _activeEcoNumber=_isEcoEditMode?(activeScope.ecoNumber||0):0;
+  function _ecoTagForEdit(row){
+    // Returns a partial { ecoTag, ecoNumber, ecoOp, ecoOriginal } to spread into
+    // the row's update — or null when no ECO transformation is needed.
+    if(!_isEcoEditMode)return null;
+    if(row.isLaborRow)return null; // labor rows aren't ECO-tagged at the row level
+    if(row.ecoTag===_activeEcoId)return null; // already tagged for this ECO; pass-through
+    return{
+      ecoTag:_activeEcoId,
+      ecoNumber:_activeEcoNumber,
+      ecoOp:"modify",
+      ecoOriginal:row.ecoOriginal||{
+        qty:row.qty,
+        unitPrice:row.unitPrice,
+        partNumber:row.partNumber||"",
+        description:row.description||"",
+        manufacturer:row.manufacturer||"",
+        leadTimeDays:row.leadTimeDays??null,
+        leadTimeSource:row.leadTimeSource||"",
+      },
+    };
+  }
+
   function updateBomRow(id,field,val){
     // DECISION(v1.19.677): When user edits qty on a row flagged with suspectQty (either
     // from column-alignment heuristic OR from v1.19.677 companion-row auto-inherit), the
@@ -17310,6 +17352,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         next.leadTimeUpdatedAt=Date.now();
         next.leadTimeEstimated=false;
       }
+      // ECO Stage B: tag the edit if we're in active ECO scope.
+      const _ecoTag=_ecoTagForEdit(r);
+      if(_ecoTag)Object.assign(next,_ecoTag);
       editedRow=next;
       return next;
     })};
@@ -17411,6 +17456,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // renders "—" until a source populates a value.
     const newRow={id:newId,qty:1,partNumber:"",description:"",manufacturer:"",notes:"",
       leadTimeDays:null,leadTimeSource:undefined,leadTimeUpdatedAt:undefined,leadTimeEstimated:false};
+    // ECO Stage B: born-tagged when in ECO scope. ecoOp:"add" gets a purple
+    // border + pill in the BOM table; deletion of an ECO-add row physically
+    // drops it (revert) instead of marking remove.
+    if(_isEcoEditMode){
+      newRow.ecoTag=_activeEcoId;
+      newRow.ecoNumber=_activeEcoNumber;
+      newRow.ecoOp="add";
+      newRow.ecoCreatedAt=Date.now();
+    }
     const bom=[...(panel.bom||[])];
     // Insert before JOB BUYOFF / Crate rows (always keep them at the end)
     const tailIdx=bom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())));
@@ -17426,6 +17480,43 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // gates the call to deleteBomRow. The native popup was a duplicate confirmation users had
   // to click through after already confirming in-app.
   function deleteBomRow(id){
+    // ECO Stage B: in ECO scope, deletes turn into ecoOp:"remove" tags so the
+    // BASE row stays present (BASE view still sees it). For rows that were
+    // ADDED in this same ECO (ecoOp:"add"), we fall through to the physical
+    // delete — that's a "revert the add" semantically.
+    if(_isEcoEditMode){
+      const row=(panel.bom||[]).find(r=>r.id===id);
+      if(row){
+        const isOwnEcoAdd=row.ecoTag===_activeEcoId&&row.ecoOp==="add";
+        if(!isOwnEcoAdd){
+          // Mark as remove (preserves the BASE row visually + drops a tagged
+          // entry in the ECO scope). If the row is already tagged for this
+          // ECO with a different op (e.g., 'modify'), flip to 'remove' but
+          // keep ecoOriginal so we know what's being removed.
+          const updated={...panel,bom:(panel.bom||[]).map(r=>{
+            if(r.id!==id)return r;
+            return{
+              ...r,
+              ecoTag:_activeEcoId,
+              ecoNumber:_activeEcoNumber,
+              ecoOp:"remove",
+              ecoOriginal:r.ecoOriginal||{
+                qty:r.qty,
+                unitPrice:r.unitPrice,
+                partNumber:r.partNumber||"",
+                description:r.description||"",
+                manufacturer:r.manufacturer||"",
+                leadTimeDays:r.leadTimeDays??null,
+                leadTimeSource:r.leadTimeSource||"",
+              },
+            };
+          })};
+          onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+          return;
+        }
+      }
+    }
+    // Default — physical delete (BASE scope or reverting a same-ECO add).
     const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
   }
@@ -17455,6 +17546,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // Row was added by addBomRow but latestPanelRef hasn't caught up — insert it
       const tailIdx=liveBom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())));
       const newRow={id:bomRowId,qty:1,partNumber:"",description:"",manufacturer:"",notes:""};
+      // ECO Stage B: orphan-insertion path needs the same ecoTag treatment that
+      // addBomRow applies, otherwise the BC-committed row falls through as
+      // untagged BASE.
+      if(_isEcoEditMode){
+        newRow.ecoTag=_activeEcoId;
+        newRow.ecoNumber=_activeEcoNumber;
+        newRow.ecoOp="add";
+        newRow.ecoCreatedAt=Date.now();
+      }
       liveBom=[...liveBom];
       if(tailIdx>=0)liveBom.splice(tailIdx,0,newRow);else liveBom.push(newRow);
       console.log("commitBcItem: row not in latestPanelRef, inserted manually");
@@ -17534,6 +17634,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           saveCorrectionEntry(uid,origPN,newPN,correctionType).then(()=>{}).catch(()=>{});
         }
       }
+      // ECO Stage B: tag the BC commit if we're in active ECO scope and the
+      // row isn't already tagged. The `{...r, ...}` spread above preserves
+      // any pre-existing ecoTag on `r`, so this only fires for an untagged
+      // BASE row being modified through the BC Item Browser in ECO scope.
+      const _ecoTag=_ecoTagForEdit(r);
+      if(_ecoTag)Object.assign(updates,_ecoTag);
       return updates;
     });
     // Clear fuzzy suggestion for this row before saving
@@ -17601,7 +17707,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     if(parsed==null||isNaN(parsed)){
       // Clearing price — no popup needed
-      const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:null,priceSource:null,priceDate:null}:r);
+      const updatedBom=(panel.bom||[]).map(r=>{
+        if(r.id!==id)return r;
+        const next={...r,unitPrice:null,priceSource:null,priceDate:null};
+        const _ecoTag=_ecoTagForEdit(r);
+        if(_ecoTag)Object.assign(next,_ecoTag);
+        return next;
+      });
       const updated={...panel,bom:updatedBom};onUpdate(updated);
       latestPanelRef.current=updated;
       if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
@@ -17618,7 +17730,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.418): Contingency/Job Buyoff/Crate price changes auto-sync to BC planning lines.
     // No Item Card push (project-specific), but planning line updates immediately.
     if(CONTINGENCY_PNS.has(pn.toUpperCase())||/^job.?buyoff$/i.test(pn)||/^crat(e|ing)$/i.test((row?.description||"").trim())){
-      const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:parsed,priceSource:"bc",priceDate:Date.now()}:r);
+      const updatedBom=(panel.bom||[]).map(r=>{
+        if(r.id!==id)return r;
+        const next={...r,unitPrice:parsed,priceSource:"bc",priceDate:Date.now()};
+        const _ecoTag=_ecoTagForEdit(r);
+        if(_ecoTag)Object.assign(next,_ecoTag);
+        return next;
+      });
       const updated={...panel,bom:updatedBom};onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
       // Auto-sync planning lines to BC in background
@@ -17641,7 +17759,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(!priceConfirmPending)return;
     const{id,price}=priceConfirmPending;
     // Budgetary: update BOM only, no BC push, no priceDate (show as dashed/unpriced)
-    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:price,priceSource:"manual",priceDate:null}:r);
+    const updatedBom=(panel.bom||[]).map(r=>{
+      if(r.id!==id)return r;
+      const next={...r,unitPrice:price,priceSource:"manual",priceDate:null};
+      const _ecoTag=_ecoTagForEdit(r);
+      if(_ecoTag)Object.assign(next,_ecoTag);
+      return next;
+    });
     const updated={...panel,bom:updatedBom};onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     setPriceConfirmPending(null);
@@ -17652,7 +17776,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const vendorName=priceConfirmVendor.trim();
     // Confirmed: update BOM with priceDate, push to BC Item Card + Purchase Price
     const now=Date.now();
-    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,unitPrice:price,priceSource:"manual",priceDate:now,bcVendorName:vendorName||r.bcVendorName}:r);
+    const updatedBom=(panel.bom||[]).map(r=>{
+      if(r.id!==id)return r;
+      const next={...r,unitPrice:price,priceSource:"manual",priceDate:now,bcVendorName:vendorName||r.bcVendorName};
+      const _ecoTag=_ecoTagForEdit(r);
+      if(_ecoTag)Object.assign(next,_ecoTag);
+      return next;
+    });
     const updated={...panel,bom:updatedBom};onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     setPriceConfirmPending(null);
@@ -19319,7 +19449,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     // DECISION(v1.19.831): Alternate-row tint bumped to 0.10 alpha — still
                     // soft enough to read row text against, but the zebra stripe is now
                     // unmistakable on the dark theme.
-                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_isBomRowFlaggedRed(row)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+                    // DECISION(v1.19.868, ECO Stage B): ECO-tagged rows get a colored
+                    // tint that overrides the zebra stripe so the user can see
+                    // at a glance which rows have ECO touches:
+                    //   modify → yellow tint
+                    //   add    → purple tint
+                    //   remove → red tint + reduced opacity (struck-through downstream)
+                    const _ecoTint=row.ecoOp==="modify"?"rgba(252,211,77,0.16)":row.ecoOp==="add"?"rgba(168,85,247,0.16)":row.ecoOp==="remove"?"rgba(248,113,113,0.18)":null;
+                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:_isBomRowFlaggedRed(row)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+                    // Strikethrough on the row text for ecoOp:"remove" so the
+                    // "this is being removed" intent is visible at a glance.
+                    const _rowTextDecoration=row.ecoOp==="remove"?"line-through":undefined;
+                    const _rowOpacity=row.ecoOp==="remove"?0.65:1;
                     // DECISION(v1.19.828): Hoisted out of the row IIFE so the meta-row emit
                     // below can also read it. Indicates the partNumber cell has additional
                     // context (from/auto-replace, Co-Part, Cross/ARC-Cross) that should be
@@ -19327,7 +19468,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     const _pnHasExtraLines=row.autoAddedCompanion||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber));
                     const _rowEl=(()=>{
                   return(
-                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg}}>
+                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg,textDecoration:_rowTextDecoration,opacity:_rowOpacity}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
                       {i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
