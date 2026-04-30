@@ -19513,8 +19513,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               onBlur={e=>{
                                 e.target.style.borderColor="transparent";
                                 const val=e.target.value;
-                                const updatedBom=(panel.bom||[]).map(r=>r.id===row.id?{...r,[f]:val}:r);
-                                saveBomRow({...panel,bom:updatedBom});
+                                // ECO Stage B fix: pull from the freshest panel
+                                // ref (latestPanelRef.current) — `panel` from
+                                // the closure may be stale before React
+                                // re-renders after the onChange's
+                                // updateBomRow call, which would clobber the
+                                // ecoTag/ecoOriginal that onChange just set.
+                                // Apply _ecoTagForEdit again as a belt-and-
+                                // suspenders for the same race.
+                                const _src=latestPanelRef.current||panel;
+                                const updatedBom=(_src.bom||[]).map(r=>{
+                                  if(r.id!==row.id)return r;
+                                  const next={...r,[f]:val};
+                                  const _ecoTag=_ecoTagForEdit(r);
+                                  if(_ecoTag)Object.assign(next,_ecoTag);
+                                  return next;
+                                });
+                                saveBomRow({..._src,bom:updatedBom});
                                 if(f==="partNumber"&&val.trim()){
                                   savePartLibraryEntry(uid,{manufacturer:row.manufacturer||"",description:row.description||"",partNumber:val.trim()})
                                     .then(()=>loadPartLibrary(uid).then(setPartLibrary)).catch(()=>{});
