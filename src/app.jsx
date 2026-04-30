@@ -5591,6 +5591,47 @@ function migrateProjectShape(p){
   if(out.ecoCounter==null)out.ecoCounter=0;
   if(out.activeEcoId===undefined)out.activeEcoId=null;
   if(!Array.isArray(out.ecoSummary))out.ecoSummary=[];
+  // DECISION(v1.19.834, ECO Stage 0): One-time cleanup of legacy Phase 2 ECO data.
+  // The original Phase 2 BOM Delta tab created tagged rows (ecoTag/ecoOp) on
+  // panel.bom plus stored ECOs in a subcollection. The redesign uses the same
+  // tag fields but with a different model (in-place modify with `ecoOriginal`).
+  // For projects that were tested under the old model (PRJ402064 specifically,
+  // but this runs against any project with legacy fields), strip the old data
+  // so the new flow starts clean. Idempotent — once a project has no tagged
+  // rows / pages and no ecoSummary entries, this is a no-op.
+  let _ecoCleanupApplied=false;
+  if(Array.isArray(out.panels)){
+    out.panels=out.panels.map(panel=>{
+      const newBom=Array.isArray(panel.bom)?panel.bom.filter(r=>!r.ecoTag):panel.bom;
+      const bomChanged=Array.isArray(panel.bom)&&newBom.length!==panel.bom.length;
+      let newPages=panel.pages;
+      let pagesChanged=false;
+      if(Array.isArray(panel.pages)){
+        newPages=panel.pages.map(pg=>{
+          if(!pg.ecoTag&&!pg.ecoId&&pg.ecoNumber==null&&pg.ecoUploadedAt==null)return pg;
+          pagesChanged=true;
+          const{ecoTag:_a,ecoId:_b,ecoNumber:_c,ecoUploadedAt:_d,aiDetectedTypes:_e,...rest}=pg;
+          return rest;
+        });
+      }
+      if(bomChanged||pagesChanged){
+        _ecoCleanupApplied=true;
+        return{...panel,bom:newBom,pages:newPages};
+      }
+      return panel;
+    });
+  }
+  // If we stripped tagged rows/pages OR the project still has ecoSummary entries
+  // pointing at orphaned subcollection ECO docs from Phase 2, reset project-level
+  // ECO state so the new model starts fresh.
+  if(_ecoCleanupApplied||(Array.isArray(out.ecoSummary)&&out.ecoSummary.length>0&&!out._ecoLegacyMigrated)){
+    if(_ecoCleanupApplied||out.ecoSummary.length>0){
+      out.ecoCounter=0;
+      out.ecoSummary=[];
+      out.activeEcoId=null;
+      out._ecoLegacyMigrated=true;
+    }
+  }
   return out;
 }
 async function deleteProject(uid,id){
@@ -9507,19 +9548,21 @@ async function createEcoDoc(uid,project,kind){
 // the parent (ProjectView) and passed down so PanelListView/PanelCard can eventually
 // filter their BOM rendering by `ecoTag` (Phase 2). For now selecting a tab just opens
 // the Eco Editor (read-only shell — Phase 2 puts editing in).
-function EcoScopeTabs({project,uid,activeScope,onScopeChange,onOpenEditor}){
+function EcoScopeTabs({project,uid,activeScope,onScopeChange,baseUnlocked,onBaseUnlock}){
   const summary=Array.isArray(project?.ecoSummary)?project.ecoSummary:[];
   const canCreateEco=
     !!project?.bcPoStatus &&
     (project?.createdBy===uid||_appCtx.role==="admin"||hasPermission("reviewer"));
   const [creating,setCreating]=useState(false);
+  // DECISION(v1.19.834, ECO Stage A.5): + New ECO no longer opens the standalone
+  // EcoEditor modal. The redesign uses the same Items tab + scope toggle to track
+  // ECO edits in place. Tab clicks just call onScopeChange.
   async function handleNewEco(){
     if(creating)return;
     setCreating(true);
     try{
       const result=await createEcoDoc(uid,project,"customer_change");
       onScopeChange&&onScopeChange({type:"eco",ecoNumber:result.number,ecoId:result.ecoId});
-      onOpenEditor&&onOpenEditor(result);
     }catch(e){
       console.error("createEcoDoc failed:",e);
       await arcAlert("Could not create ECO: "+(e&&e.message?e.message:String(e)),{kind:"error"});
@@ -9530,13 +9573,44 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onOpenEditor}){
   function tabBorder(isActive){return isActive?"1px solid #a855f7":"1px solid "+C.border;}
   function tabColor(isActive){return isActive?"#a855f7":C.muted;}
   const baseActive=!activeScope||activeScope.type==="base";
+  // DECISION(v1.19.834, ECO Stage A.1): When any ECO exists on the project, BASE
+  // becomes read-only by default — admins can unlock for the current session via
+  // a button next to the BASE tab. Lock state lives in ProjectView so PanelCard
+  // can compute readOnly correctly.
+  const ecosExist=summary.length>0;
+  const userCanUnlock=_appCtx.role==="admin"||project?.createdBy===uid;
+  const showLockIcon=ecosExist&&!baseUnlocked;
   return(
     <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:14,padding:"8px 0",borderBottom:`1px solid ${C.border}33`}}>
       <button
         onClick={()=>onScopeChange&&onScopeChange({type:"base"})}
-        style={{background:tabBg(baseActive),color:tabColor(baseActive),border:tabBorder(baseActive),borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:0.5}}>
+        style={{background:tabBg(baseActive),color:tabColor(baseActive),border:tabBorder(baseActive),borderRadius:8,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer",letterSpacing:0.5,display:"flex",alignItems:"center",gap:6}}>
+        {showLockIcon&&<span title="BASE editing locked while ECOs exist" style={{fontSize:11}}>🔒</span>}
+        {ecosExist&&baseUnlocked&&<span title="BASE temporarily unlocked for this session" style={{fontSize:11}}>🔓</span>}
         BASE
       </button>
+      {ecosExist&&userCanUnlock&&!baseUnlocked&&(
+        <button
+          onClick={async()=>{
+            const ok=await arcConfirm(
+              "Unlock BASE editing for this session?\n\nChanges to BASE while ECOs exist can desync the project from the customer's approved scope. Use only when truly necessary.",
+              {kind:"warning",okLabel:"Unlock for session"}
+            );
+            if(ok)onBaseUnlock&&onBaseUnlock(true);
+          }}
+          title="Admin: temporarily unlock BASE for editing this session"
+          style={{background:"transparent",color:"#fcd34d",border:"1px dashed #fcd34d77",borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:700,cursor:"pointer",letterSpacing:0.3}}>
+          🔓 Admin Unlock
+        </button>
+      )}
+      {ecosExist&&baseUnlocked&&(
+        <button
+          onClick={()=>onBaseUnlock&&onBaseUnlock(false)}
+          title="Re-lock BASE"
+          style={{background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",fontSize:11,fontWeight:600,cursor:"pointer",letterSpacing:0.3}}>
+          🔒 Re-lock
+        </button>
+      )}
       {summary.map(eco=>{
         const isActive=activeScope?.type==="eco"&&activeScope.ecoNumber===eco.number;
         const isTerminal=ECO_TERMINAL_STATES.includes(eco.status);
@@ -9545,10 +9619,7 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onOpenEditor}){
         const dollarStr=eco.deltaSell?` ${eco.deltaSell>=0?"+":""}$${Math.round(Math.abs(eco.deltaSell)).toLocaleString()}`:"";
         return(
           <button key={eco.ecoId}
-            onClick={()=>{
-              onScopeChange&&onScopeChange({type:"eco",ecoNumber:eco.number,ecoId:eco.ecoId});
-              onOpenEditor&&onOpenEditor(eco);
-            }}
+            onClick={()=>onScopeChange&&onScopeChange({type:"eco",ecoNumber:eco.number,ecoId:eco.ecoId})}
             style={{background:tabBg(isActive),color:tabColor(isActive),border:tabBorder(isActive),borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:isActive?800:600,cursor:"pointer",letterSpacing:0.3,opacity:isTerminal&&eco.status==="cancelled"?0.5:1}}>
             ECO {String(eco.number).padStart(2,"0")} {tag}{dollarStr}
           </button>
@@ -18752,15 +18823,27 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         manufacturer:"",notes:""
                       };
                     });
-                  // DECISION(v1.19.789, ECO Phase 2.C): When `activeScope` is a specific ECO,
-                  // hide tagged rows belonging to OTHER ECOs. BASE scope shows all rows.
-                  // The horizontal separator + per-row [ECO N] badge gets injected below.
+                  // DECISION(v1.19.834, ECO Stage A.2): Scope-aware row visibility.
+                  //   • BASE scope → only untagged rows (the original frozen BOM)
+                  //   • ECO N scope → untagged + ECO N rows + approved-prior ECO rows (effective BOM)
+                  // Approved-prior ECOs are determined from project.ecoSummary; their rows are
+                  // baked into the ECO N's effective view but rendered with their own ECO N+
+                  // markers so the user can see what came from where.
                   const _isEcoScope=activeScope&&activeScope.type==="eco";
                   const _scopeEcoNumber=_isEcoScope?activeScope.ecoNumber:null;
+                  const _scopeEcoId=_isEcoScope?activeScope.ecoId:null;
+                  const _projEcoSummary=Array.isArray(project?.ecoSummary)?project.ecoSummary:[];
+                  const _approvedPriorEcoIds=new Set(
+                    _projEcoSummary
+                      .filter(e=>(e.status==="approved"||e.status==="in_production"||e.status==="completed")&&e.number<(_scopeEcoNumber||Infinity))
+                      .map(e=>e.ecoId)
+                  );
                   const nonLabor=(panel.bom||[]).filter(r=>!r.isLaborRow).filter(r=>{
-                    if(!r.ecoTag)return true; // untagged base row always visible
-                    if(_scopeEcoNumber==null)return true; // base scope shows all tagged rows
-                    return r.ecoNumber===_scopeEcoNumber; // eco scope shows only its rows
+                    if(!r.ecoTag)return true; // untagged base row visible in every scope
+                    if(!_isEcoScope)return false; // BASE scope hides tagged rows
+                    if(r.ecoTag===_scopeEcoId||r.ecoNumber===_scopeEcoNumber)return true; // current ECO's rows
+                    if(_approvedPriorEcoIds.has(r.ecoTag))return true; // baked-in approved priors
+                    return false; // tagged by a different draft / cancelled — hidden
                   });
                   const liveBom=[..._freshLabor,...nonLabor];
                   const sortedBom=liveBom.slice().sort((a,b)=>{
@@ -24255,7 +24338,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // this through to PanelListView so BOM rendering filters by `ecoTag`. For now the tab
   // selection just opens the ECO Editor.
   const [activeScope,setActiveScope]=useState({type:"base"});
-  const [openEcoEditor,setOpenEcoEditor]=useState(null); // ECO doc/object when editor open
+  const [openEcoEditor,setOpenEcoEditor]=useState(null); // ECO doc/object when editor open (LEGACY — to be retired in Stage G)
+  // DECISION(v1.19.834, ECO Stage A): per-session admin unlock for BASE editing.
+  // When any ECO exists, BASE rows become read-only — admins can flip this on
+  // for the current tab to handle exceptional fixes that legitimately belong
+  // on BASE rather than under an ECO scope. Resets when the project is closed.
+  const [baseUnlocked,setBaseUnlocked]=useState(false);
   // DECISION(v1.19.584): Track current project/panel for debug log context
   useEffect(()=>{_currentProjectId=init&&init.id||null;addBreadcrumb('nav',`Project opened: ${init&&init.id}`);return()=>{_currentProjectId=null;_currentPanelId=null;};},[init&&init.id]);
   // DECISION(v1.19.599): Track active tasks by OTHER users on this project — used to
@@ -24650,7 +24738,27 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // remain blocked. Status flip out of "pending" auto-clears the lock for everyone.
   const reviewReadOnly=(project.preReviewStatus==="pending"||project.postReviewStatus==="pending")
                        &&!(_appCtx.role==="admin"||hasPermission("reviewer"));
-  const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly;
+  // DECISION(v1.19.834, ECO Stage A.3): scope-aware readOnly. The base
+  // computation (lock/sent/review) still applies; on top of that, when ECOs
+  // exist on the project we add scope-derived rules:
+  //   • BASE scope + ECOs exist + admin hasn't unlocked → readOnly
+  //   • ECO N scope + ECO N is the active draft → editable (Stage B wires writes)
+  //   • ECO N scope + ECO N is NOT the active draft (older draft, approved,
+  //     cancelled, etc.) → readOnly
+  // The `activeEcoIsCurrentDraft` calc also flags whether the user is editing
+  // the live working ECO so banners and edit pathways can render correctly.
+  const _ecoSummaryForReadOnly=Array.isArray(project.ecoSummary)?project.ecoSummary:[];
+  const _ecosExist=_ecoSummaryForReadOnly.length>0;
+  const _activeDraftEco=_ecoSummaryForReadOnly.filter(e=>e.status==="draft").slice(-1)[0]||null;
+  const _activeEcoIsCurrentDraft=activeScope?.type==="eco"&&_activeDraftEco&&activeScope.ecoId===_activeDraftEco.ecoId;
+  const _baseScopeReadOnly=(activeScope?.type==="base")&&_ecosExist&&!baseUnlocked;
+  const _ecoScopeReadOnly=(activeScope?.type==="eco")&&!_activeEcoIsCurrentDraft;
+  const _ecoScopeReadOnlyReason=_baseScopeReadOnly
+    ?"BASE editing locked while ECOs exist"
+    :_ecoScopeReadOnly
+      ?"This ECO is not the active draft"
+      :null;
+  const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly;
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
 
   // DECISION(v1.19.755): Send "Unlock requested" notification to project owner + all
@@ -24774,6 +24882,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(didMigrate.current){
       didMigrate.current=false;
       safeSave(uid,migrateProject(init));
+    }
+  },[]);
+
+  // DECISION(v1.19.834, ECO Stage 0): Persist the legacy ECO cleanup. The shape
+  // migrator strips tagged rows/pages + resets ecoCounter/ecoSummary in memory,
+  // and stamps `_ecoLegacyMigrated:true`. We auto-save once so the next load
+  // sees the cleaned state and the flag prevents re-triggering. Idempotent.
+  const didEcoLegacyMigrate=useRef(!!init?._ecoLegacyMigrated);
+  useEffect(()=>{
+    if(didEcoLegacyMigrate.current){
+      didEcoLegacyMigrate.current=false;
+      console.log("[ECO MIGRATION] persisting legacy cleanup for project",init.id||"(new)");
+      safeSave(uid,projectRef.current||init).catch(e=>console.warn("ECO legacy save failed:",e));
     }
   },[]);
 
@@ -25950,8 +26071,51 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 uid={uid}
                 activeScope={activeScope}
                 onScopeChange={setActiveScope}
-                onOpenEditor={(eco)=>setOpenEcoEditor(eco)}
+                baseUnlocked={baseUnlocked}
+                onBaseUnlock={setBaseUnlocked}
               />
+              {/* DECISION(v1.19.834, ECO Stage A.4): Scope banner shows the user
+                  what mode they're in. Renders only when ECOs exist (otherwise
+                  there's no scope ambiguity). */}
+              {(project?.ecoSummary||[]).length>0&&(()=>{
+                const isEcoScope=activeScope?.type==="eco";
+                if(!isEcoScope){
+                  // BASE scope with ECOs present
+                  if(_baseScopeReadOnly){
+                    return(
+                      <div style={{background:"#1a1a14",border:"1px solid #fcd34d44",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#fde68a",display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                        <span style={{fontSize:14}}>🔒</span>
+                        <span><strong style={{color:"#fcd34d"}}>BASE locked</strong> — viewing original BOM only. ECOs exist on this project; switch to an ECO tab to see/edit changes.</span>
+                      </div>
+                    );
+                  }
+                  if(baseUnlocked){
+                    return(
+                      <div style={{background:"#1a0c00",border:"1px solid #f59e0b66",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#fde68a",display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                        <span style={{fontSize:14}}>🔓</span>
+                        <span><strong style={{color:"#f59e0b"}}>BASE unlocked for this session</strong> — your edits will modify the original BOM. Use only when changes legitimately belong on BASE rather than under an ECO.</span>
+                      </div>
+                    );
+                  }
+                  return null;
+                }
+                // ECO scope
+                const ecoNum=String(activeScope.ecoNumber||0).padStart(2,"0");
+                if(_activeEcoIsCurrentDraft){
+                  return(
+                    <div style={{background:"#1a0040",border:"1px solid #a855f777",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#e9d5ff",display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                      <span style={{fontSize:14}}>🟣</span>
+                      <span><strong style={{color:"#a855f7"}}>EDITING ECO {ecoNum}</strong> — changes here are tracked. The original BASE is preserved; switch to BASE to see it.</span>
+                    </div>
+                  );
+                }
+                return(
+                  <div style={{background:"#0a0a14",border:"1px solid #94a3b833",borderRadius:8,padding:"8px 14px",fontSize:12,color:"#94a3b8",display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                    <span style={{fontSize:14}}>👁</span>
+                    <span><strong style={{color:"#cbd5e1"}}>Viewing ECO {ecoNum}</strong> (read-only) — this ECO is not the active draft. Open the active draft to make changes.</span>
+                  </div>
+                );
+              })()}
             </div>
           )}
           <PanelListView
