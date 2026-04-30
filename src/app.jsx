@@ -17315,8 +17315,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // (missing API key, missing companyId, readOnly project, owner-priority
     // lock, file-format unknown). Console output goes into the browser log
     // for downstream triage.
+    // DECISION(v1.19.898): Mirror diagnostic logs to companies/{cid}/debugLogs
+    // via logDebugEntry so admins can see what happened on a teammate's
+    // machine without remoting in. View via Settings → Debug Logs.
     const _files=Array.from(files||[]);
-    console.log("[ADDFILES] start",{
+    const _logRemote=(severity,message,extra)=>{
+      try{
+        if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+          window.logDebugEntry({severity,source:"addFiles",message,extra:{
+            projectId,panelId:panel?.id,uid,
+            ...extra,
+          }});
+        }
+      }catch(_){}
+    };
+    const _ctx={
       projectId,panelId:panel?.id,uid,
       fileCount:_files.length,
       fileNames:_files.map(f=>`${f.name} (${f.type||"no-type"}, ${f.size}b)`),
@@ -17327,9 +17340,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       readOnly:!!readOnly,
       ownerPriorityActive:!!ownerPriorityActive,
       activeScope:activeScope?.type||"base",
-    });
+    };
+    console.log("[ADDFILES] start",_ctx);
+    _logRemote("info",`addFiles start (${_files.length} file${_files.length===1?"":"s"})`,_ctx);
     if(!_files.length){
       console.warn("[ADDFILES] aborted — no files");
+      _logRemote("warn","addFiles aborted — no files",_ctx);
       return;
     }
     if(!_apiKey){
@@ -17337,6 +17353,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // caused Noah's drops to disappear into the void. Now surface a modal
       // and bail before bgStart fires so the progress chip doesn't lie.
       console.error("[ADDFILES] aborted — API key not loaded");
+      _logRemote("error","addFiles aborted — API key not loaded for this user",_ctx);
       try{
         await arcAlert(
           "AI extraction is unavailable — the Anthropic API key isn't loaded for this user. Drawings were NOT processed.\n\nFix: open Settings → API Key. If you're a team member, ask the company admin to save the key once (it auto-shares with the team via company config).",
@@ -17347,6 +17364,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     if(readOnly){
       console.error("[ADDFILES] aborted — panel is read-only");
+      _logRemote("warn","addFiles aborted — project read-only",_ctx);
       try{await arcAlert("This project is read-only. Drawings can't be added until the project is unlocked.",{kind:"warning"});}catch(_){}
       return;
     }
@@ -17427,6 +17445,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }
     console.log("[ADDFILES] file outcomes:",fileOutcomes);
+    _logRemote("info",`addFiles processed ${fileOutcomes.length} file(s) → ${newItems.length} pages`,{outcomes:fileOutcomes,resultPages:newItems.length});
     setProcessing(false);setProcessingMsg("");
     if(_apiKey&&newItems.length){
       // Load learning examples once before detection
@@ -17485,6 +17504,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(newItems.length>0){
       bgUpdate(panel.id,"Awaiting confirmation…");
       setAwaitingConfirm(true);
+      _logRemote("info",`addFiles awaiting confirmation — ${newItems.length} page(s)`,{detectedTypes:newItems.map(it=>({name:it.name,types:it.types||[]}))});
       // DECISION(v1.19.589): Persist pendingPages + awaitingConfirm to module-scope cache so
       // navigating out of the project and back doesn't silently lose the user's dropped drawings.
       // PanelCard's mount useEffect restores from this cache.
@@ -17517,6 +17537,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
       if(counts.unsupported>0)lines.push("","If a file came from an email/chat app, save it to your Desktop first then drag from File Explorer (some apps strip the MIME type).");
       bgDone(panel.id,counts.ok>0?"Complete":"⚠ Nothing imported — see alert");
+      _logRemote(counts.ok>0?"warn":"error","addFiles imported nothing usable",{counts,outcomes:fileOutcomes});
       try{await arcAlert(lines.join("\n"),{kind:counts.ok>0?"warning":"error"});}catch(_){}
     }
     }catch(ex){
