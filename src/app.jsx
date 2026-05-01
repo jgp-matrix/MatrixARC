@@ -5415,6 +5415,34 @@ async function buildQuotePdfDoc(doc,project){
     ctx.y+=4;
     doc.setTextColor(...ARC_DOC.colors.black);
 
+    // DECISION(v1.19.937): Per-panel Est. Lead Time + approval-dependency note.
+    // Mirrors the on-screen note. Only renders when the project has any
+    // Engineering Design service card (engineering drives the milestone chain).
+    {
+      const _hasEngServicePdf=Array.isArray(project?.serviceCards)&&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
+      if(_hasEngServicePdf){
+        let _cpltPdf=null;try{_cpltPdf=computeControlPanelLeadTime(pan,project);}catch(e){_cpltPdf=null;}
+        if(_cpltPdf&&!_cpltPdf.noDataWarning){
+          const _today=new Date();_today.setHours(0,0,0,0);
+          const _approvalDue=new Date(_today.getTime()+(_cpltPdf.engineeringDays+_cpltPdf.customerApprovalDays)*86400000);
+          const _fmtPdf=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
+          const noteLines=[
+            `Est. Lead Time: ${_cpltPdf.leadDays} days`,
+            `Panel Lead Time is dependent upon receiving signed Approval drawings by ${_fmtPdf(_approvalDue)}. Lead Time will be re-calculated if approvals take longer.`,
+          ];
+          arcDocCheckBreak(ctx,8);
+          doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(146,64,14);
+          doc.text(noteLines[0],ARC_DOC.margin.left+3,ctx.y+2);ctx.y+=3;
+          doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
+          const wrap=doc.splitTextToSize(noteLines[1],ctx.contentWidth-8);
+          arcDocCheckBreak(ctx,wrap.length*2.2+1);
+          wrap.forEach((ln,i)=>doc.text(ln,ARC_DOC.margin.left+3,ctx.y+i*2.2));
+          ctx.y+=wrap.length*2.2+1;
+          doc.setTextColor(...ARC_DOC.colors.black);
+        }
+      }
+    }
+
     // Quote Notes (compact — inside bordered box)
     if(qp.lineNotes){
       doc.setFontSize(5.5);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.brand);
@@ -15428,6 +15456,31 @@ function QuoteTab({project,onUpdate}){
                     return(
                       <div className="qd-li-notes" style={{borderLeftColor:_hasCrate?"#16a34a":"#94a3b8"}}>
                         <span style={{color:_hasCrate?"#16a34a":"#475569",fontWeight:700}}>{_hasCrate?"✓ Includes ISPM 15 Certified Crate":"Crate Not Included"}</span>
+                      </div>
+                    );
+                  })()}
+                  {/* DECISION(v1.19.937): Per-panel Est. Lead Time note with
+                      approval-dependency clause. Auto-rendered when the project
+                      has any Engineering Design service card (engineering is
+                      the upstream driver in the v1.19.933 milestone chain).
+                      Approval due date = today + engineeringDays + customer
+                      approvalDays. Each panel shows its own Lead Time number
+                      since BOM lead times can differ per panel; the dependency
+                      clause is identical across all panels (project-wide). */}
+                  {(()=>{
+                    const _hasEngService=Array.isArray(project?.serviceCards)&&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
+                    if(!_hasEngService)return null;
+                    let _cplt=null;try{_cplt=computeControlPanelLeadTime(pan,project);}catch(e){return null;}
+                    if(!_cplt||_cplt.noDataWarning)return null;
+                    const _today=new Date();_today.setHours(0,0,0,0);
+                    const _approvalDue=new Date(_today.getTime()+(_cplt.engineeringDays+_cplt.customerApprovalDays)*86400000);
+                    const _fmt=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
+                    return(
+                      <div className="qd-li-notes" style={{borderLeftColor:"#fbbf24"}}>
+                        <div style={{color:"#92400e",fontWeight:700,marginBottom:2}}>📋 Est. Lead Time: {_cplt.leadDays} days</div>
+                        <div style={{color:"#475569",fontSize:12,lineHeight:1.5,fontWeight:400}}>
+                          Panel Lead Time is dependent upon receiving signed Approval drawings by <strong style={{color:"#92400e"}}>{_fmt(_approvalDue)}</strong>. Lead Time will be re-calculated if approvals take longer.
+                        </div>
                       </div>
                     );
                   })()}
