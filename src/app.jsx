@@ -15476,9 +15476,9 @@ function QuoteTab({project,onUpdate}){
                     const _approvalDue=new Date(_today.getTime()+(_cplt.engineeringDays+_cplt.customerApprovalDays)*86400000);
                     const _fmt=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
                     return(
-                      <div className="qd-li-notes" style={{borderLeftColor:"#fbbf24"}}>
-                        <div style={{color:"#92400e",fontWeight:700,marginBottom:2}}>📋 Est. Lead Time: {_cplt.leadDays} days</div>
-                        <div style={{color:"#475569",fontSize:12,lineHeight:1.5,fontWeight:400}}>
+                      <div className="qd-li-notes" style={{borderLeftColor:"#fbbf24",display:"flex",flexDirection:"column",gap:4}}>
+                        <div style={{display:"block",color:"#92400e",fontWeight:700,fontSize:13,lineHeight:1.4}}>📋 Est. Lead Time: {_cplt.leadDays} days</div>
+                        <div style={{display:"block",color:"#475569",fontSize:12,lineHeight:1.5,fontWeight:400}}>
                           Panel Lead Time is dependent upon receiving signed Approval drawings by <strong style={{color:"#92400e"}}>{_fmt(_approvalDue)}</strong>. Lead Time will be re-calculated if approvals take longer.
                         </div>
                       </div>
