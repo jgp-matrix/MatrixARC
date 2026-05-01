@@ -4919,8 +4919,83 @@ async function buildQuotePdfDoc(doc,project){
   // ── LINE ITEMS ──
   arcDocText(ctx,"Line Items",{fontSize:ARC_DOC.fonts.subheading,bold:true,gap:3});
 
-  for(let pi=0;pi<panels.length;pi++){
-    const pan=panels[pi];
+  // DECISION(v1.19.921, Step F PDF): Interleave panels + service cards in
+  // createdAt order so the PDF line items mirror the on-screen / printed
+  // layout. Service cards render with a slim body (description + scope +
+  // dates + simplified pricing). pi (loop index) is the combined Line N.
+  const _ts_pdf=line=>{
+    if(line.createdAt)return +line.createdAt||0;
+    const m=String(line.id||"").match(/(\d{12,})/);
+    return m?+m[1]:0;
+  };
+  const _allLinesPdf2=[
+    ...panels.map(p=>({_kind:"panel",_obj:p,_ts:_ts_pdf(p)})),
+    ...((project?.serviceCards||[]).map(sc=>({_kind:"service",_obj:sc,_ts:_ts_pdf(sc)}))),
+  ].sort((a,b)=>a._ts-b._ts);
+  for(let pi=0;pi<_allLinesPdf2.length;pi++){
+    const _entryPdf=_allLinesPdf2[pi];
+    if(_entryPdf._kind==="service"){
+      const sc=_entryPdf._obj;
+      const total=computeServiceCardTotal(sc);
+      const label=SERVICE_CARD_LABELS[sc.lineType]||"Service";
+      const scopeLines=sc.detailDescription?doc.splitTextToSize("Scope: "+sc.detailDescription,ctx.contentWidth-8):[];
+      const datesH=(sc.requestedShipDate||sc.estCompletionDate)?5:0;
+      const estH=7+5+(scopeLines.length*3)+(scopeLines.length>0?3:0)+datesH+12+4;
+      arcDocCheckBreak(ctx,estH);
+      const _svcStartY=ctx.y;
+      const _svcStartPg=ctx.pageNum;
+      // Header bar
+      doc.setFillColor(248,250,252);doc.setDrawColor(226,232,240);
+      doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,7,2,2,"FD");
+      doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+      doc.text("Line "+(pi+1),ARC_DOC.margin.left+3,ctx.y+4.5);
+      doc.setTextColor(...ARC_DOC.colors.black);
+      doc.text(label+" - Professional Services",ARC_DOC.margin.left+22,ctx.y+4.5);
+      ctx.y+=9;
+      // Title
+      arcDocText(ctx,sc.description||label,{fontSize:11,bold:true,gap:2,indent:2,maxWidth:ctx.contentWidth-4});
+      // Scope description
+      if(scopeLines.length>0){
+        const slh=3;
+        doc.setFontSize(7.5);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
+        scopeLines.forEach((sl,li)=>{doc.text(sl,ARC_DOC.margin.left+3,ctx.y+2+li*slh);});
+        ctx.y+=scopeLines.length*slh+3;
+      }
+      // Dates row
+      if(datesH>0){
+        let dateStr="";
+        if(sc.requestedShipDate)dateStr+="Req. Ship Date: "+sc.requestedShipDate;
+        if(sc.estCompletionDate){if(dateStr)dateStr+="  ·  ";dateStr+="Est. Completion: "+sc.estCompletionDate;}
+        doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+        doc.text(dateStr,ARC_DOC.margin.left+3,ctx.y+2);
+        ctx.y+=5;
+      }
+      // Pricing row
+      const sBoxH=12;
+      arcDocCheckBreak(ctx,sBoxH+2);
+      doc.setFillColor(248,250,252);doc.setDrawColor(248,250,252);
+      doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,sBoxH,"FD");
+      const sPw=ctx.contentWidth/4;const sPy=ctx.y;
+      const qtyLabel=sc.priceMode==="hourly"?"Hours":"Quantity";
+      const qtyVal=(+sc.qty||0)+" "+(sc.priceMode==="hourly"?"hrs":"EA");
+      const rateLabel=sc.priceMode==="hourly"?"Rate":"Lump Sum";
+      const rateVal=sc.priceMode==="hourly"?(arcFmtMoney(+sc.rate||0)+"/hr"):arcFmtMoney(+sc.lumpSum||0);
+      [{l:qtyLabel,v:qtyVal},{l:rateLabel,v:rateVal},{l:"Lead Time",v:"-"},{l:"Total Price",v:total>0?arcFmtMoney(total):"-"}].forEach((col,ci)=>{
+        const cx=ARC_DOC.margin.left+ci*sPw+sPw/2;
+        doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
+        doc.text(col.l,cx,sPy+4,{align:"center"});
+        doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
+        doc.text(col.v,cx,sPy+9,{align:"center"});
+      });
+      ctx.y=sPy+sBoxH+1;
+      if(ctx.pageNum===_svcStartPg){
+        doc.setDrawColor(...ARC_DOC.colors.lightGrey);doc.setLineWidth(0.3);
+        doc.roundedRect(ARC_DOC.margin.left,_svcStartY,ctx.contentWidth,ctx.y-_svcStartY,2,2);
+      }
+      ctx.y+=3;
+      continue;
+    }
+    const pan=_entryPdf._obj;
     const panPr=pan.pricing||{};
     const panSell=computePanelSellPrice(pan);
     const panQty=pan.lineQty??1;
@@ -5197,11 +5272,6 @@ async function buildQuotePdfDoc(doc,project){
     ctx._currentLineNum=null;
     ctx.y+=3;
   }
-
-  // ── PROFESSIONAL SERVICES LINE ITEMS ──
-  // DECISION(v1.19.915): v1.19.914's project-level service-line PDF rendering
-  // was removed. Service Quote Lines now have their own ServicesCard data and
-  // will render here in Step F as boxed line items mirroring the panel layout.
 
   // ── VALIDITY DISCLAIMER ──
   // If disclaimer+totals won't fit, add "totals on next page" before breaking
@@ -14682,7 +14752,80 @@ function QuoteTab({project,onUpdate}){
           {/* Line Items */}
           <div className="qd-items">
             <div className="qd-items-heading">Line Items</div>
-            {(project.panels||[project]).map((pan,pi)=>{
+            {(()=>{
+              // DECISION(v1.19.921, Step F): Interleave panels + service cards
+              // in createdAt order on the printed Quote so the line items match
+              // the in-app line list and the QUOTE SUMMARY pane. Each line gets
+              // a sequential Line N index. Service cards render with a slim
+              // body (no specs grid / BOM crosses / ECO breakdowns) and a
+              // simplified pricing row (Qty/Rate/—/—/Total).
+              const _ts=line=>{
+                if(line.createdAt)return +line.createdAt||0;
+                const m=String(line.id||"").match(/(\d{12,})/);
+                return m?+m[1]:0;
+              };
+              const _panelsForRender=(project.panels&&project.panels.length)?project.panels:[project];
+              const _allLines=[
+                ..._panelsForRender.map(p=>({_kind:"panel",_obj:p,_ts:_ts(p)})),
+                ...(project.serviceCards||[]).map(sc=>({_kind:"service",_obj:sc,_ts:_ts(sc)})),
+              ].sort((a,b)=>a._ts-b._ts);
+              return _allLines.map((entry,idx)=>{
+                if(entry._kind==="service"){
+                  const sc=entry._obj;
+                  const total=computeServiceCardTotal(sc);
+                  const label=SERVICE_CARD_LABELS[sc.lineType]||"Service";
+                  const accentColor=sc.lineType==="commissioning"?"#fb923c":sc.lineType==="programming"?"#38bdf8":"#a78bfa";
+                  return(
+                    <div key={sc.id} style={{marginBottom:12}}>
+                      <div className="qd-li">
+                        <div className="qd-li-hdr">
+                          <span className="qd-li-num">Line {idx+1}</span>
+                          <span className="qd-li-part">{label} — Professional Services</span>
+                          <span style={{marginLeft:14,fontSize:11,fontWeight:700,color:accentColor,letterSpacing:0.6,textTransform:"uppercase"}}>{sc.priceMode==="lump_sum"?"Lump Sum":"Hourly"}</span>
+                        </div>
+                        <div className="qd-li-body">
+                          <div>
+                            <div className="qd-li-title">{sc.description||label}</div>
+                            <div className="qd-li-notes" style={{borderLeftColor:"#3b82f6"}}>
+                              <span style={{fontWeight:700}}>SCOPE: </span>
+                              <span style={{whiteSpace:"pre-wrap"}}>{sc.detailDescription||"—"}</span>
+                            </div>
+                            {(sc.requestedShipDate||sc.estCompletionDate)&&(
+                              <div className="qd-li-notes" style={{borderLeftColor:"#22c55e",fontSize:12}}>
+                                {sc.requestedShipDate&&<span><strong style={{color:"#16a34a"}}>Req. Ship Date:</strong> {sc.requestedShipDate}{sc.estCompletionDate?"  ·  ":""}</span>}
+                                {sc.estCompletionDate&&<span><strong style={{color:"#16a34a"}}>Est. Completion:</strong> {sc.estCompletionDate}</span>}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="qd-li-pricing">
+                          <div>
+                            <div className="qd-plabel">{sc.priceMode==="hourly"?"Hours":"Quantity"}</div>
+                            <div className="qd-pval">{(+sc.qty||0)} {sc.priceMode==="hourly"?"hrs":"EA"}</div>
+                          </div>
+                          <div>
+                            <div className="qd-plabel">{sc.priceMode==="hourly"?"Rate":"Lump Sum"}</div>
+                            <div className="qd-pval">{sc.priceMode==="hourly"?(fmtMoney(+sc.rate||0)+"/hr"):fmtMoney(+sc.lumpSum||0)}</div>
+                          </div>
+                          <div>
+                            <div className="qd-plabel">Lead Time</div>
+                            <div className="qd-pval">—</div>
+                          </div>
+                          <div>
+                            <div className="qd-plabel">Discount</div>
+                            <div className="qd-pval">—</div>
+                          </div>
+                          <div>
+                            <div className="qd-plabel">Total Price</div>
+                            <div className="qd-pval qd-total-val">{total>0?fmtMoney(total):"—"}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                const pan=entry._obj;
+                const pi=idx; // alias so existing panel render reads its line number from the combined index
               const panPr=pan.pricing||{};
               const panSell=computePanelSellPrice(pan);
               const panHasSell=panSell>0;
@@ -14918,12 +15061,8 @@ function QuoteTab({project,onUpdate}){
                 </div>
               )}
               </div>);
-            })}
-            {/* DECISION(v1.19.915): v1.19.914's project-level service-line render
-                here was removed. Service Quote Lines are now their own card
-                line items rendered alongside panels in the line list (Step C).
-                Bottom totals still pick up serviceCards via the
-                computeAllServiceCardsTotal helper below. */}
+              });
+            })()}
           </div>
 
           {/* Validity Notice + Totals — kept together on same page */}
