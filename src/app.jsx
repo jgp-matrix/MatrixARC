@@ -5270,7 +5270,8 @@ async function buildQuotePdfDoc(doc,project){
         const _today3=new Date();_today3.setHours(0,0,0,0);
         const _drawDeliv3=new Date(_today3.getTime()+_scLeadDaysPdf*86400000);
         const _fmtPdf3=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
-        const _msg3=`Est. Engineering Drawings Lead Time: ${_scLeadDaysPdf} days\nDrawings delivered approximately ${_fmtPdf3(_drawDeliv3)}. Submittals sent at delivery for customer approval — minimum 3-week approval window. Lead Time will be re-calculated if approvals take longer.`;
+        // DECISION(v1.19.946): ARO suffix; drawings-delivery date removed.
+        const _msg3=`Est. Engineering Drawings Lead Time: ${_scLeadDaysPdf} days ARO\nSubmittals sent at drawings delivery for customer approval — minimum 3-week approval window. Lead Time will be re-calculated if approvals take longer.`;
         // DECISION(v1.19.942): 30% font bump (7pt → 9pt).
         doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.red);
         const wrap3=doc.splitTextToSize(_msg3,ctx.contentWidth-6);
@@ -5598,8 +5599,11 @@ async function buildQuotePdfDoc(doc,project){
           const _drawDeliv2=new Date(_today2.getTime()+_cpltPdf2.engineeringDays*86400000);
           const _approvalDue2=new Date(_today2.getTime()+(_cpltPdf2.engineeringDays+_cpltPdf2.customerApprovalDays)*86400000);
           const _fmtPdf2=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
-          const _lines=[`Est. Lead Time: ${_cpltPdf2.leadDays} days`];
-          if((_cpltPdf2.engineeringDays||0)>0)_lines.push(`Est. Engineering Drawings Lead Time: ${_cpltPdf2.engineeringDays} days (delivered approx. ${_fmtPdf2(_drawDeliv2)})`);
+          // DECISION(v1.19.946): "ARO" (At Receipt of Order) suffix on the
+          // days values. Drawings-delivery date removed — the Approval-due
+          // date below is the actionable milestone.
+          const _lines=[`Est. Lead Time: ${_cpltPdf2.leadDays} days ARO`];
+          if((_cpltPdf2.engineeringDays||0)>0)_lines.push(`Est. Engineering Drawings Lead Time: ${_cpltPdf2.engineeringDays} days ARO`);
           _lines.push(`Panel Lead Time is dependent upon receiving signed Approval drawings by ${_fmtPdf2(_approvalDue2)}. Lead Time will be re-calculated if approvals take longer.`);
           const _msg=_lines.join("\n");
           // DECISION(v1.19.942): Banner font bumped 30% (7pt → 9pt) per user
@@ -15455,8 +15459,8 @@ function QuoteTab({project,onUpdate}){
                           const _fmt=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
                           return(
                             <div style={{padding:"12px 16px",borderTop:"1px solid #e2e8f0",textAlign:"center",fontSize:17,fontWeight:700,color:"#dc2626",lineHeight:1.5,background:"#fef2f2"}}>
-                              <div>Est. Engineering Drawings Lead Time: {_scLeadDays} days</div>
-                              <div style={{marginTop:3}}>Drawings delivered approximately {_fmt(_drawDeliv)}. Submittals sent at delivery for customer approval — minimum 3-week approval window. Lead Time will be re-calculated if approvals take longer.</div>
+                              <div>Est. Engineering Drawings Lead Time: {_scLeadDays} days ARO</div>
+                              <div style={{marginTop:3}}>Submittals sent at drawings delivery for customer approval — minimum 3-week approval window. Lead Time will be re-calculated if approvals take longer.</div>
                             </div>
                           );
                         })()}
@@ -15710,8 +15714,8 @@ function QuoteTab({project,onUpdate}){
                 const _fmt=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
                 return(
                   <div style={{padding:"12px 16px",borderTop:"1px solid #e2e8f0",textAlign:"center",fontSize:17,fontWeight:700,color:"#dc2626",lineHeight:1.5,background:"#fef2f2"}}>
-                    <div>Est. Lead Time: {_cplt.leadDays} days</div>
-                    {(_cplt.engineeringDays||0)>0&&<div style={{marginTop:3}}>Est. Engineering Drawings Lead Time: {_cplt.engineeringDays} days (delivered approx. {_fmt(_drawingsDeliv)})</div>}
+                    <div>Est. Lead Time: {_cplt.leadDays} days ARO</div>
+                    {(_cplt.engineeringDays||0)>0&&<div style={{marginTop:3}}>Est. Engineering Drawings Lead Time: {_cplt.engineeringDays} days ARO</div>}
                     <div style={{marginTop:6,fontWeight:600}}>Panel Lead Time is dependent upon receiving signed Approval drawings by {_fmt(_approvalDue)}. Lead Time will be re-calculated if approvals take longer.</div>
                   </div>
                 );
