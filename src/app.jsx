@@ -1087,7 +1087,12 @@ function computeControlPanelLeadTime(panel,project){
   // If real approvals come back later, the user updates the field and the
   // chain extends. Production rescheduling (TRAQS) handles the downstream
   // effect — see productionInfeasible warning below.
-  const customerApprovalDays=Math.max(0,Math.min(180,+panel.customerApprovalDays??(panel.customerApprovalDays===0?0:21)));
+  // DECISION(v1.19.934): NaN-safe default. `+undefined === NaN` and `??`
+  // doesn't trigger on NaN, so the v1.19.933 expression poisoned the whole
+  // chain with NaN on any panel that didn't have customerApprovalDays set
+  // yet. Resolve the raw value first, then coerce + clamp.
+  const _caRaw=panel.customerApprovalDays;
+  const customerApprovalDays=Math.max(0,Math.min(180,_caRaw==null?21:(+_caRaw||0)));
 
   // ── MILESTONE CHAIN (sequential days from today=PO Received) ──────────
   //   Eng → Submittals Sent → Customer Approval → Materials → Production

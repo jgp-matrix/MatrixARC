@@ -235,7 +235,7 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.933";
+const APP_VERSION="v1.19.934";
 // DECISION(v1.19.785): Schema bump 2 → 3 introduces ECO subcollection and project-level
 // ECO indexing fields (ecoCounter, activeEcoId, ecoSummary). Migration is additive only —
 // see loadProjects() which backfills missing ECO fields with defaults so legacy projects
@@ -453,6 +453,6 @@ async function unsubscribePushNotifications(uid){
 // Originally it was top-level here; that required messaging to load eagerly on every
 // page. Now this block is a no-op marker.
 </script>
-<script src="index.bundle.js?v=v1.19.933"></script>
+<script src="index.bundle.js?v=v1.19.934"></script>
 </body>
 </html>
