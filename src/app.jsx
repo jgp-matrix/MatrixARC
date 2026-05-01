@@ -735,6 +735,35 @@ function computeEcoSellDelta(panel,ecoId,ecoNumber){
   const without={...panel,bom:(panel.bom||[]).filter(r=>!_matchesEco(r,ecoId,ecoNumber))};
   return full-computePanelSellPrice(without);
 }
+// DECISION(v1.19.908): ECOs are sequential — ECO 02 builds on ECO 01. When the
+// user views ECO N's tab, totals reflect BASE + ECO 01 + … + ECO N (cumulative
+// state after applying every ECO through the selected one). Margin is linear
+// (sell = cost / (1 - m)), so summing per-ECO sell deltas equals
+// sell(BASE + ECO01 + … + ECON) - sell(BASE).
+function _ecosUpTo(project,upToEcoNumber){
+  if(!Array.isArray(project?.ecoSummary)||!upToEcoNumber)return[];
+  return project.ecoSummary
+    .filter(e=>e&&(+e.number||0)>0&&(+e.number||0)<=upToEcoNumber)
+    .slice()
+    .sort((a,b)=>(+a.number||0)-(+b.number||0));
+}
+function computeCumulativeEcoMaterialDelta(panel,project,upToEcoNumber){
+  if(!panel||!upToEcoNumber)return 0;
+  return _ecosUpTo(project,upToEcoNumber).reduce((s,e)=>s+computeEcoMaterialDelta(panel,e.ecoId),0);
+}
+function computeCumulativeEcoLabor(panel,project,upToEcoNumber){
+  if(!panel||!upToEcoNumber)return{totalHrs:0,totalCost:0};
+  let totalHrs=0,totalCost=0;
+  for(const e of _ecosUpTo(project,upToEcoNumber)){
+    const lab=computeEcoLaborForActiveEco(panel,e.ecoId);
+    totalHrs+=lab.totalHrs;totalCost+=lab.totalCost;
+  }
+  return{totalHrs,totalCost};
+}
+function computeCumulativeEcoSellDelta(panel,project,upToEcoNumber){
+  if(!panel||!upToEcoNumber)return 0;
+  return _ecosUpTo(project,upToEcoNumber).reduce((s,e)=>s+computeEcoSellDelta(panel,e.ecoId,e.number),0);
+}
 // Structured change detail for the quote form per-line ECO breakdown. Returns
 // a list of part-level entries (add / modify / remove) + total labor hours
 // summed across CUT/LAYOUT/WIRE for the given ECO. Sell-side dollar amounts
@@ -4786,19 +4815,24 @@ async function buildQuotePdfDoc(doc,project){
     const panBom=pan.bom||[];
 
     // DECISION(v1.19.890, Stage E PDF): Mirror the on-screen QuoteView ECO
-    // breakdown in the printed PDF. Without this, the PDF customer-facing
-    // output (which is what actually goes to the customer) doesn't show
-    // BASE / ECO Δ / NEW pricing, the auto-populated change detail block,
-    // crate detection, or the totals split — they only existed on screen.
-    const _draftEcosPdf=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
-    const _activeEcoPdf=_draftEcosPdf.slice(-1)[0]||null;
-    const _activeEcoLabelPdf=_activeEcoPdf?`ECO ${String(_activeEcoPdf.number||0).padStart(2,"0")}`:null;
-    const _panEcoIdPdf=_activeEcoPdf?_activeEcoPdf.ecoId:null;
-    const _panEcoNumPdf=_activeEcoPdf?_activeEcoPdf.number||0:0;
-    const _panHasEcoPdf=!!_activeEcoPdf&&panBom.some(r=>_matchesEco(r,_panEcoIdPdf,_panEcoNumPdf));
+    // breakdown in the printed PDF. DECISION(v1.19.908, multi-ECO additive):
+    // List EVERY draft ECO with rows on this panel separately so the customer
+    // sees how each ECO contributes individually. Cumulative NEW = BASE + Σ(ECO).
+    const _draftEcosPdf=Array.isArray(project?.ecoSummary)
+      ?project.ecoSummary.filter(e=>e&&e.status==="draft").slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
+      :[];
+    const _panEcoEntriesPdf=_draftEcosPdf
+      .filter(eco=>panBom.some(r=>_matchesEco(r,eco.ecoId,eco.number)))
+      .map(eco=>({
+        eco,
+        ecoId:eco.ecoId,
+        number:eco.number||0,
+        label:`ECO ${String(eco.number||0).padStart(2,"0")}`,
+        delta:computeEcoSellDelta(pan,eco.ecoId,eco.number),
+        changeDetails:computeEcoChangeDetails(pan,eco.ecoId,eco.number),
+      }));
+    const _panHasEcoPdf=_panEcoEntriesPdf.length>0;
     const _panBaseSellPdf=_panHasEcoPdf?computeBasePanelSellPrice(pan):0;
-    const _panEcoDeltaPdf=_panHasEcoPdf?computeEcoSellDelta(pan,_panEcoIdPdf,_panEcoNumPdf):0;
-    const _panChangeDetailsPdf=_panHasEcoPdf?computeEcoChangeDetails(pan,_panEcoIdPdf,_panEcoNumPdf):null;
     const _hasCratePdf=panBom.some(r=>{
       if(r.isLaborRow)return false;
       const pn=(r.partNumber||"").toString();
@@ -4818,8 +4852,13 @@ async function buildQuotePdfDoc(doc,project){
     const estNotesH=(pan.bomNotes?8:0)+(qp.lineNotes?5:0);
     const estDocsH=((pan.pages||[]).length+(pan.otherDocs||[]).length)>0?6:0;
     const estCrateH=4; // always renders — crate auto-detect line
-    const estEcoChangeH=_panHasEcoPdf&&_panChangeDetailsPdf?(4+(_panChangeDetailsPdf.parts.length+(_panChangeDetailsPdf.laborHrs?1:0)+1)*2.5+2):0;
-    const estPricingH=_panHasEcoPdf?20:14; // breakdown adds ~6mm to pricing row
+    const estEcoChangeH=_panEcoEntriesPdf.reduce((s,e)=>{
+      const cd=e.changeDetails;
+      if(!cd||(cd.parts.length===0&&cd.laborHrs===0))return s;
+      return s+4+(cd.parts.length+(cd.laborHrs?1:0)+1)*2.5+2;
+    },0);
+    // Pricing row stacks BASE + N ECO deltas + NEW; ~3.5mm per row, min 14mm.
+    const estPricingH=_panHasEcoPdf?Math.max(14,8+(_panEcoEntriesPdf.length+2)*3.5):14;
     const estH=7+8+estSpecH+estNotesH+estCrateH+estCrossH+estDocsH+estPricingH+estEcoChangeH+4;
     arcDocCheckBreak(ctx,estH);
     const lineItemStartY=ctx.y;
@@ -4937,47 +4976,46 @@ async function buildQuotePdfDoc(doc,project){
       ctx.y+=qnLines.length*2.5+1.5;
     }
 
-    // DECISION(v1.19.890, Stage E PDF): Auto-populated ECO change detail block —
-    // descriptions only (no per-line costs), labor combined into total hrs,
-    // sell-side roll-up at the bottom. Mirrors the QuoteView block.
-    // DECISION(v1.19.891): ASCII labels — "->" instead of →, no glyphs.
-    if(_panHasEcoPdf&&_panChangeDetailsPdf){
-      const cd=_panChangeDetailsPdf;
+    // DECISION(v1.19.890, Stage E PDF; v1.19.908 multi-ECO): One change detail
+    // block per draft ECO so the customer sees each ECO's contribution.
+    // ASCII labels per v1.19.891 (helvetica can't render ✓/○/→/Σ/Δ).
+    for(const _ecoPdf of _panEcoEntriesPdf){
+      const cd=_ecoPdf.changeDetails;
+      if(!cd)continue;
       const partsArr=cd.parts;
       const hasContent=partsArr.length>0||cd.laborHrs!==0;
-      if(hasContent){
-        const headerH=3.5,rowH=2.5;
-        const rowsCount=partsArr.length+(cd.laborHrs!==0?1:0);
-        const blockH=headerH+rowsCount*rowH+rowH+2;
-        arcDocCheckBreak(ctx,blockH);
-        // Header
-        doc.setFontSize(5.5);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
-        doc.text(_activeEcoLabelPdf+" - CHANGES",ARC_DOC.margin.left+3,ctx.y+2.5);ctx.y+=headerH;
-        // Per-row lines
-        doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-        for(const p of partsArr){
-          let line="";
-          if(p.op==="add")line="+ Added: "+p.qty+" x "+(p.partNumber||"(no part #)")+(p.description?" - "+p.description.slice(0,60):"");
-          else if(p.op==="remove")line="X Removed: "+p.qty+" x "+(p.partNumber||"(no part #)")+(p.description?" - "+p.description.slice(0,60):"");
-          else if(p.op==="modify"){
-            const changes=[];
-            if(p.qtyDelta!==0)changes.push("qty "+p.origQty+" -> "+p.newQty);
-            if(p.pnChanged)changes.push("part # "+(p.origPartNumber||"-")+" -> "+(p.partNumber||"-"));
-            if(p.descChanged&&!p.pnChanged)changes.push("description updated");
-            line="* Modified: "+(p.partNumber||p.origPartNumber||"(no part #)")+(changes.length?" - "+changes.join(" - "):"");
-          }
-          doc.text(line.slice(0,160),ARC_DOC.margin.left+5,ctx.y+1.5);ctx.y+=rowH;
+      if(!hasContent)continue;
+      const headerH=3.5,rowH=2.5;
+      const rowsCount=partsArr.length+(cd.laborHrs!==0?1:0);
+      const blockH=headerH+rowsCount*rowH+rowH+2;
+      arcDocCheckBreak(ctx,blockH);
+      // Header
+      doc.setFontSize(5.5);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
+      doc.text(_ecoPdf.label+" - CHANGES",ARC_DOC.margin.left+3,ctx.y+2.5);ctx.y+=headerH;
+      // Per-row lines
+      doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+      for(const p of partsArr){
+        let line="";
+        if(p.op==="add")line="+ Added: "+p.qty+" x "+(p.partNumber||"(no part #)")+(p.description?" - "+p.description.slice(0,60):"");
+        else if(p.op==="remove")line="X Removed: "+p.qty+" x "+(p.partNumber||"(no part #)")+(p.description?" - "+p.description.slice(0,60):"");
+        else if(p.op==="modify"){
+          const changes=[];
+          if(p.qtyDelta!==0)changes.push("qty "+p.origQty+" -> "+p.newQty);
+          if(p.pnChanged)changes.push("part # "+(p.origPartNumber||"-")+" -> "+(p.partNumber||"-"));
+          if(p.descChanged&&!p.pnChanged)changes.push("description updated");
+          line="* Modified: "+(p.partNumber||p.origPartNumber||"(no part #)")+(changes.length?" - "+changes.join(" - "):"");
         }
-        if(cd.laborHrs!==0){
-          doc.text("Labor: "+cd.laborHrs+" hrs",ARC_DOC.margin.left+5,ctx.y+1.5);ctx.y+=rowH;
-        }
-        // Roll-up sell-side total
-        doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
-        const sgn=_panEcoDeltaPdf>=0?"+":"-";
-        doc.text(_activeEcoLabelPdf+" Net Change: "+sgn+arcFmtMoney(Math.abs(_panEcoDeltaPdf)),ARC_DOC.W-ARC_DOC.margin.right-2,ctx.y+2,{align:"right"});
-        ctx.y+=rowH+2;
-        doc.setTextColor(...ARC_DOC.colors.black);
+        doc.text(line.slice(0,160),ARC_DOC.margin.left+5,ctx.y+1.5);ctx.y+=rowH;
       }
+      if(cd.laborHrs!==0){
+        doc.text("Labor: "+cd.laborHrs+" hrs",ARC_DOC.margin.left+5,ctx.y+1.5);ctx.y+=rowH;
+      }
+      // Roll-up sell-side total for this ECO
+      doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
+      const sgn=_ecoPdf.delta>=0?"+":"-";
+      doc.text(_ecoPdf.label+" Net Change: "+sgn+arcFmtMoney(Math.abs(_ecoPdf.delta)),ARC_DOC.W-ARC_DOC.margin.right-2,ctx.y+2,{align:"right"});
+      ctx.y+=rowH+2;
+      doc.setTextColor(...ARC_DOC.colors.black);
     }
 
     // DECISION(v1.19.330): Crossed items render INSIDE the bordered box (between docs and pricing).
@@ -5000,12 +5038,12 @@ async function buildQuotePdfDoc(doc,project){
     }
 
     // Pricing row — INSIDE the bordered box
-    // DECISION(v1.19.890, Stage E PDF): when this panel has ECO changes the
-    // Unit Price + Total Price cells show stacked BASE → ECO Δ → NEW values
-    // so the customer can see how the change order moved the price. Box
-    // height bumps from 12mm to 18mm in that case. Other cells stay single.
+    // DECISION(v1.19.890, Stage E PDF; v1.19.908 multi-ECO): stack BASE / each
+    // ECO Δ / NEW for Unit Price + Total Price. Box height grows with the
+    // number of ECOs so all rows fit cleanly.
     const _ecoStack=_panHasEcoPdf;
-    const boxH=_ecoStack?18:12;
+    const _ecoCount=_panEcoEntriesPdf.length;
+    const boxH=_ecoStack?Math.max(18,8+(_ecoCount+2)*3.5):12;
     arcDocCheckBreak(ctx,boxH+2);
     doc.setFillColor(248,250,252);doc.setDrawColor(248,250,252);
     doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,boxH,"FD");
@@ -5020,18 +5058,21 @@ async function buildQuotePdfDoc(doc,project){
       doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
       doc.text(col.l,cx,py+4,{align:"center"});
       if(col.eco){
-        // Stacked BASE / ECO Net / NEW for Unit Price (ci=1) and Total Price (ci=3)
+        // Stacked BASE / ECO 01 Net / ECO 02 Net / … / NEW
         // DECISION(v1.19.891): "Net" instead of Δ — see ASCII-only PDF note above.
         const mult=col.times||1;
+        let yy=py+8;
         doc.setFontSize(6);doc.setFont("helvetica","normal");doc.setTextColor(120,120,128);
-        doc.text("BASE: "+arcFmtMoney(_panBaseSellPdf*mult),cx,py+8,{align:"center"});
+        doc.text("BASE: "+arcFmtMoney(_panBaseSellPdf*mult),cx,yy,{align:"center"});yy+=3.5;
         doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(168,85,247);
-        doc.text(_activeEcoLabelPdf+" Net: "+_signedFmt(_panEcoDeltaPdf*mult),cx,py+11.5,{align:"center"});
+        for(const ecoEntry of _panEcoEntriesPdf){
+          doc.text(ecoEntry.label+" Net: "+_signedFmt(ecoEntry.delta*mult),cx,yy,{align:"center"});yy+=3.5;
+        }
         doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
-        doc.text(col.v,cx,py+16,{align:"center"});
+        doc.text(col.v,cx,yy+2.5,{align:"center"});
       }else{
         doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
-        doc.text(col.v,cx,py+(_ecoStack?13:9),{align:"center"});
+        doc.text(col.v,cx,py+(_ecoStack?Math.max(13,boxH/2+2):9),{align:"center"});
       }
     });
     ctx.y=py+boxH+1;
@@ -5054,25 +5095,33 @@ async function buildQuotePdfDoc(doc,project){
   arcDocText(ctx,"Budgetary quotes are provided for planning purposes only and do not represent a firm or binding price. Firm quoted prices are valid for 30 days from the date of issue unless otherwise noted. All prices are subject to change without notice and do not constitute a binding contract until a purchase order is accepted and confirmed by Matrix Systems. Lead times and material availability are estimated and subject to supplier confirmation at time of order.",{fontSize:7.5,italic:true,color:ARC_DOC.colors.grey,gap:4});
 
   // ── TOTALS BOX ──
-  // DECISION(v1.19.890, Stage E PDF): Split Subtotal into BASE Subtotal +
-  // ECO N when any panel carries ECO rows. Mirrors the QuoteView totals
-  // layout — Total stays at BASE + ECO since computePanelSellPrice already
-  // includes ECO contributions.
+  // DECISION(v1.19.890, Stage E PDF; v1.19.908 multi-ECO): list each draft
+  // ECO's subtotal separately so the customer sees how each change order
+  // rolls into the Total. Total = BASE + Σ(each ECO).
   const totalPrice=panels.reduce((s,pan)=>computePanelSellPrice(pan)*(pan.lineQty??1)+s,0);
-  const _draftTotalsPdf=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
-  const _activeTotalsPdf=_draftTotalsPdf.slice(-1)[0]||null;
-  const _activeTotalsIdPdf=_activeTotalsPdf?_activeTotalsPdf.ecoId:null;
-  const _activeTotalsNumPdf=_activeTotalsPdf?_activeTotalsPdf.number||0:0;
-  const _activeTotalsLabelPdf=_activeTotalsPdf?`ECO ${String(_activeTotalsPdf.number||0).padStart(2,"0")}`:null;
-  const _hasEcoTotalsPdf=!!_activeTotalsPdf&&panels.some(pan=>(pan.bom||[]).some(r=>_matchesEco(r,_activeTotalsIdPdf,_activeTotalsNumPdf)));
+  const _draftTotalsPdf=Array.isArray(project?.ecoSummary)
+    ?project.ecoSummary.filter(e=>e&&e.status==="draft").slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
+    :[];
+  const _ecoSubtotalsPdf=_draftTotalsPdf
+    .filter(eco=>panels.some(pan=>(pan.bom||[]).some(r=>_matchesEco(r,eco.ecoId,eco.number))))
+    .map(eco=>({
+      eco,
+      label:`ECO ${String(eco.number||0).padStart(2,"0")}`,
+      subtotal:panels.reduce((s,pan)=>s+computeEcoSellDelta(pan,eco.ecoId,eco.number)*(pan.lineQty??1),0),
+    }));
+  const _hasEcoTotalsPdf=_ecoSubtotalsPdf.length>0;
   const _baseSubtotalPdf=_hasEcoTotalsPdf?panels.reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0):totalPrice;
-  const _ecoSubtotalPdf=_hasEcoTotalsPdf?panels.reduce((s,pan)=>s+computeEcoSellDelta(pan,_activeTotalsIdPdf,_activeTotalsNumPdf)*(pan.lineQty??1),0):0;
   const _signedFmtPdf=n=>(n>=0?"+":"-")+arcFmtMoney(Math.abs(n));
-  arcDocCheckBreak(ctx,_hasEcoTotalsPdf?32:25);
+  arcDocCheckBreak(ctx,_hasEcoTotalsPdf?(25+_ecoSubtotalsPdf.length*7):25);
   const bx=ARC_DOC.W-ARC_DOC.margin.right-60;const bw=60;
   const isNonTaxable=/nontax|non.?tax/i.test(q.taxAreaCode||"");
   const totalsRows=_hasEcoTotalsPdf
-    ?[{l:"Subtotal",v:arcFmtMoney(_baseSubtotalPdf),bold:false,eco:false},{l:_activeTotalsLabelPdf,v:_signedFmtPdf(_ecoSubtotalPdf),bold:false,eco:true},{l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false,eco:false},{l:"Total",v:arcFmtMoney(totalPrice),bold:true,eco:false}]
+    ?[
+        {l:"Subtotal",v:arcFmtMoney(_baseSubtotalPdf),bold:false,eco:false},
+        ..._ecoSubtotalsPdf.map(e=>({l:e.label,v:_signedFmtPdf(e.subtotal),bold:false,eco:true})),
+        {l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false,eco:false},
+        {l:"Total",v:arcFmtMoney(totalPrice),bold:true,eco:false},
+      ]
     :[{l:"Subtotal",v:arcFmtMoney(totalPrice),bold:false,eco:false},{l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false,eco:false},{l:"Total",v:arcFmtMoney(totalPrice),bold:true,eco:false}];
   totalsRows.forEach((row,ri)=>{
     const ry=ctx.y+ri*7;
@@ -14432,28 +14481,27 @@ function QuoteTab({project,onUpdate}){
               const qp=(q.panelOverrides||{})[pan.id]||{};
               const setQP=(updates)=>{const po={...(q.panelOverrides||{}),[pan.id]:{...qp,...updates}};setQ({panelOverrides:po});};
               const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
-              // DECISION(v1.19.857, ECO Stage A): Surface the most recent draft
-              // ECO on the printed quote line. ECO label + start date appears
-              // next to the Part #, and a placeholder note row is added to the
-              // line item's notes block (details fill-in is a later stage).
-              const _draftEcosForLine=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
-              const _activeEcoForLine=_draftEcosForLine.slice(-1)[0]||null;
-              const _activeEcoLabel=_activeEcoForLine?`ECO ${String(_activeEcoForLine.number||0).padStart(2,"0")}`:null;
-              const _activeEcoStartedFmt=_activeEcoForLine&&_activeEcoForLine.createdAt
-                ?new Date(_activeEcoForLine.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})
-                :null;
-              // DECISION(v1.19.884, Quote Form ECO Stage E): Per-panel ECO
-              // breakdown only shows when THIS panel has rows tagged for the
-              // active draft ECO. Others stay in the legacy single-row view.
-              // DECISION(v1.19.885): Use the same ecoId-OR-ecoNumber fallback
-              // as bcSyncEcoPanelPlanningLines — covers stale ecoTag IDs from
-              // recreated ECOs.
-              const _panEcoId=_activeEcoForLine?_activeEcoForLine.ecoId:null;
-              const _panEcoNumber=_activeEcoForLine?_activeEcoForLine.number||0:0;
-              const _panHasActiveEco=!!_activeEcoForLine&&panBom.some(r=>_matchesEco(r,_panEcoId,_panEcoNumber));
-              const _panBaseSell=_panHasActiveEco?computeBasePanelSellPrice(pan):0;
-              const _panEcoSellDelta=_panHasActiveEco?computeEcoSellDelta(pan,_panEcoId,_panEcoNumber):0;
-              const _panChangeDetails=_panHasActiveEco?computeEcoChangeDetails(pan,_panEcoId,_panEcoNumber):null;
+              // DECISION(v1.19.857, ECO Stage A): Surface draft ECOs on the printed
+              // quote line. DECISION(v1.19.908, multi-ECO additive): List EVERY
+              // draft ECO with rows on this panel separately (sorted by number)
+              // so the customer sees how each ECO contributes individually. The
+              // cumulative NEW = BASE + ECO 01 + ECO 02 + … + ECO N.
+              const _draftEcosForLine=Array.isArray(project?.ecoSummary)
+                ?project.ecoSummary.filter(e=>e&&e.status==="draft").slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
+                :[];
+              const _panEcoEntries=_draftEcosForLine
+                .filter(eco=>panBom.some(r=>_matchesEco(r,eco.ecoId,eco.number)))
+                .map(eco=>({
+                  eco,
+                  ecoId:eco.ecoId,
+                  number:eco.number||0,
+                  label:`ECO ${String(eco.number||0).padStart(2,"0")}`,
+                  startedFmt:eco.createdAt?new Date(eco.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):null,
+                  delta:computeEcoSellDelta(pan,eco.ecoId,eco.number),
+                  changeDetails:computeEcoChangeDetails(pan,eco.ecoId,eco.number),
+                }));
+              const _panHasAnyEco=_panEcoEntries.length>0;
+              const _panBaseSell=_panHasAnyEco?computeBasePanelSellPrice(pan):0;
               const _fmtMoneySigned=(n)=>(n>=0?"+":"-")+"$"+Math.abs(Math.round(n)).toLocaleString("en-US");
               return(
               <div key={pan.id||pi} style={{marginBottom:12}}>
@@ -14462,9 +14510,9 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-li-hdr">
                 <span className="qd-li-num">Line {pi+1}</span>
                 <span className="qd-li-part">Part #: {pan.drawingNo||qp.panelId||pan.name||`Panel ${pi+1}`}</span>
-                {_activeEcoLabel&&(
+                {_panHasAnyEco&&(
                   <span style={{marginLeft:14,fontSize:13,fontWeight:700,color:"#4ade80",letterSpacing:0.4}}>
-                    {_activeEcoLabel}{_activeEcoStartedFmt?` · ${_activeEcoStartedFmt}`:""}
+                    {_panEcoEntries.map(e=>e.label+(e.startedFmt?` · ${e.startedFmt}`:"")).join("  ·  ")}
                   </span>
                 )}
               </div>
@@ -14511,19 +14559,35 @@ function QuoteTab({project,onUpdate}){
                     <span>QUOTE NOTES: </span>
                     <textarea value={qp.lineNotes||""} onChange={e=>setQP({lineNotes:e.target.value})} placeholder="Additional quote-specific notes…" rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
                   </div>
-                  {_activeEcoLabel&&(
-                    <div className="qd-li-notes" style={{borderLeftColor:"#4ade80"}}>
-                      <span style={{color:"#4ade80",fontWeight:700}}>{_activeEcoLabel}: </span>
-                      <textarea value={qp.ecoNotes||""} onChange={e=>setQP({ecoNotes:e.target.value})} placeholder={`Details of the ${_activeEcoLabel} change order — what changed, why, customer reason, etc.`} rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
+                  {/* DECISION(v1.19.908): One detail block per draft ECO with
+                      rows on this panel — sorted by ECO number. Each block has
+                      its own customer-facing notes textarea (per-ECO via
+                      qp.ecoNotesByEco[ecoId], with legacy fallback to qp.ecoNotes
+                      for the most-recent ECO so existing projects don't lose
+                      typed notes). The on-screen form is also the print source
+                      of truth — these blocks render to the customer PDF. */}
+                  {_panEcoEntries.map(({eco,ecoId,number,label,delta,changeDetails})=>{
+                    const _isLastForLegacy=eco===_panEcoEntries[_panEcoEntries.length-1];
+                    const _legacyNote=_isLastForLegacy?(qp.ecoNotes||""):"";
+                    const _byMap=qp.ecoNotesByEco||{};
+                    const _noteVal=_byMap[ecoId]??_legacyNote;
+                    const _setNote=(v)=>{
+                      const next={...(qp.ecoNotesByEco||{}),[ecoId]:v};
+                      setQP({ecoNotesByEco:next});
+                    };
+                    return(
+                    <div key={ecoId||number} className="qd-li-notes" style={{borderLeftColor:"#4ade80"}}>
+                      <span style={{color:"#4ade80",fontWeight:700}}>{label}: </span>
+                      <textarea value={_noteVal} onChange={e=>_setNote(e.target.value)} placeholder={`Details of the ${label} change order — what changed, why, customer reason, etc.`} rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
                       {/* DECISION(v1.19.884, Quote Form ECO Stage E): Auto-populated
                           change detail block — descriptions only (no per-line costs
                           per user spec; sell-side roll-up at the bottom is the only
                           dollar figure here). Glyphs: + add (green), ○ modify (yellow),
                           × remove (red), Σ labor (purple). */}
-                      {_panHasActiveEco&&_panChangeDetails&&(_panChangeDetails.parts.length>0||_panChangeDetails.laborHrs>0)&&(
+                      {changeDetails&&(changeDetails.parts.length>0||changeDetails.laborHrs>0)&&(
                         <div style={{marginTop:8,paddingTop:8,borderTop:"1px dashed #4ade8044",fontSize:12,color:"#334155",lineHeight:1.6}}>
-                          <div style={{fontSize:9,fontWeight:800,letterSpacing:0.6,color:"#a855f7",marginBottom:6,textTransform:"uppercase"}}>{_activeEcoLabel} — Changes</div>
-                          {_panChangeDetails.parts.map((p,i)=>{
+                          <div style={{fontSize:9,fontWeight:800,letterSpacing:0.6,color:"#a855f7",marginBottom:6,textTransform:"uppercase"}}>{label} — Changes</div>
+                          {changeDetails.parts.map((p,i)=>{
                             if(p.op==="add"){
                               return(
                                 <div key={i} style={{fontFamily:"monospace",fontSize:12}}>
@@ -14562,21 +14626,21 @@ function QuoteTab({project,onUpdate}){
                               </div>
                             );
                           })}
-                          {_panChangeDetails.laborHrs!==0&&(
+                          {changeDetails.laborHrs!==0&&(
                             <div style={{fontFamily:"monospace",fontSize:12}}>
                               <span style={{color:"#a855f7",fontWeight:700,display:"inline-block",width:18}}>Σ</span>
                               <span style={{color:"#475569"}}>Labor: </span>
-                              <strong>{_panChangeDetails.laborHrs}</strong>
+                              <strong>{changeDetails.laborHrs}</strong>
                               <span style={{color:"#475569"}}> hrs</span>
                             </div>
                           )}
                           <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #e2e8f0",textAlign:"right",fontWeight:800,color:"#a855f7",fontSize:13}}>
-                            {_activeEcoLabel} Δ:&nbsp; {_fmtMoneySigned(_panEcoSellDelta)}
+                            {label} Δ:&nbsp; {_fmtMoneySigned(delta)}
                           </div>
                         </div>
                       )}
-                    </div>
-                  )}
+                    </div>);
+                  })}
                 </div>
               </div>
 
@@ -14593,10 +14657,12 @@ function QuoteTab({project,onUpdate}){
                 </div>
                 <div>
                   <div className="qd-plabel">Unit Price</div>
-                  {_panHasActiveEco?(
+                  {_panHasAnyEco?(
                     <div>
                       <div style={{fontSize:11,color:"#94a3b8",fontWeight:500,lineHeight:1.5}}>BASE: <span style={{color:"#475569"}}>{fmtMoney(_panBaseSell)}</span></div>
-                      <div style={{fontSize:11,color:"#a855f7",fontWeight:600,lineHeight:1.5}}>{_activeEcoLabel} Δ: {_fmtMoneySigned(_panEcoSellDelta)}</div>
+                      {_panEcoEntries.map(({label,delta,ecoId,number})=>(
+                        <div key={ecoId||number} style={{fontSize:11,color:"#a855f7",fontWeight:600,lineHeight:1.5}}>{label} Δ: {_fmtMoneySigned(delta)}</div>
+                      ))}
                       <div className="qd-pval" style={{marginTop:2}}>{panHasSell?fmtMoney(panSell):"—"}</div>
                     </div>
                   ):(
@@ -14616,10 +14682,12 @@ function QuoteTab({project,onUpdate}){
                 </div>
                 <div>
                   <div className="qd-plabel">Total Price</div>
-                  {_panHasActiveEco?(
+                  {_panHasAnyEco?(
                     <div>
                       <div style={{fontSize:11,color:"#94a3b8",fontWeight:500,lineHeight:1.5}}>BASE: <span style={{color:"#475569"}}>{fmtMoney(_panBaseSell*panQty)}</span></div>
-                      <div style={{fontSize:11,color:"#a855f7",fontWeight:600,lineHeight:1.5}}>{_activeEcoLabel} Δ: {_fmtMoneySigned(_panEcoSellDelta*panQty)}</div>
+                      {_panEcoEntries.map(({label,delta,ecoId,number})=>(
+                        <div key={ecoId||number} style={{fontSize:11,color:"#a855f7",fontWeight:600,lineHeight:1.5}}>{label} Δ: {_fmtMoneySigned(delta*panQty)}</div>
+                      ))}
                       <div className={"qd-pval qd-total-val"} style={{marginTop:2}}>{panHasSell?fmtMoney(panSell*panQty):"—"}</div>
                     </div>
                   ):(
@@ -14647,23 +14715,26 @@ function QuoteTab({project,onUpdate}){
           {(()=>{
             const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
             const hasTotalPrice=totalPrice>0;
-            // DECISION(v1.19.884, Quote Form ECO Stage E): When any panel
-            // carries rows for the active draft ECO, split the Subtotal into
-            // BASE Subtotal + ECO Subtotal so the customer can see the
-            // change-order contribution. Otherwise render today's
-            // Subtotal/Tax/Total layout unchanged.
-            const _draftEcosTotals=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(e=>e&&e.status==="draft"):[];
-            const _activeEcoTotals=_draftEcosTotals.slice(-1)[0]||null;
-            const _activeEcoIdTotals=_activeEcoTotals?_activeEcoTotals.ecoId:null;
-            const _activeEcoNumberTotals=_activeEcoTotals?_activeEcoTotals.number||0:0;
-            const _activeEcoLabelTotals=_activeEcoTotals?`ECO ${String(_activeEcoTotals.number||0).padStart(2,"0")}`:null;
-            const _hasAnyEcoChanges=!!_activeEcoTotals&&(project.panels||[]).some(pan=>(pan.bom||[]).some(r=>_matchesEco(r,_activeEcoIdTotals,_activeEcoNumberTotals)));
+            // DECISION(v1.19.884, Quote Form ECO Stage E): split totals into BASE
+            // + ECO contributions. DECISION(v1.19.908, multi-ECO additive): list
+            // EACH draft ECO's subtotal separately so the customer sees how each
+            // change order rolls into the Total. Total = BASE + Σ(each ECO).
+            const _draftEcosTotals=Array.isArray(project?.ecoSummary)
+              ?project.ecoSummary.filter(e=>e&&e.status==="draft").slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
+              :[];
+            const _ecoSubtotalsByEco=_draftEcosTotals
+              .filter(eco=>(project.panels||[]).some(pan=>(pan.bom||[]).some(r=>_matchesEco(r,eco.ecoId,eco.number))))
+              .map(eco=>({
+                eco,
+                ecoId:eco.ecoId,
+                number:eco.number||0,
+                label:`ECO ${String(eco.number||0).padStart(2,"0")}`,
+                subtotal:(project.panels||[]).reduce((s,pan)=>s+computeEcoSellDelta(pan,eco.ecoId,eco.number)*(pan.lineQty??1),0),
+              }));
+            const _hasAnyEcoChanges=_ecoSubtotalsByEco.length>0;
             const _baseSubtotal=_hasAnyEcoChanges
               ?(project.panels||[]).reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0)
               :totalPrice;
-            const _ecoSubtotal=_hasAnyEcoChanges
-              ?(project.panels||[]).reduce((s,pan)=>s+computeEcoSellDelta(pan,_activeEcoIdTotals,_activeEcoNumberTotals)*(pan.lineQty??1),0)
-              :0;
             const _fmtSigned=(n)=>(n>=0?"+":"-")+"$"+Math.abs(Math.round(n)).toLocaleString("en-US");
             return(
           <div style={{breakInside:"avoid",pageBreakInside:"avoid"}}>
@@ -14673,7 +14744,9 @@ function QuoteTab({project,onUpdate}){
           <div className="qd-totals-bar">
             <div className="qd-totals-box">
               <div className="qd-totals-row"><span>Subtotal</span><span>{hasTotalPrice?fmtMoney(_baseSubtotal):"—"}</span></div>
-              {_hasAnyEcoChanges&&<div className="qd-totals-row" style={{color:"#a855f7",fontWeight:700}}><span>{_activeEcoLabelTotals}</span><span>{_fmtSigned(_ecoSubtotal)}</span></div>}
+              {_ecoSubtotalsByEco.map(({label,subtotal,ecoId,number})=>(
+                <div key={ecoId||number} className="qd-totals-row" style={{color:"#a855f7",fontWeight:700}}><span>{label}</span><span>{_fmtSigned(subtotal)}</span></div>
+              ))}
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
               {isProjectBudgetary&&<div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>BUDGETARY</div>}
@@ -25992,8 +26065,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             const inEcoSummaryScope=activeScope?.type==="eco"&&activeScope?.ecoId;
             const activeEcoIdForSummary=inEcoSummaryScope?activeScope.ecoId:null;
             const activeEcoNumberForSummary=inEcoSummaryScope?activeScope.ecoNumber||0:0;
-            const ecoMatDelta=activeEcoIdForSummary?computeEcoMaterialDelta(sp,activeEcoIdForSummary):0;
-            const ecoLabor=activeEcoIdForSummary?computeEcoLaborForActiveEco(sp,activeEcoIdForSummary):{totalHrs:0,totalCost:0,cutHrs:0,layoutHrs:0,wireHrs:0};
+            // DECISION(v1.19.908, cumulative): When user views ECO N's tab, the
+            // CHANGES block sums every draft ECO's delta from 1..N (not just
+            // ECO N) so totals reflect the full state of the panel after each
+            // ECO is applied in sequence. ECOs are sequential and additive.
+            const ecoMatDelta=activeEcoIdForSummary?computeCumulativeEcoMaterialDelta(sp,project,activeEcoNumberForSummary):0;
+            const ecoLabor=activeEcoIdForSummary?(()=>{const c=computeCumulativeEcoLabor(sp,project,activeEcoNumberForSummary);return{totalHrs:c.totalHrs,totalCost:c.totalCost,cutHrs:0,layoutHrs:0,wireHrs:0};})():{totalHrs:0,totalCost:0,cutHrs:0,layoutHrs:0,wireHrs:0};
             // matCost is the legacy combined value (BASE + all ECOs) used by the
             // current display when NOT in ECO scope. computePanelSellPrice mirrors
             // this logic so the legacy display matches the quote total.
@@ -26109,25 +26186,34 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       <span style={{color:valColor,fontWeight:bold?700:400,fontVariantNumeric:"tabular-nums"}}>{val}</span>
                     </div>
                   );
+                  // DECISION(v1.19.908, cumulative + per-ECO breakdown): List each
+                  // ECO 01..N as its own changes block so the user (and the printed
+                  // quote) can see how each ECO contributes individually. NEW TOTAL
+                  // is BASE + cumulative (all ECO deltas through N).
+                  const _ecosForBreakdown=_ecosUpTo(project,activeEcoNumberForSummary);
                   return(<>
                     {/* BASE reference (dimmed) */}
                     <div style={{fontSize:9,color:dimColor,fontWeight:700,letterSpacing:0.6,marginBottom:4}}>BASE (REFERENCE)</div>
                     {row("Materials",fmtPlain(baseMatCost),dimColor,dimColor,false)}
                     {row("Labor",fmtPlain(baseLaborCost),dimColor,dimColor,false)}
                     {row("Subtotal",fmtPlain(baseSubtotal),dimColor,dimColor,true)}
-                    {/* ECO delta (accent) */}
-                    <div style={{fontSize:9,color:ecoColor,fontWeight:700,letterSpacing:0.6,marginTop:10,marginBottom:4}}>ECO {String(activeEcoNumberForSummary).padStart(2,"0")} CHANGES</div>
-                    {row("Materials Δ",fmtSigned(ecoMatDelta),C.muted,ecoColor,false)}
-                    {row("Labor Δ",fmtSigned(ecoLabor.totalCost)+(ecoLabor.totalHrs?` (${ecoLabor.totalHrs}h)`:""),C.muted,ecoColor,false)}
-                    {row("Subtotal",fmtSigned(ecoSubtotal),ecoColor,ecoColor,true)}
-                    {/* NEW TOTAL */}
+                    {/* Per-ECO deltas — one block per ECO 01..N */}
+                    {_ecosForBreakdown.map(eco=>{
+                      const _mat=computeEcoMaterialDelta(sp,eco.ecoId);
+                      const _lab=computeEcoLaborForActiveEco(sp,eco.ecoId);
+                      const _sub=_mat+_lab.totalCost;
+                      const _label=`ECO ${String(eco.number||0).padStart(2,"0")} CHANGES`;
+                      return(<React.Fragment key={eco.ecoId||eco.number}>
+                        <div style={{fontSize:9,color:ecoColor,fontWeight:700,letterSpacing:0.6,marginTop:10,marginBottom:4}}>{_label}</div>
+                        {row("Materials Δ",fmtSigned(_mat),C.muted,ecoColor,false)}
+                        {row("Labor Δ",fmtSigned(_lab.totalCost)+(_lab.totalHrs?` (${_lab.totalHrs}h)`:""),C.muted,ecoColor,false)}
+                        {row("Subtotal",fmtSigned(_sub),ecoColor,ecoColor,true)}
+                      </React.Fragment>);
+                    })}
+                    {/* NEW TOTAL — BASE + cumulative through active ECO */}
                     <div style={{borderTop:"1px solid "+C.muted+"33",marginTop:10,paddingTop:8,marginBottom:4}}>
-                      <div style={{fontSize:9,color:"#fff",fontWeight:700,letterSpacing:0.6,marginBottom:4}}>NEW TOTAL</div>
+                      <div style={{fontSize:9,color:"#fff",fontWeight:700,letterSpacing:0.6,marginBottom:4}}>NEW TOTAL (BASE + ECO 01…{String(activeEcoNumberForSummary).padStart(2,"0")})</div>
                     </div>
-                    {/* DECISION(v1.19.907): NEW TOTAL is BASE + THIS ECO only
-                        (was previously `grandTotal` which is BASE + ALL ECOs —
-                        a discrepancy that surfaces if multiple draft ECOs exist
-                        simultaneously). Single-ECO panels are unaffected. */}
                     {row("Materials",fmtPlain(ecoScopeMat),"#fff","#fff",false)}
                     {row("Labor",fmtPlain(ecoScopeLabor),"#fff","#fff",false)}
                     {row("Total",fmtPlain(ecoScopeGrandTotal),"#fff","#fff",true)}
@@ -26260,16 +26346,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   // DECISION(v1.19.887): keep `ppr` in scope — line 25430 references
                   // ppr.isBudgetary for the BUDGETARY pill. v1.19.886 dropped it
                   // along with the local price calc and broke the site.
-                  // DECISION(v1.19.907): Per-panel QUOTE SUMMARY total is now
-                  // tab-scope-aware to match the Panel Summary breakdown:
+                  // DECISION(v1.19.908): Per-panel QUOTE SUMMARY total is tab-aware
+                  // and CUMULATIVE through the selected ECO:
                   //   • BASE tab     → BASE-only sell price
-                  //   • ECO N tab    → BASE + ECO N's sell delta (NEW for that ECO)
+                  //   • ECO N tab    → BASE + sum of ECO 01..N sell deltas
                   //   • no scope     → combined (legacy)
                   const ppr=p.pricing||{};
-                  const _psQuoteId=inEcoSummaryScope?activeEcoIdForSummary:null;
-                  const _psQuoteNum=inEcoSummaryScope?activeEcoNumberForSummary:0;
                   const psp=inEcoSummaryScope
-                    ?computeBasePanelSellPrice(p)+computeEcoSellDelta(p,_psQuoteId,_psQuoteNum)
+                    ?computeBasePanelSellPrice(p)+computeCumulativeEcoSellDelta(p,project,activeEcoNumberForSummary)
                     :((!activeScope||activeScope.type==="base")
                       ?computeBasePanelSellPrice(p)
                       :computePanelSellPrice(p));
@@ -26389,14 +26473,15 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 {(project.panels||[]).length>1&&(()=>{
                   // DECISION(v1.19.886): PROJECT TOTAL routed through
                   // computePanelSellPrice for consistency with per-panel rows above.
-                  // DECISION(v1.19.907): Mirror the per-panel rows' tab-aware logic
-                  // so PROJECT TOTAL adds up to the visible per-panel values:
+                  // DECISION(v1.19.908): Mirror the per-panel rows — sum cumulative
+                  // through the active ECO so PROJECT TOTAL adds up to the visible
+                  // per-panel values:
                   //   • BASE tab → sum of BASE-only sells
-                  //   • ECO N tab → sum of (BASE + ECO N delta)
+                  //   • ECO N tab → sum of (BASE + cumulative deltas through N)
                   //   • no scope → combined (legacy)
                   const total=(project.panels||[]).reduce((sum,p)=>{
                     const _ps=inEcoSummaryScope
-                      ?computeBasePanelSellPrice(p)+computeEcoSellDelta(p,activeEcoIdForSummary,activeEcoNumberForSummary)
+                      ?computeBasePanelSellPrice(p)+computeCumulativeEcoSellDelta(p,project,activeEcoNumberForSummary)
                       :((!activeScope||activeScope.type==="base")
                         ?computeBasePanelSellPrice(p)
                         :computePanelSellPrice(p));
