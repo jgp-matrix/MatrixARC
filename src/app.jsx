@@ -5250,7 +5250,8 @@ async function buildQuotePdfDoc(doc,project){
       const qtyVal=(+sc.qty||0)+" "+(sc.priceMode==="hourly"?"hrs":"EA");
       const rateLabel=sc.priceMode==="hourly"?"Rate":"Lump Sum";
       const rateVal=sc.priceMode==="hourly"?(arcFmtMoney(+sc.rate||0)+"/hr"):arcFmtMoney(+sc.lumpSum||0);
-      const leadVal=_scLeadDaysPdf>0?(_scLeadDaysPdf+" days"):"-";
+      // DECISION(v1.19.941): Asterisk on Engineering Design cards' Lead Time.
+      const leadVal=_scLeadDaysPdf>0?(_scLeadDaysPdf+" days"+(_scIsEngPdf?"*":"")):"-";
       [{l:qtyLabel,v:qtyVal},{l:rateLabel,v:rateVal},{l:"Lead Time",v:leadVal},{l:"Total Price",v:total>0?arcFmtMoney(total):"-"}].forEach((col,ci)=>{
         const cx=ARC_DOC.margin.left+ci*sPw+sPw/2;
         doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
@@ -5416,20 +5417,22 @@ async function buildQuotePdfDoc(doc,project){
     // DECISION(v1.19.332): NOTES box always renders even when empty — user wants the field visible
     // on every line item so it's clear where to add notes. Yellow background, "NOTES:" label.
     {
+      // DECISION(v1.19.941): Font bumped from 5/5.5pt to 7/7.5pt to match the
+      // "Documents Provided" section. Old size was illegible on paper.
       const noteText=pan.bomNotes||"";
-      doc.setFontSize(5.5);doc.setFont("helvetica","normal");
-      const nLines=noteText?doc.splitTextToSize(noteText,ctx.contentWidth-18):[];
-      const nlh=2;
-      const titleH=3;
-      const nH=titleH+Math.max(nLines.length,0)*nlh+2;
+      doc.setFontSize(7);doc.setFont("helvetica","normal");
+      const nLines=noteText?doc.splitTextToSize(noteText,ctx.contentWidth-22):[];
+      const nlh=2.8;
+      const titleH=3.5;
+      const nH=titleH+Math.max(nLines.length,0)*nlh+3;
       arcDocCheckBreak(ctx,nH+1);
       doc.setFillColor(255,251,235);doc.setDrawColor(...ARC_DOC.colors.black);doc.setLineWidth(0.2);
       doc.roundedRect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,nH,1,1,"FD");
-      doc.setFontSize(5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
-      doc.text("NOTES:",ARC_DOC.margin.left+3,ctx.y+2.5);
+      doc.setFontSize(7.5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text("NOTES:",ARC_DOC.margin.left+3,ctx.y+3);
       if(nLines.length){
-        doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
-        nLines.forEach(function(nl,ni){doc.text(nl,ARC_DOC.margin.left+14,ctx.y+titleH+2+ni*nlh);});
+        doc.setFontSize(7);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
+        nLines.forEach(function(nl,ni){doc.text(nl,ARC_DOC.margin.left+18,ctx.y+titleH+2+ni*nlh);});
       }
       ctx.y+=nH+1.5;
     }
@@ -5508,11 +5511,13 @@ async function buildQuotePdfDoc(doc,project){
     // height to keep the box compact enough to fit on one page (see height pre-estimate above).
     const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
     if(crossed.length>0){
+      // DECISION(v1.19.941): Font bumped from 4.5/5pt to 7/7.5pt to match
+      // "Documents Provided" — old size was illegible on paper.
       const maxCrossedW=ctx.contentWidth-8;
-      var clh=1.8;
-      doc.setFontSize(5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
-      doc.text("Crossed / Superseded - Alternate Products Used",ARC_DOC.margin.left+2,ctx.y);ctx.y+=2.5;
-      doc.setFont("helvetica","normal");doc.setFontSize(4.5);doc.setTextColor(...ARC_DOC.colors.black);
+      var clh=2.8;
+      doc.setFontSize(7.5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
+      doc.text("Crossed / Superseded - Alternate Products Used",ARC_DOC.margin.left+2,ctx.y);ctx.y+=3.5;
+      doc.setFont("helvetica","normal");doc.setFontSize(7);doc.setTextColor(...ARC_DOC.colors.black);
       crossed.forEach(function(item,i){
         var txt=(i+1)+". "+item.crossedFrom+" > "+item.partNumber+(item.description?" ("+item.description+")":"");
         var lines=doc.splitTextToSize(txt,maxCrossedW);
@@ -5538,7 +5543,11 @@ async function buildQuotePdfDoc(doc,project){
     const _computedLead=(()=>{try{return computeControlPanelLeadTime(pan,project).leadDays||0;}catch(e){return 0;}})();
     const _leadStr=qp.leadTime||q.leadTime||(_computedLead>0?String(_computedLead):"—");
     const _signedFmt=n=>(n>=0?"+":"-")+arcFmtMoney(Math.abs(n));
-    [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—",eco:_ecoStack},{l:"Lead Time",v:_leadStr+" days"},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—",eco:_ecoStack,times:panQty}].forEach((col,ci)=>{
+    // DECISION(v1.19.941): Asterisk on Lead Time when project has any
+    // Engineering Design service card — flags approval-dependency.
+    const _hasEngForLeadAsterisk=Array.isArray(project?.serviceCards)&&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
+    const _leadValPdf=_leadStr+" days"+(_hasEngForLeadAsterisk&&_leadStr!=="—"?"*":"");
+    [{l:"Quantity",v:panQty+" EA"},{l:"Unit Price",v:panSell>0?arcFmtMoney(panSell):"—",eco:_ecoStack},{l:"Lead Time",v:_leadValPdf},{l:"Total Price",v:panSell>0?arcFmtMoney(panSell*panQty):"—",eco:_ecoStack,times:panQty}].forEach((col,ci)=>{
       const cx=ARC_DOC.margin.left+ci*pw+pw/2;
       doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
       doc.text(col.l,cx,py+4,{align:"center"});
@@ -15403,7 +15412,10 @@ function QuoteTab({project,onUpdate}){
                           </div>
                           <div>
                             <div className="qd-plabel">Lead Time</div>
-                            <div className="qd-pval">{_scLeadDays>0?(_scLeadDays+" days"):"—"}</div>
+                            {/* DECISION(v1.19.941): Asterisk on Engineering Design
+                                cards' Lead Time (their drawings drive the chain
+                                + need approvals). Other types show plain days. */}
+                            <div className="qd-pval">{_scLeadDays>0?<>{_scLeadDays} days{_scIsEng?<span style={{color:"#dc2626",fontWeight:800}}>*</span>:null}</>:"—"}</div>
                           </div>
                           <div>
                             <div className="qd-plabel">Discount</div>
@@ -15642,8 +15654,16 @@ function QuoteTab({project,onUpdate}){
                   <div className="qd-plabel">Lead Time</div>
                   {/* DECISION(v1.19.737): Default to computed panel lead days (shipDate calc)
                       when no override has been typed. Still overridable per-panel (qp) or
-                      project-wide (q). */}
-                  <div className="qd-pval">{(()=>{const cd=(()=>{try{return computeControlPanelLeadTime(pan,project).leadDays||0;}catch(e){return 0;}})();return qp.leadTime||q.leadTime||(cd>0?cd:"—");})()} days</div>
+                      project-wide (q).
+                      DECISION(v1.19.941): Asterisk appended when project has any Engineering
+                      Design service card — signals the Lead Time depends on signed
+                      approvals, ties visually to the red banner below. */}
+                  {(()=>{
+                    const cd=(()=>{try{return computeControlPanelLeadTime(pan,project).leadDays||0;}catch(e){return 0;}})();
+                    const _val=qp.leadTime||q.leadTime||(cd>0?cd:"—");
+                    const _hasEng=Array.isArray(project?.serviceCards)&&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
+                    return <div className="qd-pval">{_val} days{_hasEng&&_val!=="—"?<span style={{color:"#dc2626",fontWeight:800}}>*</span>:null}</div>;
+                  })()}
                 </div>
                 <div>
                   <div className="qd-plabel">Discount</div>
@@ -15687,11 +15707,14 @@ function QuoteTab({project,onUpdate}){
               })()}
               </div>
               {/* Crossed items — outside the bordered box so .qd-li stays compact and doesn't page-break */}
+              {/* DECISION(v1.19.941): Font bumped from 9px → 13px to match
+                  the per-line Notes / Documents Provided sections. Old sizing
+                  was illegible on printed paper. */}
               {crossedItems.length>0&&(
-                <div style={{padding:"4px 44px 8px",fontSize:12}}>
-                  <div className="qd-crossed-title" style={{fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:"#94a3b8",marginBottom:4}}>Crossed / Superseded — Alternate Products Used</div>
+                <div style={{padding:"6px 44px 10px",fontSize:13}}>
+                  <div className="qd-crossed-title" style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:"#94a3b8",marginBottom:6}}>Crossed / Superseded — Alternate Products Used</div>
                   {crossedItems.map((item,i)=>(
-                    <div key={item.id||i} style={{fontSize:9,color:"#334155",marginBottom:1}}>
+                    <div key={item.id||i} style={{fontSize:13,color:"#334155",marginBottom:2,lineHeight:1.5}}>
                       {i+1}. <span style={{color:"#64748b"}}>Scanned:</span> <strong>{item.crossedFrom}</strong> <span style={{color:"#64748b"}}> → Replaced with:</span> <strong>{item.partNumber}</strong>{item.description?<span style={{color:"#64748b"}}> ({item.description})</span>:null}
                     </div>
                   ))}
