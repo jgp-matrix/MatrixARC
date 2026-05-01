@@ -3625,6 +3625,124 @@ async function bcFetchPurchasePrices(partNumbers){
   return results;
 }
 
+// DECISION(v1.19.906): Batch fetch BC ItemCard Unit_Cost for many parts.
+// Used by runPricingAudit to compare ARC unitPrice against BC's authoritative
+// Item Card cost. Mirrors bcFetchPurchasePrices's batching pattern (30 items
+// per request, OR'd Item No filters).
+async function bcFetchItemCardCosts(partNumbers){
+  if(!_bcToken||!partNumbers.length)return new Map();
+  const allPages=await bcDiscoverODataPages();
+  const itemPage=allPages.find(n=>/^itemcard$/i.test(n))||allPages.find(n=>/^items?$/i.test(n));
+  if(!itemPage){console.warn("bcFetchItemCardCosts: no ItemCard OData page");return new Map();}
+  const baseUrl=`${BC_ODATA_BASE}/${itemPage}`;
+  const results=new Map();
+  const BATCH=30;
+  for(let i=0;i<partNumbers.length;i+=BATCH){
+    const batch=partNumbers.slice(i,i+BATCH);
+    const filterClauses=batch.map(pn=>`No eq '${pn.replace(/'/g,"''")}'`).join(' or ');
+    const url=`${baseUrl}?$filter=${encodeURIComponent(filterClauses)}&$select=No,Unit_Cost,Description`;
+    try{
+      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(!r.ok)continue;
+      const d=await r.json();
+      for(const item of (d.value||[])){
+        if(item.No)results.set(item.No,{unitCost:item.Unit_Cost??null,description:item.Description||""});
+      }
+    }catch(e){console.warn("bcFetchItemCardCosts batch failed:",e.message);}
+  }
+  return results;
+}
+// DECISION(v1.19.906): Pricing audit — walks every project + panel + BOM row,
+// finds rows that may have been silently overwritten by the 5-min BC poll
+// (priceSource:"bc" + priceDate set means user might have manually confirmed,
+// then poll reverted). For each suspect row, compares ARC unitPrice against
+// BC PurchasePrices.directUnitCost and BC ItemCard.Unit_Cost; classifies risk:
+//   HIGH   — ARC differs from BOTH BC values (likely poll-reverted then BC drifted)
+//   MEDIUM — ARC differs from ONE BC value (could be poll-reverted; partial mismatch)
+//   NONE   — all three match (no concern)
+// Read-only audit. No mutations. Caller renders results in a table. Progress
+// callback fires with {phase, projectsScanned, totalProjects, etc.}.
+async function runPricingAudit(uid,onProgress){
+  const update=(p)=>{try{onProgress&&onProgress(p);}catch(_){}};
+  update({phase:"loading",msg:"Loading projects…"});
+  const projects=await loadProjects(uid);
+  update({phase:"scanning",msg:`Scanning ${projects.length} project(s) for suspect rows…`,projectsScanned:0,totalProjects:projects.length});
+  // Pass 1: find all suspect rows (priceSource:"bc" + priceDate set + non-empty partNumber)
+  // and collect unique part numbers across all projects.
+  const suspects=[];
+  const partSet=new Set();
+  for(let pi=0;pi<projects.length;pi++){
+    const proj=projects[pi];
+    update({phase:"scanning",msg:`Scanning ${proj.name||proj.id}…`,projectsScanned:pi,totalProjects:projects.length});
+    for(const panel of (proj.panels||[])){
+      for(const row of (panel.bom||[])){
+        if(row.isLaborRow)continue;
+        if(row.priceSource!=="bc")continue;
+        if(!row.priceDate)continue; // need a stamped date to be a candidate
+        const pn=(row.partNumber||"").trim();
+        if(!pn)continue;
+        suspects.push({
+          projectId:proj.id,projectName:proj.name||proj.id,
+          bcProjectNumber:proj.bcProjectNumber||null,
+          panelId:panel.id,panelName:panel.name||panel.drawingNo||"Panel",
+          rowId:row.id,
+          itemNo:row.itemNo||"",
+          partNumber:pn,
+          description:row.description||"",
+          arcUnitPrice:row.unitPrice??null,
+          priceDate:row.priceDate||null,
+          bcPoDate:row.bcPoDate||null,
+          bcVendorName:row.bcVendorName||"",
+        });
+        partSet.add(pn);
+      }
+    }
+  }
+  const partNums=[...partSet];
+  update({phase:"bc",msg:`Fetching BC PurchasePrices for ${partNums.length} part(s)…`,suspectsFound:suspects.length,totalSuspects:suspects.length});
+  const ppMap=await bcFetchPurchasePrices(partNums);
+  update({phase:"bc",msg:`Fetching BC ItemCard for ${partNums.length} part(s)…`,suspectsFound:suspects.length});
+  const icMap=await bcFetchItemCardCosts(partNums);
+  update({phase:"compare",msg:`Comparing ${suspects.length} row(s)…`});
+  // Pass 2: classify each suspect
+  const tol=0.005; // half a cent — anything tighter is rounding noise
+  const within=(a,b)=>(a==null||b==null)?false:Math.abs(+a-+b)<tol;
+  const results=[];
+  for(const s of suspects){
+    const pp=ppMap.get(s.partNumber);
+    const ic=icMap.get(s.partNumber);
+    const bcPp=pp?(pp.directUnitCost??null):null;
+    const bcIc=ic?(ic.unitCost??null):null;
+    const arc=s.arcUnitPrice;
+    const matchPp=within(arc,bcPp);
+    const matchIc=within(arc,bcIc);
+    let risk="none";
+    if(arc!=null){
+      if(bcPp!=null&&bcIc!=null){
+        if(!matchPp&&!matchIc)risk="high";
+        else if(!matchPp||!matchIc)risk="medium";
+      }else if(bcPp!=null&&!matchPp)risk="medium";
+      else if(bcIc!=null&&!matchIc)risk="medium";
+    }
+    results.push({...s,bcPurchasePrice:bcPp,bcItemCardCost:bcIc,risk,matchPp,matchIc});
+  }
+  // Sort by risk (high → medium → none), then projectName
+  const order={high:0,medium:1,none:2};
+  results.sort((a,b)=>(order[a.risk]-order[b.risk])||(a.projectName||"").localeCompare(b.projectName||""));
+  update({phase:"done",msg:`Audit complete — ${results.filter(r=>r.risk==="high").length} high risk, ${results.filter(r=>r.risk==="medium").length} medium, ${results.filter(r=>r.risk==="none").length} ok.`});
+  return{
+    scannedProjects:projects.length,
+    scannedRows:suspects.length,
+    uniqueParts:partNums.length,
+    results,
+    summary:{
+      high:results.filter(r=>r.risk==="high").length,
+      medium:results.filter(r=>r.risk==="medium").length,
+      none:results.filter(r=>r.risk==="none").length,
+    },
+  };
+}
+
 let _odataPageCache=null;
 let _odataPagePromise=null;
 async function bcDiscoverODataPages(){
@@ -25890,6 +26008,21 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             const laborCost=baseLaborCost+allEcoLabor.totalCost;
             const grandTotal=matCost+laborCost;
             const sellPrice=markup>=100?grandTotal:grandTotal/(1-markup/100);
+            // DECISION(v1.19.906, BASE Total fix): When on BASE scope and a draft
+            // ECO has tagged rows on this panel, the legacy Pricing breakdown was
+            // showing combined (BASE + ECO) values, making the BASE "Total" appear
+            // to update as ECO edits were made. BASE must remain locked at its
+            // original price — switch to ECO scope to see the BASE/Δ/NEW math.
+            // When no draft ECO exists, the BASE-only values equal the combined
+            // values so this is a no-op.
+            const _hasEcoRowsOnPanel=(sp.bom||[]).some(r=>r.ecoTag);
+            const _baseScopeWithDraftEco=!inEcoSummaryScope&&_hasEcoRowsOnPanel;
+            const baseGrandTotal=baseMatCost+baseLaborCost;
+            const baseSellPrice=markup>=100?baseGrandTotal:baseGrandTotal/(1-markup/100);
+            const displayMat=_baseScopeWithDraftEco?baseMatCost:matCost;
+            const displayLabor=_baseScopeWithDraftEco?baseLaborCost:laborCost;
+            const displayTotal=_baseScopeWithDraftEco?baseGrandTotal:grandTotal;
+            const displaySell=_baseScopeWithDraftEco?baseSellPrice:sellPrice;
             const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
             const pendingBcCount=bom.filter(r=>(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual").length;
             const laborAccepted=sp.laborData?.accepted||{};
@@ -25929,11 +26062,17 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       ECO {String(activeEcoNumberForSummary).padStart(2,"0")}
                     </span>
                   )}
+                  {_baseScopeWithDraftEco&&(
+                    <span title="Showing BASE-only totals — switch to ECO scope to see the change-order delta + new total"
+                      style={{background:"#1e293b",color:"#94a3b8",borderRadius:10,padding:"1px 8px",fontSize:10,fontWeight:800,letterSpacing:0.4}}>
+                      BASE
+                    </span>
+                  )}
                 </div>
                 {!inEcoSummaryScope&&([
-                  ["Materials",fmt(matCost),"#fff",null,null],
-                  hasAutoLabor?["Labor",fmt(laborCost),"#fff",null,null]:["Labor",null,"#fff",laborCost,"manualLaborCost"],
-                  ["Total",fmt(grandTotal),"#fff",null,null],
+                  ["Materials",fmt(displayMat),"#fff",null,null],
+                  hasAutoLabor?["Labor",fmt(displayLabor),"#fff",null,null]:["Labor",null,"#fff",displayLabor,"manualLaborCost"],
+                  ["Total",fmt(displayTotal),"#fff",null,null],
                 ].map(([label,val,color,numVal,key])=>(
                   <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6,fontSize:13}}>
                     <span style={{color:label==="Total"?"#fff":C.muted}}>{label}</span>
@@ -25989,7 +26128,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       style={{...inp({padding:"3px 6px",fontSize:13,width:55,textAlign:"right"}),color:"#fff"}}/>
                     <span style={{color:"#fff",fontSize:13}}>%</span>
                   </div>
-                  <span style={{fontWeight:800,color:"#fff",fontSize:18,fontVariantNumeric:"tabular-nums"}}>{fmt(sellPrice)}</span>
+                  <span style={{fontWeight:800,color:"#fff",fontSize:18,fontVariantNumeric:"tabular-nums"}}>{fmt(displaySell)}</span>
                 </div>
               </div>
 
