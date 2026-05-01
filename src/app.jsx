@@ -5586,6 +5586,124 @@ async function buildQuotePdfDoc(doc,project){
   });
 }
 
+// ── BOM REPORT PDF BUILDER ──
+// DECISION(v1.19.931, BOM Report): Internal-facing spreadsheet-style BOM
+// listing covering every panel in the project. Columns: ARC Item # (the part
+// number used by ARC/BC), Ref Dwg # (which panel the row belongs to), Qty,
+// Description, MFR. Mirrors the traveler's clean B&W aesthetic for visual
+// consistency. Letter landscape so the table breathes. Used by the
+// "Send w/BOM" button on the Send Quote modal (attached as a 2nd PDF) and
+// can be invoked standalone via generateBomReportPdf().
+async function buildBomReportPdfDoc(doc,project){
+  const W=doc.internal.pageSize.getWidth();   // letter landscape: ~279.4mm
+  const H=doc.internal.pageSize.getHeight();  // ~215.9mm
+  const margin=10;
+  const black=[0,0,0];
+  const mid=[80,80,80];
+  const generated=new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  const q=project?.quote||{};
+  const projectNum=q.projectNumber||project?.bcProjectNumber||project?.name||"—";
+  const customer=q.company||project?.bcCustomerName||"—";
+
+  // ── Header bar — matches traveler ──
+  const hdrH=20;
+  doc.setDrawColor(...black);doc.setLineWidth(0.6);
+  doc.rect(0,1,W,hdrH);
+  doc.setFontSize(15);doc.setFont("helvetica","bold");doc.setTextColor(...black);
+  doc.text("Matrix Systems, Inc.",margin,14);
+  doc.setFontSize(11);doc.setFont("helvetica","bold");doc.setTextColor(...mid);
+  doc.text("BILL OF MATERIALS REPORT",W-margin,14,{align:"right"});
+
+  // ── Title block ──
+  doc.setFontSize(22);doc.setFont("helvetica","bold");doc.setTextColor(...black);
+  doc.text(String(projectNum),margin,34);
+  doc.setFontSize(11);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+  doc.text(String(customer),margin,42);
+
+  // ── Info row (right-aligned) — Generated date + Panel count + Item count ──
+  const panels=Array.isArray(project?.panels)?project.panels:[];
+  // Build the flat row list across all panels (skip labor / contingency / DIN-Rail / Duct).
+  const allRows=[];
+  for(const pan of panels){
+    const refDwg=pan.drawingNo||pan.name||"—";
+    const bom=(pan.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency
+      &&!CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())
+      &&!/^job.?buyoff$/i.test(r.partNumber||""));
+    bom.sort((a,b)=>{
+      if(!a.itemNo&&!b.itemNo)return 0;
+      if(!a.itemNo)return 1;
+      if(!b.itemNo)return -1;
+      const an=parseFloat(a.itemNo),bn=parseFloat(b.itemNo);
+      if(!isNaN(an)&&!isNaN(bn))return an-bn;
+      return(a.itemNo||"").localeCompare(b.itemNo||"");
+    });
+    for(const r of bom){
+      allRows.push({
+        arcItem:r.partNumber||"—",
+        refDwg,
+        qty:r.qty||1,
+        description:r.description||"—",
+        mfr:r.manufacturer||"—",
+      });
+    }
+  }
+
+  doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+  doc.text(`Generated: ${generated}  ·  ${panels.length} panel${panels.length===1?"":"s"}  ·  ${allRows.length} line${allRows.length===1?"":"s"}`,W-margin,34,{align:"right"});
+
+  // Divider
+  const divY=50;
+  doc.setDrawColor(...black);doc.setLineWidth(0.5);doc.line(margin,divY,W-margin,divY);
+
+  // ── BOM table ──
+  doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...black);
+  doc.text("BILL OF MATERIALS",margin,divY+7);
+
+  const head=[["ARC Item #","Ref Dwg #","Qty","Description","MFR"]];
+  const body=allRows.map(r=>[r.arcItem,r.refDwg,r.qty,r.description,r.mfr]);
+  if(body.length===0){
+    doc.setFontSize(9);doc.setFont("helvetica","italic");doc.setTextColor(...mid);
+    doc.text("(No BOM rows in this project.)",margin,divY+18);
+    return;
+  }
+  doc.autoTable({
+    startY:divY+10,
+    margin:{left:margin,right:margin,bottom:14},
+    tableWidth:"auto",
+    headStyles:{fillColor:[220,220,220],textColor:[0,0,0],fontStyle:"bold",fontSize:9,cellPadding:1.8,lineWidth:0.2,lineColor:[0,0,0]},
+    bodyStyles:{fontSize:8,cellPadding:1.6,lineWidth:0.1,lineColor:[180,180,180],textColor:[0,0,0]},
+    alternateRowStyles:{fillColor:[245,245,245]},
+    styles:{overflow:"linebreak"},
+    columnStyles:{
+      0:{cellWidth:"auto",minCellWidth:35},   // ARC Item #
+      1:{cellWidth:"auto",minCellWidth:30},   // Ref Dwg #
+      2:{cellWidth:14,halign:"center"},       // Qty
+      3:{cellWidth:"auto",minCellWidth:80},   // Description
+      4:{cellWidth:"auto",minCellWidth:30},   // MFR
+    },
+    head,
+    body,
+    didDrawPage:(data)=>{
+      const pn=data.pageNumber;
+      const ph=doc.internal.pageSize.getHeight();
+      const pw=doc.internal.pageSize.getWidth();
+      doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(100,100,100);
+      doc.text(`${projectNum}  ·  ${customer}  ·  ${generated}`,margin,ph-5);
+      doc.text(`Page ${pn}`,pw-margin,ph-5,{align:"right"});
+    },
+  });
+}
+
+// Standalone BOM Report — opens in a new tab so the user can save / print directly.
+async function generateBomReportPdf(project){
+  const jsPDF=await ensureJsPDF();
+  const doc=new jsPDF({unit:"mm",format:"letter",orientation:"landscape"});
+  await buildBomReportPdfDoc(doc,project);
+  arcDocOpen(doc);
+  return{printed:true};
+}
+if(typeof window!=="undefined"){window._buildBomReportPdfDoc=buildBomReportPdfDoc;window._generateBomReportPdf=generateBomReportPdf;}
+
 async function generateQuotePdf(project){
   const jsPDF=await ensureJsPDF();
   const doc=new jsPDF({unit:"mm",format:"letter"});
@@ -5926,15 +6044,24 @@ async function buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy,companyIn
   return doc.output("datauristring").split(",")[1];
 }
 
-async function sendGraphEmail(graphToken,to,subject,htmlBody,pdfBase64,pdfFilename){
+async function sendGraphEmail(graphToken,to,subject,htmlBody,pdfBase64,pdfFilename,extraAttachments){
+  // DECISION(v1.19.931): Optional `extraAttachments` — array of
+  // {pdfBase64, pdfFilename} so the Send w/BOM flow can attach the BOM
+  // Report alongside the Quote. Backwards-compatible: when not supplied,
+  // behaves exactly as the original single-attachment signature.
   const msg={
     subject,
     body:{contentType:"HTML",content:htmlBody},
     toRecipients:to.split(/[,;]\s*/).filter(e=>e.trim()).map(e=>({emailAddress:{address:e.trim()}}))
   };
-  if(pdfBase64){
-    msg.attachments=[{"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"RFQ.pdf",contentType:"application/pdf",contentBytes:pdfBase64}];
+  const atts=[];
+  if(pdfBase64)atts.push({"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"RFQ.pdf",contentType:"application/pdf",contentBytes:pdfBase64});
+  if(Array.isArray(extraAttachments)){
+    for(const a of extraAttachments){
+      if(a&&a.pdfBase64)atts.push({"@odata.type":"#microsoft.graph.fileAttachment",name:a.pdfFilename||"Attachment.pdf",contentType:"application/pdf",contentBytes:a.pdfBase64});
+    }
   }
+  if(atts.length)msg.attachments=atts;
   const r=await fetch("https://graph.microsoft.com/v1.0/me/sendMail",{
     method:"POST",
     headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
@@ -6027,17 +6154,28 @@ async function fetchOutlookAttachment(attachmentJsonStr){
 // DECISION(v1.19.366): Uses the /replyAll action endpoint which sends immediately and supports
 // attachments in the message body. Previous draft-based approach (createReplyAll → PATCH → POST attachment → send)
 // was not attaching the PDF reliably. This single-call approach mirrors how sendGraphEmail works.
-async function graphReplyToMessage(graphToken,messageId,htmlBody,pdfBase64,pdfFilename){
+async function graphReplyToMessage(graphToken,messageId,htmlBody,pdfBase64,pdfFilename,extraAttachments){
   if(!graphToken||!messageId)throw new Error("Missing token or messageId");
   const replyBody={
     message:{
       body:{contentType:"HTML",content:htmlBody}
     }
   };
+  // DECISION(v1.19.931): Optional extraAttachments[] for Send w/BOM flow.
+  const atts=[];
   if(pdfBase64){
-    replyBody.message.attachments=[{"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"Quote.pdf",contentType:"application/pdf",contentBytes:pdfBase64}];
+    atts.push({"@odata.type":"#microsoft.graph.fileAttachment",name:pdfFilename||"Quote.pdf",contentType:"application/pdf",contentBytes:pdfBase64});
     console.log("[REPLY] Sending reply-all with attachment:",pdfFilename,"~",Math.round(pdfBase64.length*3/4/1024),"KB");
   }
+  if(Array.isArray(extraAttachments)){
+    for(const a of extraAttachments){
+      if(a&&a.pdfBase64){
+        atts.push({"@odata.type":"#microsoft.graph.fileAttachment",name:a.pdfFilename||"Attachment.pdf",contentType:"application/pdf",contentBytes:a.pdfBase64});
+        console.log("[REPLY] +extra:",a.pdfFilename,"~",Math.round(a.pdfBase64.length*3/4/1024),"KB");
+      }
+    }
+  }
+  if(atts.length)replyBody.message.attachments=atts;
   const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/replyAll`,{
     method:"POST",
     headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
@@ -25763,7 +25901,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   // are reflected.
   const incompleteItems=findIncompleteQuoteItems(project);
   const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive;
-  async function handleSend(){
+  async function handleSend(withBom){
     // DECISION(v1.19.681): Owner Priority Mode gate. Blocks quote send.
     if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
     const m=modalData;
@@ -25814,6 +25952,23 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       await buildQuotePdfDoc(pdfDoc,project);
       const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
       console.log("[SEND QUOTE] PDF generated, base64 length:",pdfBase64?.length||0,"mode:",sendMode);
+      // DECISION(v1.19.931, Send w/BOM): When the user clicks "Send w/BOM",
+      // also build the BOM Report PDF (spreadsheet-style listing with ARC
+      // Item # / Ref Dwg # / Qty / Description / MFR for every panel) and
+      // attach it alongside the Quote PDF.
+      const extraAttachments=[];
+      if(withBom){
+        const bomDoc=new jsPDF({unit:"mm",format:"letter",orientation:"landscape"});
+        await buildBomReportPdfDoc(bomDoc,project);
+        const bomBase64=bomDoc.output("datauristring").split(",")[1];
+        console.log("[SEND QUOTE] BOM Report PDF generated, base64 length:",bomBase64?.length||0);
+        const _q2=project.quote||{};
+        const _rev2=project.quoteRev||0;
+        const _company2=(_q2.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+        const _proj2=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+        const bomFilename=`BOM_REPORT-[${_q2.number||"Quote"} Rev ${String(_rev2).padStart(2,"0")}] - ${_company2} - ${_proj2}.pdf`;
+        extraAttachments.push({pdfBase64:bomBase64,pdfFilename:bomFilename});
+      }
       // DECISION(v1.19.667): Warn if PDF is getting close to Graph API request limits.
       // Graph's sendMail endpoint caps at ~4MB for inline file attachments; above that we'd
       // need to use LargeFileUploadTask which we don't implement. Warn at 3MB so sales has
@@ -25830,9 +25985,9 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
       const pdfName=`QTE_C-[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
       if(sendMode==="reply"){
-        await graphReplyToMessage(graphToken,selectedThread.id,html,pdfBase64,pdfName);
+        await graphReplyToMessage(graphToken,selectedThread.id,html,pdfBase64,pdfName,extraAttachments);
       }else{
-        await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName);
+        await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName,extraAttachments);
       }
       // DECISION(v1.19.368): For reply mode, show who the reply went to (the original thread participants),
       // not just the original sender. For new email, show the To field. Always save to Firestore.
@@ -25973,10 +26128,18 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,flexShrink:0}}>
           <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
           <button onClick={()=>{onClose();setTimeout(()=>{const evt=new CustomEvent("arc-just-print");window.dispatchEvent(evt);},100);}} style={btn(C.greenDim,C.green,{fontSize:13,fontWeight:700,border:`1px solid ${C.green}44`})}>🖨 Just Print</button>
-          <button onClick={handleSend} disabled={sending||sendBlocked}
-            title={sendBlocked?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:""}
+          <button onClick={()=>handleSend(false)} disabled={sending||sendBlocked}
+            title={sendBlocked?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send the Quote PDF only"}
             style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:(sending||sendBlocked)?0.4:1,cursor:sendBlocked?"not-allowed":undefined})}>
             {sending?"Sending…":sendBlocked?"✉ Send (blocked)":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
+          </button>
+          {/* DECISION(v1.19.931): Send w/BOM — same flow but also attaches the
+              BOM Report PDF (spreadsheet-style listing of every panel's BOM
+              with ARC Item # / Ref Dwg # / Qty / Description / MFR). */}
+          <button onClick={()=>handleSend(true)} disabled={sending||sendBlocked}
+            title={sendBlocked?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send the Quote PDF AND a BOM Report (separate PDF attachment)"}
+            style={btn(sendMode==="reply"?"#0d2a1a":"#0c1f33","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa",opacity:(sending||sendBlocked)?0.4:1,cursor:sendBlocked?"not-allowed":undefined})}>
+            {sending?"Sending…":"✉ Send w/BOM"}
           </button>
         </div>
       </div>
@@ -30112,49 +30275,67 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 </div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
                   <button onClick={()=>setQuoteSendModal(null)} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
-                  <button onClick={async()=>{
-                    const m=quoteSendModal;
-                    // DECISION(v1.19.663): Guard on incomplete BOM rows.
-                    const incomplete=findIncompleteQuoteItems(project);
-                    if(incomplete.length){arcAlert(formatIncompleteQuoteAlert(incomplete));return;}
-                    if(!m.to.trim()){arcAlert("Enter a recipient email.");return;}
-                    // DECISION(v1.19.667): Email regex validation — same as QuoteSendModal.
-                    {
-                      const emailRe=/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
-                      const recipients=m.to.split(/[,;]\s*/).map(e=>e.trim()).filter(Boolean);
-                      const bad=recipients.filter(e=>!emailRe.test(e));
-                      if(bad.length){arcAlert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
-                    }
-                    const graphToken=await acquireGraphToken();
-                    if(!graphToken){arcAlert("Could not get Microsoft 365 token.");return;}
-                    const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
-                    const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
-                    try{
-                      const jsPDF=await ensureJsPDF();
-                      const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
-                      await buildQuotePdfDoc(pdfDoc,project);
-                      const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
-                      const qq=project.quote||{};
-                      const rev=project.quoteRev||0;
-                      const co=(qq.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-                      const pn=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-                      const pdfName=`QTE_C-[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
-                      await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName);
-                      // Full BC sync before locking
-                      if(project.bcProjectNumber&&_bcToken){
-                        for(let pi=0;pi<(project.panels||[]).length;pi++){
-                          try{await bcSyncPanelPlanningLines(project.bcProjectNumber,pi+1,project.panels[pi],project.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",pi+1,"failed:",e);}
+                  {(()=>{
+                    // DECISION(v1.19.931): Inline send handler factored to take a
+                    // `withBom` flag so we can render two buttons side-by-side
+                    // (Send / Send w/BOM) without duplicating logic.
+                    const _doInlineQuoteSend=async(withBom)=>{
+                      const m=quoteSendModal;
+                      // DECISION(v1.19.663): Guard on incomplete BOM rows.
+                      const incomplete=findIncompleteQuoteItems(project);
+                      if(incomplete.length){arcAlert(formatIncompleteQuoteAlert(incomplete));return;}
+                      if(!m.to.trim()){arcAlert("Enter a recipient email.");return;}
+                      // DECISION(v1.19.667): Email regex validation — same as QuoteSendModal.
+                      {
+                        const emailRe=/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+                        const recipients=m.to.split(/[,;]\s*/).map(e=>e.trim()).filter(Boolean);
+                        const bad=recipients.filter(e=>!emailRe.test(e));
+                        if(bad.length){arcAlert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
+                      }
+                      const graphToken=await acquireGraphToken();
+                      if(!graphToken){arcAlert("Could not get Microsoft 365 token.");return;}
+                      const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
+                      const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
+                      try{
+                        const jsPDF=await ensureJsPDF();
+                        const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
+                        await buildQuotePdfDoc(pdfDoc,project);
+                        const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
+                        const qq=project.quote||{};
+                        const rev=project.quoteRev||0;
+                        const co=(qq.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+                        const pn=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+                        const pdfName=`QTE_C-[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
+                        // Build BOM Report PDF when withBom flag is set.
+                        const _extraAtts=[];
+                        if(withBom){
+                          const bomDoc=new jsPDF({unit:"mm",format:"letter",orientation:"landscape"});
+                          await buildBomReportPdfDoc(bomDoc,project);
+                          const bomBase64=bomDoc.output("datauristring").split(",")[1];
+                          const bomFilename=`BOM_REPORT-[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
+                          _extraAtts.push({pdfBase64:bomBase64,pdfFilename:bomFilename});
                         }
-                      }
-                      const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to,quoteLocked:true};
-                      onUpdate(upd);
-                      if(project.bcProjectNumber&&_bcToken){
-                        bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
-                      }
-                      setQuoteSendModal(null);
-                      arcAlert("Quote sent to "+m.to+" — quote is now locked.");
-                    }catch(e){arcAlert("Send failed: "+e.message);}
-                  }} style={btn("#0c2233","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8"})}>✉ Send</button>
+                        await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName,_extraAtts);
+                        // Full BC sync before locking
+                        if(project.bcProjectNumber&&_bcToken){
+                          for(let pi=0;pi<(project.panels||[]).length;pi++){
+                            try{await bcSyncPanelPlanningLines(project.bcProjectNumber,pi+1,project.panels[pi],project.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",pi+1,"failed:",e);}
+                          }
+                        }
+                        const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to,quoteLocked:true};
+                        onUpdate(upd);
+                        if(project.bcProjectNumber&&_bcToken){
+                          bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
+                        }
+                        setQuoteSendModal(null);
+                        arcAlert(`Quote sent to ${m.to}${withBom?" (with BOM Report attached)":""} — quote is now locked.`);
+                      }catch(e){arcAlert("Send failed: "+e.message);}
+                    };
+                    return(<>
+                      <button onClick={()=>_doInlineQuoteSend(false)} title="Send the Quote PDF only" style={btn("#0c2233","#38bdf8",{fontSize:13,fontWeight:700,border:"1px solid #38bdf8"})}>✉ Send</button>
+                      <button onClick={()=>_doInlineQuoteSend(true)} title="Send the Quote PDF AND a BOM Report (separate PDF attachment)" style={btn("#0c1f33","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa"})}>✉ Send w/BOM</button>
+                    </>);
+                  })()}
                 </div>
               </div>
             </div>
