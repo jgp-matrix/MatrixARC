@@ -1100,7 +1100,21 @@ function computeControlPanelLeadTime(panel,project){
   // days. Engineering Design produces submittals; the minimum reasonable
   // approval window is 21 days. Raw values below 21 are floored at 21
   // automatically — keeps the Approval-due date on the Quote honest.
-  const _caRaw=panel.customerApprovalDays;
+  // DECISION(v1.19.951): Source of truth moved to the Engineering Drawings
+  // service card. Read MAX customerApprovalDays across engineering cards;
+  // fall back to the legacy panel field if no engineering card defines one.
+  let _caRaw=null;
+  if(Array.isArray(project?.serviceCards)){
+    for(const sc of project.serviceCards){
+      if(!sc||sc.lineType!=="engineering")continue;
+      const v=sc.customerApprovalDays;
+      if(v==null)continue;
+      const n=+v;
+      if(!isFinite(n))continue;
+      if(_caRaw==null||n>_caRaw)_caRaw=n;
+    }
+  }
+  if(_caRaw==null)_caRaw=panel.customerApprovalDays; // legacy fallback
   const customerApprovalDays=Math.max(21,Math.min(180,_caRaw==null?21:(+_caRaw||0)));
 
   // ── MILESTONE CHAIN (sequential days from today=PO Received) ──────────
@@ -19113,8 +19127,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.939): 3-week minimum buffer on save (matches the
     // computeControlPanelLeadTime floor). User can type any value — the
     // saved value is floored at 21.
-    const custApprovalDays=Math.max(21,Math.min(180,+draftCustomerApprovalDays||21));
-    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode,customerApprovalDays:custApprovalDays};
+    // DECISION(v1.19.951): customerApprovalDays no longer saved from the panel
+    // header — moved to the Engineering Drawings ServicesCard. Existing field
+    // value on the panel remains untouched for backward compatibility.
+    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     // DECISION(v1.19.632) Phase 2: If user's value differs from the last AI extraction, save the
@@ -21585,22 +21601,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {/* DECISION(v1.19.714): Production End Date (the date production tells the user
                they expect to be done). Feeds computeControlPanelLeadTime — the software
                derives days-post-assembly at compute time. */}
-            {/* DECISION(v1.19.933): Customer Approval Days — drives the Eng →
-                Approval → Materials chain. Default 21 (3 weeks). User adjusts
-                if actual approvals run longer than estimated; lead time
-                extends accordingly. Sits next to Est. Prod. Done in the header. */}
-            <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}
-              title="Customer Approval Days — default 3 weeks (21 days). Bump this if actual approval turnaround runs longer; the lead time chain extends. If the slip pushes past the TRAQS Production Date, enter a new TRAQS date.">
-              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Approval Days</div>
-              <input type="text" inputMode="numeric"
-                value={draftCustomerApprovalDays}
-                onChange={e=>{const v=e.target.value.replace(/[^0-9]/g,'');setDraftCustomerApprovalDays(v===""?"":+v);}}
-                onFocus={e=>e.target.select()}
-                onBlur={()=>saveTitleFields()}
-                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftCustomerApprovalDays(panel.customerApprovalDays??21);e.target.blur();}}}
-                readOnly={readOnly}
-                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",width:"3.5ch",textAlign:"right",fontFamily:"inherit"}}/>
-            </div>
+            {/* DECISION(v1.19.951): Approval Days input moved to the
+                Engineering Drawings ServicesCard. Stored on the engineering
+                service card itself (`card.customerApprovalDays`). Existing
+                panel.customerApprovalDays still read by computeControlPanel
+                LeadTime as a fallback for legacy data. */}
             {/* DECISION(v1.19.935): Est. Prod. Done — TRAQS-scheduled production
                 end date. REQUIRED on every quote. The v1.19.932 days-post-
                 approval toggle was removed — the milestone chain (v1.19.933)
@@ -26519,6 +26524,10 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
   const [draftDetail,setDraftDetail]=React.useState(card.detailDescription||"");
   const [draftReqShip,setDraftReqShip]=React.useState(card.requestedShipDate||"");
   const [draftEstDone,setDraftEstDone]=React.useState(card.estCompletionDate||"");
+  // DECISION(v1.19.951): Customer Approval Days now lives on the engineering
+  // service card (was previously on the Panel Card header). 21-day default,
+  // 21-day floor. Visible only on engineering cards in the body editor.
+  const [draftApprovalDays,setDraftApprovalDays]=React.useState(card.customerApprovalDays??21);
   const label=SERVICE_CARD_LABELS[card.lineType]||card.lineType||"Service";
   const total=computeServiceCardTotal({...card,qty:+draftQty||0,rate:+draftRate||0,lumpSum:+draftLump||0});
   const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
@@ -26685,6 +26694,23 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
                 style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:14,fontWeight:700,outline:"none",width:"6ch",fontFamily:"inherit",textAlign:"right"}}/>
             </div>
           </>)}
+          {/* DECISION(v1.19.951): Customer Approval Days — engineering cards
+              only. Drives the Submittals → Approval window in the milestone
+              chain. 21-day default, 21-day floor (3-week minimum buffer per
+              v1.19.939). Was previously on the Panel Card header. */}
+          {card.lineType==="engineering"&&(
+            <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}
+              title="Customer Approval Days — default 3 weeks (21 days). Bump if approvals run longer; chain extends. Min 21.">
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Approval Days</div>
+              <input type="text" inputMode="numeric" value={draftApprovalDays} readOnly={readOnly}
+                onClick={e=>e.stopPropagation()}
+                onChange={e=>{const v=e.target.value.replace(/[^0-9]/g,'');setDraftApprovalDays(v===""?"":+v);}}
+                onFocus={e=>e.target.select()}
+                onBlur={()=>commit({customerApprovalDays:Math.max(21,Math.min(180,+draftApprovalDays||21))})}
+                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftApprovalDays(card.customerApprovalDays??21);e.target.blur();}}}
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:14,fontWeight:700,outline:"none",width:"4ch",fontFamily:"inherit",textAlign:"right"}}/>
+            </div>
+          )}
           {/* Live Total */}
           <div style={{flex:1,textAlign:"right",fontSize:18,fontWeight:800,color:total>0?C.text:C.muted,fontVariantNumeric:"tabular-nums"}}>
             {total>0?fmt(total):"—"}
