@@ -7199,35 +7199,56 @@ function migrateProjectShape(p){
   // (the symptom the user hit: ECO disappeared from the tab strip after a
   // page refresh). The one-time migration target (PRJ402064) was already
   // cleaned long ago. Removing the block prevents further data loss.
-  // DECISION(v1.19.912): Targeted one-shot manual rev resets — apply BEFORE
-  // auto-normalize so the manual override wins. Gated by `_quoteRevManualReset
-  // Applied` so each entry fires at most once per project; the flag is
-  // persisted on the next save.
+  // DECISION(v1.19.912 → v1.19.954): Targeted manual rev resets. Each entry is
+  // versioned via a `resetVersion` integer — the applied-flag set tracks
+  // `${bcProjectNumber}@v${resetVersion}` so a NEW reset for the same project
+  // (with a higher resetVersion) fires past any prior reset's flag.
+  //
+  // The reset writes BOTH `quoteRev` AND `quoteRevAtPrint` to the target so the
+  // project lands in a clean "no unsent revision" state — the user can print/
+  // send and the rev advances normally from there. lastQuoteHash is cleared so
+  // the next save reseeds without bumping. Auto-normalize (below) then stays
+  // out of the way because Rev === RevAtPrint, not Rev > RevAtPrint+1.
+  //
+  // History:
+  //   • v1 — PRJ402083 → 15 (v1.19.912). Set the applied flag on the project,
+  //     which then exempted it from auto-normalize. Combined with the silent
+  //     load-time save bug fixed in v1.19.954, the rev drifted 15 → 31.
+  //   • v2 — PRJ402083 → 4 (v1.19.954). User wants this project back to the
+  //     correct revision count after the runaway. Versioned key fires past the
+  //     v1 applied flag.
   const _quoteRevManualResets={
-    "PRJ402083":15,
+    "PRJ402083":{target:4,resetVersion:2},
   };
   const _appliedSet=Array.isArray(out._quoteRevManualResetApplied)?new Set(out._quoteRevManualResetApplied):new Set();
   const _bcNum=(out.bcProjectNumber||"").trim();
-  let _manualResetEverApplied=_appliedSet.has(_bcNum);
-  if(_bcNum&&_quoteRevManualResets[_bcNum]!=null&&!_manualResetEverApplied){
-    const _target=_quoteRevManualResets[_bcNum];
-    console.log(`[QUOTE REV] manual reset ${_bcNum}: ${out.quoteRev||0} → ${_target}`);
-    out.quoteRev=_target;
-    out.lastQuoteHash=null;
-    _appliedSet.add(_bcNum);
-    out._quoteRevManualResetApplied=Array.from(_appliedSet);
-    _manualResetEverApplied=true;
+  const _resetCfg=_bcNum?_quoteRevManualResets[_bcNum]:null;
+  if(_resetCfg){
+    const _appliedKey=`${_bcNum}@v${_resetCfg.resetVersion}`;
+    if(!_appliedSet.has(_appliedKey)){
+      const _target=_resetCfg.target;
+      console.log(`[QUOTE REV] manual reset ${_bcNum} (v${_resetCfg.resetVersion}): rev ${out.quoteRev||0} → ${_target}, revAtPrint ${out.quoteRevAtPrint||0} → ${_target}`);
+      out.quoteRev=_target;
+      out.quoteRevAtPrint=_target;
+      out.lastQuoteHash=null;
+      _appliedSet.add(_appliedKey);
+      out._quoteRevManualResetApplied=Array.from(_appliedSet);
+    }
   }
-  // DECISION(v1.19.911, runaway Quote Rev): One-shot self-heal for projects
-  // that climbed past quoteRevAtPrint (v1.19.910 and earlier had a hash that
-  // included BC-poll-driven fields, so silent background bumps drove projects
-  // into the hundreds — PRJ402083 hit Rev 293). Normalize to quoteRevAtPrint+1
-  // in memory; lastQuoteHash is cleared so the reset itself doesn't trigger
-  // another bump.
-  // DECISION(v1.19.913): Skip auto-normalize once a manual reset has been
-  // applied for this project — otherwise a manually-set Rev (e.g. 15 with
-  // revAtPrint=8) would get normalized back to revAtPrint+1=9 on next load.
-  if(!_manualResetEverApplied){
+  // DECISION(v1.19.911 → v1.19.954, runaway Quote Rev): Self-heal projects
+  // whose quoteRev climbed past quoteRevAtPrint+1. Earlier (v1.19.910) the
+  // hash included BC-poll-driven fields, driving silent bumps into the
+  // hundreds (PRJ402083 hit Rev 293). v1.19.954 also closed a load-time save
+  // path that fired on every project open for any project ever touched by
+  // the v1.19.834-era ECO migration. The self-heal stays as a safety net for
+  // any future hash-drift bug.
+  //
+  // v1.19.913 used to skip this clamp once a manual reset had been applied —
+  // that exempted PRJ402083 from the safety net and let it drift 15 → 31.
+  // v1.19.954 removes the skip: manual resets now sync revAtPrint to target,
+  // so the clamp condition (`rev > revAtPrint+1`) is naturally false right
+  // after a reset and only fires when actual drift occurs.
+  {
     const _rev=+out.quoteRev||0;
     const _revAtPrint=+out.quoteRevAtPrint||0;
     if(_rev>_revAtPrint+1){
@@ -26800,8 +26821,16 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     if(!project.bcCustomerNumber||!_bcToken)return;
     bcFetchCustomerContacts(project.bcCustomerNumber).then(c=>{if(c.length)setContactPersons(c);});
   },[project.bcCustomerNumber]);
-  // DECISION(v1.19.351): Sync BC customer name on project open — if the company was renamed in BC,
-  // the project header and quote should reflect the current name, not the stale one from creation.
+  // DECISION(v1.19.351 → v1.19.954): Sync BC customer name on project open — if
+  // the company was renamed in BC, the project header and quote should reflect
+  // the current name, not the stale one from creation.
+  //
+  // v1.19.954 hardening: compare with `.trim()` so trailing whitespace doesn't
+  // count as a "rename" and trigger a save every project open. Also only
+  // overwrite `quote.company` when (a) it's empty/whitespace, or (b) it equals
+  // the OLD bcCustomerName — preserving manual quote-form edits. Without this,
+  // a stale-but-different BC value could overwrite the user's typed company
+  // name on every load and contribute to phantom Quote Rev bumps.
   useEffect(()=>{
     if(!project.bcCustomerNumber||!_bcToken||isBcDisconnected)return;
     (async()=>{
@@ -26811,11 +26840,19 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
         const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${project.bcCustomerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(!r.ok)return;
         const cust=((await r.json()).value||[])[0];
-        if(cust&&cust.displayName&&cust.displayName!==project.bcCustomerName){
-          console.log("BC_SYNC: Customer name changed:",project.bcCustomerName,"→",cust.displayName);
-          const upd={...project,bcCustomerName:cust.displayName,quote:{...(project.quote||{}),company:cust.displayName}};
-          onUpdate(upd);safeSave(uid,upd);
-        }
+        if(!cust||!cust.displayName)return;
+        const _bcName=String(cust.displayName).trim();
+        const _oldName=String(project.bcCustomerName||"").trim();
+        if(!_bcName||_bcName===_oldName)return; // no meaningful change
+        console.log("BC_SYNC: Customer name changed:",_oldName||"(empty)","→",_bcName);
+        const _curCompany=String((project.quote||{}).company||"").trim();
+        const _shouldUpdateQuoteCompany=!_curCompany||_curCompany===_oldName;
+        const upd={
+          ...project,
+          bcCustomerName:_bcName,
+          ..._shouldUpdateQuoteCompany?{quote:{...(project.quote||{}),company:_bcName}}:{}
+        };
+        onUpdate(upd);safeSave(uid,upd);
       }catch(e){}
     })();
   },[project.id]);
@@ -29399,18 +29436,23 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     }
   },[]);
 
-  // DECISION(v1.19.834, ECO Stage 0): Persist the legacy ECO cleanup. The shape
-  // migrator strips tagged rows/pages + resets ecoCounter/ecoSummary in memory,
-  // and stamps `_ecoLegacyMigrated:true`. We auto-save once so the next load
-  // sees the cleaned state and the flag prevents re-triggering. Idempotent.
-  const didEcoLegacyMigrate=useRef(!!init?._ecoLegacyMigrated);
-  useEffect(()=>{
-    if(didEcoLegacyMigrate.current){
-      didEcoLegacyMigrate.current=false;
-      console.log("[ECO MIGRATION] persisting legacy cleanup for project",init.id||"(new)");
-      safeSave(uid,projectRef.current||init).catch(e=>console.warn("ECO legacy save failed:",e));
-    }
-  },[]);
+  // DECISION(v1.19.954, runaway Quote Rev): The Stage 0 legacy-ECO save effect
+  // was DELETED here. Original intent (v1.19.834) was: when migrateProjectShape
+  // ran the legacy-ECO cleanup, stamp `_ecoLegacyMigrated:true` and auto-save
+  // once so the cleanup persisted. The cleanup itself was deleted in v1.19.875
+  // (it was destroying live ECO work on refresh), but the auto-save effect
+  // survived. The useRef captured `!!init?._ecoLegacyMigrated` — TRUE for every
+  // project that had been through the v1.19.834-era migration — which meant
+  // every open of those projects fired `safeSave(uid, projectRef.current)` with
+  // a fresh project reference. That reference's `_computeQuoteHash` differed
+  // from Firestore's `lastQuoteHash` whenever migrateProjectShape's in-memory
+  // normalization (defaults, ECO `kind` fill, serviceCards initialization) had
+  // touched anything in the hash domain — so the cap-once-per-print bump fired,
+  // adding +1 to Quote Rev every project open. PRJ402083 climbed 15 → 31 this
+  // way after its v1.19.912 manual reset. The effect is no longer needed; the
+  // `_ecoLegacyMigrated` flag stays in Firestore on already-migrated projects
+  // (per data-retention rules — never strip fields), it just no longer triggers
+  // a save on open.
 
   // DECISION(v1.19.849, ECO Stage A): Backfill the unlock-cascade state for any
   // project that has a draft ECO but is missing `ecoEditUnlocked`. This catches
