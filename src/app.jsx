@@ -5604,7 +5604,7 @@ async function buildQuotePdfDoc(doc,project){
           // date below is the actionable milestone.
           const _lines=[`Est. Panel Lead Time: ${_cpltPdf2.leadDays} days ARO`];
           if((_cpltPdf2.engineeringDays||0)>0)_lines.push(`Est. Engineering Drawings Lead Time: ${_cpltPdf2.engineeringDays} days ARO`);
-          _lines.push(`Panel Lead Time is dependent upon receiving signed Approval drawings by ${_fmtPdf2(_approvalDue2)}. Lead Time will be re-calculated if approvals take longer.`);
+          _lines.push("Panel Lead Time is based upon receiving signed Approval drawings within approximately 3 weeks from Submittal. Lead Time will be re-calculated if approvals take longer.");
           const _msg=_lines.join("\n");
           // DECISION(v1.19.942): Banner font bumped 30% (7pt → 9pt) per user
           // request — lead-time note is the most actionable callout on the
@@ -15720,7 +15720,7 @@ function QuoteTab({project,onUpdate}){
                   <div style={{padding:"12px 16px",borderTop:"1px solid #e2e8f0",textAlign:"center",fontSize:17,fontWeight:700,color:"#dc2626",lineHeight:1.5,background:"#fef2f2"}}>
                     <div>Est. Panel Lead Time: {_cplt.leadDays} days ARO</div>
                     {(_cplt.engineeringDays||0)>0&&<div style={{marginTop:3}}>Est. Engineering Drawings Lead Time: {_cplt.engineeringDays} days ARO</div>}
-                    <div style={{marginTop:6,fontWeight:600}}>Panel Lead Time is dependent upon receiving signed Approval drawings by {_fmt(_approvalDue)}. Lead Time will be re-calculated if approvals take longer.</div>
+                    <div style={{marginTop:6,fontWeight:600}}>Panel Lead Time is based upon receiving signed Approval drawings within approximately 3 weeks from Submittal. Lead Time will be re-calculated if approvals take longer.</div>
                   </div>
                 );
               })()}
