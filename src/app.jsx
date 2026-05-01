@@ -6061,12 +6061,18 @@ function _computeQuoteHash(project){
         laborRate:pr.laborRate??null,
         laborHoursOverride:pr.laborHoursOverride??null,
         isBudgetary:!!pr.isBudgetary,
+        // DECISION(v1.19.911, runaway Quote Rev): drop leadTimeDays + leadTimeSource
+        // entirely — they auto-fluctuate from BC syncs / AI estimates and were
+        // driving quoteRev into the hundreds (PRJ402083 hit Rev 293). For unitPrice,
+        // include it only when priceSource is user-driven (manual / unset). Rows
+        // sourced from BC ("bc") get their unitPrice silently refreshed by the
+        // 5-minute pollBcPricing — those refreshes are not customer-facing
+        // revisions and should never bump Quote Rev. User-edited prices still
+        // do, because applyConfirmedPrice flips priceSource to "manual".
         bom:(p.bom||[]).filter(r=>!r.isLaborRow).map(r=>({
           pn:(r.partNumber||"").trim(),
           q:r.qty||0,
-          up:r.unitPrice||0,
-          ld:r.leadTimeDays??null,
-          ls:r.leadTimeSource||"",
+          up:r.priceSource==="bc"?null:(r.unitPrice||0),
           d:(r.description||"").trim(),
           m:(r.manufacturer||"").trim(),
         })),
@@ -6187,19 +6193,30 @@ async function saveProject(uid,project){
         // change order, not a new revision of the BASE. Once the ECO closes
         // (Stage F auto-relock) bumps resume normally. Hash is still recorded so
         // the next post-ECO save compares cleanly.
+        // DECISION(v1.19.911, runaway Quote Rev): cap at one bump per print cycle.
+        // Quote Rev means "next revision awaiting print/send". Once it's already
+        // ahead of quoteRevAtPrint, further hash changes are still in the same
+        // unsent revision — they don't deserve a new rev number. The "unsent"
+        // pill already communicates "this differs from what was last printed".
+        // Hash is still recorded so the comparison stays accurate.
         const _hasActiveEcoSP=!!data.ecoEditUnlocked||(Array.isArray(data.ecoSummary)&&data.ecoSummary.some(e=>e&&e.status==="draft"));
         const oldQuoteHash=_curDoc.data().lastQuoteHash;
         const newQuoteHash=_computeQuoteHash(data);
+        const _curRev=data.quoteRev||0;
+        const _curRevAtPrint=data.quoteRevAtPrint||0;
+        const _alreadyAheadOfPrint=_curRev>_curRevAtPrint;
         if(oldQuoteHash){
-          if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSP){
-            data.quoteRev=(data.quoteRev||1)+1;
+          if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSP&&!_alreadyAheadOfPrint){
+            data.quoteRev=_curRev+1;
             data.lastQuoteHash=newQuoteHash;
-            console.log(`[QUOTE REV] bumped to ${data.quoteRev}`);
-          }else if(newQuoteHash!==oldQuoteHash&&_hasActiveEcoSP){
-            // Hash diff detected but suppressed — refresh persisted hash anyway so
-            // post-ECO saves don't see a stale baseline.
+            console.log(`[QUOTE REV] bumped to ${data.quoteRev} (first change since print)`);
+          }else if(newQuoteHash!==oldQuoteHash){
+            // Hash differs but we either (a) are in an active ECO, or (b) have
+            // already bumped once since the last print. Refresh persisted hash
+            // so the next post-print save compares cleanly without bumping.
             data.lastQuoteHash=newQuoteHash;
-            console.log("[QUOTE REV] suppressed — active ECO in flight");
+            if(_hasActiveEcoSP)console.log("[QUOTE REV] suppressed — active ECO in flight");
+            else console.log("[QUOTE REV] suppressed — already 1 rev ahead of last print");
           }
         }else{
           // First save with the new system — initialize without bumping
@@ -6396,16 +6413,22 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     // DECISION(v1.19.850, ECO Stage A): Bumps suppressed while a draft ECO is
     // active — see saveProject for the rationale. Hash is still refreshed so
     // the post-ECO save sees a clean baseline.
+    // DECISION(v1.19.911, runaway Quote Rev): cap at one bump per print cycle.
+    // See saveProject for full rationale.
     const _hasActiveEcoSPP=!!liveProject.ecoEditUnlocked||(Array.isArray(liveProject.ecoSummary)&&liveProject.ecoSummary.some(e=>e&&e.status==="draft"));
     const oldQuoteHash=proj.lastQuoteHash;
     const newQuoteHash=_computeQuoteHash(liveProject);
+    const _curRevSPP=liveProject.quoteRev||0;
+    const _curRevAtPrintSPP=liveProject.quoteRevAtPrint||0;
+    const _alreadyAheadSPP=_curRevSPP>_curRevAtPrintSPP;
     if(oldQuoteHash){
-      if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSPP){
-        liveProject={...liveProject,quoteRev:(liveProject.quoteRev||1)+1,lastQuoteHash:newQuoteHash};
-        console.log(`[QUOTE REV] bumped to ${liveProject.quoteRev} (panel save)`);
-      }else if(newQuoteHash!==oldQuoteHash&&_hasActiveEcoSPP){
+      if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSPP&&!_alreadyAheadSPP){
+        liveProject={...liveProject,quoteRev:_curRevSPP+1,lastQuoteHash:newQuoteHash};
+        console.log(`[QUOTE REV] bumped to ${liveProject.quoteRev} (panel save, first change since print)`);
+      }else if(newQuoteHash!==oldQuoteHash){
         liveProject={...liveProject,lastQuoteHash:newQuoteHash};
-        console.log("[QUOTE REV] suppressed (panel save) — active ECO in flight");
+        if(_hasActiveEcoSPP)console.log("[QUOTE REV] suppressed (panel save) — active ECO in flight");
+        else console.log("[QUOTE REV] suppressed (panel save) — already 1 rev ahead of last print");
       }
     }else{
       liveProject={...liveProject,quoteRev:liveProject.quoteRev||1,lastQuoteHash:newQuoteHash};
@@ -6441,6 +6464,22 @@ function migrateProjectShape(p){
   // (the symptom the user hit: ECO disappeared from the tab strip after a
   // page refresh). The one-time migration target (PRJ402064) was already
   // cleaned long ago. Removing the block prevents further data loss.
+  // DECISION(v1.19.911, runaway Quote Rev): One-shot self-heal. If quoteRev
+  // climbed way past quoteRevAtPrint (v1.19.910 and earlier had a hash that
+  // included BC-poll-driven fields, so silent background bumps drove some
+  // projects into the hundreds — PRJ402083 hit Rev 293), normalize back to
+  // quoteRevAtPrint+1 in memory. The next save (now under the v1.19.911
+  // bump-once-per-print-cycle rule) writes this back to Firestore, so the
+  // healing is permanent on first save after load. lastQuoteHash is cleared
+  // so that next save's hash compare doesn't bump again on the reset itself.
+  const _rev=+out.quoteRev||0;
+  const _revAtPrint=+out.quoteRevAtPrint||0;
+  if(_rev>_revAtPrint+1){
+    const _normalized=Math.max(_revAtPrint+1,1);
+    console.log(`[QUOTE REV] normalized ${out.id||"<unknown>"}: ${_rev} → ${_normalized} (revAtPrint=${_revAtPrint})`);
+    out.quoteRev=_normalized;
+    out.lastQuoteHash=null;
+  }
   return out;
 }
 async function deleteProject(uid,id){
