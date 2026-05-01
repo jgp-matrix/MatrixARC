@@ -25541,6 +25541,72 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   </>,document.body);
 }
 
+// ── ServicesCard — project-level service Quote Line item card ──
+// DECISION(v1.19.917, Step C): Read-only render of a service card. Mirrors the
+// PanelCard outer chrome (line number, status pill, delete) but with a much
+// smaller body (no BOM / drawings / labor estimate). Step D wires editing.
+function ServicesCard({card,idx,isSelected,onSelect,onDelete,readOnly}){
+  const [collapsed,setCollapsed]=React.useState(false);
+  const label=SERVICE_CARD_LABELS[card.lineType]||card.lineType||"Service";
+  const total=computeServiceCardTotal(card);
+  const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
+  const statusLabel=({draft:"Draft",in_progress:"In Progress",evc:"Ready",active:"Active",complete:"Complete"})[card.status]||card.status||"Draft";
+  const accentColor=card.lineType==="commissioning"?"#fb923c":card.lineType==="programming"?"#38bdf8":"#a78bfa";
+  const accentBg=card.lineType==="commissioning"?"#2a1a0a":card.lineType==="programming"?"#0a1a28":"#1a0a28";
+  const iconChar=card.lineType==="commissioning"?"🔧":card.lineType==="programming"?"💻":"✏️";
+  const fmtDate=d=>d?new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"—";
+  return(
+    <div onClick={onSelect}
+      style={{
+        background:isSelected?"#101025":"#0a0a14",
+        border:`1px solid ${isSelected?C.accent:C.border}`,
+        borderLeft:`4px solid ${accentColor}`,
+        borderRadius:10,
+        padding:0,
+        cursor:"pointer",
+        transition:"border-color 120ms,background 120ms",
+        boxShadow:isSelected?"0 0 0 1px "+C.accent+"55":"none",
+      }}>
+      {/* Header row — Line #, Qty, label/desc, dates, collapse, status, delete */}
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:collapsed?"none":`1px solid ${C.border}55`}}>
+        <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.5,minWidth:38}}>Line {idx+1}</span>
+        <span style={{fontSize:18,flexShrink:0}}>{iconChar}</span>
+        <span style={{fontSize:11,fontWeight:700,color:accentColor,background:accentBg,borderRadius:4,padding:"2px 8px",letterSpacing:0.4,whiteSpace:"nowrap"}}>{label.toUpperCase()}</span>
+        <span style={{fontSize:11,color:C.sub,minWidth:34,textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{card.qty||0}{card.priceMode==="hourly"?" hr":" ea"}</span>
+        <span style={{flex:1,minWidth:0,fontSize:13,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.description||"(no description)"}</span>
+        <span title="Requested Ship Date" style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>Req: <span style={{color:card.requestedShipDate?C.text:C.muted}}>{fmtDate(card.requestedShipDate)}</span></span>
+        <span title="Estimated Completion Date" style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>Est: <span style={{color:card.estCompletionDate?C.text:C.muted}}>{fmtDate(card.estCompletionDate)}</span></span>
+        <button onClick={e=>{e.stopPropagation();setCollapsed(c=>!c);}}
+          title={collapsed?"Expand":"Collapse"}
+          style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"0 4px",lineHeight:1,fontFamily:"inherit"}}>
+          {collapsed?"▸":"▾"}
+        </button>
+        <span style={{background:"#1a1a2a",border:`1px solid ${accentColor}66`,color:accentColor,borderRadius:20,padding:"3px 12px",fontSize:11,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>{statusLabel}</span>
+        <span style={{fontSize:14,fontWeight:800,color:total>0?C.text:C.muted,fontVariantNumeric:"tabular-nums",minWidth:88,textAlign:"right"}}>{total>0?fmt(total):"—"}</span>
+        {!readOnly&&<button onClick={e=>{e.stopPropagation();onDelete&&onDelete();}}
+          title="Delete this Quote Line"
+          style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:14,padding:"0 4px",lineHeight:1,fontFamily:"inherit"}}>✕</button>}
+      </div>
+      {/* Body — Detail Description (read-only in Step C; editable in Step D) */}
+      {!collapsed&&(
+        <div style={{padding:"12px 14px",background:"#06060f"}}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:0.6,textTransform:"uppercase",marginBottom:6}}>Detail / Scope</div>
+          <div style={{fontSize:12,color:card.detailDescription?C.text:C.muted,lineHeight:1.6,whiteSpace:"pre-wrap",fontStyle:card.detailDescription?"normal":"italic"}}>
+            {card.detailDescription||"(no scope details yet — editable in next step)"}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:14,marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}33`,fontSize:11,color:C.muted}}>
+            <span>Mode: <strong style={{color:C.text,textTransform:"capitalize"}}>{card.priceMode==="lump_sum"?"Lump Sum":"Hourly"}</strong></span>
+            {card.priceMode==="hourly"
+              ?<span>Rate: <strong style={{color:C.text,fontVariantNumeric:"tabular-nums"}}>${(+card.rate||0).toLocaleString()}/hr</strong></span>
+              :<span>Lump Sum: <strong style={{color:C.text,fontVariantNumeric:"tabular-nums"}}>${(+card.lumpSum||0).toLocaleString()}</strong></span>}
+            {card.bcProjectTaskNo&&<span style={{marginLeft:"auto",fontFamily:"monospace",fontSize:10}}>BC Task: <span style={{color:C.text}}>{card.bcProjectTaskNo}</span></span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
@@ -25677,6 +25743,17 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const card=createServiceCard(lineType,existing);
     if(!card)return;
     const updated={...project,serviceCards:[...existing,card]};
+    onUpdate(updated);
+    safeSave(uid,updated);
+  }
+  // DECISION(v1.19.917, Step C): Delete a service Quote Line. Confirmation
+  // matches PanelCard's deletion UX. BC task cleanup will happen in Step G.
+  async function deleteServiceCard(id){
+    const card=(project.serviceCards||[]).find(sc=>sc.id===id);
+    if(!card)return;
+    const label=SERVICE_CARD_LABELS[card.lineType]||"Service";
+    if(!(await arcConfirm(`Delete this ${label} line?`,{destructive:true,okLabel:"Delete"})))return;
+    const updated={...project,serviceCards:(project.serviceCards||[]).filter(sc=>sc.id!==id)};
     onUpdate(updated);
     safeSave(uid,updated);
   }
@@ -26216,11 +26293,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               </div>
             )}
           </div>
-          {panels.length===0?(
+          {panels.length===0&&(project.serviceCards||[]).length===0?(
             <div style={{textAlign:"center",padding:"60px 20px",color:C.muted}}>
               <div style={{fontSize:52,marginBottom:16,opacity:0.3}}>🗂️</div>
-              <div style={{fontSize:18,fontWeight:700,color:C.sub,marginBottom:8}}>No panels yet</div>
-              <div style={{fontSize:13,marginBottom:24,lineHeight:1.7}}>Add a panel to start uploading drawings and quoting this job.</div>
+              <div style={{fontSize:18,fontWeight:700,color:C.sub,marginBottom:8}}>No quote lines yet</div>
+              <div style={{fontSize:13,marginBottom:24,lineHeight:1.7}}>Add a panel, engineering, programming, or commissioning line to start quoting this job.</div>
               {!readOnly&&<button onClick={()=>setShowAddLineModal(true)} style={btn(C.accent,"#fff")}>+ Add Quote Line</button>}
             </div>
           ):(
@@ -26242,7 +26319,38 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               if(!inEcoScope&&baseScopeReadOnly)return "grayscale(0.4)";
               return "none";
             })(),transition:"opacity 0.2s, filter 0.2s"}}>
-              {panels.map((panel,idx)=>(
+              {/* DECISION(v1.19.917, Step C): Render panels + service cards in
+                  createdAt order so the line list reflects the order in which
+                  the user added them. Both card types use the same numeric
+                  Line index. Panel id contains a Date.now() timestamp; service
+                  cards have an explicit createdAt. */}
+              {(()=>{
+                const _ts=line=>{
+                  if(line.createdAt)return +line.createdAt||0;
+                  const m=String(line.id||"").match(/(\d{12,})/);
+                  return m?+m[1]:0;
+                };
+                const _allLines=[
+                  ...panels.map(p=>({_kind:"panel",_obj:p,_ts:_ts(p)})),
+                  ...(project.serviceCards||[]).map(sc=>({_kind:"service",_obj:sc,_ts:_ts(sc)})),
+                ].sort((a,b)=>a._ts-b._ts);
+                return _allLines.map((entry,idx)=>{
+                  if(entry._kind==="service"){
+                    const card=entry._obj;
+                    return(
+                      <ServicesCard
+                        key={card.id}
+                        card={card}
+                        idx={idx}
+                        readOnly={readOnly}
+                        isSelected={card.id===selectedPanelId}
+                        onSelect={()=>setSelectedPanelId(card.id)}
+                        onDelete={()=>deleteServiceCard(card.id)}
+                      />
+                    );
+                  }
+                  const panel=entry._obj;
+                  return(
                 <PanelCard
                   key={panel.id}
                   panel={{...panel,_projectDesigner:project.bcDesigner||""}}
@@ -26294,7 +26402,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   activeScope={activeScope}
                   onOpenEcoEditor={onOpenEcoEditor}
                 />
-              ))}
+                  );
+                });
+              })()}
             </div>
           )}
         </div>
