@@ -26535,7 +26535,49 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
         <div style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",overflow:"hidden"}}>
           {(()=>{
             const sp=(project.panels||[]).find(p=>p.id===selectedPanelId)||(project.panels||[])[0]||null;
-            if(!sp)return <div style={{color:C.muted,fontSize:13,textAlign:"center",marginTop:40}}>No panels</div>;
+            // DECISION(v1.19.919, Step E): If the project has no panels but does
+            // have service cards (e.g. an Engineering-only quote), render a
+            // simplified right pane showing the service cards + project total
+            // instead of the bare "No panels" placeholder.
+            if(!sp){
+              const _serviceCards=project.serviceCards||[];
+              if(_serviceCards.length>0){
+                const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
+                const total=computeAllServiceCardsTotal(project);
+                return(
+                  <div style={{padding:16,display:"flex",flexDirection:"column",gap:12,height:"100%",overflowY:"auto"}}>
+                    <div style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Rev ${String(project.quoteRev).padStart(2,'0')}`:""}</div>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {_serviceCards.slice().sort((a,b)=>(+a.createdAt||0)-(+b.createdAt||0)).map(sc=>{
+                        const isSel=sc.id===selectedPanelId;
+                        const t=computeServiceCardTotal(sc);
+                        const accentColor=sc.lineType==="commissioning"?"#fb923c":sc.lineType==="programming"?"#38bdf8":"#a78bfa";
+                        const accentBg=sc.lineType==="commissioning"?"#2a1a0a":sc.lineType==="programming"?"#0a1a28":"#1a0a28";
+                        const iconChar=sc.lineType==="commissioning"?"🔧":sc.lineType==="programming"?"💻":"✏️";
+                        const labelTxt=sc.description||SERVICE_CARD_LABELS[sc.lineType]||"Service";
+                        const qtyTxt=sc.priceMode==="hourly"?`${+sc.qty||0}h`:`${+sc.qty||1}`;
+                        return(
+                          <div key={sc.id} onClick={()=>setSelectedPanelId(sc.id)}
+                            style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:isSel?"#1a1a2e":"transparent",border:`1px solid ${isSel?C.accent:C.border}`,cursor:"pointer"}}>
+                            <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:24,textAlign:"center"}}>{qtyTxt}</span>
+                            <span style={{fontSize:13}}>{iconChar}</span>
+                            <span style={{fontSize:9,fontWeight:800,color:accentColor,background:accentBg,borderRadius:3,padding:"1px 5px",letterSpacing:0.4,whiteSpace:"nowrap"}}>{(SERVICE_CARD_LABELS[sc.lineType]||"").toUpperCase()}</span>
+                            <span style={{fontSize:12,color:isSel?C.accent:C.sub,fontWeight:isSel?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{labelTxt}</span>
+                            <Badge status={sc.status||"draft"}/>
+                            <span style={{fontSize:13,fontWeight:700,color:t>0?C.text:C.muted,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{t>0?pfmt(t):"—"}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",marginTop:4,borderTop:"1px solid #fff"}}>
+                      <span style={{fontSize:12,fontWeight:700,color:C.muted,letterSpacing:0.5}}>PROJECT TOTAL</span>
+                      <span style={{fontSize:16,fontWeight:800,color:"#fff",fontVariantNumeric:"tabular-nums"}}>{pfmt(total)}</span>
+                    </div>
+                  </div>
+                );
+              }
+              return <div style={{color:C.muted,fontSize:13,textAlign:"center",marginTop:40}}>No quote lines</div>;
+            }
             const pr=sp.pricing||{};
             const markup=pr.markup??30;
             const laborRate=pr.laborRate??45;
@@ -26822,62 +26864,81 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   })()}
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {(project.panels||[]).map((p,pi)=>{
-                  // DECISION(v1.19.886): Use computePanelSellPrice directly so the
-                  // in-app QUOTE SUMMARY always matches the printed Quote. The
-                  // prior local material+labor calc didn't handle ECO-tagged
-                  // rows (qty=0 for modify, sign=-1 for remove) and skipped ECO
-                  // labor entirely — caused a $1,950 mismatch on PRJ402064 (30hrs ×
-                  // $65 ECO labor) between the Quote Summary and the printed quote.
-                  // DECISION(v1.19.887): keep `ppr` in scope — line 25430 references
-                  // ppr.isBudgetary for the BUDGETARY pill. v1.19.886 dropped it
-                  // along with the local price calc and broke the site.
-                  // DECISION(v1.19.908): Per-panel QUOTE SUMMARY total is tab-aware
-                  // and CUMULATIVE through the selected ECO:
-                  //   • BASE tab     → BASE-only sell price
-                  //   • ECO N tab    → BASE + sum of ECO 01..N sell deltas
-                  //   • no scope     → combined (legacy)
-                  const ppr=p.pricing||{};
-                  const psp=inEcoSummaryScope
-                    ?computeBasePanelSellPrice(p)+computeCumulativeEcoSellDelta(p,project,activeEcoNumberForSummary)
-                    :((!activeScope||activeScope.type==="base")
-                      ?computeBasePanelSellPrice(p)
-                      :computePanelSellPrice(p));
+                {/* DECISION(v1.19.919, Step E): Interleave panels + service cards
+                    in createdAt order so the QUOTE SUMMARY mirrors the line-list
+                    layout in the main pane. Each entry gets the same numeric
+                    Line index. Panels keep their full chrome (ship-date chip,
+                    questions pulse, budgetary pill); service cards get a leaner
+                    row with type icon + status badge + total. */}
+                {(()=>{
+                  const _ts=line=>{
+                    if(line.createdAt)return +line.createdAt||0;
+                    const m=String(line.id||"").match(/(\d{12,})/);
+                    return m?+m[1]:0;
+                  };
+                  const _allLines=[
+                    ...(project.panels||[]).map(p=>({_kind:"panel",_obj:p,_ts:_ts(p)})),
+                    ...(project.serviceCards||[]).map(sc=>({_kind:"service",_obj:sc,_ts:_ts(sc)})),
+                  ].sort((a,b)=>a._ts-b._ts);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
-                  const pqty=p.lineQty??p.qty??1;
-                  // DECISION(v1.19.708): Control Panel Lead Time chip — live-computed per panel.
-                  const cplt=computeControlPanelLeadTime(p,project);
-                  const cpltOverride=p.controlPanelShipDateOverride&&p.controlPanelShipDate;
-                  const effectiveDays=cpltOverride?Math.ceil((new Date(p.controlPanelShipDate).getTime()-_startOfDay(Date.now()))/_ONE_DAY_MS):cplt.leadDays;
-                  const effectiveShipDate=cpltOverride?p.controlPanelShipDate:cplt.shipDate;
-                  const overrideGap=cpltOverride?effectiveDays-cplt.leadDays:0;
-                  const chipColor=cpltOverride&&overrideGap>14?"#ef4444":cplt.hasAiLeads?"#fcd34d":cplt.noDataWarning?"#64748b":"#22d3ee";
-                  const chipBg=cpltOverride&&overrideGap>14?"#2a0a0a":cplt.hasAiLeads?"#3a2800":cplt.noDataWarning?"#1a1a2e":"#08253a";
-                  const chipTip=cplt.noDataWarning?"No lead times or production days entered — ship date estimate not meaningful":`Ship date: ${effectiveShipDate} · ${cplt.longestItemDays}d material + ${cplt.laborDays}d labor + ${cplt.productionDays}d production · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`;
-                  return(
-                    <div key={p.id} onClick={()=>setSelectedPanelId(p.id)}
-                      style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:p.id===selectedPanelId?"#1a1a2e":"transparent",border:`1px solid ${p.id===selectedPanelId?C.accent:C.border}`,cursor:"pointer"}}>
-                      <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:20,textAlign:"center"}}>{pqty}</span>
-                      <span style={{fontSize:12,color:p.id===selectedPanelId?C.accent:C.sub,fontWeight:p.id===selectedPanelId?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{p.drawingNo||p.name||`Panel ${pi+1}`}</span>
-                      {/* DECISION(v1.19.708): Ship-date chip to the LEFT of the status pill.
-                          Click opens override popover (Task 4). */}
-                      <button onClick={e=>{e.stopPropagation();setShipDatePopoverFor(shipDatePopoverFor===p.id?null:p.id);}}
-                        title={chipTip}
-                        style={{background:chipBg,border:`1px solid ${chipColor}44`,borderRadius:10,color:chipColor,padding:"2px 8px",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,fontVariantNumeric:"tabular-nums",fontFamily:"inherit"}}>
-                        {cplt.noDataWarning&&!cpltOverride?"—":`${effectiveDays}d`}
-                      </button>
-                      {/* DECISION(v1.19.394): Compute panel status from actual BOM state, not just the
-                          pipeline-set status field. If all non-labor items have prices, show "costed" or "ready"
-                          even if the pricing didn't go through runPricingOnPanel. */}
-                      {(()=>{const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;
-                        if(openEqs>0)return React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:"1px solid #fde04766",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:"#fde047",animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?");
-                        // DECISION(v1.19.510): Use project-level effective status — single source of truth
-                        return React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer"}},React.createElement(Badge,{status:computeProjectEffectiveStatus(project)}));})()}
-                      {ppr.isBudgetary&&<span style={{fontSize:9,fontWeight:700,color:"#f59e0b",background:"#3a1f00",borderRadius:4,padding:"1px 5px",flexShrink:0}}>BUDGETARY</span>}
-                      <span style={{fontSize:13,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{pfmt(psp*pqty)}</span>
-                    </div>
-                  );
-                })}
+                  return _allLines.map((entry,idx)=>{
+                    if(entry._kind==="service"){
+                      const sc=entry._obj;
+                      const isSel=sc.id===selectedPanelId;
+                      const total=computeServiceCardTotal(sc);
+                      const accentColor=sc.lineType==="commissioning"?"#fb923c":sc.lineType==="programming"?"#38bdf8":"#a78bfa";
+                      const accentBg=sc.lineType==="commissioning"?"#2a1a0a":sc.lineType==="programming"?"#0a1a28":"#1a0a28";
+                      const iconChar=sc.lineType==="commissioning"?"🔧":sc.lineType==="programming"?"💻":"✏️";
+                      const labelTxt=sc.description||SERVICE_CARD_LABELS[sc.lineType]||"Service";
+                      const qtyTxt=sc.priceMode==="hourly"?`${+sc.qty||0}h`:`${+sc.qty||1}`;
+                      return(
+                        <div key={sc.id} onClick={()=>setSelectedPanelId(sc.id)}
+                          style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:isSel?"#1a1a2e":"transparent",border:`1px solid ${isSel?C.accent:C.border}`,cursor:"pointer"}}>
+                          <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:24,textAlign:"center"}}>{qtyTxt}</span>
+                          <span style={{fontSize:13,flexShrink:0}}>{iconChar}</span>
+                          <span style={{fontSize:9,fontWeight:800,color:accentColor,background:accentBg,borderRadius:3,padding:"1px 5px",letterSpacing:0.4,flexShrink:0,whiteSpace:"nowrap"}}>{(SERVICE_CARD_LABELS[sc.lineType]||"").toUpperCase()}</span>
+                          <span style={{fontSize:12,color:isSel?C.accent:C.sub,fontWeight:isSel?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{labelTxt}</span>
+                          <Badge status={sc.status||"draft"}/>
+                          <span style={{fontSize:13,fontWeight:700,color:total>0?C.text:C.muted,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{total>0?pfmt(total):"—"}</span>
+                        </div>
+                      );
+                    }
+                    // panel render — preserves all the existing chrome
+                    const p=entry._obj;
+                    const ppr=p.pricing||{};
+                    const psp=inEcoSummaryScope
+                      ?computeBasePanelSellPrice(p)+computeCumulativeEcoSellDelta(p,project,activeEcoNumberForSummary)
+                      :((!activeScope||activeScope.type==="base")
+                        ?computeBasePanelSellPrice(p)
+                        :computePanelSellPrice(p));
+                    const pqty=p.lineQty??p.qty??1;
+                    const cplt=computeControlPanelLeadTime(p,project);
+                    const cpltOverride=p.controlPanelShipDateOverride&&p.controlPanelShipDate;
+                    const effectiveDays=cpltOverride?Math.ceil((new Date(p.controlPanelShipDate).getTime()-_startOfDay(Date.now()))/_ONE_DAY_MS):cplt.leadDays;
+                    const effectiveShipDate=cpltOverride?p.controlPanelShipDate:cplt.shipDate;
+                    const overrideGap=cpltOverride?effectiveDays-cplt.leadDays:0;
+                    const chipColor=cpltOverride&&overrideGap>14?"#ef4444":cplt.hasAiLeads?"#fcd34d":cplt.noDataWarning?"#64748b":"#22d3ee";
+                    const chipBg=cpltOverride&&overrideGap>14?"#2a0a0a":cplt.hasAiLeads?"#3a2800":cplt.noDataWarning?"#1a1a2e":"#08253a";
+                    const chipTip=cplt.noDataWarning?"No lead times or production days entered — ship date estimate not meaningful":`Ship date: ${effectiveShipDate} · ${cplt.longestItemDays}d material + ${cplt.laborDays}d labor + ${cplt.productionDays}d production · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`;
+                    return(
+                      <div key={p.id} onClick={()=>setSelectedPanelId(p.id)}
+                        style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:p.id===selectedPanelId?"#1a1a2e":"transparent",border:`1px solid ${p.id===selectedPanelId?C.accent:C.border}`,cursor:"pointer"}}>
+                        <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:20,textAlign:"center"}}>{pqty}</span>
+                        <span style={{fontSize:12,color:p.id===selectedPanelId?C.accent:C.sub,fontWeight:p.id===selectedPanelId?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{p.drawingNo||p.name||`Panel ${idx+1}`}</span>
+                        <button onClick={e=>{e.stopPropagation();setShipDatePopoverFor(shipDatePopoverFor===p.id?null:p.id);}}
+                          title={chipTip}
+                          style={{background:chipBg,border:`1px solid ${chipColor}44`,borderRadius:10,color:chipColor,padding:"2px 8px",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,fontVariantNumeric:"tabular-nums",fontFamily:"inherit"}}>
+                          {cplt.noDataWarning&&!cpltOverride?"—":`${effectiveDays}d`}
+                        </button>
+                        {(()=>{const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;
+                          if(openEqs>0)return React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:"1px solid #fde04766",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:"#fde047",animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?");
+                          return React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer"}},React.createElement(Badge,{status:computeProjectEffectiveStatus(project)}));})()}
+                        {ppr.isBudgetary&&<span style={{fontSize:9,fontWeight:700,color:"#f59e0b",background:"#3a1f00",borderRadius:4,padding:"1px 5px",flexShrink:0}}>BUDGETARY</span>}
+                        <span style={{fontSize:13,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{pfmt(psp*pqty)}</span>
+                      </div>
+                    );
+                  });
+                })()}
                 {/* DECISION(v1.19.709): Ship-date override popover — rendered via portal
                    so it floats above the Quote Summary. Click-outside closes via onMouseDown
                    on the backdrop. */}
