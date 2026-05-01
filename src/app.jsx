@@ -18927,10 +18927,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // computeControlPanelLeadTime reads productionEndMode first; when set to
     // "days_post_approval" it uses productionDaysPostApproval and ignores the
     // date. Mode "date" (default) uses productionEndDate as before.
-    const prodMode=draftProductionEndMode==="days_post_approval"?"days_post_approval":"date";
-    const prodDaysPostApproval=Math.max(0,Math.min(365,+draftProductionDaysPostApproval||0));
+    // DECISION(v1.19.935): days-post-approval mode retired — always persist
+    // mode as "date". Legacy panels with productionEndMode==="days_post_approval"
+    // get migrated back to "date" the next time the user edits any title field.
+    // The numeric productionDaysPostApproval is left intact in the doc so no
+    // data is destroyed; computeControlPanelLeadTime simply ignores it now
+    // that mode is "date" + productionEndDate exists.
+    const prodMode="date";
     const custApprovalDays=Math.max(0,Math.min(180,+draftCustomerApprovalDays||0));
-    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode,productionDaysPostApproval:prodDaysPostApproval,customerApprovalDays:custApprovalDays};
+    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode,customerApprovalDays:custApprovalDays};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     // DECISION(v1.19.632) Phase 2: If user's value differs from the last AI extraction, save the
@@ -21417,49 +21422,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 readOnly={readOnly}
                 style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",width:"3.5ch",textAlign:"right",fontFamily:"inherit"}}/>
             </div>
-            {/* DECISION(v1.19.932): Est. Prod. Done now supports two modes —
-                a fixed date OR "## Days - Signed Approvals" (relative offset
-                applied once approvals come in). Toggle button under the label
-                flips between modes. The active mode renders the appropriate
-                input (date picker vs. number + label). */}
+            {/* DECISION(v1.19.935): Est. Prod. Done — TRAQS-scheduled production
+                end date. REQUIRED on every quote. The v1.19.932 days-post-
+                approval toggle was removed — the milestone chain (v1.19.933)
+                derives the production component directly from this absolute
+                date, and the chain warns when the field is blank. Legacy data
+                with productionEndMode === "days_post_approval" still resolves
+                correctly via computeControlPanelLeadTime's fallback. */}
             <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}>
-              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}
-                     title="Production timeline. Either a specific date OR a number of days post signed approvals. Feeds the Control Panel Ship Date.">Est. Prod. Done</div>
-                {!readOnly&&<button
-                  onClick={e=>{
-                    e.stopPropagation();
-                    const next=draftProductionEndMode==="days_post_approval"?"date":"days_post_approval";
-                    setDraftProductionEndMode(next);
-                    // Save on toggle so the switch persists immediately.
-                    setTimeout(()=>saveTitleFields(),0);
-                  }}
-                  title={draftProductionEndMode==="days_post_approval"?"Switch to fixed date":"Switch to '## Days - Signed Approvals'"}
-                  style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,padding:"0 6px",fontSize:9,cursor:"pointer",fontFamily:"inherit",lineHeight:"14px"}}>
-                  ⇄ {draftProductionEndMode==="days_post_approval"?"DATE":"DAYS"}
-                </button>}
-              </div>
-              {draftProductionEndMode==="days_post_approval"?(
-                <div style={{display:"flex",alignItems:"baseline",gap:4}}>
-                  <input type="text" inputMode="numeric"
-                    value={draftProductionDaysPostApproval}
-                    onChange={e=>{const v=e.target.value.replace(/[^0-9]/g,'');setDraftProductionDaysPostApproval(v===""?"":+v);}}
-                    onFocus={e=>e.target.select()}
-                    onBlur={()=>saveTitleFields()}
-                    onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftProductionDaysPostApproval(panel.productionDaysPostApproval??30);e.target.blur();}}}
-                    readOnly={readOnly}
-                    title="Number of production days post signed approvals"
-                    style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",fontFamily:"inherit",width:"3.5ch",textAlign:"right"}}/>
-                  <span style={{fontSize:10,color:C.muted,fontWeight:600,whiteSpace:"nowrap"}}>Days · Signed Approvals</span>
-                </div>
-              ):(
-                <input type="date" value={draftProductionEndDate}
-                  onChange={e=>setDraftProductionEndDate(e.target.value)} readOnly={readOnly}
-                  onBlur={()=>saveTitleFields()}
-                  onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftProductionEndDate(panel.productionEndDate||"");e.target.blur();}}}
-                  title="Date production tells you they expect to be done. Feeds the Control Panel Ship Date."
-                  style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
-              )}
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}
+                   title="TRAQS-scheduled date production has the panel ready to ship. Required on every quote — feeds the Control Panel Ship Date.">Est. Prod. Done</div>
+              <input type="date" value={draftProductionEndDate}
+                onChange={e=>setDraftProductionEndDate(e.target.value)} readOnly={readOnly}
+                onBlur={()=>saveTitleFields()}
+                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftProductionEndDate(panel.productionEndDate||"");e.target.blur();}}}
+                title="TRAQS Est. Prod. Done — required."
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
             </div>
           </div>
         </div>
