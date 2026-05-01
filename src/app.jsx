@@ -1077,7 +1077,12 @@ function computeControlPanelLeadTime(panel,project){
       // Commissioning ignored — happens on-site post-ship.
     }
   }
-  const engineeringDays=Math.ceil(engineeringHours/dailyCrewHours);
+  // DECISION(v1.19.942): Engineering Drawings Lead Time always includes a
+  // 3-week buffer beyond the raw hour-derived days. Accounts for review
+  // cycles, revisions, and unforeseen changes. Buffer only applies when there
+  // are actual engineering hours entered (no hours → 0 days, no buffer).
+  const ENG_LEAD_BUFFER_DAYS=21;
+  const engineeringDays=engineeringHours>0?Math.ceil(engineeringHours/dailyCrewHours)+ENG_LEAD_BUFFER_DAYS:0;
   const programmingDays=Math.ceil(programmingHours/dailyCrewHours);
   const programmingTestingDays=Math.ceil((programmingHours*0.2)/dailyCrewHours);
 
@@ -5233,14 +5238,12 @@ async function buildQuotePdfDoc(doc,project){
         ctx.y+=5;
       }
       // Pricing row
-      // DECISION(v1.19.940): Per-card lead time. Hours come from qty (hourly)
-      // or estimatedHours (lump-sum). Days = ⌈ hours ÷ dailyCrewHours ⌉. The
-      // Lead Time cell now shows that value (was previously "-"); the banner
-      // below the row only renders for Engineering Design service cards.
+      // DECISION(v1.19.940 → v1.19.942): Per-card lead time + 3-week buffer
+      // on Engineering Design.
       const _scHoursPdf=sc.priceMode==="hourly"?(+sc.qty||0):(+sc.estimatedHours||0);
       const _dchPdf=+(typeof LABOR_RATES!=="undefined"?LABOR_RATES.dailyCrewHours:null)||+project?.laborConfig?.dailyCrewHours||8;
-      const _scLeadDaysPdf=_scHoursPdf>0?Math.ceil(_scHoursPdf/_dchPdf):0;
       const _scIsEngPdf=sc.lineType==="engineering";
+      const _scLeadDaysPdf=_scHoursPdf>0?(Math.ceil(_scHoursPdf/_dchPdf)+(_scIsEngPdf?21:0)):0;
       const sBoxH=12;
       arcDocCheckBreak(ctx,sBoxH+2);
       doc.setFillColor(248,250,252);doc.setDrawColor(248,250,252);
@@ -5268,14 +5271,16 @@ async function buildQuotePdfDoc(doc,project){
         const _drawDeliv3=new Date(_today3.getTime()+_scLeadDaysPdf*86400000);
         const _fmtPdf3=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
         const _msg3=`Est. Engineering Drawings Lead Time: ${_scLeadDaysPdf} days\nDrawings delivered approximately ${_fmtPdf3(_drawDeliv3)}. Submittals sent at delivery for customer approval — minimum 3-week approval window. Lead Time will be re-calculated if approvals take longer.`;
-        doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.red);
+        // DECISION(v1.19.942): 30% font bump (7pt → 9pt).
+        doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.red);
         const wrap3=doc.splitTextToSize(_msg3,ctx.contentWidth-6);
-        const bH3=wrap3.length*3+3;
+        const _lh3=4;
+        const bH3=wrap3.length*_lh3+4;
         arcDocCheckBreak(ctx,bH3+2);
         doc.setFillColor(254,242,242);doc.setDrawColor(254,202,202);doc.setLineWidth(0.2);
         doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,bH3,"FD");
         doc.setTextColor(...ARC_DOC.colors.red);
-        wrap3.forEach((ln,i)=>doc.text(ln,ARC_DOC.W/2,ctx.y+3+i*3,{align:"center"}));
+        wrap3.forEach((ln,i)=>doc.text(ln,ARC_DOC.W/2,ctx.y+4+i*_lh3,{align:"center"}));
         ctx.y+=bH3+1;
         doc.setTextColor(...ARC_DOC.colors.black);
       }
@@ -5587,15 +5592,19 @@ async function buildQuotePdfDoc(doc,project){
           if((_cpltPdf2.engineeringDays||0)>0)_lines.push(`Est. Engineering Drawings Lead Time: ${_cpltPdf2.engineeringDays} days (delivered approx. ${_fmtPdf2(_drawDeliv2)})`);
           _lines.push(`Panel Lead Time is dependent upon receiving signed Approval drawings by ${_fmtPdf2(_approvalDue2)}. Lead Time will be re-calculated if approvals take longer.`);
           const _msg=_lines.join("\n");
-          doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.red);
+          // DECISION(v1.19.942): Banner font bumped 30% (7pt → 9pt) per user
+          // request — lead-time note is the most actionable callout on the
+          // quote and should read clearly on paper.
+          doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.red);
           const wrap2=doc.splitTextToSize(_msg,ctx.contentWidth-6);
-          const bH=wrap2.length*3+3;
+          const _lh=4;
+          const bH=wrap2.length*_lh+4;
           arcDocCheckBreak(ctx,bH+2);
           // Pale red background fill + thin top border.
           doc.setFillColor(254,242,242);doc.setDrawColor(254,202,202);doc.setLineWidth(0.2);
           doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,bH,"FD");
           doc.setTextColor(...ARC_DOC.colors.red);
-          wrap2.forEach((ln,i)=>doc.text(ln,ARC_DOC.W/2,ctx.y+3+i*3,{align:"center"}));
+          wrap2.forEach((ln,i)=>doc.text(ln,ARC_DOC.W/2,ctx.y+4+i*_lh,{align:"center"}));
           ctx.y+=bH+1;
           doc.setTextColor(...ARC_DOC.colors.black);
         }
@@ -15370,14 +15379,14 @@ function QuoteTab({project,onUpdate}){
                   const total=computeServiceCardTotal(sc);
                   const label=SERVICE_CARD_LABELS[sc.lineType]||"Service";
                   const accentColor=sc.lineType==="commissioning"?"#fb923c":sc.lineType==="programming"?"#38bdf8":"#a78bfa";
-                  // DECISION(v1.19.940): Per-card lead-time math for the
-                  // pricing row's Lead Time cell + the red banner below.
+                  // DECISION(v1.19.940 → v1.19.942): Per-card lead-time math.
                   // Hours come from qty (hourly) or estimatedHours (lump-sum).
-                  // Days = ⌈ hours ÷ dailyCrewHours ⌉.
+                  // Days = ⌈ hours ÷ dailyCrewHours ⌉. Engineering Design
+                  // cards add a 3-week (21d) buffer per spec.
                   const _scHours=sc.priceMode==="hourly"?(+sc.qty||0):(+sc.estimatedHours||0);
                   const _dch=+(typeof LABOR_RATES!=="undefined"?LABOR_RATES.dailyCrewHours:null)||+project?.laborConfig?.dailyCrewHours||8;
-                  const _scLeadDays=_scHours>0?Math.ceil(_scHours/_dch):0;
                   const _scIsEng=sc.lineType==="engineering";
+                  const _scLeadDays=_scHours>0?(Math.ceil(_scHours/_dch)+(_scIsEng?21:0)):0;
                   return(
                     <div key={sc.id} style={{marginBottom:12}}>
                       <div className="qd-li">
@@ -15412,10 +15421,10 @@ function QuoteTab({project,onUpdate}){
                           </div>
                           <div>
                             <div className="qd-plabel">Lead Time</div>
-                            {/* DECISION(v1.19.941): Asterisk on Engineering Design
-                                cards' Lead Time (their drawings drive the chain
-                                + need approvals). Other types show plain days. */}
+                            {/* DECISION(v1.19.941 → v1.19.942): Asterisk +
+                                "See Note Below" on Engineering Design cards. */}
                             <div className="qd-pval">{_scLeadDays>0?<>{_scLeadDays} days{_scIsEng?<span style={{color:"#dc2626",fontWeight:800}}>*</span>:null}</>:"—"}</div>
+                            {_scLeadDays>0&&_scIsEng&&<div style={{fontSize:11,fontStyle:"italic",color:"#dc2626",marginTop:2,fontWeight:600}}>See Note Below</div>}
                           </div>
                           <div>
                             <div className="qd-plabel">Discount</div>
@@ -15435,9 +15444,9 @@ function QuoteTab({project,onUpdate}){
                           const _drawDeliv=new Date(_today.getTime()+_scLeadDays*86400000);
                           const _fmt=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
                           return(
-                            <div style={{padding:"10px 16px",borderTop:"1px solid #e2e8f0",textAlign:"center",fontSize:13,fontWeight:700,color:"#dc2626",lineHeight:1.5,background:"#fef2f2"}}>
+                            <div style={{padding:"12px 16px",borderTop:"1px solid #e2e8f0",textAlign:"center",fontSize:17,fontWeight:700,color:"#dc2626",lineHeight:1.5,background:"#fef2f2"}}>
                               <div>Est. Engineering Drawings Lead Time: {_scLeadDays} days</div>
-                              <div style={{marginTop:2}}>Drawings delivered approximately {_fmt(_drawDeliv)}. Submittals sent at delivery for customer approval — minimum 3-week approval window. Lead Time will be re-calculated if approvals take longer.</div>
+                              <div style={{marginTop:3}}>Drawings delivered approximately {_fmt(_drawDeliv)}. Submittals sent at delivery for customer approval — minimum 3-week approval window. Lead Time will be re-calculated if approvals take longer.</div>
                             </div>
                           );
                         })()}
@@ -15652,17 +15661,21 @@ function QuoteTab({project,onUpdate}){
                 </div>
                 <div>
                   <div className="qd-plabel">Lead Time</div>
-                  {/* DECISION(v1.19.737): Default to computed panel lead days (shipDate calc)
-                      when no override has been typed. Still overridable per-panel (qp) or
-                      project-wide (q).
-                      DECISION(v1.19.941): Asterisk appended when project has any Engineering
-                      Design service card — signals the Lead Time depends on signed
-                      approvals, ties visually to the red banner below. */}
+                  {/* DECISION(v1.19.737 → v1.19.942): Default to computed panel
+                      lead days (shipDate calc); still overridable per-panel
+                      (qp) or project-wide (q). Asterisk + "See Note Below"
+                      surface when the project has any Engineering Design
+                      service card so the customer is directed to the red
+                      banner below the pricing row. */}
                   {(()=>{
                     const cd=(()=>{try{return computeControlPanelLeadTime(pan,project).leadDays||0;}catch(e){return 0;}})();
                     const _val=qp.leadTime||q.leadTime||(cd>0?cd:"—");
                     const _hasEng=Array.isArray(project?.serviceCards)&&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
-                    return <div className="qd-pval">{_val} days{_hasEng&&_val!=="—"?<span style={{color:"#dc2626",fontWeight:800}}>*</span>:null}</div>;
+                    const _showHint=_hasEng&&_val!=="—";
+                    return(<>
+                      <div className="qd-pval">{_val} days{_showHint?<span style={{color:"#dc2626",fontWeight:800}}>*</span>:null}</div>
+                      {_showHint&&<div style={{fontSize:11,fontStyle:"italic",color:"#dc2626",marginTop:2,fontWeight:600}}>See Note Below</div>}
+                    </>);
                   })()}
                 </div>
                 <div>
@@ -15698,10 +15711,10 @@ function QuoteTab({project,onUpdate}){
                 const _approvalDue=new Date(_today.getTime()+(_cplt.engineeringDays+_cplt.customerApprovalDays)*86400000);
                 const _fmt=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
                 return(
-                  <div style={{padding:"10px 16px",borderTop:"1px solid #e2e8f0",textAlign:"center",fontSize:13,fontWeight:700,color:"#dc2626",lineHeight:1.5,background:"#fef2f2"}}>
+                  <div style={{padding:"12px 16px",borderTop:"1px solid #e2e8f0",textAlign:"center",fontSize:17,fontWeight:700,color:"#dc2626",lineHeight:1.5,background:"#fef2f2"}}>
                     <div>Est. Lead Time: {_cplt.leadDays} days</div>
-                    {(_cplt.engineeringDays||0)>0&&<div style={{marginTop:2}}>Est. Engineering Drawings Lead Time: {_cplt.engineeringDays} days (delivered approx. {_fmt(_drawingsDeliv)})</div>}
-                    <div style={{marginTop:4,fontWeight:600}}>Panel Lead Time is dependent upon receiving signed Approval drawings by {_fmt(_approvalDue)}. Lead Time will be re-calculated if approvals take longer.</div>
+                    {(_cplt.engineeringDays||0)>0&&<div style={{marginTop:3}}>Est. Engineering Drawings Lead Time: {_cplt.engineeringDays} days (delivered approx. {_fmt(_drawingsDeliv)})</div>}
+                    <div style={{marginTop:6,fontWeight:600}}>Panel Lead Time is dependent upon receiving signed Approval drawings by {_fmt(_approvalDue)}. Lead Time will be re-calculated if approvals take longer.</div>
                   </div>
                 );
               })()}
