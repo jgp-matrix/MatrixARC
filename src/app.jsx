@@ -5206,7 +5206,9 @@ async function buildQuotePdfDoc(doc,project){
       const total=computeServiceCardTotal(sc);
       const label=SERVICE_CARD_LABELS[sc.lineType]||"Service";
       const scopeLines=sc.detailDescription?doc.splitTextToSize("Scope: "+sc.detailDescription,ctx.contentWidth-8):[];
-      const datesH=(sc.requestedShipDate||sc.estCompletionDate)?5:0;
+      // DECISION(v1.19.947): Est. Completion removed — only Req. Ship Date
+      // gates the dates row.
+      const datesH=sc.requestedShipDate?5:0;
       const estH=7+5+(scopeLines.length*3)+(scopeLines.length>0?3:0)+datesH+12+4;
       arcDocCheckBreak(ctx,estH);
       const _svcStartY=ctx.y;
@@ -5228,11 +5230,9 @@ async function buildQuotePdfDoc(doc,project){
         scopeLines.forEach((sl,li)=>{doc.text(sl,ARC_DOC.margin.left+3,ctx.y+2+li*slh);});
         ctx.y+=scopeLines.length*slh+3;
       }
-      // Dates row
+      // Dates row (Req. Ship Date only)
       if(datesH>0){
-        let dateStr="";
-        if(sc.requestedShipDate)dateStr+="Req. Ship Date: "+sc.requestedShipDate;
-        if(sc.estCompletionDate){if(dateStr)dateStr+="  ·  ";dateStr+="Est. Completion: "+sc.estCompletionDate;}
+        const dateStr="Req. Ship Date: "+sc.requestedShipDate;
         doc.setFontSize(7.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.black);
         doc.text(dateStr,ARC_DOC.margin.left+3,ctx.y+2);
         ctx.y+=5;
@@ -15416,10 +15416,14 @@ function QuoteTab({project,onUpdate}){
                               <span style={{fontWeight:700}}>SCOPE: </span>
                               <span style={{whiteSpace:"pre-wrap"}}>{sc.detailDescription||"—"}</span>
                             </div>
-                            {(sc.requestedShipDate||sc.estCompletionDate)&&(
+                            {/* DECISION(v1.19.947): "Est. Completion" removed —
+                                redundant with the Lead Time days shown in the
+                                pricing row + lead-time banner below. Req. Ship
+                                Date kept since that's a customer-facing target
+                                rather than a calculated value. */}
+                            {sc.requestedShipDate&&(
                               <div className="qd-li-notes" style={{borderLeftColor:"#22c55e",fontSize:12}}>
-                                {sc.requestedShipDate&&<span><strong style={{color:"#16a34a"}}>Req. Ship Date:</strong> {sc.requestedShipDate}{sc.estCompletionDate?"  ·  ":""}</span>}
-                                {sc.estCompletionDate&&<span><strong style={{color:"#16a34a"}}>Est. Completion:</strong> {sc.estCompletionDate}</span>}
+                                <span><strong style={{color:"#16a34a"}}>Req. Ship Date:</strong> {sc.requestedShipDate}</span>
                               </div>
                             )}
                           </div>
