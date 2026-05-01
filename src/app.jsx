@@ -29670,8 +29670,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!q.drawingRev&&firstPanel.drawingRev)autoFields.drawingRev=firstPanel.drawingRev;
     if(!q.projectNumber&&proj.bcProjectNumber)autoFields.projectNumber=proj.bcProjectNumber;
     // Fetch contact and salesperson from BC project card — skip if quote already has key fields
+    // DECISION(v1.19.953): Also re-fetch when paymentTerms or shippingMethod
+    // are missing. The earlier gate only checked company/address/salesperson,
+    // so projects where those filled in WITHOUT a BC pull (or with a stale BC
+    // pull from before terms were configured) never got their Pmt Terms +
+    // Shipping Method back-filled even though BC has them populated.
     const spLooksLikeCode=q.salesperson&&/^[SP]-/i.test(q.salesperson);
-    const needsBcFetch=!q.company||!q.address||!q.salesperson||spLooksLikeCode;
+    const needsBcFetch=!q.company||!q.address||!q.salesperson||spLooksLikeCode||!q.paymentTerms||!q.shippingMethod;
     if(proj.bcProjectNumber&&_bcToken&&needsBcFetch){
       try{
         const allPages=await bcDiscoverODataPages();
