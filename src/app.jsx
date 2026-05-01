@@ -2205,6 +2205,129 @@ async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNum
 }
 if(typeof window!=="undefined"){window._bcCreateEcoTaskPlanningSkeleton=bcCreateEcoTaskPlanningSkeleton;}
 
+// ── SERVICE-CARD BC SYNC (Engineering Design / Programming / Commissioning) ──
+// DECISION(v1.19.922, Step G): Service Quote Lines are project-level line
+// items; each gets its own BC Project Task + a single Planning Line 10000
+// (Sales/Billable, "PROGRESS BILLING" Item, Quantity = 1, Unit_Price = total).
+// Slot allocation is sequential within type — see SERVICE_CARD_BC_BASE_SLOT.
+//
+// One sync function (`bcSyncServiceCardTask`) handles both create and update:
+//   1. Probe whether the task already exists at sc.bcProjectTaskNo
+//   2. Create the Project Task if missing (Posting type)
+//   3. Probe whether Line 10000 exists; create or PATCH so its Description +
+//      Quantity + Unit_Price reflect the current service-card values
+// Mirrors the field-probe / Job_/Project_ fallback pattern used by
+// bcAddEcoTask + bcCreateEcoTaskPlanningSkeleton above.
+async function bcSyncServiceCardTask(projectNumber,serviceCard){
+  if(!projectNumber||!serviceCard)return{ok:false,reason:"missing-args"};
+  if(!serviceCard.bcProjectTaskNo){
+    console.warn("bcSyncServiceCardTask: serviceCard has no bcProjectTaskNo, skipping");
+    return{ok:false,reason:"no-task-no"};
+  }
+  const taskNo=String(serviceCard.bcProjectTaskNo);
+  const label=SERVICE_CARD_LABELS[serviceCard.lineType]||"Service";
+  const taskDescBase=label+(serviceCard.description?` - ${serviceCard.description}`:"");
+  const taskDesc=taskDescBase.slice(0,100); // BC description limit
+  const total=computeServiceCardTotal(serviceCard);
+
+  const allPages=await bcDiscoverODataPages();
+  const taskPage=allPages.find(p=>/^project.?task/i.test(p))||allPages.find(p=>/job.?task/i.test(p))||null;
+  const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p))||null;
+  if(!taskPage)throw new Error("bcSyncServiceCardTask: No project task OData page found");
+  if(!planPage)throw new Error("bcSyncServiceCardTask: No project planning lines OData page found");
+
+  // Field-name probe (Project_ vs Job_) — cache-aware
+  let FT_NO="Project_No",FT_TASK_NO="Project_Task_No",FT_TYPE="Project_Task_Type";
+  let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
+  if(window._bcPlanFieldsCache&&window._bcPlanFieldsCache[`${BC_ODATA_BASE}::${planPage}`]){
+    const c=window._bcPlanFieldsCache[`${BC_ODATA_BASE}::${planPage}`];
+    FP_NO=c.FP_NO;FP_TASK_NO=c.FP_TASK_NO;
+  }else{
+    try{
+      const pr=await fetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];
+        if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}
+      }
+    }catch(_){}
+  }
+  // Step 1: Check if the task already exists
+  const taskFilterUrl=`${BC_ODATA_BASE}/${taskPage}?$filter=${FT_NO} eq '${encodeURIComponent(projectNumber)}' and ${FT_TASK_NO} eq '${encodeURIComponent(taskNo)}'`;
+  let taskExists=false;
+  try{
+    const r=await fetch(taskFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(r.ok){const d=await r.json();taskExists=(d.value||[]).length>0;}
+    else if(r.status===400){
+      // Try Job_ fallback for the task page
+      FT_NO="Job_No";FT_TASK_NO="Job_Task_No";FT_TYPE="Job_Task_Type";
+      const r2=await fetch(`${BC_ODATA_BASE}/${taskPage}?$filter=${FT_NO} eq '${encodeURIComponent(projectNumber)}' and ${FT_TASK_NO} eq '${encodeURIComponent(taskNo)}'`,
+        {headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(r2.ok){const d=await r2.json();taskExists=(d.value||[]).length>0;}
+    }
+  }catch(e){console.warn("bcSyncServiceCardTask: task lookup failed",e.message);}
+
+  // Step 2: Create the task if missing (Posting type)
+  if(!taskExists){
+    async function postTask(prefix){
+      const body={[`${prefix}_No`]:projectNumber,[`${prefix}_Task_No`]:taskNo,Description:taskDesc,[`${prefix}_Task_Type`]:"Posting"};
+      const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
+        method:"POST",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+        body:JSON.stringify(body)
+      });
+      if(r.ok)return{ok:true};
+      const txt=await r.text();return{ok:false,status:r.status,text:txt};
+    }
+    let res=await postTask("Project");
+    if(!res.ok&&res.status===400&&/'Project_No' does not exist/i.test(res.text||"")){res=await postTask("Job");}
+    if(!res.ok)throw new Error(`bcSyncServiceCardTask: task ${taskNo} create failed (${res.status}): ${res.text}`);
+    console.log(`[BC SVC] Created task ${taskNo} (${label})`);
+  }else{
+    // Task exists — PATCH the description so it stays current with ARC.
+    try{
+      const url=`${BC_ODATA_BASE}/${taskPage}(${FT_NO}='${encodeURIComponent(projectNumber)}',${FT_TASK_NO}='${encodeURIComponent(taskNo)}')`;
+      await fetch(url,{
+        method:"PATCH",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
+        body:JSON.stringify({Description:taskDesc})
+      });
+    }catch(e){console.warn(`bcSyncServiceCardTask: task ${taskNo} description PATCH failed`,e.message);}
+  }
+
+  // Step 3: Check if Line 10000 already exists, then create or PATCH it
+  const lineFilterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}' and Line_No eq 10000`;
+  let lineExists=false;
+  try{
+    const r=await fetch(lineFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(r.ok){const d=await r.json();lineExists=(d.value||[]).length>0;}
+  }catch(e){console.warn("bcSyncServiceCardTask: line lookup failed",e.message);}
+
+  const today=new Date().toISOString().split('T')[0];
+  const lineDescription=taskDescBase.slice(0,100);
+  if(!lineExists){
+    const body={[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:10000,Planning_Date:today,
+      Line_Type:"Billable",Type:"Item",No:"PROGRESS BILLING",
+      Description:lineDescription,Quantity:1,Unit_Price:total,Location_Code:"MAIN"};
+    const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
+      method:"POST",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+      body:JSON.stringify(body)
+    });
+    if(!r.ok){const txt=await r.text();throw new Error(`bcSyncServiceCardTask: line 10000 create failed (${r.status}): ${txt}`);}
+    console.log(`[BC SVC] Created line 10000 on task ${taskNo} (Unit_Price=${total})`);
+  }else{
+    const url=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=10000)`;
+    const r=await fetch(url,{
+      method:"PATCH",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
+      body:JSON.stringify({Description:lineDescription,Quantity:1,Unit_Price:total})
+    });
+    if(!r.ok){const txt=await r.text();throw new Error(`bcSyncServiceCardTask: line 10000 patch failed (${r.status}): ${txt}`);}
+    console.log(`[BC SVC] Patched line 10000 on task ${taskNo} (Unit_Price=${total})`);
+  }
+  return{ok:true,taskNo};
+}
+if(typeof window!=="undefined"){window._bcSyncServiceCardTask=bcSyncServiceCardTask;}
+
 // DECISION(v1.19.867, ECO Stage A): Delete a single ECO task line in BC. Used
 // by the ARC ECO delete flow so dropping an ECO in ARC also tears down its
 // BC task slot — keeps ARC and BC in sync. Field-name probe + fallback
@@ -4401,6 +4524,11 @@ async function _bcQueueExecute(item){
     case 'syncTaskDescs':{
       const{projectNumber,taskDescs}=item.params;
       await bcSyncPanelTaskDescriptions(projectNumber,taskDescs);
+      break;
+    }
+    case 'syncServiceCardTask':{
+      const{projectNumber,serviceCard}=item.params;
+      await bcSyncServiceCardTask(projectNumber,serviceCard);
       break;
     }
     default:
@@ -25991,6 +26119,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   }
   // DECISION(v1.19.916, Step B): Add a service Quote Line of the given type.
   // Allocates a fresh BC task slot in the type's bucket (50100..50399 series).
+  // DECISION(v1.19.922, Step G): Trigger BC sync immediately on add so the new
+  // task and Line 10000 are created in BC right away. Falls back to the offline
+  // queue when BC is unreachable.
   function addServiceCard(lineType){
     const existing=project.serviceCards||[];
     const card=createServiceCard(lineType,existing);
@@ -25998,6 +26129,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const updated={...project,serviceCards:[...existing,card]};
     onUpdate(updated);
     safeSave(uid,updated);
+    _syncServiceCardToBc(card,"create");
   }
   // DECISION(v1.19.917, Step C): Delete a service Quote Line. Confirmation
   // matches PanelCard's deletion UX. BC task cleanup will happen in Step G.
@@ -26012,11 +26144,34 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   }
   // DECISION(v1.19.918, Step D): Update a service Quote Line in place.
   // Persisted via the same safeSave path as addServiceCard / deleteServiceCard.
+  // DECISION(v1.19.922, Step G): Push edits to BC after save. The sync is
+  // idempotent (PATCH if line 10000 exists, POST if not) so this is safe to
+  // call on every commit.
   function updateServiceCard(updatedCard){
     if(!updatedCard||!updatedCard.id)return;
     const updated={...project,serviceCards:(project.serviceCards||[]).map(sc=>sc.id===updatedCard.id?updatedCard:sc)};
     onUpdate(updated);
     safeSave(uid,updated);
+    _syncServiceCardToBc(updatedCard,"update");
+  }
+  // BC sync helper — used by both add and update paths.
+  function _syncServiceCardToBc(card,action){
+    if(!project.bcProjectNumber||!card||!card.bcProjectTaskNo)return;
+    if(project.bcEnv&&project.bcEnv!==_bcConfig.env){
+      console.log(`[BC SVC] skipped ${action} (project bound to ${project.bcEnv}, current ${_bcConfig.env})`);
+      return;
+    }
+    const label=SERVICE_CARD_LABELS[card.lineType]||"Service";
+    if(_bcToken){
+      bcSyncServiceCardTask(project.bcProjectNumber,card)
+        .then(()=>console.log(`[BC SVC] ${action} synced for ${label} (task ${card.bcProjectTaskNo})`))
+        .catch(e=>{
+          console.warn(`[BC SVC] ${action} failed, queuing:`,e.message);
+          bcEnqueue('syncServiceCardTask',{projectNumber:project.bcProjectNumber,serviceCard:card},`Sync ${label} (task ${card.bcProjectTaskNo})`);
+        });
+    }else{
+      bcEnqueue('syncServiceCardTask',{projectNumber:project.bcProjectNumber,serviceCard:card},`Sync ${label} (task ${card.bcProjectTaskNo})`);
+    }
   }
   function deletePanel(id){
     if(!window.confirm("Delete this panel and all its data?"))return;
