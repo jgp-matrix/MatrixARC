@@ -5352,16 +5352,18 @@ async function buildQuotePdfDoc(doc,project){
     const lineItemStartPage=ctx.pageNum;
 
     // Line header bar
+    // DECISION(v1.19.943): Part # header now includes the panel description
+    // ("Part #: <drawingNo> — <description>"). Standalone title row removed.
     doc.setFillColor(248,250,252);doc.setDrawColor(226,232,240);
     doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,7,2,2,"FD");
     doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
     doc.text("Line "+(pi+1),ARC_DOC.margin.left+3,ctx.y+4.5);
     doc.setTextColor(...ARC_DOC.colors.black);
-    doc.text("Part #: "+(pan.drawingNo||qp.panelId||pan.name||"Panel "+(pi+1)),ARC_DOC.margin.left+22,ctx.y+4.5);
+    const _partNoPdf=pan.drawingNo||qp.panelId||pan.name||"Panel "+(pi+1);
+    const _descPdf=qp.description||pan.drawingDesc||pan.name||"";
+    const _partHdrPdf="Part #: "+_partNoPdf+(_descPdf?" - "+_descPdf:"");
+    doc.text(_partHdrPdf,ARC_DOC.margin.left+22,ctx.y+4.5);
     ctx.y+=9;
-
-    // Title (indented inside border)
-    arcDocText(ctx,qp.description||pan.drawingDesc||pan.name||"Panel "+(pi+1),{fontSize:11,bold:true,gap:2,indent:2,maxWidth:ctx.contentWidth-4});
 
     // DECISION(v1.19.468): Bold red UL698/1203 label on quote line item when hazardous location detected
     if(pan.hazardousLocation?.found){
@@ -5376,7 +5378,9 @@ async function buildQuotePdfDoc(doc,project){
       ["Project",q.projectNumber||project.bcProjectNumber||project.name||""],
       ["Drawing Rev",pan.drawingRev||"—"],
       ["Panel ID",pan.drawingNo||pan.name||"—"],
-      ["Plant Name",qp.plantName||q.plantName||""],
+      // DECISION(v1.19.943): Plant Name defaults to the ARC project title.
+      // Per-panel and per-quote overrides still win when set.
+      ["Plant Name",qp.plantName||q.plantName||project?.name||project?.bcCustomerName||""],
       ["Supply Voltage",qp.supplyVoltage||q.supplyVoltage||pan.supplyVoltage||""],
       ["Control Voltage",qp.controlVoltage||q.controlVoltage||pan.controlVoltage||""]
     ];
@@ -15260,7 +15264,7 @@ function QuoteTab({project,onUpdate}){
                 {fld("Drawing Rev","drawingRev","A",80)}
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
-                {fld("Plant Name","plantName","",180)}
+                {fld("Plant Name","plantName",project.name||"",180)}
                 {fld("Supply Voltage","supplyVoltage","",120)}
                 {fld("Control Voltage","controlVoltage","",120)}
               </div>
@@ -15496,7 +15500,10 @@ function QuoteTab({project,onUpdate}){
               <div className="qd-li">
               <div className="qd-li-hdr">
                 <span className="qd-li-num">Line {pi+1}</span>
-                <span className="qd-li-part">Part #: {pan.drawingNo||qp.panelId||pan.name||`Panel ${pi+1}`}</span>
+                {/* DECISION(v1.19.943): Header shows "Part #: <drawingNo> — <description>".
+                    The standalone qd-li-title in the body has been removed
+                    since the description now appears in the header instead. */}
+                <span className="qd-li-part">Part #: {pan.drawingNo||qp.panelId||pan.name||`Panel ${pi+1}`}{(()=>{const _d=qp.description||pan.drawingDesc||pan.name||"";return _d?` — ${_d}`:"";})()}</span>
                 {_panHasAnyEco&&(
                   <span style={{marginLeft:14,fontSize:13,fontWeight:700,color:"#4ade80",letterSpacing:0.4}}>
                     {_panEcoEntries.map(e=>e.label+(e.startedFmt?` · ${e.startedFmt}`:"")).join("  ·  ")}
@@ -15505,13 +15512,12 @@ function QuoteTab({project,onUpdate}){
               </div>
               <div className="qd-li-body">
                 <div>
-                  <div className="qd-li-title">{qp.description||pan.drawingDesc||pan.name||`Panel ${pi+1}`}</div>
                   <div className="qd-specs">
                     {[
                       ["Project",q.projectNumber||project.bcProjectNumber||project.name],
                       ["Drawing Rev",pan.drawingRev||"—"],
                       ["Panel ID",pan.drawingNo||pan.name||"—"],
-                      ["Plant Name",qp.plantName||q.plantName||""],
+                      ["Plant Name",qp.plantName||q.plantName||project?.name||""],
                       ["Supply Voltage",qp.supplyVoltage||q.supplyVoltage||pan.supplyVoltage||""],
                       ["Control Voltage",qp.controlVoltage||q.controlVoltage||pan.controlVoltage||""],
                     ].map(([label,val])=>(
