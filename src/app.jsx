@@ -28660,6 +28660,31 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
 
 // ── QUOTE VIEW (aggregates all panels) ──
 function QuoteView({project,uid,onBack,onUpdate}){
+  // DECISION(v1.19.952): Request browser fullscreen on Quote view mount so
+  // the user gets a maximized read of the customer-facing quote. Wrapped in
+  // try/catch — Fullscreen API may be denied (no user gesture, browser
+  // setting, sandboxed iframe) and we don't want a broken page in that case.
+  // Cleanup on unmount: exit fullscreen if still active and we entered it.
+  React.useEffect(()=>{
+    let _enteredByUs=false;
+    try{
+      const el=document.documentElement;
+      const req=el.requestFullscreen||el.webkitRequestFullscreen||el.mozRequestFullScreen||el.msRequestFullscreen;
+      if(req&&!document.fullscreenElement){
+        const r=req.call(el);
+        if(r&&typeof r.then==="function")r.then(()=>{_enteredByUs=true;}).catch(()=>{});
+        else _enteredByUs=true;
+      }
+    }catch(_){}
+    return()=>{
+      if(!_enteredByUs)return;
+      try{
+        if(document.fullscreenElement||document.webkitFullscreenElement||document.mozFullScreenElement||document.msFullscreenElement){
+          (document.exitFullscreen||document.webkitExitFullscreen||document.mozCancelFullScreen||document.msExitFullscreen)?.call(document);
+        }
+      }catch(_){}
+    };
+  },[]);
   const panels=project.panels||[];
   const allBom=mergeBoms(panels.map(p=>p.bom||[]));
   const totalWireCount=panels.reduce((s,p)=>s+(p.validation?.wireCount||0),0);
