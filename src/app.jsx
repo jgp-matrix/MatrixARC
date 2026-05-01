@@ -838,9 +838,59 @@ function computePanelSellPrice(panel){
 // and the Sent/Sold/Lost dashboard boxes on the main page. Mirrors the logic at the
 // quote print site (sum of computePanelSellPrice × lineQty across panels). Returns
 // 0 when the project has no panels — keeps reduce() callers safe.
+// DECISION(v1.19.914, Service Lines): Now also includes project-level service
+// lines (Engineering / Programming / Commissioning).
 function computeProjectTotal(p){
-  if(!p||!Array.isArray(p.panels))return 0;
-  return p.panels.reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
+  if(!p)return 0;
+  const panelsTotal=Array.isArray(p.panels)
+    ?p.panels.reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0)
+    :0;
+  return panelsTotal+computeServiceLinesTotal(p);
+}
+
+// ── PROJECT-LEVEL SERVICE LINES (Engineering / Programming / Commissioning) ──
+// DECISION(v1.19.914): Project-level professional-services line items that
+// appear on the printed quote alongside (not inside) panels. Stored at
+// `project.serviceLines = { engineering: {hours,rate,description}, programming
+// : {…}, commissioning: {…} }`. Each line sells at hours × rate (no margin —
+// the rate IS the bill rate). Lines with hours=0 are hidden everywhere.
+const SERVICE_LINE_TYPES=["engineering","programming","commissioning"];
+const SERVICE_LINE_LABELS={
+  engineering:"Engineering",
+  programming:"Programming",
+  commissioning:"Commissioning",
+};
+const SERVICE_LINE_DEFAULT_RATES={
+  engineering:125,
+  programming:125,
+  commissioning:150,
+};
+const SERVICE_LINE_DEFAULT_DESCRIPTIONS={
+  engineering:"Schematic design, BOM development, drawing package",
+  programming:"PLC / HMI programming and configuration",
+  commissioning:"On-site startup, system verification, operator training",
+};
+function _getServiceLine(project,type){
+  const sl=(project?.serviceLines||{})[type]||{};
+  return{
+    hours:Number(sl.hours)||0,
+    rate:sl.rate!=null?Number(sl.rate):SERVICE_LINE_DEFAULT_RATES[type],
+    description:sl.description||SERVICE_LINE_DEFAULT_DESCRIPTIONS[type],
+    notes:sl.notes||"",
+  };
+}
+function computeServiceLineTotal(project,type){
+  const l=_getServiceLine(project,type);
+  return l.hours*l.rate;
+}
+function computeServiceLinesTotal(project){
+  if(!project)return 0;
+  return SERVICE_LINE_TYPES.reduce((s,t)=>s+computeServiceLineTotal(project,t),0);
+}
+function getActiveServiceLines(project){
+  return SERVICE_LINE_TYPES
+    .filter(t=>computeServiceLineTotal(project,t)>0)
+    .map(t=>({type:t,label:SERVICE_LINE_LABELS[t],..._getServiceLine(project,t),total:computeServiceLineTotal(project,t)}));
 }
 
 // ── LABOR BOM ROWS (auto-managed, always first 3 rows) ──
@@ -5085,6 +5135,61 @@ async function buildQuotePdfDoc(doc,project){
     ctx.y+=3;
   }
 
+  // ── PROFESSIONAL SERVICES LINE ITEMS ──
+  // DECISION(v1.19.914): Project-level service lines render as additional line
+  // items after the panel loop. Each non-zero service line gets a compact box
+  // with description / hours × rate / total.
+  const _servicesPdf=getActiveServiceLines(project);
+  if(_servicesPdf.length>0){
+    for(let si=0;si<_servicesPdf.length;si++){
+      const s=_servicesPdf[si];
+      const lineNum=panels.length+si+1;
+      // Pre-estimate height: header(7) + title(5) + scope(6) + pricing(12) = ~30mm
+      arcDocCheckBreak(ctx,32);
+      const _svcStartY=ctx.y;
+      const _svcStartPg=ctx.pageNum;
+      // Header bar
+      doc.setFillColor(248,250,252);doc.setDrawColor(226,232,240);
+      doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,7,2,2,"FD");
+      doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
+      doc.text("Line "+lineNum,ARC_DOC.margin.left+3,ctx.y+4.5);
+      doc.setTextColor(...ARC_DOC.colors.black);
+      doc.text(s.label+" - Professional Services",ARC_DOC.margin.left+22,ctx.y+4.5);
+      ctx.y+=9;
+      // Title
+      arcDocText(ctx,s.label,{fontSize:11,bold:true,gap:2,indent:2,maxWidth:ctx.contentWidth-4});
+      // Scope description (notes-style box)
+      if(s.description){
+        const scopeLines=doc.splitTextToSize("Scope: "+s.description,ctx.contentWidth-8);
+        const slh=3;
+        const scopeH=scopeLines.length*slh+3;
+        arcDocCheckBreak(ctx,scopeH);
+        doc.setFontSize(7.5);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
+        scopeLines.forEach((sl,li)=>{doc.text(sl,ARC_DOC.margin.left+3,ctx.y+2+li*slh);});
+        ctx.y+=scopeH;
+      }
+      // Pricing row — Hours / Rate / Lead / Discount / Total
+      const sBoxH=12;
+      arcDocCheckBreak(ctx,sBoxH+2);
+      doc.setFillColor(248,250,252);doc.setDrawColor(248,250,252);
+      doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,sBoxH,"FD");
+      const sPw=ctx.contentWidth/4;const sPy=ctx.y;
+      [{l:"Hours",v:s.hours+" hrs"},{l:"Rate",v:arcFmtMoney(s.rate)+"/hr"},{l:"Lead Time",v:"-"},{l:"Total Price",v:arcFmtMoney(s.total)}].forEach((col,ci)=>{
+        const cx=ARC_DOC.margin.left+ci*sPw+sPw/2;
+        doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
+        doc.text(col.l,cx,sPy+4,{align:"center"});
+        doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
+        doc.text(col.v,cx,sPy+9,{align:"center"});
+      });
+      ctx.y=sPy+sBoxH+1;
+      if(ctx.pageNum===_svcStartPg){
+        doc.setDrawColor(...ARC_DOC.colors.lightGrey);doc.setLineWidth(0.3);
+        doc.roundedRect(ARC_DOC.margin.left,_svcStartY,ctx.contentWidth,ctx.y-_svcStartY,2,2);
+      }
+      ctx.y+=3;
+    }
+  }
+
   // ── VALIDITY DISCLAIMER ──
   // If disclaimer+totals won't fit, add "totals on next page" before breaking
   if(ctx.y+50>ctx.contentBottom){
@@ -5098,7 +5203,10 @@ async function buildQuotePdfDoc(doc,project){
   // DECISION(v1.19.890, Stage E PDF; v1.19.908 multi-ECO): list each draft
   // ECO's subtotal separately so the customer sees how each change order
   // rolls into the Total. Total = BASE + Σ(each ECO).
-  const totalPrice=panels.reduce((s,pan)=>computePanelSellPrice(pan)*(pan.lineQty??1)+s,0);
+  // DECISION(v1.19.914): Services subtotal is its own row.
+  const _servicesSubtotalPdf=computeServiceLinesTotal(project);
+  const _panelsSubtotalPdf=panels.reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
+  const totalPrice=_panelsSubtotalPdf+_servicesSubtotalPdf;
   const _draftTotalsPdf=Array.isArray(project?.ecoSummary)
     ?project.ecoSummary.filter(e=>e&&e.status==="draft").slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
     :[];
@@ -5110,19 +5218,19 @@ async function buildQuotePdfDoc(doc,project){
       subtotal:panels.reduce((s,pan)=>s+computeEcoSellDelta(pan,eco.ecoId,eco.number)*(pan.lineQty??1),0),
     }));
   const _hasEcoTotalsPdf=_ecoSubtotalsPdf.length>0;
-  const _baseSubtotalPdf=_hasEcoTotalsPdf?panels.reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0):totalPrice;
+  const _baseSubtotalPdf=_hasEcoTotalsPdf?panels.reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0):_panelsSubtotalPdf;
   const _signedFmtPdf=n=>(n>=0?"+":"-")+arcFmtMoney(Math.abs(n));
-  arcDocCheckBreak(ctx,_hasEcoTotalsPdf?(25+_ecoSubtotalsPdf.length*7):25);
+  const _extraRows=(_hasEcoTotalsPdf?_ecoSubtotalsPdf.length:0)+(_servicesSubtotalPdf>0?1:0);
+  arcDocCheckBreak(ctx,25+_extraRows*7);
   const bx=ARC_DOC.W-ARC_DOC.margin.right-60;const bw=60;
   const isNonTaxable=/nontax|non.?tax/i.test(q.taxAreaCode||"");
-  const totalsRows=_hasEcoTotalsPdf
-    ?[
-        {l:"Subtotal",v:arcFmtMoney(_baseSubtotalPdf),bold:false,eco:false},
-        ..._ecoSubtotalsPdf.map(e=>({l:e.label,v:_signedFmtPdf(e.subtotal),bold:false,eco:true})),
-        {l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false,eco:false},
-        {l:"Total",v:arcFmtMoney(totalPrice),bold:true,eco:false},
-      ]
-    :[{l:"Subtotal",v:arcFmtMoney(totalPrice),bold:false,eco:false},{l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false,eco:false},{l:"Total",v:arcFmtMoney(totalPrice),bold:true,eco:false}];
+  const totalsRows=[
+    {l:_servicesSubtotalPdf>0?"Subtotal (Panels)":"Subtotal",v:arcFmtMoney(_baseSubtotalPdf),bold:false,eco:false},
+    ...(_hasEcoTotalsPdf?_ecoSubtotalsPdf.map(e=>({l:e.label,v:_signedFmtPdf(e.subtotal),bold:false,eco:true})):[]),
+    ...(_servicesSubtotalPdf>0?[{l:"Professional Services",v:arcFmtMoney(_servicesSubtotalPdf),bold:false,eco:false}]:[]),
+    {l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false,eco:false},
+    {l:"Total",v:arcFmtMoney(totalPrice),bold:true,eco:false},
+  ];
   totalsRows.forEach((row,ri)=>{
     const ry=ctx.y+ri*7;
     if(row.bold){doc.setDrawColor(...ARC_DOC.colors.black);doc.setLineWidth(0.5);doc.line(bx,ry,bx+bw,ry);}
@@ -14779,11 +14887,68 @@ function QuoteTab({project,onUpdate}){
               )}
               </div>);
             })}
+            {/* DECISION(v1.19.914): Project-level service lines (Engineering /
+                Programming / Commissioning) render as additional line items
+                AFTER the panel rows. Each active line gets its own boxed entry
+                like a panel. Hidden when zero hours. */}
+            {(()=>{
+              const _services=getActiveServiceLines(project);
+              if(_services.length===0)return null;
+              const _panelCount=(project.panels||[]).length;
+              return _services.map((s,si)=>(
+                <div key={`svc-${s.type}`} style={{marginBottom:12}}>
+                  <div className="qd-li">
+                    <div className="qd-li-hdr">
+                      <span className="qd-li-num">Line {_panelCount+si+1}</span>
+                      <span className="qd-li-part">{s.label} — Professional Services</span>
+                    </div>
+                    <div className="qd-li-body">
+                      <div>
+                        <div className="qd-li-title">{s.label}</div>
+                        <div className="qd-li-notes" style={{borderLeftColor:"#3b82f6"}}>
+                          <span>SCOPE: </span>
+                          <textarea value={s.description||""}
+                            onChange={e=>{
+                              const sl={...(project.serviceLines||{})};
+                              sl[s.type]={...(sl[s.type]||{}),description:e.target.value};
+                              onUpdate({...project,serviceLines:sl});
+                            }}
+                            rows={2}
+                            style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="qd-li-pricing">
+                      <div>
+                        <div className="qd-plabel">Hours</div>
+                        <div className="qd-pval">{s.hours} hrs</div>
+                      </div>
+                      <div>
+                        <div className="qd-plabel">Rate</div>
+                        <div className="qd-pval">{fmtMoney(s.rate)}/hr</div>
+                      </div>
+                      <div>
+                        <div className="qd-plabel">Lead Time</div>
+                        <div className="qd-pval">—</div>
+                      </div>
+                      <div>
+                        <div className="qd-plabel">Discount</div>
+                        <div className="qd-pval">—</div>
+                      </div>
+                      <div>
+                        <div className="qd-plabel">Total Price</div>
+                        <div className={"qd-pval qd-total-val"}>{fmtMoney(s.total)}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ));
+            })()}
           </div>
 
           {/* Validity Notice + Totals — kept together on same page */}
           {(()=>{
-            const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
+            const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0)+computeServiceLinesTotal(project);
             const hasTotalPrice=totalPrice>0;
             // DECISION(v1.19.884, Quote Form ECO Stage E): split totals into BASE
             // + ECO contributions. DECISION(v1.19.908, multi-ECO additive): list
@@ -14802,9 +14967,12 @@ function QuoteTab({project,onUpdate}){
                 subtotal:(project.panels||[]).reduce((s,pan)=>s+computeEcoSellDelta(pan,eco.ecoId,eco.number)*(pan.lineQty??1),0),
               }));
             const _hasAnyEcoChanges=_ecoSubtotalsByEco.length>0;
-            const _baseSubtotal=_hasAnyEcoChanges
+            // DECISION(v1.19.914): Service lines render as their own subtotal row.
+            // BASE/panels subtotal excludes services so they're not double-counted.
+            const _servicesSubtotal=computeServiceLinesTotal(project);
+            const _panelsSubtotal=_hasAnyEcoChanges
               ?(project.panels||[]).reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0)
-              :totalPrice;
+              :(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
             const _fmtSigned=(n)=>(n>=0?"+":"-")+"$"+Math.abs(Math.round(n)).toLocaleString("en-US");
             return(
           <div style={{breakInside:"avoid",pageBreakInside:"avoid"}}>
@@ -14813,10 +14981,11 @@ function QuoteTab({project,onUpdate}){
           </div>
           <div className="qd-totals-bar">
             <div className="qd-totals-box">
-              <div className="qd-totals-row"><span>Subtotal</span><span>{hasTotalPrice?fmtMoney(_baseSubtotal):"—"}</span></div>
+              <div className="qd-totals-row"><span>Subtotal{_servicesSubtotal>0?" (Panels)":""}</span><span>{hasTotalPrice?fmtMoney(_panelsSubtotal):"—"}</span></div>
               {_ecoSubtotalsByEco.map(({label,subtotal,ecoId,number})=>(
                 <div key={ecoId||number} className="qd-totals-row" style={{color:"#a855f7",fontWeight:700}}><span>{label}</span><span>{_fmtSigned(subtotal)}</span></div>
               ))}
+              {_servicesSubtotal>0&&<div className="qd-totals-row"><span>Professional Services</span><span>{fmtMoney(_servicesSubtotal)}</span></div>}
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
               {isProjectBudgetary&&<div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>BUDGETARY</div>}
@@ -26559,7 +26728,54 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   })(),
                   document.body
                 )}
-                {(project.panels||[]).length>1&&(()=>{
+                {/* DECISION(v1.19.914, Service Lines): Project-level services
+                    section — Engineering, Programming, Commissioning. Hours ×
+                    Rate per category, rolls into PROJECT TOTAL and the printed
+                    quote. Independent of BASE/ECO scope (always visible). Lines
+                    with hours=0 are hidden on the printed quote but the editor
+                    always shows all three categories. */}
+                <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:6}}>
+                  <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.7,textTransform:"uppercase"}}>Project Services</span>
+                    {(()=>{const slt=computeServiceLinesTotal(project);return slt>0?<span style={{fontSize:10,color:"#94a3b8",fontWeight:500}}>· {SERVICE_LINE_TYPES.filter(t=>computeServiceLineTotal(project,t)>0).length} active</span>:null;})()}
+                  </div>
+                  {SERVICE_LINE_TYPES.map(type=>{
+                    const line=_getServiceLine(project,type);
+                    const total=line.hours*line.rate;
+                    const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
+                    const setField=(field,val)=>{
+                      const sl={...(project.serviceLines||{})};
+                      sl[type]={...(sl[type]||{}),[field]:val};
+                      const upd={...project,serviceLines:sl};
+                      update(upd);
+                      try{safeSave(uid,upd);}catch(e){}
+                    };
+                    return(
+                      <div key={type} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 0",fontSize:12}}>
+                        <span style={{color:total>0?"#a78bfa":C.muted,fontWeight:600,minWidth:96,fontSize:11}}>{SERVICE_LINE_LABELS[type]}</span>
+                        <input type="number" min="0" step="0.5" readOnly={readOnly}
+                          value={line.hours||""}
+                          placeholder="0"
+                          onChange={e=>setField("hours",Math.max(0,+e.target.value||0))}
+                          onFocus={e=>e.target.select()}
+                          title="Hours"
+                          style={{...inp({padding:"3px 6px",fontSize:12,width:54,textAlign:"right"}),color:C.text}}/>
+                        <span style={{color:C.muted,fontSize:11}}>hrs ×</span>
+                        <input type="number" min="0" step="5" readOnly={readOnly}
+                          value={line.rate}
+                          onChange={e=>setField("rate",Math.max(0,+e.target.value||0))}
+                          onFocus={e=>e.target.select()}
+                          title="Rate $/hr"
+                          style={{...inp({padding:"3px 6px",fontSize:12,width:60,textAlign:"right"}),color:C.text}}/>
+                        <span style={{color:C.muted,fontSize:11}}>/hr</span>
+                        <span style={{flex:1,textAlign:"right",fontVariantNumeric:"tabular-nums",color:total>0?"#fff":C.muted,fontWeight:total>0?700:400,fontSize:12}}>
+                          {total>0?pfmt(total):"—"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                {(()=>{
                   // DECISION(v1.19.886): PROJECT TOTAL routed through
                   // computePanelSellPrice for consistency with per-panel rows above.
                   // DECISION(v1.19.908): Mirror the per-panel rows — sum cumulative
@@ -26568,7 +26784,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   //   • BASE tab → sum of BASE-only sells
                   //   • ECO N tab → sum of (BASE + cumulative deltas through N)
                   //   • no scope → combined (legacy)
-                  const total=(project.panels||[]).reduce((sum,p)=>{
+                  // DECISION(v1.19.914): Now also adds service lines total. Always
+                  // renders if multiple panels OR service lines exist (was previously
+                  // gated on panels.length>1).
+                  const panelsTotal=(project.panels||[]).reduce((sum,p)=>{
                     const _ps=inEcoSummaryScope
                       ?computeBasePanelSellPrice(p)+computeCumulativeEcoSellDelta(p,project,activeEcoNumberForSummary)
                       :((!activeScope||activeScope.type==="base")
@@ -26576,6 +26795,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         :computePanelSellPrice(p));
                     return sum+_ps*(p.lineQty??p.qty??1);
                   },0);
+                  const servicesTotal=computeServiceLinesTotal(project);
+                  const total=panelsTotal+servicesTotal;
+                  const _shouldShow=(project.panels||[]).length>1||servicesTotal>0;
+                  if(!_shouldShow)return null;
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   return(
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",marginTop:4,borderTop:"1px solid #fff"}}>
