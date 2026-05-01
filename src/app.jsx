@@ -11421,6 +11421,14 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
       // Optimistically hide the tab now — the snapshot listener will catch up
       // shortly with the persisted ecoSummary.
       _setPendingDeletedIds(prev=>{const n=new Set(prev);n.add(ecoIdBeingDeleted);return n;});
+      // DECISION(v1.19.929): Also yank the entry from _pendingNewEcos. Without
+      // this, ECOs created + deleted in the same session keep reappearing in
+      // the tab strip — the `summary` build at the top of EcoScopeTabs merges
+      // _baseSummary (filtered by _pendingDeletedIds) with _pendingNewEcos
+      // (NOT filtered). Once the deleted ECO drops out of _baseSummary, the
+      // pending-new entry passes the dedupe check and gets re-added. Refresh
+      // worked because the page reload reset _pendingNewEcos to empty.
+      _setPendingNewEcos(prev=>prev.filter(pe=>pe&&pe.ecoId!==ecoIdBeingDeleted));
       // DECISION(v1.19.873, ECO delta-row): Optimistically merge the
       // post-delete state back into the parent project so BASE unlocks
       // immediately when the last draft is gone. Mirrors what deleteEcoDoc
