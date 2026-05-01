@@ -747,6 +747,49 @@ function _ecosUpTo(project,upToEcoNumber){
     .slice()
     .sort((a,b)=>(+a.number||0)-(+b.number||0));
 }
+// DECISION(v1.19.925, Internal vs External ECOs): Customer-facing variants of
+// the cumulative ECO helpers. They filter to `kind === "external"` so Internal
+// ECOs (our-responsibility changes) never appear on the customer Quote totals
+// or breakdowns. Legacy entries without an explicit kind were backfilled to
+// "external" by migrateProjectShape, so they continue to behave exactly as
+// before. Internal ECOs still flow through the original helpers (`_ecosUpTo`,
+// `computeCumulativeEcoSellDelta`) for internal cost tracking views.
+function _isExternalEco(eco){
+  return!eco||eco.kind!=="internal"; // missing/unknown kind treated as external
+}
+function _externalEcosUpTo(project,upToEcoNumber){
+  return _ecosUpTo(project,upToEcoNumber).filter(_isExternalEco);
+}
+function computeCustomerCumulativeEcoMaterialDelta(panel,project,upToEcoNumber){
+  if(!panel||!upToEcoNumber)return 0;
+  return _externalEcosUpTo(project,upToEcoNumber).reduce((s,e)=>s+computeEcoMaterialDelta(panel,e.ecoId),0);
+}
+function computeCustomerCumulativeEcoLabor(panel,project,upToEcoNumber){
+  if(!panel||!upToEcoNumber)return{totalHrs:0,totalCost:0};
+  let totalHrs=0,totalCost=0;
+  for(const e of _externalEcosUpTo(project,upToEcoNumber)){
+    const lab=computeEcoLaborForActiveEco(panel,e.ecoId);
+    totalHrs+=lab.totalHrs;totalCost+=lab.totalCost;
+  }
+  return{totalHrs,totalCost};
+}
+function computeCustomerCumulativeEcoSellDelta(panel,project,upToEcoNumber){
+  if(!panel||!upToEcoNumber)return 0;
+  return _externalEcosUpTo(project,upToEcoNumber).reduce((s,e)=>s+computeEcoSellDelta(panel,e.ecoId,e.number),0);
+}
+// computeCustomerPanelSellPrice — BASE + sum of External ECO deltas. Use this
+// in any customer-facing context (printed Quote, PDF, QUOTE SUMMARY, PROJECT
+// TOTAL). Internal ECOs are excluded so the customer never sees costs we eat.
+// computePanelSellPrice (legacy) still includes ALL ECOs for internal cost
+// views (Panel Summary BASE/ECO/NEW breakdown, dashboard kanbans).
+function computeCustomerPanelSellPrice(panel,project){
+  if(!panel)return 0;
+  const base=computeBasePanelSellPrice(panel);
+  const externalEcos=Array.isArray(project?.ecoSummary)?project.ecoSummary.filter(_isExternalEco):[];
+  let extDelta=0;
+  for(const e of externalEcos)extDelta+=computeEcoSellDelta(panel,e.ecoId,e.number);
+  return base+extDelta;
+}
 function computeCumulativeEcoMaterialDelta(panel,project,upToEcoNumber){
   if(!panel||!upToEcoNumber)return 0;
   return _ecosUpTo(project,upToEcoNumber).reduce((s,e)=>s+computeEcoMaterialDelta(panel,e.ecoId),0);
@@ -5125,7 +5168,8 @@ async function buildQuotePdfDoc(doc,project){
     }
     const pan=_entryPdf._obj;
     const panPr=pan.pricing||{};
-    const panSell=computePanelSellPrice(pan);
+    // DECISION(v1.19.925): Customer-facing sell — Internal ECOs excluded.
+    const panSell=computeCustomerPanelSellPrice(pan,project);
     const panQty=pan.lineQty??1;
     const qp=(q.panelOverrides||{})[pan.id]||{};
     const panBom=pan.bom||[];
@@ -5134,8 +5178,10 @@ async function buildQuotePdfDoc(doc,project){
     // breakdown in the printed PDF. DECISION(v1.19.908, multi-ECO additive):
     // List EVERY draft ECO with rows on this panel separately so the customer
     // sees how each ECO contributes individually. Cumulative NEW = BASE + Σ(ECO).
+    // DECISION(v1.19.925): Filter to EXTERNAL only on the customer-facing PDF —
+    // Internal ECOs never appear on customer-facing renders.
     const _draftEcosPdf=Array.isArray(project?.ecoSummary)
-      ?project.ecoSummary.filter(e=>e&&e.status==="draft").slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
+      ?project.ecoSummary.filter(e=>e&&e.status==="draft"&&_isExternalEco(e)).slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
       :[];
     const _panEcoEntriesPdf=_draftEcosPdf
       .filter(eco=>panBom.some(r=>_matchesEco(r,eco.ecoId,eco.number)))
@@ -5416,10 +5462,11 @@ async function buildQuotePdfDoc(doc,project){
   // rolls into the Total. Total = BASE + Σ(each ECO).
   // DECISION(v1.19.914 / v1.19.915): Services subtotal is its own row.
   const _servicesSubtotalPdf=computeAllServiceCardsTotal(project);
-  const _panelsSubtotalPdf=panels.reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
+  const _panelsSubtotalPdf=panels.reduce((s,pan)=>s+computeCustomerPanelSellPrice(pan,project)*(pan.lineQty??1),0);
   const totalPrice=_panelsSubtotalPdf+_servicesSubtotalPdf;
+  // DECISION(v1.19.925): External ECOs only on customer PDF totals.
   const _draftTotalsPdf=Array.isArray(project?.ecoSummary)
-    ?project.ecoSummary.filter(e=>e&&e.status==="draft").slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
+    ?project.ecoSummary.filter(e=>e&&e.status==="draft"&&_isExternalEco(e)).slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
     :[];
   const _ecoSubtotalsPdf=_draftTotalsPdf
     .filter(eco=>panels.some(pan=>(pan.bom||[]).some(r=>_matchesEco(r,eco.ecoId,eco.number))))
@@ -6788,6 +6835,15 @@ function migrateProjectShape(p){
   if(out.ecoCounter==null)out.ecoCounter=0;
   if(out.activeEcoId===undefined)out.activeEcoId=null;
   if(!Array.isArray(out.ecoSummary))out.ecoSummary=[];
+  // DECISION(v1.19.925, Internal vs External ECOs): Backfill `kind` on
+  // existing ecoSummary entries. Legacy entries used `kind:"customer_change"`
+  // (or no kind at all) — those are all External per the original behavior.
+  // New entries get "external" or "internal" explicitly at creation.
+  out.ecoSummary=out.ecoSummary.map(e=>{
+    if(!e)return e;
+    if(e.kind==="external"||e.kind==="internal")return e;
+    return{...e,kind:"external"};
+  });
   // DECISION(v1.19.915, Service Cards): Initialize serviceCards array. Wipe
   // v1.19.914's project-level `serviceLines` object — that approach was
   // discarded in favor of per-card line items. v1.19.914 had no real data, so
@@ -11157,8 +11213,27 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
         console.log("[ECO] applying unlock state changes:",unlockUpdate);
         await fbDb.doc(projPath).update(unlockUpdate);
       }
-      console.log("[ECO] calling createEcoDoc…");
-      const result=await createEcoDoc(uid,project,"customer_change");
+      // DECISION(v1.19.925, Internal vs External ECOs): Prompt for ECO kind
+      // before creating. External = customer-driven (default, billable, on
+      // customer Quote). Internal = our responsibility (not billable, not on
+      // customer Quote, but tracked through BC for cost accounting).
+      // arcConfirm returns true=External, false=Internal (Cancel exits).
+      const _kindChoice=await arcConfirm(
+        "What kind of ECO is this?\n\n"+
+        "EXTERNAL: A customer-driven change order. The customer is paying for the change.\n"+
+        "  • Listed on the customer's printed Quote\n"+
+        "  • Counted toward Quote totals\n\n"+
+        "INTERNAL: A change we are responsible for (e.g., engineering miss, supplier substitution).\n"+
+        "  • Hidden from the customer Quote\n"+
+        "  • Tracked through BC for internal cost accounting only\n\n"+
+        "Choose External or Internal:",
+        {title:"ECO Type",okLabel:"External (customer)",cancelLabel:"Internal (us)"}
+      );
+      // arcConfirm doesn't have a "Cancel out" option here — both choices are
+      // valid. true → external, false → internal.
+      const _ecoKind=_kindChoice?"external":"internal";
+      console.log("[ECO] calling createEcoDoc kind="+_ecoKind);
+      const result=await createEcoDoc(uid,project,_ecoKind);
       console.log("[ECO] createEcoDoc returned:",result);
       // Optimistically insert the new ECO into the tab strip so the tab
       // appears instantly — the snapshot listener catches up shortly after.
@@ -11166,7 +11241,7 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
         ecoId:result.ecoId,
         number:result.number,
         status:"draft",
-        kind:result.kind||"customer_change",
+        kind:result.kind||"external",
         deltaSell:0,
         approvedAt:null,
         completedAt:null,
@@ -11184,7 +11259,7 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
           ecoId:result.ecoId,
           number:result.number,
           status:"draft",
-          kind:result.kind||"customer_change",
+          kind:result.kind||"external",
           deltaSell:0,
           approvedAt:null,
           completedAt:null,
@@ -11426,11 +11501,19 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
         // progress" and is cleaner.
         const tag=isApproved?" ✓":(isTerminal?" –":"");
         const dollarStr=eco.deltaSell?` ${eco.deltaSell>=0?"+":""}$${Math.round(Math.abs(eco.deltaSell)).toLocaleString()}`:"";
+        // DECISION(v1.19.925): Visual differentiation for Internal ECOs —
+        // they're tracked through BC for cost accounting but never appear on
+        // the customer Quote. Display gets an amber INT chip + amber border
+        // so anyone looking at the tab strip can immediately tell which
+        // changes are billable (External, default) vs absorbed (Internal).
+        const _isInternal=eco.kind==="internal";
+        const _internalBorder=_isInternal?"2px solid #f59e0b":tabBorder(isActive);
         return(
           <button key={eco.ecoId}
             onClick={()=>onScopeChange&&onScopeChange({type:"eco",ecoNumber:eco.number,ecoId:eco.ecoId})}
-            style={{background:tabBg(isActive),color:tabColor(isActive),border:tabBorder(isActive),borderBottom:isActive?"1px solid "+tabBg(true):tabBorder(false),borderRadius:_tabRadius,padding:"7px 14px",fontSize:12,fontWeight:isActive?800:600,cursor:"pointer",letterSpacing:0.3,opacity:isTerminal&&eco.status==="cancelled"?0.5:1,marginBottom:-1,position:"relative",zIndex:isActive?2:1}}>
-            ECO {String(eco.number).padStart(2,"0")}{tag}{dollarStr}
+            title={_isInternal?"INTERNAL ECO — our responsibility, not billed to the customer":"EXTERNAL ECO — customer-driven, billable on the Quote"}
+            style={{background:tabBg(isActive),color:_isInternal?"#f59e0b":tabColor(isActive),border:_internalBorder,borderBottom:isActive?"1px solid "+tabBg(true):_internalBorder,borderRadius:_tabRadius,padding:"7px 14px",fontSize:12,fontWeight:isActive?800:600,cursor:"pointer",letterSpacing:0.3,opacity:isTerminal&&eco.status==="cancelled"?0.5:1,marginBottom:-1,position:"relative",zIndex:isActive?2:1}}>
+            ECO {String(eco.number).padStart(2,"0")}{_isInternal&&<span style={{marginLeft:4,fontSize:9,fontWeight:800,padding:"1px 5px",background:"#3a1f00",color:"#f59e0b",borderRadius:3,letterSpacing:0.5}}>INT</span>}{tag}{dollarStr}
           </button>
         );
       })}
@@ -14955,7 +15038,8 @@ function QuoteTab({project,onUpdate}){
                 const pan=entry._obj;
                 const pi=idx; // alias so existing panel render reads its line number from the combined index
               const panPr=pan.pricing||{};
-              const panSell=computePanelSellPrice(pan);
+              // DECISION(v1.19.925): Customer-facing sell — Internal ECOs excluded.
+              const panSell=computeCustomerPanelSellPrice(pan,project);
               const panHasSell=panSell>0;
               const panQty=pan.lineQty??1;
               const panBom=pan.bom||[];
@@ -14967,8 +15051,11 @@ function QuoteTab({project,onUpdate}){
               // draft ECO with rows on this panel separately (sorted by number)
               // so the customer sees how each ECO contributes individually. The
               // cumulative NEW = BASE + ECO 01 + ECO 02 + … + ECO N.
+              // DECISION(v1.19.925): External ECOs only on the customer-facing
+              // printed Quote — Internal ECOs are tracked through BC for cost
+              // accounting but never billed to or shown to the customer.
               const _draftEcosForLine=Array.isArray(project?.ecoSummary)
-                ?project.ecoSummary.filter(e=>e&&e.status==="draft").slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
+                ?project.ecoSummary.filter(e=>e&&e.status==="draft"&&_isExternalEco(e)).slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
                 :[];
               const _panEcoEntries=_draftEcosForLine
                 .filter(eco=>panBom.some(r=>_matchesEco(r,eco.ecoId,eco.number)))
@@ -15195,14 +15282,15 @@ function QuoteTab({project,onUpdate}){
 
           {/* Validity Notice + Totals — kept together on same page */}
           {(()=>{
-            const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0)+computeAllServiceCardsTotal(project);
+            const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computeCustomerPanelSellPrice(pan,project)*(pan.lineQty??1),0)+computeAllServiceCardsTotal(project);
             const hasTotalPrice=totalPrice>0;
             // DECISION(v1.19.884, Quote Form ECO Stage E): split totals into BASE
             // + ECO contributions. DECISION(v1.19.908, multi-ECO additive): list
             // EACH draft ECO's subtotal separately so the customer sees how each
             // change order rolls into the Total. Total = BASE + Σ(each ECO).
+            // DECISION(v1.19.925): External ECOs only on customer Quote totals.
             const _draftEcosTotals=Array.isArray(project?.ecoSummary)
-              ?project.ecoSummary.filter(e=>e&&e.status==="draft").slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
+              ?project.ecoSummary.filter(e=>e&&e.status==="draft"&&_isExternalEco(e)).slice().sort((a,b)=>(+a.number||0)-(+b.number||0))
               :[];
             const _ecoSubtotalsByEco=_draftEcosTotals
               .filter(eco=>(project.panels||[]).some(pan=>(pan.bom||[]).some(r=>_matchesEco(r,eco.ecoId,eco.number))))
@@ -15220,7 +15308,7 @@ function QuoteTab({project,onUpdate}){
             const _servicesSubtotal=computeAllServiceCardsTotal(project);
             const _panelsSubtotal=_hasAnyEcoChanges
               ?(project.panels||[]).reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0)
-              :(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
+              :(project.panels||[]).reduce((s,pan)=>s+computeCustomerPanelSellPrice(pan,project)*(pan.lineQty??1),0);
             const _fmtSigned=(n)=>(n>=0?"+":"-")+"$"+Math.abs(Math.round(n)).toLocaleString("en-US");
             return(
           <div style={{breakInside:"avoid",pageBreakInside:"avoid"}}>
