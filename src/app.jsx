@@ -25562,7 +25562,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
   const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
   const accentColor=card.lineType==="commissioning"?"#fb923c":card.lineType==="programming"?"#38bdf8":"#a78bfa";
   const accentBg=card.lineType==="commissioning"?"#2a1a0a":card.lineType==="programming"?"#0a1a28":"#1a0a28";
-  const iconChar=card.lineType==="commissioning"?"🔧":card.lineType==="programming"?"💻":"✏️";
+  const iconChar=card.lineType==="commissioning"?"🔧":card.lineType==="programming"?"💻":null;
   function commit(patch){
     if(!onUpdate)return;
     onUpdate({...card,...patch});
@@ -25590,7 +25590,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
         <div style={{background:C.accentDim,color:C.accent,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:800,letterSpacing:1,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",justifyContent:"center"}}>LINE {idx+1}</div>
         {/* Type pill — Engineering / Programming / Commissioning */}
         <div style={{background:accentBg,color:accentColor,borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:800,letterSpacing:0.6,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
-          <span style={{fontSize:14}}>{iconChar}</span>
+          {iconChar&&<span style={{fontSize:14}}>{iconChar}</span>}
           <span style={{textTransform:"uppercase"}}>{label}</span>
         </div>
         {/* Qty */}
@@ -26553,14 +26553,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         const t=computeServiceCardTotal(sc);
                         const accentColor=sc.lineType==="commissioning"?"#fb923c":sc.lineType==="programming"?"#38bdf8":"#a78bfa";
                         const accentBg=sc.lineType==="commissioning"?"#2a1a0a":sc.lineType==="programming"?"#0a1a28":"#1a0a28";
-                        const iconChar=sc.lineType==="commissioning"?"🔧":sc.lineType==="programming"?"💻":"✏️";
+                        const iconChar=sc.lineType==="commissioning"?"🔧":sc.lineType==="programming"?"💻":null;
                         const labelTxt=sc.description||SERVICE_CARD_LABELS[sc.lineType]||"Service";
                         const qtyTxt=sc.priceMode==="hourly"?`${+sc.qty||0}h`:`${+sc.qty||1}`;
                         return(
                           <div key={sc.id} onClick={()=>setSelectedPanelId(sc.id)}
                             style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:isSel?"#1a1a2e":"transparent",border:`1px solid ${isSel?C.accent:C.border}`,cursor:"pointer"}}>
                             <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:24,textAlign:"center"}}>{qtyTxt}</span>
-                            <span style={{fontSize:13}}>{iconChar}</span>
+                            {iconChar&&<span style={{fontSize:13}}>{iconChar}</span>}
                             <span style={{fontSize:9,fontWeight:800,color:accentColor,background:accentBg,borderRadius:3,padding:"1px 5px",letterSpacing:0.4,whiteSpace:"nowrap"}}>{(SERVICE_CARD_LABELS[sc.lineType]||"").toUpperCase()}</span>
                             <span style={{fontSize:12,color:isSel?C.accent:C.sub,fontWeight:isSel?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{labelTxt}</span>
                             <Badge status={sc.status||"draft"}/>
@@ -26888,14 +26888,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       const total=computeServiceCardTotal(sc);
                       const accentColor=sc.lineType==="commissioning"?"#fb923c":sc.lineType==="programming"?"#38bdf8":"#a78bfa";
                       const accentBg=sc.lineType==="commissioning"?"#2a1a0a":sc.lineType==="programming"?"#0a1a28":"#1a0a28";
-                      const iconChar=sc.lineType==="commissioning"?"🔧":sc.lineType==="programming"?"💻":"✏️";
+                      const iconChar=sc.lineType==="commissioning"?"🔧":sc.lineType==="programming"?"💻":null;
                       const labelTxt=sc.description||SERVICE_CARD_LABELS[sc.lineType]||"Service";
                       const qtyTxt=sc.priceMode==="hourly"?`${+sc.qty||0}h`:`${+sc.qty||1}`;
                       return(
                         <div key={sc.id} onClick={()=>setSelectedPanelId(sc.id)}
                           style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:isSel?"#1a1a2e":"transparent",border:`1px solid ${isSel?C.accent:C.border}`,cursor:"pointer"}}>
                           <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:24,textAlign:"center"}}>{qtyTxt}</span>
-                          <span style={{fontSize:13,flexShrink:0}}>{iconChar}</span>
+                          {iconChar&&<span style={{fontSize:13,flexShrink:0}}>{iconChar}</span>}
                           <span style={{fontSize:9,fontWeight:800,color:accentColor,background:accentBg,borderRadius:3,padding:"1px 5px",letterSpacing:0.4,flexShrink:0,whiteSpace:"nowrap"}}>{(SERVICE_CARD_LABELS[sc.lineType]||"").toUpperCase()}</span>
                           <span style={{fontSize:12,color:isSel?C.accent:C.sub,fontWeight:isSel?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{labelTxt}</span>
                           <Badge status={sc.status||"draft"}/>
