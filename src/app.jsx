@@ -11425,11 +11425,27 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
       // post-delete state back into the parent project so BASE unlocks
       // immediately when the last draft is gone. Mirrors what deleteEcoDoc
       // writes to Firestore.
+      // DECISION(v1.19.927): ALSO strip the ECO's tagged rows + pages from
+      // the local panels array so the UI updates immediately. Without this
+      // step, the panel-list cards, ECO Summary, BC sync chips, etc. kept
+      // reading the ghost rows from local React state until the Firestore
+      // onSnapshot delivered the cleaned panels (~500ms-1s later, or only
+      // after a hard refresh if the listener missed). Mirrors the panel-
+      // cleanup logic in deleteEcoDoc.
       if(onLocalProjectUpdate){
         const _existingSummary=Array.isArray(project.ecoSummary)?project.ecoSummary:[];
         const _mergedSummary=_existingSummary.filter(e=>e&&e.ecoId!==ecoIdBeingDeleted);
         const _hasAnyDraftLeft=_mergedSummary.some(e=>e&&e.status==="draft");
-        const partial={ecoSummary:_mergedSummary};
+        const _cleanedPanels=Array.isArray(project.panels)?project.panels.map(panel=>{
+          const bom=Array.isArray(panel.bom)?panel.bom.filter(r=>r.ecoTag!==ecoIdBeingDeleted):panel.bom;
+          const pages=Array.isArray(panel.pages)?panel.pages.filter(p=>p.ecoTag!==ecoIdBeingDeleted):panel.pages;
+          return{...panel,bom,pages};
+        }):project.panels;
+        const partial={
+          ecoSummary:_mergedSummary,
+          panels:_cleanedPanels,
+          activeEcoId:project.activeEcoId===ecoIdBeingDeleted?null:project.activeEcoId,
+        };
         if(!_hasAnyDraftLeft){
           partial.ecoEditUnlocked=false;
           partial.ecoEditUnlockedAt=null;
