@@ -4846,7 +4846,7 @@ async function buildQuotePdfDoc(doc,project){
     // leaving Line 2+ with no visible border. The border draws at line ~3340 with an
     // if(ctx.pageNum===lineItemStartPage) guard — so the box MUST fit on one page.
     ctx._currentLineNum=pi+1;
-    const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
+    const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
     const estCrossH=crossedPre.length>0?(4+crossedPre.length*1.8):0;
     const estSpecH=Math.ceil(6/2)*4.5; // 6 spec items in 2 cols
     const estNotesH=(pan.bomNotes?8:0)+(qp.lineNotes?5:0);
@@ -5021,7 +5021,7 @@ async function buildQuotePdfDoc(doc,project){
     // DECISION(v1.19.330): Crossed items render INSIDE the bordered box (between docs and pricing).
     // User wants crosses kept with their line item, not floating below. Font is 4.5pt with 1.8mm line
     // height to keep the box compact enough to fit on one page (see height pre-estimate above).
-    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
+    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
     if(crossed.length>0){
       const maxCrossedW=ctx.contentWidth-8;
       var clh=1.8;
@@ -5413,7 +5413,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
     if(!isNaN(an)&&!isNaN(bn))return an-bn;
     return(a.itemNo||"").localeCompare(b.itemNo||"");
   });
-  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
+  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
   doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
   doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,laborDivY+m(7),{align:"right"});
   const accent=[0,0,0]; // B&W mode — used by autoTable
@@ -14480,7 +14480,7 @@ function QuoteTab({project,onUpdate}){
               const panBom=pan.bom||[];
               const qp=(q.panelOverrides||{})[pan.id]||{};
               const setQP=(updates)=>{const po={...(q.panelOverrides||{}),[pan.id]:{...qp,...updates}};setQ({panelOverrides:po});};
-              const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
+              const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
               // DECISION(v1.19.857, ECO Stage A): Surface draft ECOs on the printed
               // quote line. DECISION(v1.19.908, multi-ECO additive): List EVERY
               // draft ECO with rows on this panel separately (sorted by number)
@@ -21797,7 +21797,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>}
           {/* BOM Notes */}
           {(()=>{
-            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
+            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
             const formatCorrections=(panel.bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
             return(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
