@@ -4846,7 +4846,7 @@ async function buildQuotePdfDoc(doc,project){
     // leaving Line 2+ with no visible border. The border draws at line ~3340 with an
     // if(ctx.pageNum===lineItemStartPage) guard — so the box MUST fit on one page.
     ctx._currentLineNum=pi+1;
-    const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
+    const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
     const estCrossH=crossedPre.length>0?(4+crossedPre.length*1.8):0;
     const estSpecH=Math.ceil(6/2)*4.5; // 6 spec items in 2 cols
     const estNotesH=(pan.bomNotes?8:0)+(qp.lineNotes?5:0);
@@ -5021,7 +5021,7 @@ async function buildQuotePdfDoc(doc,project){
     // DECISION(v1.19.330): Crossed items render INSIDE the bordered box (between docs and pricing).
     // User wants crosses kept with their line item, not floating below. Font is 4.5pt with 1.8mm line
     // height to keep the box compact enough to fit on one page (see height pre-estimate above).
-    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
+    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
     if(crossed.length>0){
       const maxCrossedW=ctx.contentWidth-8;
       var clh=1.8;
@@ -5413,7 +5413,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
     if(!isNaN(an)&&!isNaN(bn))return an-bn;
     return(a.itemNo||"").localeCompare(b.itemNo||"");
   });
-  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
+  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
   doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
   doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,laborDivY+m(7),{align:"right"});
   const accent=[0,0,0]; // B&W mode — used by autoTable
@@ -14480,7 +14480,7 @@ function QuoteTab({project,onUpdate}){
               const panBom=pan.bom||[];
               const qp=(q.panelOverrides||{})[pan.id]||{};
               const setQP=(updates)=>{const po={...(q.panelOverrides||{}),[pan.id]:{...qp,...updates}};setQ({panelOverrides:po});};
-              const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
+              const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
               // DECISION(v1.19.857, ECO Stage A): Surface draft ECOs on the printed
               // quote line. DECISION(v1.19.908, multi-ECO additive): List EVERY
               // draft ECO with rows on this panel separately (sorted by number)
@@ -21282,44 +21282,63 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     if(!isNaN(an)&&!isNaN(bn))return an-bn;
                     return (a.itemNo||"").localeCompare(b.itemNo||"");
                   });
-                  // ECO Phase 2.C: Build out array with optional separator <tr> inserted
-                  // at the boundary between untagged and tagged rows. flatMap lets us emit
-                  // the separator + the row from a single iteration.
-                  const _firstEcoIdx=sortedBom.findIndex(r=>r.ecoTag);
-                  const _hasEcoRows=_firstEcoIdx>=0;
-                  const _ecoCount=sortedBom.filter(r=>r.ecoTag).length;
-                  // DECISION(v1.19.873, ECO delta-row): in ECO scope, ALWAYS show the
-                  // CHANGE ORDER separator so the user knows where their changes will
-                  // land. When no ECO rows exist yet we render it after the last
-                  // untagged row (i.e., at the end of the table). When ECO rows exist
-                  // we render it at the first ECO row index as before.
+                  // ECO Phase 2.C: Insert a sub-header BEFORE each ECO group of rows.
+                  // DECISION(v1.19.909): Replace the single "ENGINEERING CHANGE ORDERS"
+                  // separator with one per-ECO header row. Each header reads
+                  // "ENGINEERING CHANGE ORDER NN — <date> — <N items>" and groups all
+                  // rows tagged for that ECO underneath it. Items per ECO counts
+                  // unique BOM rows (excludes labor; labor renders inside the same
+                  // group below the BOM rows).
+                  const _hasEcoRows=sortedBom.some(r=>r.ecoTag);
                   const _emitTrailingEcoSep=_isEcoScope&&!_hasEcoRows;
-                  const _lastUntaggedIdx=_emitTrailingEcoSep?sortedBom.length-1:-1;
+                  const _lastIdx=sortedBom.length-1;
+                  // metadata lookup: ecoNumber → ecoSummary entry (date)
+                  const _ecoMetaByNum=new Map();
+                  for(const e of (project?.ecoSummary||[])){
+                    if(e&&e.number!=null)_ecoMetaByNum.set(+e.number||0,e);
+                  }
+                  // items-per-ECO counts (BOM rows only)
+                  const _itemsByEcoNum=new Map();
+                  for(const r of sortedBom){
+                    if(!r.ecoTag||r.isLaborRow)continue;
+                    const n=r.ecoNumber||0;
+                    _itemsByEcoNum.set(n,(_itemsByEcoNum.get(n)||0)+1);
+                  }
+                  const _emittedEcoHeaders=new Set();
+                  const _renderEcoHdr=(num,opts)=>{
+                    const e=_ecoMetaByNum.get(num)||{};
+                    const date=e.createdAt?new Date(e.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"";
+                    const itemCount=_itemsByEcoNum.get(num)||0;
+                    const label=`ENGINEERING CHANGE ORDER ${String(num).padStart(2,"0")}`;
+                    const isEmpty=!!opts?.empty;
+                    return(
+                      <tr key={`eco-hdr-${num}-${isEmpty?"empty":"items"}`} style={{background:"#1a0040"}}>
+                        <td colSpan={13} style={{padding:"6px 12px",borderTop:"2px solid #a855f7",borderBottom:isEmpty?"1px dashed #a855f766":"1px solid #a855f7"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,fontWeight:800,color:"#a855f7",letterSpacing:1}}>
+                            <span>⏷ {label}</span>
+                            {date&&<span style={{color:C.muted,fontWeight:500,letterSpacing:0.3,fontSize:10}}>· {date}</span>}
+                            <span style={{color:C.muted,fontWeight:500,letterSpacing:0.3,fontSize:10}}>
+                              · {isEmpty?"no changes yet — edit qty / description above, or use 🔍 to swap parts":`${itemCount} item${itemCount===1?"":"s"}`}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  };
                   return sortedBom.flatMap((row,i)=>{
-                    const _ecoSep=(_hasEcoRows&&i===_firstEcoIdx)?(
-                      <tr key="eco-separator" style={{background:"#1a0040"}}>
-                        <td colSpan={13} style={{padding:"6px 12px",borderTop:"2px solid #a855f7",borderBottom:"2px solid #a855f7"}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,fontWeight:800,color:"#a855f7",letterSpacing:1}}>
-                            <span>⏷ ENGINEERING CHANGE ORDERS</span>
-                            <span style={{color:C.muted,fontWeight:500,letterSpacing:0.3,fontSize:10}}>
-                              · {_ecoCount} change{_ecoCount===1?"":"s"} below
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ):null;
-                    const _trailingEcoSep=(_emitTrailingEcoSep&&i===_lastUntaggedIdx)?(
-                      <tr key="eco-separator-empty" style={{background:"#1a0040"}}>
-                        <td colSpan={13} style={{padding:"6px 12px",borderTop:"2px solid #a855f7",borderBottom:"1px dashed #a855f766"}}>
-                          <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,fontWeight:800,color:"#a855f7",letterSpacing:1}}>
-                            <span>⏷ ENGINEERING CHANGE ORDERS</span>
-                            <span style={{color:C.muted,fontWeight:500,letterSpacing:0.3,fontSize:10}}>
-                              · no changes yet — edit qty / description above, or use 🔍 to swap parts
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ):null;
+                    // Per-ECO header: emit before the first row of each ECO number.
+                    let _ecoSep=null;
+                    if(row.ecoTag){
+                      const _ecoNum=row.ecoNumber||0;
+                      if(!_emittedEcoHeaders.has(_ecoNum)){
+                        _emittedEcoHeaders.add(_ecoNum);
+                        _ecoSep=_renderEcoHdr(_ecoNum,{empty:false});
+                      }
+                    }
+                    // Trailing placeholder header when in ECO scope but no rows yet.
+                    const _trailingEcoSep=(_emitTrailingEcoSep&&i===_lastIdx)
+                      ?_renderEcoHdr(_scopeEcoNumber||0,{empty:true})
+                      :null;
                     // DECISION(v1.19.666): Red row = qty=0 / unitPrice=0 / priceDate missing or stale.
                     // See _isBomRowFlaggedRed for full rules + exclusions.
                     // DECISION(v1.19.831): Alternate-row tint bumped to 0.10 alpha — still
@@ -21778,7 +21797,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>}
           {/* BOM Notes */}
           {(()=>{
-            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber));
+            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||""));
             const formatCorrections=(panel.bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
             return(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
