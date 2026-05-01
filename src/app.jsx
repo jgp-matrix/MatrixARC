@@ -838,59 +838,122 @@ function computePanelSellPrice(panel){
 // and the Sent/Sold/Lost dashboard boxes on the main page. Mirrors the logic at the
 // quote print site (sum of computePanelSellPrice × lineQty across panels). Returns
 // 0 when the project has no panels — keeps reduce() callers safe.
-// DECISION(v1.19.914, Service Lines): Now also includes project-level service
-// lines (Engineering / Programming / Commissioning).
+// DECISION(v1.19.915, Service Cards): Includes project-level service-card line
+// items (Engineering Design / Programming / Commissioning) which sit alongside
+// panels on the customer quote. Each service card has its own sell-side total.
 function computeProjectTotal(p){
   if(!p)return 0;
   const panelsTotal=Array.isArray(p.panels)
     ?p.panels.reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0)
     :0;
-  return panelsTotal+computeServiceLinesTotal(p);
+  return panelsTotal+computeAllServiceCardsTotal(p);
 }
 
-// ── PROJECT-LEVEL SERVICE LINES (Engineering / Programming / Commissioning) ──
-// DECISION(v1.19.914): Project-level professional-services line items that
-// appear on the printed quote alongside (not inside) panels. Stored at
-// `project.serviceLines = { engineering: {hours,rate,description}, programming
-// : {…}, commissioning: {…} }`. Each line sells at hours × rate (no margin —
-// the rate IS the bill rate). Lines with hours=0 are hidden everywhere.
-const SERVICE_LINE_TYPES=["engineering","programming","commissioning"];
-const SERVICE_LINE_LABELS={
-  engineering:"Engineering",
+// ── SERVICE CARDS (project-level Quote Lines: Engineering / Programming / Commissioning) ──
+// DECISION(v1.19.915): Project-level professional-services line items, each its
+// own card alongside panels in the line list. Replaces v1.19.914's project-level
+// `serviceLines` object — that approach is gone. Each service card shows up as a
+// quote line item with its own status, total, and BC Project Task. Multi-of-same-
+// type allowed (e.g., two Engineering Design cards for Phase 1 + Phase 2).
+//
+// BC Project Task slots — sequential within each type bucket:
+//   Engineering Design  → 50100, 50101, 50102, … 50199 (100 slots)
+//   Programming         → 50200, 50201, 50202, … 50299 (100 slots)
+//   Commissioning       → 50300, 50301, 50302, … 50399 (100 slots)
+//
+// Pricing modes:
+//   "hourly"   — qty = hours, total = qty × rate
+//   "lump_sum" — qty = units (default 1), total = qty × lumpSum
+const SERVICE_CARD_TYPES=["engineering","programming","commissioning"];
+const SERVICE_CARD_LABELS={
+  engineering:"Engineering Design",
   programming:"Programming",
   commissioning:"Commissioning",
 };
-const SERVICE_LINE_DEFAULT_RATES={
-  engineering:125,
-  programming:125,
-  commissioning:150,
+const SERVICE_CARD_DEFAULTS={
+  engineering:{
+    description:"Engineering Design",
+    detailDescription:"Schematic design, BOM development, drawing package",
+    priceMode:"hourly",
+    rate:125,
+    qty:1,
+    lumpSum:0,
+  },
+  programming:{
+    description:"Programming",
+    detailDescription:"PLC / HMI programming and configuration",
+    priceMode:"hourly",
+    rate:125,
+    qty:1,
+    lumpSum:0,
+  },
+  commissioning:{
+    description:"Commissioning",
+    detailDescription:"On-site startup, system verification, operator training",
+    priceMode:"lump_sum",
+    rate:0,
+    qty:1,
+    lumpSum:0,
+  },
 };
-const SERVICE_LINE_DEFAULT_DESCRIPTIONS={
-  engineering:"Schematic design, BOM development, drawing package",
-  programming:"PLC / HMI programming and configuration",
-  commissioning:"On-site startup, system verification, operator training",
+const SERVICE_CARD_BC_BASE_SLOT={
+  engineering:50100,
+  programming:50200,
+  commissioning:50300,
 };
-function _getServiceLine(project,type){
-  const sl=(project?.serviceLines||{})[type]||{};
+function computeServiceCardTotal(card){
+  if(!card)return 0;
+  const qty=Number(card.qty)||0;
+  if(card.priceMode==="lump_sum"){
+    return qty*(Number(card.lumpSum)||0);
+  }
+  return qty*(Number(card.rate)||0);
+}
+function computeAllServiceCardsTotal(project){
+  if(!project||!Array.isArray(project.serviceCards))return 0;
+  return project.serviceCards.reduce((s,sc)=>s+computeServiceCardTotal(sc),0);
+}
+function getServiceCardsByType(project,type){
+  if(!project||!Array.isArray(project.serviceCards))return[];
+  return project.serviceCards.filter(sc=>sc&&sc.lineType===type);
+}
+// Pick the lowest unused BC slot in the type's bucket. Returns null if all 100
+// slots are used (vanishingly unlikely but the caller should handle it).
+function allocateServiceCardBcSlot(serviceCards,lineType){
+  const base=SERVICE_CARD_BC_BASE_SLOT[lineType];
+  if(!base)return null;
+  const used=new Set(
+    (serviceCards||[])
+      .filter(sc=>sc&&sc.lineType===lineType&&sc.bcProjectTaskNo)
+      .map(sc=>String(sc.bcProjectTaskNo))
+  );
+  for(let i=0;i<100;i++){
+    const slot=String(base+i);
+    if(!used.has(slot))return slot;
+  }
+  return null;
+}
+// Factory — used by the "+ Add Quote Line" modal in Step B.
+function createServiceCard(lineType,existingServiceCards){
+  const def=SERVICE_CARD_DEFAULTS[lineType];
+  if(!def)return null;
   return{
-    hours:Number(sl.hours)||0,
-    rate:sl.rate!=null?Number(sl.rate):SERVICE_LINE_DEFAULT_RATES[type],
-    description:sl.description||SERVICE_LINE_DEFAULT_DESCRIPTIONS[type],
-    notes:sl.notes||"",
+    id:`svc-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+    lineType,
+    qty:def.qty,
+    rate:def.rate,
+    lumpSum:def.lumpSum,
+    priceMode:def.priceMode,
+    description:def.description,
+    detailDescription:def.detailDescription,
+    requestedShipDate:"",
+    estCompletionDate:"",
+    notes:"",
+    status:"draft",
+    bcProjectTaskNo:allocateServiceCardBcSlot(existingServiceCards||[],lineType),
+    schemaVersion:typeof APP_SCHEMA_VERSION!=="undefined"?APP_SCHEMA_VERSION:1,
+    createdAt:Date.now(),
   };
-}
-function computeServiceLineTotal(project,type){
-  const l=_getServiceLine(project,type);
-  return l.hours*l.rate;
-}
-function computeServiceLinesTotal(project){
-  if(!project)return 0;
-  return SERVICE_LINE_TYPES.reduce((s,t)=>s+computeServiceLineTotal(project,t),0);
-}
-function getActiveServiceLines(project){
-  return SERVICE_LINE_TYPES
-    .filter(t=>computeServiceLineTotal(project,t)>0)
-    .map(t=>({type:t,label:SERVICE_LINE_LABELS[t],..._getServiceLine(project,t),total:computeServiceLineTotal(project,t)}));
 }
 
 // ── LABOR BOM ROWS (auto-managed, always first 3 rows) ──
@@ -5136,59 +5199,9 @@ async function buildQuotePdfDoc(doc,project){
   }
 
   // ── PROFESSIONAL SERVICES LINE ITEMS ──
-  // DECISION(v1.19.914): Project-level service lines render as additional line
-  // items after the panel loop. Each non-zero service line gets a compact box
-  // with description / hours × rate / total.
-  const _servicesPdf=getActiveServiceLines(project);
-  if(_servicesPdf.length>0){
-    for(let si=0;si<_servicesPdf.length;si++){
-      const s=_servicesPdf[si];
-      const lineNum=panels.length+si+1;
-      // Pre-estimate height: header(7) + title(5) + scope(6) + pricing(12) = ~30mm
-      arcDocCheckBreak(ctx,32);
-      const _svcStartY=ctx.y;
-      const _svcStartPg=ctx.pageNum;
-      // Header bar
-      doc.setFillColor(248,250,252);doc.setDrawColor(226,232,240);
-      doc.roundedRect(ARC_DOC.margin.left,ctx.y,ctx.contentWidth,7,2,2,"FD");
-      doc.setFontSize(9);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.brand);
-      doc.text("Line "+lineNum,ARC_DOC.margin.left+3,ctx.y+4.5);
-      doc.setTextColor(...ARC_DOC.colors.black);
-      doc.text(s.label+" - Professional Services",ARC_DOC.margin.left+22,ctx.y+4.5);
-      ctx.y+=9;
-      // Title
-      arcDocText(ctx,s.label,{fontSize:11,bold:true,gap:2,indent:2,maxWidth:ctx.contentWidth-4});
-      // Scope description (notes-style box)
-      if(s.description){
-        const scopeLines=doc.splitTextToSize("Scope: "+s.description,ctx.contentWidth-8);
-        const slh=3;
-        const scopeH=scopeLines.length*slh+3;
-        arcDocCheckBreak(ctx,scopeH);
-        doc.setFontSize(7.5);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
-        scopeLines.forEach((sl,li)=>{doc.text(sl,ARC_DOC.margin.left+3,ctx.y+2+li*slh);});
-        ctx.y+=scopeH;
-      }
-      // Pricing row — Hours / Rate / Lead / Discount / Total
-      const sBoxH=12;
-      arcDocCheckBreak(ctx,sBoxH+2);
-      doc.setFillColor(248,250,252);doc.setDrawColor(248,250,252);
-      doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,sBoxH,"FD");
-      const sPw=ctx.contentWidth/4;const sPy=ctx.y;
-      [{l:"Hours",v:s.hours+" hrs"},{l:"Rate",v:arcFmtMoney(s.rate)+"/hr"},{l:"Lead Time",v:"-"},{l:"Total Price",v:arcFmtMoney(s.total)}].forEach((col,ci)=>{
-        const cx=ARC_DOC.margin.left+ci*sPw+sPw/2;
-        doc.setFontSize(6);doc.setFont("helvetica","italic");doc.setTextColor(...ARC_DOC.colors.grey);
-        doc.text(col.l,cx,sPy+4,{align:"center"});
-        doc.setFontSize(10);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.black);
-        doc.text(col.v,cx,sPy+9,{align:"center"});
-      });
-      ctx.y=sPy+sBoxH+1;
-      if(ctx.pageNum===_svcStartPg){
-        doc.setDrawColor(...ARC_DOC.colors.lightGrey);doc.setLineWidth(0.3);
-        doc.roundedRect(ARC_DOC.margin.left,_svcStartY,ctx.contentWidth,ctx.y-_svcStartY,2,2);
-      }
-      ctx.y+=3;
-    }
-  }
+  // DECISION(v1.19.915): v1.19.914's project-level service-line PDF rendering
+  // was removed. Service Quote Lines now have their own ServicesCard data and
+  // will render here in Step F as boxed line items mirroring the panel layout.
 
   // ── VALIDITY DISCLAIMER ──
   // If disclaimer+totals won't fit, add "totals on next page" before breaking
@@ -5203,8 +5216,8 @@ async function buildQuotePdfDoc(doc,project){
   // DECISION(v1.19.890, Stage E PDF; v1.19.908 multi-ECO): list each draft
   // ECO's subtotal separately so the customer sees how each change order
   // rolls into the Total. Total = BASE + Σ(each ECO).
-  // DECISION(v1.19.914): Services subtotal is its own row.
-  const _servicesSubtotalPdf=computeServiceLinesTotal(project);
+  // DECISION(v1.19.914 / v1.19.915): Services subtotal is its own row.
+  const _servicesSubtotalPdf=computeAllServiceCardsTotal(project);
   const _panelsSubtotalPdf=panels.reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
   const totalPrice=_panelsSubtotalPdf+_servicesSubtotalPdf;
   const _draftTotalsPdf=Array.isArray(project?.ecoSummary)
@@ -6155,6 +6168,19 @@ if(typeof window!=="undefined"){window._bumpBomVersionIfChanged=_bumpBomVersionI
 function _computeQuoteHash(project){
   if(!project)return"";
   const data={
+    // DECISION(v1.19.915): Service cards contribute to the quote hash so
+    // Quote Rev bumps when a service line is added, removed, repriced, or has
+    // its description changed. Status / dates / BC slot / id are excluded —
+    // those don't affect the customer-facing quote.
+    serviceCards:(project.serviceCards||[]).map(sc=>({
+      lt:sc.lineType||"",
+      pm:sc.priceMode||"",
+      q:Number(sc.qty)||0,
+      r:Number(sc.rate)||0,
+      ls:Number(sc.lumpSum)||0,
+      d:(sc.description||"").trim(),
+      dd:(sc.detailDescription||"").trim(),
+    })),
     panels:(project.panels||[]).map(p=>{
       const pr=p.pricing||{};
       return{
@@ -6564,6 +6590,12 @@ function migrateProjectShape(p){
   if(out.ecoCounter==null)out.ecoCounter=0;
   if(out.activeEcoId===undefined)out.activeEcoId=null;
   if(!Array.isArray(out.ecoSummary))out.ecoSummary=[];
+  // DECISION(v1.19.915, Service Cards): Initialize serviceCards array. Wipe
+  // v1.19.914's project-level `serviceLines` object — that approach was
+  // discarded in favor of per-card line items. v1.19.914 had no real data, so
+  // we just delete the field rather than migrate.
+  if(!Array.isArray(out.serviceCards))out.serviceCards=[];
+  if(out.serviceLines!=null)delete out.serviceLines;
   // DECISION(v1.19.875): The Stage 0 legacy-ECO cleanup that lived here was
   // DELETED. It stripped every ecoTag-bearing BOM row + wiped ecoSummary on
   // every project load if `_ecoLegacyMigrated` wasn't set. That flag was set
@@ -14887,68 +14919,16 @@ function QuoteTab({project,onUpdate}){
               )}
               </div>);
             })}
-            {/* DECISION(v1.19.914): Project-level service lines (Engineering /
-                Programming / Commissioning) render as additional line items
-                AFTER the panel rows. Each active line gets its own boxed entry
-                like a panel. Hidden when zero hours. */}
-            {(()=>{
-              const _services=getActiveServiceLines(project);
-              if(_services.length===0)return null;
-              const _panelCount=(project.panels||[]).length;
-              return _services.map((s,si)=>(
-                <div key={`svc-${s.type}`} style={{marginBottom:12}}>
-                  <div className="qd-li">
-                    <div className="qd-li-hdr">
-                      <span className="qd-li-num">Line {_panelCount+si+1}</span>
-                      <span className="qd-li-part">{s.label} — Professional Services</span>
-                    </div>
-                    <div className="qd-li-body">
-                      <div>
-                        <div className="qd-li-title">{s.label}</div>
-                        <div className="qd-li-notes" style={{borderLeftColor:"#3b82f6"}}>
-                          <span>SCOPE: </span>
-                          <textarea value={s.description||""}
-                            onChange={e=>{
-                              const sl={...(project.serviceLines||{})};
-                              sl[s.type]={...(sl[s.type]||{}),description:e.target.value};
-                              onUpdate({...project,serviceLines:sl});
-                            }}
-                            rows={2}
-                            style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="qd-li-pricing">
-                      <div>
-                        <div className="qd-plabel">Hours</div>
-                        <div className="qd-pval">{s.hours} hrs</div>
-                      </div>
-                      <div>
-                        <div className="qd-plabel">Rate</div>
-                        <div className="qd-pval">{fmtMoney(s.rate)}/hr</div>
-                      </div>
-                      <div>
-                        <div className="qd-plabel">Lead Time</div>
-                        <div className="qd-pval">—</div>
-                      </div>
-                      <div>
-                        <div className="qd-plabel">Discount</div>
-                        <div className="qd-pval">—</div>
-                      </div>
-                      <div>
-                        <div className="qd-plabel">Total Price</div>
-                        <div className={"qd-pval qd-total-val"}>{fmtMoney(s.total)}</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ));
-            })()}
+            {/* DECISION(v1.19.915): v1.19.914's project-level service-line render
+                here was removed. Service Quote Lines are now their own card
+                line items rendered alongside panels in the line list (Step C).
+                Bottom totals still pick up serviceCards via the
+                computeAllServiceCardsTotal helper below. */}
           </div>
 
           {/* Validity Notice + Totals — kept together on same page */}
           {(()=>{
-            const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0)+computeServiceLinesTotal(project);
+            const totalPrice=(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0)+computeAllServiceCardsTotal(project);
             const hasTotalPrice=totalPrice>0;
             // DECISION(v1.19.884, Quote Form ECO Stage E): split totals into BASE
             // + ECO contributions. DECISION(v1.19.908, multi-ECO additive): list
@@ -14967,9 +14947,10 @@ function QuoteTab({project,onUpdate}){
                 subtotal:(project.panels||[]).reduce((s,pan)=>s+computeEcoSellDelta(pan,eco.ecoId,eco.number)*(pan.lineQty??1),0),
               }));
             const _hasAnyEcoChanges=_ecoSubtotalsByEco.length>0;
-            // DECISION(v1.19.914): Service lines render as their own subtotal row.
-            // BASE/panels subtotal excludes services so they're not double-counted.
-            const _servicesSubtotal=computeServiceLinesTotal(project);
+            // DECISION(v1.19.914 / v1.19.915): Service cards render as their own
+            // subtotal row. BASE/panels subtotal excludes services so they're
+            // not double-counted.
+            const _servicesSubtotal=computeAllServiceCardsTotal(project);
             const _panelsSubtotal=_hasAnyEcoChanges
               ?(project.panels||[]).reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0)
               :(project.panels||[]).reduce((s,pan)=>s+computePanelSellPrice(pan)*(pan.lineQty??1),0);
@@ -26728,53 +26709,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   })(),
                   document.body
                 )}
-                {/* DECISION(v1.19.914, Service Lines): Project-level services
-                    section — Engineering, Programming, Commissioning. Hours ×
-                    Rate per category, rolls into PROJECT TOTAL and the printed
-                    quote. Independent of BASE/ECO scope (always visible). Lines
-                    with hours=0 are hidden on the printed quote but the editor
-                    always shows all three categories. */}
-                <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginTop:6}}>
-                  <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:6}}>
-                    <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.7,textTransform:"uppercase"}}>Project Services</span>
-                    {(()=>{const slt=computeServiceLinesTotal(project);return slt>0?<span style={{fontSize:10,color:"#94a3b8",fontWeight:500}}>· {SERVICE_LINE_TYPES.filter(t=>computeServiceLineTotal(project,t)>0).length} active</span>:null;})()}
-                  </div>
-                  {SERVICE_LINE_TYPES.map(type=>{
-                    const line=_getServiceLine(project,type);
-                    const total=line.hours*line.rate;
-                    const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
-                    const setField=(field,val)=>{
-                      const sl={...(project.serviceLines||{})};
-                      sl[type]={...(sl[type]||{}),[field]:val};
-                      const upd={...project,serviceLines:sl};
-                      update(upd);
-                      try{safeSave(uid,upd);}catch(e){}
-                    };
-                    return(
-                      <div key={type} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 0",fontSize:12}}>
-                        <span style={{color:total>0?"#a78bfa":C.muted,fontWeight:600,minWidth:96,fontSize:11}}>{SERVICE_LINE_LABELS[type]}</span>
-                        <input type="number" min="0" step="0.5" readOnly={readOnly}
-                          value={line.hours||""}
-                          placeholder="0"
-                          onChange={e=>setField("hours",Math.max(0,+e.target.value||0))}
-                          onFocus={e=>e.target.select()}
-                          title="Hours"
-                          style={{...inp({padding:"3px 6px",fontSize:12,width:54,textAlign:"right"}),color:C.text}}/>
-                        <span style={{color:C.muted,fontSize:11}}>hrs ×</span>
-                        <input type="number" min="0" step="5" readOnly={readOnly}
-                          value={line.rate}
-                          onChange={e=>setField("rate",Math.max(0,+e.target.value||0))}
-                          onFocus={e=>e.target.select()}
-                          title="Rate $/hr"
-                          style={{...inp({padding:"3px 6px",fontSize:12,width:60,textAlign:"right"}),color:C.text}}/>
-                        <span style={{color:C.muted,fontSize:11}}>/hr</span>
-                        <span style={{flex:1,textAlign:"right",fontVariantNumeric:"tabular-nums",color:total>0?"#fff":C.muted,fontWeight:total>0?700:400,fontSize:12}}>
-                          {total>0?pfmt(total):"—"}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                {/* DECISION(v1.19.915): v1.19.914's project-level service-lines
+                    editor was removed. Service Quote Lines now live as their own
+                    cards in the panel-list view (added via "+ Add Quote Line"
+                    in Step B). The PROJECT TOTAL roll-up below still picks up
+                    serviceCards via computeAllServiceCardsTotal so totals
+                    remain correct as soon as cards exist. */}
                 {(()=>{
                   // DECISION(v1.19.886): PROJECT TOTAL routed through
                   // computePanelSellPrice for consistency with per-panel rows above.
@@ -26795,7 +26735,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         :computePanelSellPrice(p));
                     return sum+_ps*(p.lineQty??p.qty??1);
                   },0);
-                  const servicesTotal=computeServiceLinesTotal(project);
+                  const servicesTotal=computeAllServiceCardsTotal(project);
                   const total=panelsTotal+servicesTotal;
                   const _shouldShow=(project.panels||[]).length>1||servicesTotal>0;
                   if(!_shouldShow)return null;
