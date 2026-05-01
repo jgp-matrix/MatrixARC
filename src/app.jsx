@@ -5450,18 +5450,9 @@ async function buildQuotePdfDoc(doc,project){
       ctx.y+=nH+1.5;
     }
 
-    // DECISION(v1.19.890, Stage E PDF): Crate auto-detect line. Renders
-    // immediately under the NOTES box. Detection rule per user spec —
-    // partNumber contains "CRATE" OR description starts with "CRATE".
-    // DECISION(v1.19.891): ASCII only — jsPDF helvetica mangles ✓/○/→/Σ/Δ
-    // glyphs (Unicode beyond Latin-1) into garbled multi-byte sequences with
-    // weird inter-letter spacing. Web (qd-li-notes) keeps the rich glyphs.
-    arcDocCheckBreak(ctx,4);
-    doc.setFontSize(7);doc.setFont("helvetica","bold");
-    if(_hasCratePdf){doc.setTextColor(22,163,74);}else{doc.setTextColor(120,120,128);}
-    doc.text(_hasCratePdf?"Includes ISPM 15 Certified Crate":"Crate Not Included",ARC_DOC.margin.left+3,ctx.y+2);
-    ctx.y+=4;
-    doc.setTextColor(...ARC_DOC.colors.black);
+    // DECISION(v1.19.945): Crate auto-detect moved further down — now renders
+    // BELOW the Crossed/Superseded list (immediately before the pricing row).
+    // The previous position above QUOTE NOTES is gone.
 
     // DECISION(v1.19.939): Lead-Time note moved BELOW the pricing row (see
     // banner block after pricing-row render — full-width, bold red). Old
@@ -5539,6 +5530,17 @@ async function buildQuotePdfDoc(doc,project){
       });
       ctx.y+=1.5;
     }
+
+    // DECISION(v1.19.945): Crate auto-detect line — moved here so it sits
+    // BELOW the Crossed/Superseded list (immediately above the pricing row).
+    // Same detection rule as the on-screen quote (partNumber contains
+    // "CRATE" or description starts with "CRATE", excluding labor rows).
+    arcDocCheckBreak(ctx,4);
+    doc.setFontSize(7);doc.setFont("helvetica","bold");
+    if(_hasCratePdf){doc.setTextColor(22,163,74);}else{doc.setTextColor(120,120,128);}
+    doc.text(_hasCratePdf?"Includes ISPM 15 Certified Crate":"Crate Not Included",ARC_DOC.margin.left+3,ctx.y+2);
+    ctx.y+=4;
+    doc.setTextColor(...ARC_DOC.colors.black);
 
     // Pricing row — INSIDE the bordered box
     // DECISION(v1.19.890, Stage E PDF; v1.19.908 multi-ECO): stack BASE / each
@@ -15535,25 +15537,9 @@ function QuoteTab({project,onUpdate}){
                   {pan.bomNotes&&<div className="qd-li-notes">
                     <span>NOTES: </span>{pan.bomNotes}
                   </div>}
-                  {/* DECISION(v1.19.889): Auto-detected crate status. Per user
-                      spec: partNumber CONTAINS "CRATE" (anywhere, case-insensitive)
-                      OR description STARTS WITH "CRATE". Tighter than the v1.19.888
-                      pass which used /crat(e|ing)/i and also caught descriptions
-                      with "crate" mid-string (e.g. "wood crate"). Excludes labor
-                      rows. */}
-                  {(()=>{
-                    const _hasCrate=(panBom||[]).some(r=>{
-                      if(r.isLaborRow)return false;
-                      const pn=(r.partNumber||"").toString();
-                      const desc=(r.description||"").toString().trim();
-                      return /crate/i.test(pn)||/^crate/i.test(desc);
-                    });
-                    return(
-                      <div className="qd-li-notes" style={{borderLeftColor:_hasCrate?"#16a34a":"#94a3b8"}}>
-                        <span style={{color:_hasCrate?"#16a34a":"#475569",fontWeight:700}}>{_hasCrate?"✓ Includes ISPM 15 Certified Crate":"Crate Not Included"}</span>
-                      </div>
-                    );
-                  })()}
+                  {/* DECISION(v1.19.945): Crate detection moved to a spot
+                      BELOW the Crossed/Superseded list (outside qd-li body).
+                      Old position above QUOTE NOTES is gone. */}
                   {/* DECISION(v1.19.939): Per-panel Lead Time note moved BELOW
                       the pricing row (see banner outside qd-li-body / before
                       qd-li closes). Old position inside qd-li-notes is gone. */}
@@ -15745,6 +15731,23 @@ function QuoteTab({project,onUpdate}){
                   ))}
                 </div>
               )}
+              {/* DECISION(v1.19.945): Crate detection moved here — sits BELOW
+                  the Crossed/Superseded list at the bottom of the line item.
+                  Same auto-detect rule (partNumber contains "CRATE" OR
+                  description starts with "CRATE", excluding labor rows). */}
+              {(()=>{
+                const _hasCrate=(panBom||[]).some(r=>{
+                  if(r.isLaborRow)return false;
+                  const pn=(r.partNumber||"").toString();
+                  const desc=(r.description||"").toString().trim();
+                  return /crate/i.test(pn)||/^crate/i.test(desc);
+                });
+                return(
+                  <div style={{padding:"4px 44px 10px",fontSize:13,fontWeight:700,color:_hasCrate?"#16a34a":"#475569"}}>
+                    {_hasCrate?"✓ Includes ISPM 15 Certified Crate":"Crate Not Included"}
+                  </div>
+                );
+              })()}
               </div>);
               });
             })()}
