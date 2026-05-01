@@ -33773,10 +33773,25 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
       return order.map(k=>({label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="engineering"){
-      const order=["pre_review","post_review"];
-      const labels={pre_review:"Needs Pre-Review",post_review:"Needs Post-Review"};
+      // DECISION(v1.19.923, Step H): Engineering tab now also surfaces projects
+      // with service Quote Lines (Engineering Design / Programming / Commissioning)
+      // so the engineering team can see who needs to do what at a glance. A
+      // project with multiple service types appears in multiple columns. The
+      // existing pre/post review columns remain.
+      const order=["engineering_design","programming","commissioning","pre_review","post_review"];
+      const labels={
+        engineering_design:"Engineering Design",
+        programming:"Programming",
+        commissioning:"Commissioning",
+        pre_review:"Needs Pre-Review",
+        post_review:"Needs Post-Review",
+      };
       const map={};
+      const _hasServiceOfType=(p,t)=>Array.isArray(p.serviceCards)&&p.serviceCards.some(sc=>sc&&sc.lineType===t);
       list.forEach(p=>{
+        if(_hasServiceOfType(p,"engineering")){if(!map.engineering_design)map.engineering_design=[];map.engineering_design.push(p);}
+        if(_hasServiceOfType(p,"programming")){if(!map.programming)map.programming=[];map.programming.push(p);}
+        if(_hasServiceOfType(p,"commissioning")){if(!map.commissioning)map.commissioning=[];map.commissioning.push(p);}
         if(p.preReviewStatus==="pending"){if(!map.pre_review)map.pre_review=[];map.pre_review.push(p);}
         if(p.postReviewStatus==="pending"){if(!map.post_review)map.post_review=[];map.post_review.push(p);}
       });
@@ -33969,8 +33984,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
           {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981"};
-                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16"};
+                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981","Engineering Design":"#a78bfa","Programming":"#38bdf8","Commissioning":"#fb923c"};
+                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
                 const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColColors[g.label]||C.muted):C.sub;
                 const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColBg[g.label]||C.border):"#3d6090";
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
