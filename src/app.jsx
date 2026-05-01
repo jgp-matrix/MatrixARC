@@ -6464,39 +6464,43 @@ function migrateProjectShape(p){
   // (the symptom the user hit: ECO disappeared from the tab strip after a
   // page refresh). The one-time migration target (PRJ402064) was already
   // cleaned long ago. Removing the block prevents further data loss.
-  // DECISION(v1.19.911, runaway Quote Rev): One-shot self-heal. If quoteRev
-  // climbed way past quoteRevAtPrint (v1.19.910 and earlier had a hash that
-  // included BC-poll-driven fields, so silent background bumps drove some
-  // projects into the hundreds — PRJ402083 hit Rev 293), normalize back to
-  // quoteRevAtPrint+1 in memory. The next save (now under the v1.19.911
-  // bump-once-per-print-cycle rule) writes this back to Firestore, so the
-  // healing is permanent on first save after load. lastQuoteHash is cleared
-  // so that next save's hash compare doesn't bump again on the reset itself.
-  const _rev=+out.quoteRev||0;
-  const _revAtPrint=+out.quoteRevAtPrint||0;
-  if(_rev>_revAtPrint+1){
-    const _normalized=Math.max(_revAtPrint+1,1);
-    console.log(`[QUOTE REV] normalized ${out.id||"<unknown>"}: ${_rev} → ${_normalized} (revAtPrint=${_revAtPrint})`);
-    out.quoteRev=_normalized;
-    out.lastQuoteHash=null;
-  }
-  // DECISION(v1.19.912): Targeted one-shot manual rev resets. Per user request,
-  // specific projects need their Quote Rev pinned to a chosen value (overrides
-  // the auto-normalize above). Gated by `_quoteRevManualResets` map so each
-  // entry fires at most once per project — the flag is persisted back on the
-  // next save. To reset a project, add `bcProjectNumber → targetRev` here.
+  // DECISION(v1.19.912): Targeted one-shot manual rev resets — apply BEFORE
+  // auto-normalize so the manual override wins. Gated by `_quoteRevManualReset
+  // Applied` so each entry fires at most once per project; the flag is
+  // persisted on the next save.
   const _quoteRevManualResets={
     "PRJ402083":15,
   };
   const _appliedSet=Array.isArray(out._quoteRevManualResetApplied)?new Set(out._quoteRevManualResetApplied):new Set();
   const _bcNum=(out.bcProjectNumber||"").trim();
-  if(_bcNum&&_quoteRevManualResets[_bcNum]!=null&&!_appliedSet.has(_bcNum)){
+  let _manualResetEverApplied=_appliedSet.has(_bcNum);
+  if(_bcNum&&_quoteRevManualResets[_bcNum]!=null&&!_manualResetEverApplied){
     const _target=_quoteRevManualResets[_bcNum];
     console.log(`[QUOTE REV] manual reset ${_bcNum}: ${out.quoteRev||0} → ${_target}`);
     out.quoteRev=_target;
     out.lastQuoteHash=null;
     _appliedSet.add(_bcNum);
     out._quoteRevManualResetApplied=Array.from(_appliedSet);
+    _manualResetEverApplied=true;
+  }
+  // DECISION(v1.19.911, runaway Quote Rev): One-shot self-heal for projects
+  // that climbed past quoteRevAtPrint (v1.19.910 and earlier had a hash that
+  // included BC-poll-driven fields, so silent background bumps drove projects
+  // into the hundreds — PRJ402083 hit Rev 293). Normalize to quoteRevAtPrint+1
+  // in memory; lastQuoteHash is cleared so the reset itself doesn't trigger
+  // another bump.
+  // DECISION(v1.19.913): Skip auto-normalize once a manual reset has been
+  // applied for this project — otherwise a manually-set Rev (e.g. 15 with
+  // revAtPrint=8) would get normalized back to revAtPrint+1=9 on next load.
+  if(!_manualResetEverApplied){
+    const _rev=+out.quoteRev||0;
+    const _revAtPrint=+out.quoteRevAtPrint||0;
+    if(_rev>_revAtPrint+1){
+      const _normalized=Math.max(_revAtPrint+1,1);
+      console.log(`[QUOTE REV] normalized ${out.id||"<unknown>"}: ${_rev} → ${_normalized} (revAtPrint=${_revAtPrint})`);
+      out.quoteRev=_normalized;
+      out.lastQuoteHash=null;
+    }
   }
   return out;
 }
@@ -6669,10 +6673,19 @@ async function ensureDataUrl(page){
 
 // ── PROJECT MIGRATION (flat → panels) ──
 function migrateProject(p){
-  if(p.panels) return p;
-  const panel={id:'panel-1',name:'Panel 1',pages:p.pages||[],bom:p.bom||[],validation:p.validation||null,pricing:p.pricing||null,budgetaryQuote:p.budgetaryQuote||null,status:p.status||'draft'};
-  const {pages,bom,validation,pricing,budgetaryQuote,...rest}=p;
-  return{...rest,panels:[panel]};
+  // DECISION(v1.19.913): Chain through migrateProjectShape so live onSnapshot
+  // updates (ProjectView's listener at ~line 27534) get the same ECO defaults +
+  // Quote Rev normalization + manual rev resets that loadProjects() applies.
+  // Without this chain, migrateProjectShape only fired on initial dashboard load,
+  // so a project opened directly (or refreshed via onSnapshot) skipped the
+  // quoteRev cleanup — PRJ402083 stayed at 294 even after v1.19.911/.912 deploy.
+  let q=p;
+  if(!q.panels){
+    const panel={id:'panel-1',name:'Panel 1',pages:q.pages||[],bom:q.bom||[],validation:q.validation||null,pricing:q.pricing||null,budgetaryQuote:q.budgetaryQuote||null,status:q.status||'draft'};
+    const {pages,bom,validation,pricing,budgetaryQuote,...rest}=q;
+    q={...rest,panels:[panel]};
+  }
+  return migrateProjectShape(q);
 }
 
 // ── PART LIBRARY ──
