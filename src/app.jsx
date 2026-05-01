@@ -6480,6 +6480,24 @@ function migrateProjectShape(p){
     out.quoteRev=_normalized;
     out.lastQuoteHash=null;
   }
+  // DECISION(v1.19.912): Targeted one-shot manual rev resets. Per user request,
+  // specific projects need their Quote Rev pinned to a chosen value (overrides
+  // the auto-normalize above). Gated by `_quoteRevManualResets` map so each
+  // entry fires at most once per project — the flag is persisted back on the
+  // next save. To reset a project, add `bcProjectNumber → targetRev` here.
+  const _quoteRevManualResets={
+    "PRJ402083":15,
+  };
+  const _appliedSet=Array.isArray(out._quoteRevManualResetApplied)?new Set(out._quoteRevManualResetApplied):new Set();
+  const _bcNum=(out.bcProjectNumber||"").trim();
+  if(_bcNum&&_quoteRevManualResets[_bcNum]!=null&&!_appliedSet.has(_bcNum)){
+    const _target=_quoteRevManualResets[_bcNum];
+    console.log(`[QUOTE REV] manual reset ${_bcNum}: ${out.quoteRev||0} → ${_target}`);
+    out.quoteRev=_target;
+    out.lastQuoteHash=null;
+    _appliedSet.add(_bcNum);
+    out._quoteRevManualResetApplied=Array.from(_appliedSet);
+  }
   return out;
 }
 async function deleteProject(uid,id){
