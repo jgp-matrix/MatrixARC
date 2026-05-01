@@ -29478,6 +29478,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         }
         if(hit&&!hit.isCrossed){
           matched++;
+          // DECISION(v1.19.924): Preserve user-edited prices. If the row was
+          // manually priced (priceSource:"manual"), DO NOT overwrite unitPrice
+          // or flip priceSource back to "bc" — this was Noah's bug: every
+          // supplier-portal apply was clobbering his manual edits, then the
+          // 5-min BC poll would silently re-sync to BC's stale price. We still
+          // apply the lead-time patch + vendor name (those aren't pricing).
+          if(row.priceSource==="manual"){
+            console.log("[PORTAL APPLY] preserving manual price for",row.partNumber,"(was $"+row.unitPrice+", supplier offered $"+hit.price+")");
+            return Object.keys(ltPatch).length||submission.vendorName
+              ?{...row,...ltPatch,bcVendorName:submission.vendorName||row.bcVendorName}
+              :row;
+          }
           return{...row,unitPrice:hit.price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName,...ltPatch};
         }
         return Object.keys(ltPatch).length?{...row,...ltPatch,bcVendorName:submission.vendorName||row.bcVendorName}:row;
@@ -29941,6 +29953,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 const pn=(r.partNumber||"").trim().toUpperCase();
                 const match=results.find(res=>(res.partNumber||"").trim().toUpperCase()===pn);
                 if(match&&match.price>0){
+                  // DECISION(v1.19.924): Preserve user-edited prices. Vendor
+                  // scraper apply must not clobber priceSource:"manual" rows
+                  // (same rule as applyPortalPrices).
+                  if(r.priceSource==="manual"){
+                    console.log("[VENDOR SCRAPER] preserving manual price for",r.partNumber,"(was $"+r.unitPrice+", scraper offered $"+match.price+")");
+                    return{...r,bcVendorName:match.source||vendorName,bcVendorNo:vendorNo};
+                  }
                   applied++;
                   return{...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:match.source||vendorName,bcVendorNo:vendorNo};
                 }
