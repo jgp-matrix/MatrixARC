@@ -25542,70 +25542,184 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
 }
 
 // ── ServicesCard — project-level service Quote Line item card ──
-// DECISION(v1.19.917, Step C): Read-only render of a service card. Mirrors the
-// PanelCard outer chrome (line number, status pill, delete) but with a much
-// smaller body (no BOM / drawings / labor estimate). Step D wires editing.
-function ServicesCard({card,idx,isSelected,onSelect,onDelete,readOnly}){
+// DECISION(v1.19.918, Step C+D): Visually mirrors PanelCard. Same outer card()
+// shell, same LINE pill, same accent labels and transparent-border inputs that
+// activate on focus, same date-box treatment for ship/completion dates, same
+// right-side cluster of [Collapse] [Status Badge] [Delete ✕]. Body holds the
+// Detail / Scope textarea and the price-mode toggle (Hourly / Lump Sum) so the
+// service card is fully editable from this rendition forward.
+function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly}){
   const [collapsed,setCollapsed]=React.useState(false);
+  const [draftDesc,setDraftDesc]=React.useState(card.description||"");
+  const [draftQty,setDraftQty]=React.useState(card.qty??1);
+  const [draftRate,setDraftRate]=React.useState(card.rate??0);
+  const [draftLump,setDraftLump]=React.useState(card.lumpSum??0);
+  const [draftDetail,setDraftDetail]=React.useState(card.detailDescription||"");
+  const [draftReqShip,setDraftReqShip]=React.useState(card.requestedShipDate||"");
+  const [draftEstDone,setDraftEstDone]=React.useState(card.estCompletionDate||"");
   const label=SERVICE_CARD_LABELS[card.lineType]||card.lineType||"Service";
-  const total=computeServiceCardTotal(card);
+  const total=computeServiceCardTotal({...card,qty:+draftQty||0,rate:+draftRate||0,lumpSum:+draftLump||0});
   const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
-  const statusLabel=({draft:"Draft",in_progress:"In Progress",evc:"Ready",active:"Active",complete:"Complete"})[card.status]||card.status||"Draft";
   const accentColor=card.lineType==="commissioning"?"#fb923c":card.lineType==="programming"?"#38bdf8":"#a78bfa";
   const accentBg=card.lineType==="commissioning"?"#2a1a0a":card.lineType==="programming"?"#0a1a28":"#1a0a28";
   const iconChar=card.lineType==="commissioning"?"🔧":card.lineType==="programming"?"💻":"✏️";
-  const fmtDate=d=>d?new Date(d+"T00:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):"—";
+  function commit(patch){
+    if(!onUpdate)return;
+    onUpdate({...card,...patch});
+  }
+  function commitAll(){
+    commit({
+      description:draftDesc,
+      qty:+draftQty||0,
+      rate:+draftRate||0,
+      lumpSum:+draftLump||0,
+      requestedShipDate:draftReqShip,
+      estCompletionDate:draftEstDone,
+      detailDescription:draftDetail,
+    });
+  }
+  function setMode(mode){
+    if(readOnly)return;
+    commit({priceMode:mode});
+  }
   return(
-    <div onClick={onSelect}
-      style={{
-        background:isSelected?"#101025":"#0a0a14",
-        border:`1px solid ${isSelected?C.accent:C.border}`,
-        borderLeft:`4px solid ${accentColor}`,
-        borderRadius:10,
-        padding:0,
-        cursor:"pointer",
-        transition:"border-color 120ms,background 120ms",
-        boxShadow:isSelected?"0 0 0 1px "+C.accent+"55":"none",
-      }}>
-      {/* Header row — Line #, Qty, label/desc, dates, collapse, status, delete */}
-      <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderBottom:collapsed?"none":`1px solid ${C.border}55`}}>
-        <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.5,minWidth:38}}>Line {idx+1}</span>
-        <span style={{fontSize:18,flexShrink:0}}>{iconChar}</span>
-        <span style={{fontSize:11,fontWeight:700,color:accentColor,background:accentBg,borderRadius:4,padding:"2px 8px",letterSpacing:0.4,whiteSpace:"nowrap"}}>{label.toUpperCase()}</span>
-        <span style={{fontSize:11,color:C.sub,minWidth:34,textAlign:"right",fontVariantNumeric:"tabular-nums"}}>{card.qty||0}{card.priceMode==="hourly"?" hr":" ea"}</span>
-        <span style={{flex:1,minWidth:0,fontSize:13,color:C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{card.description||"(no description)"}</span>
-        <span title="Requested Ship Date" style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>Req: <span style={{color:card.requestedShipDate?C.text:C.muted}}>{fmtDate(card.requestedShipDate)}</span></span>
-        <span title="Estimated Completion Date" style={{fontSize:11,color:C.muted,whiteSpace:"nowrap"}}>Est: <span style={{color:card.estCompletionDate?C.text:C.muted}}>{fmtDate(card.estCompletionDate)}</span></span>
-        <button onClick={e=>{e.stopPropagation();setCollapsed(c=>!c);}}
-          title={collapsed?"Expand":"Collapse"}
-          style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"0 4px",lineHeight:1,fontFamily:"inherit"}}>
-          {collapsed?"▸":"▾"}
-        </button>
-        <span style={{background:"#1a1a2a",border:`1px solid ${accentColor}66`,color:accentColor,borderRadius:20,padding:"3px 12px",fontSize:11,fontWeight:700,letterSpacing:0.3,whiteSpace:"nowrap"}}>{statusLabel}</span>
-        <span style={{fontSize:14,fontWeight:800,color:total>0?C.text:C.muted,fontVariantNumeric:"tabular-nums",minWidth:88,textAlign:"right"}}>{total>0?fmt(total):"—"}</span>
-        {!readOnly&&<button onClick={e=>{e.stopPropagation();onDelete&&onDelete();}}
-          title="Delete this Quote Line"
-          style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:14,padding:"0 4px",lineHeight:1,fontFamily:"inherit"}}>✕</button>}
-      </div>
-      {/* Body — Detail Description (read-only in Step C; editable in Step D) */}
-      {!collapsed&&(
-        <div style={{padding:"12px 14px",background:"#06060f"}}>
-          <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:0.6,textTransform:"uppercase",marginBottom:6}}>Detail / Scope</div>
-          <div style={{fontSize:12,color:card.detailDescription?C.text:C.muted,lineHeight:1.6,whiteSpace:"pre-wrap",fontStyle:card.detailDescription?"normal":"italic"}}>
-            {card.detailDescription||"(no scope details yet — editable in next step)"}
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:14,marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}33`,fontSize:11,color:C.muted}}>
-            <span>Mode: <strong style={{color:C.text,textTransform:"capitalize"}}>{card.priceMode==="lump_sum"?"Lump Sum":"Hourly"}</strong></span>
-            {card.priceMode==="hourly"
-              ?<span>Rate: <strong style={{color:C.text,fontVariantNumeric:"tabular-nums"}}>${(+card.rate||0).toLocaleString()}/hr</strong></span>
-              :<span>Lump Sum: <strong style={{color:C.text,fontVariantNumeric:"tabular-nums"}}>${(+card.lumpSum||0).toLocaleString()}</strong></span>}
-            {card.bcProjectTaskNo&&<span style={{marginLeft:"auto",fontFamily:"monospace",fontSize:10}}>BC Task: <span style={{color:C.text}}>{card.bcProjectTaskNo}</span></span>}
+    <div className="fade-in" onClick={e=>{if(onSelect)onSelect();}}
+      style={{...card_style(),border:`2px solid ${isSelected?C.accent:C.border}`,cursor:"pointer",position:"relative"}}>
+      {/* Combined header + title block — same layout as PanelCard */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:collapsed?0:14,flexWrap:"wrap"}}>
+        <div style={{background:C.accentDim,color:C.accent,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:800,letterSpacing:1,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",justifyContent:"center"}}>LINE {idx+1}</div>
+        {/* Type pill — Engineering / Programming / Commissioning */}
+        <div style={{background:accentBg,color:accentColor,borderRadius:6,padding:"4px 10px",fontSize:11,fontWeight:800,letterSpacing:0.6,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+          <span style={{fontSize:14}}>{iconChar}</span>
+          <span style={{textTransform:"uppercase"}}>{label}</span>
+        </div>
+        {/* Qty */}
+        <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
+          <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>{card.priceMode==="hourly"?"Hours":"Qty"}</div>
+          <input type="text" inputMode="decimal" value={draftQty} readOnly={readOnly}
+            onClick={e=>e.stopPropagation()}
+            onChange={e=>{const v=e.target.value.replace(/[^0-9.]/g,'');setDraftQty(v);}}
+            onFocus={e=>{e.target.select();e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
+            onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";commit({qty:+draftQty||0});}}
+            onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftQty(card.qty??1);e.target.blur();}}}
+            style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:"5ch",fontFamily:"inherit",textAlign:"center"}}/>
+        </div>
+        {/* General description (mirrors Panel's DWG # / Description block) */}
+        <div style={{flex:1,display:"flex",alignItems:"flex-start",gap:20,minWidth:0,flexWrap:"wrap"}}>
+          <div style={{display:"flex",gap:8,flex:1,minWidth:160,alignItems:"flex-start"}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1,minWidth:0}}>
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Description</div>
+              <input value={draftDesc} placeholder="—" readOnly={readOnly}
+                onClick={e=>e.stopPropagation()}
+                onChange={e=>setDraftDesc(e.target.value)}
+                onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
+                onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";commit({description:draftDesc});}}
+                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftDesc(card.description||"");e.target.blur();}}}
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.sub,fontSize:14,outline:"none",width:"100%",fontFamily:"inherit"}}/>
+            </div>
+            {/* Requested Ship Date — bordered box like PanelCard */}
+            <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}>
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Requested Ship Date</div>
+              <input type="date" value={draftReqShip} readOnly={readOnly}
+                onClick={e=>e.stopPropagation()}
+                onChange={e=>setDraftReqShip(e.target.value)}
+                onBlur={()=>commit({requestedShipDate:draftReqShip})}
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
+            </div>
+            {/* Est. Completion Date — bordered box */}
+            <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}>
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}
+                title="Date this service is expected to be complete">Est. Completion</div>
+              <input type="date" value={draftEstDone} readOnly={readOnly}
+                onClick={e=>e.stopPropagation()}
+                onChange={e=>setDraftEstDone(e.target.value)}
+                onBlur={()=>commit({estCompletionDate:draftEstDone})}
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
+            </div>
           </div>
         </div>
-      )}
+        {/* Right-side controls — Collapse + Status + Delete (matches PanelCard) */}
+        <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+          <button onClick={e=>{e.stopPropagation();setCollapsed(v=>!v);}} title={collapsed?"Expand":"Collapse"}
+            style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:collapsed?C.accent:C.sub,borderRadius:6,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0,letterSpacing:0.3}}>
+            {collapsed?"▶ Expand":"▼ Collapse"}
+          </button>
+          <Badge status={card.status||"draft"}/>
+          {!readOnly&&<button onClick={e=>{e.stopPropagation();onDelete&&onDelete();}}
+            title="Delete this Quote Line"
+            style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}}
+            onMouseEnter={e=>{e.target.style.color=C.red;}}
+            onMouseLeave={e=>{e.target.style.color=C.muted;}}>✕</button>}
+        </div>
+      </div>
+
+      {/* Body — Detail / Scope + Pricing controls (only when expanded) */}
+      {!collapsed&&(<>
+        {/* Detail Description / Scope */}
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+            <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7}}>DETAIL / SCOPE</div>
+            <span style={{fontSize:11,color:C.muted}}>(customer-facing description on the quote)</span>
+          </div>
+          <textarea value={draftDetail} placeholder="Describe the scope, deliverables, assumptions…" readOnly={readOnly}
+            onClick={e=>e.stopPropagation()}
+            onChange={e=>setDraftDetail(e.target.value)}
+            onFocus={e=>{e.target.style.borderColor=C.accent;}}
+            onBlur={e=>{e.target.style.borderColor=C.border;commit({detailDescription:draftDetail});}}
+            rows={3}
+            style={{width:"100%",background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 12px",color:C.text,fontSize:13,fontFamily:"inherit",lineHeight:1.6,outline:"none",resize:"vertical",boxSizing:"border-box"}}/>
+        </div>
+
+        {/* Pricing controls */}
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,display:"flex",alignItems:"center",gap:14,flexWrap:"wrap"}}>
+          <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:4}}>PRICING</div>
+          {/* Mode toggle */}
+          <div style={{display:"flex",border:`1px solid ${C.border}`,borderRadius:6,overflow:"hidden",flexShrink:0}}>
+            {[["hourly","Hourly"],["lump_sum","Lump Sum"]].map(([k,lbl])=>(
+              <button key={k} onClick={e=>{e.stopPropagation();setMode(k);}}
+                style={{background:card.priceMode===k?C.accentDim:"transparent",color:card.priceMode===k?C.accent:C.muted,border:"none",padding:"5px 14px",fontSize:11,fontWeight:700,cursor:readOnly?"default":"pointer",letterSpacing:0.4,fontFamily:"inherit"}}>
+                {lbl}
+              </button>
+            ))}
+          </div>
+          {/* Rate or Lump Sum input */}
+          {card.priceMode==="hourly"?(
+            <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}>
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Rate ($/hr)</div>
+              <input type="text" inputMode="decimal" value={draftRate} readOnly={readOnly}
+                onClick={e=>e.stopPropagation()}
+                onChange={e=>{const v=e.target.value.replace(/[^0-9.]/g,'');setDraftRate(v);}}
+                onFocus={e=>e.target.select()}
+                onBlur={()=>commit({rate:+draftRate||0})}
+                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:14,fontWeight:700,outline:"none",width:"7ch",fontFamily:"inherit",textAlign:"right"}}/>
+            </div>
+          ):(
+            <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}>
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Lump Sum ($)</div>
+              <input type="text" inputMode="decimal" value={draftLump} readOnly={readOnly}
+                onClick={e=>e.stopPropagation()}
+                onChange={e=>{const v=e.target.value.replace(/[^0-9.]/g,'');setDraftLump(v);}}
+                onFocus={e=>e.target.select()}
+                onBlur={()=>commit({lumpSum:+draftLump||0})}
+                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:14,fontWeight:700,outline:"none",width:"10ch",fontFamily:"inherit",textAlign:"right"}}/>
+            </div>
+          )}
+          {/* Live Total */}
+          <div style={{flex:1,textAlign:"right",fontSize:18,fontWeight:800,color:total>0?C.text:C.muted,fontVariantNumeric:"tabular-nums"}}>
+            {total>0?fmt(total):"—"}
+          </div>
+          {card.bcProjectTaskNo&&<span title="Business Central Project Task slot" style={{fontSize:10,color:C.muted,fontFamily:"monospace",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 6px"}}>BC {card.bcProjectTaskNo}</span>}
+        </div>
+      </>)}
     </div>
   );
 }
+// Alias to avoid name collision with the local `card` variable inside
+// PanelListView (it shadows `card` from module scope when looking up
+// service-card data). `card_style` is the shared module-level style helper.
+const card_style=card;
 
 function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent}){
   const [editingName,setEditingName]=useState(false);
@@ -25754,6 +25868,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const label=SERVICE_CARD_LABELS[card.lineType]||"Service";
     if(!(await arcConfirm(`Delete this ${label} line?`,{destructive:true,okLabel:"Delete"})))return;
     const updated={...project,serviceCards:(project.serviceCards||[]).filter(sc=>sc.id!==id)};
+    onUpdate(updated);
+    safeSave(uid,updated);
+  }
+  // DECISION(v1.19.918, Step D): Update a service Quote Line in place.
+  // Persisted via the same safeSave path as addServiceCard / deleteServiceCard.
+  function updateServiceCard(updatedCard){
+    if(!updatedCard||!updatedCard.id)return;
+    const updated={...project,serviceCards:(project.serviceCards||[]).map(sc=>sc.id===updatedCard.id?updatedCard:sc)};
     onUpdate(updated);
     safeSave(uid,updated);
   }
@@ -26346,6 +26468,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         isSelected={card.id===selectedPanelId}
                         onSelect={()=>setSelectedPanelId(card.id)}
                         onDelete={()=>deleteServiceCard(card.id)}
+                        onUpdate={updateServiceCard}
                       />
                     );
                   }
