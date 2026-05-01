@@ -21090,9 +21090,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         );
       })()}
       {/* Combined header + title block */}
-      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
+      {/* DECISION(v1.19.930): Header row uses alignItems:"stretch" so all
+          columns share the row's height; LINE pill, Qty, DWG#, Rev,
+          Description, and the bordered date boxes all line up cleanly. The
+          label divs sit at row top (matched padding) and the value rows
+          baseline-align via consistent fontSize:15 + fontWeight:700. */}
+      <div style={{display:"flex",alignItems:"stretch",gap:10,marginBottom:14,flexWrap:"wrap"}}>
         <div style={{background:C.accentDim,color:C.accent,borderRadius:6,padding:"4px 12px",fontSize:13,fontWeight:800,letterSpacing:1,flexShrink:0,alignSelf:"stretch",display:"flex",alignItems:"center",justifyContent:"center"}}>LINE {idx+1}</div>
-        <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0}}>
+        <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,paddingTop:4}}>
           <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Qty</div>
           <input type="text" inputMode="numeric" value={draftLineQty} readOnly={readOnly}
             onChange={e=>{const v=e.target.value.replace(/[^0-9]/g,'');setDraftLineQty(v);}}
@@ -21103,7 +21108,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         </div>
         {/* Panel name + title block identity */}
         <div style={{flex:1,display:"flex",alignItems:"flex-start",gap:20,minWidth:0,flexWrap:"wrap"}}>
-          <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,position:"relative"}}>
+          <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,position:"relative",paddingTop:4}}>
             <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>DWG #</div>
             <input value={draftNo} onChange={e=>{
                 const v=e.target.value;
@@ -21123,7 +21128,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:Math.max(5,(draftNo||"").length+2)+"ch",fontFamily:"inherit"}}/>
             {draftNoWarn&&<div style={{position:"absolute",top:"100%",left:0,marginTop:4,background:"#1a0a0a",border:"1px solid "+C.red,borderRadius:6,padding:"5px 10px",fontSize:12,color:C.red,whiteSpace:"nowrap",zIndex:100}}>Max 25 characters (BC limit)</div>}
           </div>
-          <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,minWidth:40}}>
+          <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,minWidth:40,paddingTop:4}}>
             <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Rev</div>
             <input value={draftRev} onChange={e=>setDraftRev(e.target.value)} placeholder="—" readOnly={readOnly}
               onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
@@ -21132,20 +21137,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.yellow,fontSize:15,fontWeight:700,outline:"none",width:Math.max(3,(draftRev||"").length+2)+"ch",fontFamily:"inherit"}}/>
           </div>
           <div style={{display:"flex",gap:8,flex:1,minWidth:160,alignItems:"flex-start"}}>
-            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1,minWidth:0}}>
+            <div style={{display:"flex",flexDirection:"column",gap:3,flex:1,minWidth:0,paddingTop:4}}>
               <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Description</div>
               <input value={draftDesc} onChange={e=>setDraftDesc(e.target.value)} placeholder="—" readOnly={readOnly}
                 onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
                 onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";saveTitleFields();}}
                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftDesc(panel.drawingDesc||"");e.target.blur();}}}
-                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.sub,fontSize:14,outline:"none",width:"100%",fontFamily:"inherit"}}/>
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.sub,fontSize:15,fontWeight:700,outline:"none",width:"100%",fontFamily:"inherit"}}/>
             </div>
-            {/* DECISION(v1.19.716): Each date picker gets its own independent frame. */}
+            {/* DECISION(v1.19.716): Each date picker gets its own independent frame.
+                v1.19.930: padding now "4px 10px" with bottom shifted to fontSize:15 inputs
+                so the in-box label/value pair has the same total height as the plain
+                columns (which now have paddingTop:4). All labels align at one y. */}
             <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}>
               <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Requested Ship Date</div>
               <input type="date" value={draftShipDate} onChange={e=>setDraftShipDate(e.target.value)} readOnly={readOnly}
                 onBlur={()=>saveTitleFields()}
-                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
             </div>
             {/* DECISION(v1.19.714): Production End Date (the date production tells the user
                they expect to be done). Feeds computeControlPanelLeadTime — the software
@@ -21158,7 +21166,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 onBlur={()=>saveTitleFields()}
                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftProductionEndDate(panel.productionEndDate||"");e.target.blur();}}}
                 title="Date production tells you they expect to be done. Feeds the Control Panel Ship Date."
-                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:13,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
             </div>
           </div>
         </div>
