@@ -25576,6 +25576,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [eqModalPanelId,setEqModalPanelId]=useState(null);
   const [fbLaborMoreInfo,setFbLaborMoreInfo]=useState(false);
   const [showCADLinkModal,setShowCADLinkModal]=useState(false);
+  // DECISION(v1.19.916, Step B): "+ Add Quote Line" modal state. Picks the
+  // line type (Control Panel / Engineering Design / Programming / Commissioning)
+  // before creating the line.
+  const [showAddLineModal,setShowAddLineModal]=useState(false);
   // Contact person dropdown state
   const [contactPersons,setContactPersons]=useState([]);
   const [showNewContact,setShowNewContact]=useState(false);
@@ -25665,6 +25669,16 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const n=(project.panels||[]).length+1;
     const newPanel={id:'panel-'+Date.now(),name:`Panel ${n}`,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'};
     onUpdate({...project,panels:[...(project.panels||[]),newPanel]});
+  }
+  // DECISION(v1.19.916, Step B): Add a service Quote Line of the given type.
+  // Allocates a fresh BC task slot in the type's bucket (50100..50399 series).
+  function addServiceCard(lineType){
+    const existing=project.serviceCards||[];
+    const card=createServiceCard(lineType,existing);
+    if(!card)return;
+    const updated={...project,serviceCards:[...existing,card]};
+    onUpdate(updated);
+    safeSave(uid,updated);
   }
   function deletePanel(id){
     if(!window.confirm("Delete this panel and all its data?"))return;
@@ -26101,7 +26115,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               {relinkMsg&&<div style={{fontSize:12,color:relinkMsg.startsWith("✓")?C.green:relinkMsg.startsWith("Failed")?C.red:C.muted,marginBottom:2}}>{relinkMsg}</div>}
             </div>
             <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-              <button onClick={!readOnly?addPanel:undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Panel</button>
+              <button onClick={!readOnly?()=>setShowAddLineModal(true):undefined} disabled={readOnly} style={btn(C.accent,"#fff",{fontSize:13,opacity:readOnly?0.4:1})}>+ Add Quote Line</button>
               {panels.some(p=>(p.bom||[]).some(r=>!r.isLaborRow))&&(
                 <button onClick={()=>setShowCADLinkModal(true)} style={btn("#0d1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>📦 Send CADLink BOM's</button>
               )}
@@ -26207,7 +26221,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               <div style={{fontSize:52,marginBottom:16,opacity:0.3}}>🗂️</div>
               <div style={{fontSize:18,fontWeight:700,color:C.sub,marginBottom:8}}>No panels yet</div>
               <div style={{fontSize:13,marginBottom:24,lineHeight:1.7}}>Add a panel to start uploading drawings and quoting this job.</div>
-              {!readOnly&&<button onClick={addPanel} style={btn(C.accent,"#fff")}>+ Add First Panel</button>}
+              {!readOnly&&<button onClick={()=>setShowAddLineModal(true)} style={btn(C.accent,"#fff")}>+ Add Quote Line</button>}
             </div>
           ):(
             // DECISION(v1.19.847, ECO Stage A): Visually grey out the entire
@@ -27063,6 +27077,56 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
     {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)} ownerPriorityActive={ownerPriorityActive}/>}
     {showCADLinkModal&&<CADLinkSendModal project={project} onClose={()=>setShowCADLinkModal(false)}/>}
+    {/* DECISION(v1.19.916, Step B): "+ Add Quote Line" type-picker modal.
+        Vertical list of 4 options. Picks: Control Panel (existing flow) or one
+        of three Service types (creates a serviceCard). Closes on selection or
+        backdrop click. */}
+    {showAddLineModal&&ReactDOM.createPortal(
+      <div onMouseDown={e=>{if(e.target===e.currentTarget)setShowAddLineModal(false);}}
+        style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div onMouseDown={e=>e.stopPropagation()}
+          style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"22px 26px",width:"100%",maxWidth:540,boxShadow:"0 12px 48px rgba(0,0,0,0.6)",color:C.text}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+            <div style={{fontSize:18,fontWeight:800,color:C.text,letterSpacing:0.4}}>Add Quote Line</div>
+            <button onClick={()=>setShowAddLineModal(false)}
+              style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:22,padding:"0 4px",fontFamily:"inherit"}}
+              title="Close">✕</button>
+          </div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:18,lineHeight:1.5}}>
+            Choose what kind of line item to add to this project's quote.
+          </div>
+          {(()=>{
+            const opts=[
+              {key:"panel",icon:"🏠",label:"Control Panel",desc:"Add a control panel with drawings & BOM extraction.",onClick:()=>{setShowAddLineModal(false);addPanel();}},
+              {key:"engineering",icon:"✏️",label:"Engineering Design",desc:"Schematic design, BOM development, drawing package.",onClick:()=>{setShowAddLineModal(false);addServiceCard("engineering");}},
+              {key:"programming",icon:"💻",label:"Programming",desc:"PLC / HMI programming and configuration.",onClick:()=>{setShowAddLineModal(false);addServiceCard("programming");}},
+              {key:"commissioning",icon:"🔧",label:"Commissioning",desc:"On-site startup, system verification, operator training.",onClick:()=>{setShowAddLineModal(false);addServiceCard("commissioning");}},
+            ];
+            return(
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {opts.map(o=>(
+                  <button key={o.key} onClick={o.onClick}
+                    style={{textAlign:"left",background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:8,padding:"14px 16px",cursor:"pointer",color:C.text,fontFamily:"inherit",display:"flex",alignItems:"center",gap:14,transition:"border-color 120ms,background 120ms"}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor=C.accent;e.currentTarget.style.background="#101025";}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.background="#0a0a14";}}>
+                    <span style={{fontSize:24,flexShrink:0,width:32,textAlign:"center"}}>{o.icon}</span>
+                    <span style={{flex:1,minWidth:0}}>
+                      <span style={{display:"block",fontSize:14,fontWeight:700,color:C.text,marginBottom:2}}>{o.label}</span>
+                      <span style={{display:"block",fontSize:12,color:C.muted,lineHeight:1.5}}>{o.desc}</span>
+                    </span>
+                    <span style={{fontSize:18,color:C.muted,flexShrink:0}}>›</span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:18}}>
+            <button onClick={()=>setShowAddLineModal(false)}
+              style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600}}>Cancel</button>
+          </div>
+        </div>
+      </div>
+    ,document.body)}
     {/* DECISION(v1.19.752): Mark-LOST confirm modal. Replaces native browser confirm()
         so it matches ARC's dark UI. Same confirmation copy as before. */}
     {showMarkLostConfirm&&ReactDOM.createPortal(
