@@ -1091,8 +1091,12 @@ function computeControlPanelLeadTime(panel,project){
   // doesn't trigger on NaN, so the v1.19.933 expression poisoned the whole
   // chain with NaN on any panel that didn't have customerApprovalDays set
   // yet. Resolve the raw value first, then coerce + clamp.
+  // DECISION(v1.19.939): Enforce 3-week MINIMUM buffer on customer approval
+  // days. Engineering Design produces submittals; the minimum reasonable
+  // approval window is 21 days. Raw values below 21 are floored at 21
+  // automatically — keeps the Approval-due date on the Quote honest.
   const _caRaw=panel.customerApprovalDays;
-  const customerApprovalDays=Math.max(0,Math.min(180,_caRaw==null?21:(+_caRaw||0)));
+  const customerApprovalDays=Math.max(21,Math.min(180,_caRaw==null?21:(+_caRaw||0)));
 
   // ── MILESTONE CHAIN (sequential days from today=PO Received) ──────────
   //   Eng → Submittals Sent → Customer Approval → Materials → Production
@@ -5415,33 +5419,9 @@ async function buildQuotePdfDoc(doc,project){
     ctx.y+=4;
     doc.setTextColor(...ARC_DOC.colors.black);
 
-    // DECISION(v1.19.937): Per-panel Est. Lead Time + approval-dependency note.
-    // Mirrors the on-screen note. Only renders when the project has any
-    // Engineering Design service card (engineering drives the milestone chain).
-    {
-      const _hasEngServicePdf=Array.isArray(project?.serviceCards)&&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
-      if(_hasEngServicePdf){
-        let _cpltPdf=null;try{_cpltPdf=computeControlPanelLeadTime(pan,project);}catch(e){_cpltPdf=null;}
-        if(_cpltPdf&&!_cpltPdf.noDataWarning){
-          const _today=new Date();_today.setHours(0,0,0,0);
-          const _approvalDue=new Date(_today.getTime()+(_cpltPdf.engineeringDays+_cpltPdf.customerApprovalDays)*86400000);
-          const _fmtPdf=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
-          const noteLines=[
-            `Est. Lead Time: ${_cpltPdf.leadDays} days`,
-            `Panel Lead Time is dependent upon receiving signed Approval drawings by ${_fmtPdf(_approvalDue)}. Lead Time will be re-calculated if approvals take longer.`,
-          ];
-          arcDocCheckBreak(ctx,8);
-          doc.setFontSize(6);doc.setFont("helvetica","bold");doc.setTextColor(146,64,14);
-          doc.text(noteLines[0],ARC_DOC.margin.left+3,ctx.y+2);ctx.y+=3;
-          doc.setFontSize(5.5);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.grey);
-          const wrap=doc.splitTextToSize(noteLines[1],ctx.contentWidth-8);
-          arcDocCheckBreak(ctx,wrap.length*2.2+1);
-          wrap.forEach((ln,i)=>doc.text(ln,ARC_DOC.margin.left+3,ctx.y+i*2.2));
-          ctx.y+=wrap.length*2.2+1;
-          doc.setTextColor(...ARC_DOC.colors.black);
-        }
-      }
-    }
+    // DECISION(v1.19.939): Lead-Time note moved BELOW the pricing row (see
+    // banner block after pricing-row render — full-width, bold red). Old
+    // position above Quote Notes is gone.
 
     // Quote Notes (compact — inside bordered box)
     if(qp.lineNotes){
@@ -5553,6 +5533,33 @@ async function buildQuotePdfDoc(doc,project){
       }
     });
     ctx.y=py+boxH+1;
+    // DECISION(v1.19.939): Lead-Time banner — red bold, full-width across the
+    // line item box, sits between the pricing row and the line-item border
+    // close. Mirrors the on-screen banner. Only renders when project has any
+    // Engineering Design service card.
+    {
+      const _hasEngServicePdf2=Array.isArray(project?.serviceCards)&&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
+      if(_hasEngServicePdf2){
+        let _cpltPdf2=null;try{_cpltPdf2=computeControlPanelLeadTime(pan,project);}catch(e){_cpltPdf2=null;}
+        if(_cpltPdf2&&!_cpltPdf2.noDataWarning){
+          const _today2=new Date();_today2.setHours(0,0,0,0);
+          const _approvalDue2=new Date(_today2.getTime()+(_cpltPdf2.engineeringDays+_cpltPdf2.customerApprovalDays)*86400000);
+          const _fmtPdf2=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
+          const _msg=`Est. Lead Time: ${_cpltPdf2.leadDays} days · Panel Lead Time is dependent upon receiving signed Approval drawings by ${_fmtPdf2(_approvalDue2)}. Lead Time will be re-calculated if approvals take longer.`;
+          doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.red);
+          const wrap2=doc.splitTextToSize(_msg,ctx.contentWidth-6);
+          const bH=wrap2.length*3+3;
+          arcDocCheckBreak(ctx,bH+2);
+          // Pale red background fill + thin top border.
+          doc.setFillColor(254,242,242);doc.setDrawColor(254,202,202);doc.setLineWidth(0.2);
+          doc.rect(ARC_DOC.margin.left+0.3,ctx.y,ctx.contentWidth-0.6,bH,"FD");
+          doc.setTextColor(...ARC_DOC.colors.red);
+          wrap2.forEach((ln,i)=>doc.text(ln,ARC_DOC.W/2,ctx.y+3+i*3,{align:"center"}));
+          ctx.y+=bH+1;
+          doc.setTextColor(...ARC_DOC.colors.black);
+        }
+      }
+    }
     // Draw border around entire line item (header + specs + notes + crosses + pricing)
     if(ctx.pageNum===lineItemStartPage){
       doc.setDrawColor(...ARC_DOC.colors.lightGrey);doc.setLineWidth(0.3);
@@ -15459,31 +15466,9 @@ function QuoteTab({project,onUpdate}){
                       </div>
                     );
                   })()}
-                  {/* DECISION(v1.19.937): Per-panel Est. Lead Time note with
-                      approval-dependency clause. Auto-rendered when the project
-                      has any Engineering Design service card (engineering is
-                      the upstream driver in the v1.19.933 milestone chain).
-                      Approval due date = today + engineeringDays + customer
-                      approvalDays. Each panel shows its own Lead Time number
-                      since BOM lead times can differ per panel; the dependency
-                      clause is identical across all panels (project-wide). */}
-                  {(()=>{
-                    const _hasEngService=Array.isArray(project?.serviceCards)&&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
-                    if(!_hasEngService)return null;
-                    let _cplt=null;try{_cplt=computeControlPanelLeadTime(pan,project);}catch(e){return null;}
-                    if(!_cplt||_cplt.noDataWarning)return null;
-                    const _today=new Date();_today.setHours(0,0,0,0);
-                    const _approvalDue=new Date(_today.getTime()+(_cplt.engineeringDays+_cplt.customerApprovalDays)*86400000);
-                    const _fmt=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
-                    return(
-                      <div className="qd-li-notes" style={{borderLeftColor:"#fbbf24",display:"flex",flexDirection:"column",gap:4}}>
-                        <div style={{display:"block",color:"#92400e",fontWeight:700,fontSize:13,lineHeight:1.4}}>📋 Est. Lead Time: {_cplt.leadDays} days</div>
-                        <div style={{display:"block",color:"#475569",fontSize:12,lineHeight:1.5,fontWeight:400}}>
-                          Panel Lead Time is dependent upon receiving signed Approval drawings by <strong style={{color:"#92400e"}}>{_fmt(_approvalDue)}</strong>. Lead Time will be re-calculated if approvals take longer.
-                        </div>
-                      </div>
-                    );
-                  })()}
+                  {/* DECISION(v1.19.939): Per-panel Lead Time note moved BELOW
+                      the pricing row (see banner outside qd-li-body / before
+                      qd-li closes). Old position inside qd-li-notes is gone. */}
                   <div className="qd-li-notes" style={{borderLeftColor:"#3b82f6"}}>
                     <span>QUOTE NOTES: </span>
                     <textarea value={qp.lineNotes||""} onChange={e=>setQP({lineNotes:e.target.value})} placeholder="Additional quote-specific notes…" rows={1} style={{...qInp({display:"inline-block",width:"80%",resize:"vertical",fontSize:13,verticalAlign:"top",borderBottom:"none"})}}/>
@@ -15624,6 +15609,26 @@ function QuoteTab({project,onUpdate}){
                   )}
                 </div>
               </div>
+              {/* DECISION(v1.19.939): Lead-Time banner sits BELOW the pricing
+                  row, spans the full width of the line item box, bold red.
+                  Only renders when project has any Engineering Design service
+                  card (engineering drives the milestone chain). The
+                  approval-due date enforces a 3-week minimum buffer past Eng
+                  completion via computeControlPanelLeadTime's clamp. */}
+              {(()=>{
+                const _hasEngService=Array.isArray(project?.serviceCards)&&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
+                if(!_hasEngService)return null;
+                let _cplt=null;try{_cplt=computeControlPanelLeadTime(pan,project);}catch(e){return null;}
+                if(!_cplt||_cplt.noDataWarning)return null;
+                const _today=new Date();_today.setHours(0,0,0,0);
+                const _approvalDue=new Date(_today.getTime()+(_cplt.engineeringDays+_cplt.customerApprovalDays)*86400000);
+                const _fmt=d=>(d.getMonth()+1).toString().padStart(2,"0")+"/"+d.getDate().toString().padStart(2,"0")+"/"+d.getFullYear();
+                return(
+                  <div style={{padding:"10px 16px",borderTop:"1px solid #e2e8f0",textAlign:"center",fontSize:13,fontWeight:700,color:"#dc2626",lineHeight:1.5,background:"#fef2f2"}}>
+                    Est. Lead Time: {_cplt.leadDays} days · Panel Lead Time is dependent upon receiving signed Approval drawings by {_fmt(_approvalDue)}. Lead Time will be re-calculated if approvals take longer.
+                  </div>
+                );
+              })()}
               </div>
               {/* Crossed items — outside the bordered box so .qd-li stays compact and doesn't page-break */}
               {crossedItems.length>0&&(
@@ -18987,7 +18992,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // data is destroyed; computeControlPanelLeadTime simply ignores it now
     // that mode is "date" + productionEndDate exists.
     const prodMode="date";
-    const custApprovalDays=Math.max(0,Math.min(180,+draftCustomerApprovalDays||0));
+    // DECISION(v1.19.939): 3-week minimum buffer on save (matches the
+    // computeControlPanelLeadTime floor). User can type any value — the
+    // saved value is floored at 21.
+    const custApprovalDays=Math.max(21,Math.min(180,+draftCustomerApprovalDays||21));
     const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode,customerApprovalDays:custApprovalDays};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
