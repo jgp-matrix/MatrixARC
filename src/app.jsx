@@ -17921,6 +17921,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [bcNewlyCreated,setBcNewlyCreated]=useState(new Set());
   const [bcUpdatedRows,setBcUpdatedRows]=useState(new Set());
   const [bcUpdateNotif,setBcUpdateNotif]=useState(false);
+  // DECISION(v1.19.928): When inside an ECO scope and a base BOM row gets
+  // edited, the change creates a new ECO modify-row below the CHANGE ORDER
+  // separator. The user is editing a base row at the top of the table — the
+  // newly-created delta row is offscreen below. Track the new row's id here
+  // so a useEffect can scroll it into view + flash a purple highlight.
+  const [ecoFlashRowId,setEcoFlashRowId]=useState(null);
+  useEffect(()=>{
+    if(!ecoFlashRowId)return;
+    // Scroll the row into view smoothly. setTimeout(0) lets React commit the
+    // new row to the DOM before we query for it.
+    const t=setTimeout(()=>{
+      try{
+        const el=document.querySelector(`[data-row-id="${String(ecoFlashRowId)}"]`);
+        if(el&&typeof el.scrollIntoView==="function"){
+          el.scrollIntoView({behavior:"smooth",block:"center"});
+        }
+      }catch(_){}
+    },50);
+    // Clear the flash after the CSS animation completes (2.8s).
+    const t2=setTimeout(()=>setEcoFlashRowId(null),3000);
+    return()=>{clearTimeout(t);clearTimeout(t2);};
+  },[ecoFlashRowId]);
   const [bcBrowserQuery,setBcBrowserQuery]=useState("");
   const [pendingPages,setPendingPages]=useState([]);
   const [alternates,setAlternates]=useState([]);
@@ -19642,6 +19664,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const existing=(src.bom||[]).find(r=>r.ecoTag===_activeEcoId&&r.ecoModifiesBaseRowId===baseRowId);
     let bom=src.bom||[];
     const baseQty=Number(base.qty)||0;
+    // DECISION(v1.19.928): Track the ECO row id to flash + scroll into view.
+    // Set whenever this redirect creates a new row OR mutates an existing one
+    // (so the user sees the change land below the CHANGE ORDER separator).
+    let _flashRowId=null;
     if(field==="qty"){
       const newQty=Number(val);
       if(!isFinite(newQty)){
@@ -19664,12 +19690,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             bom=bom.filter(r=>r.id!==existing.id);
           }else{
             bom=bom.map(r=>r.id===existing.id?{...r,qty:delta}:r);
+            _flashRowId=existing.id;
           }
         }else{
           bom=bom.map(r=>r.id===existing.id?{...r,qty:delta}:r);
+          _flashRowId=existing.id;
         }
       }else if(delta!==0){
         const newId=Date.now()+Math.random();
+        _flashRowId=newId;
         bom=[...bom,{
           id:newId,
           ecoTag:_activeEcoId,
@@ -19715,12 +19744,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             bom=bom.filter(r=>r.id!==existing.id);
           }else{
             bom=bom.map(r=>r.id===existing.id?updates:r);
+            _flashRowId=existing.id;
           }
         }else{
           bom=bom.map(r=>r.id===existing.id?{...r,[field]:newVal}:r);
+          _flashRowId=existing.id;
         }
       }else if(!sameAsBase){
         const newId=Date.now()+Math.random();
+        _flashRowId=newId;
         bom=[...bom,{
           id:newId,
           ecoTag:_activeEcoId,
@@ -19751,6 +19783,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     latestPanelRef.current=updated;
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
+    // DECISION(v1.19.928): Trigger scroll + highlight on the ECO row that was
+    // just created/modified. The useEffect on `ecoFlashRowId` handles the DOM
+    // query + smooth scroll + animation cleanup. Only fires when this redirect
+    // actually affected an ECO row (else _flashRowId stays null).
+    if(_flashRowId)setEcoFlashRowId(_flashRowId);
     return true;
   }
 
@@ -22021,7 +22058,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     const _baseLockedInEco=_isBaseRowInEcoScope(row);
                     const _rowEl=(()=>{
                   return(
-                  <tr key={row.id} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":undefined} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg,textDecoration:_rowTextDecoration,opacity:_rowOpacity}}>
+                  <tr key={row.id} data-row-id={String(row.id)} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":(ecoFlashRowId&&String(ecoFlashRowId)===String(row.id)?"eco-row-flash":undefined)} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg,textDecoration:_rowTextDecoration,opacity:_rowOpacity}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
                       {i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(

@@ -39,6 +39,8 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 @keyframes pulseYellow{0%,100%{box-shadow:0 0 4px 1px rgba(250,204,21,0.15);background:rgba(250,204,21,0.04);border-color:rgba(250,204,21,0.4)}50%{box-shadow:0 0 40px 12px rgba(250,204,21,0.7),0 0 80px 20px rgba(250,204,21,0.25);background:rgba(250,204,21,0.18);border-color:#fde047}}
 @keyframes bcRowFlash{0%{background:rgba(74,222,128,0)}15%{background:rgba(74,222,128,0.38)}60%{background:rgba(74,222,128,0.18)}100%{background:rgba(74,222,128,0.06)}}
 .bc-row-updated{animation:bcRowFlash 2.5s ease-out forwards!important}
+@keyframes ecoRowFlash{0%{background:rgba(168,85,247,0)}10%{background:rgba(168,85,247,0.55);box-shadow:0 0 12px 2px rgba(168,85,247,0.5)}50%{background:rgba(168,85,247,0.28)}100%{background:rgba(168,85,247,0.10)}}
+.eco-row-flash{animation:ecoRowFlash 2.8s ease-out forwards!important}
 .fade-in{animation:fadeIn 0.25s ease-out both}
 .spin{animation:spin 1s linear infinite;display:inline-block}
 /* ── Quote Document ── */
@@ -233,7 +235,7 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.19.927";
+const APP_VERSION="v1.19.928";
 // DECISION(v1.19.785): Schema bump 2 → 3 introduces ECO subcollection and project-level
 // ECO indexing fields (ecoCounter, activeEcoId, ecoSummary). Migration is additive only —
 // see loadProjects() which backfills missing ECO fields with defaults so legacy projects
@@ -451,6 +453,6 @@ async function unsubscribePushNotifications(uid){
 // Originally it was top-level here; that required messaging to load eagerly on every
 // page. Now this block is a no-op marker.
 </script>
-<script src="index.bundle.js?v=v1.19.927"></script>
+<script src="index.bundle.js?v=v1.19.928"></script>
 </body>
 </html>
