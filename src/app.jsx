@@ -11096,6 +11096,23 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
   const canCreateEco=
     (project?.createdBy===uid||_appCtx.role==="admin"||hasPermission("reviewer"));
   const [creating,setCreating]=useState(false);
+  // DECISION(v1.19.926): Custom ECO kind-picker modal — replaces the
+  // arcConfirm flow so we can have two equal-weight color-coded buttons
+  // (External=red, Internal=blue) with company-name interpolation in the
+  // Internal label. State holds the resolver so the picker UX feels like a
+  // promise (await pickEcoKind() → "external"|"internal"|null).
+  const [ecoKindPickerResolve,setEcoKindPickerResolve]=useState(null);
+  function pickEcoKind(){
+    return new Promise(resolve=>{
+      setEcoKindPickerResolve(()=>resolve);
+    });
+  }
+  function _closeEcoKindPicker(value){
+    if(ecoKindPickerResolve){
+      ecoKindPickerResolve(value);
+      setEcoKindPickerResolve(null);
+    }
+  }
   // DECISION(v1.19.840, ECO Stage A.6): + New ECO on a Won/Lost-locked project
   // requires the owner/admin to unlock first. The flow:
   //   1. Detect Won/Lost lock (project.wonAt OR project.lostAt set, no active unlock).
@@ -11213,25 +11230,11 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
         console.log("[ECO] applying unlock state changes:",unlockUpdate);
         await fbDb.doc(projPath).update(unlockUpdate);
       }
-      // DECISION(v1.19.925, Internal vs External ECOs): Prompt for ECO kind
-      // before creating. External = customer-driven (default, billable, on
-      // customer Quote). Internal = our responsibility (not billable, not on
-      // customer Quote, but tracked through BC for cost accounting).
-      // arcConfirm returns true=External, false=Internal (Cancel exits).
-      const _kindChoice=await arcConfirm(
-        "What kind of ECO is this?\n\n"+
-        "EXTERNAL: A customer-driven change order. The customer is paying for the change.\n"+
-        "  • Listed on the customer's printed Quote\n"+
-        "  • Counted toward Quote totals\n\n"+
-        "INTERNAL: A change we are responsible for (e.g., engineering miss, supplier substitution).\n"+
-        "  • Hidden from the customer Quote\n"+
-        "  • Tracked through BC for internal cost accounting only\n\n"+
-        "Choose External or Internal:",
-        {title:"ECO Type",okLabel:"External (customer)",cancelLabel:"Internal (us)"}
-      );
-      // arcConfirm doesn't have a "Cancel out" option here — both choices are
-      // valid. true → external, false → internal.
-      const _ecoKind=_kindChoice?"external":"internal";
+      // DECISION(v1.19.926, Internal vs External ECOs): Custom kind picker —
+      // External=red, Internal=blue, both buttons equal weight (no implied
+      // default). Returns "external"|"internal" or null on cancel.
+      const _ecoKind=await pickEcoKind();
+      if(!_ecoKind){console.log("[ECO] kind picker cancelled");setCreating(false);return;}
       console.log("[ECO] calling createEcoDoc kind="+_ecoKind);
       const result=await createEcoDoc(uid,project,_ecoKind);
       console.log("[ECO] createEcoDoc returned:",result);
@@ -11543,6 +11546,62 @@ function EcoScopeTabs({project,uid,activeScope,onScopeChange,onLocalProjectUpdat
           {deleting?"Deleting…":`🗑 Delete ${activeEcoLabel}`}
         </button>
       )}
+      {/* DECISION(v1.19.926): Custom ECO kind picker modal. Two equal-weight
+          color-coded buttons. Backdrop click + ✕ + Cancel all resolve null. */}
+      {ecoKindPickerResolve&&ReactDOM.createPortal(
+        <div onMouseDown={e=>{if(e.target===e.currentTarget)_closeEcoKindPicker(null);}}
+          style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:99999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div onMouseDown={e=>e.stopPropagation()}
+            style={{background:"#0d0d1a",border:"1px solid #a855f766",borderRadius:12,padding:"22px 26px",width:"100%",maxWidth:560,boxShadow:"0 0 36px #a855f755, 0 12px 48px rgba(0,0,0,0.7)",fontFamily:"inherit",color:"#cbd5e1"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <div style={{fontSize:16,fontWeight:800,color:"#f1f5f9",letterSpacing:0.4}}>Choose ECO Type</div>
+              <button onClick={()=>_closeEcoKindPicker(null)} title="Cancel"
+                style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:18,padding:"2px 6px"}}>✕</button>
+            </div>
+            <div style={{fontSize:13,color:"#94a3b8",lineHeight:1.6,marginBottom:18}}>
+              Select what kind of Engineering Change Order this is. Internal ECOs are tracked through BC for cost accounting but are <strong style={{color:"#cbd5e1"}}>not</strong> shown to the customer.
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:18}}>
+              {/* Internal — BLUE */}
+              <button onClick={()=>_closeEcoKindPicker("internal")}
+                title="Our responsibility — not billed to the customer"
+                style={{textAlign:"left",background:"#0c2233",border:"2px solid #38bdf8",borderRadius:8,padding:"14px 18px",cursor:"pointer",color:"#38bdf8",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14,transition:"background 120ms"}}
+                onMouseEnter={e=>{e.currentTarget.style.background="#102f48";}}
+                onMouseLeave={e=>{e.currentTarget.style.background="#0c2233";}}>
+                <span style={{flex:1,minWidth:0}}>
+                  <span style={{display:"block",fontSize:15,fontWeight:800,color:"#38bdf8",marginBottom:3,letterSpacing:0.4}}>
+                    Internal ({(_appCtx.company&&_appCtx.company.name)||"Matrix Systems"})
+                  </span>
+                  <span style={{display:"block",fontSize:12,color:"#7dd3fc",lineHeight:1.5}}>
+                    Our responsibility — engineering miss, supplier substitution, etc. Tracked in BC for cost accounting only. Not on customer Quote.
+                  </span>
+                </span>
+                <span style={{fontSize:18,color:"#38bdf8",flexShrink:0}}>›</span>
+              </button>
+              {/* External — RED */}
+              <button onClick={()=>_closeEcoKindPicker("external")}
+                title="Customer-driven — billable on the Quote"
+                style={{textAlign:"left",background:"#2a0a0a",border:"2px solid #ef4444",borderRadius:8,padding:"14px 18px",cursor:"pointer",color:"#ef4444",fontFamily:"inherit",display:"flex",alignItems:"center",gap:14,transition:"background 120ms"}}
+                onMouseEnter={e=>{e.currentTarget.style.background="#3d0d0d";}}
+                onMouseLeave={e=>{e.currentTarget.style.background="#2a0a0a";}}>
+                <span style={{flex:1,minWidth:0}}>
+                  <span style={{display:"block",fontSize:15,fontWeight:800,color:"#ef4444",marginBottom:3,letterSpacing:0.4}}>
+                    External (Customer)
+                  </span>
+                  <span style={{display:"block",fontSize:12,color:"#fca5a5",lineHeight:1.5}}>
+                    Customer-driven change. Listed on the printed Quote, counted in totals, billable.
+                  </span>
+                </span>
+                <span style={{fontSize:18,color:"#ef4444",flexShrink:0}}>›</span>
+              </button>
+            </div>
+            <div style={{display:"flex",justifyContent:"flex-end"}}>
+              <button onClick={()=>_closeEcoKindPicker(null)}
+                style={{background:"transparent",color:"#94a3b8",border:"1px solid #3d6090",borderRadius:7,padding:"7px 18px",fontSize:13,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      ,document.body)}
     </div>
   );
 }
