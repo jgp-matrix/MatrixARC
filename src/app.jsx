@@ -5518,6 +5518,9 @@ async function buildQuotePdfDoc(doc,project){
     if(crossed.length>0){
       // DECISION(v1.19.941): Font bumped from 4.5/5pt to 7/7.5pt to match
       // "Documents Provided" — old size was illegible on paper.
+      // DECISION(v1.19.950): +4mm top breathing room — the title was riding
+      // up onto the border of the row above it.
+      ctx.y+=4;
       const maxCrossedW=ctx.contentWidth-8;
       var clh=2.8;
       doc.setFontSize(7.5);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
@@ -15730,7 +15733,7 @@ function QuoteTab({project,onUpdate}){
                   the per-line Notes / Documents Provided sections. Old sizing
                   was illegible on printed paper. */}
               {crossedItems.length>0&&(
-                <div style={{padding:"6px 44px 10px",fontSize:13}}>
+                <div style={{padding:"16px 44px 10px",fontSize:13}}>
                   <div className="qd-crossed-title" style={{fontSize:12,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,color:"#94a3b8",marginBottom:6}}>Crossed / Superseded — Alternate Products Used</div>
                   {crossedItems.map((item,i)=>(
                     <div key={item.id||i} style={{fontSize:13,color:"#334155",marginBottom:2,lineHeight:1.5}}>
