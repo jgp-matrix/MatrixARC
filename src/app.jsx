@@ -921,6 +921,7 @@ const SERVICE_CARD_DEFAULTS={
     rate:125,
     qty:1,
     lumpSum:0,
+    estimatedHours:0,
   },
   programming:{
     description:"Programming",
@@ -929,6 +930,7 @@ const SERVICE_CARD_DEFAULTS={
     rate:125,
     qty:1,
     lumpSum:0,
+    estimatedHours:0,
   },
   commissioning:{
     description:"Commissioning",
@@ -937,6 +939,7 @@ const SERVICE_CARD_DEFAULTS={
     rate:0,
     qty:1,
     lumpSum:0,
+    estimatedHours:0,
   },
 };
 const SERVICE_CARD_BC_BASE_SLOT={
@@ -986,6 +989,10 @@ function createServiceCard(lineType,existingServiceCards){
     qty:def.qty,
     rate:def.rate,
     lumpSum:def.lumpSum,
+    // DECISION(v1.19.933): estimatedHours is the schedule-driving hour count
+    // when priceMode==="lump_sum" (decoupled from the lump-sum dollars). In
+    // hourly mode `qty` already serves as hours so this stays 0.
+    estimatedHours:def.estimatedHours||0,
     priceMode:def.priceMode,
     description:def.description,
     detailDescription:def.detailDescription,
@@ -1039,7 +1046,7 @@ const LEAD_DRIVER_THRESHOLD_DAYS=30;
 function _startOfDay(ts){const d=new Date(ts);d.setHours(0,0,0,0);return d.getTime();}
 function _isoDate(ts){const d=new Date(ts);return d.toISOString().slice(0,10);}
 function computeControlPanelLeadTime(panel,project){
-  if(!panel)return{shipDate:null,leadDays:0,longestItemDays:0,laborDays:0,productionDays:0,servicesDays:0,averageItemLeadDays:0,drivers:[],largestContributor:"material",hasAiLeads:false,noDataWarning:true};
+  if(!panel)return{shipDate:null,leadDays:0,longestItemDays:0,laborDays:0,productionDays:0,engineeringDays:0,engineeringHours:0,programmingDays:0,programmingHours:0,programmingTestingDays:0,buyoffDays:3,customerApprovalDays:21,materialsCompleteDays:0,productionDoneDays:0,postProductionDays:3,programmingDrives:false,productionInfeasible:false,productionDateMissing:true,averageItemLeadDays:0,drivers:[],largestContributor:"material",hasAiLeads:false,noDataWarning:true};
   const today=_startOfDay(Date.now());
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
   const longestItemDays=bom.reduce((m,r)=>Math.max(m,+r.leadTimeDays||0),0);
@@ -1047,52 +1054,97 @@ function computeControlPanelLeadTime(panel,project){
   // DECISION(v1.19.713): Daily crew hours config lives in the app-level LABOR_RATES
   // (loaded from laborRates Firestore doc on mount). Falls back to 8 if unset.
   const dailyCrewHours=+(typeof LABOR_RATES!=="undefined"?LABOR_RATES.dailyCrewHours:null)||+project?.laborConfig?.dailyCrewHours||8;
+  // Labor still computed for legacy consumers (the cyan ship-date popover, BC
+  // sync displays, quote summaries) but it's NO LONGER an additive bucket in
+  // the v1.19.933 chain — TRAQS production end date already accounts for it.
   const laborDays=Math.ceil((lab.totalHours||0)/dailyCrewHours);
-  // DECISION(v1.19.714): productionDays derived from productionEndDate (YYYY-MM-DD).
-  // Represents post-assembly production time. If end date is before assembly complete,
-  // productionDays=0 (material+labor is binding). Legacy panel.productionDays (numeric)
-  // still read as fallback for projects saved before the date-picker change.
-  // DECISION(v1.19.932): New `productionEndMode` = "days_post_approval" lets the user
-  // park the field with a relative offset before approvals come in. When set, the
-  // numeric productionDaysPostApproval value is used directly as productionDays
-  // (capped 0..365). Legacy productionEndDate (date mode) and productionDays
-  // (numeric legacy) fall through after.
-  const assemblyCompleteBeforeProd=today+(longestItemDays+laborDays)*_ONE_DAY_MS;
-  let productionDays=0;
-  if(panel.productionEndMode==="days_post_approval"){
-    productionDays=Math.max(0,Math.min(365,+panel.productionDaysPostApproval||0));
-  }else if(panel.productionEndDate){
-    const prodEnd=_startOfDay(new Date(panel.productionEndDate).getTime());
-    if(!isNaN(prodEnd)&&prodEnd>assemblyCompleteBeforeProd){
-      productionDays=Math.ceil((prodEnd-assemblyCompleteBeforeProd)/_ONE_DAY_MS);
-    }
-  }else if(panel.productionDays!=null){
-    productionDays=Math.max(0,Math.min(365,+panel.productionDays||0));
-  }
-  // DECISION(v1.19.932, services in ship date): If the project has any service
-  // Quote Lines (Engineering Design / Programming / Commissioning) with an Est.
-  // Completion Date set, take the LONGEST one (in days from today) and add it
-  // to the ship date as its own component. Per user spec the formula is now:
-  //   Ship Date = today + Longest(Eng/Prog/Comm completion days) + Material + Labor + Production
-  // Services flow in PARALLEL to material in real life but the user wants them
-  // explicitly additive on the quote so customers see the full schedule.
-  let servicesDays=0;
+
+  // ── ENGINEERING DESIGN HOURS (max across cards, not sum) ──────────────
+  // DECISION(v1.19.933, milestone chain): Engineering Design hours come from
+  // service cards. If multiple Engineering Design cards exist (e.g., Phase 1
+  // Mech + Phase 2 Elec), take the LONGEST card's hours, not the sum — those
+  // are typically separate resources working in parallel. Same MAX policy
+  // applied to Programming for symmetry. Hours source: `qty` in Hourly mode
+  // (qty IS hours), `estimatedHours` in Lump-Sum mode (decoupled from $).
+  let engineeringHours=0,programmingHours=0;
   if(Array.isArray(project?.serviceCards)){
     for(const sc of project.serviceCards){
-      if(!sc||!sc.estCompletionDate)continue;
-      const target=_startOfDay(new Date(sc.estCompletionDate).getTime());
-      if(isNaN(target))continue;
-      const d=Math.max(0,Math.ceil((target-today)/_ONE_DAY_MS));
-      if(d>servicesDays)servicesDays=d;
+      if(!sc)continue;
+      const hrs=sc.priceMode==="hourly"?(+sc.qty||0):(+sc.estimatedHours||0);
+      const safeHrs=Math.max(0,hrs);
+      if(sc.lineType==="engineering"){if(safeHrs>engineeringHours)engineeringHours=safeHrs;}
+      else if(sc.lineType==="programming"){if(safeHrs>programmingHours)programmingHours=safeHrs;}
+      // Commissioning ignored — happens on-site post-ship.
     }
   }
-  const totalDays=servicesDays+longestItemDays+laborDays+productionDays;
+  const engineeringDays=Math.ceil(engineeringHours/dailyCrewHours);
+  const programmingDays=Math.ceil(programmingHours/dailyCrewHours);
+  const programmingTestingDays=Math.ceil((programmingHours*0.2)/dailyCrewHours);
+
+  // ── CUSTOMER APPROVAL WINDOW ──────────────────────────────────────────
+  // DECISION(v1.19.933): Customer approvals are the primary lead-time driver.
+  // Default 3 weeks (21 days). Editable per panel via `customerApprovalDays`.
+  // If real approvals come back later, the user updates the field and the
+  // chain extends. Production rescheduling (TRAQS) handles the downstream
+  // effect — see productionInfeasible warning below.
+  const customerApprovalDays=Math.max(0,Math.min(180,+panel.customerApprovalDays??(panel.customerApprovalDays===0?0:21)));
+
+  // ── MILESTONE CHAIN (sequential days from today=PO Received) ──────────
+  //   Eng → Submittals Sent → Customer Approval → Materials → Production
+  const materialsCompleteDays=engineeringDays+customerApprovalDays+longestItemDays;
+
+  // ── PRODUCTION (TRAQS-scheduled or relative-to-approvals) ─────────────
+  // DECISION(v1.19.933): Per user spec, productionEndDate is the ABSOLUTE
+  // calendar date Production has scheduled the panel to be ready ("Est. Prod.
+  // Done", from TRAQS) — REQUIRED on every quote. Days-post-approval mode
+  // remains for early-stage estimates before TRAQS schedules the project.
+  let productionDoneDaysFromChain=0;
+  let productionDateMissing=false;
+  if(panel.productionEndMode==="days_post_approval"){
+    const dur=Math.max(0,Math.min(365,+panel.productionDaysPostApproval||0));
+    productionDoneDaysFromChain=materialsCompleteDays+dur;
+  }else if(panel.productionEndDate){
+    const prodEnd=_startOfDay(new Date(panel.productionEndDate).getTime());
+    if(!isNaN(prodEnd))productionDoneDaysFromChain=Math.max(0,Math.ceil((prodEnd-today)/_ONE_DAY_MS));
+  }else if(panel.productionDays!=null){
+    // Legacy: numeric productionDays. Treat as relative duration after materials.
+    productionDoneDaysFromChain=materialsCompleteDays+Math.max(0,Math.min(365,+panel.productionDays||0));
+  }else{
+    productionDateMissing=true;
+  }
+  // Production component (days BETWEEN materials complete and production done).
+  // Legacy field name preserved for callers that still read it.
+  const productionDays=Math.max(0,productionDoneDaysFromChain-materialsCompleteDays);
+
+  // ── PRODUCTION INFEASIBILITY FLAG ─────────────────────────────────────
+  // If TRAQS date lands BEFORE the Eng+Approval+Materials chain says we
+  // could possibly be ready, the schedule is impossible to hit. Surface a
+  // red warning so the user knows to push TRAQS or accelerate approvals.
+  const productionInfeasible=!productionDateMissing&&productionDoneDaysFromChain<materialsCompleteDays;
+
+  // ── PROGRAMMING PATH ──────────────────────────────────────────────────
+  // Programming runs in parallel from PO Received through Production Done.
+  // If programmingDays > productionDoneDaysFromChain, Programming gates
+  // Production Done — warn the user.
+  const programmingPathDays=programmingDays;
+  const productionDoneDays=Math.max(productionDoneDaysFromChain,programmingPathDays);
+  const programmingDrives=programmingPathDays>productionDoneDaysFromChain&&programmingPathDays>0;
+
+  // ── POST-PRODUCTION (Buyoff + Programming Testing in parallel) ────────
+  const BUYOFF_DAYS=3;
+  const postProductionDays=Math.max(BUYOFF_DAYS,programmingTestingDays);
+
+  // ── FINAL ─────────────────────────────────────────────────────────────
+  const totalDays=productionDoneDays+postProductionDays;
   const shipDate=today+totalDays*_ONE_DAY_MS;
-  // Largest contributor
+
+  // Largest contributor — pick the single most consequential bucket.
+  // Programming gating wins if it's the gate; otherwise compare the chain.
   let largestContributor="material",largest=longestItemDays;
-  if(servicesDays>largest){largestContributor="services";largest=servicesDays;}
-  if(laborDays>largest){largestContributor="labor";largest=laborDays;}
+  if(engineeringDays>largest){largestContributor="engineering";largest=engineeringDays;}
+  if(customerApprovalDays>largest){largestContributor="approval";largest=customerApprovalDays;}
   if(productionDays>largest){largestContributor="production";largest=productionDays;}
+  if(programmingDrives){largestContributor="programming";largest=programmingDays;}
   // DECISION(v1.19.736): Drivers = BOM items with leadTimeDays > LEAD_DRIVER_THRESHOLD_DAYS
   // (30 days). Previously used "above BOM average," which for panels with a few long-lead
   // items and many short-lead ones listed far too many rows in the auto-generated Notes
@@ -1107,11 +1159,16 @@ function computeControlPanelLeadTime(panel,project){
   return{
     shipDate:_isoDate(shipDate),
     leadDays:totalDays,
-    longestItemDays,laborDays,productionDays,servicesDays,
+    longestItemDays,laborDays,productionDays,
+    engineeringDays,engineeringHours,
+    programmingDays,programmingHours,programmingTestingDays,
+    customerApprovalDays,
+    materialsCompleteDays,productionDoneDays,postProductionDays,buyoffDays:3,
+    programmingDrives,productionInfeasible,productionDateMissing,
     averageItemLeadDays:Math.round(avg*10)/10,
     drivers,largestContributor,
     hasAiLeads:bom.some(r=>r.leadTimeSource==="ai"),
-    noDataWarning:longestItemDays===0&&laborDays===0&&productionDays===0&&servicesDays===0,
+    noDataWarning:longestItemDays===0&&engineeringDays===0&&programmingDays===0&&productionDoneDaysFromChain===0,
   };
 }
 // Expose for console testing
@@ -18001,6 +18058,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // mode==="days_post_approval".
   const [draftProductionEndMode,setDraftProductionEndMode]=useState(panel.productionEndMode||"date");
   const [draftProductionDaysPostApproval,setDraftProductionDaysPostApproval]=useState(panel.productionDaysPostApproval??30);
+  // DECISION(v1.19.933): Customer Approval Days — drives the Eng → Approval →
+  // Materials chain. Default 21 (3 weeks). User adjusts when actual approvals
+  // come in differently. Persisted on the panel.
+  const [draftCustomerApprovalDays,setDraftCustomerApprovalDays]=useState(panel.customerApprovalDays??21);
   const [draftLineQty,setDraftLineQty]=useState(panel.lineQty??1);
   const [bcSyncing,setBcSyncing]=useState(false);
   const [bcSyncStatus,setBcSyncStatus]=useState(null); // null | "ok" | "error"
@@ -18863,7 +18924,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // date. Mode "date" (default) uses productionEndDate as before.
     const prodMode=draftProductionEndMode==="days_post_approval"?"days_post_approval":"date";
     const prodDaysPostApproval=Math.max(0,Math.min(365,+draftProductionDaysPostApproval||0));
-    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode,productionDaysPostApproval:prodDaysPostApproval};
+    const custApprovalDays=Math.max(0,Math.min(180,+draftCustomerApprovalDays||0));
+    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode,productionDaysPostApproval:prodDaysPostApproval,customerApprovalDays:custApprovalDays};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     // DECISION(v1.19.632) Phase 2: If user's value differs from the last AI extraction, save the
@@ -21334,6 +21396,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {/* DECISION(v1.19.714): Production End Date (the date production tells the user
                they expect to be done). Feeds computeControlPanelLeadTime — the software
                derives days-post-assembly at compute time. */}
+            {/* DECISION(v1.19.933): Customer Approval Days — drives the Eng →
+                Approval → Materials chain. Default 21 (3 weeks). User adjusts
+                if actual approvals run longer than estimated; lead time
+                extends accordingly. Sits next to Est. Prod. Done in the header. */}
+            <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}
+              title="Customer Approval Days — default 3 weeks (21 days). Bump this if actual approval turnaround runs longer; the lead time chain extends. If the slip pushes past the TRAQS Production Date, enter a new TRAQS date.">
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Approval Days</div>
+              <input type="text" inputMode="numeric"
+                value={draftCustomerApprovalDays}
+                onChange={e=>{const v=e.target.value.replace(/[^0-9]/g,'');setDraftCustomerApprovalDays(v===""?"":+v);}}
+                onFocus={e=>e.target.select()}
+                onBlur={()=>saveTitleFields()}
+                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftCustomerApprovalDays(panel.customerApprovalDays??21);e.target.blur();}}}
+                readOnly={readOnly}
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",width:"3.5ch",textAlign:"right",fontFamily:"inherit"}}/>
+            </div>
             {/* DECISION(v1.19.932): Est. Prod. Done now supports two modes —
                 a fixed date OR "## Days - Signed Approvals" (relative offset
                 applied once approvals come in). Toggle button under the label
@@ -26272,6 +26350,10 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
   const [draftQty,setDraftQty]=React.useState(card.qty??1);
   const [draftRate,setDraftRate]=React.useState(card.rate??0);
   const [draftLump,setDraftLump]=React.useState(card.lumpSum??0);
+  // DECISION(v1.19.933): estimatedHours is the schedule-driver in lump-sum mode
+  // (the lump-sum dollars are decoupled from hours). Hourly mode uses qty as
+  // hours so this draft is unused there.
+  const [draftEstHours,setDraftEstHours]=React.useState(card.estimatedHours??0);
   const [draftDetail,setDraftDetail]=React.useState(card.detailDescription||"");
   const [draftReqShip,setDraftReqShip]=React.useState(card.requestedShipDate||"");
   const [draftEstDone,setDraftEstDone]=React.useState(card.estCompletionDate||"");
@@ -26412,7 +26494,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
                 style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:14,fontWeight:700,outline:"none",width:"7ch",fontFamily:"inherit",textAlign:"right"}}/>
             </div>
-          ):(
+          ):(<>
             <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}>
               <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Lump Sum ($)</div>
               <input type="text" inputMode="decimal" value={draftLump} readOnly={readOnly}
@@ -26423,7 +26505,24 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
                 onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
                 style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:14,fontWeight:700,outline:"none",width:"10ch",fontFamily:"inherit",textAlign:"right"}}/>
             </div>
-          )}
+            {/* DECISION(v1.19.933): Estimated Hours — drives the ship-date math
+                in Lump Sum mode (lump-sum dollars decoupled from schedule). For
+                Engineering Design cards, this is THE schedule driver. For
+                Programming cards, drives parallel programming time + 20%
+                post-production testing. Commissioning's hours don't impact
+                ship date but the field is still shown for consistency. */}
+            <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}
+              title="Estimated hours — drives the ship-date schedule. The lump-sum dollars are decoupled from the hour count.">
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}>Est. Hours</div>
+              <input type="text" inputMode="decimal" value={draftEstHours} readOnly={readOnly}
+                onClick={e=>e.stopPropagation()}
+                onChange={e=>{const v=e.target.value.replace(/[^0-9.]/g,'');setDraftEstHours(v);}}
+                onFocus={e=>e.target.select()}
+                onBlur={()=>commit({estimatedHours:+draftEstHours||0})}
+                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:14,fontWeight:700,outline:"none",width:"6ch",fontFamily:"inherit",textAlign:"right"}}/>
+            </div>
+          </>)}
           {/* Live Total */}
           <div style={{flex:1,textAlign:"right",fontSize:18,fontWeight:800,color:total>0?C.text:C.muted,fontVariantNumeric:"tabular-nums"}}>
             {total>0?fmt(total):"—"}
@@ -27662,9 +27761,21 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     const effectiveDays=cpltOverride?Math.ceil((new Date(p.controlPanelShipDate).getTime()-_startOfDay(Date.now()))/_ONE_DAY_MS):cplt.leadDays;
                     const effectiveShipDate=cpltOverride?p.controlPanelShipDate:cplt.shipDate;
                     const overrideGap=cpltOverride?effectiveDays-cplt.leadDays:0;
-                    const chipColor=cpltOverride&&overrideGap>14?"#ef4444":cplt.hasAiLeads?"#fcd34d":cplt.noDataWarning?"#64748b":"#22d3ee";
-                    const chipBg=cpltOverride&&overrideGap>14?"#2a0a0a":cplt.hasAiLeads?"#3a2800":cplt.noDataWarning?"#1a1a2e":"#08253a";
-                    const chipTip=cplt.noDataWarning?"No lead times or production days entered — ship date estimate not meaningful":`Ship date: ${effectiveShipDate} · ${(cplt.servicesDays||0)>0?cplt.servicesDays+"d services + ":""}${cplt.longestItemDays}d material + ${cplt.laborDays}d labor + ${cplt.productionDays}d production · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`;
+                    // DECISION(v1.19.933): Chip color flips amber when Programming
+                    // gates the chain or when TRAQS production date is missing/
+                    // infeasible — both states the user must address.
+                    const _scheduleWarn=cplt.programmingDrives||cplt.productionInfeasible||cplt.productionDateMissing;
+                    const chipColor=cpltOverride&&overrideGap>14?"#ef4444":cplt.productionInfeasible?"#ef4444":cplt.productionDateMissing?"#fcd34d":cplt.programmingDrives?"#f59e0b":cplt.hasAiLeads?"#fcd34d":cplt.noDataWarning?"#64748b":"#22d3ee";
+                    const chipBg=cpltOverride&&overrideGap>14?"#2a0a0a":cplt.productionInfeasible?"#2a0a0a":cplt.productionDateMissing?"#3a2800":cplt.programmingDrives?"#3a1f00":cplt.hasAiLeads?"#3a2800":cplt.noDataWarning?"#1a1a2e":"#08253a";
+                    // DECISION(v1.19.933): Tooltip explains the chain shape.
+                    // When Programming drives, the chip flips to a Programming-
+                    // led summary: "Programming Nd + Production Nd"; otherwise
+                    // it shows the panel chain (Eng + Mat + Lab + Prod).
+                    const chipTip=cplt.noDataWarning?"No lead times or production days entered — ship date estimate not meaningful":(
+                      cplt.programmingDrives
+                        ?`Ship date: ${effectiveShipDate} · Programming ${cplt.programmingDays}d (drives the chain) + ${cplt.productionDays}d production · panel chain (Eng+Mat+Lab) was ${cplt.panelChainDays}d · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`
+                        :`Ship date: ${effectiveShipDate} · ${(cplt.engineeringDays||0)>0?cplt.engineeringDays+"d eng + ":""}${cplt.longestItemDays}d material + ${cplt.laborDays}d labor + ${cplt.productionDays}d production${(cplt.programmingDays||0)>0?` · programming ${cplt.programmingDays}d (parallel)`:""} · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`
+                    );
                     return(
                       <div key={p.id} onClick={()=>setSelectedPanelId(p.id)}
                         style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:p.id===selectedPanelId?"#1a1a2e":"transparent",border:`1px solid ${p.id===selectedPanelId?C.accent:C.border}`,cursor:"pointer"}}>
@@ -27710,15 +27821,28 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                           <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
                             {curOverride?Math.ceil((new Date(pp.controlPanelShipDate).getTime()-_startOfDay(Date.now()))/_ONE_DAY_MS):cp.leadDays} calendar days from today
                           </div>
+                          {/* DECISION(v1.19.933): Milestone chain breakdown.
+                              PO Received → Eng → Approvals → Materials → Production
+                              → max(Buyoff, Programming Testing) → Ship.
+                              Programming runs in parallel from PO; flags when it
+                              gates Production Done. Production date is REQUIRED
+                              from TRAQS — show warning when blank. */}
                           <div style={{fontSize:12,color:C.sub,lineHeight:1.7,background:"#0a0a14",padding:"10px 12px",borderRadius:6,border:`1px solid ${C.border}44`,marginBottom:12}}>
-                            {/* DECISION(v1.19.932): Show services bucket (longest of Eng/Prog/Comm est. completion) when present. */}
-                            {(cp.servicesDays||0)>0&&<div>✏️ <strong style={{color:cp.largestContributor==="services"?"#22d3ee":C.text}}>{cp.servicesDays}d</strong> services (longest of Eng / Programming / Commissioning Est. Completion)</div>}
-                            <div>📦 <strong style={{color:cp.largestContributor==="material"?"#22d3ee":C.text}}>{cp.longestItemDays}d</strong> material{cp.drivers.length?` — longest: ${cp.drivers[0].partNumber} (${cp.drivers[0].leadTimeDays}d${cp.drivers[0].source==="ai"?"*":""})`:""}</div>
-                            <div>🔧 <strong style={{color:cp.largestContributor==="labor"?"#22d3ee":C.text}}>{cp.laborDays}d</strong> labor ({Math.round(laborHrs)} hrs ÷ {dch} hrs/day)</div>
-                            <div>📦 <strong style={{color:cp.largestContributor==="production"?"#22d3ee":C.text}}>{cp.productionDays}d</strong> production{pp.productionEndMode==="days_post_approval"?" (days post signed approvals)":""}</div>
+                            {(cp.engineeringDays||0)>0&&<div>✏️ <strong style={{color:cp.largestContributor==="engineering"?"#22d3ee":C.text}}>{cp.engineeringDays}d</strong> Engineering Design ({Math.round(cp.engineeringHours||0)} hrs)</div>}
+                            <div>📋 <strong style={{color:cp.largestContributor==="approval"?"#22d3ee":C.text}}>{cp.customerApprovalDays}d</strong> Customer Approval{cp.customerApprovalDays===21?" (3-week default)":""}</div>
+                            <div>📦 <strong style={{color:cp.largestContributor==="material"?"#22d3ee":C.text}}>{cp.longestItemDays}d</strong> Materials{cp.drivers.length?` — longest: ${cp.drivers[0].partNumber} (${cp.drivers[0].leadTimeDays}d${cp.drivers[0].source==="ai"?"*":""})`:""}</div>
+                            <div>🏭 <strong style={{color:cp.largestContributor==="production"?"#22d3ee":C.text}}>{cp.productionDays}d</strong> Production{pp.productionEndMode==="days_post_approval"?" (days post signed approvals)":" (TRAQS-scheduled)"}</div>
+                            {(cp.programmingDays||0)>0&&<div>💻 <strong style={{color:cp.programmingDrives?"#f59e0b":C.text}}>{cp.programmingDays}d</strong> Programming ({Math.round(cp.programmingHours||0)} hrs) — {cp.programmingDrives?"GATING":"runs parallel from PO"}</div>}
+                            <div style={{marginTop:6,paddingTop:6,borderTop:"1px dashed "+C.border}}>
+                              <div>⏱ <strong>{cp.productionDoneDays}d</strong> to Production Done</div>
+                              <div>+ <strong>{cp.postProductionDays}d</strong> post-prod (Buyoff {cp.buyoffDays}d{(cp.programmingTestingDays||0)>0?` ‖ Programming Testing ${cp.programmingTestingDays}d (20% of programming)`:""})</div>
+                            </div>
                             <div style={{marginTop:4,fontSize:11,color:C.muted,fontStyle:"italic"}}>Largest contributor: {cp.largestContributor}</div>
+                            {cp.programmingDrives&&<div style={{marginTop:6,fontSize:11,color:"#f59e0b",fontWeight:700,padding:"4px 8px",background:"#3a1f00",border:"1px solid #f59e0b66",borderRadius:4}}>⚠ Programming time exceeds the Eng + Approval + Materials chain — Programming is now the gating factor for Production Done.</div>}
+                            {cp.productionInfeasible&&<div style={{marginTop:6,fontSize:11,color:"#ef4444",fontWeight:700,padding:"4px 8px",background:"#2a0a0a",border:"1px solid #ef444466",borderRadius:4}}>⚠ TRAQS Production date precedes Eng+Approval+Materials chain ({cp.materialsCompleteDays}d). Schedule is infeasible — push the TRAQS date or accelerate approvals.</div>}
+                            {cp.productionDateMissing&&<div style={{marginTop:6,fontSize:11,color:"#fcd34d",fontWeight:700,padding:"4px 8px",background:"#3a2800",border:"1px solid #fcd34d66",borderRadius:4}}>⚠ TRAQS Est. Prod. Done date is required on every quote.</div>}
                             {cp.hasAiLeads&&<div style={{marginTop:4,fontSize:11,color:"#fcd34d"}}>⚠ Includes AI-estimated lead times</div>}
-                            {cp.noDataWarning&&<div style={{marginTop:4,fontSize:11,color:"#fcd34d"}}>⚠ No inputs — estimate not meaningful</div>}
+                            {cp.noDataWarning&&!cp.productionDateMissing&&<div style={{marginTop:4,fontSize:11,color:"#fcd34d"}}>⚠ No inputs — estimate not meaningful</div>}
                           </div>
                           {curOverride&&<div style={{fontSize:11,color:"#f59e0b",marginBottom:8}}>Manual override active — computed value would be {cp.shipDate} ({cp.leadDays}d)</div>}
                           <div style={{fontSize:11,color:C.muted,marginBottom:4,fontWeight:600,letterSpacing:0.5,textTransform:"uppercase"}}>Override ship date</div>
