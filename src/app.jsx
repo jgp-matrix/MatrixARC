@@ -27750,14 +27750,21 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     const _scheduleWarn=cplt.programmingDrives||cplt.productionInfeasible||cplt.productionDateMissing;
                     const chipColor=cpltOverride&&overrideGap>14?"#ef4444":cplt.productionInfeasible?"#ef4444":cplt.productionDateMissing?"#fcd34d":cplt.programmingDrives?"#f59e0b":cplt.hasAiLeads?"#fcd34d":cplt.noDataWarning?"#64748b":"#22d3ee";
                     const chipBg=cpltOverride&&overrideGap>14?"#2a0a0a":cplt.productionInfeasible?"#2a0a0a":cplt.productionDateMissing?"#3a2800":cplt.programmingDrives?"#3a1f00":cplt.hasAiLeads?"#3a2800":cplt.noDataWarning?"#1a1a2e":"#08253a";
-                    // DECISION(v1.19.933): Tooltip explains the chain shape.
-                    // When Programming drives, the chip flips to a Programming-
-                    // led summary: "Programming Nd + Production Nd"; otherwise
-                    // it shows the panel chain (Eng + Mat + Lab + Prod).
-                    const chipTip=cplt.noDataWarning?"No lead times or production days entered — ship date estimate not meaningful":(
+                    // DECISION(v1.19.936): Tooltip rewritten to match the
+                    // v1.19.933 milestone chain (PO → Eng → Approval →
+                    // Materials → Production → Buyoff/Programming Testing).
+                    // Two variants: (a) Programming gating; (b) standard
+                    // chain. Adds the post-production bucket and the new
+                    // warning states (TRAQS missing / TRAQS infeasible).
+                    const _engPart=(cplt.engineeringDays||0)>0?`${cplt.engineeringDays}d Eng + `:"";
+                    const _progParallel=(cplt.programmingDays||0)>0?` · Programming ${cplt.programmingDays}d (parallel)`:"";
+                    const _postProd=`${cplt.postProductionDays}d post-prod (Buyoff ${cplt.buyoffDays}d${(cplt.programmingTestingDays||0)>0?` ‖ Prog Test ${cplt.programmingTestingDays}d`:""})`;
+                    const _warnSuffix=cplt.productionInfeasible?" · ⚠ TRAQS infeasible":cplt.productionDateMissing?" · ⚠ TRAQS Est. Prod. Done required":cplt.hasAiLeads?" · includes AI estimates":"";
+                    const _overSuffix=cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:"";
+                    const chipTip=cplt.noDataWarning?"No lead times or production date entered — ship date estimate not meaningful":(
                       cplt.programmingDrives
-                        ?`Ship date: ${effectiveShipDate} · Programming ${cplt.programmingDays}d (drives the chain) + ${cplt.productionDays}d production · panel chain (Eng+Mat+Lab) was ${cplt.panelChainDays}d · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`
-                        :`Ship date: ${effectiveShipDate} · ${(cplt.engineeringDays||0)>0?cplt.engineeringDays+"d eng + ":""}${cplt.longestItemDays}d material + ${cplt.laborDays}d labor + ${cplt.productionDays}d production${(cplt.programmingDays||0)>0?` · programming ${cplt.programmingDays}d (parallel)`:""} · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`
+                        ?`Ship date: ${effectiveShipDate} · Programming ${cplt.programmingDays}d (gates Production Done — chain was ${cplt.materialsCompleteDays+cplt.productionDays}d) + ${_postProd} · largest: ${cplt.largestContributor}${_warnSuffix}${_overSuffix}`
+                        :`Ship date: ${effectiveShipDate} · ${_engPart}${cplt.customerApprovalDays}d Approval + ${cplt.longestItemDays}d Materials + ${cplt.productionDays}d Production + ${_postProd}${_progParallel} · largest: ${cplt.largestContributor}${_warnSuffix}${_overSuffix}`
                     );
                     return(
                       <div key={p.id} onClick={()=>setSelectedPanelId(p.id)}
