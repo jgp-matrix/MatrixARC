@@ -26008,21 +26008,31 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             const laborCost=baseLaborCost+allEcoLabor.totalCost;
             const grandTotal=matCost+laborCost;
             const sellPrice=markup>=100?grandTotal:grandTotal/(1-markup/100);
-            // DECISION(v1.19.906, BASE Total fix): When on BASE scope and a draft
-            // ECO has tagged rows on this panel, the legacy Pricing breakdown was
-            // showing combined (BASE + ECO) values, making the BASE "Total" appear
-            // to update as ECO edits were made. BASE must remain locked at its
-            // original price — switch to ECO scope to see the BASE/Δ/NEW math.
-            // When no draft ECO exists, the BASE-only values equal the combined
-            // values so this is a no-op.
+            // DECISION(v1.19.906, BASE Total fix; refined in v1.19.907):
+            // Scope-aware breakdown so Panel Summary + Quote Summary mirror the
+            // selected tab.
+            //   • BASE tab → BASE-only values everywhere.
+            //   • ECO N tab → BASE shown as REFERENCE; everything else uses values
+            //     for that specific ECO (NEW = BASE + ECO N delta only — NOT
+            //     BASE + all ECOs).
+            // When no draft ECO exists, BASE-only equals the combined values so
+            // this is a no-op for legacy panels.
             const _hasEcoRowsOnPanel=(sp.bom||[]).some(r=>r.ecoTag);
             const _baseScopeWithDraftEco=!inEcoSummaryScope&&_hasEcoRowsOnPanel;
             const baseGrandTotal=baseMatCost+baseLaborCost;
             const baseSellPrice=markup>=100?baseGrandTotal:baseGrandTotal/(1-markup/100);
-            const displayMat=_baseScopeWithDraftEco?baseMatCost:matCost;
-            const displayLabor=_baseScopeWithDraftEco?baseLaborCost:laborCost;
-            const displayTotal=_baseScopeWithDraftEco?baseGrandTotal:grandTotal;
-            const displaySell=_baseScopeWithDraftEco?baseSellPrice:sellPrice;
+            // In ECO scope: cost subtotals for THIS ECO only (BASE + this ECO delta).
+            const ecoScopeMat=baseMatCost+ecoMatDelta;
+            const ecoScopeLabor=baseLaborCost+ecoLabor.totalCost;
+            const ecoScopeGrandTotal=ecoScopeMat+ecoScopeLabor;
+            const ecoScopeSellPrice=markup>=100?ecoScopeGrandTotal:ecoScopeGrandTotal/(1-markup/100);
+            // displayMat/Labor/Total/Sell — drives the legacy single-section view AND
+            // the bottom big sellPrice. In ECO scope the dedicated 3-section view
+            // (BASE / ECO N CHANGES / NEW TOTAL) renders separately below.
+            const displayMat=_baseScopeWithDraftEco?baseMatCost:(inEcoSummaryScope?ecoScopeMat:matCost);
+            const displayLabor=_baseScopeWithDraftEco?baseLaborCost:(inEcoSummaryScope?ecoScopeLabor:laborCost);
+            const displayTotal=_baseScopeWithDraftEco?baseGrandTotal:(inEcoSummaryScope?ecoScopeGrandTotal:grandTotal);
+            const displaySell=_baseScopeWithDraftEco?baseSellPrice:(inEcoSummaryScope?ecoScopeSellPrice:sellPrice);
             const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
             const pendingBcCount=bom.filter(r=>(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual").length;
             const laborAccepted=sp.laborData?.accepted||{};
@@ -26114,9 +26124,13 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     <div style={{borderTop:"1px solid "+C.muted+"33",marginTop:10,paddingTop:8,marginBottom:4}}>
                       <div style={{fontSize:9,color:"#fff",fontWeight:700,letterSpacing:0.6,marginBottom:4}}>NEW TOTAL</div>
                     </div>
-                    {row("Materials",fmtPlain(baseMatCost+ecoMatDelta),"#fff","#fff",false)}
-                    {row("Labor",fmtPlain(baseLaborCost+ecoLabor.totalCost),"#fff","#fff",false)}
-                    {row("Total",fmtPlain(grandTotal),"#fff","#fff",true)}
+                    {/* DECISION(v1.19.907): NEW TOTAL is BASE + THIS ECO only
+                        (was previously `grandTotal` which is BASE + ALL ECOs —
+                        a discrepancy that surfaces if multiple draft ECOs exist
+                        simultaneously). Single-ECO panels are unaffected. */}
+                    {row("Materials",fmtPlain(ecoScopeMat),"#fff","#fff",false)}
+                    {row("Labor",fmtPlain(ecoScopeLabor),"#fff","#fff",false)}
+                    {row("Total",fmtPlain(ecoScopeGrandTotal),"#fff","#fff",true)}
                   </>);
                 })()}
                 <div style={{borderTop:"1px solid #fff",paddingTop:10,marginTop:4,display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:14}}>
@@ -26226,6 +26240,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:2}}>
                   <span style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Rev ${String(project.quoteRev).padStart(2,'0')}`:""}</span>
                   {(project.quoteRev||0)>(project.quoteRevAtPrint||0)&&<span style={{fontSize:10,fontWeight:700,color:"#f59e0b",letterSpacing:0.3}}>unsent revision</span>}
+                  {/* DECISION(v1.19.907): scope indicator — matches Panel Summary's
+                      BASE / ECO N pill so the user can see at a glance which tab's
+                      values are being totalled below. */}
+                  {(()=>{const _anyEco=(project.panels||[]).some(p=>(p.bom||[]).some(r=>r.ecoTag));
+                    if(!_anyEco)return null;
+                    if(inEcoSummaryScope)return <span title="Showing BASE + this ECO's delta — switch to BASE tab for the original quote total" style={{background:"#3b0764",color:"#a855f7",borderRadius:10,padding:"1px 8px",fontSize:10,fontWeight:800,letterSpacing:0.4}}>ECO {String(activeEcoNumberForSummary).padStart(2,"0")}</span>;
+                    return <span title="Showing BASE-only totals — switch to an ECO tab to see the new total including the change order" style={{background:"#1e293b",color:"#94a3b8",borderRadius:10,padding:"1px 8px",fontSize:10,fontWeight:800,letterSpacing:0.4}}>BASE</span>;
+                  })()}
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {(project.panels||[]).map((p,pi)=>{
@@ -26238,8 +26260,19 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   // DECISION(v1.19.887): keep `ppr` in scope — line 25430 references
                   // ppr.isBudgetary for the BUDGETARY pill. v1.19.886 dropped it
                   // along with the local price calc and broke the site.
+                  // DECISION(v1.19.907): Per-panel QUOTE SUMMARY total is now
+                  // tab-scope-aware to match the Panel Summary breakdown:
+                  //   • BASE tab     → BASE-only sell price
+                  //   • ECO N tab    → BASE + ECO N's sell delta (NEW for that ECO)
+                  //   • no scope     → combined (legacy)
                   const ppr=p.pricing||{};
-                  const psp=computePanelSellPrice(p);
+                  const _psQuoteId=inEcoSummaryScope?activeEcoIdForSummary:null;
+                  const _psQuoteNum=inEcoSummaryScope?activeEcoNumberForSummary:0;
+                  const psp=inEcoSummaryScope
+                    ?computeBasePanelSellPrice(p)+computeEcoSellDelta(p,_psQuoteId,_psQuoteNum)
+                    :((!activeScope||activeScope.type==="base")
+                      ?computeBasePanelSellPrice(p)
+                      :computePanelSellPrice(p));
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   const pqty=p.lineQty??p.qty??1;
                   // DECISION(v1.19.708): Control Panel Lead Time chip — live-computed per panel.
@@ -26354,10 +26387,21 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   document.body
                 )}
                 {(project.panels||[]).length>1&&(()=>{
-                  // DECISION(v1.19.886): PROJECT TOTAL also routed through
-                  // computePanelSellPrice for consistency with the printed
-                  // Quote and the per-panel rows above.
-                  const total=(project.panels||[]).reduce((sum,p)=>sum+computePanelSellPrice(p)*(p.lineQty??p.qty??1),0);
+                  // DECISION(v1.19.886): PROJECT TOTAL routed through
+                  // computePanelSellPrice for consistency with per-panel rows above.
+                  // DECISION(v1.19.907): Mirror the per-panel rows' tab-aware logic
+                  // so PROJECT TOTAL adds up to the visible per-panel values:
+                  //   • BASE tab → sum of BASE-only sells
+                  //   • ECO N tab → sum of (BASE + ECO N delta)
+                  //   • no scope → combined (legacy)
+                  const total=(project.panels||[]).reduce((sum,p)=>{
+                    const _ps=inEcoSummaryScope
+                      ?computeBasePanelSellPrice(p)+computeEcoSellDelta(p,activeEcoIdForSummary,activeEcoNumberForSummary)
+                      :((!activeScope||activeScope.type==="base")
+                        ?computeBasePanelSellPrice(p)
+                        :computePanelSellPrice(p));
+                    return sum+_ps*(p.lineQty??p.qty??1);
+                  },0);
                   const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
                   return(
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",marginTop:4,borderTop:"1px solid #fff"}}>
