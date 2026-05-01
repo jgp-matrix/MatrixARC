@@ -1039,7 +1039,7 @@ const LEAD_DRIVER_THRESHOLD_DAYS=30;
 function _startOfDay(ts){const d=new Date(ts);d.setHours(0,0,0,0);return d.getTime();}
 function _isoDate(ts){const d=new Date(ts);return d.toISOString().slice(0,10);}
 function computeControlPanelLeadTime(panel,project){
-  if(!panel)return{shipDate:null,leadDays:0,longestItemDays:0,laborDays:0,productionDays:0,averageItemLeadDays:0,drivers:[],largestContributor:"material",hasAiLeads:false,noDataWarning:true};
+  if(!panel)return{shipDate:null,leadDays:0,longestItemDays:0,laborDays:0,productionDays:0,servicesDays:0,averageItemLeadDays:0,drivers:[],largestContributor:"material",hasAiLeads:false,noDataWarning:true};
   const today=_startOfDay(Date.now());
   const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
   const longestItemDays=bom.reduce((m,r)=>Math.max(m,+r.leadTimeDays||0),0);
@@ -1052,9 +1052,16 @@ function computeControlPanelLeadTime(panel,project){
   // Represents post-assembly production time. If end date is before assembly complete,
   // productionDays=0 (material+labor is binding). Legacy panel.productionDays (numeric)
   // still read as fallback for projects saved before the date-picker change.
+  // DECISION(v1.19.932): New `productionEndMode` = "days_post_approval" lets the user
+  // park the field with a relative offset before approvals come in. When set, the
+  // numeric productionDaysPostApproval value is used directly as productionDays
+  // (capped 0..365). Legacy productionEndDate (date mode) and productionDays
+  // (numeric legacy) fall through after.
   const assemblyCompleteBeforeProd=today+(longestItemDays+laborDays)*_ONE_DAY_MS;
   let productionDays=0;
-  if(panel.productionEndDate){
+  if(panel.productionEndMode==="days_post_approval"){
+    productionDays=Math.max(0,Math.min(365,+panel.productionDaysPostApproval||0));
+  }else if(panel.productionEndDate){
     const prodEnd=_startOfDay(new Date(panel.productionEndDate).getTime());
     if(!isNaN(prodEnd)&&prodEnd>assemblyCompleteBeforeProd){
       productionDays=Math.ceil((prodEnd-assemblyCompleteBeforeProd)/_ONE_DAY_MS);
@@ -1062,10 +1069,28 @@ function computeControlPanelLeadTime(panel,project){
   }else if(panel.productionDays!=null){
     productionDays=Math.max(0,Math.min(365,+panel.productionDays||0));
   }
-  const totalDays=longestItemDays+laborDays+productionDays;
+  // DECISION(v1.19.932, services in ship date): If the project has any service
+  // Quote Lines (Engineering Design / Programming / Commissioning) with an Est.
+  // Completion Date set, take the LONGEST one (in days from today) and add it
+  // to the ship date as its own component. Per user spec the formula is now:
+  //   Ship Date = today + Longest(Eng/Prog/Comm completion days) + Material + Labor + Production
+  // Services flow in PARALLEL to material in real life but the user wants them
+  // explicitly additive on the quote so customers see the full schedule.
+  let servicesDays=0;
+  if(Array.isArray(project?.serviceCards)){
+    for(const sc of project.serviceCards){
+      if(!sc||!sc.estCompletionDate)continue;
+      const target=_startOfDay(new Date(sc.estCompletionDate).getTime());
+      if(isNaN(target))continue;
+      const d=Math.max(0,Math.ceil((target-today)/_ONE_DAY_MS));
+      if(d>servicesDays)servicesDays=d;
+    }
+  }
+  const totalDays=servicesDays+longestItemDays+laborDays+productionDays;
   const shipDate=today+totalDays*_ONE_DAY_MS;
   // Largest contributor
   let largestContributor="material",largest=longestItemDays;
+  if(servicesDays>largest){largestContributor="services";largest=servicesDays;}
   if(laborDays>largest){largestContributor="labor";largest=laborDays;}
   if(productionDays>largest){largestContributor="production";largest=productionDays;}
   // DECISION(v1.19.736): Drivers = BOM items with leadTimeDays > LEAD_DRIVER_THRESHOLD_DAYS
@@ -1082,11 +1107,11 @@ function computeControlPanelLeadTime(panel,project){
   return{
     shipDate:_isoDate(shipDate),
     leadDays:totalDays,
-    longestItemDays,laborDays,productionDays,
+    longestItemDays,laborDays,productionDays,servicesDays,
     averageItemLeadDays:Math.round(avg*10)/10,
     drivers,largestContributor,
     hasAiLeads:bom.some(r=>r.leadTimeSource==="ai"),
-    noDataWarning:longestItemDays===0&&laborDays===0&&productionDays===0,
+    noDataWarning:longestItemDays===0&&laborDays===0&&productionDays===0&&servicesDays===0,
   };
 }
 // Expose for console testing
@@ -17969,6 +17994,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // = max(0, productionEndDate - assemblyCompleteDate) so the SUM math still works: the
   // "production" bucket represents any post-assembly time the production schedule adds.
   const [draftProductionEndDate,setDraftProductionEndDate]=useState(panel.productionEndDate||"");
+  // DECISION(v1.19.932): "## Days - Signed Approvals" mode for the Est. Prod.
+  // Done field. When set, the value is a relative offset (number of production
+  // days post signed approvals) rather than a fixed date. computeControlPanelLeadTime
+  // reads productionEndMode and uses productionDaysPostApproval directly when
+  // mode==="days_post_approval".
+  const [draftProductionEndMode,setDraftProductionEndMode]=useState(panel.productionEndMode||"date");
+  const [draftProductionDaysPostApproval,setDraftProductionDaysPostApproval]=useState(panel.productionDaysPostApproval??30);
   const [draftLineQty,setDraftLineQty]=useState(panel.lineQty??1);
   const [bcSyncing,setBcSyncing]=useState(false);
   const [bcSyncStatus,setBcSyncStatus]=useState(null); // null | "ok" | "error"
@@ -18825,7 +18857,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const newNo=draftNo.trim(),newDesc=draftDesc.trim(),newRev=draftRev.trim();
     // DECISION(v1.19.714): productionEndDate stored as YYYY-MM-DD string (empty = null).
     const prodEnd=draftProductionEndDate?String(draftProductionEndDate).trim()||null:null;
-    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd};
+    // DECISION(v1.19.932): Persist productionEndMode + days-post-approval value.
+    // computeControlPanelLeadTime reads productionEndMode first; when set to
+    // "days_post_approval" it uses productionDaysPostApproval and ignores the
+    // date. Mode "date" (default) uses productionEndDate as before.
+    const prodMode=draftProductionEndMode==="days_post_approval"?"days_post_approval":"date";
+    const prodDaysPostApproval=Math.max(0,Math.min(365,+draftProductionDaysPostApproval||0));
+    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode,productionDaysPostApproval:prodDaysPostApproval};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     // DECISION(v1.19.632) Phase 2: If user's value differs from the last AI extraction, save the
@@ -21296,15 +21334,49 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {/* DECISION(v1.19.714): Production End Date (the date production tells the user
                they expect to be done). Feeds computeControlPanelLeadTime — the software
                derives days-post-assembly at compute time. */}
+            {/* DECISION(v1.19.932): Est. Prod. Done now supports two modes —
+                a fixed date OR "## Days - Signed Approvals" (relative offset
+                applied once approvals come in). Toggle button under the label
+                flips between modes. The active mode renders the appropriate
+                input (date picker vs. number + label). */}
             <div style={{display:"flex",flexDirection:"column",gap:3,flexShrink:0,padding:"4px 10px",border:`1px solid ${C.border}`,borderRadius:6,background:"#0a0a18"}}>
-              <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}
-                   title="Date production tells you they expect to be done. Feeds the Control Panel Ship Date.">Est. Prod. Done</div>
-              <input type="date" value={draftProductionEndDate}
-                onChange={e=>setDraftProductionEndDate(e.target.value)} readOnly={readOnly}
-                onBlur={()=>saveTitleFields()}
-                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftProductionEndDate(panel.productionEndDate||"");e.target.blur();}}}
-                title="Date production tells you they expect to be done. Feeds the Control Panel Ship Date."
-                style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <div style={{fontSize:11,color:C.accent,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase"}}
+                     title="Production timeline. Either a specific date OR a number of days post signed approvals. Feeds the Control Panel Ship Date.">Est. Prod. Done</div>
+                {!readOnly&&<button
+                  onClick={e=>{
+                    e.stopPropagation();
+                    const next=draftProductionEndMode==="days_post_approval"?"date":"days_post_approval";
+                    setDraftProductionEndMode(next);
+                    // Save on toggle so the switch persists immediately.
+                    setTimeout(()=>saveTitleFields(),0);
+                  }}
+                  title={draftProductionEndMode==="days_post_approval"?"Switch to fixed date":"Switch to '## Days - Signed Approvals'"}
+                  style={{background:"transparent",border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,padding:"0 6px",fontSize:9,cursor:"pointer",fontFamily:"inherit",lineHeight:"14px"}}>
+                  ⇄ {draftProductionEndMode==="days_post_approval"?"DATE":"DAYS"}
+                </button>}
+              </div>
+              {draftProductionEndMode==="days_post_approval"?(
+                <div style={{display:"flex",alignItems:"baseline",gap:4}}>
+                  <input type="text" inputMode="numeric"
+                    value={draftProductionDaysPostApproval}
+                    onChange={e=>{const v=e.target.value.replace(/[^0-9]/g,'');setDraftProductionDaysPostApproval(v===""?"":+v);}}
+                    onFocus={e=>e.target.select()}
+                    onBlur={()=>saveTitleFields()}
+                    onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftProductionDaysPostApproval(panel.productionDaysPostApproval??30);e.target.blur();}}}
+                    readOnly={readOnly}
+                    title="Number of production days post signed approvals"
+                    style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",fontFamily:"inherit",width:"3.5ch",textAlign:"right"}}/>
+                  <span style={{fontSize:10,color:C.muted,fontWeight:600,whiteSpace:"nowrap"}}>Days · Signed Approvals</span>
+                </div>
+              ):(
+                <input type="date" value={draftProductionEndDate}
+                  onChange={e=>setDraftProductionEndDate(e.target.value)} readOnly={readOnly}
+                  onBlur={()=>saveTitleFields()}
+                  onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftProductionEndDate(panel.productionEndDate||"");e.target.blur();}}}
+                  title="Date production tells you they expect to be done. Feeds the Control Panel Ship Date."
+                  style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.green,fontSize:15,fontWeight:700,outline:"none",fontFamily:"inherit",colorScheme:"dark"}}/>
+              )}
             </div>
           </div>
         </div>
@@ -27592,7 +27664,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     const overrideGap=cpltOverride?effectiveDays-cplt.leadDays:0;
                     const chipColor=cpltOverride&&overrideGap>14?"#ef4444":cplt.hasAiLeads?"#fcd34d":cplt.noDataWarning?"#64748b":"#22d3ee";
                     const chipBg=cpltOverride&&overrideGap>14?"#2a0a0a":cplt.hasAiLeads?"#3a2800":cplt.noDataWarning?"#1a1a2e":"#08253a";
-                    const chipTip=cplt.noDataWarning?"No lead times or production days entered — ship date estimate not meaningful":`Ship date: ${effectiveShipDate} · ${cplt.longestItemDays}d material + ${cplt.laborDays}d labor + ${cplt.productionDays}d production · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`;
+                    const chipTip=cplt.noDataWarning?"No lead times or production days entered — ship date estimate not meaningful":`Ship date: ${effectiveShipDate} · ${(cplt.servicesDays||0)>0?cplt.servicesDays+"d services + ":""}${cplt.longestItemDays}d material + ${cplt.laborDays}d labor + ${cplt.productionDays}d production · largest: ${cplt.largestContributor}${cplt.hasAiLeads?" · includes AI estimates":""}${cpltOverride?` · OVERRIDDEN (computed: ${cplt.leadDays}d)`:""}`;
                     return(
                       <div key={p.id} onClick={()=>setSelectedPanelId(p.id)}
                         style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:p.id===selectedPanelId?"#1a1a2e":"transparent",border:`1px solid ${p.id===selectedPanelId?C.accent:C.border}`,cursor:"pointer"}}>
@@ -27639,9 +27711,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                             {curOverride?Math.ceil((new Date(pp.controlPanelShipDate).getTime()-_startOfDay(Date.now()))/_ONE_DAY_MS):cp.leadDays} calendar days from today
                           </div>
                           <div style={{fontSize:12,color:C.sub,lineHeight:1.7,background:"#0a0a14",padding:"10px 12px",borderRadius:6,border:`1px solid ${C.border}44`,marginBottom:12}}>
+                            {/* DECISION(v1.19.932): Show services bucket (longest of Eng/Prog/Comm est. completion) when present. */}
+                            {(cp.servicesDays||0)>0&&<div>✏️ <strong style={{color:cp.largestContributor==="services"?"#22d3ee":C.text}}>{cp.servicesDays}d</strong> services (longest of Eng / Programming / Commissioning Est. Completion)</div>}
                             <div>📦 <strong style={{color:cp.largestContributor==="material"?"#22d3ee":C.text}}>{cp.longestItemDays}d</strong> material{cp.drivers.length?` — longest: ${cp.drivers[0].partNumber} (${cp.drivers[0].leadTimeDays}d${cp.drivers[0].source==="ai"?"*":""})`:""}</div>
                             <div>🔧 <strong style={{color:cp.largestContributor==="labor"?"#22d3ee":C.text}}>{cp.laborDays}d</strong> labor ({Math.round(laborHrs)} hrs ÷ {dch} hrs/day)</div>
-                            <div>📦 <strong style={{color:cp.largestContributor==="production"?"#22d3ee":C.text}}>{cp.productionDays}d</strong> production</div>
+                            <div>📦 <strong style={{color:cp.largestContributor==="production"?"#22d3ee":C.text}}>{cp.productionDays}d</strong> production{pp.productionEndMode==="days_post_approval"?" (days post signed approvals)":""}</div>
                             <div style={{marginTop:4,fontSize:11,color:C.muted,fontStyle:"italic"}}>Largest contributor: {cp.largestContributor}</div>
                             {cp.hasAiLeads&&<div style={{marginTop:4,fontSize:11,color:"#fcd34d"}}>⚠ Includes AI-estimated lead times</div>}
                             {cp.noDataWarning&&<div style={{marginTop:4,fontSize:11,color:"#fcd34d"}}>⚠ No inputs — estimate not meaningful</div>}
