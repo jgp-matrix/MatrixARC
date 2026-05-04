@@ -21998,26 +21998,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         </div>
       </div>}
 
-      {/* 5 stat boxes */}
-      <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:14}}>
-        {[
-          {label:"Total",count:pages.length,color:C.sub,dim:C.border+"44"},
-          {label:"BOM",count:bomCount,color:C.accent,dim:C.accentDim},
-          {label:"Schematic",count:schCount,color:C.green,dim:C.greenDim},
-          {label:"Back Panel",count:backpanelCount+layoutCount,color:C.purple,dim:"#2e1a4a"},
-          {label:"Enclosure",count:enclosureCount,color:C.teal||"#0d9488",dim:"#042f2e"},
-        ].map(s=>(
-          <div key={s.label} style={{background:s.dim,border:`1px solid ${s.color}44`,borderRadius:8,padding:"10px 6px",textAlign:"center"}}>
-            <div style={{fontSize:24,fontWeight:800,color:s.color,lineHeight:1}}>{s.count}</div>
-            <div style={{fontSize:12,color:s.color,fontWeight:700,marginTop:4,letterSpacing:0.5,opacity:0.85}}>{s.label.toUpperCase()}</div>
-          </div>
-        ))}
-      </div>
+      {/* DECISION(v1.19.961): Removed the 5-tile page-type grid (TOTAL / BOM / SCHEMATIC /
+          BACK PANEL / ENCLOSURE). The per-type counts were noise — only the total
+          page count is useful at a glance. The page count is now inlined into the
+          DRAWINGS header below. The bomCount/schCount/backpanelCount/enclosureCount
+          variables above are still used elsewhere in the component, so they stay. */}
 
       {/* Drawings section */}
       <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-          <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:2}}>DRAWINGS</div>
+          <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:2}}>{pages.length>0?`${pages.length} `:""}DRAWING{pages.length===1?"":"S"}{pages.length>0?" in package":""}</div>
           {/* DECISION(v1.19.743): Drawing Version chip — shows v.N next to the DRAWINGS
               header. Bumps automatically when the BOM hash changes. Hidden when the panel
               has no version yet (existing pre-v1.19.743 panels until their first edit). */}
