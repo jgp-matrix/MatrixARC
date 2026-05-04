@@ -22007,7 +22007,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {/* Drawings section */}
       <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-          <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:2}}>{pages.length>0?`${pages.length} `:""}DRAWING{pages.length===1?"":"S"}{pages.length>0?" in package":""}</div>
+          <div style={{fontSize:12,color:"#fff",fontWeight:700,letterSpacing:0.7,marginRight:2}}>{pages.length>0?`${pages.length} `:""}DRAWING{pages.length===1?"":"S"}{pages.length>0?" in package":""}</div>
           {/* DECISION(v1.19.743): Drawing Version chip — shows v.N next to the DRAWINGS
               header. Bumps automatically when the BOM hash changes. Hidden when the panel
               has no version yet (existing pre-v1.19.743 panels until their first edit). */}
