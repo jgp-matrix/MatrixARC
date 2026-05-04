@@ -6912,6 +6912,42 @@ async function saveProject(uid,project){
           const cp=curPanels.find(p=>p.id===np.id);
           newPanels[i]=_bumpBomVersionIfChanged(np,cp);
         }
+        // DECISION(v1.19.960): Project-level admin-set field preservation guard.
+        // Same pattern as the panel-level reviewNotes guard above (v1.19.776) but for
+        // PROJECT-LEVEL fields that one user sets and another user's save can wipe.
+        //
+        // The trigger case: Jon (admin) clicks "Take Over" on a project Noah is working
+        // in. ownerTakeoverActive gets written to Firestore directly. The next save
+        // from ANY user — Noah, Jon himself, or a background extraction save — merges
+        // their local React state with curDoc. If their local state was loaded BEFORE
+        // the takeover landed (or the takeover-set call only writes Firestore without
+        // updating local state), `data.ownerTakeoverActive` is undefined and gets
+        // stripped on `ref.set(toSave)`. Banner snaps back to "Owner is working" within
+        // seconds.
+        //
+        // Fix: if the SERVER has an active (unexpired) takeover, and the incoming write
+        // would wipe it (no value present), restore it from the server. Writers who
+        // explicitly want to extend or replace the takeover include a non-null value;
+        // those pass through unchanged. To dismiss a takeover, set its expiresAt to a
+        // past time (the next save's `_serverTakeover.expiresAt > Date.now()` check
+        // will fail and the guard becomes a no-op).
+        // Same logic applies to ownerLockActive — only owner-initiated UI changes that
+        // intentionally set the field should propagate; accidental clobbers are restored.
+        const _serverTakeover=_curDoc.data().ownerTakeoverActive;
+        if(_serverTakeover&&_serverTakeover.expiresAt>Date.now()){
+          if(!data.ownerTakeoverActive){
+            console.warn(`SAVE GUARD: preserving active takeover by ${_serverTakeover.takeoverBy} (expires ${new Date(_serverTakeover.expiresAt).toLocaleTimeString()}) — incoming save by ${uid} would have wiped it`);
+            data.ownerTakeoverActive=_serverTakeover;
+          }
+        }
+        const _serverLockActive=_curDoc.data().ownerLockActive===true;
+        const _serverCreatedBy=_curDoc.data().createdBy;
+        // Only the project owner can toggle ownerLockActive. Non-owner saves that don't
+        // include the field must preserve whatever the owner set.
+        if(_serverLockActive&&data.ownerLockActive!==true&&_serverCreatedBy!==uid){
+          console.warn(`SAVE GUARD: preserving owner-set lock — incoming save by ${uid} would have cleared it`);
+          data.ownerLockActive=true;
+        }
         // (3) quoteRev bump — compute hash AFTER bomVersion has been applied so
         // version changes are part of the quote-state hash. Compare to the last-
         // persisted hash; if different, bump quoteRev and record the new hash. First
