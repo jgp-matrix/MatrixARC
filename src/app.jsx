@@ -8277,12 +8277,6 @@ STEP 4 — EXTRACT EVERY ROW (no skipping):
 STEP 5 — CHARACTER ACCURACY (most critical step):
 Industrial part numbers are alpha-numeric codes where a SINGLE wrong character makes the part unfindable. You MUST verify each character individually by examining its actual glyph shape — do NOT rely on context or guessing.
 
-DENSE-RENDER NOTE: D-size and large-format engineering drawings often pack 50-100 BOM rows into one sheet. After downsampling, adjacent characters may visually TOUCH or merge, especially in catalog numbers like "AHCC2335" (where two C's may look like a single wide letter, or "33" may look like "8"). When characters appear to touch:
-  • Look for the gap-stroke pattern: even when characters touch, each glyph retains its distinct inner stroke shape (e.g. C's inner curve vs. l's vertical line).
-  • If the character count for a part number "looks short," reconsider — adjacent zeros, ones, and similar-shape pairs (CC, OO, ll) commonly merge visually. ELC1001PBUL ≠ ELC101PBUL — count the digits in each numeric run, not just the run length.
-  • For catalog-number runs of pure digits (e.g. "2903528"), verify each digit individually — a 0 may visually merge with an adjacent 0 or with a 5/6/8.
-  • Hoffman, Phoenix Contact, and Allen-Bradley catalog numbers have characteristic length patterns; if your read is unusually short, it's probably missing a character.
-
 LETTER vs DIGIT confusion matrix — examine stroke shape carefully:
 • O vs D: O is a closed oval, symmetric left-right. D has a flat vertical stroke on the LEFT side. If the left side is straight/flat → it is D. If both sides are curved → it is O.
 • O vs 0 (zero): In engineering drawings, 0 often has a slash through it or is narrower. O is a smooth wider oval. When a character appears in an otherwise all-digit sequence, it is likely 0. When in an all-letter sequence, likely O.
