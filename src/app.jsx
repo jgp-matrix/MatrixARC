@@ -7405,6 +7405,49 @@ async function uploadPageImage(uid,projectId,pageId,dataUrl){
   _dbg("UPLOAD IMAGE: got URL",pageId);
   return url;
 }
+// DECISION(v1.19.959, native PDF input for AI extraction): Retain the original
+// PDF in Firebase Storage so BOM extraction and other AI passes can use Anthropic's
+// native document input — bypassing our render → JPEG → resize → JPEG pipeline that
+// was systematically corrupting OCR on dense BOMs (OVIVO CSW1807-121 case study).
+// Storage cost is trivial: a typical 21-page D-size PDF is 2-3 MB, ~$0.04/GB-year.
+// The page images at pageImages/{uid}/{projectId}/{pageId}.jpg are NOT replaced —
+// they remain the source for stamping, redlining, customer review, thumbnails, and
+// quote rendering. Only AI extraction switches to the PDF path.
+// Falls back to image-based extraction if PDF retention fails or for legacy projects
+// uploaded before v1.19.959.
+async function uploadOriginalPdf(uid,projectId,fileName,arrayBuffer){
+  if(!fbStorage)return null;
+  const safeName=(fileName||"drawing.pdf").replace(/[^a-zA-Z0-9._-]/g,"_");
+  const stamp=Date.now()+"_"+Math.random().toString(36).slice(2,8);
+  const path=`originalPdfs/${uid}/${projectId}/${stamp}_${safeName}`;
+  const ref=fbStorage.ref(path);
+  _dbg("UPLOAD PDF: starting",path,"size="+arrayBuffer.byteLength);
+  await ref.put(new Blob([arrayBuffer],{type:"application/pdf"}));
+  _dbg("UPLOAD PDF: uploaded",path);
+  return path;
+}
+// Download a retained PDF as base64. Used by extractBomPage when sending native
+// PDF input to Anthropic. Throws on failure so the caller can fall back cleanly.
+async function loadOriginalPdfAsBase64(storagePath){
+  if(!fbStorage||!storagePath)throw new Error("No PDF path provided");
+  const ref=fbStorage.ref(storagePath);
+  const url=await ref.getDownloadURL();
+  const r=await fetch(url);
+  if(!r.ok)throw new Error("PDF fetch failed: "+r.status);
+  const blob=await r.blob();
+  // FileReader-based base64 conversion handles large files (avoids stack overflow
+  // from String.fromCharCode(...new Uint8Array(buf)) on 5+ MB PDFs).
+  return await new Promise((resolve,reject)=>{
+    const fr=new FileReader();
+    fr.onload=()=>{
+      const s=fr.result||"";
+      const i=s.indexOf(",");
+      resolve(i>=0?s.slice(i+1):s);
+    };
+    fr.onerror=()=>reject(new Error("FileReader failed"));
+    fr.readAsDataURL(blob);
+  });
+}
 async function ensureDataUrl(page){
   if(page.dataUrl)return page;
   if(!page.storageUrl)return page;
@@ -8379,12 +8422,16 @@ function cropRegionFromImage(dataUrl,region){
 async function getExtractionUnits(pg){
   const regions=(pg.regions||[]).filter(r=>r.type==="bom");
   if(regions.length){
+    // User has drawn a region — crop the image and use the image extraction path.
+    // Native PDF input is not used here because the region is a SUBSET of the page
+    // and we want the model to focus only on the user-cropped area. The image-based
+    // path correctly receives just the cropped image.
     const units=[];
     for(const r of regions){
       const cropped=await cropRegionFromImage(pg.dataUrl,r);
-      if(cropped)units.push({dataUrl:cropped,regionNote:r.note||null});
+      if(cropped)units.push({dataUrl:cropped,regionNote:r.note||null,originalPdfPath:null,pageNumber:null});
     }
-    return units.length?units:[{dataUrl:pg.dataUrl,regionNote:null}];
+    return units.length?units:[{dataUrl:pg.dataUrl,regionNote:null,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null}];
   }
   // DECISION(v1.19.622): REVERTED v1.19.603 auto-quadrant split. Quadrants fixed one-off
   // character-misread bugs (P5PN3Y→P5PKJY) but created much worse problems:
@@ -8398,7 +8445,9 @@ async function getExtractionUnits(pg){
   // is the original behavior that had been reliable since the program was written. Users
   // who need higher character detail on a specific BOM table can draw a user region on
   // that page — the user-region code path above is preserved.
-  return [{dataUrl:pg.dataUrl,regionNote:null}];
+  // v1.19.959: also surface originalPdfPath + pageNumber so the caller can opt into
+  // native PDF extraction when the page was uploaded with PDF retention enabled.
+  return [{dataUrl:pg.dataUrl,regionNote:null,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null}];
 }
 
 // Build region context string for extraction notes
@@ -8441,10 +8490,97 @@ function buildAllRegionSummary(pages){
   return"\n\nUSER REGION OBSERVATIONS (these are ground-truth observations from the user reviewing the drawings — trust these for device counts, component identification, and labor estimation):\n"+entries.map(e=>`• [${e.type}] on ${e.page}: ${e.note}`).join("\n");
 }
 
-async function extractBomPage(dataUrl,feedback="",userNotes=""){
+async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=null,pageNumber=null){
   // DECISION(v1.19.899): Fail fast if the global credit-exhausted latch is set —
   // see _trippedApiCreditExhausted near apiCall.
   if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
+
+  // DECISION(v1.19.959, BULLETPROOF BOM extraction): If the page has a retained
+  // original PDF, send it as native document input to Anthropic. This bypasses
+  // our entire render → JPEG → resize → re-encode pipeline that was producing
+  // ~30% character accuracy on dense BOMs (CSW1807-121 case study). Anthropic's
+  // PDF support gives the model crisp vector text and an internally-optimized
+  // OCR pipeline. Falls back to the image-based path if PDF retention failed,
+  // is unavailable for legacy projects (uploaded before v1.19.959), or if the
+  // PDF call itself errors. The image-based path is preserved unchanged below.
+  if(originalPdfPath&&pageNumber&&_apiKey){
+    try{
+      const pdfBase64=await loadOriginalPdfAsBase64(originalPdfPath);
+      const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
+      const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
+      const pageHint=`This drawing has multiple pages. Extract the Bill of Materials from PAGE ${pageNumber} ONLY. Other pages may contain schematics, layouts, enclosure views, or notes — do not extract from those. If page ${pageNumber} does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+      console.log(`[BOM EXTRACT] using native PDF input — page ${pageNumber}, pdf=${originalPdfPath}`);
+      const resp=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({
+          model:"claude-opus-4-6",
+          max_tokens:16000,
+          thinking:{type:"enabled",budget_tokens:4000},
+          messages:[{role:"user",content:[
+            {type:"document",source:{type:"base64",media_type:"application/pdf",data:pdfBase64}},
+            {type:"text",text:pageHint+BOM_PROMPT+feedbackSection+notesSection}
+          ]}]
+        })
+      });
+      const d=await resp.json();
+      if(!resp.ok){
+        console.warn("[BOM EXTRACT] PDF native call failed, falling back to image:",d.error?.message||resp.status);
+        // Fall through to the image-based path below.
+      }else{
+        if(d.stop_reason==="max_tokens")console.warn("BOM extraction (PDF): response TRUNCATED (hit max_tokens limit) — some items may be lost");
+        const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
+        console.log("BOM extraction (PDF) response:",raw.length,"chars, stop_reason:",d.stop_reason);
+        // Reuse the same parse logic as the image path. Wrap in a small helper-style block.
+        try{
+          const cleaned=raw.replace(/```json|```/gi,"").trim();
+          let items=[],questions=[],noBomReason=null;
+          try{
+            const direct=JSON.parse(cleaned);
+            if(direct&&Array.isArray(direct.items)){items=direct.items;questions=direct.questions||[];if(direct.noBomReason)noBomReason=direct.noBomReason;}
+            else if(Array.isArray(direct)){items=direct;}
+          }catch(_e1){}
+          if(!items.length){
+            const wStart=cleaned.indexOf('{"items"');
+            if(wStart>=0){
+              let depth=0,endIdx=-1;
+              for(let i=wStart;i<cleaned.length;i++){
+                if(cleaned[i]==='{')depth++;
+                if(cleaned[i]==='}'){depth--;if(depth===0){endIdx=i;break;}}
+              }
+              if(endIdx>wStart){
+                try{
+                  const parsed=JSON.parse(cleaned.slice(wStart,endIdx+1));
+                  items=parsed.items||[];questions=parsed.questions||[];
+                  if(parsed.noBomReason)noBomReason=parsed.noBomReason;
+                }catch(_e2){}
+              }
+            }
+          }
+          if(items.length){
+            console.log(`[BOM EXTRACT] PDF native success — ${items.length} items extracted from page ${pageNumber}`);
+            return{items,questions,noBomReason:noBomReason||null};
+          }
+          // Empty items — return immediately if we got an explicit noBomReason
+          // (means model confirmed page has no BOM); else fall through to image
+          // path which may try harder.
+          if(noBomReason){
+            console.log(`[BOM EXTRACT] PDF native returned no items (reason: ${noBomReason})`);
+            return{items:[],questions:[],noBomReason};
+          }
+          console.warn("[BOM EXTRACT] PDF native returned empty result, falling back to image");
+        }catch(parseErr){
+          console.warn("[BOM EXTRACT] PDF native parse failed, falling back to image:",parseErr.message);
+        }
+      }
+    }catch(pdfErr){
+      console.warn("[BOM EXTRACT] PDF native path failed, falling back to image:",pdfErr.message);
+      // Fall through to image-based path.
+    }
+  }
+  // ── Image-based extraction (legacy path, also fallback) ──
+  // Used when: no original PDF retained (legacy projects), PDF download fails,
+  // or PDF native API call fails. Preserves backward compatibility.
   // DECISION(v1.19.958, BOM OCR accuracy): Two changes vs v1.19.955:
   //   1. Bumped 2400 → 4500 px on long edge — more pixels per character on dense BOMs.
   //   2. Switched output format JPEG → PNG — eliminates a SECOND JPEG compression on
@@ -10327,7 +10463,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         let pageRejectReasons=[];
         for(const unit of units){
           const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):userNotes;
-          const result=await extractBomPage(unit.dataUrl,"",notes);
+          const result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber);
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
@@ -12179,6 +12315,15 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           const pdfjs=window._pdfjs;
           const buf=await f.arrayBuffer();
           const pdf=await pdfjs.getDocument({data:buf}).promise;
+          // v1.19.959: retain original PDF for native AI extraction. Same logic as
+          // addFiles main upload path. ECO drawings benefit from the same accuracy
+          // gains for redline-vs-base BOM diff'ing.
+          let originalPdfPath=null;
+          try{
+            originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,buf);
+          }catch(retErr){
+            console.warn(`[ECO Drawings] PDF retention failed: ${retErr.message}`);
+          }
           for(let pg=1;pg<=pdf.numPages;pg++){
             setEcoExtractMsg(`${f.name} p${pg}/${pdf.numPages}`);
             const page=await pdf.getPage(pg);
@@ -12203,6 +12348,8 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
               ecoId:eco.ecoId,
               ecoNumber:eco.number,
               ecoUploadedAt:Date.now(),
+              originalPdfPath, // v1.19.959 — null if retention failed
+              pageNumber:pg,   // v1.19.959 — 1-indexed PDF page
             });
           }
         }else if(isImg){
@@ -12281,7 +12428,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           const pg=bomNewPages[i];
           setEcoExtractMsg(`Extracting BOM ${pg.name} (${i+1}/${bomNewPages.length})…`);
           try{
-            const r=await extractBomPage(pg.dataUrl,"","");
+            const r=await extractBomPage(pg.dataUrl,"","",pg.originalPdfPath||null,pg.pageNumber||null);
             const items=Array.isArray(r)?r:(r&&r.items)||[];
             results[pg.id]=items;
             setEcoExtractedItems(prev=>({...prev,[pg.id]:items}));
@@ -18867,6 +19014,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             console.warn(`[ADDFILES] ${f.name} — PDF reports 0 pages, skipping`);
             continue;
           }
+          // DECISION(v1.19.959): Retain the original PDF in Firebase Storage so AI
+          // extraction can use Anthropic's native document input. The page-image
+          // pipeline below is unchanged — those images still drive display, stamping,
+          // redlining, customer review, and quote rendering. PDF retention is purely
+          // additive: it gives the AI a lossless source for OCR-critical workflows.
+          // If retention fails (network, quota, etc.), pages still get the standard
+          // image extraction path — no regression.
+          let originalPdfPath=null;
+          try{
+            originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,buf);
+            console.log(`[ADDFILES] PDF retained for native AI input: ${originalPdfPath}`);
+          }catch(retErr){
+            console.warn(`[ADDFILES] PDF retention failed (extraction will fall back to image-based): ${retErr.message}`);
+            _logRemote("warn","PDF retention upload failed",{file:f.name,error:retErr.message});
+          }
           let pageCount=0;
           for(let pg=1;pg<=pdf.numPages;pg++){
             setProcessingMsg(`${f.name} p${pg}/${pdf.numPages}`);
@@ -18884,7 +19046,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const dataUrl=srcCanvas.toDataURL("image/jpeg",0.95);
             srcCanvas.width=0;srcCanvas.height=0;
             const resized=await resizeImage(dataUrl,3800);
-            const item={id:Date.now()+Math.random(),name:`${f.name} — p${pg}`,dataUrl:resized,types:[]};
+            // v1.19.959: page now also carries originalPdfPath + pageNumber so the
+            // AI extraction path can opt into native PDF input. Existing fields
+            // (id, name, dataUrl, types) are unchanged — stamping, redlining, and
+            // every other page-image consumer keep working as before.
+            const item={
+              id:Date.now()+Math.random(),
+              name:`${f.name} — p${pg}`,
+              dataUrl:resized,
+              types:[],
+              originalPdfPath, // v1.19.959 — null if retention failed
+              pageNumber:pg,   // v1.19.959 — 1-indexed PDF page
+            };
             newItems.push(item);
             livePages=[...livePages,item];
             setPendingPages([...livePages]);
@@ -19707,7 +19880,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         let pageItems=[],pageQs=[];
         for(const unit of units){
           const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):rgnNotes;
-          const result=await extractBomPage(unit.dataUrl,"",notes);
+          const result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber);
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           console.log(`[RE-EXTRACT] Page ${pgIdx+1} unit: ${items.length} items, ${(result.questions||[]).length} questions`);
           pageItems.push(...items);
@@ -19913,7 +20086,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         let pageItems=[],pageQs=[];
         for(const unit of units){
           const notes=unit.regionNote?("Cropped BOM region: "+unit.regionNote+fbRgnCtx):fbRgnCtx;
-          const result=await extractBomPage(unit.dataUrl,aiFeedback,notes);
+          const result=await extractBomPage(unit.dataUrl,aiFeedback,notes,unit.originalPdfPath,unit.pageNumber);
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
