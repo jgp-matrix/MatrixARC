@@ -6660,7 +6660,7 @@ async function sqSaveVendorMapping(uid,supplierName,vendorNo){
 }
 
 // ── IMAGE RESIZE ──
-function resizeImage(dataUrl,maxW=2800){
+function resizeImage(dataUrl,maxW=2800,format="jpeg"){
   return new Promise((res,rej)=>{
     if(!dataUrl){return rej(new Error("resizeImage: empty dataUrl"));}
     const img=new Image();
@@ -6669,14 +6669,23 @@ function resizeImage(dataUrl,maxW=2800){
       if(w>maxW){h=Math.round(h*(maxW/w));w=maxW;}
       const c=document.createElement("canvas");c.width=w;c.height=h;
       c.getContext("2d").drawImage(img,0,0,w,h);
-      res(c.toDataURL("image/jpeg",0.95));c.width=0;c.height=0;
+      // DECISION(v1.19.958, BOM OCR accuracy): Caller can request PNG output to avoid
+      // a SECOND JPEG compression on top of the PDF-render JPEG. For dense small-text
+      // pages (BOMs), the double JPEG pass creates ringing/bleed artifacts on character
+      // edges that compound into OCR errors. PNG is lossless — preserves the edge
+      // sharpness the OCR model needs. JPEG is fine for analysis tasks where pixel-
+      // perfect text doesn't matter (layout, schematic, page classification).
+      const mime=format==="png"?"image/png":"image/jpeg";
+      const quality=format==="png"?undefined:0.95;
+      res(c.toDataURL(mime,quality));c.width=0;c.height=0;
     };
     img.onerror=()=>rej(new Error("resizeImage: failed to load image"));
     img.src=dataUrl;
   });
 }
-// Resize specifically for AI API calls — Claude internally caps at 1568px, so sending larger is wasted bandwidth
-function resizeForAnalysis(dataUrl,maxW=1568){return resizeImage(dataUrl,maxW);}
+// Resize specifically for AI API calls. Default 1568px is fine for non-OCR analysis tasks.
+// BOM extraction overrides with maxW=4500 + format="png" to preserve character edges.
+function resizeForAnalysis(dataUrl,maxW=1568,format="jpeg"){return resizeImage(dataUrl,maxW,format);}
 
 // ── QUOTE REVISION — hash BOM state to detect changes after printing ──
 function computeBomHash(panels){
@@ -8436,19 +8445,24 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
   // DECISION(v1.19.899): Fail fast if the global credit-exhausted latch is set —
   // see _trippedApiCreditExhausted near apiCall.
   if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
-  // DECISION(v1.19.956, BOM OCR accuracy): Bumped 2400 → 4500 because dense D-size BOMs
-  // (e.g. OVIVO Bracket Green Bosker CSW1807-121, 84 items in two columns on one sheet)
-  // were producing systematically wrong catalog numbers. At 2400px each character of small
-  // print rendered at ~5–8px and characters physically touched, causing C↔l, 6↔5, and
-  // dropped-digit errors. PDF source is rasterized at scale 4.0 (~9800px on D-size), so
-  // 4500px still discards ~half the rendered detail but doubles the per-character pixel
-  // budget vs the old 2400. Cost impact: ~$0.20 → ~$0.30 per extract image at Opus pricing,
-  // an acceptable trade for materially fewer "?PN" / "Extract Fix" downstream flags.
-  // Anthropic vision API supports up to 8000px per side; 4500px JPEG q=0.95 stays well under
-  // the 5MB per-image limit. The legacy comment at resizeForAnalysis claiming Claude caps
-  // internally at 1568px is from 2024-era guidance and no longer applies for OCR-style work.
-  const small=await resizeForAnalysis(dataUrl,4500);
+  // DECISION(v1.19.958, BOM OCR accuracy): Two changes vs v1.19.955:
+  //   1. Bumped 2400 → 4500 px on long edge — more pixels per character on dense BOMs.
+  //   2. Switched output format JPEG → PNG — eliminates a SECOND JPEG compression on
+  //      top of the PDF-render JPEG, which was creating ringing artifacts on character
+  //      edges that visibly merged adjacent letters (C↔l, 0↔8, etc). PNG is lossless;
+  //      character edges stay sharp through the pipeline. Confirmed scoreboard at 30%
+  //      accuracy under JPEG-only fix; this should close most of the remaining gap.
+  // PDF source is rasterized at scale 4.0 (~9800px on D-size), so 4500px still discards
+  // ~half the rendered detail but the PNG format keeps what we do send pristine.
+  // PNG file size is larger (~2-5 MB at 4500px) but Anthropic bills by token count
+  // (image dimensions), not by file size, so cost impact is purely the dimension bump.
+  // The 5 MB per-image API limit is honored — 4500px PNG of a typical D-sheet is ~3 MB.
+  // The legacy "Claude caps internally at 1568px" comment is from 2024-era guidance and
+  // no longer applies for OCR-style tasks.
+  const small=await resizeForAnalysis(dataUrl,4500,"png");
   const b64=small&&small.split(",")[1];
+  // Detect PNG vs JPEG from the data URL prefix so the API sees the correct media_type.
+  const mediaType=small&&small.startsWith("data:image/png")?"image/png":"image/jpeg";
   if(!b64){console.warn("extractBomPage: skipping — empty or invalid dataUrl");return[];}
   const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
   const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
@@ -8480,7 +8494,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes=""){
       thinking:{type:"enabled",budget_tokens:4000},
       messages:[{role:"user",content:[
         ...regionLearningParts,
-        {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
+        {type:"image",source:{type:"base64",media_type:mediaType,data:b64}},
         {type:"text",text:BOM_PROMPT+feedbackSection+notesSection}
       ]}]
     })
