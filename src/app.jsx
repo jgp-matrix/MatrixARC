@@ -8600,9 +8600,49 @@ Certain descriptions imply a single physical assembly and almost never have qty 
 • Main disconnect, main breaker (usually 1)
 If you are about to emit qty > 10 for a row whose description matches one of these assembly-level items, STOP and re-verify the qty column on that specific row. The correct value is almost certainly a small number and you are likely reading a qty from a different row (often a terminal-block count like 143).
 
+STEP 6 — LINE-COUNT VERIFICATION (CRITICAL — added v1.19.969):
+A missed BOM line item costs the customer thousands of dollars in change orders. Your top
+priority is to NEVER drop a row, even if you can't read it cleanly.
+
+BEFORE emitting items, COUNT the total number of BOM line items visible on this page.
+Set "detectedLineCount" in your response to that number.
+
+★ HARD CONSTRAINT: items.length MUST equal detectedLineCount.
+
+If a specific row is too unreadable to extract cleanly, emit a PLACEHOLDER row instead of
+dropping it. Placeholder format:
+  {"itemNo": "<the printed row number, or sequential index>",
+   "qty": 0, "partNumber": "?", "description": "<whatever you CAN read>",
+   "manufacturer": "?", "notes": "EXTRACTION_FAILED — partially readable",
+   "confidence": "low", "additionalPartNumbers": []}
+The user can fix placeholder rows manually downstream — but only if they exist as rows.
+Silent drops are catastrophic; placeholder rows are recoverable.
+
+LINE NUMBER ALIGNMENT:
+- If the BOM table has visible item numbers (printed in the leftmost column, usually labeled
+  ITEM, ITEM #, NO., or LINE), your itemNo MUST match the printed value exactly.
+- If no item numbers are visible, use sequential 1, 2, 3, ... matching the row's position
+  in the table (top to bottom, left column then right column for two-column BOMs).
+- Multi-tag rows that share a single CATALOG/MFG/DESCRIPTION cluster: assign the itemNo
+  of the FIRST tag's row in the cluster.
+- Sequential numbering must have NO GAPS — if you extract items 1, 2, 4, 5, you missed item 3.
+  Re-examine that row.
+
+PER-ROW CONFIDENCE (CRITICAL — added v1.19.969):
+Each item must include a "confidence" field with one of these values:
+- "high": every cell (qty, partNumber, description, manufacturer) is clearly legible,
+  character-by-character certain. No ambiguous glyphs.
+- "medium": one or two characters in the partNumber are ambiguous; you've made your best
+  read but there's reasonable doubt. OR the description is partially clipped.
+- "low": multiple cells are hard to read; significant uncertainty. Use this for any row
+  where you'd want a human to double-check before sending an order.
+
+Lower-confidence rows will be surfaced for user review downstream. It is FAR BETTER to
+mark a row as low-confidence than to silently submit a wrong reading as if it were correct.
+
 RETURN FORMAT:
 Output ONLY a valid JSON object — no markdown, no explanation. Format:
-{"items":[...],"questions":[],"noBomReason":null}
+{"items":[...], "questions":[], "noBomReason":null, "detectedLineCount":N}
 
 When items is EMPTY, populate noBomReason with the SPECIFIC reason this page produced no rows, using ONE of these category strings:
   • "no-table-on-page"        — page has no tabular content at all (cover, schematic, blank, notes, etc.)
@@ -8616,20 +8656,30 @@ When items is EMPTY, populate noBomReason with the SPECIFIC reason this page pro
 When items has rows, omit noBomReason or set it to null.
 
 Each item in the "items" array must have exactly:
-{"itemNo":"","qty":1,"partNumber":"","description":"","manufacturer":"","notes":"","additionalPartNumbers":[],"y_top":0.0,"y_bottom":0.0,"x_left":0.0,"x_right":1.0}
+{"itemNo":"","qty":1,"partNumber":"","description":"","manufacturer":"","notes":"","confidence":"high","additionalPartNumbers":[],"y_top":0.0,"y_bottom":0.0,"x_left":0.0,"x_right":1.0}
 
 additionalPartNumbers is an array of {"partNumber","relationship","context"} for every EXTRA catalog code found on the same row as this item (relay bases, aux contacts, sockets, accessories etc.). If none, use []. See the COMPANION PARTS section above. NEVER drop a second catalog code from the row.
 
 y_top and y_bottom are the top and bottom edges of this row as fractions of the total image height (0.0=top, 1.0=bottom). Be precise.
 x_left and x_right are the left and right edges of the entire BOM TABLE (all columns) as fractions of the total image width. Exclude any schematic diagram, layout drawing, or whitespace to the left of the table — crop to where the BOM table columns begin and end. All rows on the same page share the same x_left/x_right values.
 
-QUESTIONS:
-Do NOT ask clarifying questions. ALWAYS return "questions": [] — an empty array. Make your best interpretation of every character, abbreviation, and value based on glyph shape and manufacturer context alone. The user does NOT want to be asked to confirm ambiguous characters — extract your best reading and move on. Fuzzy-dedup and manual review steps run downstream to catch any mistakes. NEVER populate the questions array with any entries, regardless of how ambiguous a character looks.
+QUESTIONS (UPDATED v1.19.969):
+For routine character disambiguation, do NOT ask questions — make your best read and tag the
+row's confidence as "medium" or "low". The downstream user-review step handles those.
 
-IMPORTANT: You MUST return the wrapper object format: {"items":[...],"questions":[]}
-Do NOT return a bare JSON array. Always wrap in the object with both keys. The questions array must always be empty.
+You MAY populate "questions" for cases where extraction CANNOT proceed without clarification
+that the user actually needs to provide. Examples of legitimate questions:
+- "Row 17 spans two pages and may have items hidden in the page break — please confirm."
+- "Multiple TAGS cells reference different physical locations; should they be combined?"
+These are rare. When in doubt, prefer a "low" confidence rating over a question.
 
-If no BOM table exists on this page, return {"items":[],"questions":[]}.`;
+questions[] entries: {"itemNo": "<row this references>", "question": "<concise question>"}.
+
+IMPORTANT: You MUST return the wrapper object format with all four keys:
+  {"items":[...], "questions":[], "noBomReason": null, "detectedLineCount": N}
+Do NOT return a bare JSON array.
+
+If no BOM table exists on this page, return {"items":[], "questions":[], "noBomReason":"<one of the categories above>", "detectedLineCount": 0}.`;
 
 // Crop a region from an image using normalized coordinates (0-1)
 function cropRegionFromImage(dataUrl,region){
@@ -8777,10 +8827,14 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         // Reuse the same parse logic as the image path. Wrap in a small helper-style block.
         try{
           const cleaned=raw.replace(/```json|```/gi,"").trim();
-          let items=[],questions=[],noBomReason=null;
+          let items=[],questions=[],noBomReason=null,detectedLineCount=null;
           try{
             const direct=JSON.parse(cleaned);
-            if(direct&&Array.isArray(direct.items)){items=direct.items;questions=direct.questions||[];if(direct.noBomReason)noBomReason=direct.noBomReason;}
+            if(direct&&Array.isArray(direct.items)){
+              items=direct.items;questions=direct.questions||[];
+              if(direct.noBomReason)noBomReason=direct.noBomReason;
+              if(direct.detectedLineCount!=null)detectedLineCount=+direct.detectedLineCount;
+            }
             else if(Array.isArray(direct)){items=direct;}
           }catch(_e1){}
           if(!items.length){
@@ -8796,20 +8850,54 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
                   const parsed=JSON.parse(cleaned.slice(wStart,endIdx+1));
                   items=parsed.items||[];questions=parsed.questions||[];
                   if(parsed.noBomReason)noBomReason=parsed.noBomReason;
+                  if(parsed.detectedLineCount!=null)detectedLineCount=+parsed.detectedLineCount;
                 }catch(_e2){}
               }
             }
           }
           if(items.length){
-            console.log(`[BOM EXTRACT] PDF native success — ${items.length} items extracted from page ${pageNumber}`);
-            return{items,questions,noBomReason:noBomReason||null};
+            console.log(`[BOM EXTRACT] PDF native success — ${items.length} items extracted from page ${pageNumber}, detectedLineCount=${detectedLineCount}`);
+            // v1.19.969: same Layer 2 verification as the image path.
+            const verification={
+              status:"ok",detectedLineCount,extractedCount:items.length,
+              countMismatch:false,sequenceGaps:[],
+              lowConfidenceRows:[],mediumConfidenceRows:[],placeholderRows:[],
+              questions:questions.length,
+            };
+            if(detectedLineCount!=null&&items.length!==detectedLineCount){
+              verification.countMismatch=true;verification.status="needs-review";
+              console.warn(`[BOM VERIFY/PDF] count mismatch: AI counted ${detectedLineCount} but returned ${items.length}`);
+            }
+            const numericItemNos=items.map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10)).filter(n=>!isNaN(n)&&n>0);
+            if(numericItemNos.length>=3){
+              const sorted=[...new Set(numericItemNos)].sort((a,b)=>a-b);
+              for(let i=0;i<sorted.length-1;i++){
+                if(sorted[i+1]-sorted[i]>1){
+                  for(let g=sorted[i]+1;g<sorted[i+1];g++)verification.sequenceGaps.push(g);
+                }
+              }
+              if(verification.sequenceGaps.length>0){
+                verification.status="needs-review";
+                console.warn(`[BOM VERIFY/PDF] sequence gaps in itemNo: ${verification.sequenceGaps.join(", ")}`);
+              }
+            }
+            for(const it of items){
+              const c=String(it.confidence||"").toLowerCase();
+              if(c==="low")verification.lowConfidenceRows.push(it.itemNo||it.partNumber||"?");
+              else if(c==="medium")verification.mediumConfidenceRows.push(it.itemNo||it.partNumber||"?");
+              if(it.partNumber==="?"||/EXTRACTION_FAILED/i.test(it.notes||""))verification.placeholderRows.push(it.itemNo||"?");
+            }
+            if(verification.lowConfidenceRows.length>0||verification.placeholderRows.length>0){
+              verification.status=verification.status==="ok"?"low-confidence":verification.status;
+            }
+            return{items,questions,noBomReason:noBomReason||null,extractionVerification:verification};
           }
           // Empty items — return immediately if we got an explicit noBomReason
           // (means model confirmed page has no BOM); else fall through to image
           // path which may try harder.
           if(noBomReason){
             console.log(`[BOM EXTRACT] PDF native returned no items (reason: ${noBomReason})`);
-            return{items:[],questions:[],noBomReason};
+            return{items:[],questions:[],noBomReason,extractionVerification:{status:"empty",detectedLineCount}};
           }
           console.warn("[BOM EXTRACT] PDF native returned empty result, falling back to image");
         }catch(parseErr){
@@ -8890,11 +8978,16 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   console.log("BOM extraction response:",raw.length,"chars, stop_reason:",d.stop_reason);
   try{
     const cleaned=raw.replace(/```json|```/gi,"").trim();
-    let items=[],questions=[],noBomReason=null;
+    let items=[],questions=[],noBomReason=null,detectedLineCount=null;
     // Strategy 1: Try direct JSON.parse (works when AI returns clean JSON)
     try{
       const direct=JSON.parse(cleaned);
-      if(direct&&Array.isArray(direct.items)){items=direct.items;questions=direct.questions||[];if(direct.noBomReason)noBomReason=direct.noBomReason;console.log("BOM extraction: direct parse OK,",items.length,"items,",questions.length,"questions");}
+      if(direct&&Array.isArray(direct.items)){
+        items=direct.items;questions=direct.questions||[];
+        if(direct.noBomReason)noBomReason=direct.noBomReason;
+        if(direct.detectedLineCount!=null)detectedLineCount=+direct.detectedLineCount;
+        console.log("BOM extraction: direct parse OK,",items.length,"items,",questions.length,"questions, detectedLineCount=",detectedLineCount);
+      }
       else if(Array.isArray(direct)){items=direct;console.log("BOM extraction: direct parse bare array,",items.length,"items");}
     }catch(e1){/* not clean JSON, try extraction */}
     // Strategy 2: Find wrapper object {"items":[...],"questions":[...]}
@@ -8913,7 +9006,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
             const parsed=JSON.parse(cleaned.slice(wStart,endIdx+1));
             items=parsed.items||[];questions=parsed.questions||[];
             if(parsed.noBomReason)noBomReason=parsed.noBomReason;
-            console.log("BOM extraction: wrapper parse OK,",items.length,"items,",questions.length,"questions");
+            if(parsed.detectedLineCount!=null)detectedLineCount=+parsed.detectedLineCount;
+            console.log("BOM extraction: wrapper parse OK,",items.length,"items,",questions.length,"questions, detectedLineCount=",detectedLineCount);
           }catch(e2){console.warn("Wrapper parse failed:",e2.message);}
         }
       }
@@ -8929,15 +9023,20 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         // Also try to find noBomReason in the raw text even if items array parse succeeded
         const reasonMatch=cleaned.match(/"noBomReason"\s*:\s*"([^"]+)"/);
         if(reasonMatch&&!noBomReason)noBomReason=reasonMatch[1];
-        console.log("BOM extraction: array fallback,",items.length,"items,",questions.length,"questions");
+        const lcMatch=cleaned.match(/"detectedLineCount"\s*:\s*(\d+)/);
+        if(lcMatch)detectedLineCount=+lcMatch[1];
+        console.log("BOM extraction: array fallback,",items.length,"items,",questions.length,"questions, detectedLineCount=",detectedLineCount);
       } else {
         // Strategy 4: Truncated JSON — extract individual complete item objects
         const itemMatches=[...cleaned.matchAll(/\{"itemNo"[^}]*\}/g)];
         if(itemMatches.length){
           for(const m of itemMatches){try{items.push(JSON.parse(m[0]));}catch(e4){}}
-          console.log("BOM extraction: salvaged",items.length,"items from truncated response");
+          // Best-effort recovery of detectedLineCount from a truncated response.
+          const lcMatch=cleaned.match(/"detectedLineCount"\s*:\s*(\d+)/);
+          if(lcMatch)detectedLineCount=+lcMatch[1];
+          console.log("BOM extraction: salvaged",items.length,"items from truncated response, detectedLineCount=",detectedLineCount);
         } else {
-          console.warn("No JSON found in response. Raw:",cleaned.slice(0,200));return{items:[],questions:[],noBomReason:"parse-failure"};
+          console.warn("No JSON found in response. Raw:",cleaned.slice(0,200));return{items:[],questions:[],noBomReason:"parse-failure",extractionVerification:{status:"parse-failure"}};
         }
       }
     }
@@ -8947,8 +9046,64 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
     if(!items.length){
       console.warn(`[BOM EXTRACT] page produced 0 rows. AI reason: ${noBomReason||"not-supplied"}`);
     }
-    if(!questions.length&&items.length>=3)console.warn("BOM extraction: 0 questions returned but",items.length,"items found — AI should have asked at least 3 questions");
-    else if(!questions.length)console.log("BOM extraction: 0 questions returned");
+    if(!questions.length&&items.length>=3)console.log("BOM extraction:",items.length,"items extracted, no clarifying questions");
+
+    // ═══════════════════════════════════════════════════════════════════
+    // DECISION(v1.19.969): Layer 2 — post-extraction verification.
+    // The user explicitly stated BOM accuracy is THE most important feature
+    // and a missed line item costs thousands. We run three structural checks:
+    //   1. items.length must equal detectedLineCount (AI's self-reported count)
+    //   2. itemNo sequence must have no gaps (e.g. 1,2,4 means we missed 3)
+    //   3. Confidence aggregate — what % of rows are low-confidence
+    // Findings are bundled into extractionVerification on the return value
+    // and surfaced in the UI as "⚠ N rows need review" pills.
+    // ═══════════════════════════════════════════════════════════════════
+    const verification={
+      status:"ok",
+      detectedLineCount,
+      extractedCount:items.length,
+      countMismatch:false,
+      sequenceGaps:[],
+      lowConfidenceRows:[],
+      mediumConfidenceRows:[],
+      placeholderRows:[],
+      questions:questions.length,
+    };
+    if(detectedLineCount!=null&&items.length!==detectedLineCount){
+      verification.countMismatch=true;
+      verification.status="needs-review";
+      console.warn(`[BOM VERIFY] count mismatch: AI counted ${detectedLineCount} BOM rows but returned ${items.length} items — extraction may be incomplete`);
+    }
+    // Sequence gap check — only meaningful when itemNo values are numeric.
+    const numericItemNos=items
+      .map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10))
+      .filter(n=>!isNaN(n)&&n>0);
+    if(numericItemNos.length>=3){
+      const sorted=[...new Set(numericItemNos)].sort((a,b)=>a-b);
+      for(let i=0;i<sorted.length-1;i++){
+        if(sorted[i+1]-sorted[i]>1){
+          for(let g=sorted[i]+1;g<sorted[i+1];g++)verification.sequenceGaps.push(g);
+        }
+      }
+      if(verification.sequenceGaps.length>0){
+        verification.status="needs-review";
+        console.warn(`[BOM VERIFY] sequence gaps in itemNo — items ${verification.sequenceGaps.join(", ")} appear to be missing`);
+      }
+    }
+    // Confidence aggregate
+    for(const it of items){
+      const c=String(it.confidence||"").toLowerCase();
+      if(c==="low"){verification.lowConfidenceRows.push(it.itemNo||it.partNumber||"?");}
+      else if(c==="medium"){verification.mediumConfidenceRows.push(it.itemNo||it.partNumber||"?");}
+      if(it.partNumber==="?"||/EXTRACTION_FAILED/i.test(it.notes||""))verification.placeholderRows.push(it.itemNo||"?");
+    }
+    if(verification.lowConfidenceRows.length>0||verification.placeholderRows.length>0){
+      verification.status=verification.status==="ok"?"low-confidence":verification.status;
+      console.warn(`[BOM VERIFY] ${verification.lowConfidenceRows.length} low-conf, ${verification.placeholderRows.length} placeholder, ${verification.mediumConfidenceRows.length} medium-conf rows`);
+    }
+    if(verification.status==="ok"){
+      console.log(`[BOM VERIFY] PASS — ${items.length} items, all high confidence, no gaps, count matches detectedLineCount=${detectedLineCount}`);
+    }
     // Post-process: split any rows where partNumber still contains multiple values
     const expanded=[];
     for(const item of items){
@@ -8991,10 +9146,11 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         if(typeof it.x_right!=="number"||isNaN(it.x_right))it.x_right=1;
       }
     }
-    // DECISION(v1.19.601): User turned off extraction questions — always return empty array,
-    // regardless of what the AI returned. No more "10 questions to answer" on new extractions.
-    return{items:expanded,questions:[],noBomReason:expanded.length?null:noBomReason};
-  }catch(e){console.error("JSON parse error:",e,raw);return{items:[],questions:[],noBomReason:"parse-error"};}
+    // DECISION(v1.19.969): Re-allow questions for legitimate clarification cases (was
+    // suppressed in v1.19.601). The new prompt only emits questions when extraction
+    // truly cannot proceed — most uncertainty maps to per-row confidence instead.
+    return{items:expanded,questions,noBomReason:expanded.length?null:noBomReason,extractionVerification:verification};
+  }catch(e){console.error("JSON parse error:",e,raw);return{items:[],questions:[],noBomReason:"parse-error",extractionVerification:{status:"parse-error"}};}
 }
 
 // ── PER-ROW SNIPPET SELF-CORRECTION ──
