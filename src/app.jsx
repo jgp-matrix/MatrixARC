@@ -4815,27 +4815,55 @@ function vendorCode(vendorName){
   return words.slice(0,3).map(w=>w[0]).join('').toUpperCase();
 }
 
+// DECISION(v1.19.963, security audit H-4): HTML escape helper for email builders.
+// All user-controlled / BOM-extracted fields must be wrapped in _esc() before
+// interpolation into HTML email templates. Closes the XSS vector where a malicious
+// supplier PDF could cause AI extraction to emit a description like
+// "</td><td><script src=...>" which would be sent to other suppliers via email
+// AND rendered in the in-app email-preview iframe. The preview iframe itself now
+// also has sandbox="allow-same-origin" to block any script that does slip through.
+// _safeUrl validates URL fields against javascript:/data: URIs before interpolation.
+function _esc(s){
+  if(s==null)return"";
+  return String(s)
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&#39;");
+}
+function _safeUrl(u){
+  if(!u||typeof u!=="string")return"";
+  if(/^\s*(javascript|data|vbscript):/i.test(u))return"";
+  // Allow http(s), mailto, tel, relative paths, fragments
+  if(/^(https?:\/\/|mailto:|tel:|\/|#)/.test(u.trim()))return _esc(u);
+  return"";
+}
+
 function buildReviewEmailHtml(projectName,bcProjectNumber,designerName,notes,reviewUrl,companyInfo=null){
+  // v1.19.963: All interpolations now escaped via _esc()/_safeUrl() to close XSS vectors.
   const ci=companyInfo||{};
-  const logoHtml=ci.logoUrl?`<img src="${ci.logoUrl}" alt="${ci.name||'ARC'}" style="height:40px;max-width:200px"/>`:`<span style="font-size:20px;font-weight:800;color:#1e293b">${ci.name||'ARC'}</span>`;
+  const safeLogoUrl=_safeUrl(ci.logoUrl);
+  const logoHtml=safeLogoUrl?`<img src="${safeLogoUrl}" alt="${_esc(ci.name||'ARC')}" style="height:40px;max-width:200px"/>`:`<span style="font-size:20px;font-weight:800;color:#1e293b">${_esc(ci.name||'ARC')}</span>`;
   const noteRows=notes.map((n,i)=>`
     <tr>
-      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#2563eb;vertical-align:top;width:50px">#${n.number}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;vertical-align:top;width:50px;color:#64748b;font-size:12px">Page ${n.pageNum||"?"}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0">${(n.text||"").replace(/</g,"&lt;")}${n.detail?'<div style="color:#64748b;font-size:12px;margin-top:4px">'+n.detail.replace(/</g,"&lt;").replace(/\n/g,"<br>")+'</div>':''}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#2563eb;vertical-align:top;width:50px">#${_esc(n.number)}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;vertical-align:top;width:50px;color:#64748b;font-size:12px">Page ${_esc(n.pageNum||"?")}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0">${_esc(n.text||"")}${n.detail?'<div style="color:#64748b;font-size:12px;margin-top:4px">'+_esc(n.detail).replace(/\n/g,"<br>")+'</div>':''}</td>
     </tr>
   `).join("");
+  const safeReviewUrl=_safeUrl(reviewUrl);
   return `<!DOCTYPE html><html><body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc">
 <div style="max-width:640px;margin:0 auto;padding:24px">
   <div style="margin-bottom:20px">${logoHtml}</div>
   <h2 style="color:#1e293b;margin-bottom:4px">Engineering Review</h2>
-  <p style="color:#64748b;font-size:14px;margin-bottom:16px">${bcProjectNumber?bcProjectNumber+" — ":""}${projectName||"Project"}</p>
+  <p style="color:#64748b;font-size:14px;margin-bottom:16px">${bcProjectNumber?_esc(bcProjectNumber)+" — ":""}${_esc(projectName||"Project")}</p>
   <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:16px 20px;margin-bottom:20px">
-    <p style="color:#1e40af;font-size:14px;margin:0"><strong>${designerName||"The engineering team"}</strong> has sent drawings for your review with ${notes.length} note${notes.length!==1?"s":""}.</p>
+    <p style="color:#1e40af;font-size:14px;margin:0"><strong>${_esc(designerName||"The engineering team")}</strong> has sent drawings for your review with ${notes.length} note${notes.length!==1?"s":""}.</p>
     <p style="color:#3b82f6;font-size:13px;margin:8px 0 0">Please review the notes below and provide your responses using the link.</p>
   </div>
   <div style="text-align:center;margin:24px 0">
-    <a href="${reviewUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:700;text-decoration:none">Review Drawings &#x2192;</a>
+    <a href="${safeReviewUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:700;text-decoration:none">Review Drawings &#x2192;</a>
   </div>
   <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:14px">
     <thead><tr style="background:#f1f5f9">
@@ -4846,7 +4874,7 @@ function buildReviewEmailHtml(projectName,bcProjectNumber,designerName,notes,rev
     <tbody>${noteRows}</tbody>
   </table>
   <div style="text-align:center;margin:24px 0">
-    <a href="${reviewUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:700;text-decoration:none">Review Drawings &#x2192;</a>
+    <a href="${safeReviewUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:700;text-decoration:none">Review Drawings &#x2192;</a>
   </div>
   <p style="color:#94a3b8;font-size:12px;text-align:center;margin-top:24px">This link expires in 24 hours. If you have questions, reply to this email.</p>
 </div></body></html>`;
@@ -4855,6 +4883,8 @@ function buildReviewEmailHtml(projectName,bcProjectNumber,designerName,notes,rev
 function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl=null,companyInfo=null,opts={}){
   // DECISION(v1.19.692): opts.leadTimeOnly — when true, render a "Current Price" reference
   // column with BC prices, mark Lead Time as the field to fill, and swap banner + body.
+  // DECISION(v1.19.963): All BOM/vendor/company fields now escaped via _esc()/_safeUrl()
+  // to close XSS vectors via attacker-controlled supplier PDF descriptions and BC data.
   const leadTimeOnly=!!(opts&&opts.leadTimeOnly);
   const rows=group.items.map((item,i)=>{
     const refP=item.unitPrice!=null?`$${Number(item.unitPrice).toFixed(2)}`:"—";
@@ -4862,31 +4892,32 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
       return `
     <tr>
       <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${i+1}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">${item.partNumber||"—"}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${item.description||"—"}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${item.manufacturer||"—"}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${item.qty||1}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b;font-style:italic">${refP}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">${_esc(item.partNumber||"—")}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${_esc(item.description||"—")}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${_esc(item.manufacturer||"—")}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${_esc(item.qty||1)}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b;font-style:italic">${_esc(refP)}</td>
       <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:center;background:#fef9c3">&nbsp;</td>
     </tr>`;
     }
     return `
     <tr>
       <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${i+1}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">${item.partNumber||"—"}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${item.description||"—"}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${item.manufacturer||"—"}</td>
-      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${item.qty||1}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:600">${_esc(item.partNumber||"—")}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${_esc(item.description||"—")}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${_esc(item.manufacturer||"—")}</td>
+      <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${_esc(item.qty||1)}</td>
       <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:right">&nbsp;</td>
       <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:center">&nbsp;</td>
     </tr>`;
   }).join("");
   const co=companyInfo||{};
-  const coHeader=co.logoUrl
-    ?`<img src="${co.logoUrl}" alt="Company Logo" style="max-height:52px;max-width:180px;object-fit:contain"/>`
-    :`<h2 style="margin:0;color:#2563eb;font-size:22px">${co.name||"Matrix Systems, Inc."}</h2>`;
+  const safeCoLogoUrl=_safeUrl(co.logoUrl);
+  const coHeader=safeCoLogoUrl
+    ?`<img src="${safeCoLogoUrl}" alt="Company Logo" style="max-height:52px;max-width:180px;object-fit:contain"/>`
+    :`<h2 style="margin:0;color:#2563eb;font-size:22px">${_esc(co.name||"Matrix Systems, Inc.")}</h2>`;
   const coAddr=(co.address||co.phone)
-    ?`<p style="margin:4px 0 0;color:#64748b;font-size:13px">${[co.address,co.phone].filter(Boolean).join(' · ')}</p>`
+    ?`<p style="margin:4px 0 0;color:#64748b;font-size:13px">${_esc([co.address,co.phone].filter(Boolean).join(' · '))}</p>`
     :``;
   return`<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#1e293b;max-width:820px;margin:0 auto;padding:24px">
   <div style="font-size:22px;font-weight:900;color:#1e293b;margin-bottom:12px;letter-spacing:-0.3px">${leadTimeOnly?"Lead Time Request from":"Request For Quote from"}</div>
@@ -4897,19 +4928,19 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
     <td>${coHeader}${coAddr}</td>
     <td style="text-align:right;vertical-align:top">
       <div style="font-size:11px;color:#64748b;letter-spacing:2px;text-transform:uppercase">${leadTimeOnly?"Lead Time Request":"Request for Quote"}</div>
-      <div style="font-size:18px;font-weight:700;color:#1e293b">${rfqNum}</div>
+      <div style="font-size:18px;font-weight:700;color:#1e293b">${_esc(rfqNum)}</div>
     </td>
   </tr></table>
   <table style="margin-bottom:20px;font-size:13px">
-    <tr><td style="padding:3px 12px 3px 0;color:#64748b">To:</td><td style="font-weight:700">${group.vendorName}</td></tr>
-    <tr><td style="padding:3px 12px 3px 0;color:#64748b">Project:</td><td>${projectName||"—"}</td></tr>
-    <tr><td style="padding:3px 12px 3px 0;color:#64748b">RFQ Date:</td><td>${rfqDate}</td></tr>
-    <tr><td style="padding:3px 12px 3px 0;color:#64748b">Response By:</td><td style="font-weight:600">${responseBy}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">To:</td><td style="font-weight:700">${_esc(group.vendorName)}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">Project:</td><td>${_esc(projectName||"—")}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">RFQ Date:</td><td>${_esc(rfqDate)}</td></tr>
+    <tr><td style="padding:3px 12px 3px 0;color:#64748b">Response By:</td><td style="font-weight:600">${_esc(responseBy)}</td></tr>
   </table>
   ${uploadUrl?`<div style="margin-bottom:24px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px 20px;text-align:center">
     <div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:6px">${leadTimeOnly?"&#x1F4C5; Confirm Lead Times Online":"&#x1F4E4; Submit Your Quote Online"}</div>
     <div style="font-size:12px;color:#3b82f6;margin-bottom:10px">${leadTimeOnly?"Open the portal to enter lead times per line. No quote upload needed — you can also upload a revised quote if pricing has changed.":"Upload your completed quote directly to our purchasing portal — no email required."}</div>
-    <a href="${uploadUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:700;font-size:13px;padding:10px 24px;border-radius:6px;text-decoration:none">${leadTimeOnly?"Enter Lead Times":"Upload Quote"} &#x2192;</a>
+    <a href="${_safeUrl(uploadUrl)}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:700;font-size:13px;padding:10px 24px;border-radius:6px;text-decoration:none">${leadTimeOnly?"Enter Lead Times":"Upload Quote"} &#x2192;</a>
   </div>`:""}
 
   <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -4928,7 +4959,7 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
   ${uploadUrl?`<div style="margin-top:24px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:18px 20px;text-align:center">
     <div style="font-size:13px;color:#1e40af;font-weight:700;margin-bottom:6px">${leadTimeOnly?"&#x1F4C5; Confirm Lead Times Online":"&#x1F4E4; Submit Your Quote Online"}</div>
     <div style="font-size:12px;color:#3b82f6;margin-bottom:12px">${leadTimeOnly?"Open the portal to enter lead times per line. No quote upload needed — you can also upload a revised quote if pricing has changed.":"Upload your completed quote directly to our purchasing portal — no email required."}</div>
-    <a href="${uploadUrl}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:700;font-size:13px;padding:10px 24px;border-radius:6px;text-decoration:none">${leadTimeOnly?"Enter Lead Times":"Upload Quote"} &#x2192;</a>
+    <a href="${_safeUrl(uploadUrl)}" style="display:inline-block;background:#2563eb;color:#ffffff;font-weight:700;font-size:13px;padding:10px 24px;border-radius:6px;text-decoration:none">${leadTimeOnly?"Enter Lead Times":"Upload Quote"} &#x2192;</a>
     <div style="font-size:11px;color:#93c5fd;margin-top:8px">Link valid for 30 days</div>
   </div>`:""}
   </body></html>`;
@@ -6604,7 +6635,15 @@ async function bcUpdateItemCost(itemId,newCost){
 }
 async function sqSavePushAudit(quoteDocId,supplier,quoteId,userId,auditItems){
   if(!auditItems.length)return;
-  await fbDb.collection('bcPriceUpdates').add({quoteId,supplier,quoteDocId,
+  // DECISION(v1.19.963, security audit M-3): Include companyId so the tightened
+  // bcPriceUpdates Firestore rule allows the write. The rule requires companyId
+  // be present AND the writer be a member of that company. Skip the audit write
+  // for users not yet in a company — they don't have a member doc anywhere, so
+  // the rule would reject. The audit is best-effort by design and skipping it
+  // doesn't break the BC push.
+  const companyId=_appCtx.companyId;
+  if(!companyId){console.warn("[sqSavePushAudit] skipping audit write — user not in a company");return;}
+  await fbDb.collection('bcPriceUpdates').add({quoteId,supplier,quoteDocId,companyId,
     pushedAt:firebase.firestore.FieldValue.serverTimestamp(),pushedBy:userId,items:auditItems});
 }
 // Supplier quote part-number crossings — maps supplier PN → BC item
@@ -8588,6 +8627,14 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
       const pageHint=`This drawing has multiple pages. Extract the Bill of Materials from PAGE ${pageNumber} ONLY. Other pages may contain schematics, layouts, enclosure views, or notes — do not extract from those. If page ${pageNumber} does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
       console.log(`[BOM EXTRACT] using native PDF input — page ${pageNumber}, pdf=${originalPdfPath}`);
+      // DECISION(v1.19.963, cost report A4): Prompt caching on BOM_PROMPT. The prompt
+      // is ~3500 tokens of carefully-tuned extraction logic (column mapping, character
+      // disambiguation, multi-tag aggregation, etc.) and is identical on every call.
+      // Marking it cache_control: ephemeral lets subsequent calls within 5 min reuse
+      // the cached prompt at ~10% of regular input cost. Hit rate is high because
+      // panels in the same project extract back-to-back. Variable parts (page hint,
+      // user feedback, notes) sit AFTER the document and outside the cached system
+      // block — they vary per call and can't be cached effectively.
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
@@ -8595,9 +8642,10 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
           model:"claude-opus-4-6",
           max_tokens:16000,
           thinking:{type:"enabled",budget_tokens:4000},
+          system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
             {type:"document",source:{type:"base64",media_type:"application/pdf",data:pdfBase64}},
-            {type:"text",text:pageHint+BOM_PROMPT+feedbackSection+notesSection}
+            {type:"text",text:pageHint+feedbackSection+notesSection}
           ]}]
         })
       });
@@ -8699,6 +8747,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   // what made BOM extraction reliable historically (qty + description integrity). Sonnet was
   // ~30% cheaper but demonstrably worse on small-text row-alignment tasks, which compounded
   // once quadrant crops added cross-source merging on top.
+  // v1.19.963: BOM_PROMPT moved to cached system block (cost report A4).
   const resp=await fetch("https://api.anthropic.com/v1/messages",{
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
@@ -8706,10 +8755,11 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       model:"claude-opus-4-6",
       max_tokens:16000,
       thinking:{type:"enabled",budget_tokens:4000},
+      system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
       messages:[{role:"user",content:[
         ...regionLearningParts,
         {type:"image",source:{type:"base64",media_type:mediaType,data:b64}},
-        {type:"text",text:BOM_PROMPT+feedbackSection+notesSection}
+        {type:"text",text:feedbackSection+notesSection}
       ]}]
     })
   });
@@ -13892,20 +13942,25 @@ function TeamModal({uid,companyId,userRole,onClose}){
       .catch(e=>{setErr("Failed to load members: "+e.message);setLoading(false);});
   },[companyId]);
 
-  // DECISION(v1.19.409): Create pending invite record in Firestore AND send email.
-  // Previously only sent email — no record of pending invites was persisted.
+  // DECISION(v1.19.409 → v1.19.963): Route invite token creation through the
+  // inviteTeamMember Cloud Function instead of writing to pendingInvites directly
+  // from the client. The Cloud Function:
+  //   • Uses crypto.getRandomValues for token generation (was Date.now()+Math.random)
+  //   • Re-validates the caller is an admin of the target companyId server-side
+  //   • Stores the token via Admin SDK, bypassing client-side rule limitations
+  // Closes security audit M-5 (weak token entropy) and tightens the trust boundary.
+  // The client still calls sendInviteEmail to send the actual email.
   async function sendInvite(e){
     e.preventDefault();if(!inviteEmail.trim())return;
     setInviting(true);setErr("");
     try{
       const email=inviteEmail.trim();
-      const token=Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+      // Server-generated token (cryptographically random, admin-validated)
+      const inviteResp=await fbFunctions.httpsCallable("inviteTeamMember")({email,role:inviteRole,companyId});
+      const token=inviteResp.data?.token;
+      if(!token)throw new Error("inviteTeamMember returned no token");
       const payload=btoa(JSON.stringify({c:companyId,r:inviteRole,e:email,t:token}));
       const url=`${window.location.origin}${window.location.pathname}?join=${payload}`;
-      // Save pending invite to Firestore
-      await fbDb.doc(`companies/${companyId}/pendingInvites/${token}`).set({
-        email,role:inviteRole,invitedBy:uid,invitedAt:Date.now(),url
-      });
       await fbFunctions.httpsCallable("sendInviteEmail")({to:email,inviteUrl:url,role:inviteRole});
       setGeneratedLinks(l=>[...l,{email,role:inviteRole,url,sent:true}]);
       setPendingInvites(p=>[...p,{token,email,role:inviteRole,invitedAt:Date.now()}]);
@@ -14903,7 +14958,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
             <span style={{color:"#a5b4fc",fontWeight:700,fontSize:13,flex:1}}>Preview: {previewGroup.vendorName} — {_makeRfqNum(previewGroup.vendorName)}</span>
             <button onClick={()=>setPreviewGroup(null)} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:18,lineHeight:1,padding:"2px 6px"}}>✕</button>
           </div>
-          <iframe srcDoc={buildRfqEmailHtml(previewGroup,projectName,_makeRfqNum(previewGroup.vendorName),_rfqDate,_responseBy,null,_appCtx.company)} style={{flex:1,border:"none",minHeight:1000}} title="RFQ Preview"/>
+          <iframe srcDoc={buildRfqEmailHtml(previewGroup,projectName,_makeRfqNum(previewGroup.vendorName),_rfqDate,_responseBy,null,_appCtx.company)} sandbox="allow-same-origin" style={{flex:1,border:"none",minHeight:1000}} title="RFQ Preview"/>
         </div>
         <div style={{marginTop:12}}>
           <button onClick={()=>setPreviewGroup(null)} style={{background:"#1e1b4b",border:"1px solid #4f46e5",color:"#a5b4fc",padding:"7px 24px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:600}}>Close Preview</button>
@@ -28539,7 +28594,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                           await fbDb.collection(`users/${designerMember.id}/notifications`).add({
                             type:"pre_review",title:"Pre-Quote Review Requested",
                             body:`${project.bcProjectNumber||""} — ${project.name||""} needs engineering review`,
-                            projectId:project.id,projectName:project.name||"",createdAt:Date.now(),read:false
+                            projectId:project.id,projectName:project.name||"",createdAt:Date.now(),read:false,
+                            from:uid // v1.19.963: required by tightened notifications create rule
                           });
                         }
                       }
@@ -29602,6 +29658,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         body:`${meName} is requesting edit access to ${proj}${reason?" — "+reason:""}`,
         projectId:project.id,projectName:project.name||"",
         fromUid:uid,fromName:meName,fromEmail:meEmail,reason:reason||"",
+        from:uid, // v1.19.963: required by tightened notifications create rule
         createdAt:Date.now(),read:false};
       const writes=[];
       recipientUids.forEach(rUid=>{writes.push(fbDb.collection(`users/${rUid}/notifications`).add(note));});
@@ -29633,6 +29690,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           body:`${meName} unlocked ${proj}. You can now edit.`,
           projectId:project.id,projectName:project.name||"",
           createdAt:Date.now(),read:false,
+          from:uid, // v1.19.963: required by tightened notifications create rule
         }));
       });
       await Promise.all(writes).catch(e=>console.warn("[UNLOCK GRANT] notify failed:",e));
