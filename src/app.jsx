@@ -1865,6 +1865,82 @@ function _trippedApiCreditExhausted(message){
     },50);
   }
 }
+// DECISION(v1.19.965, cost report A6): Anthropic spend ledger.
+// Tracks per-call token usage and dollar spend in Firestore at
+// users/{uid}/config/anthropicLedger so the user has running visibility into
+// monthly Anthropic burn. Toolbar pill reads this via onSnapshot. Resets
+// monthCents on month rollover. Best-effort — failed ledger writes do NOT
+// fail the underlying API call (the user already got their answer; we just
+// lose one ledger row).
+//
+// Pricing as of 2026 (cents per 1M tokens — VERIFY at console.anthropic.com):
+//   Opus:    input 1500 / output 7500 / cache_write 1875 / cache_read 150
+//   Sonnet:  input 300  / output 1500 / cache_write 375  / cache_read 30
+//   Haiku:   input 100  / output 500  / cache_write 125  / cache_read 10
+const _ANTHROPIC_PRICING={
+  opus:   {in:1500,out:7500,cacheWrite:1875,cacheRead:150},
+  sonnet: {in:300, out:1500,cacheWrite:375, cacheRead:30},
+  haiku:  {in:100, out:500, cacheWrite:125, cacheRead:10},
+};
+function _modelPriceFamily(model){
+  const m=String(model||"").toLowerCase();
+  if(m.includes("opus"))return"opus";
+  if(m.includes("haiku"))return"haiku";
+  return"sonnet"; // default — most calls
+}
+function _computeAnthropicCents(model,usage){
+  if(!usage)return 0;
+  const p=_ANTHROPIC_PRICING[_modelPriceFamily(model)]||_ANTHROPIC_PRICING.sonnet;
+  const inputTokens=usage.input_tokens||0;
+  const outputTokens=usage.output_tokens||0;
+  const cacheWriteTokens=usage.cache_creation_input_tokens||0;
+  const cacheReadTokens=usage.cache_read_input_tokens||0;
+  return Math.ceil(
+    (inputTokens/1_000_000)*p.in +
+    (outputTokens/1_000_000)*p.out +
+    (cacheWriteTokens/1_000_000)*p.cacheWrite +
+    (cacheReadTokens/1_000_000)*p.cacheRead
+  );
+}
+function _currentMonthKey(){
+  const d=new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
+}
+async function _recordAnthropicUsage(model,usage){
+  try{
+    const uid=_appCtx&&_appCtx.uid;
+    if(!uid||!fbDb)return;
+    const cents=_computeAnthropicCents(model,usage);
+    if(cents<=0)return;
+    const ref=fbDb.doc(`users/${uid}/config/anthropicLedger`);
+    const monthKey=_currentMonthKey();
+    await fbDb.runTransaction(async tx=>{
+      const snap=await tx.get(ref);
+      const cur=snap.exists?snap.data():{};
+      const sameMonth=cur.monthKey===monthKey;
+      const newMonthCents=(sameMonth?(cur.monthCents||0):0)+cents;
+      const newTotalCents=(cur.totalCents||0)+cents;
+      tx.set(ref,{
+        monthKey,
+        monthCents:newMonthCents,
+        totalCents:newTotalCents,
+        lastCallAt:Date.now(),
+        lastCallModel:model||"unknown",
+        lastCallCents:cents,
+        lastCallUsage:{
+          input:usage.input_tokens||0,
+          output:usage.output_tokens||0,
+          cacheWrite:usage.cache_creation_input_tokens||0,
+          cacheRead:usage.cache_read_input_tokens||0,
+        },
+      },{merge:true});
+    });
+  }catch(e){
+    // Ledger write failure is non-fatal — log only.
+    console.warn("[anthropicLedger] update failed (non-fatal):",e.message);
+  }
+}
+
 // DECISION(v1.19.963, cost report A5): Retry with exponential backoff on transient
 // Anthropic errors. Previously a single 429 (rate limit) or 529 (overloaded) blip
 // aborted the whole extraction and the user had to click Re-Extract. The model can
@@ -1888,7 +1964,11 @@ async function apiCall(body){
         body:JSON.stringify({model:"claude-opus-4-6",...body})
       });
       const d=await r.json();
-      if(r.ok)return d.content?.[0]?.text||"";
+      if(r.ok){
+        // v1.19.965: record per-call usage to the spend ledger (best-effort).
+        _recordAnthropicUsage(d.model||body.model||"claude-opus-4-6",d.usage);
+        return d.content?.[0]?.text||"";
+      }
       // Permanent errors: never retry
       if(_isCreditError(d.error?.message)){_trippedApiCreditExhausted(d.error?.message);throw new Error(d.error?.message||"API error");}
       if(r.status===401||r.status===403||r.status===404||r.status===400){
@@ -8657,6 +8737,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         if(d.stop_reason==="max_tokens")console.warn("BOM extraction (PDF): response TRUNCATED (hit max_tokens limit) — some items may be lost");
         const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
         console.log("BOM extraction (PDF) response:",raw.length,"chars, stop_reason:",d.stop_reason);
+        // v1.19.965: record per-call usage to spend ledger (best-effort).
+        _recordAnthropicUsage(d.model||"claude-opus-4-6",d.usage);
         // Reuse the same parse logic as the image path. Wrap in a small helper-style block.
         try{
           const cleaned=raw.replace(/```json|```/gi,"").trim();
@@ -8766,6 +8848,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   const d=await resp.json();
   if(!resp.ok)throw new Error(d.error?.message||"API error");
   if(d.stop_reason==="max_tokens")console.warn("BOM extraction: response TRUNCATED (hit max_tokens limit) — some items may be lost");
+  // v1.19.965: record per-call usage to spend ledger (best-effort).
+  _recordAnthropicUsage(d.model||"claude-opus-4-6",d.usage);
   // Find the text block (thinking blocks come first)
   const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
   console.log("BOM extraction response:",raw.length,"chars, stop_reason:",d.stop_reason);
@@ -11634,6 +11718,17 @@ async function createEcoDoc(uid,project,kind){
   return await fbDb.runTransaction(async tx=>{
     const projSnap=await tx.get(fbDb.doc(projPath));
     const cur=projSnap.exists?projSnap.data():{};
+    // DECISION(v1.19.965, concurrency H-5): Assert no existing draft ECO before
+    // creating. The ECO state machine assumes exactly one editable draft at a time;
+    // optimistic local UI gating isn't enough for concurrent users (Jon and Noah
+    // both clicking "+ New ECO" within a second would each pass the local check
+    // and both succeed). The transaction read of ecoSummary closes the race —
+    // whichever transaction commits first wins; the other aborts with this error.
+    const existingDraft=(Array.isArray(cur.ecoSummary)?cur.ecoSummary:[])
+      .find(e=>e&&e.status==="draft");
+    if(existingDraft){
+      throw new Error(`A draft ECO already exists (ECO ${String(existingDraft.number).padStart(2,"0")}). Approve, cancel, or delete it before creating a new one.`);
+    }
     const nextNumber=(cur.ecoCounter||0)+1;
     ecoData.number=nextNumber;
     tx.set(newRef,ecoData);
@@ -30009,13 +30104,60 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     return()=>window.removeEventListener("arc-just-print",onJustPrint);
   },[]);
   // DECISION(v1.19.405): Debounce guard — prevents double-click triggering parallel quote generation.
+  // DECISION(v1.19.965, concurrency H-2): Cross-user print lock. The local quotePrinting
+  // state only protects against the SAME user double-clicking. If User-A and User-B both
+  // click "Print Client Quote" within ~1 second, getNextQuoteNumber gives them DIFFERENT
+  // quote numbers (transaction is correct) but both PDFs go out claiming to be the latest
+  // revision, with potentially different BOM contents. The lock now also writes to a
+  // Firestore field on the project doc so cross-user / cross-tab attempts see "already
+  // printing" and bail. The lock auto-expires 30 seconds after acquisition.
   const [quotePrinting,setQuotePrinting]=useState(false);
+  const QUOTE_PRINT_LOCK_TTL_MS=30000;
+  async function _tryAcquireQuotePrintLock(projectId){
+    const ref=fbDb.doc(`users/${uid}/projects/${projectId}`);
+    try{
+      const result=await fbDb.runTransaction(async tx=>{
+        const snap=await tx.get(ref);
+        if(!snap.exists)return{ok:false,reason:"missing-project"};
+        const cur=snap.data();
+        const lock=cur.quotePrintLock||null;
+        const now=Date.now();
+        if(lock&&lock.expiresAt>now&&lock.lockedBy!==uid){
+          return{ok:false,reason:"locked",lockedBy:lock.lockedByName||lock.lockedBy,expiresAt:lock.expiresAt};
+        }
+        tx.update(ref,{quotePrintLock:{
+          lockedBy:uid,
+          lockedByName:fbAuth.currentUser?.displayName||fbAuth.currentUser?.email||"another user",
+          lockedAt:now,
+          expiresAt:now+QUOTE_PRINT_LOCK_TTL_MS,
+        }});
+        return{ok:true};
+      });
+      return result;
+    }catch(e){
+      console.warn("[quotePrintLock] acquire failed (non-fatal — proceeding):",e.message);
+      return{ok:true,degraded:true}; // fail-open: don't block printing on a Firestore blip
+    }
+  }
+  async function _releaseQuotePrintLock(projectId){
+    const ref=fbDb.doc(`users/${uid}/projects/${projectId}`);
+    try{await ref.update({quotePrintLock:null});}catch(e){/* harmless */}
+  }
   async function handlePrintQuote(){
     if(quotePrinting)return;
+    let proj=projectRef.current;
+    // v1.19.965: Cross-user print lock check.
+    const lockResult=await _tryAcquireQuotePrintLock(proj.id);
+    if(!lockResult.ok){
+      const remainSec=Math.max(1,Math.ceil((lockResult.expiresAt-Date.now())/1000));
+      try{await arcAlert(
+        `Another user is currently printing this quote. Please wait ~${remainSec} seconds and try again.\n\nIf this is in error (e.g. they crashed), the lock auto-clears within ${Math.ceil(QUOTE_PRINT_LOCK_TTL_MS/1000)} seconds.`,
+        {kind:"warning",okLabel:"OK"});}catch(_){}
+      return;
+    }
     setQuotePrinting(true);
     try{
     // Auto-assign quote number if not yet set
-    let proj=projectRef.current;
     if(!proj.quote?.number||!/^MTX-Q\d{6}$/.test(String(proj.quote.number))){
       try{
         const qNum=await getNextQuoteNumber(uid);
@@ -30271,7 +30413,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     }else{
       setPrePrintChecklist({issues});
     }
-    }finally{setQuotePrinting(false);}
+    }finally{
+      setQuotePrinting(false);
+      // v1.19.965: Release the cross-user print lock. Best-effort — the lock also
+      // auto-expires after QUOTE_PRINT_LOCK_TTL_MS even if release fails.
+      try{await _releaseQuotePrintLock(proj.id);}catch(_){}
+    }
   }
 
   async function verifyBcLineCount(){
@@ -37384,9 +37531,54 @@ INSTRUCTIONS:
       }).catch(()=>{});
   },[]);
 
-  // Periodic BC connectivity ping every 5 minutes
+  // DECISION(v1.19.965, BC disconnect popup noise): Soften the modal trigger.
+  //
+  // Prior behavior: ANY non-OK response on the 5-min ping fired the full-screen
+  // "BC Connection Lost" modal. In practice this triggered constantly because:
+  //   • BC has a 600 req/min tenant rate limit. During heavy use (extraction
+  //     calling BC for every BOM row) the 5-min ping can land on a 429.
+  //   • Transient 5xx blips (BC tenant occasionally rebooting overnight) fired
+  //     the modal even though the next ping recovered.
+  //   • The modal already auto-recovers because subsequent pings succeed —
+  //     but the user still sees the alarming overlay each time.
+  //
+  // New behavior:
+  //   1. Differentiate transient errors (429, 5xx) from persistent (401 +
+  //      refresh fail, network down). Transient errors do NOT fire the modal —
+  //      they just log + flip bcOnline=false (yellow pill in toolbar) so the
+  //      user knows BC is briefly unavailable.
+  //   2. Persistent errors require N consecutive failures before firing the
+  //      modal. One bad ping = no modal. Two consecutive bad pings (10 minutes
+  //      of consistent failure) = fire the modal — that's a real outage.
+  //   3. ANY successful ping immediately resets the fail counter and dismisses
+  //      the modal if it was open.
+  //   4. On 429 specifically, log a warning so the user knows BC is being
+  //      throttled — might suggest pacing extraction work.
+  // v1.19.965: Consecutive-failure counter persists across re-renders via useRef.
+  const bcFailCountRef=useRef(0);
+
+  // v1.19.965 (cost report A6): Anthropic spend ledger — running monthly spend
+  // displayed as a small pill in the toolbar. Reads users/{uid}/config/anthropicLedger
+  // via onSnapshot so it updates live as extractions run. Resets to $0 on month
+  // rollover (handled by _recordAnthropicUsage's monthKey check).
+  const [anthropicMonthCents,setAnthropicMonthCents]=useState(null);
+  useEffect(()=>{
+    if(!user.uid)return;
+    const unsub=fbDb.doc(`users/${user.uid}/config/anthropicLedger`).onSnapshot(snap=>{
+      if(!snap.exists){setAnthropicMonthCents(0);return;}
+      const d=snap.data();
+      // If month doesn't match current, treat as 0 (will reset on next call).
+      const curMonth=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
+      setAnthropicMonthCents(d.monthKey===curMonth?(d.monthCents||0):0);
+    },err=>{
+      console.warn("[anthropicLedger] listener error:",err.message);
+      setAnthropicMonthCents(null);
+    });
+    return()=>unsub();
+  },[user.uid]);
   useEffect(()=>{
     const CHECK_MS=300000;
+    const FAIL_THRESHOLD=2; // require 2 consecutive failures before alarming
     const checkBc=async()=>{
       if(!_bcToken){
         const t=await acquireBcToken(false);
@@ -37397,34 +37589,83 @@ INSTRUCTIONS:
         if(r.status===401){
           // Token expired — try silent refresh before alarming user
           const t=await acquireBcToken(false);
-          if(t){setBcOnline(true);bcOnlinePrev.current=true;return;}
-          _bcToken=null;_odataPageCache=null;bcOnlinePrev.current=false;setBcOnline(false);setBcLostAlert(true);return;
+          if(t){
+            bcFailCountRef.current=0;
+            setBcOnline(true);bcOnlinePrev.current=true;
+            setBcLostAlert(false); // dismiss modal if it was open
+            return;
+          }
+          // 401 with failed refresh = persistent auth problem. Count toward threshold.
+          _bcToken=null;_odataPageCache=null;
+          bcFailCountRef.current++;
+          bcOnlinePrev.current=false;setBcOnline(false);
+          if(bcFailCountRef.current>=FAIL_THRESHOLD){
+            console.warn(`[BC PING] persistent 401 (${bcFailCountRef.current} consecutive failures) — showing reconnect modal`);
+            setBcLostAlert(true);
+          }else{
+            console.log(`[BC PING] 401 + refresh failed (${bcFailCountRef.current}/${FAIL_THRESHOLD}) — soft fail, will retry next interval`);
+          }
+          return;
+        }
+        // Treat 429 (rate limit) and 5xx (server side) as transient — log only,
+        // no modal. The next ping should succeed once the tenant cools down.
+        if(r.status===429||r.status>=500){
+          console.warn(`[BC PING] transient ${r.status} — BC is rate-limited or server-side blip. Not alarming user.`);
+          // Don't increment fail count for transient — these recover on their own.
+          // Do flip bcOnline=false so the toolbar pill reflects current state.
+          if(bcOnlinePrev.current){setBcOnline(false);bcOnlinePrev.current=false;}
+          return;
         }
         const ok=r.ok;
-        if(ok&&!bcOnlinePrev.current){
-          setBcOnline(true);
-          // BC just came back online — refresh company info, salesperson cache, and process queue
-          // DECISION(v1.19.360): Include E_Mail and Phone_No in salesperson cache so Send Quote
-          // signature can show the correct salesperson email/phone without an extra BC lookup.
-          fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
-          bcFetchCompanyInfo().then(info=>{
-            if(info&&_appCtx.companyId){
-              const merged={...(_appCtx.company||{}),name:info.name||_appCtx.company?.name,address:info.address||_appCtx.company?.address,phone:info.phone||_appCtx.company?.phone};
-              _appCtx.company=merged;
-              if(info.address||info.phone||info.name){
-                fbDb.doc(`companies/${_appCtx.companyId}`).update({...(info.name?{name:info.name}:{}),address:info.address||"",phone:info.phone||""}).catch(()=>{});
+        if(ok){
+          bcFailCountRef.current=0;
+          setBcLostAlert(false); // dismiss modal if it was open
+          if(!bcOnlinePrev.current){
+            setBcOnline(true);
+            // BC just came back online — refresh company info, salesperson cache, and process queue.
+            // DECISION(v1.19.360): Include E_Mail and Phone_No in salesperson cache so Send Quote
+            // signature can show the correct salesperson email/phone without an extra BC lookup.
+            fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
+            bcFetchCompanyInfo().then(info=>{
+              if(info&&_appCtx.companyId){
+                const merged={...(_appCtx.company||{}),name:info.name||_appCtx.company?.name,address:info.address||_appCtx.company?.address,phone:info.phone||_appCtx.company?.phone};
+                _appCtx.company=merged;
+                if(info.address||info.phone||info.name){
+                  fbDb.doc(`companies/${_appCtx.companyId}`).update({...(info.name?{name:info.name}:{}),address:info.address||"",phone:info.phone||""}).catch(()=>{});
+                }
               }
-            }
-          }).catch(()=>{});
-          bcProcessQueue();
+            }).catch(()=>{});
+            bcProcessQueue();
+          }
+          bcOnlinePrev.current=true;
+        }else{
+          // Other non-OK status — count toward threshold.
+          bcFailCountRef.current++;
+          if(bcFailCountRef.current>=FAIL_THRESHOLD&&bcOnlinePrev.current){
+            console.warn(`[BC PING] persistent ${r.status} (${bcFailCountRef.current} consecutive failures) — showing reconnect modal`);
+            setBcOnline(false);setBcLostAlert(true);
+            bcOnlinePrev.current=false;
+          }else{
+            console.log(`[BC PING] ${r.status} (${bcFailCountRef.current}/${FAIL_THRESHOLD}) — soft fail`);
+          }
         }
-        else if(!ok&&bcOnlinePrev.current){setBcOnline(false);setBcLostAlert(true);}
-        bcOnlinePrev.current=ok;
       }catch(e){
         // Network error — try silent token refresh before alerting
         const t=await acquireBcToken(false).catch(()=>null);
-        if(t){setBcOnline(true);bcOnlinePrev.current=true;}
-        else if(bcOnlinePrev.current){setBcOnline(false);setBcLostAlert(true);bcOnlinePrev.current=false;}
+        if(t){
+          bcFailCountRef.current=0;
+          setBcLostAlert(false);
+          setBcOnline(true);bcOnlinePrev.current=true;
+        }else{
+          bcFailCountRef.current++;
+          if(bcFailCountRef.current>=FAIL_THRESHOLD&&bcOnlinePrev.current){
+            console.warn(`[BC PING] persistent network error (${bcFailCountRef.current} consecutive failures): ${e.message} — showing reconnect modal`);
+            setBcOnline(false);setBcLostAlert(true);
+            bcOnlinePrev.current=false;
+          }else{
+            console.log(`[BC PING] network error (${bcFailCountRef.current}/${FAIL_THRESHOLD}): ${e.message} — soft fail`);
+          }
+        }
       }
     };
     const interval=setInterval(checkBc,CHECK_MS);
@@ -37876,6 +38117,25 @@ INSTRUCTIONS:
               <span style={{fontSize:12,fontWeight:600,color:"#86efac",whiteSpace:"nowrap"}}>{bgRunning.length} processing</span>
             </div>
           )}
+          {/* DECISION(v1.19.965, cost report A6): Anthropic spend pill — running monthly burn
+              vs the workspace cap on the Anthropic console (~$300 default). Color thresholds:
+              <50% green, 50-90% amber, >90% red. Hidden when ledger hasn't loaded yet. */}
+          {anthropicMonthCents!=null&&(()=>{
+            const monthDollars=anthropicMonthCents/100;
+            const capDollars=300; // matches the Workspace Spend Limit set in v1.19.953 plan
+            const pct=Math.min(100,Math.round((monthDollars/capDollars)*100));
+            const tone=pct>=90?{bg:"#3a0a0a",border:"#ef4444aa",fg:"#fca5a5"}
+                      :pct>=50?{bg:"#3a1f00",border:"#f59e0baa",fg:"#fcd34d"}
+                      :{bg:"#0d2a18",border:"#22c55e88",fg:"#86efac"};
+            return(
+              <div title={`Anthropic API spend this month — running total from your spend ledger.\n\nResets monthly. The workspace cap on console.anthropic.com is your hard ceiling; this pill helps you stay ahead of it.`}
+                style={{display:"flex",alignItems:"center",gap:6,padding:"0 12px",height:36,borderRadius:10,background:tone.bg,border:`1px solid ${tone.border}`,cursor:"default",flexShrink:0}}>
+                <span style={{fontSize:11,fontWeight:600,color:tone.fg,letterSpacing:0.3,opacity:0.85}}>Anthropic</span>
+                <span style={{fontSize:13,fontWeight:700,color:tone.fg,whiteSpace:"nowrap"}}>${monthDollars.toFixed(2)}</span>
+                <span style={{fontSize:10,color:tone.fg,opacity:0.6,whiteSpace:"nowrap"}}>/mo</span>
+              </div>
+            );
+          })()}
           {/* DECISION(v1.19.599): Team-wide active-task indicator. Shows when teammates are processing anything. */}
           {teamTasks.length>0&&(
             <div title={teamTasks.map(t=>{
