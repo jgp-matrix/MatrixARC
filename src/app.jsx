@@ -1865,21 +1865,63 @@ function _trippedApiCreditExhausted(message){
     },50);
   }
 }
+// DECISION(v1.19.963, cost report A5): Retry with exponential backoff on transient
+// Anthropic errors. Previously a single 429 (rate limit) or 529 (overloaded) blip
+// aborted the whole extraction and the user had to click Re-Extract. The model can
+// be flaky for tens of seconds during traffic spikes; a 4-stage backoff (1s, 2s, 4s,
+// 8s) typically rides through. Permanent errors (401/403/404/credit-exhausted) are
+// NOT retried — they fail immediately. 5xx other than 529 gets one retry then fails.
+// Honors `Retry-After` header when Anthropic provides it.
+async function _anthropicSleep(ms){return new Promise(r=>setTimeout(r,ms));}
 async function apiCall(body){
   if(!_apiKey)throw new Error("API key not set. Open Settings and add your Anthropic key.");
   if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
-  const r=await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({model:"claude-opus-4-6",...body})
-  });
-  const d=await r.json();
-  if(!r.ok){
-    console.error("API ERROR:",r.status,d.error?.type,d.error?.message);
-    if(_isCreditError(d.error?.message))_trippedApiCreditExhausted(d.error?.message);
-    throw new Error(d.error?.message||"API error");
+  const TRANSIENT_STATUSES=new Set([429,500,502,503,504,529]);
+  const MAX_ATTEMPTS=5; // initial + 4 retries
+  const BASE_DELAY_MS=1000;
+  let lastErr=null;
+  for(let attempt=1;attempt<=MAX_ATTEMPTS;attempt++){
+    try{
+      const r=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({model:"claude-opus-4-6",...body})
+      });
+      const d=await r.json();
+      if(r.ok)return d.content?.[0]?.text||"";
+      // Permanent errors: never retry
+      if(_isCreditError(d.error?.message)){_trippedApiCreditExhausted(d.error?.message);throw new Error(d.error?.message||"API error");}
+      if(r.status===401||r.status===403||r.status===404||r.status===400){
+        console.error("API ERROR:",r.status,d.error?.type,d.error?.message);
+        throw new Error(d.error?.message||"API error");
+      }
+      // Transient errors: retry with backoff
+      if(TRANSIENT_STATUSES.has(r.status)&&attempt<MAX_ATTEMPTS){
+        const retryAfterHeader=r.headers.get("Retry-After");
+        const retryAfterMs=retryAfterHeader?Math.min(parseInt(retryAfterHeader,10)*1000,30000):0;
+        const backoffMs=BASE_DELAY_MS*Math.pow(2,attempt-1);
+        const delay=Math.max(retryAfterMs,backoffMs);
+        console.warn(`[apiCall] transient ${r.status} (${d.error?.type||"unknown"}), retrying in ${delay}ms (attempt ${attempt}/${MAX_ATTEMPTS})`);
+        lastErr=new Error(d.error?.message||`API error ${r.status}`);
+        await _anthropicSleep(delay);
+        continue;
+      }
+      // Out of retries or non-transient
+      console.error("API ERROR:",r.status,d.error?.type,d.error?.message);
+      throw new Error(d.error?.message||"API error");
+    }catch(e){
+      // Network errors (fetch threw) — also transient, retry with backoff
+      if(e.message&&!/API error|API key not set|credits exhausted/i.test(e.message)&&attempt<MAX_ATTEMPTS){
+        const delay=BASE_DELAY_MS*Math.pow(2,attempt-1);
+        console.warn(`[apiCall] network error: ${e.message}, retrying in ${delay}ms (attempt ${attempt}/${MAX_ATTEMPTS})`);
+        lastErr=e;
+        await _anthropicSleep(delay);
+        continue;
+      }
+      throw e;
+    }
   }
-  return d.content?.[0]?.text||"";
+  throw lastErr||new Error("apiCall: exceeded max retries");
 }
 
 async function parallelMap(items,fn,concurrency=4){
