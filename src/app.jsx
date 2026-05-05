@@ -8593,6 +8593,32 @@ ADDITIONAL ACCURACY RULES:
 • NEVER assume or autocomplete a part number — if a character is genuinely unreadable, transcribe your best interpretation based on glyph shape alone
 TRANSCRIBE EXACTLY what is printed — do NOT autocomplete, normalize, or guess part numbers
 
+★ LONG PART NUMBERS — CHARACTER-COUNT FIRST (CRITICAL):
+For any part number longer than ~10 characters, the most common failure mode is dropping a
+single character ("A62H6012SSLP3PT" misread as "A62H60125SLPPT" — dropped the "3", and merged
+"2S" into "25" via S/5 confusion). The reader sees a long alphanumeric blur and types what
+"feels right" instead of every glyph that's actually printed.
+
+Procedure for long PNs (REQUIRED):
+  1. COUNT the printed characters first. State the count to yourself.
+  2. Transcribe the value one character at a time, left to right.
+  3. COUNT what you typed. If the two counts don't match, you missed or doubled a character —
+     re-read the cell from scratch.
+  4. Pay extra attention to "SS", "33", "55", "00", "II" runs — repeated characters are easy
+     to drop when reading at speed.
+  5. Pay extra attention to S vs 5 right next to digits (e.g. "12SS" vs "1255" vs "12S5").
+
+★ ENCLOSURE / CABINET / LARGE KIT PARTS ARE HIGHEST STAKES:
+The enclosure (cabinet, NEMA box, free-standing housing) is usually the most expensive single
+line in the BOM and is typically item #1. A wrong enclosure PN means the wrong piece of metal
+ships and the entire panel has to be rebuilt. If a row's description contains any of these
+keywords:
+   ENCLOSURE, CABINET, NEMA BOX, FREE-STAND, FREESTAND, CONSOLET, JIC, SUBPANEL,
+   BACKPLATE, BACKPAN, DOOR ASSY, DISCONNECT ENCLOSURE
+treat its part number as if a customer reviewer is going to compare every character. Default
+the row's confidence to "medium" unless every glyph is unambiguous AND you've performed the
+character-count check above.
+
 DUPLICATE PART NUMBERS: If the same part number appears on multiple rows in the BOM table, combine them into ONE item with the total quantity summed. For example, if "QD100X300HW" appears 3 times each with qty 1, return ONE item with qty 3. Do NOT return separate rows for the same part number.
 
 QUANTITY "A/R" or "AR": If a BOM row shows quantity as "A/R", "AR", "As Required", or "As Req'd", this means the panel shop uses whatever length/amount is needed. Set qty to 1 for these items.
@@ -8917,6 +8943,20 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
                 console.warn(`[BOM VERIFY/PDF] sequence gaps in itemNo: ${verification.sequenceGaps.join(", ")}`);
               }
             }
+            // v1.19.973: same long-PN / enclosure auto-downgrade as the image path.
+            const _enclosureKwPdf=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
+            for(const it of items){
+              if(String(it.confidence||"").toLowerCase()!=="high")continue;
+              const stripped=String(it.partNumber||"").replace(/[^A-Z0-9]/gi,"");
+              const letters=(stripped.match(/[A-Z]/gi)||[]).length;
+              const digits=(stripped.match(/\d/g)||[]).length;
+              const isLongMixed=stripped.length>=10&&letters>=2&&digits>=2;
+              const isEnclosure=_enclosureKwPdf.test(String(it.description||""));
+              if(isLongMixed||isEnclosure){
+                it.confidence="medium";
+                it._confDowngradeReason=isEnclosure?"enclosure-row":"long-mixed-pn";
+              }
+            }
             for(const it of items){
               const c=String(it.confidence||"").toLowerCase();
               if(c==="low")verification.lowConfidenceRows.push(it.itemNo||it.partNumber||"?");
@@ -9137,6 +9177,31 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       if(verification.sequenceGaps.length>0){
         verification.status="needs-review";
         console.warn(`[BOM VERIFY] sequence gaps in itemNo — items ${verification.sequenceGaps.slice(0,20).join(", ")}${verification.sequenceGaps.length>20?` (+${verification.sequenceGaps.length-20} more)`:""} appear to be missing`);
+      }
+    }
+    // DECISION(v1.19.973): Auto-downgrade confidence for high-stakes rows the AI
+    // tagged "high". Real failure case: enclosure A62H6012SSLP3PT was misread as
+    // A62H60125SLPPT (dropped a '3', S→5 confusion) and shipped as confidence:"high"
+    // — silent and uncaught. Two heuristics surface these for review:
+    //   (a) Long mixed alphanumeric PNs (≥10 chars, ≥2 letters AND ≥2 digits) are
+    //       the failure-prone shape — drop one char and the AI doesn't notice.
+    //   (b) Enclosure / cabinet / backpan rows are the single highest-cost line item
+    //       — wrong PN ships the wrong metal — flag regardless of length.
+    // Downgrade is one notch (high→medium); doesn't override low.
+    const _enclosureKw=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
+    for(const it of items){
+      const pn=String(it.partNumber||"").trim();
+      const desc=String(it.description||"");
+      const cur=String(it.confidence||"").toLowerCase();
+      if(cur!=="high")continue;
+      const stripped=pn.replace(/[^A-Z0-9]/gi,"");
+      const letters=(stripped.match(/[A-Z]/gi)||[]).length;
+      const digits=(stripped.match(/\d/g)||[]).length;
+      const isLongMixed=stripped.length>=10&&letters>=2&&digits>=2;
+      const isEnclosure=_enclosureKw.test(desc);
+      if(isLongMixed||isEnclosure){
+        it.confidence="medium";
+        it._confDowngradeReason=isEnclosure?"enclosure-row":"long-mixed-pn";
       }
     }
     // Confidence aggregate
@@ -22865,14 +22930,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const lowConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="low");
               const medConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="medium");
               const placeholders=rows.filter(r=>r.partNumber==="?"||/EXTRACTION_FAILED/i.test(r.notes||""));
-              const flagged=lowConf.length+placeholders.length; // medium is informational, not flagged
+              // v1.19.973: enclosure-downgrade rows are stakes-elevated, treat as flagged.
+              const encDowngrade=medConf.filter(r=>r._confDowngradeReason==="enclosure-row");
+              const flagged=lowConf.length+placeholders.length+encDowngrade.length;
               if(flagged===0&&medConf.length===0)return null;
               const tone=flagged>0
                 ?{bg:"#3a1f00",border:"#f59e0baa",fg:"#fcd34d",label:`⚠ ${flagged} row${flagged===1?"":"s"} need${flagged===1?"s":""} review`}
                 :{bg:"#1a2a3a",border:"#3b82f688",fg:"#93c5fd",label:`${medConf.length} medium-confidence row${medConf.length===1?"":"s"}`};
               return(
                 <button onClick={()=>setShowVerifyModal(true)}
-                  title="BOM extraction verification — some rows have low confidence or are placeholder/unreadable. Click to review."
+                  title="BOM extraction verification — some rows have low confidence, are placeholder/unreadable, or are enclosure rows (highest stakes) that need character-by-character verification. Click to review."
                   style={{background:tone.bg,border:`1px solid ${tone.border}`,color:tone.fg,borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
                   {tone.label}
                 </button>
@@ -23807,10 +23874,35 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 )}
                 {medConf.length>0&&(
                   <div style={{marginBottom:14}}>
-                    <div style={{fontSize:12,fontWeight:600,color:"#93c5fd",marginBottom:6}}>{medConf.length} medium-confidence row{medConf.length===1?"":"s"} (informational)</div>
-                    <div style={{fontSize:11,color:C.muted,padding:"4px 10px",background:"#1a2a3a22",border:"1px solid #3b82f644",borderRadius:6,maxHeight:80,overflow:"auto"}}>
-                      {medConf.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}
-                    </div>
+                    <div style={{fontSize:12,fontWeight:600,color:"#93c5fd",marginBottom:6}}>{medConf.length} medium-confidence row{medConf.length===1?"":"s"} — verify carefully against drawing</div>
+                    {/* DECISION(v1.19.973): Group medium-confidence rows by downgrade
+                       reason so high-stakes ones (enclosure, long mixed-alpha PNs)
+                       surface clearly. Items without _confDowngradeReason were marked
+                       medium by the AI itself (legible-but-uncertain glyph). */}
+                    {(()=>{
+                      const enc=medConf.filter(r=>r._confDowngradeReason==="enclosure-row");
+                      const longPn=medConf.filter(r=>r._confDowngradeReason==="long-mixed-pn");
+                      const aiMed=medConf.filter(r=>!r._confDowngradeReason);
+                      return(<>
+                        {enc.length>0&&(
+                          <div style={{fontSize:11,color:"#fbbf24",padding:"6px 10px",marginBottom:6,background:"#3a1f0022",border:"1px solid #f59e0b66",borderRadius:6}}>
+                            <div style={{fontWeight:700,marginBottom:3}}>📦 Enclosure / cabinet row{enc.length===1?"":"s"} ({enc.length}) — highest stakes, character-by-character verify:</div>
+                            <div style={{color:C.muted,fontFamily:"Consolas,monospace"}}>{enc.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}</div>
+                          </div>
+                        )}
+                        {longPn.length>0&&(
+                          <div style={{fontSize:11,color:"#93c5fd",padding:"6px 10px",marginBottom:6,background:"#1a2a3a22",border:"1px solid #3b82f644",borderRadius:6}}>
+                            <div style={{fontWeight:700,marginBottom:3}}>🔢 Long alphanumeric part numbers ({longPn.length}) — easy to drop a character, count vs. drawing:</div>
+                            <div style={{color:C.muted,fontFamily:"Consolas,monospace"}}>{longPn.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}</div>
+                          </div>
+                        )}
+                        {aiMed.length>0&&(
+                          <div style={{fontSize:11,color:C.muted,padding:"4px 10px",background:"#1a2a3a22",border:"1px solid #3b82f644",borderRadius:6,maxHeight:80,overflow:"auto"}}>
+                            <span style={{fontWeight:600,color:"#93c5fd"}}>AI-flagged uncertain:</span> {aiMed.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}
+                          </div>
+                        )}
+                      </>);
+                    })()}
                   </div>
                 )}
                 {placeholdersOnly.length===0&&lowConf.length===0&&medConf.length===0&&(
