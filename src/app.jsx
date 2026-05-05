@@ -2969,6 +2969,12 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
 // becomes one BC planning line; qty is the SIGNED DELTA (modify rows
 // already store delta; add rows store absolute new qty). 'remove' rows
 // are skipped — handled by Stage D follow-up if needed.
+// DECISION(v1.19.978, ECO BC qty fix): Per user — ECO row qty is the TOTAL
+// project addition, NOT a per-panel delta. So we push qtyEffective AS-IS to
+// BC, without multiplying by panel.lineQty. Real failure case: PRJ402065
+// had 3 panels (lineQty=3); user added qty 1 of each of 3 ECO items to one
+// panel; BC was getting qty 3 (1 × 3) instead of qty 1. Base BOM rows still
+// multiply by lineQty (those are stored per-panel); only ECO rows differ.
 async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber, ecoId, panel, projectName){
   if(ecoNumber<1||ecoNumber>10)throw new Error(`bcSyncEcoPanelPlanningLines: ECO number must be 1-10 (got ${ecoNumber})`);
   const n=panelIndex;
@@ -3021,7 +3027,10 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
       Type:"Item",
       No:row.partNumber.trim(),
       Description:desc,
-      Quantity:qtyEffective*lineQty,
+      // v1.19.978: push ECO qty AS-IS (no lineQty multiplication). The qty
+      // entered into the ECO row IS the total project qty — not a per-panel
+      // figure. See decision comment at function header for rationale.
+      Quantity:qtyEffective,
       Unit_Cost:row.unitPrice||0,
       Location_Code:"MAIN",
       _row:row,
