@@ -38814,8 +38814,9 @@ INSTRUCTIONS:
           )}
           {/* DECISION(v1.19.965, cost report A6): Anthropic spend pill — running monthly burn
               vs the workspace cap on the Anthropic console (~$300 default). Color thresholds:
-              <50% green, 50-90% amber, >90% red. Hidden when ledger hasn't loaded yet. */}
-          {anthropicMonthCents!=null&&(()=>{
+              <50% green, 50-90% amber, >90% red. Hidden when ledger hasn't loaded yet.
+              v1.19.976: admin-only — non-admin users don't need API spend visibility. */}
+          {anthropicMonthCents!=null&&isAdmin()&&(()=>{
             const monthDollars=anthropicMonthCents/100;
             const capDollars=300; // matches the Workspace Spend Limit set in v1.19.953 plan
             const pct=Math.min(100,Math.round((monthDollars/capDollars)*100));
