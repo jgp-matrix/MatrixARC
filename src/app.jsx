@@ -8463,7 +8463,19 @@ async function callResetTeamApiKeys(companyId){
 // ── BOM EXTRACTION PROMPT ──
 const BOM_PROMPT=`You are an expert at reading UL508A industrial electrical control panel drawings.
 
-TASK: Extract every line item from the BOM table on this drawing page.
+TASK: Extract every BOM line item visible anywhere on this drawing page. The page may
+contain ONE BOM table, or it may contain TWO OR THREE BOM boxes/columns/sections that
+together form a single Bill of Materials split across the page for layout. Your job is
+to find ALL of them and extract every row.
+
+★ READ LIKE A HUMAN REVIEWER — SCAN THE WHOLE PAGE FIRST:
+Before you extract anything, scan the entire page and inventory what you see:
+  - How many BOM boxes/tables/sections are present? (often 1, sometimes 2, occasionally 3)
+  - Where are they positioned (left/middle/right, top/bottom)?
+  - What's the lowest item number you can see? What's the highest?
+  - Do they share the same column headers? (If yes, they're parts of one BOM.)
+A meticulous human would never extract one table and call it done while a second BOM
+box sits visible on the same page. You shouldn't either.
 
 WHAT IS A BOM (Bill of Materials)?
 A BOM is a structured spreadsheet-style grid listing physical components that go INTO a control panel. A real BOM row always has ALL FOUR essential fields populated:
@@ -8600,12 +8612,36 @@ Certain descriptions imply a single physical assembly and almost never have qty 
 • Main disconnect, main breaker (usually 1)
 If you are about to emit qty > 10 for a row whose description matches one of these assembly-level items, STOP and re-verify the qty column on that specific row. The correct value is almost certainly a small number and you are likely reading a qty from a different row (often a terminal-block count like 143).
 
-STEP 6 — LINE-COUNT VERIFICATION (CRITICAL — added v1.19.969):
+STEP 6 — LINE-COUNT VERIFICATION (CRITICAL — added v1.19.969, refined v1.19.971):
 A missed BOM line item costs the customer thousands of dollars in change orders. Your top
 priority is to NEVER drop a row, even if you can't read it cleanly.
 
-BEFORE emitting items, COUNT the total number of BOM line items visible on this page.
-Set "detectedLineCount" in your response to that number.
+★ MULTI-COLUMN / MULTI-BOX / MULTI-SECTION BOM HANDLING (CRITICAL):
+Engineering drawings — especially D-size and larger — frequently split a long BOM into
+TWO OR THREE side-by-side columns/boxes/sections on the SAME PAGE to fit items in the
+available space. Real example: drawing CSW1807-121 has items 1–50 in a LEFT BOM box and
+items 51–84 in a RIGHT BOM box, both labeled "BILL OF MATERIAL" with identical column
+headers. They are NOT separate tables — they are continuation of the same BOM, just laid
+out across the page. Three-column BOMs follow the same pattern (left/middle/right).
+
+You MUST extract from ALL BOM boxes/columns/sections on the page. Specific rules:
+1. If you see a BOM table that doesn't start at item 1 (i.e., its smallest itemNo > 1),
+   STOP. There must be an earlier column/box/section containing items 1 through
+   (smallest − 1). Find it. It is almost always to the LEFT or ABOVE the column you're
+   looking at. Do not return any results until you've located all earlier items.
+2. If multiple BOM boxes share the same column headers (ITEM, QTY, CATALOG, MFG, DESCRIPTION),
+   they are PARTS OF ONE BOM. Extract from all of them. detectedLineCount is the SUM
+   across all boxes/columns/sections.
+3. The whole-page item-number sequence must be continuous: if extracted item numbers are
+   1..40 and 51..84, you're missing 41..50 — find them in another column or box.
+4. Reading order across columns: top-to-bottom in the LEFT column first, then top-to-bottom
+   in the MIDDLE column (if any), then top-to-bottom in the RIGHT column. Mirror this for
+   item-number sequence so consecutive numbers stay adjacent in your output.
+5. NEVER assume "this BOM box is the entire BOM" without scanning the rest of the page
+   for additional columns/boxes/sections with the same column headers.
+
+BEFORE emitting items, COUNT the total number of BOM line items visible on this page,
+SUMMING ACROSS ALL BOM BOXES/COLUMNS. Set "detectedLineCount" to that total.
 
 ★ HARD CONSTRAINT: items.length MUST equal detectedLineCount.
 
@@ -9080,6 +9116,19 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       .filter(n=>!isNaN(n)&&n>0);
     if(numericItemNos.length>=3){
       const sorted=[...new Set(numericItemNos)].sort((a,b)=>a-b);
+      // DECISION(v1.19.971, multi-column BOM detection): If the smallest extracted
+      // itemNo is > 1, the AI almost certainly missed an earlier column/box (real
+      // case: OVIVO CSW1807-121 has items 1-50 in left box and 51-84 in right box;
+      // AI extracted only 51-84 and confidently passed self-verification because
+      // detectedLineCount matched the (incorrect) 34-row count). Flag as missing
+      // even when count and sequence agree internally.
+      const minItemNo=sorted[0];
+      if(minItemNo>1){
+        verification.status="needs-review";
+        verification.missingFromStart=minItemNo-1;
+        console.warn(`[BOM VERIFY] smallest itemNo is ${minItemNo} — items 1..${minItemNo-1} appear to be missing (likely an earlier BOM column was not extracted)`);
+        for(let g=1;g<minItemNo;g++)verification.sequenceGaps.push(g);
+      }
       for(let i=0;i<sorted.length-1;i++){
         if(sorted[i+1]-sorted[i]>1){
           for(let g=sorted[i]+1;g<sorted[i+1];g++)verification.sequenceGaps.push(g);
@@ -9087,7 +9136,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       }
       if(verification.sequenceGaps.length>0){
         verification.status="needs-review";
-        console.warn(`[BOM VERIFY] sequence gaps in itemNo — items ${verification.sequenceGaps.join(", ")} appear to be missing`);
+        console.warn(`[BOM VERIFY] sequence gaps in itemNo — items ${verification.sequenceGaps.slice(0,20).join(", ")}${verification.sequenceGaps.length>20?` (+${verification.sequenceGaps.length-20} more)`:""} appear to be missing`);
       }
     }
     // Confidence aggregate
