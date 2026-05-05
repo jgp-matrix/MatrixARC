@@ -30148,8 +30148,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // printing" and bail. The lock auto-expires 30 seconds after acquisition.
   const [quotePrinting,setQuotePrinting]=useState(false);
   const QUOTE_PRINT_LOCK_TTL_MS=30000;
+  // v1.19.966 bugfix: Use the resolved projectsPath (company OR user) — not a
+  // hardcoded users/{uid}/projects path. For team projects under a company, the
+  // doc lives at companies/{cid}/projects/{id}; the original hardcoded path
+  // wrote to a path that doesn't exist for company users, defeating the lock.
+  function _projectDocPath(projectId){
+    const base=(_appCtx&&_appCtx.projectsPath)||`users/${uid}/projects`;
+    return`${base}/${projectId}`;
+  }
   async function _tryAcquireQuotePrintLock(projectId){
-    const ref=fbDb.doc(`users/${uid}/projects/${projectId}`);
+    const ref=fbDb.doc(_projectDocPath(projectId));
     try{
       const result=await fbDb.runTransaction(async tx=>{
         const snap=await tx.get(ref);
@@ -30175,7 +30183,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     }
   }
   async function _releaseQuotePrintLock(projectId){
-    const ref=fbDb.doc(`users/${uid}/projects/${projectId}`);
+    const ref=fbDb.doc(_projectDocPath(projectId));
     try{await ref.update({quotePrintLock:null});}catch(e){/* harmless */}
   }
   async function handlePrintQuote(){
