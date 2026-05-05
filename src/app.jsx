@@ -8702,14 +8702,30 @@ LINE NUMBER ALIGNMENT:
 - Sequential numbering must have NO GAPS — if you extract items 1, 2, 4, 5, you missed item 3.
   Re-examine that row.
 
-PER-ROW CONFIDENCE (CRITICAL — added v1.19.969):
-Each item must include a "confidence" field with one of these values:
-- "high": every cell (qty, partNumber, description, manufacturer) is clearly legible,
-  character-by-character certain. No ambiguous glyphs.
-- "medium": one or two characters in the partNumber are ambiguous; you've made your best
-  read but there's reasonable doubt. OR the description is partially clipped.
-- "low": multiple cells are hard to read; significant uncertainty. Use this for any row
-  where you'd want a human to double-check before sending an order.
+PER-ROW CONFIDENCE (CRITICAL — added v1.19.969, tightened v1.19.975):
+Each item must include a "confidence" field. The bar for "high" is strict: ZERO doubt on
+EVERY character of every cell.
+
+- "high": Reserved for crystal-clear text where every glyph in the part number, description,
+  manufacturer, and qty is unambiguous. NO confusable-glyph pairs in play. If the partNumber
+  contains ANY of these characters AND you cannot rule out the alternate reading by glyph
+  shape alone, you may NOT mark "high":
+     S (could be 5)        5 (could be S)        0 (could be O / Q / D)
+     O (could be 0 / Q)    Q (could be O / 0)    D (could be 0 / O)
+     8 (could be B)        B (could be 8)        1 (could be I / L / l)
+     I (could be 1 / L)    L (could be 1 / I)    Z (could be 2)
+     2 (could be Z)        6 (could be G)        G (could be 6 / C)
+     T (could be 7)        7 (could be T)        H (could be N / A)
+     N (could be H / M)    C (could be G / O)
+  When in doubt about a single glyph, mark "medium". When in doubt about multiple, "low".
+- "medium": At least one character could plausibly be read as its confusable counterpart.
+  You've committed to your best read, but a reviewer should glance at the source.
+- "low": Multiple characters are doubtful, the print is faded/clipped, or you'd refuse to
+  bet on this part number being correct.
+
+Default behavior when uncertain: drop to "medium" rather than holding "high". Surfacing a
+correctly-read row as "medium" costs the user 2 seconds; missing a misread costs hundreds
+of dollars and project delay. Err on the side of caution.
 
 Lower-confidence rows will be surfaced for user review downstream. It is FAR BETTER to
 mark a row as low-confidence than to silently submit a wrong reading as if it were correct.
@@ -8955,21 +8971,18 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
                 console.warn(`[BOM VERIFY/PDF] sequence gaps in itemNo: ${verification.sequenceGaps.join(", ")}`);
               }
             }
-            // v1.19.973-.974: same long-PN / edge-confusable / enclosure auto-downgrade as image path.
+            // v1.19.973-.975: same auto-downgrade as image path.
             const _enclosureKwPdf=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
-            const _confusableEdgePdf=/^[S0O8BIZG6T7HN5]|[S0O8BIZG6T7HN5]$/i;
+            const _confusableAnyPdf=/[S0O8BIZG6T7HN5DC2QlIL1]/i;
             for(const it of items){
               if(String(it.confidence||"").toLowerCase()!=="high")continue;
               const stripped=String(it.partNumber||"").replace(/[^A-Z0-9]/gi,"");
-              const letters=(stripped.match(/[A-Z]/gi)||[]).length;
-              const digits=(stripped.match(/\d/g)||[]).length;
-              const isMixed=letters>=2&&digits>=2;
-              const isLongMixed=stripped.length>=8&&isMixed;
-              const isEdgeConfusable=stripped.length>=6&&isMixed&&_confusableEdgePdf.test(stripped);
+              if(!stripped||stripped==="?")continue;
+              const hasConfusable=_confusableAnyPdf.test(stripped);
               const isEnclosure=_enclosureKwPdf.test(String(it.description||""));
-              if(isLongMixed||isEdgeConfusable||isEnclosure){
+              if(hasConfusable||isEnclosure){
                 it.confidence="medium";
-                it._confDowngradeReason=isEnclosure?"enclosure-row":(isLongMixed?"long-mixed-pn":"edge-confusable-pn");
+                it._confDowngradeReason=isEnclosure?"enclosure-row":"contains-confusable-glyph";
               }
             }
             for(const it of items){
@@ -9194,37 +9207,34 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         console.warn(`[BOM VERIFY] sequence gaps in itemNo — items ${verification.sequenceGaps.slice(0,20).join(", ")}${verification.sequenceGaps.length>20?` (+${verification.sequenceGaps.length-20} more)`:""} appear to be missing`);
       }
     }
-    // DECISION(v1.19.973): Auto-downgrade confidence for high-stakes rows the AI
-    // tagged "high". Real failure cases:
-    //   v1.19.973 — A62H6012SSLP3PT (15 chars) misread as A62H60125SLPPT (dropped '3', S→5)
-    //   v1.19.974 — ACHI238S (8 chars) misread as AHCI2385 (HC↔CH transpose, S→5)
-    // Both shipped as confidence:"high" — silent failures. Heuristics surface these:
-    //   (a) Mixed alphanumeric PNs (≥8 chars, ≥2 letters AND ≥2 digits) — failure-prone.
-    //       v1.19.974: lowered from 10→8 chars after ACHI238S slipped past at length 8.
-    //   (b) Mixed alphanumeric PNs of ANY length whose first OR last character is a
-    //       confusable glyph (S/5, 0/O, 8/B, 1/I, Z/2, 6/G, T/7, H/N) — these are the
-    //       highest-error positions because suffix letters get read as digits and vice
-    //       versa (e.g. ACHI238S last char S↔5, A62H...3PT first char A vs other).
-    //   (c) Enclosure / cabinet / backpan rows are the single highest-cost line item —
-    //       wrong PN ships the wrong metal — flag regardless of length.
-    // Downgrade is one notch (high→medium); doesn't override low.
+    // DECISION(v1.19.973-.975): Auto-downgrade confidence for rows where the AI
+    // tagged "high" but the PN contains characters that could plausibly be misread.
+    // Real failure cases:
+    //   v1.19.973 — A62H6012SSLP3PT misread as A62H60125SLPPT (dropped '3', S→5)
+    //   v1.19.974 — ACHI238S misread as AHCI2385 (HC↔CH transpose, S→5)
+    // v1.19.975: dropped composition/length gates — part numbers come in all shapes
+    // and lengths; ANY confusable glyph anywhere in the PN is the real risk signal.
+    // Categories that auto-downgrade high→medium:
+    //   (a) ANY confusable glyph (S/5, 0/O/Q, 8/B, 1/I/L, Z/2, 6/G, T/7, H/N, D/0, C/G)
+    //       anywhere in the PN — these are the documented OCR failure points.
+    //   (b) Enclosure / cabinet / backpan rows — single highest-cost line, wrong PN
+    //       ships wrong metal — flag regardless of glyph composition.
+    // Downgrade is one notch (high→medium); doesn't override an AI-set "low".
     const _enclosureKw=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
-    const _confusableEdge=/^[S0O8BIZG6T7HN5]|[S0O8BIZG6T7HN5]$/i;
+    // Confusable set covers every glyph pair in the prompt's character matrix.
+    const _confusableAny=/[S0O8BIZG6T7HN5DC2QlIL1]/i;
     for(const it of items){
       const pn=String(it.partNumber||"").trim();
       const desc=String(it.description||"");
       const cur=String(it.confidence||"").toLowerCase();
       if(cur!=="high")continue;
       const stripped=pn.replace(/[^A-Z0-9]/gi,"");
-      const letters=(stripped.match(/[A-Z]/gi)||[]).length;
-      const digits=(stripped.match(/\d/g)||[]).length;
-      const isMixed=letters>=2&&digits>=2;
-      const isLongMixed=stripped.length>=8&&isMixed;
-      const isEdgeConfusable=stripped.length>=6&&isMixed&&_confusableEdge.test(stripped);
+      if(!stripped||stripped==="?")continue; // skip empty / placeholder
+      const hasConfusable=_confusableAny.test(stripped);
       const isEnclosure=_enclosureKw.test(desc);
-      if(isLongMixed||isEdgeConfusable||isEnclosure){
+      if(hasConfusable||isEnclosure){
         it.confidence="medium";
-        it._confDowngradeReason=isEnclosure?"enclosure-row":(isLongMixed?"long-mixed-pn":"edge-confusable-pn");
+        it._confDowngradeReason=isEnclosure?"enclosure-row":"contains-confusable-glyph";
       }
     }
     // Confidence aggregate
@@ -23904,8 +23914,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                        medium by the AI itself (legible-but-uncertain glyph). */}
                     {(()=>{
                       const enc=medConf.filter(r=>r._confDowngradeReason==="enclosure-row");
-                      const longPn=medConf.filter(r=>r._confDowngradeReason==="long-mixed-pn");
-                      const edgePn=medConf.filter(r=>r._confDowngradeReason==="edge-confusable-pn");
+                      const conf=medConf.filter(r=>r._confDowngradeReason==="contains-confusable-glyph"||r._confDowngradeReason==="long-pn"||r._confDowngradeReason==="long-mixed-pn"||r._confDowngradeReason==="edge-confusable-pn");
                       const aiMed=medConf.filter(r=>!r._confDowngradeReason);
                       return(<>
                         {enc.length>0&&(
@@ -23914,16 +23923,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             <div style={{color:C.muted,fontFamily:"Consolas,monospace"}}>{enc.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}</div>
                           </div>
                         )}
-                        {longPn.length>0&&(
-                          <div style={{fontSize:11,color:"#93c5fd",padding:"6px 10px",marginBottom:6,background:"#1a2a3a22",border:"1px solid #3b82f644",borderRadius:6}}>
-                            <div style={{fontWeight:700,marginBottom:3}}>🔢 Long alphanumeric part numbers ({longPn.length}) — easy to drop a character, count vs. drawing:</div>
-                            <div style={{color:C.muted,fontFamily:"Consolas,monospace"}}>{longPn.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}</div>
-                          </div>
-                        )}
-                        {edgePn.length>0&&(
+                        {conf.length>0&&(
                           <div style={{fontSize:11,color:"#a5b4fc",padding:"6px 10px",marginBottom:6,background:"#1e1b4b22",border:"1px solid #6366f144",borderRadius:6}}>
-                            <div style={{fontWeight:700,marginBottom:3}}>🔡 First/last character is confusable ({edgePn.length}) — verify ends (e.g. S/5, 0/O, 8/B, H/N):</div>
-                            <div style={{color:C.muted,fontFamily:"Consolas,monospace"}}>{edgePn.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}</div>
+                            <div style={{fontWeight:700,marginBottom:3}}>🔡 Contains confusable glyph{conf.length===1?"":"s"} ({conf.length}) — verify each character (S/5, 0/O, 8/B, 1/I, Z/2, 6/G, T/7, H/N, D/0, C/G):</div>
+                            <div style={{color:C.muted,fontFamily:"Consolas,monospace"}}>{conf.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}</div>
                           </div>
                         )}
                         {aiMed.length>0&&(
