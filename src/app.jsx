@@ -18893,6 +18893,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [feedbackSaved,setFeedbackSaved]=useState(false);
   const [showAiQuestions,setShowAiQuestions]=useState(false);
   const [showEqModal,setShowEqModal]=useState(false);
+  const [showVerifyModal,setShowVerifyModal]=useState(false); // v1.19.969 — BOM verification review
   const [aiAnswers,setAiAnswers]=useState({});
   const [err,setErr]=useState("");
   const [reExtractWarn,setReExtractWarn]=useState(false);
@@ -22805,6 +22806,29 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:6}}>
               BILL OF MATERIALS — {(panel.bom||[]).length} items
             </div>
+            {/* DECISION(v1.19.969): BOM extraction verification badge. Reads each row's
+                `confidence` field (set by the AI per Layer 1 prompt) plus placeholder
+                markers ("?" partNumber + EXTRACTION_FAILED note) to compute how many
+                rows need review. Clicking the badge opens a modal listing them. The
+                badge is invisible when extraction is healthy — no false alarms. */}
+            {(()=>{
+              const rows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency&&!r.autoLoaded);
+              const lowConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="low");
+              const medConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="medium");
+              const placeholders=rows.filter(r=>r.partNumber==="?"||/EXTRACTION_FAILED/i.test(r.notes||""));
+              const flagged=lowConf.length+placeholders.length; // medium is informational, not flagged
+              if(flagged===0&&medConf.length===0)return null;
+              const tone=flagged>0
+                ?{bg:"#3a1f00",border:"#f59e0baa",fg:"#fcd34d",label:`⚠ ${flagged} row${flagged===1?"":"s"} need${flagged===1?"s":""} review`}
+                :{bg:"#1a2a3a",border:"#3b82f688",fg:"#93c5fd",label:`${medConf.length} medium-confidence row${medConf.length===1?"":"s"}`};
+              return(
+                <button onClick={()=>setShowVerifyModal(true)}
+                  title="BOM extraction verification — some rows have low confidence or are placeholder/unreadable. Click to review."
+                  style={{background:tone.bg,border:`1px solid ${tone.border}`,color:tone.fg,borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                  {tone.label}
+                </button>
+              );
+            })()}
             {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
               <div style={{position:"relative",display:"inline-flex"}}>
                 <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Refresh pricing — skips items priced within threshold"}
@@ -23657,6 +23681,100 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         />
       )}
       {showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
+      {/* DECISION(v1.19.969): BOM Verification Review modal. Lists rows that the AI
+          flagged as low-confidence or placeholder (couldn't extract cleanly). User can
+          jump to each one in the BOM table and fix manually. */}
+      {showVerifyModal&&ReactDOM.createPortal(
+        (()=>{
+          const rows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency&&!r.autoLoaded);
+          const lowConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="low");
+          const medConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="medium");
+          const placeholders=rows.filter(r=>r.partNumber==="?"||/EXTRACTION_FAILED/i.test(r.notes||""));
+          // Dedupe — placeholder rows are typically also low-confidence
+          const lowConfIds=new Set(lowConf.map(r=>r.id));
+          const placeholdersOnly=placeholders.filter(r=>!lowConfIds.has(r.id));
+          return(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16}} onClick={()=>setShowVerifyModal(false)}>
+              <div onClick={e=>e.stopPropagation()} style={{...card(),width:"95%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                  <h3 style={{margin:0,color:C.text}}>BOM Extraction — Rows to Review</h3>
+                  <button onClick={()=>setShowVerifyModal(false)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,padding:"2px 8px"}}>✕</button>
+                </div>
+                <div style={{fontSize:12,color:C.muted,marginBottom:14,lineHeight:1.6}}>
+                  When the AI extracted this BOM, it flagged some rows as having lower confidence — usually because characters were merged, faded, or the cell was partially clipped. Review each one against the source drawing and correct as needed. Placeholder rows ("?") were too unreadable to extract; they're surfaced as rows so you don't lose them, but you'll need to enter the part manually.
+                </div>
+                {placeholdersOnly.length>0&&(
+                  <div style={{marginBottom:18}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#fca5a5",marginBottom:8}}>🚨 Placeholder rows ({placeholdersOnly.length}) — could not be extracted</div>
+                    <div style={{maxHeight:200,overflow:"auto",border:"1px solid #ef444444",borderRadius:6,background:"#3a0a0a22"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5}}>
+                        <thead><tr style={{background:"#3a0a0a"}}>
+                          <th style={{padding:"6px 10px",textAlign:"left",color:"#fca5a5",fontWeight:700}}>Item #</th>
+                          <th style={{padding:"6px 10px",textAlign:"left",color:"#fca5a5",fontWeight:700}}>Description (partial)</th>
+                          <th style={{padding:"6px 10px",textAlign:"left",color:"#fca5a5",fontWeight:700}}>Notes</th>
+                        </tr></thead>
+                        <tbody>
+                          {placeholdersOnly.map(r=>(
+                            <tr key={r.id} style={{borderTop:"1px solid #3a0a0a"}}>
+                              <td style={{padding:"5px 10px",color:"#fca5a5",fontWeight:700}}>{r.itemNo||"?"}</td>
+                              <td style={{padding:"5px 10px",color:C.muted}}>{r.description||"(unreadable)"}</td>
+                              <td style={{padding:"5px 10px",color:C.muted,fontSize:10.5}}>{r.notes||""}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+                {lowConf.length>0&&(
+                  <div style={{marginBottom:18}}>
+                    <div style={{fontSize:13,fontWeight:700,color:"#fcd34d",marginBottom:8}}>⚠ Low-confidence rows ({lowConf.length})</div>
+                    <div style={{maxHeight:240,overflow:"auto",border:"1px solid #f59e0b44",borderRadius:6,background:"#3a1f0022"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5}}>
+                        <thead><tr style={{background:"#3a1f00"}}>
+                          <th style={{padding:"6px 10px",textAlign:"left",color:"#fcd34d",fontWeight:700}}>Item #</th>
+                          <th style={{padding:"6px 10px",textAlign:"left",color:"#fcd34d",fontWeight:700}}>Part #</th>
+                          <th style={{padding:"6px 10px",textAlign:"left",color:"#fcd34d",fontWeight:700}}>Description</th>
+                          <th style={{padding:"6px 10px",textAlign:"left",color:"#fcd34d",fontWeight:700}}>Mfg</th>
+                          <th style={{padding:"6px 10px",textAlign:"center",color:"#fcd34d",fontWeight:700}}>Qty</th>
+                        </tr></thead>
+                        <tbody>
+                          {lowConf.map(r=>(
+                            <tr key={r.id} style={{borderTop:"1px solid #3a1f00"}}>
+                              <td style={{padding:"5px 10px",color:C.text,fontWeight:600}}>{r.itemNo||"—"}</td>
+                              <td style={{padding:"5px 10px",color:C.text,fontFamily:"Consolas,monospace"}}>{r.partNumber||""}</td>
+                              <td style={{padding:"5px 10px",color:C.muted,maxWidth:280,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.description}>{r.description||""}</td>
+                              <td style={{padding:"5px 10px",color:C.muted}}>{r.manufacturer||""}</td>
+                              <td style={{padding:"5px 10px",color:C.text,textAlign:"center"}}>{r.qty}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+                {medConf.length>0&&(
+                  <div style={{marginBottom:14}}>
+                    <div style={{fontSize:12,fontWeight:600,color:"#93c5fd",marginBottom:6}}>{medConf.length} medium-confidence row{medConf.length===1?"":"s"} (informational)</div>
+                    <div style={{fontSize:11,color:C.muted,padding:"4px 10px",background:"#1a2a3a22",border:"1px solid #3b82f644",borderRadius:6,maxHeight:80,overflow:"auto"}}>
+                      {medConf.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}
+                    </div>
+                  </div>
+                )}
+                {placeholdersOnly.length===0&&lowConf.length===0&&medConf.length===0&&(
+                  <div style={{padding:"40px 20px",textAlign:"center",color:C.muted,fontSize:13}}>
+                    ✅ All BOM rows are high confidence. No review needed.
+                  </div>
+                )}
+                <div style={{marginTop:"auto",paddingTop:12,textAlign:"right"}}>
+                  <button onClick={()=>setShowVerifyModal(false)} style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 22px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Done</button>
+                </div>
+              </div>
+            </div>
+          );
+        })(),
+        document.body
+      )}
       {/* Drawing Review Modal — full-screen annotation view */}
       {showDrawingReview&&pages.length>0&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.95)",zIndex:9999,display:"flex",flexDirection:"column"}}>
