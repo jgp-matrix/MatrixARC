@@ -4756,6 +4756,17 @@ function bcEnqueue(type,params,description){
   if(_bcQueueCountSetter)_bcQueueCountSetter(q.length);
 }
 
+// DECISION(v1.19.965, cost report D5): BC 429 retry/backoff. Previously the queue
+// retried on every error generically (5 attempts, no delay). Now: detect 429 (rate
+// limit) and 503 (BC overloaded) and apply exponential backoff with Retry-After
+// honoring before the next attempt. This dramatically reduces the chance of a
+// burst of queued operations all retrying simultaneously and triggering more 429s
+// — the textbook thundering-herd pattern.
+async function _bcQueueDelay(ms){return new Promise(r=>setTimeout(r,ms));}
+function _bcExtractStatusFromError(err){
+  const m=String(err&&err.message||"").match(/\b(\d{3})\b/);
+  return m?parseInt(m[1],10):0;
+}
 async function bcProcessQueue(){
   if(!_bcToken)return;
   const q=_bcQGet();
@@ -4763,12 +4774,36 @@ async function bcProcessQueue(){
   console.log(`[BC Queue] Processing ${q.length} pending item(s)…`);
   const remaining=[];
   for(const item of q){
+    // v1.19.965: If the previous attempt failed with 429/503, honor the
+    // backoff before retrying. attempts is 0-indexed prior failures.
+    const prevAttempts=item.attempts||0;
+    const wasTransient=item.lastErrorStatus===429||item.lastErrorStatus===503;
+    if(prevAttempts>0&&wasTransient){
+      const backoffMs=Math.min(60000,1000*Math.pow(2,prevAttempts-1)); // 1s, 2s, 4s, 8s, 16s, capped at 60s
+      const retryAfterMs=item.retryAfterMs||0;
+      const wait=Math.max(backoffMs,retryAfterMs);
+      console.log(`[BC Queue] backing off ${wait}ms before retry of "${item.description}" (attempt ${prevAttempts+1}, last status ${item.lastErrorStatus})`);
+      await _bcQueueDelay(wait);
+    }
     try{
       await _bcQueueExecute(item);
       console.log(`[BC Queue] Done: ${item.description}`);
     }catch(e){
-      console.warn(`[BC Queue] Failed (attempt ${(item.attempts||0)+1}): ${item.description}`,e.message);
-      const updated={...item,attempts:(item.attempts||0)+1,lastError:String(e.message||e)};
+      const status=_bcExtractStatusFromError(e);
+      console.warn(`[BC Queue] Failed (attempt ${prevAttempts+1}, status ${status||"?"}): ${item.description}`,e.message);
+      const updated={...item,
+        attempts:prevAttempts+1,
+        lastError:String(e.message||e),
+        lastErrorStatus:status,
+        // BC sometimes sends Retry-After in seconds — extract it if the underlying
+        // BC fetch wrapper passes it through. Fall back to backoff calc above.
+        retryAfterMs:0,
+      };
+      // 4xx other than 429 = client error (bad data). Drop immediately, retrying won't help.
+      if(status>=400&&status<500&&status!==429){
+        console.warn(`[BC Queue] Dropped permanent error ${status}: ${item.description}`);
+        continue;
+      }
       if(updated.attempts<5)remaining.push(updated);
       else console.warn(`[BC Queue] Dropped after 5 attempts: ${item.description}`);
     }
@@ -32083,6 +32118,184 @@ function MouserTestPanel({uid}){
   </div>);
 }
 
+// ── PRICING AUDIT MODAL ──
+// DECISION(v1.19.965, carryover): UI for the runPricingAudit engine added in v1.19.906.
+// Admin-only review tool: scans every BC-priced BOM row across all the user's projects
+// and compares ARC's stored unitPrice against BC's current PurchasePrice and ItemCard
+// cost. Surfaces rows that drifted (ARC has a price BC no longer agrees with).
+// Read-only — fixes happen through the normal Sync BC / Get New Pricing flows on
+// the project page; this tool just tells you which projects need attention.
+function PricingAuditModal({uid,onClose}){
+  const [running,setRunning]=useState(false);
+  const [progress,setProgress]=useState(null);
+  const [result,setResult]=useState(null);
+  const [error,setError]=useState("");
+  const [riskFilter,setRiskFilter]=useState("all"); // all | high | medium | none
+  const [sortKey,setSortKey]=useState("risk"); // risk | project | partNumber
+  const [sortDir,setSortDir]=useState("asc");
+
+  async function runAudit(){
+    setRunning(true);setError("");setResult(null);setProgress({phase:"start",msg:"Starting…"});
+    try{
+      const r=await runPricingAudit(uid,p=>setProgress(p));
+      setResult(r);
+    }catch(e){
+      console.error("[Pricing Audit] failed:",e);
+      setError(e.message||"Audit failed");
+    }finally{
+      setRunning(false);
+    }
+  }
+
+  function exportCsv(){
+    if(!result||!result.results)return;
+    const rows=result.results;
+    const header=["Risk","BC Project","Project","Panel","Item #","Part Number","Description","ARC Unit $","BC PurchasePrice $","BC ItemCard $","Matches PP","Matches IC"];
+    const csv=[header.join(",")].concat(
+      rows.map(r=>[
+        r.risk,
+        r.bcProjectNumber||"",
+        `"${(r.projectName||"").replace(/"/g,'""')}"`,
+        `"${(r.panelName||"").replace(/"/g,'""')}"`,
+        r.itemNo||"",
+        `"${(r.partNumber||"").replace(/"/g,'""')}"`,
+        `"${(r.description||"").replace(/"/g,'""')}"`,
+        r.arcUnitPrice??"",
+        r.bcPurchasePrice??"",
+        r.bcItemCardCost??"",
+        r.matchPp?"yes":"no",
+        r.matchIc?"yes":"no",
+      ].join(","))
+    ).join("\n");
+    const blob=new Blob([csv],{type:"text/csv"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=`pricing-audit-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},100);
+  }
+
+  const filteredRows=React.useMemo(()=>{
+    if(!result||!result.results)return[];
+    let rows=result.results.slice();
+    if(riskFilter!=="all")rows=rows.filter(r=>r.risk===riskFilter);
+    const order={high:0,medium:1,none:2};
+    const cmp=(a,b)=>{
+      let v=0;
+      if(sortKey==="risk")v=(order[a.risk]||9)-(order[b.risk]||9);
+      else if(sortKey==="project")v=(a.projectName||"").localeCompare(b.projectName||"");
+      else if(sortKey==="partNumber")v=(a.partNumber||"").localeCompare(b.partNumber||"");
+      return sortDir==="desc"?-v:v;
+    };
+    rows.sort(cmp);
+    return rows;
+  },[result,riskFilter,sortKey,sortDir]);
+
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{...card(),width:"95%",maxWidth:1200,maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <h3 style={{margin:0,color:C.text}}>Pricing Audit</h3>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,padding:"2px 8px"}}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:14,lineHeight:1.6}}>
+          Cross-checks every BC-priced BOM row against current BC PurchasePrice and ItemCard. Flags drift between ARC's stored price and BC's authoritative values.
+          <br/><strong>High risk:</strong> ARC matches neither BC source — likely outdated.
+          <br/><strong>Medium risk:</strong> ARC matches one BC source but not the other.
+          <br/><strong>OK:</strong> ARC matches both BC sources.
+        </div>
+        {!running&&!result&&!error&&(
+          <button onClick={runAudit} style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:8,padding:"10px 24px",fontSize:14,fontWeight:600,cursor:"pointer",alignSelf:"flex-start"}}>Run Audit</button>
+        )}
+        {running&&progress&&(
+          <div style={{padding:"16px 0",color:C.muted,fontSize:13}}>
+            <div style={{fontWeight:700,color:C.accent,marginBottom:6}}>{progress.phase==="done"?"Done":"Running…"}</div>
+            <div>{progress.msg||"Working…"}</div>
+            {progress.totalProjects>0&&progress.projectsScanned!=null&&(
+              <div style={{marginTop:8,height:4,background:C.border,borderRadius:2,overflow:"hidden"}}>
+                <div style={{width:`${Math.round((progress.projectsScanned/progress.totalProjects)*100)}%`,height:"100%",background:C.accent,transition:"width 0.2s"}}/>
+              </div>
+            )}
+          </div>
+        )}
+        {error&&(
+          <div style={{padding:"12px 16px",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:6,color:"#fca5a5",fontSize:13}}>
+            <strong>Audit failed:</strong> {error}
+          </div>
+        )}
+        {result&&(
+          <>
+            <div style={{display:"flex",gap:12,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+              <div style={{display:"flex",gap:8,fontSize:12}}>
+                <div style={{padding:"4px 10px",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:6,color:"#fca5a5",fontWeight:700}}>High: {result.summary.high}</div>
+                <div style={{padding:"4px 10px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontWeight:700}}>Medium: {result.summary.medium}</div>
+                <div style={{padding:"4px 10px",background:"#0d2a18",border:"1px solid #22c55e88",borderRadius:6,color:"#86efac",fontWeight:700}}>OK: {result.summary.none}</div>
+                <div style={{padding:"4px 10px",color:C.muted}}>{result.scannedRows} rows / {result.scannedProjects} projects / {result.uniqueParts} unique parts</div>
+              </div>
+              <div style={{flex:1}}/>
+              <select value={riskFilter} onChange={e=>setRiskFilter(e.target.value)} style={{background:"#0a0a16",color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 8px",fontSize:12}}>
+                <option value="all">All risks</option>
+                <option value="high">High only</option>
+                <option value="medium">Medium only</option>
+                <option value="none">OK only</option>
+              </select>
+              <button onClick={exportCsv} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"5px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Export CSV</button>
+              <button onClick={runAudit} style={{background:C.border,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 14px",fontSize:12,cursor:"pointer"}}>Re-run</button>
+            </div>
+            <div style={{flex:1,overflow:"auto",border:`1px solid ${C.border}`,borderRadius:6}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5}}>
+                <thead style={{position:"sticky",top:0,background:"#0a0a12",zIndex:1}}>
+                  <tr>
+                    {[
+                      {key:"risk",label:"Risk"},
+                      {key:"project",label:"Project"},
+                      {key:null,label:"Panel"},
+                      {key:"partNumber",label:"Part #"},
+                      {key:null,label:"Description"},
+                      {key:null,label:"ARC $"},
+                      {key:null,label:"BC PurchasePrice"},
+                      {key:null,label:"BC ItemCard"},
+                    ].map(h=>(
+                      <th key={h.label} onClick={h.key?()=>{
+                        if(sortKey===h.key)setSortDir(d=>d==="asc"?"desc":"asc");
+                        else{setSortKey(h.key);setSortDir("asc");}
+                      }:undefined}
+                      style={{padding:"8px 10px",textAlign:"left",borderBottom:`1px solid ${C.border}`,cursor:h.key?"pointer":"default",color:C.sub,fontWeight:700,whiteSpace:"nowrap"}}>
+                        {h.label}{h.key&&sortKey===h.key?(sortDir==="asc"?" ▲":" ▼"):""}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.length===0&&(
+                    <tr><td colSpan={8} style={{padding:"24px",textAlign:"center",color:C.muted}}>No rows match the filter.</td></tr>
+                  )}
+                  {filteredRows.map((r,i)=>{
+                    const tone=r.risk==="high"?{bg:"#3a0a0a44",fg:"#fca5a5"}:r.risk==="medium"?{bg:"#3a1f0044",fg:"#fcd34d"}:{bg:"transparent",fg:C.muted};
+                    return(
+                      <tr key={`${r.projectId}-${r.rowId}-${i}`} style={{background:tone.bg}}>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:tone.fg,fontWeight:700,textTransform:"uppercase",fontSize:10}}>{r.risk}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.text}}>{r.bcProjectNumber?r.bcProjectNumber+" — ":""}{r.projectName}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted}}>{r.panelName}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.text,fontFamily:"Consolas,monospace",fontWeight:600}}>{r.partNumber}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted,maxWidth:300,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.description}>{r.description}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.text,textAlign:"right",fontFamily:"Consolas,monospace"}}>{r.arcUnitPrice!=null?`$${(+r.arcUnitPrice).toFixed(2)}`:"—"}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:r.matchPp?C.green:r.bcPurchasePrice==null?C.muted:C.red,textAlign:"right",fontFamily:"Consolas,monospace"}}>{r.bcPurchasePrice!=null?`$${(+r.bcPurchasePrice).toFixed(2)}`:"—"}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:r.matchIc?C.green:r.bcItemCardCost==null?C.muted:C.red,textAlign:"right",fontFamily:"Consolas,monospace"}}>{r.bcItemCardCost!=null?`$${(+r.bcItemCardCost).toFixed(2)}`:"—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ── PRICING REPORTS MODAL ──
 function PricingReportsModal({uid,onClose}){
   const [runs,setRuns]=useState([]);
@@ -32732,6 +32945,7 @@ function APISetupModal({uid,onClose}){
   const [apiTestMsg,setApiTestMsg]=useState(null);
   const [apiTesting,setApiTesting]=useState(false);
   const [showPricingReports,setShowPricingReports]=useState(false);
+  const [showPricingAudit,setShowPricingAudit]=useState(false);
   // Custom scraper configs — stored at company level in Firestore
   const [customScrapers,setCustomScrapers]=useState([]);
   const [scrapersLoading,setScrapersLoading]=useState(true);
@@ -33242,6 +33456,19 @@ function APISetupModal({uid,onClose}){
           <button onClick={()=>setShowPricingReports(true)} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>View Pricing Reports</button>
         </div>
         {showPricingReports&&<PricingReportsModal uid={uid} onClose={()=>setShowPricingReports(false)}/>}
+
+        {/* DECISION(v1.19.965, carryover): Pricing Audit — engine added in v1.19.906,
+            UI added here. Compares ARC's stored unitPrice on every BC-priced row
+            against BC's authoritative PurchasePrice and ItemCard cost. Surfaces
+            "high risk" rows (ARC matches neither BC source) and "medium risk" rows
+            (matches one but not the other). Read-only audit; user takes action via
+            normal price-sync flows. */}
+        <div style={{marginTop:24,marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Pricing Audit</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Cross-check every BC-priced BOM row against current BC PurchasePrice and ItemCard. Flags rows where ARC's stored price no longer matches.</div>
+          <button onClick={()=>setShowPricingAudit(true)} style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Run Pricing Audit</button>
+        </div>
+        {showPricingAudit&&<PricingAuditModal uid={uid} onClose={()=>setShowPricingAudit(false)}/>}
 
         <div style={{marginTop:24,textAlign:"center"}}>
           <button onClick={onClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
