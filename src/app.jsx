@@ -23005,7 +23005,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           {(panel.bom||[]).length>0&&<div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
-                <col style={{width:42}}/><col style={{width:42}}/><col style={{width:42}}/>
+                {/* DECISION(v1.19.972): Qty column widened from 42 to 56 — 42px
+                    couldn't fit 3-digit quantities (e.g., 100, 240) without
+                    truncation; some BOMs have qty up to several hundred. */}
+                <col style={{width:42}}/><col style={{width:42}}/><col style={{width:56}}/>
                 <col style={{width:"18%"}}/><col style={{width:28}}/><col style={{width:"22%"}}/>
                 <col style={{width:"10%"}}/><col style={{width:"11%"}}/>
                 {/* DECISION(v1.19.825): Unit $ column was 82px which couldn't fit the BC/ARC AI/M
