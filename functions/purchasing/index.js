@@ -21,7 +21,8 @@ const db = admin.firestore();
  * Create a new Purchase Order
  * Called from the Purchasing module UI
  */
-exports.createPurchaseOrder = functions.https.onCall(async (data, context) => {
+// DECISION(v1.19.955, cost-attack hardening): maxInstances cap.
+exports.createPurchaseOrder = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { companyId, vendorName, vendorNumber, projectNumber, projectId, lineItems, notes } = data || {};
   if (!companyId) throw new functions.https.HttpsError('invalid-argument', 'companyId required');
@@ -63,7 +64,7 @@ exports.createPurchaseOrder = functions.https.onCall(async (data, context) => {
 /**
  * Update PO status (draft → submitted → approved → received → closed)
  */
-exports.updatePurchaseOrderStatus = functions.https.onCall(async (data, context) => {
+exports.updatePurchaseOrderStatus = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { companyId, poId, status } = data || {};
   if (!companyId || !poId || !status) throw new functions.https.HttpsError('invalid-argument', 'Missing required fields');

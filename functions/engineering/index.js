@@ -63,8 +63,13 @@ exports.onCustomerReviewSubmitted = functions.firestore
       }
     }
 
-    // Build email HTML
-    const emailHtml = `
+    // DECISION(v1.19.781): Email button now deep-links to the specific project AND
+    // auto-opens the Customer Review Responses modal. Previously it only went to APP_URL
+    // (the home page), which left the recipient hunting through projects to find the
+    // one with new responses. Designer/salesperson recipients get the deep link;
+    // customers get the plain APP_URL (they don't have an account to land into).
+    const designerLink = after.projectId ? `${APP_URL}/?openCustomerReview=${encodeURIComponent(after.projectId)}` : APP_URL;
+    const buildEmailHtml = (link) => `
       <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px">
         <h2 style="color:#1e293b;margin-bottom:4px">Customer Review Submitted</h2>
         <p style="color:#64748b;font-size:14px;margin-bottom:16px"><strong>${bcProjectNumber || ''}</strong> — ${projectName || 'Project'}</p>
@@ -74,7 +79,7 @@ exports.onCustomerReviewSubmitted = functions.firestore
           <div style="font-size:13px;color:#15803d;line-height:1.5">Includes: ${summary}</div>
         </div>
         <div style="text-align:center;margin:24px 0">
-          <a href="${APP_URL}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:700;text-decoration:none">Open ARC to View Responses →</a>
+          <a href="${link}" style="display:inline-block;background:#2563eb;color:#ffffff;padding:14px 32px;border-radius:8px;font-size:16px;font-weight:700;text-decoration:none">Open ARC to View Responses →</a>
         </div>
         <p style="color:#94a3b8;font-size:12px;text-align:center;margin-top:24px">This is an automated notification from ARC Engineering Review.</p>
       </div>
@@ -108,11 +113,13 @@ exports.onCustomerReviewSubmitted = functions.firestore
 
       for (const recip of recipients) {
         try {
+          // Designer + salesperson get the deep link; customer gets the plain APP_URL.
+          const link = recip.role === 'customer' ? APP_URL : designerLink;
           await sgMail.send({
             to: recip.email,
             from: FROM_EMAIL,
             subject,
-            html: emailHtml,
+            html: buildEmailHtml(link),
           });
           console.log(`[ENG] Review email sent to ${recip.role}: ${recip.email}`);
         } catch (e) {
@@ -144,7 +151,8 @@ exports.onCustomerReviewSubmitted = functions.firestore
 /**
  * Send engineering review email notification (callable from client)
  */
-exports.sendReviewEmail = functions.https.onCall(async (data, context) => {
+// DECISION(v1.19.955, cost-attack hardening): maxInstances cap.
+exports.sendReviewEmail = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { to, projectName, bcProjectNumber, reviewType, designerName, message } = data || {};
   if (!to) throw new functions.https.HttpsError('invalid-argument', 'Recipient email required');

@@ -39,11 +39,28 @@ self.addEventListener('push', (event) => {
 });
 
 // ── Notification click — open / focus the app ──
+// DECISION(v1.19.963, security audit M-1): Same URL validation as sw.js. Defense-in-depth
+// against future code paths that might forward user-controlled content into data.url.
+function _isSafeNavigationUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  if (url.startsWith('/')) return true;
+  try {
+    const u = new URL(url, self.location.origin);
+    return u.origin === self.location.origin;
+  } catch (e) {
+    return false;
+  }
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   const data = event.notification.data || {};
-  const targetUrl = data.url || '/';
+  let targetUrl = data.url || '/';
+  if (!_isSafeNavigationUrl(targetUrl)) {
+    console.warn('[FCM-SW] notification click rejected unsafe target URL:', targetUrl);
+    targetUrl = '/';
+  }
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

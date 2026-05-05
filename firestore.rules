@@ -13,21 +13,31 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
-    // Any authenticated user can create notifications for other users (for review requests, etc.)
+    // DECISION(v1.19.963, security audit M-4): Authenticated users can create
+    // notifications for other users (for unlock requests, review requests, etc.) but
+    // MUST stamp `from` with their own uid so the recipient can see who sent it. This
+    // closes the spam/phishing vector where any signed-in user could spoof
+    // notifications with attacker-controlled `title`/`body`/`projectId` (e.g. fake
+    // "supplier_quote" notifications that deep-link to attacker-controlled portals).
+    // Cloud Function notifications use Admin SDK (bypasses rules) so they are
+    // unaffected — they may or may not include `from` depending on context.
     match /users/{uid}/notifications/{notifId} {
-      allow create: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.from == request.auth.uid;
       allow read, update, delete: if request.auth != null && request.auth.uid == uid;
     }
 
-    // DECISION(v1.19.404): Supplier quotes — restricted to authenticated users who own the quote
-    // or are members of the company that created it. Previously allowed any authenticated user.
+    // DECISION(v1.19.404 → v1.19.963): Supplier quotes — restricted to authenticated
+    // users who own the quote or are members of the company that created it. v1.19.963
+    // tightens CREATE to require the writer set their own userId (security audit M-3) —
+    // previously any signed-in user could create supplierQuotes pretending to belong to
+    // another user.
     match /supplierQuotes/{quoteId} {
       allow read: if request.auth != null && (
         resource.data.userId == request.auth.uid ||
         (resource.data.companyId != null &&
          exists(/databases/$(database)/documents/companies/$(resource.data.companyId)/members/$(request.auth.uid)))
       );
-      allow create: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
       allow update, delete: if request.auth != null && (
         resource.data.userId == request.auth.uid ||
         (resource.data.companyId != null &&
@@ -35,30 +45,65 @@ service cloud.firestore {
       );
     }
 
-    // DECISION(v1.19.404): BC price update audit log — restricted to owner or company members.
+    // DECISION(v1.19.404 → v1.19.963): BC price update audit log — restricted to owner
+    // or company members. v1.19.963 (security audit M-3) requires companyId be set
+    // explicitly — previously the rule allowed writes when companyId was MISSING from
+    // the doc, which let any signed-in user pollute the audit collection by simply
+    // omitting the field. Now: write is allowed only when companyId is present and
+    // the writer is a member of that company.
     match /bcPriceUpdates/{updateId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && (
-        !('companyId' in request.resource.data) ||
-        request.resource.data.companyId == null ||
-        exists(/databases/$(database)/documents/companies/$(request.resource.data.companyId)/members/$(request.auth.uid))
-      );
+      allow write: if request.auth != null
+        && 'companyId' in request.resource.data
+        && request.resource.data.companyId != null
+        && exists(/databases/$(database)/documents/companies/$(request.resource.data.companyId)/members/$(request.auth.uid));
     }
 
-    // DECISION(v1.19.404): Supplier RFQ upload tokens — token-based access for supplier portal.
-    // Read: public (suppliers access via token link). Write: authenticated users only + size guard.
+    // DECISION(v1.19.734): Security audit finding C-2 — previously read: if true and
+    // update: if true made every rfqUploads doc world-readable and world-writable. Tokens
+    // are unguessable at creation time but `update: if true` also let anyone who intercepts
+    // a link vandalize submissions and trigger Cloud Function side-effects with a
+    // controlled storageUrl.
+    //
+    // New rules:
+    //   - READ: the authenticated ARC owner (matching `uid`) can always read; otherwise
+    //     public reads are allowed only while the token hasn't expired. Older than
+    //     `expiresAt` → denied.
+    //   - UPDATE:
+    //     (a) The authenticated owner can update freely (dismiss / mark imported / etc.).
+    //     (b) An unauthenticated supplier can only update an unexpired doc that is still
+    //         in `status: "pending"`, and only the allow-listed fields written by the
+    //         supplier portal submit flow. No way to rewrite `uid`, `expiresAt`,
+    //         `projectId`, or any field outside the submit payload.
+    //   - DELETE: restricted to the authenticated owner.
     match /rfqUploads/{token} {
-      allow read: if true;
+      allow read: if (request.auth != null && resource.data.get('uid', null) == request.auth.uid)
+                  || resource.data.get('expiresAt', 0) > request.time.toMillis();
       allow create: if request.auth != null;
-      allow update: if true;
-      allow delete: if request.auth != null;
+      allow update: if (request.auth != null && resource.data.get('uid', null) == request.auth.uid)
+                    || (resource.data.get('expiresAt', 0) > request.time.toMillis() &&
+                        resource.data.get('status', 'pending') == 'pending' &&
+                        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                          'status','submittedAt','lineItems','leadTimeDays',
+                          'confirmedCrossings','fileName','storageUrl'
+                        ]));
+      allow delete: if request.auth != null && resource.data.get('uid', null) == request.auth.uid;
     }
 
-    // Engineering review portal — customer access via token (like supplier portal)
+    // DECISION(v1.19.734): Security audit finding C-2 — engineering review portal.
+    // Same model as rfqUploads: public read while unexpired, public update restricted
+    // to the draft + submit field allow-lists, create/delete require auth.
     match /reviewUploads/{token} {
-      allow read: if true;
+      allow read: if resource.data.get('expiresAt', 0) > request.time.toMillis();
       allow create: if request.auth != null;
-      allow update: if true;
+      allow update: if resource.data.get('expiresAt', 0) > request.time.toMillis() &&
+                       resource.data.get('status', 'pending') == 'pending' &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                         'status','submittedAt','responses','customerNotes',
+                         'customerShapes','additionalComments','customerName',
+                         'draftCustomerNotes','draftCustomerShapes','draftResponses',
+                         'draftAdditionalComments','draftUpdatedAt'
+                       ]);
       allow delete: if request.auth != null;
     }
 
@@ -83,10 +128,107 @@ service cloud.firestore {
       // The 90s presence-based lock is client-side only (can't query projectPresence from
       // within a project rule). See docs/superpowers/specs/2026-04-23-owner-priority-mode-design.md
       function isOwnerPriorityLocked(project) {
+        // DECISION(v1.19.733): Use .get() with defaults for safe field access. Direct
+        // attribute lookup (`project.ownerLockActive`) on Firestore-rules maps throws
+        // a permission error when the field doesn't exist — not what we want for
+        // optional fields. Use map.get(key, default) so missing fields evaluate to the
+        // default (lockActive=false, takeover=null), which means "no lock".
         let isProjectOwner = request.auth.uid == project.createdBy;
-        let takeover = project.ownerTakeoverActive;
-        let hasActiveTakeover = takeover != null && takeover.expiresAt > request.time.toMillis();
-        return !isProjectOwner && !hasActiveTakeover && project.ownerLockActive == true;
+        let lockActive = project.get('ownerLockActive', false);
+        let takeover = project.get('ownerTakeoverActive', null);
+        let hasActiveTakeover = takeover != null && takeover.get('expiresAt', 0) > request.time.toMillis();
+        return !isProjectOwner && !hasActiveTakeover && lockActive == true;
+      }
+      // DECISION(v1.19.754/755): Won/Lost project lock. When `wonAt` (PO received) or
+      // `lostAt` (marked lost) is set, the project is frozen — only the project owner
+      // OR a company admin may write to it. Non-owner / non-admin attempts are rejected
+      // by the rule layer regardless of what the client UI does. v1.19.755 added
+      // `editUnlocked` — a persistent unlock flag set by an owner/admin that bypasses
+      // the lock for ALL users until the owner/admin re-locks. The flag is also writable
+      // by non-owners/admins to support the small set of meta-fields they CAN write while
+      // the project is locked: only `unlockRequestedBy` and `lastUnlockRequest` (used by
+      // the Request Unlock flow). All other field writes are blocked when locked.
+      function isWonOrLostLocked(project) {
+        let isProjectOwner = request.auth.uid == project.createdBy;
+        let isLocked = project.get('wonAt', null) != null || project.get('lostAt', null) != null;
+        let editUnlocked = project.get('editUnlocked', false) == true;
+        // DECISION(v1.19.840, ECO Stage A.6): When an ECO is started on a Won/Lost
+        // project, the owner/admin flips ecoEditUnlocked=true so Sales can rework
+        // the BOM through the normal Pre-Review → Send → Post-Review → PO flow.
+        // This flag bypasses the Won/Lost lock for everyone with write access; it
+        // gets cleared automatically when the last draft ECO is approved/cancelled
+        // (Stage F) or manually via Re-lock.
+        let ecoEditUnlocked = project.get('ecoEditUnlocked', false) == true;
+        return isLocked && !editUnlocked && !ecoEditUnlocked && !isProjectOwner && !isAdminMember();
+      }
+      // DECISION(v1.19.755): Allow non-owners to write the request-tracking fields even
+      // when the project is locked, so the Request Unlock flow can stamp who's asking
+      // and when. The check verifies the diff touches ONLY those two fields plus the
+      // standard timestamp fields — anything else gets rejected back into the regular
+      // isWonOrLostLocked check.
+      function isOnlyUnlockRequestUpdate() {
+        let allowedKeys = ['unlockRequestedBy', 'lastUnlockRequest', 'updatedAt', 'updatedBy', 'lastQuoteHash', 'quoteRev'];
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
+      }
+      // DECISION(v1.19.756/761): Pre-Review / Post-Review lock. While `preReviewStatus`
+      // or `postReviewStatus` is "pending", project writes are blocked at the rule layer
+      // for non-reviewer / non-admin users. Reviewers (members with permissions.reviewer
+      // = true) and admins can edit through the review pass — they need to make the
+      // engineering-driven changes before approving. The carve-out via
+      // isOnlyReviewStateUpdate also lets ANY caller flip the review state itself, which
+      // is needed for the approve/reject button (UI gates the reviewer-role check).
+      function isInReviewLocked(project) {
+        let pre = project.get('preReviewStatus', '');
+        let post = project.get('postReviewStatus', '');
+        let isPending = pre == 'pending' || post == 'pending';
+        return isPending && !isAdminMember() && !isReviewer();
+      }
+      function isReviewer() {
+        let m = get(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)).data;
+        return m.get('permissions', {}).get('reviewer', false) == true;
+      }
+      function isOnlyReviewStateUpdate() {
+        let allowedKeys = [
+          'preReviewStatus','preReviewApprovedAt','preReviewApprovedBy','preReviewNotes',
+          'preReviewSubmittedAt','preReviewSubmittedBy',
+          'postReviewStatus','postReviewApprovedAt','postReviewApprovedBy','postReviewNotes',
+          'updatedAt','updatedBy','schemaVersion','lastQuoteHash','quoteRev'
+        ];
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
+      }
+      // DECISION(v1.19.785): ECO carve-outs (see plan §Firestore rules). The project doc
+      // gets a small whitelist of fields that can be updated even when the Won/Lost lock
+      // is active — the ECO system itself runs strictly post-PO, so without this carve-out
+      // every ECO indexing write would be rejected. ECO subcollection rules are defined
+      // inline at /companies/{companyId}/projects/{projectId}/ecos/{ecoId}.
+      function isOnlyEcoIndexUpdate() {
+        let allowedKeys = [
+          'ecoCounter','activeEcoId','ecoSummary','effectivePanelTotals',
+          'ecoFirstCreatedAt','ecoEditUnlockedAt','ecoEditUnlockedBy',
+          'bcStatusForcedToQuote','bcStatusForcedToQuoteAt',
+          'updatedAt','updatedBy','schemaVersion'
+        ];
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
+      }
+      // ECO subcollection: reviewer flips internalReviewStatus only.
+      function isOnlyEcoReviewStateUpdate() {
+        let allowedKeys = [
+          'status','internalReviewStatus','internalReviewedAt','internalReviewedBy',
+          'sentAt','sentBy','sentTo',
+          'updatedAt','updatedBy'
+        ];
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
+      }
+      // ECO subcollection: customer-side state writes routed through the portal Cloud
+      // Function (Admin SDK) — but if the portal ever updates directly, allow only the
+      // customer-token + approval fields.
+      function isOnlyEcoCustomerStateUpdate() {
+        let allowedKeys = [
+          'customerReviewToken','customerReviewSentAt',
+          'customerApprovedAt','customerApprovedBy','customerApprovalEmail','customerApprovalDocUrl',
+          'updatedAt'
+        ];
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
       }
 
       allow read: if isMember();
@@ -96,10 +238,30 @@ service cloud.firestore {
 
       match /members/{memberId} {
         allow read: if isMember();
-        // Self-add: company creation flow, or accepting an invite
-        allow create: if request.auth != null && memberId == request.auth.uid;
-        // Admin can change roles and remove other members (not self)
-        allow update: if isAdminMember() && memberId != request.auth.uid;
+        // DECISION(v1.19.734): Security audit finding C-1 — previous rule allowed any
+        // authenticated user to self-add as admin into any company by writing directly
+        // to Firestore (full cross-tenant compromise). The only legitimate client-side
+        // self-create path is the initial company-creation bootstrap where the caller
+        // is the company's own `createdBy`. All invite acceptance now goes through the
+        // `acceptTeamInvite` Cloud Function, which uses the Admin SDK and bypasses
+        // these rules after validating the invite token + email match.
+        allow create: if request.auth != null && memberId == request.auth.uid &&
+                         get(/databases/$(database)/documents/companies/$(companyId)).data.createdBy == request.auth.uid;
+        // DECISION(v1.19.757): Admins can update other members' role + permissions, and
+        // can update their OWN permissions (but not their own role — protects against
+        // self-demote-and-lock-out). The `permissions` map stores per-user feature flags
+        // like { reviewer: true, ... } added/edited from the Permissions tab in the
+        // Team modal. Future flags expand the same map.
+        // DECISION(v1.19.770): BC Mapping tab — admins can set bcUserCode (BC /User
+        // page User_Name) and bcSalespersonCode (BC /Salesperson Code) on member docs
+        // to link an ARC user to their BC identities. displayName cached for dropdown
+        // labels. Self-edit whitelist extended to include these so an admin can set
+        // their own mapping without involving a second admin. Role + email are still
+        // protected against self-modification.
+        allow update: if isAdminMember() && (
+          memberId != request.auth.uid ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['permissions','updatedAt','bcUserCode','bcSalespersonCode','displayName'])
+        );
         allow delete: if isAdminMember() && memberId != request.auth.uid;
       }
 
@@ -120,8 +282,53 @@ service cloud.firestore {
         // DECISION(v1.19.678): Update rejected when owner priority lock is active AND the
         // writer is not the owner AND no admin takeover is in effect. Delete remains open
         // to any writer (destructive actions are client-gated separately; rare event).
-        allow update: if canWrite() && !isOwnerPriorityLocked(resource.data);
+        // DECISION(v1.19.754/755/756): Update rejected when the project is in a Won/Lost
+        // locked state, OR in pending Pre-/Post-Review. Carve-outs:
+        //   • isOnlyUnlockRequestUpdate — Request Unlock flow can stamp pending requests
+        //     even on a Won/Lost-locked project.
+        //   • isOnlyReviewStateUpdate — reviewer's approve/reject can flip the review
+        //     status even though the project is review-locked (this IS the unlock).
+        // DECISION(v1.19.785): Won/Lost lock carve-out extended to allow ECO-related
+        // updates on the project doc (ecoCounter, activeEcoId, ecoSummary,
+        // bcStatusForcedToQuote, bcStatusForcedToQuoteAt). ECO creation requires post-PO
+        // state, which is exactly when the project is "won" — so the lock would otherwise
+        // block our own ECO indexing writes. The carve-out is narrowly scoped to those
+        // exact field names.
+        allow update: if canWrite() && !isOwnerPriorityLocked(resource.data)
+                                    && (!isWonOrLostLocked(resource.data) || isOnlyUnlockRequestUpdate() || isOnlyEcoIndexUpdate())
+                                    && (!isInReviewLocked(resource.data) || isOnlyReviewStateUpdate());
         allow delete: if canWrite();
+
+        // DECISION(v1.19.785): ECO subcollection — append-only audit records of customer-
+        // approvable change-orders. Per the ECO plan (docs/superpowers/plans/2026-04-28-
+        // change-orders.md):
+        //   - Read: any project member
+        //   - Create: owner / admin / reviewer-permission user, only on projects with a
+        //     received PO (gated client-side via bcPoStatus check; this rule additionally
+        //     requires the parent project to have wonAt set as a backstop)
+        //   - Update: gated by ECO state machine (owner+draft/returned, reviewer for
+        //     internal review state, anyone for customer-state writes that the portal does
+        //     via the Cloud Function with Admin SDK, admins for everything)
+        //   - Delete: blocked. ECOs are append-only audit records. Cancel via status flip,
+        //     never delete.
+        match /ecos/{ecoId} {
+          allow read: if isMember();
+          allow create: if (canWrite() || isReviewer())
+                        && request.resource.data.number is int
+                        && request.resource.data.status == 'draft';
+          allow update: if isAdminMember()
+                        || (canWrite() && resource.data.status in ['draft','returned'])
+                        || (isReviewer() && isOnlyEcoReviewStateUpdate())
+                        || (isMember() && isOnlyEcoCustomerStateUpdate());
+          // DECISION(v1.19.839, ECO Stage A): Draft ECOs can now be deleted by
+          // any writer; admins can delete any ECO. Approved / sent / in_production
+          // / completed ECOs remain immutable for audit purposes — to take those
+          // out of scope, flip status to "cancelled" instead. The redesign treats
+          // ECO docs as scope markers (not audit ledgers), so allowing draft
+          // deletion lets users clean up mistakes / test ECOs without an admin.
+          allow delete: if isAdminMember()
+                        || (canWrite() && resource.data.status in ['draft','returned']);
+        }
       }
 
       // DECISION(v1.19.678): Owner takeover audit trail — append-only log of admin overrides.
@@ -144,7 +351,21 @@ service cloud.firestore {
 
       // DECISION(v1.19.411): Config write access — admins can write all config,
       // edit-role users can write defaultBomItems and laborRates (needed for daily workflow).
-      // API keys and BC environment remain admin-only via client-side guards.
+      // DECISION(v1.19.963, security audit H-3): API keys and BC environment are now
+      // admin-only at the rule layer (was client-side guard only). The Anthropic key
+      // was previously readable by any team member, including 'view' role users. A
+      // compromised non-admin account could exfiltrate the sk-ant-... key via the
+      // Firestore SDK and use it indefinitely. Same logic applies to bcEnv (BC OData
+      // environment URL — less sensitive but still admin-set config). Other config
+      // docs (defaultBomItems, laborRates, salespersonInfo, quoteCounter,
+      // page_type_learning, layout_learning, alternates, corrections, etc.) keep the
+      // member access pattern needed for daily workflow.
+      match /config/api {
+        allow read, write: if isAdminMember();
+      }
+      match /config/bcEnv {
+        allow read, write: if isAdminMember();
+      }
       match /config/{configId} {
         allow read: if isMember();
         allow write: if canWrite();

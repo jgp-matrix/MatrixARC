@@ -39,11 +39,33 @@ self.addEventListener('push', (event) => {
 });
 
 // ── Notification click — open / focus the app ──
+// DECISION(v1.19.963, security audit M-1): Validate `data.url` against the SW's own
+// origin before navigate/openWindow. Today the only sender is sendPushToUser in
+// functions/index.js (always sets url: APP_URL), so this is defense-in-depth — if
+// any future Cloud Function ever forwards user-controlled content into data.url,
+// the SW will not blindly navigate the ARC tab to an attacker-chosen origin.
+function _isSafeNavigationUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  // Allow same-origin paths like '/' or '/?rfqUpload=...'
+  if (url.startsWith('/')) return true;
+  // Allow same-origin absolute URLs
+  try {
+    const u = new URL(url, self.location.origin);
+    return u.origin === self.location.origin;
+  } catch (e) {
+    return false;
+  }
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
   const data = event.notification.data || {};
-  const targetUrl = data.url || '/';
+  let targetUrl = data.url || '/';
+  if (!_isSafeNavigationUrl(targetUrl)) {
+    console.warn('[SW] notification click rejected unsafe target URL:', targetUrl);
+    targetUrl = '/';
+  }
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

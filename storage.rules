@@ -6,11 +6,25 @@ service firebase.storage {
     match /pageImages/{uid}/{allPaths=**} {
       allow read, write: if request.auth != null;
     }
-    // DECISION(v1.19.404): Supplier uploads — token-based, kept open for supplier portal flow.
-    // Restrict file size to 25MB to prevent abuse.
+    // DECISION(v1.19.959): Original-PDF retention for bulletproof BOM extraction.
+    // Same access pattern as pageImages — team members need to access each other's
+    // retained PDFs for AI re-extraction. Used by extractBomPage native PDF path.
+    // Size cap prevents accidentally storing absurdly large files (Anthropic max is
+    // 32 MB per document anyway).
+    match /originalPdfs/{uid}/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.resource.size < 32 * 1024 * 1024;
+    }
+    // DECISION(v1.19.404 → v1.19.963): Supplier uploads — token-based, kept open for
+    // supplier portal flow. Restrict file size to 25MB AND content type to PDF only
+    // to prevent suppliers from using the bucket as a generic file host (security audit
+    // L-3). The supplier portal client UI already enforces PDF-only via file picker,
+    // but the storage rule was bypassable via direct API write. PDF check uses the
+    // contentType validator on the upload request.
     match /supplierUploads/{token}/{allPaths=**} {
       allow read: if true;
-      allow write: if request.resource.size < 25 * 1024 * 1024;
+      allow write: if request.resource.size < 25 * 1024 * 1024
+                   && request.resource.contentType == "application/pdf";
     }
     match /supplierQuotePDFs/{uid}/{allPaths=**} {
       allow read, write: if request.auth != null && request.auth.uid == uid;

@@ -19,6 +19,15 @@ const engineering = require('./engineering');
 exports.onCustomerReviewSubmitted = engineering.onCustomerReviewSubmitted;
 exports.engSendReviewEmail = engineering.sendReviewEmail;
 
+// DECISION(v1.19.785): ECO module — Phase 1 of the ECO rollout. Triggers log only;
+// Phase 6 will wire BC Status flip + TRAQS HOLD webhook. See plan at
+// docs/superpowers/plans/2026-04-28-change-orders.md.
+const ecos = require('./ecos');
+exports.onEcoCreatedCompany = ecos.onEcoCreatedCompany;
+exports.onEcoCreatedUser = ecos.onEcoCreatedUser;
+exports.onEcoUpdatedCompany = ecos.onEcoUpdatedCompany;
+exports.onEcoUpdatedUser = ecos.onEcoUpdatedUser;
+
 const SENDGRID_KEY = process.env.SENDGRID_API_KEY || '';
 const MOUSER_API_KEY = process.env.MOUSER_API_KEY || '';
 const DIGIKEY_CLIENT_ID = process.env.DIGIKEY_CLIENT_ID || '';
@@ -147,8 +156,19 @@ async function postToTeams(opts) {
 }
 
 // Test endpoint for Teams webhook
-exports.testTeamsWebhook = functions.https.onCall(async (data, context) => {
+// DECISION(v1.19.955, cost-attack hardening): maxInstances cap added to every callable.
+// Prevents accidental fan-out on auth-required functions and bounds the worst-case
+// invocation rate on the public extractSupplierQuotePricing.
+exports.testTeamsWebhook = functions.runWith({ maxInstances: 5 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  // DECISION(v1.19.963, security audit L-4): Admin-only. Previously any signed-in user
+  // could spam the Teams channel with test messages.
+  const { companyId } = data || {};
+  if (!companyId) throw new functions.https.HttpsError('invalid-argument', 'companyId required');
+  const member = await db.doc(`companies/${companyId}/members/${context.auth.uid}`).get();
+  if (!member.exists || member.data().role !== 'admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Admin only');
+  }
   await postToTeams({
     title: 'MatrixARC Test',
     body: 'Teams webhook is working!',
@@ -160,7 +180,7 @@ exports.testTeamsWebhook = functions.https.onCall(async (data, context) => {
 
 // ── TEAM MANAGEMENT ──
 
-exports.inviteTeamMember = functions.https.onCall(async (data, context) => {
+exports.inviteTeamMember = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { email, role, companyId } = data;
   if (!email || !role || !companyId) throw new functions.https.HttpsError('invalid-argument', 'Missing required fields');
@@ -181,7 +201,7 @@ exports.inviteTeamMember = functions.https.onCall(async (data, context) => {
   return { token };
 });
 
-exports.acceptTeamInvite = functions.https.onCall(async (data, context) => {
+exports.acceptTeamInvite = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { token } = data;
   if (!token) throw new functions.https.HttpsError('invalid-argument', 'Missing token');
@@ -223,7 +243,7 @@ exports.acceptTeamInvite = functions.https.onCall(async (data, context) => {
   return { companyId: found.companyId, role: found.role };
 });
 
-exports.removeTeamMember = functions.https.onCall(async (data, context) => {
+exports.removeTeamMember = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { targetUid, companyId } = data;
   if (!targetUid || !companyId) throw new functions.https.HttpsError('invalid-argument', 'Missing fields');
@@ -240,7 +260,7 @@ exports.removeTeamMember = functions.https.onCall(async (data, context) => {
   return { success: true };
 });
 
-exports.updateMemberRole = functions.https.onCall(async (data, context) => {
+exports.updateMemberRole = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { targetUid, role, companyId } = data;
   if (!targetUid || !role || !companyId) throw new functions.https.HttpsError('invalid-argument', 'Missing fields');
@@ -257,8 +277,45 @@ exports.updateMemberRole = functions.https.onCall(async (data, context) => {
   return { success: true };
 });
 
+// DECISION(v1.19.899): Admin-invoked wipe of all team members' user-level
+// Anthropic API key docs (users/{uid}/config/api). Forces every member to
+// fall back to the company-level key on next loadApiKey, eliminating stale
+// personal-key overrides like the one Noah had that was hitting an exhausted
+// Anthropic billing account. Admin-only; the caller's own user-level doc is
+// also wiped so they're consistent with the rest of the team.
+exports.resetTeamApiKeys = functions.runWith({ maxInstances: 5 }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const { companyId } = data;
+  if (!companyId) throw new functions.https.HttpsError('invalid-argument', 'Missing companyId');
+
+  // Verify caller is admin of the company
+  const callerMember = await admin.firestore().doc(`companies/${companyId}/members/${context.auth.uid}`).get();
+  if (!callerMember.exists || callerMember.data().role !== 'admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Only admins can reset team API keys');
+  }
+
+  // List members and delete users/{uid}/config/api for each
+  const membersSnap = await admin.firestore().collection(`companies/${companyId}/members`).get();
+  let cleared = 0;
+  let skipped = 0;
+  const errors = [];
+  for (const m of membersSnap.docs) {
+    const memberUid = m.id;
+    try {
+      const apiRef = admin.firestore().doc(`users/${memberUid}/config/api`);
+      const apiDoc = await apiRef.get();
+      if (!apiDoc.exists) { skipped++; continue; }
+      await apiRef.delete();
+      cleared++;
+    } catch (e) {
+      errors.push({ uid: memberUid, error: e.message });
+    }
+  }
+  return { success: true, cleared, skipped, totalMembers: membersSnap.size, errors };
+});
+
 // DECISION(v1.19.404): Added auth check — previously missing, allowing unauthenticated email sends.
-exports.sendInviteEmail = functions.https.onCall(async (data, context) => {
+exports.sendInviteEmail = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { to, inviteUrl, role } = data;
   if (!to || !inviteUrl) throw new functions.https.HttpsError('invalid-argument', 'Missing fields');
@@ -548,7 +605,7 @@ exports.onIssueReported = functions.firestore
 
 // ── ENGINEERING QUESTIONS EMAIL ──
 
-exports.sendEngineerQuestionEmail = functions.https.onCall(async (data, context) => {
+exports.sendEngineerQuestionEmail = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   if (!SENDGRID_KEY) throw new functions.https.HttpsError('failed-precondition', 'Email not configured');
   const { to, projectName, bcProjectNumber, panelName, questions, recipientUid } = data;
@@ -616,17 +673,100 @@ exports.sendEngineerQuestionEmail = functions.https.onCall(async (data, context)
 
 // ── SUPPLIER QUOTE AI EXTRACTION ──
 
-exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, memory: '512MB' }).https.onCall(async (data, context) => {
+// DECISION(v1.19.955, cost-attack hardening): Hard caps on the public supplier-portal
+// callable. Without these, a leaked supplier-portal token plus a synthetic 500-page
+// PDF could burn ~$13 of Sonnet spend per upload. Scripted at one upload per 30 seconds
+// for an hour, that's ~$1,560 in damage on a single ARC user's Anthropic key.
+// Caps are conservative — legitimate supplier quotes are typically 1-15 pages and
+// never approach 25.
+const SUPPLIER_PORTAL_MAX_PAGES = 25;             // Hard cap on pages per call
+const SUPPLIER_PORTAL_MAX_IMAGE_CHARS = 6_900_000; // ~5 MB raw / base64 chars
+const SUPPLIER_PORTAL_MAX_CALLS = 10;             // Lifetime per-token cap
+const SUPPLIER_PORTAL_MAX_SPEND_CENTS = 500;      // $5 lifetime per-token spend cap
+
+exports.extractSupplierQuotePricing = functions
+  .runWith({ timeoutSeconds: 120, memory: '512MB', maxInstances: 5 })
+  .https.onCall(async (data, context) => {
   const { token, pageImages } = data;
   if (!token || !Array.isArray(pageImages) || !pageImages.length) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing token or images');
   }
 
+  // DECISION(v1.19.955): Page-count cap. Legitimate quotes are 1-15 pages.
+  if (pageImages.length > SUPPLIER_PORTAL_MAX_PAGES) {
+    functions.logger.warn(
+      'extractSupplierQuotePricing rejected: page count exceeds cap',
+      { token, pageCount: pageImages.length, cap: SUPPLIER_PORTAL_MAX_PAGES }
+    );
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      `Too many pages: ${pageImages.length}. Maximum ${SUPPLIER_PORTAL_MAX_PAGES} pages per call.`
+    );
+  }
+
+  // DECISION(v1.19.955): Per-image size cap. Stops base64 inflation attacks.
+  for (let i = 0; i < pageImages.length; i++) {
+    if (typeof pageImages[i] !== 'string') {
+      throw new functions.https.HttpsError('invalid-argument', `Page ${i + 1} is not a string`);
+    }
+    if (pageImages[i].length > SUPPLIER_PORTAL_MAX_IMAGE_CHARS) {
+      functions.logger.warn(
+        'extractSupplierQuotePricing rejected: image exceeds size cap',
+        { token, pageIndex: i, sizeChars: pageImages[i].length }
+      );
+      throw new functions.https.HttpsError(
+        'invalid-argument',
+        `Page ${i + 1} exceeds size limit (~5 MB max per image).`
+      );
+    }
+  }
+
   // Validate token
-  const tokenDoc = await admin.firestore().collection('rfqUploads').doc(token).get();
+  const tokenRef = admin.firestore().collection('rfqUploads').doc(token);
+  const tokenDoc = await tokenRef.get();
   if (!tokenDoc.exists) throw new functions.https.HttpsError('not-found', 'Invalid token');
   const tokenData = tokenDoc.data();
   if ((tokenData.expiresAt || 0) < Date.now()) throw new functions.https.HttpsError('failed-precondition', 'Token expired');
+
+  // DECISION(v1.19.955): Refuse calls on already-finalized tokens. Once a supplier
+  // submits a quote (status=submitted) or the user dismisses it (status=dismissed),
+  // there is no legitimate reason to keep extracting from that token.
+  if (tokenData.status === 'submitted' || tokenData.status === 'dismissed') {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      `Token is ${tokenData.status} — no further AI extraction allowed.`
+    );
+  }
+
+  // DECISION(v1.19.955): Per-token call counter. A single supplier quote requires
+  // 1-3 batches of extraction. Cap of 10 lifetime allows for re-extracts and
+  // multi-batch PDFs while bounding abuse.
+  const currentCallCount = tokenData.aiCallCount || 0;
+  if (currentCallCount >= SUPPLIER_PORTAL_MAX_CALLS) {
+    functions.logger.warn(
+      'extractSupplierQuotePricing rejected: per-token call cap reached',
+      { token, currentCallCount, cap: SUPPLIER_PORTAL_MAX_CALLS }
+    );
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'This token has reached its call limit. Contact ARC if you need to re-extract.'
+    );
+  }
+
+  // DECISION(v1.19.955): Per-token spend ledger. Tracks accumulated Anthropic spend
+  // (in cents) attributable to this token; blocks new calls once the cap is hit.
+  // The cap is much higher than a legitimate single supplier quote ever needs.
+  const currentSpendCents = tokenData.aiSpendCents || 0;
+  if (currentSpendCents >= SUPPLIER_PORTAL_MAX_SPEND_CENTS) {
+    functions.logger.warn(
+      'extractSupplierQuotePricing rejected: per-token spend cap reached',
+      { token, currentSpendCents, cap: SUPPLIER_PORTAL_MAX_SPEND_CENTS }
+    );
+    throw new functions.https.HttpsError(
+      'resource-exhausted',
+      'This token has reached its spend limit.'
+    );
+  }
 
   const uid = tokenData.uid;
   const lineItems = tokenData.lineItems || [];
@@ -642,6 +782,56 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     `${i + 1}. Part#: ${item.partNumber || '—'}, Description: ${item.description || '—'}, Qty: ${item.qty || 1}`
   ).join('\n');
 
+  // DECISION(v1.19.963, cost report A4): Split the supplier extraction prompt into a
+  // STATIC system block (OCR rules, matching rules, distributor-specific lead time
+  // patterns, return format spec — ~3 KB stable text) and a per-call user block
+  // (line item list, page image data). The static portion is cacheable across batches
+  // of the same supplier upload (multi-batch PDFs hit cache after the first batch)
+  // and across multiple supplier uploads within 5 min on the same Anthropic key.
+  // Cache hit rate is high because: (1) batches of one supplier upload reuse the
+  // exact same prompt, (2) different supplier uploads within 5 min reuse the static
+  // portion. Cost: cached read = ~10% of normal input cost; cache write = 1.25x
+  // (one-time penalty per fresh cache entry).
+  const STATIC_PROMPT = `CRITICAL OCR RULES — READ CAREFULLY:
+- Read each character on the PDF very carefully. Common OCR mistakes: K↔R, B↔R, S↔5, 0↔O, I↔1, U↔V. Double-check every character against the PDF.
+- "supplierPartNumber" = the part# EXACTLY as printed on the supplier's PDF. Copy character by character. Do NOT guess or autocorrect.
+- If the supplier quoted an ALTERNATE or SUBSTITUTE part (different part number than requested), capture it in "supplierPartNumber" and set confidence to "alternate".
+
+MATCHING RULES:
+- Ignore spaces, dashes, case: "ARL 449" = "ARL449"
+- Strip manufacturer prefixes: "HOFF CEL550M" → "CEL550M"
+- Substring match: requested part# inside supplier part# = match
+- Match by description if part numbers differ but item is clearly the same
+- "partNumber" = ALWAYS use the exact part# from the requested list (never the supplier's version)
+- "supplierPartNumber" = part# exactly as printed on supplier's quote (may differ from requested)
+- "supplierLineNumber" = line/item number from the supplier's quote document
+- Confidence: "high" = exact match, "medium" = fuzzy/prefix match, "alternate" = supplier quoted a different part as substitute, "low" = uncertain, "unmatched" = supplier item not matching any request
+
+NOTES — VERY IMPORTANT:
+- "notes" = capture ANY notes, comments, remarks, conditions, or annotations the supplier wrote for each line item. This includes: lead time notes, minimum order quantities, special conditions, "call for pricing", "alternate suggested", obsolete warnings, etc.
+- Also capture any general notes at the top or bottom of the quote in the header "notes" field.
+
+DISTRIBUTOR-SPECIFIC LEAD TIME PATTERNS (apply when matched, treat conservatively):
+- **Codale** (look for "CODALE" in supplier name OR Codale-style line markers): the Description column has lead-time annotations BELOW the part description, separated by "===" rows. Patterns:
+   • "## IN SLC" (e.g. "24 IN SLC", "5 IN SLC", "1 IN SLC") → in stock locally → leadTimeDays = 1
+   • "FACTORY STOCK" → leadTimeDays = 14 (typical factory ship)
+   • "MM/DD/YY ESD" (e.g. "05/12/26 ESD") → Estimated Ship Date. Compute: (ESD − quoteDate in days) + 10 shipping days = leadTimeDays. If quoteDate missing, default to (ESD − today) + 10. Clamp ≥ 1.
+   • If MULTIPLE patterns appear on the same line (rare), prefer the slowest one (most conservative).
+- For Codale items, also IGNORE these markers (not lead times): "N/S Item: Mfg Return Policy Applies", "**MUST ORDER QTY ##**", separator rows like "==========".
+
+CODALE PART NUMBER EXTRACTION:
+- Codale's Description column starts with "MFR PARTNUMBER" (e.g. "A-B 800FP-F2 BLACK 22MM PB MOM"). The token after the manufacturer (A-B, SQD, ABB, etc.) is the part number. The 12-digit UPC column is NOT the part number.
+- Use this part number to match against the requested list (with normal fuzzy/prefix-strip rules).
+
+CODALE STOCK SNAPSHOT — when "## IN SLC" pattern is matched, capture the qty into "supplierStockQty" (e.g. "24 IN SLC" → supplierStockQty=24, supplierStockSource="Codale SLC"). Leave both null for FACTORY STOCK / ESD / non-Codale items.
+
+Return ONLY JSON:
+{"header":{"supplierName":null,"quoteNumber":null,"revisionNumber":null,"quoteDate":null,"updatedOn":null,"expiresOn":null,"jobName":null,"contactName":null,"customerPO":null,"customerPODate":null,"fob":null,"freight":null,"notes":null},"lineItems":[{"partNumber":"...","supplierPartNumber":"...","supplierLineNumber":"1","unitPrice":0.00,"leadTimeDays":null,"supplierStockQty":null,"supplierStockSource":null,"confidence":"high","notes":""}]}
+
+Set unitPrice to null if not found. Convert lead time weeks to days (*7), months to days (*30). Look for "ARO", "days ARO", "weeks", "delivery", AND the distributor-specific patterns above. Set header fields to null if not found. Dates as YYYY-MM-DD.
+
+You MUST return one entry per requested item. Also include extra supplier items not matching any request (partNumber=null, confidence="unmatched").`;
+
   const messageContent = [
     ...pageImages.slice(0, 20).map(img => ({
       type: 'image',
@@ -649,7 +839,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     })),
     {
       type: 'text',
-      text: `Extract pricing from this supplier quote. ${lineItems.length} items were requested:\n\n${itemList}\n\nCRITICAL OCR RULES — READ CAREFULLY:\n- Read each character on the PDF very carefully. Common OCR mistakes: K↔R, B↔R, S↔5, 0↔O, I↔1, U↔V. Double-check every character against the PDF.\n- "supplierPartNumber" = the part# EXACTLY as printed on the supplier's PDF. Copy character by character. Do NOT guess or autocorrect.\n- If the supplier quoted an ALTERNATE or SUBSTITUTE part (different part number than requested), capture it in "supplierPartNumber" and set confidence to "alternate".\n\nMATCHING RULES:\n- Ignore spaces, dashes, case: "ARL 449" = "ARL449"\n- Strip manufacturer prefixes: "HOFF CEL550M" → "CEL550M"\n- Substring match: requested part# inside supplier part# = match\n- Match by description if part numbers differ but item is clearly the same\n- "partNumber" = ALWAYS use the exact part# from the requested list above (never the supplier's version)\n- "supplierPartNumber" = part# exactly as printed on supplier's quote (may differ from requested)\n- "supplierLineNumber" = line/item number from the supplier's quote document\n- Confidence: "high" = exact match, "medium" = fuzzy/prefix match, "alternate" = supplier quoted a different part as substitute, "low" = uncertain, "unmatched" = supplier item not matching any request\n\nNOTES — VERY IMPORTANT:\n- "notes" = capture ANY notes, comments, remarks, conditions, or annotations the supplier wrote for each line item. This includes: lead time notes, minimum order quantities, special conditions, "call for pricing", "alternate suggested", obsolete warnings, etc.\n- Also capture any general notes at the top or bottom of the quote in the header "notes" field.\n\nYou MUST return one entry per requested item (${lineItems.length} total). Also include extra supplier items not matching any request (partNumber=null, confidence="unmatched").\n\nReturn ONLY JSON:\n{"header":{"supplierName":null,"quoteNumber":null,"revisionNumber":null,"quoteDate":null,"updatedOn":null,"expiresOn":null,"jobName":null,"contactName":null,"customerPO":null,"customerPODate":null,"fob":null,"freight":null,"notes":null},"lineItems":[{"partNumber":"...","supplierPartNumber":"...","supplierLineNumber":"1","unitPrice":0.00,"leadTimeDays":null,"confidence":"high","notes":""}]}\n\nSet unitPrice to null if not found. Convert lead time weeks to days (*7). Look for "ARO", "days ARO", "weeks", "delivery". Set header fields to null if not found. Dates as YYYY-MM-DD.`
+      text: `Extract pricing from this supplier quote. ${lineItems.length} items were requested:\n\n${itemList}`
     }
   ];
 
@@ -663,6 +853,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
       max_tokens: 16000,
+      system: [{ type: 'text', text: STATIC_PROMPT, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: messageContent }],
     }),
   });
@@ -678,6 +869,32 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
   // supplier part numbers / pricing data into log infrastructure. Length alone is enough to
   // detect truncation issues without exposing the content.
   functions.logger.info('extractSupplierQuotePricing AI response length:', text.length);
+
+  // DECISION(v1.19.955): Update per-token usage ledger after the Anthropic call so future
+  // calls on this token can be capped against the running totals. Sonnet 4 pricing as of
+  // early 2026: $3 / M input tokens, $15 / M output tokens. Costs are stored in CENTS to
+  // avoid float precision drift. Failure to update the ledger does NOT fail the extraction
+  // — extraction has already happened and the supplier should still get their result; we
+  // just lose one ledger row, which is acceptable.
+  const usage = (result && result.usage) || {};
+  const inputTokens = usage.input_tokens || 0;
+  const outputTokens = usage.output_tokens || 0;
+  const callCents = Math.ceil(
+    (inputTokens / 1_000_000) * 300 +    // 300 cents/M input
+    (outputTokens / 1_000_000) * 1500    // 1500 cents/M output
+  );
+  try {
+    await tokenRef.update({
+      aiCallCount: admin.firestore.FieldValue.increment(1),
+      aiSpendCents: admin.firestore.FieldValue.increment(callCents),
+      aiLastCallAt: Date.now(),
+    });
+    functions.logger.info(
+      `extractSupplierQuotePricing usage tracked: in=${inputTokens}, out=${outputTokens}, cents=${callCents}, cumulativeCents=${currentSpendCents + callCents}, cumulativeCalls=${currentCallCount + 1}`
+    );
+  } catch (e) {
+    functions.logger.warn('Failed to update token usage ledger (non-fatal):', e.message);
+  }
 
   let extracted = [];
   let quoteHeader = null;
@@ -776,7 +993,7 @@ exports.extractSupplierQuotePricing = functions.runWith({ timeoutSeconds: 120, m
  * Manual trigger — callable from ARC UI "Run Codale Scrape" button
  * Requires auth. Accepts optional { maxItems } to limit batch size.
  */
-exports.codaleRunScrape = functions.runWith({ timeoutSeconds: 540, memory: '2GB' }).https.onCall(async (data, context) => {
+exports.codaleRunScrape = functions.runWith({ timeoutSeconds: 540, memory: '2GB', maxInstances: 2 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const uid = context.auth.uid;
   const maxItems = data?.maxItems || 30;
@@ -795,7 +1012,7 @@ exports.codaleRunScrape = functions.runWith({ timeoutSeconds: 540, memory: '2GB'
  * Finds the first user with Codale items configured and runs the scrape.
  * Schedule: every 6 hours (configure via Cloud Scheduler in GCP console)
  */
-exports.codaleScheduledScrape = functions.runWith({ timeoutSeconds: 540, memory: '2GB' }).pubsub
+exports.codaleScheduledScrape = functions.runWith({ timeoutSeconds: 540, memory: '2GB', maxInstances: 1 }).pubsub
   .topic('codale-price-scrape')
   .onPublish(async (message) => {
     // Find users with codaleItems configured
@@ -824,7 +1041,7 @@ exports.codaleScheduledScrape = functions.runWith({ timeoutSeconds: 540, memory:
   });
 
 // TEMPORARY: Admin diagnostic — check and fix team member API key access
-exports.diagnoseMemberApiKey = functions.https.onCall(async (data, context) => {
+exports.diagnoseMemberApiKey = functions.runWith({ maxInstances: 5 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const targetEmail = data?.email;
   if (!targetEmail) throw new functions.https.HttpsError('invalid-argument', 'Provide email');
@@ -885,7 +1102,7 @@ exports.diagnoseMemberApiKey = functions.https.onCall(async (data, context) => {
  * Test endpoint — scrape specific part numbers from Codale with login (customer pricing)
  * Call with { partNumbers: ["25B-D4P0N114", "5069-OB16"] }
  */
-exports.codaleTestScrape = functions.runWith({ timeoutSeconds: 300, memory: '2GB' }).https.onCall(async (data, context) => {
+exports.codaleTestScrape = functions.runWith({ timeoutSeconds: 300, memory: '2GB', maxInstances: 2 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const partNumbers = data?.partNumbers;
   if (!Array.isArray(partNumbers) || !partNumbers.length) {
@@ -951,7 +1168,7 @@ async function hardenScraperPage(page, label) {
   });
 }
 
-exports.customScraperLookup = functions.runWith({ timeoutSeconds: 300, memory: '2GB' }).https.onCall(async (data, context) => {
+exports.customScraperLookup = functions.runWith({ timeoutSeconds: 300, memory: '2GB', maxInstances: 5 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { partNumber, config, steps } = data || {};
   if (!partNumber) throw new functions.https.HttpsError('invalid-argument', 'partNumber is required');
@@ -1216,7 +1433,7 @@ exports.customScraperLookup = functions.runWith({ timeoutSeconds: 300, memory: '
 // DECISION(v1.19.390): Batch version of customScraperLookup. Logs in ONCE, then searches
 // multiple part numbers in the same browser session. Used by "Get New Pricing" to auto-price
 // all items from a vendor (Royal, etc.) in one go.
-exports.customScraperBatch = functions.runWith({ timeoutSeconds: 540, memory: '2GB' }).https.onCall(async (data, context) => {
+exports.customScraperBatch = functions.runWith({ timeoutSeconds: 540, memory: '2GB', maxInstances: 3 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { partNumbers, config, steps } = data || {};
   if (!partNumbers || !partNumbers.length) throw new functions.https.HttpsError('invalid-argument', 'partNumbers array required');
@@ -1376,7 +1593,7 @@ exports.customScraperBatch = functions.runWith({ timeoutSeconds: 540, memory: '2
  * Search parts via Mouser API — returns real-time pricing and availability
  * Call with { partNumbers: ["LM358", "STM32F407VET6"] }
  */
-exports.mouserSearch = functions.runWith({ timeoutSeconds: 120, memory: '256MB' }).https.onCall(async (data, context) => {
+exports.mouserSearch = functions.runWith({ timeoutSeconds: 120, memory: '256MB', maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   if (!MOUSER_API_KEY) throw new functions.https.HttpsError('failed-precondition', 'Mouser API key not configured');
   const partNumbers = data?.partNumbers;
@@ -1395,7 +1612,7 @@ exports.mouserSearch = functions.runWith({ timeoutSeconds: 120, memory: '256MB' 
  * Search parts via DigiKey API — returns real-time pricing and availability
  * Call with { items: [{partNumber, manufacturer}] } or { partNumbers: ["..."] }
  */
-exports.digikeySearch = functions.runWith({ timeoutSeconds: 120, memory: '256MB' }).https.onCall(async (data, context) => {
+exports.digikeySearch = functions.runWith({ timeoutSeconds: 120, memory: '256MB', maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   if (!DIGIKEY_CLIENT_ID || !DIGIKEY_CLIENT_SECRET) throw new functions.https.HttpsError('failed-precondition', 'DigiKey credentials not configured');
   // Accept either items array [{partNumber, manufacturer}] or legacy partNumbers array
@@ -1416,7 +1633,7 @@ exports.digikeySearch = functions.runWith({ timeoutSeconds: 120, memory: '256MB'
  * Returns per-item results for both vendors — frontend writes prices to BC under each vendor.
  * Call with { items: [{partNumber, manufacturer}] } — max 10 items per call (Mouser rate limit).
  */
-exports.searchVendorPricing = functions.runWith({ timeoutSeconds: 300, memory: '512MB' }).https.onCall(async (data, context) => {
+exports.searchVendorPricing = functions.runWith({ timeoutSeconds: 300, memory: '512MB', maxInstances: 10 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const items = (data?.items || []).slice(0, 10);
   if (!items.length) return { success: true, results: [] };
@@ -1549,13 +1766,31 @@ async function oemsecretsSearchMfr(partNumber) {
 
 // Two functions: one to list items needing MFR, one to process a small batch
 
+// DECISION(v1.19.734): Security audit finding H-3 — both bulkMfrList and bulkMfrLookup
+// accept a client-supplied `bcODataBase` URL and forward the caller's BC bearer token in
+// the Authorization header. Without validation, any authenticated caller could direct
+// the function to send their token to an attacker-controlled host (credential theft),
+// or probe internal / cloud-metadata endpoints via SSRF. We pin the prefix to Microsoft's
+// Business Central OData domain to close both attack paths.
+const BC_ODATA_ALLOWED_PREFIX = 'https://api.businesscentral.dynamics.com/';
+function assertBcODataBase(bcODataBase) {
+  if (typeof bcODataBase !== 'string' || !bcODataBase.startsWith(BC_ODATA_ALLOWED_PREFIX)) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'bcODataBase must begin with ' + BC_ODATA_ALLOWED_PREFIX
+    );
+  }
+}
+
 exports.bulkMfrList = functions.runWith({
   timeoutSeconds: 300,
   memory: '256MB',
+  maxInstances: 5,
 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { bcToken, bcODataBase } = data || {};
   if (!bcToken || !bcODataBase) throw new functions.https.HttpsError('invalid-argument', 'bcToken and bcODataBase required');
+  assertBcODataBase(bcODataBase);
 
   const bcHeaders = { 'Authorization': `Bearer ${bcToken}`, 'Accept': 'application/json' };
   const allItems = [];
@@ -1576,11 +1811,13 @@ exports.bulkMfrList = functions.runWith({
 exports.bulkMfrLookup = functions.runWith({
   timeoutSeconds: 540,
   memory: '512MB',
+  maxInstances: 3,
 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
 
   const { bcToken, bcODataBase, dryRun = true, items: inputItems } = data || {};
   if (!bcToken || !bcODataBase) throw new functions.https.HttpsError('invalid-argument', 'bcToken and bcODataBase required');
+  assertBcODataBase(bcODataBase);
   if (!Array.isArray(inputItems) || !inputItems.length) throw new functions.https.HttpsError('invalid-argument', 'items array required');
 
   const dkReady = !!(DIGIKEY_CLIENT_ID && DIGIKEY_CLIENT_SECRET);
