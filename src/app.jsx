@@ -1650,29 +1650,61 @@ async function saveDefaultBomItems(uid,items){
 // ── ALTERNATES DATABASE ──
 let _altCache=null;
 function _altPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/alternates";}
+// DECISION(v1.19.977): Unified alternates normalization — strip every common
+// separator (-, _, space, dot, slash, backslash, comma) and uppercase. This
+// matches save AND apply paths so a part typed "ABC-123" stored as alternate
+// will still match an extracted "abc 123" / "ABC.123" / "abc/123".
+// Also exposed as _altNorm (and used by alt-match helper) so the same logic
+// runs everywhere.
+function _altNorm(s){return(s||"").replace(/[\s\-_./\\,]/g,"").toUpperCase();}
+function _altMatchesPN(alt,pn){
+  if(!alt)return false;
+  const a=alt.originalPN||"";
+  return a===pn||_altNorm(a)===_altNorm(pn);
+}
 async function loadAlternates(uid){
   if(_altCache)return _altCache;
   try{const d=await fbDb.doc(_altPath(uid)).get();_altCache=d.exists?(d.data().alternates||[]):[];}
   catch(e){_altCache=[];}
   return _altCache;
 }
+// DECISION(v1.19.977): cache invalidator — used on user/company switch so the
+// next loadAlternates re-reads from Firestore instead of returning the cached
+// other-account alternates.
+function _invalidateAltCache(){_altCache=null;}
 async function saveAlternateEntry(uid,originalPN,replacement,autoReplace=false){
   // DECISION(v1.19.319): Never save a cross where original and replacement are the same part.
   // False crosses were polluting the alternates DB and showing bogus "Crossed/Superseded" notes on quotes.
   // This guard + the one-time scrub in PanelListView cleaned up existing bad data.
   if(normPart(originalPN)===normPart(replacement?.partNumber||""))return await loadAlternates(uid);
   const alts=await loadAlternates(uid);
-  const idx=alts.findIndex(a=>a.originalPN===originalPN);
-  if(idx>=0){alts[idx]={...alts[idx],replacement,autoReplace:autoReplace||alts[idx].autoReplace,updatedAt:Date.now()};}
-  else{alts.push({originalPN,replacement,autoReplace,createdAt:Date.now()});}
+  // DECISION(v1.19.977): use NORMALIZED matching for the save lookup, not exact.
+  // Previously two saves of "abc-123" and "ABC123" would create two rows; only
+  // the first would auto-apply and the second would shadow it confusingly.
+  // Now we update the existing row no matter how the user typed the PN.
+  const norm=_altNorm(originalPN);
+  const idx=alts.findIndex(a=>a.originalPN===originalPN||_altNorm(a.originalPN)===norm);
+  if(idx>=0){
+    // Preserve original-typed PN for display; merge autoReplace truthy.
+    alts[idx]={...alts[idx],replacement,autoReplace:autoReplace||alts[idx].autoReplace,updatedAt:Date.now()};
+    console.log(`[ALT SAVE] updated existing entry: "${alts[idx].originalPN}" → "${replacement?.partNumber}" (autoReplace=${alts[idx].autoReplace})`);
+  }
+  else{
+    alts.push({originalPN,replacement,autoReplace,createdAt:Date.now()});
+    console.log(`[ALT SAVE] new entry: "${originalPN}" → "${replacement?.partNumber}" (autoReplace=${autoReplace})`);
+  }
   _altCache=[...alts];
   await fbDb.doc(_altPath(uid)).set({alternates:_altCache});
   return _altCache;
 }
 async function setAltAutoReplace(uid,originalPN,autoReplace){
   const alts=await loadAlternates(uid);
-  const idx=alts.findIndex(a=>a.originalPN===originalPN);
-  if(idx>=0){alts[idx]={...alts[idx],autoReplace};}
+  // v1.19.977: normalized lookup so toggling auto-replace works regardless of
+  // case/punctuation differences between the row and the stored entry.
+  const norm=_altNorm(originalPN);
+  const idx=alts.findIndex(a=>a.originalPN===originalPN||_altNorm(a.originalPN)===norm);
+  if(idx>=0){alts[idx]={...alts[idx],autoReplace};console.log(`[ALT TOGGLE] "${alts[idx].originalPN}" autoReplace=${autoReplace}`);}
+  else console.warn(`[ALT TOGGLE] no entry found for "${originalPN}" — toggle no-op`);
   _altCache=[...alts];
   await fbDb.doc(_altPath(uid)).set({alternates:_altCache});
   return _altCache;
@@ -7817,8 +7849,16 @@ async function applyLearnedCorrections(bom,uid){
     loadPartCorrections(uid).catch(()=>[]),
   ]);}catch(e){console.warn("applyLearnedCorrections: load failed:",e.message);return{bom,appliedLog:[]};}
   if(!userAlts.length&&!userCorrs.length&&!userPartCorrs.length)return{bom,appliedLog:[]};
-  const normPN=s=>(s||"").replace(/[-\s./\\]/g,"").toUpperCase();
+  // v1.19.977: use the same _altNorm/normPN normalization throughout (strips
+  // -, _, space, dot, slash, backslash, comma; uppercases). normPart inside the
+  // module strips a smaller set; using a shared normalizer prevents drift.
+  const normPN=s=>(s||"").replace(/[\s\-_./\\,]/g,"").toUpperCase();
+  // v1.19.977: surface diagnostic counts for the cache and auto-replace state.
+  const autoCount=userAlts.filter(a=>a.autoReplace&&a.replacement).length;
+  const totalAlt=userAlts.length;
+  console.log(`[LEARNING DB] alternates=${totalAlt} (autoReplace=${autoCount}), corrections=${userCorrs.length}, partCorrections=${userPartCorrs.length} | uid=${uid?.slice?.(0,6)} configPath=${_appCtx.configPath||"(user-default)"}`);
   const appliedLog=[];
+  const skippedNonAuto=[];
   const result=bom.map(r=>{
     if(r.isLaborRow||r.isContingency)return r;
     const pn=(r.partNumber||"").trim();
@@ -7830,11 +7870,16 @@ async function applyLearnedCorrections(bom,uid){
     // until runPricingOnPanel fetches the real BC Starting_Date. priceSource="bc" tells the
     // pricing phase to use an EXACT BC lookup, preventing re-crossing of an already-crossed PN.
     if(!r.isCrossed){
-      const alt=userAlts.find(a=>a.autoReplace&&a.replacement&&(a.originalPN===pn||normPN(a.originalPN)===normPN(pn)));
+      const alt=userAlts.find(a=>a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
       if(alt){
         appliedLog.push({rowId:r.id,kind:"alternate",from:pn,to:alt.replacement.partNumber,reason:"auto-cross from learning DB"});
         return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true};
       }
+      // v1.19.977: log when an alternate exists for this PN but isn't set to
+      // auto-replace — surfaces a UX bug (user crossed a part but uncheck auto)
+      // versus a matching bug (no entry at all).
+      const matchedButNotAuto=userAlts.find(a=>!a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
+      if(matchedButNotAuto)skippedNonAuto.push(`${pn} (entry exists, autoReplace=false)`);
     }
     // 2. Bad PN → corrected PN (from correctionDB)
     if(!r.isCorrection){
@@ -7855,6 +7900,7 @@ async function applyLearnedCorrections(bom,uid){
     }
     return r;
   });
+  if(skippedNonAuto.length)console.warn(`[LEARNING DB] ${skippedNonAuto.length} row(s) had alternates that were NOT auto-applied (autoReplace=false): ${skippedNonAuto.slice(0,5).join("; ")}`);
   if(appliedLog.length>0){
     console.log(`[LEARNING DB] Applied ${appliedLog.length} correction${appliedLog.length>1?"s":""} from memory:`,appliedLog.map(l=>`${l.kind}: ${l.from} → ${l.to}`));
   }
@@ -19196,37 +19242,39 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   useEffect(()=>()=>{if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);},[]);
 
   // Load alternates + corrections and auto-apply on mount
+  // v1.19.977: uses unified _altNorm normalization (strips -, _, space, dot,
+  // slash, backslash, comma) and the _altMatchesPN helper so this matches the
+  // save-side and applyLearnedCorrections matching exactly.
   useEffect(()=>{
-    const normPN=s=>s.replace(/[-\s./\\]/g,'').toUpperCase();
+    const normPN=s=>(s||"").replace(/[\s\-_./\\,]/g,"").toUpperCase();
     Promise.all([loadAlternates(uid),loadCorrectionDB(uid)]).then(([alts,corrs])=>{
       setAlternates(alts);
       if(altAutoApplied.current)return;
       altAutoApplied.current=true;
       const bom=panel.bom||[];
       let changed=false;
+      let appliedAlt=0,appliedCorr=0;
       const newBom=bom.map(r=>{
         if(r.isLaborRow||r.isCrossed||r.isCorrection)return r;
         const pn=(r.partNumber||"").trim();
         if(!pn)return r;
-        // Auto-replace: exact match first, then normalized match (catches format variants)
-        // DECISION(v1.19.635/638): Swap PN/description + BC-lock + cross flags. Keep the
-        // cached unitPrice from the learning DB as a fallback (in case BC is offline), but
-        // leave priceDate null so UI shows "—" until BC confirms the real Starting_Date.
-        const alt=alts.find(a=>a.autoReplace&&(a.originalPN===pn||normPN(a.originalPN)===normPN(pn)));
+        const alt=alts.find(a=>a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
         if(alt){
-          changed=true;
+          changed=true;appliedAlt++;
           return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true};
         }
-        // Auto-correct: apply known corrections (exact or normalized match)
         const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn));
         if(corr){
-          changed=true;
+          changed=true;appliedCorr++;
           return{...r,partNumber:corr.correctedPN,isCorrection:true,correctionType:corr.type||'extraction',correctionFrom:pn};
         }
         return r;
       });
-      if(changed){const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}}
-    }).catch(()=>{});
+      if(changed){
+        console.log(`[PanelView mount] auto-applied ${appliedAlt} alternates and ${appliedCorr} corrections to existing BOM`);
+        const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+      }
+    }).catch(e=>console.warn("[PanelView mount] alternates/corrections load failed:",e?.message));
   },[uid]);
 
   // Backfill bcVendorName for BC-priced rows that are missing it
