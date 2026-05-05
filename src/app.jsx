@@ -30192,11 +30192,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // v1.19.965: Cross-user print lock check.
     const lockResult=await _tryAcquireQuotePrintLock(proj.id);
     if(!lockResult.ok){
-      const remainSec=Math.max(1,Math.ceil((lockResult.expiresAt-Date.now())/1000));
-      try{await arcAlert(
-        `Another user is currently printing this quote. Please wait ~${remainSec} seconds and try again.\n\nIf this is in error (e.g. they crashed), the lock auto-clears within ${Math.ceil(QUOTE_PRINT_LOCK_TTL_MS/1000)} seconds.`,
-        {kind:"warning",okLabel:"OK"});}catch(_){}
-      return;
+      // v1.19.967: Handle different failure reasons. "missing-project" shouldn't
+      // normally fire for a project the user is currently viewing, but if it
+      // does we want a sensible message — not "wait ~NaN seconds".
+      if(lockResult.reason==="missing-project"){
+        console.warn("[quotePrintLock] project doc not found at expected path — proceeding without lock");
+        // Fall through and let printing proceed; missing project doc means saveProject
+        // will fail downstream with a clearer error.
+      }else{
+        const remainSec=lockResult.expiresAt?Math.max(1,Math.ceil((lockResult.expiresAt-Date.now())/1000)):Math.ceil(QUOTE_PRINT_LOCK_TTL_MS/1000);
+        try{await arcAlert(
+          `${lockResult.lockedBy||"Another user"} is currently printing this quote. Please wait ~${remainSec} seconds and try again.\n\nIf this is in error (e.g. they crashed), the lock auto-clears within ${Math.ceil(QUOTE_PRINT_LOCK_TTL_MS/1000)} seconds.`,
+          {kind:"warning",okLabel:"OK"});}catch(_){}
+        return;
+      }
     }
     setQuotePrinting(true);
     try{
