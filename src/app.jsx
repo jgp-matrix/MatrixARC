@@ -8584,6 +8584,18 @@ LETTER vs DIGIT confusion matrix — examine stroke shape carefully:
 • U vs V: U has a curved bottom; V comes to a sharp point.
 • C vs G: C is open on the right; G has a horizontal bar at mid-right.
 • Q vs O: Q has a small tail or crossbar at bottom-right; O does not.
+• H vs N: H has a horizontal CROSSBAR connecting two verticals at mid-height; N has a DIAGONAL stroke from upper-left to lower-right. If the connecting stroke is horizontal → H. If diagonal → N.
+• H vs A: A has a peaked top (two strokes meeting at apex) and a horizontal crossbar; H has two parallel verticals with a horizontal crossbar. The top of A converges; the top of H stays parallel.
+• Letter ORDER matters: "ACHI" vs "AHCI" are both valid letter sequences. After transcribing, verify each letter is in its CORRECT POSITION — re-scan left-to-right and confirm. Transpositions (swapping two adjacent letters) are silent failures because both versions "look like words".
+
+★ END-OF-PART-NUMBER POSITIONS ARE HIGHEST-ERROR:
+The LAST character of an alphanumeric part number is the highest-error position because:
+  - Suffix letters (S/B/H/T/I/L/P) are routinely misread as digits (5/8/0/7/1/4/9) when the
+    reader's expectation is "this is a part number, must end in a digit".
+  - Catalog suffixes encode variants ("3PT", "0SS", "S", "B", "X") and a wrong last character
+    ships the wrong variant.
+The FIRST character is the second-highest-error position (same reason — first letter sets
+the family). Verify these positions character-by-character, twice.
 
 ADDITIONAL ACCURACY RULES:
 • Hyphens matter: "100-C09D10" is different from "1OOC09D10" — note how O/0 confusion changes meaning
@@ -8943,18 +8955,21 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
                 console.warn(`[BOM VERIFY/PDF] sequence gaps in itemNo: ${verification.sequenceGaps.join(", ")}`);
               }
             }
-            // v1.19.973: same long-PN / enclosure auto-downgrade as the image path.
+            // v1.19.973-.974: same long-PN / edge-confusable / enclosure auto-downgrade as image path.
             const _enclosureKwPdf=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
+            const _confusableEdgePdf=/^[S0O8BIZG6T7HN5]|[S0O8BIZG6T7HN5]$/i;
             for(const it of items){
               if(String(it.confidence||"").toLowerCase()!=="high")continue;
               const stripped=String(it.partNumber||"").replace(/[^A-Z0-9]/gi,"");
               const letters=(stripped.match(/[A-Z]/gi)||[]).length;
               const digits=(stripped.match(/\d/g)||[]).length;
-              const isLongMixed=stripped.length>=10&&letters>=2&&digits>=2;
+              const isMixed=letters>=2&&digits>=2;
+              const isLongMixed=stripped.length>=8&&isMixed;
+              const isEdgeConfusable=stripped.length>=6&&isMixed&&_confusableEdgePdf.test(stripped);
               const isEnclosure=_enclosureKwPdf.test(String(it.description||""));
-              if(isLongMixed||isEnclosure){
+              if(isLongMixed||isEdgeConfusable||isEnclosure){
                 it.confidence="medium";
-                it._confDowngradeReason=isEnclosure?"enclosure-row":"long-mixed-pn";
+                it._confDowngradeReason=isEnclosure?"enclosure-row":(isLongMixed?"long-mixed-pn":"edge-confusable-pn");
               }
             }
             for(const it of items){
@@ -9180,15 +9195,21 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       }
     }
     // DECISION(v1.19.973): Auto-downgrade confidence for high-stakes rows the AI
-    // tagged "high". Real failure case: enclosure A62H6012SSLP3PT was misread as
-    // A62H60125SLPPT (dropped a '3', S→5 confusion) and shipped as confidence:"high"
-    // — silent and uncaught. Two heuristics surface these for review:
-    //   (a) Long mixed alphanumeric PNs (≥10 chars, ≥2 letters AND ≥2 digits) are
-    //       the failure-prone shape — drop one char and the AI doesn't notice.
-    //   (b) Enclosure / cabinet / backpan rows are the single highest-cost line item
-    //       — wrong PN ships the wrong metal — flag regardless of length.
+    // tagged "high". Real failure cases:
+    //   v1.19.973 — A62H6012SSLP3PT (15 chars) misread as A62H60125SLPPT (dropped '3', S→5)
+    //   v1.19.974 — ACHI238S (8 chars) misread as AHCI2385 (HC↔CH transpose, S→5)
+    // Both shipped as confidence:"high" — silent failures. Heuristics surface these:
+    //   (a) Mixed alphanumeric PNs (≥8 chars, ≥2 letters AND ≥2 digits) — failure-prone.
+    //       v1.19.974: lowered from 10→8 chars after ACHI238S slipped past at length 8.
+    //   (b) Mixed alphanumeric PNs of ANY length whose first OR last character is a
+    //       confusable glyph (S/5, 0/O, 8/B, 1/I, Z/2, 6/G, T/7, H/N) — these are the
+    //       highest-error positions because suffix letters get read as digits and vice
+    //       versa (e.g. ACHI238S last char S↔5, A62H...3PT first char A vs other).
+    //   (c) Enclosure / cabinet / backpan rows are the single highest-cost line item —
+    //       wrong PN ships the wrong metal — flag regardless of length.
     // Downgrade is one notch (high→medium); doesn't override low.
     const _enclosureKw=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
+    const _confusableEdge=/^[S0O8BIZG6T7HN5]|[S0O8BIZG6T7HN5]$/i;
     for(const it of items){
       const pn=String(it.partNumber||"").trim();
       const desc=String(it.description||"");
@@ -9197,11 +9218,13 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       const stripped=pn.replace(/[^A-Z0-9]/gi,"");
       const letters=(stripped.match(/[A-Z]/gi)||[]).length;
       const digits=(stripped.match(/\d/g)||[]).length;
-      const isLongMixed=stripped.length>=10&&letters>=2&&digits>=2;
+      const isMixed=letters>=2&&digits>=2;
+      const isLongMixed=stripped.length>=8&&isMixed;
+      const isEdgeConfusable=stripped.length>=6&&isMixed&&_confusableEdge.test(stripped);
       const isEnclosure=_enclosureKw.test(desc);
-      if(isLongMixed||isEnclosure){
+      if(isLongMixed||isEdgeConfusable||isEnclosure){
         it.confidence="medium";
-        it._confDowngradeReason=isEnclosure?"enclosure-row":"long-mixed-pn";
+        it._confDowngradeReason=isEnclosure?"enclosure-row":(isLongMixed?"long-mixed-pn":"edge-confusable-pn");
       }
     }
     // Confidence aggregate
@@ -23882,6 +23905,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     {(()=>{
                       const enc=medConf.filter(r=>r._confDowngradeReason==="enclosure-row");
                       const longPn=medConf.filter(r=>r._confDowngradeReason==="long-mixed-pn");
+                      const edgePn=medConf.filter(r=>r._confDowngradeReason==="edge-confusable-pn");
                       const aiMed=medConf.filter(r=>!r._confDowngradeReason);
                       return(<>
                         {enc.length>0&&(
@@ -23894,6 +23918,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           <div style={{fontSize:11,color:"#93c5fd",padding:"6px 10px",marginBottom:6,background:"#1a2a3a22",border:"1px solid #3b82f644",borderRadius:6}}>
                             <div style={{fontWeight:700,marginBottom:3}}>🔢 Long alphanumeric part numbers ({longPn.length}) — easy to drop a character, count vs. drawing:</div>
                             <div style={{color:C.muted,fontFamily:"Consolas,monospace"}}>{longPn.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}</div>
+                          </div>
+                        )}
+                        {edgePn.length>0&&(
+                          <div style={{fontSize:11,color:"#a5b4fc",padding:"6px 10px",marginBottom:6,background:"#1e1b4b22",border:"1px solid #6366f144",borderRadius:6}}>
+                            <div style={{fontWeight:700,marginBottom:3}}>🔡 First/last character is confusable ({edgePn.length}) — verify ends (e.g. S/5, 0/O, 8/B, H/N):</div>
+                            <div style={{color:C.muted,fontFamily:"Consolas,monospace"}}>{edgePn.map(r=>`${r.itemNo||"—"} ${r.partNumber||""}`).join(" · ")}</div>
                           </div>
                         )}
                         {aiMed.length>0&&(
