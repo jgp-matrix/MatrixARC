@@ -8917,10 +8917,202 @@ function buildAllRegionSummary(pages){
   return"\n\nUSER REGION OBSERVATIONS (these are ground-truth observations from the user reviewing the drawings — trust these for device counts, component identification, and labor estimation):\n"+entries.map(e=>`• [${e.type}] on ${e.page}: ${e.note}`).join("\n");
 }
 
+// DECISION(v1.19.981, server-side BOM extraction): Shared parse + verify
+// helper used by both the server-side wrapper (extractBomPageViaServer)
+// and — implicitly — the legacy direct-API paths inline below. Single
+// source of truth for: JSON parse strategies (4 fallbacks for varying
+// model JSON quality), Layer-2 verification (count mismatch, sequence
+// gaps), and the confusable-glyph + enclosure auto-downgrade pass. By
+// extracting this, the server wrapper can run identical post-processing
+// to the direct API code, so the result shape is bit-identical from the
+// caller's perspective.
+function _parseAndVerifyBomRaw(raw,extractionPath){
+  const cleaned=(raw||"").replace(/```json|```/gi,"").trim();
+  let items=[],questions=[],noBomReason=null,detectedLineCount=null;
+  // Strategy 1 — direct JSON.parse
+  try{
+    const direct=JSON.parse(cleaned);
+    if(direct&&Array.isArray(direct.items)){
+      items=direct.items;questions=direct.questions||[];
+      if(direct.noBomReason)noBomReason=direct.noBomReason;
+      if(direct.detectedLineCount!=null)detectedLineCount=+direct.detectedLineCount;
+    } else if(Array.isArray(direct)){items=direct;}
+  }catch(_e1){}
+  // Strategy 2 — find {"items": ...} via brace matching
+  if(!items.length){
+    const wStart=cleaned.indexOf('{"items"');
+    if(wStart>=0){
+      let depth=0,endIdx=-1;
+      for(let i=wStart;i<cleaned.length;i++){
+        if(cleaned[i]==='{')depth++;
+        if(cleaned[i]==='}'){depth--;if(depth===0){endIdx=i;break;}}
+      }
+      if(endIdx>wStart){
+        try{
+          const parsed=JSON.parse(cleaned.slice(wStart,endIdx+1));
+          items=parsed.items||[];questions=parsed.questions||[];
+          if(parsed.noBomReason)noBomReason=parsed.noBomReason;
+          if(parsed.detectedLineCount!=null)detectedLineCount=+parsed.detectedLineCount;
+        }catch(_e2){}
+      }
+    }
+  }
+  // Strategy 3 — bare array fallback
+  if(!items.length){
+    const arrMatch=cleaned.match(/\[[\s\S]*\]/);
+    if(arrMatch){
+      try{items=JSON.parse(arrMatch[0]);}catch(_e3){}
+      const qMatch=cleaned.match(/"questions"\s*:\s*(\[[\s\S]*?\])/);
+      if(qMatch){try{questions=JSON.parse(qMatch[1]);}catch(_qe){}}
+      const reasonMatch=cleaned.match(/"noBomReason"\s*:\s*"([^"]+)"/);
+      if(reasonMatch&&!noBomReason)noBomReason=reasonMatch[1];
+      const lcMatch=cleaned.match(/"detectedLineCount"\s*:\s*(\d+)/);
+      if(lcMatch)detectedLineCount=+lcMatch[1];
+    } else {
+      // Strategy 4 — salvage individual {itemNo} objects from truncated JSON
+      const itemMatches=[...cleaned.matchAll(/\{"itemNo"[^}]*\}/g)];
+      if(itemMatches.length){
+        for(const m of itemMatches){try{items.push(JSON.parse(m[0]));}catch(_e4){}}
+        const lcMatch=cleaned.match(/"detectedLineCount"\s*:\s*(\d+)/);
+        if(lcMatch)detectedLineCount=+lcMatch[1];
+      }
+    }
+  }
+  // Layer-2 verification
+  const verification={
+    status:"ok",detectedLineCount,extractedCount:items.length,
+    countMismatch:false,sequenceGaps:[],
+    lowConfidenceRows:[],mediumConfidenceRows:[],placeholderRows:[],
+    questions:questions.length,extractionPath,
+  };
+  if(detectedLineCount!=null&&items.length!==detectedLineCount){
+    verification.countMismatch=true;verification.status="needs-review";
+  }
+  const numericItemNos=items.map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10)).filter(n=>!isNaN(n)&&n>0);
+  if(numericItemNos.length>=3){
+    const sorted=[...new Set(numericItemNos)].sort((a,b)=>a-b);
+    const minItemNo=sorted[0];
+    if(minItemNo>1){
+      verification.status="needs-review";
+      verification.missingFromStart=minItemNo-1;
+      for(let g=1;g<minItemNo;g++)verification.sequenceGaps.push(g);
+    }
+    for(let i=0;i<sorted.length-1;i++){
+      if(sorted[i+1]-sorted[i]>1){
+        for(let g=sorted[i]+1;g<sorted[i+1];g++)verification.sequenceGaps.push(g);
+      }
+    }
+    if(verification.sequenceGaps.length>0)verification.status="needs-review";
+  }
+  // Confusable-glyph + enclosure auto-downgrade (mirrors v1.19.975 logic)
+  const _enclosureKw=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
+  const _confusableAny=/[S0O8BIZG6T7HN5DC2QlIL1]/i;
+  for(const it of items){
+    if(String(it.confidence||"").toLowerCase()!=="high")continue;
+    const stripped=String(it.partNumber||"").replace(/[^A-Z0-9]/gi,"");
+    if(!stripped||stripped==="?")continue;
+    const hasConfusable=_confusableAny.test(stripped);
+    const isEnclosure=_enclosureKw.test(String(it.description||""));
+    if(hasConfusable||isEnclosure){
+      it.confidence="medium";
+      it._confDowngradeReason=isEnclosure?"enclosure-row":"contains-confusable-glyph";
+    }
+  }
+  for(const it of items){
+    const c=String(it.confidence||"").toLowerCase();
+    if(c==="low")verification.lowConfidenceRows.push(it.itemNo||it.partNumber||"?");
+    else if(c==="medium")verification.mediumConfidenceRows.push(it.itemNo||it.partNumber||"?");
+    if(it.partNumber==="?"||/EXTRACTION_FAILED/i.test(it.notes||""))verification.placeholderRows.push(it.itemNo||"?");
+  }
+  if(verification.lowConfidenceRows.length>0||verification.placeholderRows.length>0){
+    verification.status=verification.status==="ok"?"low-confidence":verification.status;
+  }
+  // Companion-PN split (matches the post-process in the legacy direct path)
+  const expanded=[];
+  for(const item of items){
+    const pn=(item.partNumber||"").trim();
+    const segments=pn.split(/\s*\/\s*|\s*,\s*/).map(s=>s.trim()).filter(s=>s&&/[A-Z0-9]{3,}/i.test(s));
+    if(segments.length>1){
+      for(let si=0;si<segments.length;si++){
+        const base=item.description||"";
+        const alreadyLabeled=base.includes("(sub-part from above)");
+        const desc=si===0?base:(alreadyLabeled?base:base+" (sub-part from above)");
+        expanded.push({...item,partNumber:segments[si],description:desc});
+      }
+    } else expanded.push(item);
+  }
+  for(const item of expanded){
+    const q=String(item.qty||"").trim().toUpperCase();
+    if(q==="A/R"||q==="AR"||q==="AS REQUIRED"||q==="AS REQ'D"||q==="A.R."||q==="A\\R")item.qty=1;
+  }
+  if(expanded.length>0){
+    const count=expanded.length;
+    for(let i=0;i<count;i++){
+      const it=expanded[i];
+      if(typeof it.y_top!=="number"||isNaN(it.y_top)){
+        it.y_top=i/count;
+        if(typeof it.y_bottom!=="number"||isNaN(it.y_bottom))it.y_bottom=(i+1)/count;
+      }
+    }
+  }
+  return{items:expanded,questions,noBomReason:expanded.length?null:noBomReason,extractionVerification:verification,extractionPath};
+}
+
+// DECISION(v1.19.981, server-side BOM extraction): Tries the server-side
+// extractBomPage Cloud Function FIRST. The function uses the same prompt,
+// model, and Anthropic call params as the legacy direct path — but runs
+// server-side so all users (different browsers, sessions, cache states,
+// region-learning context) take the IDENTICAL code path. If the function
+// throws (deploy lag, transient error, network), the caller falls back
+// to the legacy direct API path, preserving zero-regression behavior.
+async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber){
+  const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:300000});
+  let payload;
+  if(originalPdfPath&&pageNumber){
+    payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
+  } else {
+    // Image-fallback path — resize to ≤4500px PNG (matches direct path) and
+    // strip the data URL prefix.
+    const small=await resizeForAnalysis(dataUrl,4500,"png");
+    if(!small)throw new Error("server: empty resized image");
+    const b64=small.split(",")[1]||"";
+    const isPng=small.startsWith("data:image/png");
+    payload={imageBase64:b64,imageMediaType:isPng?"image/png":"image/jpeg",feedback:feedback||"",userNotes:userNotes||""};
+    // Region-learning multimodal context — pass through to the function so
+    // the server call sees the same examples the client would have sent.
+    try{
+      const uid=fbAuth.currentUser?.uid;
+      if(uid){
+        const examples=await loadRegionLearning(uid);
+        const bomFirst=[...examples.filter(e=>e.type==="bom"),...examples.filter(e=>e.type!=="bom"&&e.type!=="ignore")];
+        const parts=buildRegionLearningContext(bomFirst,{pageTypeContext:"bom",maxExamples:3});
+        if(parts&&parts.length)payload.regionLearningParts=parts;
+      }
+    }catch(_e){}
+  }
+  const result=await callable(payload);
+  const data=result?.data||{};
+  if(!data.raw){
+    throw new Error("server: empty raw response from extractBomPage Cloud Function");
+  }
+  console.log(`[BOM EXTRACT/server] ok path=${data.extractionPath} model=${data.modelUsed||"?"} text=${data.raw.length}c stop=${data.stopReason}`);
+  return _parseAndVerifyBomRaw(data.raw,data.extractionPath||(originalPdfPath?"pdf-native":"image-fallback"));
+}
+
 async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=null,pageNumber=null){
   // DECISION(v1.19.899): Fail fast if the global credit-exhausted latch is set —
   // see _trippedApiCreditExhausted near apiCall.
   if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
+
+  // DECISION(v1.19.981): Server-side path FIRST. Eliminates per-browser
+  // variance (stale bundles, region-learning drift, prompt versions). On
+  // any server error, falls through to the legacy direct API path below
+  // so a function deploy lag or transient outage doesn't block users.
+  try{
+    return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber);
+  }catch(serverErr){
+    console.warn(`[BOM EXTRACT] server path failed: ${serverErr?.message||serverErr} — falling back to direct API`);
+  }
 
   // DECISION(v1.19.959, BULLETPROOF BOM extraction): If the page has a retained
   // original PDF, send it as native document input to Anthropic. This bypasses
