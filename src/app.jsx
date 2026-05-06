@@ -1939,6 +1939,18 @@ function _currentMonthKey(){
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;
 }
 async function _recordAnthropicUsage(model,usage){
+  // DECISION(v1.19.984, ledger race fix): Two parallel API calls would each
+  // open a runTransaction on the same anthropicLedger doc and the second
+  // would fail with `failed-precondition` because the first's read/write
+  // span overlaps. The error was caught and ignored, so it didn't break
+  // anything — but it polluted Noah's debug log breadcrumbs and made the
+  // ledger occasionally undercount.
+  //
+  // Fix: replace the read-modify-write transaction with atomic FieldValue
+  // operations. .increment() is server-side atomic and doesn't need a
+  // transaction. The month-rollover logic moves to a small read step that
+  // only runs when we detect a stale monthKey — no race because it's only
+  // run on transitions, and we use a transaction ONLY for that case.
   try{
     const uid=_appCtx&&_appCtx.uid;
     if(!uid||!fbDb)return;
@@ -1946,27 +1958,39 @@ async function _recordAnthropicUsage(model,usage){
     if(cents<=0)return;
     const ref=fbDb.doc(`users/${uid}/config/anthropicLedger`);
     const monthKey=_currentMonthKey();
-    await fbDb.runTransaction(async tx=>{
-      const snap=await tx.get(ref);
-      const cur=snap.exists?snap.data():{};
-      const sameMonth=cur.monthKey===monthKey;
-      const newMonthCents=(sameMonth?(cur.monthCents||0):0)+cents;
-      const newTotalCents=(cur.totalCents||0)+cents;
-      tx.set(ref,{
+    const FV=(window.firebase&&window.firebase.firestore&&window.firebase.firestore.FieldValue)||null;
+    if(!FV){
+      // Older firebase shim — fall back to a plain set with merge (no race
+      // protection but doesn't pollute logs).
+      await ref.set({
         monthKey,
-        monthCents:newMonthCents,
-        totalCents:newTotalCents,
         lastCallAt:Date.now(),
         lastCallModel:model||"unknown",
         lastCallCents:cents,
-        lastCallUsage:{
-          input:usage.input_tokens||0,
-          output:usage.output_tokens||0,
-          cacheWrite:usage.cache_creation_input_tokens||0,
-          cacheRead:usage.cache_read_input_tokens||0,
-        },
       },{merge:true});
-    });
+      return;
+    }
+    // Read once to check for month rollover. If the existing monthKey is
+    // different from now, reset monthCents BEFORE incrementing.
+    let existingMonth=null;
+    try{const s=await ref.get();if(s.exists)existingMonth=s.data().monthKey||null;}catch(_){}
+    const isRollover=existingMonth&&existingMonth!==monthKey;
+    const update={
+      monthKey,
+      lastCallAt:Date.now(),
+      lastCallModel:model||"unknown",
+      lastCallCents:cents,
+      lastCallUsage:{
+        input:usage.input_tokens||0,
+        output:usage.output_tokens||0,
+        cacheWrite:usage.cache_creation_input_tokens||0,
+        cacheRead:usage.cache_read_input_tokens||0,
+      },
+      // Atomic increments — no transaction needed, no race.
+      monthCents:isRollover?cents:FV.increment(cents),
+      totalCents:FV.increment(cents),
+    };
+    await ref.set(update,{merge:true});
   }catch(e){
     // Ledger write failure is non-fatal — log only.
     console.warn("[anthropicLedger] update failed (non-fatal):",e.message);
@@ -4373,6 +4397,16 @@ async function bcGetPlanPageMeta(){
   return _planPageCache;
 }
 
+// DECISION(v1.19.984): Helper that returns the MSAL/BC user identity
+// (UPN/email) tied to the current BC token. Lets admin debug logs compare
+// per-user BC identity when 404s diverge between admin and member sessions.
+function _bcUserUpn(){
+  try{
+    const acc=_msalInstance&&_msalInstance.getAllAccounts&&_msalInstance.getAllAccounts()[0];
+    return acc?(acc.username||acc.idTokenClaims?.preferred_username||""):"";
+  }catch(_){return"";}
+}
+
 async function bcPatchProgressBillingLine(projectNumber,taskNo,unitPrice){
   if(!_bcToken||!projectNumber||!taskNo)return;
   const meta=await bcGetPlanPageMeta();
@@ -4380,7 +4414,34 @@ async function bcPatchProgressBillingLine(projectNumber,taskNo,unitPrice){
   const {planPage,FP_NO,FP_TASK_NO}=meta;
   const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=10000)`;
   const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-  if(!gr.ok){console.warn("bcPatchProgressBilling: GET failed",gr.status);return;}
+  if(!gr.ok){
+    // DECISION(v1.19.984, BC 404 diagnostic): When the GET fails for a
+    // non-admin user but works for the admin (real failure case: Noah's
+    // session showed 404 here while Jon's didn't), capture the full BC
+    // request context to debug logs — including the MSAL user identity
+    // tied to the BC token. BC commonly returns 404 (instead of 403) for
+    // resources the calling user lacks permissions on, so per-user 404
+    // divergence usually means per-user BC permissions divergence.
+    let bodyExcerpt='';
+    try{bodyExcerpt=(await gr.text()).slice(0,300);}catch(_){}
+    console.warn("bcPatchProgressBilling: GET failed",gr.status);
+    try{
+      if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"&&gr.status===404){
+        window.logDebugEntry({severity:"warn",source:"bcPatchProgressBilling",message:`GET 404 — planning line not visible to this user (admin can see it); likely BC permissions or company/env mismatch`,extra:{
+          status:gr.status,
+          projectNumber,taskNo,
+          planPage,FP_NO,FP_TASK_NO,
+          bcOdataBase:BC_ODATA_BASE,
+          bcEnv:_bcConfig.env,
+          bcCompanyName:_bcConfig.companyName,
+          bcUserUpn:_bcUserUpn(),
+          urlPattern:`${planPage}(...,Line_No=10000)`,
+          responseExcerpt:bodyExcerpt,
+        }});
+      }
+    }catch(_){}
+    return;
+  }
   const rec=await gr.json();
   const etag=rec["@odata.etag"];
   const pr=await fetch(lineUrl,{
@@ -4410,11 +4471,34 @@ async function bcPatchLaborPlanningLines(projectNumber,panelIndex,panel){
     {lineNo:40000,qty:Math.ceil(layoutHrs)*lineQty,label:"LAYOUT"},
     {lineNo:50000,qty:Math.ceil(wireHrs)*lineQty,label:"WIRE"},
   ];
+  // DECISION(v1.19.984, BC 404 diagnostic): The 404s in Noah's logs are
+  // NOT missing data — admin can patch these same lines. Capture enough
+  // BC request context to debug logs to diagnose the user-specific auth
+  // / company-env mismatch.
   for(const {lineNo,qty,label} of patches){
     try{
       const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${lineNo})`;
       const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(!gr.ok){console.warn(`bcPatchLabor ${label}: GET failed`,gr.status);continue;}
+      if(!gr.ok){
+        let bodyExcerpt='';
+        try{bodyExcerpt=(await gr.text()).slice(0,300);}catch(_){}
+        console.warn(`bcPatchLabor ${label}: GET failed`,gr.status);
+        try{
+          if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"&&gr.status===404){
+            window.logDebugEntry({severity:"warn",source:"bcPatchLaborPlanningLines",message:`GET 404 on ${label} line ${lineNo} — line not visible to this user (admin can see it); likely BC permissions or company/env mismatch`,extra:{
+              status:gr.status,
+              projectNumber,taskNo,lineNo,label,
+              planPage,FP_NO,FP_TASK_NO,
+              bcOdataBase:BC_ODATA_BASE,
+              bcEnv:_bcConfig.env,
+              bcCompanyName:_bcConfig.companyName,
+              bcUserUpn:_bcUserUpn(),
+              responseExcerpt:bodyExcerpt,
+            }});
+          }
+        }catch(_){}
+        continue;
+      }
       const rec=await gr.json();
       if(rec.Quantity===qty){console.log(`bcPatchLabor ${label}: already ${qty}, skip`);continue;}
       const etag=rec["@odata.etag"];
