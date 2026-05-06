@@ -3943,6 +3943,68 @@ async function bcFuzzyLookup(partNumber){
     if(r4.items.length===1)return{match:r4.items[0],type:"fuzzy",suggestions:[]};
     if(r4.items.length>1)return{match:null,type:"fuzzy",suggestions:r4.items.slice(0,8)};
   }
+  // DECISION(v1.19.985): Steps 1-4 all use contains() — a literal substring
+  // filter. They MISS items where BC stores the part with internal punctuation
+  // (e.g. BC has "ABD-122-NUB" but extraction returned "ABD122NUB"). BC's
+  // OData doesn't expose a normalize/replace function we can call server-side,
+  // so the only way to find these is to fetch a broader candidate set with a
+  // prefix filter and normalize client-side.
+  //
+  // Strategy: use startswith() on the first 5 characters of the stripped PN
+  // across No, Vendor_Item_No, and Common_Item_No (ItemCard fields the basic
+  // /items endpoint can't reach), then strip punctuation from each candidate
+  // and compare against the normalized search PN. This catches:
+  //   - "ABD-122-NUB" when extraction reads "ABD122NUB"
+  //   - PNs stored only in Vendor_Item_No (BC's internal No is an SKU code)
+  //   - Period-separated variants like "ABC.123.XYZ"
+  // Real failure case: PRJ402091 row "ABD122NUB" — BC had it; steps 1-4 all
+  // returned empty because the stored value contained a separator.
+  if(stripped.length>=5){
+    const prefix=stripped.slice(0,5).replace(/'/g,"''");
+    const wantNorm=stripped.toUpperCase();
+    try{
+      const fields=["No","Vendor_Item_No","Common_Item_No"];
+      const fetched=await Promise.all(
+        fields.map(f=>_bcFetchItemsViaItemCard(`startswith(${f},'${prefix}')`,200,0).catch(()=>null))
+      );
+      const candidates=new Map();
+      for(const items of fetched){
+        if(!items)continue;
+        for(const it of items){if(it.number&&!candidates.has(it.number))candidates.set(it.number,it);}
+      }
+      const localNorm=s=>(s||"").replace(/[-\s\/\\.#_]+/g,"").toUpperCase();
+      const matches=[];
+      for(const it of candidates.values()){
+        if(localNorm(it.number)===wantNorm
+          ||localNorm(it._vendorItemNo||"")===wantNorm
+          ||localNorm(it._commonItemNo||"")===wantNorm){
+          matches.push(it);
+        }
+      }
+      if(matches.length===1){
+        console.log(`[bcFuzzyLookup] MATCH via normalized startswith: "${pn}" → BC No "${matches[0].number}" (${candidates.size} candidates scanned)`);
+        return{match:matches[0],type:"fuzzy-normalized",suggestions:[]};
+      }
+      if(matches.length>1){
+        return{match:null,type:"fuzzy-normalized",suggestions:matches.slice(0,8)};
+      }
+      // No matches even after normalize — log diagnostic for admin to spot
+      // systematic gaps. Surface to debug logs at info severity (not warn —
+      // legitimate "not in BC" parts will hit this path too).
+      try{
+        if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+          window.logDebugEntry({severity:"info",source:"bcFuzzyLookup",message:`No match for "${pn}" — scanned ${candidates.size} prefix candidates with no normalized hit`,extra:{
+            partNumber:pn,
+            stripped,
+            wantNorm,
+            prefix,
+            candidatesScanned:candidates.size,
+            sampleCandidateNos:[...candidates.keys()].slice(0,10),
+          }});
+        }
+      }catch(_){}
+    }catch(e){console.warn("bcFuzzyLookup normalized step failed:",e.message);}
+  }
   return{match:null,type:null,suggestions:[]};
 }
 
