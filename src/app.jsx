@@ -9068,8 +9068,10 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
 async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber){
   const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:300000});
   let payload;
+  let intendedPath;
   if(originalPdfPath&&pageNumber){
     payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
+    intendedPath="pdf-native";
   } else {
     // Image-fallback path — resize to ≤4500px PNG (matches direct path) and
     // strip the data URL prefix.
@@ -9078,6 +9080,7 @@ async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPat
     const b64=small.split(",")[1]||"";
     const isPng=small.startsWith("data:image/png");
     payload={imageBase64:b64,imageMediaType:isPng?"image/png":"image/jpeg",feedback:feedback||"",userNotes:userNotes||""};
+    intendedPath="image-fallback";
     // Region-learning multimodal context — pass through to the function so
     // the server call sees the same examples the client would have sent.
     try{
@@ -9090,13 +9093,32 @@ async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPat
       }
     }catch(_e){}
   }
+  const t0=Date.now();
   const result=await callable(payload);
+  const elapsedMs=Date.now()-t0;
   const data=result?.data||{};
   if(!data.raw){
     throw new Error("server: empty raw response from extractBomPage Cloud Function");
   }
-  console.log(`[BOM EXTRACT/server] ok path=${data.extractionPath} model=${data.modelUsed||"?"} text=${data.raw.length}c stop=${data.stopReason}`);
-  return _parseAndVerifyBomRaw(data.raw,data.extractionPath||(originalPdfPath?"pdf-native":"image-fallback"));
+  console.log(`[BOM EXTRACT/server] ok path=${data.extractionPath} model=${data.modelUsed||"?"} text=${data.raw.length}c stop=${data.stopReason} elapsedMs=${elapsedMs}`);
+  // v1.19.982: emit a remote-visible info log so admins can see server-path
+  // success on any user's machine (Settings → Open Debug Logs). Only logged
+  // on the FIRST page-extraction call per session to avoid log spam — set a
+  // session-scoped sentinel so subsequent calls only show errors/fallbacks.
+  try{
+    if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+      if(!window._bomExtractServerOkLogged){
+        window._bomExtractServerOkLogged=true;
+        window.logDebugEntry({severity:"info",source:"extractBomPage",message:`server path OK (${data.extractionPath})`,extra:{
+          extractionPath:data.extractionPath,modelUsed:data.modelUsed,
+          stopReason:data.stopReason,rawChars:data.raw.length,elapsedMs,
+          intendedPath,hasPdf:!!(originalPdfPath&&pageNumber),pageNumber:pageNumber||null,
+          usage:data.usage||null,
+        }});
+      }
+    }
+  }catch(_){}
+  return _parseAndVerifyBomRaw(data.raw,data.extractionPath||intendedPath);
 }
 
 async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=null,pageNumber=null){
@@ -9111,7 +9133,22 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   try{
     return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber);
   }catch(serverErr){
-    console.warn(`[BOM EXTRACT] server path failed: ${serverErr?.message||serverErr} — falling back to direct API`);
+    const msg=serverErr?.message||String(serverErr);
+    console.warn(`[BOM EXTRACT] server path failed: ${msg} — falling back to direct API`);
+    // v1.19.982: emit a WARN-severity remote log so admins see fallback
+    // events on any user's machine without console access. The console.warn
+    // above only adds a breadcrumb; this writes its own debug log entry.
+    try{
+      if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+        window.logDebugEntry({severity:"warn",source:"extractBomPage",message:`server path FAILED — falling back to direct API: ${msg.slice(0,200)}`,extra:{
+          serverErrorMessage:msg,
+          serverErrorCode:serverErr?.code||null,
+          serverErrorDetails:serverErr?.details||null,
+          hasPdf:!!(originalPdfPath&&pageNumber),pageNumber:pageNumber||null,
+          originalPdfPath:originalPdfPath||null,
+        }});
+      }
+    }catch(_){}
   }
 
   // DECISION(v1.19.959, BULLETPROOF BOM extraction): If the page has a retained
