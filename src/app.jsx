@@ -34685,6 +34685,210 @@ function APISetupModal({uid,onClose}){
   );
 }
 
+// ── COST ANALYSIS MODAL ──
+// DECISION(v1.19.987): Admin-only cost dashboard. First version surfaces team-
+// wide Anthropic spend (this month / all-time), per-user breakdown, project +
+// panel counts, and derived cost-per-job metrics. Sources:
+//   • users/{uid}/config/anthropicLedger — per-user ledger (one doc per
+//     team member). Schema: monthKey, monthCents, totalCents, lastCallAt,
+//     lastCallModel, lastCallCents, lastCallUsage. Updated by both client
+//     _recordAnthropicUsage (extraction, validation) and the server-side
+//     extractBomPage Cloud Function.
+//   • companies/{cid}/projects — project + panel counts.
+// Future: per-project cost attribution (needs new ledger field or new
+// collection at companies/{cid}/projects/{pid}/costs); pricing-scraper
+// spend; SendGrid usage; storage usage. The "Coming Soon" section
+// communicates that this is an evolving view.
+function CostAnalysisModal({onClose,uid,companyId}){
+  const [memberLedgers,setMemberLedgers]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [err,setErr]=useState(null);
+  const [counts,setCounts]=useState({thisMonthProjects:0,allTimeProjects:0,allTimePanels:0,thisMonthPanels:0});
+
+  useEffect(()=>{
+    if(!companyId){setErr("Cost Analysis requires company membership.");setLoading(false);return;}
+    let cancelled=false;
+    (async()=>{
+      try{
+        // 1. Pull every member's anthropicLedger.
+        const memSnap=await fbDb.collection(`companies/${companyId}/members`).get();
+        const ledgers=await Promise.all(memSnap.docs.map(async m=>{
+          const memUid=m.id;
+          const memData=m.data()||{};
+          let led=null;
+          try{
+            const d=await fbDb.doc(`users/${memUid}/config/anthropicLedger`).get();
+            led=d.exists?d.data():null;
+          }catch(_){}
+          return{
+            uid:memUid,
+            email:memData.email||"",
+            role:memData.role||"",
+            ledger:led,
+          };
+        }));
+        if(cancelled)return;
+        // Sort by this-month spend desc
+        const curMonth=new Date().toISOString().slice(0,7);
+        ledgers.sort((a,b)=>{
+          const am=a.ledger?.monthKey===curMonth?(a.ledger?.monthCents||0):0;
+          const bm=b.ledger?.monthKey===curMonth?(b.ledger?.monthCents||0):0;
+          return bm-am;
+        });
+        setMemberLedgers(ledgers);
+
+        // 2. Project + panel counts (this month vs all-time).
+        const projSnap=await fbDb.collection(`companies/${companyId}/projects`).get();
+        const monthStart=(()=>{const d=new Date();d.setUTCDate(1);d.setUTCHours(0,0,0,0);return d.getTime();})();
+        let thisMonthProjects=0,allTimePanels=0,thisMonthPanels=0;
+        projSnap.docs.forEach(d=>{
+          const data=d.data()||{};
+          const pans=data.panels||[];
+          allTimePanels+=pans.length;
+          if((data.createdAt||0)>=monthStart)thisMonthProjects++;
+          // Count panels whose extraction stamp lives in this month.
+          for(const p of pans){
+            const ts=p?.extractionReport?.timestamp||p?.updatedAt||0;
+            if(ts>=monthStart)thisMonthPanels++;
+          }
+        });
+        if(cancelled)return;
+        setCounts({thisMonthProjects,allTimeProjects:projSnap.size,allTimePanels,thisMonthPanels});
+      }catch(e){
+        if(!cancelled)setErr(e?.message||"Load failed");
+      }finally{
+        if(!cancelled)setLoading(false);
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[companyId]);
+
+  const curMonth=new Date().toISOString().slice(0,7);
+  // Aggregate totals
+  const monthCents=memberLedgers.reduce((s,m)=>{
+    if(!m.ledger)return s;
+    if(m.ledger.monthKey===curMonth)return s+(m.ledger.monthCents||0);
+    return s;
+  },0);
+  const totalCents=memberLedgers.reduce((s,m)=>s+((m.ledger?.totalCents)||0),0);
+  const monthDollars=monthCents/100;
+  const totalDollars=totalCents/100;
+  const cap=300; // Workspace spend limit (matches the toolbar pill default)
+  const monthPct=Math.min(100,Math.round((monthDollars/cap)*100));
+  const costPerProjMonth=counts.thisMonthProjects>0?(monthDollars/counts.thisMonthProjects):null;
+  const costPerPanelMonth=counts.thisMonthPanels>0?(monthDollars/counts.thisMonthPanels):null;
+  const avgCostPerProjAllTime=counts.allTimeProjects>0?(totalDollars/counts.allTimeProjects):null;
+  const avgCostPerPanelAllTime=counts.allTimePanels>0?(totalDollars/counts.allTimePanels):null;
+
+  const fmtUsd=v=>v==null?"—":"$"+v.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtTs=ts=>{if(!ts)return"—";try{return new Date(ts).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});}catch(_){return"—";}};
+
+  // Determine month-cents pill tone (matches toolbar pill v1.19.965)
+  const pillTone=monthPct>=90?{bg:"#3a0a0a",border:"#ef4444aa",fg:"#fca5a5"}
+                :monthPct>=50?{bg:"#3a1f00",border:"#f59e0baa",fg:"#fcd34d"}
+                :{bg:"#0d2a18",border:"#22c55e88",fg:"#86efac"};
+
+  return ReactDOM.createPortal(
+    <div onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"16px"}}>
+      <div style={{...card(),width:"100%",maxWidth:1000,margin:"16px 0"}} onMouseDown={e=>e.stopPropagation()}>
+        <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
+          <div style={{fontSize:28,fontWeight:900,flex:1}}>📊 ARC Cost Analysis</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:18}}>Anthropic spend, jobs scanned, and derived cost metrics — admin only. New metrics will be added over time.</div>
+
+        {loading&&<div style={{textAlign:"center",color:C.muted,padding:"40px 0"}}>Loading…</div>}
+        {err&&<div style={{padding:"10px 14px",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:8,color:C.red,fontSize:13,marginBottom:12}}>⚠ {err}</div>}
+
+        {!loading&&!err&&(<>
+          {/* THIS MONTH */}
+          <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"14px 16px",marginBottom:14}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.sub,textTransform:"uppercase",letterSpacing:0.6,flex:1}}>This Month — {curMonth}</span>
+              <span style={{fontSize:11,fontWeight:600,color:pillTone.fg,padding:"3px 10px",borderRadius:14,background:pillTone.bg,border:`1px solid ${pillTone.border}`}}>{monthPct}% of ${cap} cap</span>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Anthropic Spend</div><div style={{fontSize:24,fontWeight:800,color:pillTone.fg,lineHeight:1.1,marginTop:4}}>{fmtUsd(monthDollars)}</div></div>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Projects</div><div style={{fontSize:24,fontWeight:800,color:C.text,lineHeight:1.1,marginTop:4}}>{counts.thisMonthProjects}</div></div>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Panels Extracted</div><div style={{fontSize:24,fontWeight:800,color:C.text,lineHeight:1.1,marginTop:4}}>{counts.thisMonthPanels}</div></div>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Cost / Project</div><div style={{fontSize:24,fontWeight:800,color:C.text,lineHeight:1.1,marginTop:4}}>{costPerProjMonth!=null?fmtUsd(costPerProjMonth):"—"}</div></div>
+            </div>
+            {costPerPanelMonth!=null&&<div style={{fontSize:11,color:C.muted,marginTop:10}}>Cost per panel extraction: <strong style={{color:C.sub}}>{fmtUsd(costPerPanelMonth)}</strong></div>}
+          </div>
+
+          {/* ALL TIME */}
+          <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"14px 16px",marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.sub,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10}}>All Time</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Total Spend</div><div style={{fontSize:22,fontWeight:800,color:C.text,lineHeight:1.1,marginTop:4}}>{fmtUsd(totalDollars)}</div></div>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Projects</div><div style={{fontSize:22,fontWeight:800,color:C.text,lineHeight:1.1,marginTop:4}}>{counts.allTimeProjects}</div></div>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Panels</div><div style={{fontSize:22,fontWeight:800,color:C.text,lineHeight:1.1,marginTop:4}}>{counts.allTimePanels}</div></div>
+              <div><div style={{fontSize:10,color:C.muted,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Avg / Project</div><div style={{fontSize:22,fontWeight:800,color:C.text,lineHeight:1.1,marginTop:4}}>{avgCostPerProjAllTime!=null?fmtUsd(avgCostPerProjAllTime):"—"}</div></div>
+            </div>
+            {avgCostPerPanelAllTime!=null&&<div style={{fontSize:11,color:C.muted,marginTop:10}}>Avg cost per panel: <strong style={{color:C.sub}}>{fmtUsd(avgCostPerPanelAllTime)}</strong></div>}
+          </div>
+
+          {/* PER USER */}
+          <div style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"14px 16px",marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.sub,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10}}>Per Member ({memberLedgers.length})</div>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead>
+                  <tr style={{background:"#13131e"}}>
+                    <th style={{textAlign:"left",padding:"6px 10px",color:C.muted,fontWeight:700,letterSpacing:0.4}}>Member</th>
+                    <th style={{textAlign:"left",padding:"6px 10px",color:C.muted,fontWeight:700,letterSpacing:0.4}}>Role</th>
+                    <th style={{textAlign:"right",padding:"6px 10px",color:C.muted,fontWeight:700,letterSpacing:0.4}}>This Month</th>
+                    <th style={{textAlign:"right",padding:"6px 10px",color:C.muted,fontWeight:700,letterSpacing:0.4}}>All Time</th>
+                    <th style={{textAlign:"left",padding:"6px 10px",color:C.muted,fontWeight:700,letterSpacing:0.4}}>Last Call</th>
+                    <th style={{textAlign:"left",padding:"6px 10px",color:C.muted,fontWeight:700,letterSpacing:0.4}}>Last Model</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {memberLedgers.map(m=>{
+                    const led=m.ledger;
+                    const monthCents=led&&led.monthKey===curMonth?(led.monthCents||0):0;
+                    const tot=led?.totalCents||0;
+                    return(
+                      <tr key={m.uid} style={{borderTop:`1px solid ${C.border}`}}>
+                        <td style={{padding:"6px 10px",color:C.text,fontWeight:600}}>{m.email||m.uid.slice(0,8)}</td>
+                        <td style={{padding:"6px 10px",color:C.muted,fontSize:11}}>{m.role||"—"}</td>
+                        <td style={{padding:"6px 10px",textAlign:"right",color:monthCents>0?C.text:C.muted,fontFamily:"ui-monospace,Menlo,monospace"}}>{fmtUsd(monthCents/100)}</td>
+                        <td style={{padding:"6px 10px",textAlign:"right",color:tot>0?C.text:C.muted,fontFamily:"ui-monospace,Menlo,monospace"}}>{fmtUsd(tot/100)}</td>
+                        <td style={{padding:"6px 10px",color:C.muted,fontSize:11}}>{fmtTs(led?.lastCallAt)}</td>
+                        <td style={{padding:"6px 10px",color:C.muted,fontSize:11}}>{led?.lastCallModel||"—"}</td>
+                      </tr>
+                    );
+                  })}
+                  {memberLedgers.length===0&&(
+                    <tr><td colSpan={6} style={{padding:"14px 10px",textAlign:"center",color:C.muted,fontSize:12}}>No team members or no ledger data yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* COMING SOON */}
+          <div style={{background:"#0a0a14",border:`1px dashed ${C.border}`,borderRadius:8,padding:"12px 16px",marginBottom:8}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.6,marginBottom:6}}>Coming Soon</div>
+            <ul style={{margin:0,paddingLeft:18,fontSize:12,color:C.muted,lineHeight:1.7}}>
+              <li>Per-project cost attribution (today: only team aggregates)</li>
+              <li>Per-panel cost attribution</li>
+              <li>Pricing-scraper API costs (Mouser, DigiKey, Codale)</li>
+              <li>SendGrid email volume / cost</li>
+              <li>Firebase Storage usage</li>
+              <li>BC operation volume + 4xx error rate</li>
+              <li>Month-over-month spend trend</li>
+            </ul>
+          </div>
+
+          <div style={{fontSize:10,color:C.muted,textAlign:"right",fontStyle:"italic"}}>Reads users/{"{uid}"}/config/anthropicLedger per member · companies/{"{cid}"}/projects · v1.19.987</div>
+        </>)}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ── CUSTOMER TEMPLATES MODAL (Level 3 Session 1 UI) ──
 // DECISION(v1.19.656): View and edit per-customer title-block templates. The data model
 // was established in v1.19.655 (auto-learning from corrections). This UI makes the
@@ -38630,6 +38834,7 @@ function App({user}){
   const [showNew,setShowNew]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
   const [showApiSetup,setShowApiSetup]=useState(false);
+  const [showCostAnalysis,setShowCostAnalysis]=useState(false);
   const [showAbout,setShowAbout]=useState(false);
   const [showConfig,setShowConfig]=useState(false);
   const [showReportIssue,setShowReportIssue]=useState(false);
@@ -39682,6 +39887,7 @@ INSTRUCTIONS:
               </div>
               <button onClick={()=>{setShowSettings(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>⚙ Settings</button>
               {userRole==="admin"&&<button onClick={()=>{setShowApiSetup(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>🔌 API Setup</button>}
+              {userRole==="admin"&&<button onClick={()=>{setShowCostAnalysis(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📊 Cost Analysis</button>}
               <button data-tour="config-btn" onClick={()=>{setShowConfig(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>🔧 Configuration</button>
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
               <button data-tour="training-btn" onClick={()=>{startTour("full");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null&&tourMode==="full"?"#172554":"none",border:"none",color:tourStep!==null&&tourMode==="full"?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null&&tourMode==="full"?700:500}} onMouseEnter={e=>{if(!(tourStep!==null&&tourMode==="full"))e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(!(tourStep!==null&&tourMode==="full"))e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&(tourStep===null||tourMode!=="full")){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume Full Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Full Training (Engineering)'}</button>
@@ -39824,6 +40030,7 @@ INSTRUCTIONS:
       {copyProject_&&<CopyProjectModal project={copyProject_} uid={user.uid} onCopied={p=>{setCopyProject(null);setProjects(ps=>[p,...ps]);handleOpen(p);}} onClose={()=>setCopyProject(null)}/>}
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)} onShowDebugLogs={()=>setShowDebugLogs(true)}/>}
       {showApiSetup&&<APISetupModal uid={user.uid} onClose={()=>setShowApiSetup(false)}/>}
+      {showCostAnalysis&&<CostAnalysisModal uid={user.uid} companyId={companyId} onClose={()=>setShowCostAnalysis(false)}/>}
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
       {showCustomerTemplates&&<CustomerTemplatesModal uid={user.uid} onClose={()=>setShowCustomerTemplates(false)}/>}
       {showConfig&&<PricingConfigModal uid={user.uid} onClose={()=>setShowConfig(false)} onLogoChange={url=>{setCompanyLogo(url||null);_appCtx.company={...(_appCtx.company||{}),logoUrl:url||null};}}/>}
