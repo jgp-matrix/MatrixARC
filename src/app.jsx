@@ -40598,6 +40598,28 @@ function SupplierPortalPage({token}){
 
   async function handleSubmit(){
     if(uploading)return;
+    // DECISION(v1.19.988, supplier-portal lead-time fix): Auto-propagate the
+    // order-level "Fill all Lead Times" value into any blank per-row entries
+    // BEFORE validating. The original auto-fill only fired on the order-level
+    // input's onBlur — which is unreliable on mobile (some keyboards don't
+    // emit blur when the user taps Submit directly) and confusing on desktop
+    // when the supplier types in the prominent fill-all field then clicks
+    // Submit without first clicking elsewhere. Real failure: supplier reports
+    // "I can't enter lead times" but actually they DID enter the order-level
+    // value; it just never made it to the per-row state. We now propagate
+    // here at submit time so the validation never spuriously rejects.
+    let _itemLeadTimesEffective=itemLeadTimes;
+    if(leadTime&&leadTime.trim()){
+      const filled={};
+      const lineItems=info?.lineItems||[];
+      lineItems.forEach((_,i)=>{
+        const cur=itemLeadTimes[i];
+        if(cur===undefined||cur===null||String(cur).trim()===""){filled[i]=leadTime.trim();}
+        else filled[i]=cur;
+      });
+      _itemLeadTimesEffective=filled;
+      setItemLeadTimes(filled); // commit to state so UI reflects post-submit
+    }
     // DECISION(v1.19.692): In leadTimeOnly mode, validate per-line lead times instead of the
     // bulk order-lead-time field. Each non-cannot-supply line must have a per-item lead time.
     if(info?.leadTimeOnly){
@@ -40605,12 +40627,12 @@ function SupplierPortalPage({token}){
       const missing=[];
       lineItems.forEach((item,i)=>{
         if(cannotSupply[i]===true)return;
-        const v=itemLeadTimes[i];
+        const v=_itemLeadTimesEffective[i];
         if(v===undefined||v===null||String(v).trim()===""||!(+v>0)){
           missing.push((item.partNumber||"")+" (row "+(i+1)+")");
         }
       });
-      if(missing.length){arcAlert("Please provide a lead time for every item:\n\n"+missing.slice(0,10).join("\n")+(missing.length>10?`\n…and ${missing.length-10} more`:""));return;}
+      if(missing.length){arcAlert("Please provide a lead time for every item — either fill in each row, or type a number into the yellow \"Fill all Lead Times at once\" box at the top.\n\nMissing on:\n"+missing.slice(0,10).join("\n")+(missing.length>10?`\n…and ${missing.length-10} more`:""));return;}
     }else{
       if(!leadTime.trim()){arcAlert("Please enter the lead time in days ARO for this order before submitting.");return;}
     }
@@ -40635,7 +40657,7 @@ function SupplierPortalPage({token}){
         return{
           ...item,
           unitPrice:cannotSupply[i]===true?null:(unitPrices[i]!==undefined&&unitPrices[i]!==''?parseFloat(unitPrices[i])||null:null),
-          leadTimeDays:cannotSupply[i]===true?null:(itemLeadTimes[i]!==undefined&&itemLeadTimes[i]!==''?parseInt(itemLeadTimes[i])||null:orderLeadTime),
+          leadTimeDays:cannotSupply[i]===true?null:(_itemLeadTimesEffective[i]!==undefined&&_itemLeadTimesEffective[i]!==''?parseInt(_itemLeadTimesEffective[i])||null:orderLeadTime),
           cannotSupply:cannotSupply[i]===true,
           supplierPartNumber:spn,
           supplierLineNumber:supplierLineNums[i]||null,
@@ -40790,21 +40812,28 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               <strong>Fill all Lead Times at once</strong> — type a value and it will auto-fill any blank rows below. You can still override per line.
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <input type="number" min="0" step="1" placeholder="e.g. 14" value={leadTime}
-                onChange={e=>setLeadTime(e.target.value)}
-                onFocus={e=>e.target.select()}
-                onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                onBlur={e=>{
-                  const val=e.target.value;
-                  if(val.trim()){
+              {/* DECISION(v1.19.988): type="number" has known input quirks on
+                  Android Chrome / iOS Safari — switched to text+inputMode for
+                  reliable typing on mobile. Auto-fill now also fires on every
+                  onChange (not just onBlur) so suppliers who type and tap
+                  Submit immediately don't lose the value. */}
+              <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="e.g. 14" value={leadTime}
+                onChange={e=>{
+                  const v=e.target.value;
+                  if(v!==''&&!/^\d*$/.test(v))return; // reject non-digit characters
+                  setLeadTime(v);
+                  // Live propagate to blank per-row entries so submit always sees it.
+                  if(v.trim()){
                     const lineItems=info?.lineItems||[];
                     setItemLeadTimes(prev=>{
                       const next={...prev};
-                      lineItems.forEach((_,i)=>{if(!next[i]||next[i]==='')next[i]=val;});
+                      lineItems.forEach((_,i)=>{if(!next[i]||next[i]==='')next[i]=v;});
                       return next;
                     });
                   }
                 }}
+                onFocus={e=>e.target.select()}
+                onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
                 style={{width:90,...inp,border:`1px solid ${(!info?.leadTimeOnly&&!leadTime.trim())?"#fca5a5":"#d97706"}`,background:"#fff"}}/>
               <span style={{fontSize:13,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>days ARO {!info?.leadTimeOnly&&<span style={{color:"#dc2626"}}>*</span>}</span>
             </div>
@@ -40929,13 +40958,21 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                         </div>)}
                       </td>
                       <td style={{padding:"8px 12px",textAlign:"center"}}>
-                        {!cant&&<input type="number" min="0" step="1" placeholder="—"
-                          value={itemLeadTimes[i]??''}
-                          onChange={e=>setItemLeadTimes(prev=>({...prev,[i]:e.target.value}))}
-                          onFocus={e=>e.target.select()}
-                          onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                          style={{width:70,textAlign:"center",...inp}}
-                        />}
+                        {/* DECISION(v1.19.988): Mobile-friendly input + visible
+                            placeholder when "No Bid" is on so suppliers don't
+                            think the field is broken — previously the cell was
+                            blank making it look like ARC had a bug. */}
+                        {cant?(
+                          <span style={{fontSize:12,color:muted,fontStyle:"italic"}}>n/a</span>
+                        ):(
+                          <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="days"
+                            value={itemLeadTimes[i]??''}
+                            onChange={e=>{const v=e.target.value;if(v!==''&&!/^\d*$/.test(v))return;setItemLeadTimes(prev=>({...prev,[i]:v}));}}
+                            onFocus={e=>e.target.select()}
+                            onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
+                            style={{width:80,textAlign:"center",...inp}}
+                          />
+                        )}
                       </td>
                       <td style={{padding:"8px 12px",textAlign:"center"}}>
                         <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer",userSelect:"none"}}>
