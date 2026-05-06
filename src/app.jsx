@@ -23775,6 +23775,31 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7,marginRight:6}}>
               BILL OF MATERIALS — {(panel.bom||[]).length} items
             </div>
+            {/* DECISION(v1.19.991, audit Item L11): Schematic ↔ BOM count
+                reconciliation pill. Surfaces when the schematic shows
+                reference designators (M1, CB1, PB10, etc.) that don't
+                appear in the BOM, OR when the BOM has parts the schematic
+                doesn't. Both directions matter — first catches missing
+                BOM rows; second catches ARC misclassifying a row's `notes`
+                tag. Source of truth: panel.validation.unaccountedTags +
+                panel.validation.missingFromSchematic. Click opens the
+                Compliance / Validation modal which details every row. */}
+            {(()=>{
+              const v=panel.validation;
+              if(!v)return null;
+              const unaccounted=Array.isArray(v.unaccountedTags)?v.unaccountedTags:[];
+              const acceptedSet=new Set((panel.wiringAccepted||[]).map(String));
+              const missingFromSchematic=Array.isArray(v.missingFromSchematic)?v.missingFromSchematic.filter(m=>!acceptedSet.has(String(m.id))):[];
+              const totalDelta=unaccounted.length+missingFromSchematic.length;
+              if(totalDelta===0)return null;
+              const tip=`Schematic shows ${unaccounted.length} tag${unaccounted.length===1?"":"s"} not in the BOM; BOM has ${missingFromSchematic.length} row${missingFromSchematic.length===1?"":"s"} not referenced on the schematic. Common causes: (a) a BOM row is missing for a real device on the schematic, (b) the AI tagged a row's reference designator into the wrong column, (c) the device is intentionally off-schematic (DIN rail, ducts, hardware).${unaccounted.length?"\n\nSchematic-only tags: "+unaccounted.slice(0,12).join(", ")+(unaccounted.length>12?` (+${unaccounted.length-12} more)`:""):""}`;
+              return(
+                <span title={tip}
+                  style={{background:"#1e1b4b22",border:"1px solid #6366f188",color:"#a5b4fc",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
+                  ⚖ Sch↔BOM: {unaccounted.length>0?`${unaccounted.length} schematic-only`:""}{unaccounted.length>0&&missingFromSchematic.length>0?" · ":""}{missingFromSchematic.length>0?`${missingFromSchematic.length} BOM-only`:""}
+                </span>
+              );
+            })()}
             {/* DECISION(v1.19.980): Extraction-path pill — surfaces whether the
                 AI used the high-accuracy PDF native input or fell back to the
                 lower-accuracy image pipeline. Lets users diagnose why two
