@@ -11593,10 +11593,56 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         let pageItems=[],pageQs=[];
         let pageRejectReasons=[];
         let pageExtractionPath=null;
+        // DECISION(v1.19.992, audit Item L3): Auto-retry tiebreaker. After
+        // every extraction unit, if the verification flagged a count mismatch
+        // or sequence gap (e.g. items 41-50 missing in a multi-column BOM),
+        // automatically re-extract the unit ONCE with structured feedback
+        // describing the gap. If the retry yields more items, use it instead.
+        // This catches the silent "missed an entire BOM box on the right side
+        // of the page" failure mode without requiring the user to spot it.
+        let pageRetryAttempts=0;
         for(const unit of units){
           const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):userNotes;
-          const result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber);
+          let result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber);
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
+          // L3 retry check
+          const verif=result?.extractionVerification;
+          const shouldRetry=verif&&verif.status==="needs-review"&&pageRetryAttempts<1;
+          if(shouldRetry){
+            const reasons=[];
+            if(verif.countMismatch)reasons.push(`Your previous read returned ${verif.extractedCount} items but you reported detectedLineCount=${verif.detectedLineCount}. The numbers should match — recount and re-extract every BOM row.`);
+            if(verif.missingFromStart)reasons.push(`Items 1..${verif.missingFromStart} appear to be MISSING from your previous read — the smallest itemNo you returned was ${verif.missingFromStart+1}. Look for an additional BOM box/column to the LEFT or ABOVE the one you scanned. Multi-column BOMs are common on D-size drawings.`);
+            if(Array.isArray(verif.sequenceGaps)&&verif.sequenceGaps.length>0){
+              const sample=verif.sequenceGaps.slice(0,15).join(", ");
+              reasons.push(`Sequence gaps in your previous read — items ${sample}${verif.sequenceGaps.length>15?` (+${verif.sequenceGaps.length-15} more)`:""} are missing. Re-scan the entire page including any BOM boxes that may continue from a separate area.`);
+            }
+            if(reasons.length){
+              const retryFeedback=`AUTO-RETRY (your previous extraction was flagged for review):\n\n${reasons.join("\n\n")}\n\nThis is a SECOND PASS — you have full memory of your previous attempt. Identify which BOM rows you missed and capture them this time. Specifically look for additional BOM boxes/columns elsewhere on the page that you may have skipped.`;
+              console.warn(`[BOM EXTRACT] L3 auto-retry triggered for page "${pg.name||pgIdx+1}": ${reasons[0]}`);
+              pageRetryAttempts++;
+              const retryResult=await extractBomPage(unit.dataUrl,retryFeedback,notes,unit.originalPdfPath,unit.pageNumber);
+              if(retryResult?.extractionPath){_extractionPathsSeen.add(retryResult.extractionPath);pageExtractionPath=retryResult.extractionPath;}
+              const firstCount=(result.items||[]).length;
+              const retryCount=(retryResult.items||[]).length;
+              if(retryCount>firstCount){
+                console.log(`[BOM EXTRACT] L3 retry SUCCESS — first attempt: ${firstCount} items, retry: ${retryCount} items. Using retry result.`);
+                // Tag retry result items for admin visibility
+                if(Array.isArray(retryResult.items))retryResult.items.forEach(it=>{it._extractionRetried=true;});
+                result=retryResult;
+                try{
+                  if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+                    window.logDebugEntry({severity:"info",source:"extractBomPage(L3 retry)",message:`L3 auto-retry produced ${retryCount-firstCount} additional row(s) on page "${pg.name||pgIdx+1}" — first pass missed them`,extra:{
+                      pageId:pg.id,pageName:pg.name,
+                      firstCount,retryCount,
+                      reasons,
+                    }});
+                  }
+                }catch(_){}
+              } else {
+                console.log(`[BOM EXTRACT] L3 retry produced ${retryCount} items vs original ${firstCount} — keeping original (no improvement).`);
+              }
+            }
+          }
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
