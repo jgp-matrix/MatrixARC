@@ -1,6 +1,19 @@
 
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
+// DECISION(v1.19.990): Centralized Anthropic model registry — mirrors
+// functions/models.js. Single source of truth for every Anthropic alias
+// the client invokes. The earlier model-deprecation outage (v1.19.989)
+// happened because one literal in functions/index.js had drifted from the
+// rest of the codebase. Now: bump these constants to roll a new model
+// across the whole app.
+const ANTHROPIC_MODELS={
+  OPUS:"claude-opus-4-6",
+  SONNET:"claude-sonnet-4-6",
+  HAIKU:"claude-haiku-4-5",
+  HAIKU_DATED:"claude-haiku-4-5-20251001",
+};
+
 // ── JOKE ENGINE — no repeat jokes per user, shuffled queue, persisted in localStorage ──
 const _ARC_JOKES=[
   {setup:"Why did the electrician break up with the neutral wire?",punchline:"There was no spark between them."},
@@ -2055,12 +2068,12 @@ async function apiCall(body){
       const r=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-opus-4-6",...body})
+        body:JSON.stringify({model:ANTHROPIC_MODELS.OPUS,...body})
       });
       const d=await r.json();
       if(r.ok){
         // v1.19.965: record per-call usage to the spend ledger (best-effort).
-        _recordAnthropicUsage(d.model||body.model||"claude-opus-4-6",d.usage);
+        _recordAnthropicUsage(d.model||body.model||ANTHROPIC_MODELS.OPUS,d.usage);
         return d.content?.[0]?.text||"";
       }
       // Permanent errors: never retry
@@ -9362,7 +9375,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
         body:JSON.stringify({
-          model:"claude-opus-4-6",
+          model:ANTHROPIC_MODELS.OPUS,
           max_tokens:16000,
           thinking:{type:"enabled",budget_tokens:4000},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
@@ -9381,7 +9394,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
         console.log("BOM extraction (PDF) response:",raw.length,"chars, stop_reason:",d.stop_reason);
         // v1.19.965: record per-call usage to spend ledger (best-effort).
-        _recordAnthropicUsage(d.model||"claude-opus-4-6",d.usage);
+        _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
         // Reuse the same parse logic as the image path. Wrap in a small helper-style block.
         try{
           const cleaned=raw.replace(/```json|```/gi,"").trim();
@@ -9532,7 +9545,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
     method:"POST",
     headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
     body:JSON.stringify({
-      model:"claude-opus-4-6",
+      model:ANTHROPIC_MODELS.OPUS,
       max_tokens:16000,
       thinking:{type:"enabled",budget_tokens:4000},
       system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
@@ -9547,7 +9560,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   if(!resp.ok)throw new Error(d.error?.message||"API error");
   if(d.stop_reason==="max_tokens")console.warn("BOM extraction: response TRUNCATED (hit max_tokens limit) — some items may be lost");
   // v1.19.965: record per-call usage to spend ledger (best-effort).
-  _recordAnthropicUsage(d.model||"claude-opus-4-6",d.usage);
+  _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
   // Find the text block (thinking blocks come first)
   const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
   console.log("BOM extraction response:",raw.length,"chars, stop_reason:",d.stop_reason);
@@ -9880,7 +9893,7 @@ async function selfCorrectBomRowsWithSnippets(bom,pages,onProgress){
             // Haiku was returning adjacent-row data on tight single-row crops (couldn't resolve
             // small-text OCR accurately). Sonnet's visual reasoning on small crops is materially
             // better. Cost goes from ~$0.15 to ~$2 per 60-row BOM — negligible for a quoting tool.
-            model:"claude-sonnet-4-6",
+            model:ANTHROPIC_MODELS.SONNET,
             max_tokens:600,
             messages:[{role:"user",content:[
               {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -10012,7 +10025,7 @@ ${JSON.stringify(list)}
 
 Return ONLY a JSON array: [{"id":"...","status":"verified|plausible|suspect","note":"brief reason"}]`;
   try{
-    const raw=await apiCall({model:"claude-haiku-4-5-20251001",max_tokens:4000,messages:[{role:"user",content:prompt}]});
+    const raw=await apiCall({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:4000,messages:[{role:"user",content:prompt}]});
     const m=raw.replace(/```json|```/g,"").trim().match(/\[[\s\S]*\]/);
     if(!m)return[];
     return JSON.parse(m[0]);
@@ -10043,7 +10056,7 @@ Return ONLY a JSON array: [{"id":"...","leadTimeDays":14,"reasoning":"brief"}]
 - Omit or skip entries you truly can't estimate (return empty for those ids)
 - Keep reasoning under 12 words`;
   try{
-    const raw=await apiCall({model:"claude-haiku-4-5-20251001",max_tokens:4000,messages:[{role:"user",content:prompt}]});
+    const raw=await apiCall({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:4000,messages:[{role:"user",content:prompt}]});
     const m=raw.replace(/```json|```/g,"").trim().match(/\[[\s\S]*\]/);
     if(!m)return[];
     return JSON.parse(m[0]);
@@ -10113,7 +10126,7 @@ If everything matches perfectly, return {"rowChecks": [{"id":"...","status":"ok"
 If you cannot read the image at all, return {"rowChecks": [], "missingRows": [], "error": "image unreadable"}.`;
   try{
     const raw=await apiCall({
-      model:"claude-opus-4-6",
+      model:ANTHROPIC_MODELS.OPUS,
       max_tokens:8000,
       thinking:{type:"enabled",budget_tokens:4000},
       messages:[{role:"user",content:[...imgSources,{type:"text",text:prompt}]}]
@@ -10256,7 +10269,7 @@ async function analyzeSchematicPage(dataUrl,userNotes="",deviceClassHint=""){
   if(!b64){console.warn("analyzeSchematicPage: skipping — empty or invalid dataUrl");return{tags:[],wireCount:0,wireTerminations:0};}
   const notesAppend=(userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}`:"")+(deviceClassHint||"");
   const raw=await apiCall({
-    model:"claude-sonnet-4-6",
+    model:ANTHROPIC_MODELS.SONNET,
     max_tokens:4000,
     messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -10379,7 +10392,7 @@ async function analyzeLayoutPage(dataUrl,layoutLearningHint="",userNotes=""){
   if(!b64){console.warn("analyzeLayoutPage: skipping — empty or invalid dataUrl");return null;}
   const notesAppend=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}`:"";
   const raw=await apiCall({
-    model:"claude-sonnet-4-6",
+    model:ANTHROPIC_MODELS.SONNET,
     max_tokens:4000,
     messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -10401,7 +10414,7 @@ async function analyzeBackpanelPage(dataUrl,userNotes=""){
   if(!b64){console.warn("analyzeBackpanelPage: skipping — empty or invalid dataUrl");return null;}
   const notesAppend=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}`:"";
   const raw=await apiCall({
-    model:"claude-haiku-4-5-20251001",
+    model:ANTHROPIC_MODELS.HAIKU_DATED,
     max_tokens:2000,
     messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -10423,7 +10436,7 @@ async function analyzeEnclosurePage(dataUrl,layoutLearningHint="",userNotes=""){
   if(!b64){console.warn("analyzeEnclosurePage: skipping — empty or invalid dataUrl");return null;}
   const notesAppend=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}`:"";
   const raw=await apiCall({
-    model:"claude-haiku-4-5-20251001",
+    model:ANTHROPIC_MODELS.HAIKU_DATED,
     max_tokens:2000,
     messages:[{role:"user",content:[
       {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -10647,7 +10660,7 @@ Examples:
 - Title block → {"columnHeaders":[],"rowCount":0,"structuralSummary":"Drawing title block with project number, drawing number, revision, scale, date.","signaturePhrase":"title block — std drawing identification"}`;
   try{
     const raw=await apiCall({
-      model:"claude-haiku-4-5",
+      model:ANTHROPIC_MODELS.HAIKU,
       max_tokens:300,
       messages:[{role:"user",content:[
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -10760,7 +10773,7 @@ async function detectZoomedPages(pagesOfType){
     const resp=await fetch("https://api.anthropic.com/v1/messages",{
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:200,messages:[{role:"user",content:[
+      body:JSON.stringify({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:200,messages:[{role:"user",content:[
         ...imageContent,
         {type:"text",text:`These ${batch.length} drawing pages are all tagged as the same type. Identify any that are clearly zoomed-in detail sections showing just a portion of content that already appears in full on another page. These zoomed pages duplicate information and should be excluded from processing.\nReturn ONLY JSON array: [{"idx":0,"isZoomed":false},{"idx":1,"isZoomed":true},...] for all ${batch.length} pages. If uncertain, set isZoomed:false.`}
       ]}]})
@@ -11334,7 +11347,7 @@ async function scanForHazardousLocation(pages){
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
         body:JSON.stringify({
-          model:"claude-sonnet-4-6",
+          model:ANTHROPIC_MODELS.SONNET,
           max_tokens:1000,
           messages:[{role:"user",content:[
             ...batch,
@@ -11976,7 +11989,7 @@ async function estimatePrices(items){
     const payload=batch.map(r=>({id:String(r.id),partNumber:r.partNumber||"",description:r.description||"",manufacturer:r.manufacturer||""}));
     try{
       const raw=await apiCall({
-        model:"claude-sonnet-4-6",
+        model:ANTHROPIC_MODELS.SONNET,
         max_tokens:3000,
         messages:[{role:"user",content:`${PRICING_PROMPT}\n${JSON.stringify(payload)}`}]
       });
@@ -12082,7 +12095,7 @@ async function detectPageTypes(dataUrl,learningExamples=[]){
       // downstream. Sonnet's structural-classification accuracy is materially better.
       // DECISION(v1.19.659): Lowered max_tokens to 100 now that sheetNo is removed from
       // the response — smaller JSON, no need for generous budget.
-      model:"claude-sonnet-4-6",
+      model:ANTHROPIC_MODELS.SONNET,
       max_tokens:100,
       messages:[{role:"user",content:[
         ...regionParts,
@@ -17611,7 +17624,7 @@ async function extractTitleBlock(dataUrl,opts){
       method:"POST",
       headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
-        model:"claude-opus-4-6",
+        model:ANTHROPIC_MODELS.OPUS,
         // DECISION(v1.19.637): max_tokens MUST exceed budget_tokens when thinking is enabled —
         // thinking tokens are drawn from the max budget. Previously max=2000, budget=2000 left
         // zero room for the JSON text response, so title block extraction silently returned
@@ -18369,7 +18382,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:"claude-haiku-4-5-20251001",max_tokens:80,messages:[{role:"user",content:[
+        body:JSON.stringify({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:80,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
           {type:"text",text:`This drawing has a BOM table. Return JSON with: table_top (y fraction where FIRST data row starts), table_bottom (y fraction where LAST data row ends), total_rows (count of data rows), pn_x (x fraction of center of part number/catalog column). All fractions of image dimensions 0.0-1.0.`}
         ]},{role:"assistant",content:[{type:"text",text:"{"}]}]})
@@ -25450,7 +25463,7 @@ Categories: PLC Processor, PLC I/O Module, VFD, Contactor, Relay, MCCB, Circuit 
 Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) where confident. Set unitPrice to 0 if unknown.`;
 
         const resp=await apiCall({
-          model:"claude-sonnet-4-6",
+          model:ANTHROPIC_MODELS.SONNET,
           max_tokens:4096,
           system:systemPrompt,
           messages:[{role:"user",content:`Generate a BOM for: ${query}`}]
@@ -26339,7 +26352,7 @@ ${fullText.slice(0,8000)}`;
         {type:'text',text:promptText}
       ];
       console.log('SQ PARSE: sending',pageImages.length,'page images +',fullText.length,'chars text to AI');
-      const raw=await apiCall({model:"claude-sonnet-4-6",max_tokens:8000,messages:[{role:"user",content:messageContent}]});
+      const raw=await apiCall({model:ANTHROPIC_MODELS.SONNET,max_tokens:8000,messages:[{role:"user",content:messageContent}]});
       console.log('SQ PARSE: AI response length:',raw.length,'chars, preview:',raw.slice(0,200));
       const aiElapsed=(Date.now()-parseMetaRef.current.aiStartMs)/1000;
       sqRecordAiTime(uid,aiElapsed).catch(()=>{}); // fire-and-forget, learn from this run
@@ -34265,7 +34278,7 @@ function APISetupModal({uid,onClose}){
   async function testApiKey(){
     const k=key.trim()||_apiKey;if(!k){setApiTestMsg({ok:false,text:"No API key entered"});return;}
     setApiTesting(true);setApiTestMsg(null);
-    try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:20,messages:[{role:"user",content:"Say OK"}]})});
+    try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:ANTHROPIC_MODELS.SONNET,max_tokens:20,messages:[{role:"user",content:"Say OK"}]})});
       const d=await r.json();if(r.ok)setApiTestMsg({ok:true,text:"API key is working — "+d.model});else setApiTestMsg({ok:false,text:(d.error?.message||"Error "+r.status)});
     }catch(e){setApiTestMsg({ok:false,text:e.message});}setApiTesting(false);
   }
@@ -35335,7 +35348,7 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs}){
     if(!k){setApiTestMsg({ok:false,text:"No API key entered"});return;}
     setApiTesting(true);setApiTestMsg(null);
     try{
-      const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:20,messages:[{role:"user",content:"Say OK"}]})});
+      const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":k,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify({model:ANTHROPIC_MODELS.SONNET,max_tokens:20,messages:[{role:"user",content:"Say OK"}]})});
       const d=await r.json();
       if(r.ok){setApiTestMsg({ok:true,text:"API key is working — "+d.model});}
       else{setApiTestMsg({ok:false,text:(d.error?.message||"Error "+r.status)});}
