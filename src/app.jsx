@@ -1389,6 +1389,28 @@ async function ensureMsal(){
   }catch(e){console.warn("MSAL init failed:",e);return null;}
 }
 
+// DECISION(v1.19.986, audit Item J): Track the MSAL account that issued the
+// current session caches. If MSAL silently rotates to a different user (e.g.
+// admin's tab signed out while another user signed in to the same browser),
+// downstream caches like _bcCompanyId / _odataPageCache / _planPageCache /
+// _altCache / _correctionsCache could stay populated with the previous user's
+// data, leading to wrong company URLs and stale learning. We invalidate them
+// every time acquireBcToken sees an account different from the last call.
+let _bcLastAccountUsername=null;
+function _invalidateUserScopedCaches(reason){
+  try{
+    _bcCompanyId=null;
+    _odataPageCache=null;
+    if(typeof _planPageCache!=="undefined")_planPageCache=null;
+    if(typeof window!=="undefined"){
+      if(window._bcPlanFieldsCache)window._bcPlanFieldsCache={};
+    }
+    _altCache=null;
+    _correctionsCache=null;
+    console.log(`[cache-invalidate] cleared user-scoped caches (reason: ${reason||"unspecified"})`);
+  }catch(e){console.warn("_invalidateUserScopedCaches failed:",e?.message);}
+}
+
 async function acquireBcToken(interactive=true){
   const inst=await ensureMsal();
   if(!inst)return null;
@@ -1399,6 +1421,12 @@ async function acquireBcToken(interactive=true){
     if(accounts.length>0){
       const resp=await inst.acquireTokenSilent({scopes,account:accounts[0]});
       _bcToken=resp.accessToken;
+      // v1.19.986: detect MSAL account swap and invalidate caches.
+      const u=accounts[0]?.username||resp.account?.username||null;
+      if(_bcLastAccountUsername&&u&&u!==_bcLastAccountUsername){
+        _invalidateUserScopedCaches(`MSAL account switched: ${_bcLastAccountUsername} → ${u}`);
+      }
+      _bcLastAccountUsername=u;
       return _bcToken;
     }
   }catch(e){console.log("Silent BC token failed, trying ssoSilent…");}
@@ -1407,12 +1435,22 @@ async function acquireBcToken(interactive=true){
     const hint=fbAuth.currentUser?.email;
     const resp=await inst.ssoSilent({scopes,...(hint?{loginHint:hint}:{})});
     _bcToken=resp.accessToken;
+    const u=resp.account?.username||null;
+    if(_bcLastAccountUsername&&u&&u!==_bcLastAccountUsername){
+      _invalidateUserScopedCaches(`MSAL account switched: ${_bcLastAccountUsername} → ${u}`);
+    }
+    _bcLastAccountUsername=u;
     return _bcToken;
   }catch(e){}
   if(!interactive)return null;
   try{
     const resp=await inst.acquireTokenPopup({scopes});
     _bcToken=resp.accessToken;
+    const u=resp.account?.username||null;
+    if(_bcLastAccountUsername&&u&&u!==_bcLastAccountUsername){
+      _invalidateUserScopedCaches(`MSAL account switched: ${_bcLastAccountUsername} → ${u}`);
+    }
+    _bcLastAccountUsername=u;
     tryGraphTokenSilent().catch(()=>{}); // background: pre-consent Mail.Send if already granted
     return _bcToken;
   }catch(e){console.warn("BC token acquisition failed:",e);return null;}
@@ -24333,12 +24371,25 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       })()}
                     </td>
                     <td style={{padding:"3px 5px",textAlign:"center",width:76,fontSize:10,whiteSpace:"nowrap",cursor:(!row.isLaborRow&&row.unitPrice!=null)?"help":"default",...(()=>{
+                      // DECISION(v1.19.986, audit): Align priced-date staleness color with the
+                      // single source of truth — _pricingConfig.defaultStaleDays (default 60d).
+                      // Was hardcoded 30d, which conflicted with: (a) _isBomRowFlaggedRed using
+                      // 60d for the row-bg flag, and (b) the pricing-refresh skip threshold.
+                      // Net: a row priced 45d ago looked stale (red text) but the refresh
+                      // button skipped it as "fresh," confusing users. New behavior — 3-tier:
+                      //   ≤ halfStale (30d default) → green   "fresh"
+                      //   ≤ stale     (60d default) → amber   "aging — verify before quote"
+                      //   >  stale                  → red     "stale — refresh recommended"
                       if(row.isLaborRow)return{color:C.muted};
                       if(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)return{color:"#4ade80",fontWeight:700};
                       const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
                       if(!d)return{color:C.muted};
                       const age=Date.now()-d;
-                      if(age<=30*24*60*60*1000)return{color:"#4ade80",fontWeight:700};
+                      const staleDays=(_pricingConfig&&_pricingConfig.defaultStaleDays)||60;
+                      const staleMs=staleDays*24*60*60*1000;
+                      const halfStaleMs=Math.round(staleMs/2);
+                      if(age<=halfStaleMs)return{color:"#4ade80",fontWeight:700};
+                      if(age<=staleMs)return{color:"#fbbf24",fontWeight:700};
                       return{color:"#f87171",fontWeight:700};
                     })()}}
                     onMouseEnter={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
@@ -34182,10 +34233,33 @@ function APISetupModal({uid,onClose}){
 
   useEffect(()=>{fbDb.doc(`users/${uid}/config/api`).get().then(d=>{if(d.exists)setKey(d.data().key||"");setLoading(false);}).catch(()=>setLoading(false));},[]);
 
+  const [saveErr,setSaveErr]=useState(null);
   // DECISION(v1.19.410): Save API key to both user config AND company config so all team members inherit it.
+  // DECISION(v1.19.986, audit Item E): Don't lie to the user. Previously the
+  // company-doc write was wrapped in `.catch(()=>{})` and "✓ Saved" appeared
+  // even when the rule rejected the write — which happens for non-admins.
+  // Now: the company write only attempts when the user is admin (rule grants
+  // write only to admins anyway), and any unexpected error surfaces an inline
+  // banner so the user can act on it instead of believing the team key was
+  // updated when it wasn't.
   async function save(){
-    await fbDb.doc(`users/${uid}/config/api`).set({key});
-    if(_appCtx.configPath)await fbDb.doc(`${_appCtx.configPath}/api`).set({key}).catch(()=>{});
+    setSaveErr(null);
+    try{
+      await fbDb.doc(`users/${uid}/config/api`).set({key});
+    }catch(e){
+      const msg=e?.code==="permission-denied"?"You don't have permission to save the API key. Contact your admin.":(e?.message||"Save failed");
+      setSaveErr(msg);return;
+    }
+    // Company-shared write: only attempt if caller is admin (rule requires it
+    // — non-admin attempts would silently fail under the old code).
+    if(_appCtx.configPath&&isAdmin()){
+      try{
+        await fbDb.doc(`${_appCtx.configPath}/api`).set({key});
+      }catch(e){
+        const msg=e?.code==="permission-denied"?"Saved to your account, but team-shared write was denied. Are you still an admin?":`Saved to your account; team write failed: ${e?.message||"unknown"}`;
+        setSaveErr(msg);_apiKey=key;return;
+      }
+    }
     _apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);
   }
   async function testApiKey(){
@@ -34218,11 +34292,13 @@ function APISetupModal({uid,onClose}){
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Anthropic API Key</div>
           {loading?<div style={{color:C.muted,fontSize:13,padding:"9px 0"}}>Loading…</div>
             :<input value={key} onChange={e=>setKey(e.target.value)} type="text" placeholder="sk-ant-…" style={inp()}/>}
-          <div style={{fontSize:11,color:C.muted,marginTop:6}}>Stored in Firebase. Shared across all team members.</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:6}}>{isAdmin()?"Stored in Firebase. Shared across all team members.":"Stored in Firebase under your account. Only an admin can update the team-shared key."}</div>
           <div style={{display:"flex",gap:10,marginTop:8}}>
             <button onClick={testApiKey} disabled={apiTesting||loading} style={btn("#1e3a5f","#93c5fd",{flex:1,opacity:apiTesting||loading?0.5:1,fontSize:12})}>{apiTesting?"Testing…":"Test Key"}</button>
             <button onClick={save} disabled={loading||!key.trim()} style={btn(saved?C.green:C.accent,"#fff",{flex:1,opacity:loading||!key.trim()?0.5:1,fontSize:12})}>{saved?"✓ Saved":"Save Key"}</button>
           </div>
+          {/* v1.19.986 (audit Item E): Surface save errors instead of swallowing them. */}
+          {saveErr&&<div style={{fontSize:12,color:C.red,marginTop:6,padding:"6px 10px",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:6}}>⚠ {saveErr}</div>}
           {apiTestMsg&&<div style={{fontSize:12,color:apiTestMsg.ok?C.green:C.red,marginTop:6,padding:"6px 10px",background:apiTestMsg.ok?"rgba(34,197,94,0.08)":"rgba(239,68,68,0.08)",border:`1px solid ${apiTestMsg.ok?"rgba(34,197,94,0.25)":"rgba(239,68,68,0.25)"}`,borderRadius:6}}>{apiTestMsg.text}</div>}
           {/* DECISION(v1.19.899): Admin-only "Reset team API keys" button.
               Wipes every team member's users/{uid}/config/api doc via Cloud
@@ -34949,6 +35025,8 @@ function CustomerTemplatesModal({uid,onClose}){
 }
 
 function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs}){
+  // v1.19.986 (audit Item E): saveErr surfaces API-key save failures inline.
+  const [saveErr,setSaveErr]=useState(null);
   const [key,setKey]=useState("");
   const [loading,setLoading]=useState(true);
   const [saved,setSaved]=useState(false);
@@ -35027,9 +35105,25 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs}){
     setNameSaved(true);setTimeout(()=>setNameSaved(false),2000);
   }
 
+  // DECISION(v1.19.986, audit Item E): Same fix as the main APISetupModal —
+  // surface save failures instead of silently swallowing them, and only
+  // attempt the company-doc write when caller is admin.
   async function save(){
-    await fbDb.doc(`users/${uid}/config/api`).set({key});
-    if(_appCtx.configPath)await fbDb.doc(`${_appCtx.configPath}/api`).set({key}).catch(()=>{});
+    setSaveErr(null);
+    try{
+      await fbDb.doc(`users/${uid}/config/api`).set({key});
+    }catch(e){
+      const msg=e?.code==="permission-denied"?"You don't have permission to save the API key. Contact your admin.":(e?.message||"Save failed");
+      setSaveErr(msg);return;
+    }
+    if(_appCtx.configPath&&isAdmin()){
+      try{
+        await fbDb.doc(`${_appCtx.configPath}/api`).set({key});
+      }catch(e){
+        const msg=e?.code==="permission-denied"?"Saved to your account, but team-shared write was denied. Are you still an admin?":`Saved to your account; team write failed: ${e?.message||"unknown"}`;
+        setSaveErr(msg);_apiKey=key;return;
+      }
+    }
     _apiKey=key;setSaved(true);setTimeout(()=>setSaved(false),2000);
   }
   async function testApiKey(){
@@ -39616,7 +39710,14 @@ INSTRUCTIONS:
                   doesn't overlap in-page controls like the PO Received button. */}
               <button onClick={()=>{setShowReportIssue(true);setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>🐛 Report an Issue</button>
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
-              <button onClick={()=>{fbAuth.signOut();setShowUserMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:"#f87171",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:600}} onMouseEnter={e=>e.target.style.background="#1a0a0a"} onMouseLeave={e=>e.target.style.background="none"}>Sign Out</button>
+              <button onClick={async ()=>{
+                // v1.19.986 (audit Item J): clear user-scoped caches on sign-out
+                // so the next signed-in user doesn't inherit stale data.
+                try{_invalidateUserScopedCaches("user signed out");}catch(_){}
+                _bcToken=null;_msalInstance=null;_msalReady=false;_bcLastAccountUsername=null;
+                fbAuth.signOut();
+                setShowUserMenu(false);
+              }} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:"#f87171",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:600}} onMouseEnter={e=>e.target.style.background="#1a0a0a"} onMouseLeave={e=>e.target.style.background="none"}>Sign Out</button>
             </div>)}
           </div>
         </div>
