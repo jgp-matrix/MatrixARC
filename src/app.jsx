@@ -11294,6 +11294,12 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // image fallback = lower. If any page falls back to image, the panel is
     // tagged "image-fallback" so the warning appears.
     const _extractionPathsSeen=new Set();
+    // v1.19.983: collect per-page outcomes so the panel-level summary log
+    // captures EVERY data point an admin needs to diagnose silent extraction
+    // failures (e.g. Noah's "drawing has a BOM but extraction returned 0
+    // items" case). Without this, the only signal in the debug logs was a
+    // breadcrumb-only console.warn, which doesn't surface to admins.
+    const _perPageOutcomes=[];
     if(hasBom){
       let bomDone=0;
       let allQuestions=[];
@@ -11305,10 +11311,11 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         const units=await getExtractionUnits(pg);
         let pageItems=[],pageQs=[];
         let pageRejectReasons=[];
+        let pageExtractionPath=null;
         for(const unit of units){
           const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):userNotes;
           const result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber);
-          if(result?.extractionPath)_extractionPathsSeen.add(result.extractionPath);
+          if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
@@ -11318,9 +11325,45 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           // non-BOM pages through, vs. a real extraction failure on a real BOM page.
           if(items.length===0&&result?.noBomReason)pageRejectReasons.push(result.noBomReason);
         }
+        // v1.19.983: record outcome for the panel-level summary log
+        _perPageOutcomes.push({
+          pageId:pg.id,
+          pageName:pg.name||`Page ${pgIdx+1}`,
+          pageNumber:pg.pageNumber||null,
+          hasOriginalPdf:!!pg.originalPdfPath,
+          itemsFound:pageItems.length,
+          unitsAttempted:units.length,
+          extractionPath:pageExtractionPath,
+          rejectReasons:pageRejectReasons,
+          types:pg.types||[],
+        });
         if(pageItems.length===0){
           const reason=pageRejectReasons[0]||"unknown";
           console.warn(`[BOM EXTRACT] page "${pg.name||`Page ${pgIdx+1}`}" tagged BOM but produced 0 rows — reason: ${reason}`);
+          // v1.19.983: surface to remote debug logs at WARN severity so admins
+          // see this on any user's machine. Per-page granularity matters here —
+          // if 3 of 4 pages produced 0 rows but 1 produced rows, we want to know
+          // which is which.
+          try{
+            if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+              window.logDebugEntry({
+                severity:"warn",
+                source:"extractBomPage(client)",
+                message:`Page tagged BOM but extracted 0 rows — reason: ${reason}`,
+                extra:{
+                  projectId,panelId:panel.id,
+                  pageName:pg.name||`Page ${pgIdx+1}`,
+                  pageNumber:pg.pageNumber||null,
+                  pageId:pg.id,
+                  pageTypes:pg.types||[],
+                  rejectReasons:pageRejectReasons,
+                  hasOriginalPdf:!!pg.originalPdfPath,
+                  extractionPath:pageExtractionPath,
+                  unitsAttempted:units.length,
+                },
+              });
+            }
+          }catch(_){}
         }
         if(pageQs.length)allQuestions.push(...pageQs);
         // DECISION(v1.19.647): Also attach sourcePageId (the actual page.id). sourcePageIdx
@@ -11334,7 +11377,46 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         const _extractionPath=_extractionPathsSeen.has("image-fallback")?"image-fallback":(_extractionPathsSeen.has("pdf-native")?"pdf-native":"unknown");
         if(_extractionPath==="image-fallback")console.warn(`[BOM EXTRACT] panel used IMAGE FALLBACK on at least one page — accuracy is lower than PDF native. Causes: PDF retention failed, or PDF native call errored.`);
         else if(_extractionPath==="pdf-native")console.log(`[BOM EXTRACT] panel used PDF NATIVE path on all pages — best accuracy.`);
-        const all=results.flat();if(!all.length)return{bom:[],questions:allQuestions,mergeStats:{raw:0,exact:0,fuzzy:0,fuzzyMerges:[],extractionPath:_extractionPath}};
+        const all=results.flat();
+        // v1.19.983: panel-level summary log — fires every time extraction
+        // completes, with the full per-page outcome breakdown. This is the
+        // signal an admin needs when a user reports "no BOM was found" — the
+        // log shows exactly which pages were attempted, which reasons came
+        // back, and whether PDF retention worked.
+        try{
+          if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+            const totalItems=all.length;
+            const pagesWithItems=_perPageOutcomes.filter(o=>o.itemsFound>0).length;
+            const pagesEmpty=_perPageOutcomes.filter(o=>o.itemsFound===0).length;
+            const allReasons=_perPageOutcomes.flatMap(o=>o.rejectReasons);
+            // ZERO items across the whole panel = ERROR severity. This is the
+            // catastrophic silent-failure case. Otherwise INFO.
+            const sev=totalItems===0?"error":(pagesEmpty>0?"warn":"info");
+            const msgPrefix=totalItems===0
+              ?"BOM extraction returned ZERO items across the whole panel"
+              :`BOM extraction completed — ${totalItems} items, ${pagesWithItems}/${_perPageOutcomes.length} pages produced rows`;
+            window.logDebugEntry({
+              severity:sev,
+              source:"extractBomPage(client)",
+              message:`${msgPrefix} (path=${_extractionPath})`,
+              extra:{
+                projectId,panelId:panel.id,
+                bomPagesCount:_perPageOutcomes.length,
+                totalItems,
+                pagesWithItems,
+                pagesEmpty,
+                rejectReasonSummary:Object.fromEntries(
+                  Object.entries(allReasons.reduce((m,r)=>{m[r]=(m[r]||0)+1;return m;},{}))
+                ),
+                extractionPath:_extractionPath,
+                perPage:_perPageOutcomes,
+                userNotes:(userNotes||"").slice(0,500),
+                regionAnnotationsCount:bomPages.reduce((s,pg)=>s+(pg.regions?.filter(r=>r.note).length||0),0),
+              },
+            });
+          }
+        }catch(_){}
+        if(!all.length)return{bom:[],questions:allQuestions,mergeStats:{raw:0,exact:0,fuzzy:0,fuzzyMerges:[],extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes}};
         // DECISION(v1.19.620): Run POSITIONAL dedup FIRST (before exact PN dedup) so cross-
         // quadrant duplicates of the same row don't get their quantities INFLATED by the
         // exact-dedup's summing step. Positional takes MAX qty (a row has one qty, not
@@ -11360,8 +11442,26 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         const withCompanions=splitCompanionParts(sorted);
         // DECISION(v1.19.638): Flag column-alignment qty errors (e.g. qty=143 on a window kit).
         flagSuspectQuantities(withCompanions);
-        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath}};
-      }).catch(ex=>{console.error("BOM extraction failed:",ex);return{bom:[],questions:[],mergeStats:null};});
+        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes}};
+      }).catch(ex=>{
+        console.error("BOM extraction failed:",ex);
+        // v1.19.983: surface the catch-all failure to remote debug logs so
+        // exception cases (network, OOM, parse errors that bubbled out) are
+        // visible to admins. The inner per-page logging won't fire if the
+        // exception happens before pages start.
+        try{
+          if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+            window.logDebugEntry({severity:"error",source:"extractBomPage(client)",message:`BOM extraction THREW — ${(ex?.message||String(ex)).slice(0,200)}`,extra:{
+              projectId,panelId:panel.id,
+              bomPagesCount:bomPages.length,
+              errorMessage:ex?.message||String(ex),
+              errorStack:(ex?.stack||"").slice(0,2000),
+              perPage:_perPageOutcomes,
+            }});
+          }
+        }catch(_){}
+        return{bom:[],questions:[],mergeStats:null};
+      });
     }
     // Hazardous location scan (parallel with BOM — uses Haiku, fast)
     const hazlocPromise=scanForHazardousLocation(latestPanel.pages);
@@ -11466,6 +11566,13 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       // surface PDF native (high accuracy) vs image fallback (lower) — lets
       // users on the same drawing diagnose discrepancies between teammates.
       extractionPath:mergeStats.extractionPath||"unknown",
+      // DECISION(v1.19.983): per-page outcome breakdown so the UI can show a
+      // clear "0 BOM items found" banner when a panel had pages tagged as BOM
+      // but produced no rows. Without this surface, users like Noah see a
+      // silent empty BOM and assume the tool is broken — when really it's
+      // either an image-quality issue, a page-type misclassification, or a
+      // legitimate "wrong-page-type" result.
+      perPageOutcomes:mergeStats.perPageOutcomes||null,
       timestamp:Date.now(),
       version:APP_VERSION,
     }:null;
@@ -18870,6 +18977,77 @@ function StampedDrawing({src,overlay,width,height,onClick}){
 // ── SCAN RESULTS BANNER ──
 // DECISION(v1.19.598): Surface extraction concerns (OCR-variant dedups, suspect parts,
 // missing title block) so the user gets a heads-up instead of silently-resolved edge cases.
+// DECISION(v1.19.983): Surface the catastrophic "ran extraction but found
+// nothing" case visibly. Without this banner, users (real example: Noah
+// repeatedly hitting drawings where extraction returned 0 items) get a
+// silent empty BOM and assume the tool is broken. The banner explains the
+// reasons per page, names the extraction path used, and provides a clear
+// remediation hint based on the failure mode.
+function ZeroBomBanner({panel,onTriggerReextract}){
+  const r=panel.extractionReport;
+  if(!r)return null;
+  const hasBom=(panel.bom||[]).length>0;
+  if(hasBom)return null;
+  const bomPagesCount=r.bomPageCount||0;
+  if(bomPagesCount===0)return null; // user hasn't tagged any pages BOM — this banner is for the "tagged but empty" case
+  const perPage=r.perPageOutcomes||[];
+  // Group reasons across pages
+  const reasonCounts={};
+  perPage.forEach(p=>(p.rejectReasons||[]).forEach(rsn=>{reasonCounts[rsn]=(reasonCounts[rsn]||0)+1;}));
+  const topReason=Object.entries(reasonCounts).sort((a,b)=>b[1]-a[1])[0];
+  const path=r.extractionPath||"unknown";
+  // Tailored hint based on the dominant rejection reason
+  let hint="The AI scanned the page(s) you tagged BOM but couldn't find a parts table.";
+  if(topReason){
+    const [rsn]=topReason;
+    if(rsn==="table-too-low-quality")hint="The AI says the BOM table text is too blurry/low-quality to read. The image may have been over-compressed during upload. Try re-uploading the original PDF.";
+    else if(rsn==="wrong-page-type")hint="The AI doesn't see a BOM table on the tagged page(s). It may have classified the page contents as a schematic, layout, or cover sheet instead. Use the page-tag dropdown to verify the right page is tagged BOM.";
+    else if(rsn==="title-block-only")hint="Only a title block (drawing #, designer, etc.) was found on the tagged page — no parts table.";
+    else if(rsn==="no-table-on-page")hint="No tabular content was found on the tagged page. Verify the right page is tagged BOM.";
+    else if(rsn==="sheet-index-not-bom")hint="The AI sees a table, but it lists OTHER drawing sheets, not parts.";
+  }
+  if(path==="image-fallback"){
+    hint+=" ⚠ This panel used the IMAGE-FALLBACK extraction path — accuracy is significantly lower than PDF-native. PDF retention may have failed at upload. Re-uploading the source PDF often resolves this.";
+  }
+  return(
+    <div style={{background:"#3a0a0a",border:"2px solid #ef4444",borderRadius:10,padding:"14px 16px",marginBottom:12,animation:"fadeIn 0.3s ease-out"}}>
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+        <span style={{fontSize:20}}>🛑</span>
+        <span style={{fontSize:14,fontWeight:800,color:"#fca5a5",letterSpacing:0.3}}>NO BOM ITEMS EXTRACTED</span>
+      </div>
+      <div style={{fontSize:13,color:"#fecaca",lineHeight:1.5,marginBottom:10}}>{hint}</div>
+      <div style={{background:"#1a0a0a",border:"1px solid #ef444433",borderRadius:6,padding:"8px 12px",marginBottom:10}}>
+        <div style={{fontSize:10,color:"#fca5a5",fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Per-page detail ({perPage.length} page{perPage.length===1?"":"s"} attempted)</div>
+        <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
+          <thead>
+            <tr style={{color:"#fca5a5"}}>
+              <th style={{textAlign:"left",padding:"3px 6px"}}>Page</th>
+              <th style={{textAlign:"center",padding:"3px 6px"}}>Items</th>
+              <th style={{textAlign:"center",padding:"3px 6px"}}>Path</th>
+              <th style={{textAlign:"left",padding:"3px 6px"}}>Reason</th>
+              <th style={{textAlign:"center",padding:"3px 6px"}}>PDF Kept</th>
+            </tr>
+          </thead>
+          <tbody>
+            {perPage.map((p,i)=>(
+              <tr key={i} style={{borderTop:"1px solid #ef444422"}}>
+                <td style={{padding:"3px 6px",color:"#fef3c7",fontWeight:600}}>{p.pageName}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",color:p.itemsFound>0?"#86efac":"#fca5a5",fontWeight:700}}>{p.itemsFound}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",color:p.extractionPath==="pdf-native"?"#86efac":"#fcd34d",fontSize:10}}>{p.extractionPath||"?"}</td>
+                <td style={{padding:"3px 6px",color:"#fecaca",fontSize:10}}>{(p.rejectReasons||[]).join(", ")||"—"}</td>
+                <td style={{padding:"3px 6px",textAlign:"center"}}>{p.hasOriginalPdf?"✓":"✗"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{fontSize:11,color:"#fca5a5",lineHeight:1.4}}>
+        <strong>Next steps:</strong> verify the BOM-tagged page is actually a BOM page · re-upload the source PDF (better retention) · use the page-tag selector to re-tag · contact admin if this persists. Admin can see the full diagnostic in <strong>⚙ Settings → Open Debug Logs</strong>.
+      </div>
+    </div>
+  );
+}
+
 function ScanResultsBanner({panel}){
   const [expanded,setExpanded]=React.useState(false);
   const r=panel.extractionReport;
@@ -23243,6 +23421,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           old extractionReport is stale and shouldn't surface concerns about a scan whose
           subject matter no longer exists. */}
       {!extracting&&!validatingPanel&&(panel.bom||[]).length>0&&_basePages(panel).length>0&&<ScanResultsBanner panel={panel}/>}
+      {/* v1.19.983: ZERO-ITEM extraction failure banner. Renders when extraction
+          completed but produced no BOM rows AND there were BOM-tagged pages.
+          Surfaces the per-page reason and remediation hint so users understand
+          why the BOM is empty rather than assuming the tool is broken. */}
+      {!extracting&&!validatingPanel&&(panel.bom||[]).length===0&&_basePages(panel).length>0&&<ZeroBomBanner panel={panel}/>}
 
       {/* BOM Table */}
       {true&&(
