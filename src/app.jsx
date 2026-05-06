@@ -22970,6 +22970,44 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         items:aiMissed.map(r=>({pn:r.partNumber,reason:"AI could not estimate"})).slice(0,10)});
     }
     _pp({msg:`✓ ${totalPriced} of ${bom.length} priced${bcCount>0?` (${bcCount} BC, ${aiCount} AI est.)`:""}.`,pct:100});
+    // DECISION(v1.19.991, audit Item L8 — BC catalog cross-check): Stamp
+    // every row with a `bcVerify` status derived from existing pricing data
+    // so the UI can render an at-a-glance presence indicator. No new BC API
+    // calls — the pricing pass already collected all the signal needed:
+    //   • priceSource === "bc"                   → "in-bc" (green check)
+    //   • has fuzzy suggestions in panel state   → "fuzzy" (yellow ?)
+    //   • non-empty PN, no BC match, no fuzzy   → "not-in-bc" (red +)
+    // Real failure case from the user: "ABD122NUB extracted as needing to
+    // be added, but it was already in BC." That specific case was an exact-
+    // match miss (fixed in v1.19.985 with normalized startswith). This adds
+    // the visible OPPOSITE: the user can now see at a glance which parts
+    // ARC THINKS are missing from BC, so they can verify before manually
+    // re-adding a part that's already there.
+    try{
+      const fuzzyMap=updated.bcFuzzySuggestions||panel.bcFuzzySuggestions||{};
+      updatedBom=updatedBom.map(r=>{
+        if(r.isLaborRow||r.isContingency)return r;
+        const pn=(r.partNumber||"").trim();
+        if(!pn)return r;
+        let bcVerify;
+        if(r.priceSource==="bc")bcVerify={status:"in-bc",at:Date.now()};
+        else if(fuzzyMap[r.id]&&fuzzyMap[r.id].length>0)bcVerify={status:"fuzzy",candidateCount:fuzzyMap[r.id].length,at:Date.now()};
+        else if(r.priceSource==="manual")bcVerify={status:"manual",at:Date.now()};
+        else bcVerify={status:"not-in-bc",at:Date.now()};
+        return{...r,bcVerify};
+      });
+    }catch(e){console.warn("[L8 bcVerify] stamp failed (non-fatal):",e?.message);}
+    // Update the panel state with the bcVerify stamps so the UI re-renders
+    if(panelOverride){
+      // when called for a panel different from the React state, persist via
+      // saveProjectPanel in the existing post-pricing path
+    }else{
+      try{
+        const refreshed={...latestPanelRef.current,bom:updatedBom};
+        latestPanelRef.current=refreshed;
+        onUpdate(refreshed);
+      }catch(_){}
+    }
     setAiPricing(false);
     // Show pricing report if there were any issues
     if(_report.length>0)setPricingReport({sections:_report,totalPriced,totalItems:bom.length,bcCount,aiCount});
@@ -24285,6 +24323,34 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             );
                             return null;
                           })()}
+                          {/* DECISION(v1.19.991, audit Item L8): BC catalog presence badge. Stamped
+                             during runPricingOnPanel from existing pricing-pass data (no extra BC
+                             API calls). Shows at-a-glance whether ARC found this part in BC, has
+                             a fuzzy candidate, or thinks it's missing. The "Not in BC" red badge
+                             is the primary value-add — user can verify before they manually re-add
+                             a part that ARC's fuzzy match missed (real failure case: ABD122NUB).
+                             Click opens the BC Item Browser pre-filled with the row's PN. */}
+                          {f==="partNumber"&&!row.isLaborRow&&!row.isContingency&&row.bcVerify&&row.bcVerify.status==="not-in-bc"&&_bcToken&&(
+                            <button title="Not found in BC catalog. Click to verify in the BC Item Browser — if the part exists under a different SKU, you can match it. Otherwise it needs to be added to BC."
+                              onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
+                              style={{fontSize:10,color:"#fff",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"pointer",background:"#dc2626",padding:"1px 7px",borderRadius:10,border:"none",lineHeight:1.4}}>
+                              + BC
+                            </button>
+                          )}
+                          {f==="partNumber"&&!row.isLaborRow&&!row.isContingency&&row.bcVerify&&row.bcVerify.status==="fuzzy"&&_bcToken&&!bcFuzzySuggestions[row.id]&&(
+                            <button title="Close match exists in BC. Click to review and apply the suggested item."
+                              onClick={()=>{
+                                // Re-trigger the fuzzy lookup so the suggestions panel opens
+                                bcFuzzyLookup((row.partNumber||"").trim()).then(result=>{
+                                  if(result?.suggestions?.length>0)setBcFuzzySuggestions(prev=>({...prev,[row.id]:result.suggestions}));
+                                  else if(result?.match)applyBcItem(row.id,result.match);
+                                  else{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||"");setBcBrowserOpen(true);}
+                                });
+                              }}
+                              style={{fontSize:10,color:"#000",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"pointer",background:"#fcd34d",padding:"1px 7px",borderRadius:10,border:"none",lineHeight:1.4}}>
+                              ? BC
+                            </button>
+                          )}
                           {/* DECISION(v1.19.638): Suspect qty flag — row description implies single
                              assembly (enclosure, window kit, etc.) but qty is large. Almost always
                              a column-alignment error where qty was grabbed from a different row. */}
