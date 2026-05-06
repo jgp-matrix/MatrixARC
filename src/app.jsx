@@ -334,6 +334,33 @@ Object.defineProperty(window,'BC_ODATA_BASE',{get:_bcOdataBase});
 Object.defineProperty(window,'BC_ENV',{get:()=>_bcConfig.env});
 Object.defineProperty(window,'BC_COMPANY_NAME',{get:()=>_bcConfig.companyName});
 Object.defineProperty(window,'BC_CLIENT_ID',{get:()=>_bcConfig.clientId});
+// DECISION(v1.19.991, audit Item G): Centralized env-mismatch check used at
+// every BC sync caller site. Returns true if a project has a `bcEnv` field
+// that differs from the active BC connection — meaning the project belongs
+// to a different BC environment (e.g. sandbox A vs sandbox B vs prod) and
+// any BC API call against it will get 404'd. Prevents the noisy 404 spam
+// in debug logs and the silent corruption risk of writing to the wrong env.
+//
+// Pre-existing projects with no `bcEnv` field set are treated as matching
+// (returns false / "not mismatched") so legacy behavior is preserved.
+function _bcEnvMismatched(project){
+  if(!project)return false;
+  const projEnv=project.bcEnv;
+  if(!projEnv)return false; // no env stamp = legacy or solo project; allow
+  const curEnv=_bcConfig&&_bcConfig.env;
+  if(!curEnv)return false; // no current env (BC not configured) = nothing to mismatch
+  return projEnv!==curEnv;
+}
+// Convenience: returns a logging string describing the mismatch, for debug logs.
+function _bcEnvMismatchInfo(project){
+  return{
+    projectBcEnv:project&&project.bcEnv||null,
+    currentBcEnv:_bcConfig&&_bcConfig.env||null,
+    currentCompanyName:_bcConfig&&_bcConfig.companyName||null,
+    bcProjectNumber:project&&project.bcProjectNumber||null,
+  };
+}
+
 async function loadBcConfig(companyId){
   if(!companyId)return;
   try{
@@ -4986,9 +5013,25 @@ function _bcQGet(){try{return JSON.parse(localStorage.getItem(_BC_QUEUE_KEY)||'[
 function _bcQSet(q){try{localStorage.setItem(_BC_QUEUE_KEY,JSON.stringify(q));}catch(e){}}
 let _bcQueueCountSetter=null; // injected by React to update badge
 
+// DECISION(v1.19.991, audit Item H): Stamp every queued op with the BC env,
+// company name, and MSAL UPN active at enqueue time. On replay, mismatched
+// items are rejected so an admin who switched env between enqueue and
+// reconnect doesn't accidentally fire ops against the wrong BC company.
+// Pre-stamping items (queued before this change) have no env metadata —
+// treated as "unknown env" and replayed against current env (legacy
+// behavior, preserves backward-compat).
 function bcEnqueue(type,params,description){
   const q=_bcQGet();
-  q.push({id:`${Date.now()}-${Math.random().toString(36).slice(2,7)}`,type,params,description,enqueuedAt:Date.now(),attempts:0});
+  q.push({
+    id:`${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+    type,params,description,
+    enqueuedAt:Date.now(),
+    attempts:0,
+    // v1.19.991: env stamping
+    bcEnv:_bcConfig&&_bcConfig.env||null,
+    bcCompanyName:_bcConfig&&_bcConfig.companyName||null,
+    bcUpn:(typeof _bcUserUpn==="function"?_bcUserUpn():null)||null,
+  });
   _bcQSet(q);
   console.log(`[BC Queue] Enqueued: ${description}`);
   if(_bcQueueCountSetter)_bcQueueCountSetter(q.length);
@@ -5011,7 +5054,48 @@ async function bcProcessQueue(){
   if(!q.length)return;
   console.log(`[BC Queue] Processing ${q.length} pending item(s)…`);
   const remaining=[];
+  // v1.19.991 (audit Item H): Reject items whose stamped env/company doesn't
+  // match the currently-connected BC env. This catches the case where admin
+  // changed BC config between enqueue and replay — e.g. they were testing in
+  // sandbox env A, queued ops, switched to env B, then reconnected.
+  // Replaying those ops would have hit env B with env A's data.
+  const curEnv=_bcConfig&&_bcConfig.env||null;
+  const curCompany=_bcConfig&&_bcConfig.companyName||null;
+  const curUpn=typeof _bcUserUpn==="function"?_bcUserUpn():null;
   for(const item of q){
+    // env-mismatch reject (only if item has stamped env metadata — pre-v1.19.991
+    // items lack this and replay against current env, legacy behavior).
+    if(item.bcEnv&&curEnv&&item.bcEnv!==curEnv){
+      console.warn(`[BC Queue] Dropped (env mismatch): "${item.description}" — enqueued for env ${item.bcEnv}, current is ${curEnv}`);
+      try{
+        if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+          window.logDebugEntry({severity:"warn",source:"bcProcessQueue",message:`Dropped queue item due to env mismatch: ${item.description}`,extra:{
+            itemId:item.id,
+            type:item.type,
+            stampedEnv:item.bcEnv,
+            stampedCompany:item.bcCompanyName,
+            stampedUpn:item.bcUpn,
+            currentEnv:curEnv,
+            currentCompany:curCompany,
+            currentUpn:curUpn,
+            description:item.description,
+          }});
+        }
+      }catch(_){}
+      continue;
+    }
+    if(item.bcCompanyName&&curCompany&&item.bcCompanyName!==curCompany){
+      console.warn(`[BC Queue] Dropped (company mismatch): "${item.description}" — enqueued for ${item.bcCompanyName}, current is ${curCompany}`);
+      try{
+        if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+          window.logDebugEntry({severity:"warn",source:"bcProcessQueue",message:`Dropped queue item due to BC company mismatch: ${item.description}`,extra:{
+            itemId:item.id,type:item.type,
+            stampedCompany:item.bcCompanyName,currentCompany:curCompany,
+          }});
+        }
+      }catch(_){}
+      continue;
+    }
     // v1.19.965: If the previous attempt failed with 429/503, honor the
     // backoff before retrying. attempts is 0-indexed prior failures.
     const prevAttempts=item.attempts||0;
@@ -20128,10 +20212,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   // DECISION(v1.19.447): Auto-sync labor Qty to BC planning lines when project opens.
   // Matches the auto-update of BOM item prices on open.
+  // DECISION(v1.19.991, audit Item G): skip if the project's bcEnv differs
+  // from the current BC environment (project belongs to a different sandbox/
+  // prod) — every patch would 404 otherwise.
   const laborBcSyncRan=useRef(false);
   useEffect(()=>{
     if(laborBcSyncRan.current)return;
     if(!bcProjectNumber||!_bcToken||readOnly)return;
+    if(_bcEnvMismatched(project))return;
     laborBcSyncRan.current=true;
     bcPatchLaborPlanningLines(bcProjectNumber,idx+1,panel)
       .then(()=>console.log("LABOR BC SYNC: auto-updated planning lines on open for panel",idx+1))
@@ -20885,6 +20973,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(prevSellPrice.current===_sellPrice){return;}
     prevSellPrice.current=_sellPrice;
     if(!bcProjectNumber||!_bcToken||readOnly)return;
+    // v1.19.991 (audit Item G): skip if project bound to different BC env
+    if(_bcEnvMismatched(project))return;
     const taskNo=String(20000+(idx+1)*100+10);
     // Debounce 2s to avoid rapid-fire patches during bulk price updates
     const t=setTimeout(()=>{
@@ -20988,7 +21078,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     // Auto-resync planning lines to BC when panel qty changes
-    if(bcProjectNumber&&_bcToken&&(updated.bom||[]).length>0){
+    // v1.19.991 (audit Item G): skip if project's bcEnv ≠ current
+    if(bcProjectNumber&&_bcToken&&!_bcEnvMismatched(project)&&(updated.bom||[]).length>0){
       bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated,projectName).then(result=>{
         if(result.failed?.length>0)console.warn("LineQty BC sync: "+result.failed.length+" items failed");
         else console.log("LineQty BC sync: planning lines updated for qty="+q);
@@ -28601,8 +28692,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     onUpdate({...project,panels:updatedPanels});
     saveImmediatePanel(sp.id,updated);
     // Auto-sync BC sell price when labor rate or markup changes
+    // v1.19.991 (audit Item G): skip if project's bcEnv ≠ current
     const bcNum=project.bcProjectNumber;
-    if(bcNum&&_bcToken&&("laborRate"in patch||"markup"in patch||"manualLaborCost"in patch)){
+    if(bcNum&&_bcToken&&!_bcEnvMismatched(project)&&("laborRate"in patch||"markup"in patch||"manualLaborCost"in patch)){
       const panelIdx=(project.panels||[]).findIndex(p=>p.id===sp.id)+1;
       if(panelIdx>0){
         const sellPrice=computePanelSellPrice(updated);
@@ -28621,8 +28713,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     onUpdate({...project,panels:updatedPanels});
     saveImmediatePanel(sp.id,updated);
     // Auto-sync labor planning lines to BC
+    // v1.19.991 (audit Item G): skip if project's bcEnv ≠ current
     const bcNum=project.bcProjectNumber;
-    if(bcNum&&_bcToken){
+    if(bcNum&&_bcToken&&!_bcEnvMismatched(project)){
       const panelIdx=(project.panels||[]).findIndex(p=>p.id===sp.id)+1;
       if(panelIdx>0)bcPatchLaborPlanningLines(bcNum,panelIdx,updated).catch(e=>console.warn("bcPatchLabor auto-sync:",e.message));
     }
@@ -31212,11 +31305,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   // DECISION(v1.19.460): Full BC sync on project open — ensures planning lines are current.
   // Debounced 2s to let BC token auto-connect. Skip if locked.
+  // DECISION(v1.19.991, audit Item G): env-mismatch guard. If the project's
+  // bcEnv differs from the user's current BC config, skip the auto-sync —
+  // every call would 404 since the project doesn't exist in this env. This
+  // is the highest-noise call site (fires for every panel on every project
+  // open) and was the dominant source of 404 spam in non-admin debug logs.
   const bcOpenSyncRan=useRef(false);
   useEffect(()=>{
     if(bcOpenSyncRan.current)return;
     const bcNum=init.bcProjectNumber;
     if(!bcNum||init.quoteLocked)return;
+    if(_bcEnvMismatched(init)){
+      console.log(`[OPEN BC SYNC] skipped — project bcEnv "${init.bcEnv}" ≠ current "${_bcConfig.env}"`);
+      return;
+    }
     const hasBom=(init.panels||[]).some(p=>(p.bom||[]).some(r=>!r.isLaborRow));
     if(!hasBom)return;
     const t=setTimeout(()=>{
