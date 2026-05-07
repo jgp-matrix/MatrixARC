@@ -17,11 +17,12 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
    inside the `match /rfqUploads/{token}` block; CREATE now requires uid-self-match + non-`view`
    role; UPDATE/DELETE auth path now extends to same-company writers; legacy uid-only docs and
    solo accounts (no companyId) preserved.
-2. **OPEN** — Firestore rules: `companyId` not validated on create. Pairs with #1 — a writer
-   could still create rfqUploads docs with a `companyId` they aren't a member of (the role
-   check passes when `companyId == null`, but doesn't verify membership when companyId is set
-   to an arbitrary value). Tighten CREATE: when `companyId` is present, require `_writerIsCompanyWriter`
-   to pass on that exact value (it currently does, but the check should be hoisted to a precondition).
+2. **RESOLVED** — `701d693` (subsumed by #1, verified 2026-05-07). The CREATE rule now reads
+   `request.resource.data.get('companyId', null) == null || _writerIsCompanyWriter(request.resource.data.companyId)`.
+   The helper does `exists(...members/$(request.auth.uid))`, so a writer setting `companyId`
+   to a company they aren't a member of fails the existence check and the create is rejected.
+   The legacy/solo bypass (`companyId == null`) is intentional — those docs are uid-only by
+   design and don't participate in team-scoped queries.
 5. **STALE** (verified 2026-05-07) — Firestore rules: "Missing `rfq_history` match rule." The
    path `users/{uid}/rfq_history` is fully covered by the catch-all
    `match /users/{uid}/{document=**}` rule at `firestore.rules:12-14`, which gates read/write
