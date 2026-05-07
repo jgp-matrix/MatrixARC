@@ -1,0 +1,48 @@
+#!/bin/bash
+# ARC pre-commit hook
+# - Syntax-checks staged JS files (BLOCKS commit on failure)
+# - Runs Claude review on risk-pattern files (advisory only, 60s timeout)
+
+STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.js$' || true)
+
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# === BLOCKING: Syntax check ===
+echo "→ Syntax-checking staged JS files..."
+SYNTAX_ERRORS=0
+for file in $STAGED; do
+  if [ -f "$file" ]; then
+    if ! node --check "$file" 2>&1; then
+      SYNTAX_ERRORS=$((SYNTAX_ERRORS + 1))
+    fi
+  fi
+done
+
+if [ $SYNTAX_ERRORS -gt 0 ]; then
+  echo "✗ Commit blocked: $SYNTAX_ERRORS file(s) have syntax errors"
+  exit 1
+fi
+echo "  ✓ All staged files parse cleanly"
+
+# === ADVISORY: Claude review on risk-pattern files (60s timeout) ===
+RISK_FILES=$(echo "$STAGED" | grep -iE 'pricing|quote|margin|markup|bom|firestore|rules|deploy|functions/index' || true)
+
+if [ -n "$RISK_FILES" ]; then
+  echo "→ Risk-pattern files detected — running Claude review (60s timeout)..."
+  echo "  Files: $(echo "$RISK_FILES" | tr '\n' ' ')"
+
+  DIFF=$(git diff --cached -- $RISK_FILES | head -c 30000)
+
+  if [ -n "$DIFF" ]; then
+    echo ""
+    echo "--- Claude review (advisory) ---"
+    echo "$DIFF" | timeout 60 claude -p "Review this staged diff from ARC. Focus on pricing math, Firestore writes, async error handling, breaking changes, and obvious logic errors. Be terse. If clean, reply: Looks clean." 2>&1 || echo "(Claude review timed out or unavailable — proceeding anyway)"
+    echo "--- end review ---"
+    echo ""
+  fi
+fi
+
+echo "✓ Pre-commit checks complete"
+exit 0
