@@ -1815,16 +1815,24 @@ async function _readSupplierConfig(uid,docName){
 // migration. Writes go to the company-shared collection; reads merge both
 // company-shared and legacy user-shared collections so existing per-user
 // history isn't lost. Mirrors the rfqUploads team-scoping pattern.
+//
+// Path note: company-shared lives at `companies/{cid}/rfq_history` (top-
+// level subcollection, mirrors how `companies/{cid}/projects` is structured)
+// — NOT under `companies/{cid}/config/` because Firestore needs an odd
+// number of path segments for collection references, and config is itself
+// a collection (so `config/rfq_history` would be a doc, not a subcollection).
 function _rfqHistoryCollectionPath(uid){
-  return(_appCtx&&_appCtx.configPath?`${_appCtx.configPath}/rfq_history`:`users/${uid}/rfq_history`);
+  const cid=_appCtx&&_appCtx.companyId;
+  return cid?`companies/${cid}/rfq_history`:`users/${uid}/rfq_history`;
 }
 async function _readRfqHistoryTeamScoped(uid,{limit=100,orderByField="sentAt"}={}){
   if(!uid||!fbDb)return[];
   const queries=[];
-  // 1) Company-shared
-  if(_appCtx&&_appCtx.configPath){
+  const cid=_appCtx&&_appCtx.companyId;
+  // 1) Company-shared (only if user is on a team)
+  if(cid){
     queries.push(
-      fbDb.collection(`${_appCtx.configPath}/rfq_history`)
+      fbDb.collection(`companies/${cid}/rfq_history`)
         .orderBy(orderByField,"desc").limit(limit).get()
         .catch(e=>{console.warn("[rfq_history/company]",e.message);return{docs:[]};})
     );
