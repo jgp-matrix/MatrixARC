@@ -5758,7 +5758,10 @@ function arcDocOpen(doc,filename){
   const blob=doc.output("blob");
   const url=URL.createObjectURL(blob);
   const fname=filename||"document.pdf";
-  const win=window.open(url,"_blank","noopener,noreferrer");
+  // No 3rd-arg features string — browsers treat that as a request for a
+  // small popup window, not a normal tab. The URL is a blob (same-origin),
+  // so noopener buys nothing useful here.
+  const win=window.open(url,"_blank");
   if(!win||win.closed||typeof win.closed==="undefined"){
     URL.revokeObjectURL(url);
     if(typeof logDebugEntry==="function"){
