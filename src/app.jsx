@@ -1740,6 +1740,98 @@ function _altMatchesPN(alt,pn){
   const a=alt.originalPN||"";
   return a===pn||_altNorm(a)===_altNorm(pn);
 }
+
+// DECISION(v1.19.994, audit Item C): rfqUploads OR-fallback query helpers.
+// rfqUploads docs created before v1.19.994 have only `uid`; new docs have
+// `uid` AND `companyId`. To be backward-compatible, we issue TWO parallel
+// queries (by uid for legacy + by companyId for team-shared) and merge
+// results client-side. New docs get matched by both queries — dedup by
+// docId. Legacy docs only match the uid query — sender-only forever.
+//
+// Used by all 6 rfqUploads consumer sites (RFQ history modal, dashboard
+// pending count, per-project Submissions modal, cross-project Reports tab,
+// bell badge listener, full submissions listener).
+async function _loadRfqUploadsTeamScoped(uid,{limit=100,statusFilter=null}={}){
+  if(!uid||!fbDb)return[];
+  const cid=_appCtx&&_appCtx.companyId||null;
+  // Single query for solo accounts (no company) — no merging needed.
+  if(!cid){
+    let q=fbDb.collection('rfqUploads').where('uid','==',uid);
+    if(statusFilter)q=q.where('status','==',statusFilter);
+    if(limit)q=q.limit(limit);
+    try{const s=await q.get();return s.docs.map(d=>({id:d.id,...d.data()}));}
+    catch(e){console.warn("[rfqUploads/solo]",e.message);return[];}
+  }
+  // Team accounts — fire both queries in parallel, dedup by id.
+  const buildQ=(field,val)=>{
+    let q=fbDb.collection('rfqUploads').where(field,'==',val);
+    if(statusFilter)q=q.where('status','==',statusFilter);
+    if(limit)q=q.limit(limit);
+    return q.get().catch(e=>{console.warn(`[rfqUploads/${field}]`,e.message);return{docs:[]};});
+  };
+  const [snapUid,snapCid]=await Promise.all([
+    buildQ('uid',uid),
+    buildQ('companyId',cid),
+  ]);
+  const m=new Map();
+  for(const d of snapUid.docs)m.set(d.id,{id:d.id,...d.data()});
+  for(const d of snapCid.docs)m.set(d.id,{id:d.id,...d.data()});
+  return[...m.values()];
+}
+// DECISION(v1.19.994, audit Item D): Supplier learning-DB path resolution.
+// Switches to company-shared paths for team accounts (mirrors alternates,
+// corrections, layout-learning, etc. — this was a missed retrofit). Reads
+// fall back to the legacy user-shared path if the company-shared doc is
+// empty/missing — lazy migration on first write to the new path.
+//
+// Covers: supplierCantSupply, supplierCrossRef. Other docs in the audit
+// (sqCrossings, vendorConfig, vendorEmails, rfq_history) ship in a follow-up.
+function _supplierDocPath(uid,docName){
+  return(_appCtx&&_appCtx.configPath?`${_appCtx.configPath}/${docName}`:`users/${uid}/config/${docName}`);
+}
+async function _readSupplierConfig(uid,docName){
+  // 1) Try company-shared path first
+  if(_appCtx&&_appCtx.configPath){
+    try{
+      const c=await fbDb.doc(`${_appCtx.configPath}/${docName}`).get();
+      if(c.exists){
+        const data=c.data();
+        // Treat empty document (fields all empty) as "not yet populated" → fall through
+        // to user-doc read below and merge so we don't lose pre-existing user data.
+        if(data&&(Object.keys(data).length>0))return{data,source:"company"};
+      }
+    }catch(e){console.warn(`[supplier-config:${docName}/company]`,e.message);}
+  }
+  // 2) Fall back to user-shared (legacy / solo accounts)
+  try{
+    const u=await fbDb.doc(`users/${uid}/config/${docName}`).get();
+    return{data:u.exists?(u.data()||{}):{},source:"user"};
+  }catch(e){console.warn(`[supplier-config:${docName}/user]`,e.message);return{data:{},source:"user"};}
+}
+
+// onSnapshot variant — runs two parallel listeners and calls onMerged with
+// the deduped+sorted list whenever either fires. Returns combined unsub.
+function _listenRfqUploadsTeamScoped(uid,{statusFilter=null}={},onMerged){
+  if(!uid||!fbDb)return()=>{};
+  const cid=_appCtx&&_appCtx.companyId||null;
+  const buf={uid:[],cid:[]};
+  const flush=()=>{
+    const m=new Map();
+    for(const d of buf.uid)m.set(d.id,{id:d.id,...d.data()});
+    for(const d of buf.cid)m.set(d.id,{id:d.id,...d.data()});
+    onMerged([...m.values()]);
+  };
+  const buildQ=(field,val)=>{
+    let q=fbDb.collection('rfqUploads').where(field,'==',val);
+    if(statusFilter)q=q.where('status','==',statusFilter);
+    return q;
+  };
+  const unsubA=buildQ('uid',uid).onSnapshot(snap=>{buf.uid=snap.docs;flush();},
+    err=>console.warn("[rfqUploads/uid listener]",err.message));
+  const unsubB=cid?buildQ('companyId',cid).onSnapshot(snap=>{buf.cid=snap.docs;flush();},
+    err=>console.warn("[rfqUploads/cid listener]",err.message)):null;
+  return()=>{try{unsubA();}catch(_){}if(unsubB)try{unsubB();}catch(_){}};
+}
 async function loadAlternates(uid){
   if(_altCache)return _altCache;
   try{const d=await fbDb.doc(_altPath(uid)).get();_altCache=d.exists?(d.data().alternates||[]):[];}
@@ -15937,7 +16029,13 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
           }
           return base;
         });
-        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:(emails[group.vendorName]||"").trim(),rfqNum,lineItems:lineItemsPayload,leadTimeOnly:ltOnly,sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
+        // DECISION(v1.19.994, audit Item C): Stamp companyId on every new
+        // rfqUploads doc so teammates of the sender can read/act on supplier
+        // submissions. Pre-v1.19.994 docs lack this field — query sites use
+        // OR-fallback (query both uid AND companyId, merge) so legacy docs
+        // remain readable by the original sender forever, while new docs
+        // are team-shared. Zero data migration; zero breaking change.
+        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,companyId:_appCtx.companyId||null,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:(emails[group.vendorName]||"").trim(),rfqNum,lineItems:lineItemsPayload,leadTimeOnly:ltOnly,sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
       }
     }
     const sentItemIds=[];
@@ -16001,7 +16099,10 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         });
       });
       if(allCrossings.length>0){
-        fbDb.doc(`users/${uid}/config/supplierCrossRef`).set({records:firebase.firestore.FieldValue.arrayUnion(...allCrossings)},{merge:true}).catch(e=>console.warn("CrossRef save failed:",e));
+        // DECISION(v1.19.994, audit Item D): Write supplierCrossRef to the
+        // company-shared path (or fall back to user-shared on solo accounts).
+        // Mirrors the alternates/corrections team-shared pattern.
+        fbDb.doc(_supplierDocPath(uid,"supplierCrossRef")).set({records:firebase.firestore.FieldValue.arrayUnion(...allCrossings)},{merge:true}).catch(e=>console.warn("CrossRef save failed:",e));
       }
     }
     // Process API vendor groups — auto-fetch pricing with cross-vendor check
@@ -16569,14 +16670,17 @@ function RfqHistoryModal({uid,projectId,onClose}){
       .catch(()=>setHistory([]));
     // DECISION(v1.19.485): Query rfqUploads with fallback — composite index may not exist.
     // Also include "pending" status and don't require specific statuses to capture all history.
-    fbDb.collection('rfqUploads').where('uid','==',uid).orderBy('sentAt','desc').limit(100).get()
-      .then(snap=>{
-        let docs=snap.docs.map(d=>({id:d.id,...d.data()}));
+    // DECISION(v1.19.994, audit Item C): Use _loadRfqUploadsTeamScoped helper
+    // which fires uid-query AND companyId-query in parallel and dedups —
+    // makes RFQ history team-shared while keeping legacy uid-only docs visible.
+    _loadRfqUploadsTeamScoped(uid,{limit:100})
+      .then(allDocs=>{
+        let docs=[...allDocs].sort((a,b)=>(b.sentAt||0)-(a.sentAt||0));
         if(projectId)docs=docs.filter(d=>d.projectId===projectId);
         setSubmissions(docs);
       })
       .catch(e=>{
-        console.warn("rfqUploads ordered query failed (index may be missing):",e.message);
+        console.warn("rfqUploads team-scoped query failed:",e.message);
         // Fallback: query without ordering
         fbDb.collection('rfqUploads').where('uid','==',uid).limit(100).get()
           .then(snap=>{
@@ -31022,15 +31126,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   }
   useEffect(()=>{
     if(!uid||!init.id){setPendingRfqUploads(0);setPortalSubmissions([]);return;}
-    const unsub=fbDb.collection('rfqUploads').where('uid','==',uid).onSnapshot(snap=>{
-      const matching=snap.docs.filter(d=>{
-        const data=d.data();
-        return data.projectId===init.id&&data.status==='submitted';
-      });
-      console.log('PORTAL SUBS: project',init.id,'total docs',snap.size,'matching',matching.length,matching.map(d=>d.id));
+    // DECISION(v1.19.994, audit Item C): team-scoped listener — fires for
+    // submissions on RFQs sent by the user OR by any teammate at the same
+    // company. Was uid-only; teammates couldn't see each other's submissions.
+    const unsub=_listenRfqUploadsTeamScoped(uid,{},(allDocs)=>{
+      const matching=allDocs.filter(d=>d.projectId===init.id&&d.status==='submitted');
+      console.log('PORTAL SUBS: project',init.id,'merged docs',allDocs.length,'matching',matching.length,matching.map(d=>d.id));
       setPendingRfqUploads(matching.length);
-      setPortalSubmissions(matching.map(d=>({id:d.id,...d.data()})));
-    },err=>{console.error('PORTAL SUBS error:',err);setPendingRfqUploads(0);setPortalSubmissions([]);});
+      setPortalSubmissions(matching);
+    });
     return()=>unsub();
   },[uid,init.id]);
   // DECISION(v1.19.421): Concurrent editing detection — only show warning for OTHER users' changes.
@@ -32104,9 +32208,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const cantItems=(submission.lineItems||[]).filter(item=>item.cannotSupply&&item.partNumber);
     if(cantItems.length>0){
       try{
-        const docRef=fbDb.doc(`users/${uid}/config/supplierCantSupply`);
-        const snap=await docRef.get();
-        const existing=(snap.exists?(snap.data().records||[]):[]);
+        // DECISION(v1.19.994, audit Item D): supplierCantSupply now lives at
+        // company-shared path (with fallback read to legacy user-shared so
+        // existing data isn't lost on the cutover). New writes go to the
+        // company doc; old user docs stay as backup.
+        const docRef=fbDb.doc(_supplierDocPath(uid,"supplierCantSupply"));
+        const{data}=await _readSupplierConfig(uid,"supplierCantSupply");
+        const existing=data.records||[];
         const byKey=new Map();
         // Seed with existing; new records overwrite older ones for the same key so markedAt/rfqNum reflect latest
         for(const r of existing){
@@ -36763,20 +36871,23 @@ function ReportsModal({uid,onClose}){
   const [rfqExpanded,setRfqExpanded]=useState({});
   useEffect(()=>{
     if(!uid)return;
-    fbDb.doc(`users/${uid}/config/supplierCrossRef`).get()
-      .then(d=>{setRecords(d.exists?(d.data().records||[]):[]);setLoading(false);})
+    // DECISION(v1.19.994, audit Item D): Read supplierCrossRef team-scoped
+    // with fallback to legacy user-shared.
+    _readSupplierConfig(uid,"supplierCrossRef")
+      .then(({data})=>{setRecords(data.records||[]);setLoading(false);})
       .catch(()=>{setRecords([]);setLoading(false);});
     // RFQ history (lazy-loaded once when modal opens — small enough to load up front)
     fbDb.collection(`users/${uid}/rfq_history`).orderBy("sentAt","desc").limit(500).get()
       .then(snap=>setRfqHistory(snap.docs.map(d=>({id:d.id,...d.data()}))))
       .catch(()=>setRfqHistory([]));
-    fbDb.collection('rfqUploads').where('uid','==',uid).orderBy('sentAt','desc').limit(500).get()
-      .then(snap=>setRfqSubs(snap.docs.map(d=>({id:d.id,...d.data()}))))
-      .catch(()=>{
-        fbDb.collection('rfqUploads').where('uid','==',uid).limit(500).get()
-          .then(snap=>{const docs=snap.docs.map(d=>({id:d.id,...d.data()}));docs.sort((a,b)=>(b.sentAt||0)-(a.sentAt||0));setRfqSubs(docs);})
-          .catch(()=>setRfqSubs([]));
-      });
+    // DECISION(v1.19.994, audit Item C): team-scoped — Reports tab now
+    // shows team-wide RFQ submissions, not just the current user's sends.
+    _loadRfqUploadsTeamScoped(uid,{limit:500})
+      .then(allDocs=>{
+        const docs=[...allDocs].sort((a,b)=>(b.sentAt||0)-(a.sentAt||0));
+        setRfqSubs(docs);
+      })
+      .catch(()=>setRfqSubs([]));
   },[uid]);
   const byVendor={};
   (records||[]).forEach(r=>{if(!byVendor[r.vendorName])byVendor[r.vendorName]=[];byVendor[r.vendorName].push(r);});
@@ -39226,15 +39337,18 @@ function App({user}){
   },[projects.length]);
 
   // RFQ pending counts per project (for dashboard cards)
+  // DECISION(v1.19.994, audit Item C): team-scoped — dashboard "Upload Quote (N)"
+  // pill now reflects team-wide submitted RFQs, not just the current user's.
+  // Teammates see each other's pending supplier replies.
   const [rfqCounts,setRfqCounts]=useState({});
   useEffect(()=>{
     if(!user.uid)return;
-    const unsub=fbDb.collection('rfqUploads').where('uid','==',user.uid).where('status','==','submitted').onSnapshot(snap=>{
+    const unsub=_listenRfqUploadsTeamScoped(user.uid,{statusFilter:'submitted'},(allDocs)=>{
       const counts={};
-      snap.docs.forEach(d=>{const pid=d.data().projectId;if(pid)counts[pid]=(counts[pid]||0)+1;});
+      allDocs.forEach(d=>{const pid=d.projectId;if(pid)counts[pid]=(counts[pid]||0)+1;});
       setRfqCounts(counts);
-    },()=>{setRfqCounts({});});
-    return()=>unsub();
+    });
+    return()=>{try{unsub();}catch(_){}};
   },[user.uid]);
 
   // DECISION(v1.19.599): Team-wide active-task visibility. Listens to company/activeExtractions
