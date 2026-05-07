@@ -36,9 +36,14 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
    old key until the function instance is recycled.
 7. **OPEN** — Ledger schema mismatch — server vs client. Server writes one shape, client reads
    another, leading to monthly spend being under-counted in the toolbar pill.
-8. **OPEN** — Unawaited `_writeDebugLog` — fire-and-forget risks lost writes on error paths.
-   When the function exits before the log write completes (e.g. due to throwing), the log is
-   silently dropped.
+8. **STALE** (verified 2026-05-07) — "Unawaited `_writeDebugLog` — fire-and-forget risks lost
+   writes." The function is actually `logDebugEntry`, defined in `public/index.html:277` and
+   `public/modules/shared.js:201`. It is BROWSER-side only — there is no Cloud Function
+   equivalent. In browser code, `await`-ing the log write blocks the UI without improving
+   durability (tab-close before write completes is solved by `navigator.sendBeacon`, not by
+   await). The codebase already awaits at `shared.js:329` (user-reported issue submit) where
+   the caller actually needs the write to complete before showing success UI. The mixed
+   pattern is deliberate, not a bug.
 9. **RESOLVED** — `b33df02` (2026-05-07). Prompt injection via `pageNumber`. Note: the original
    finding mis-located the vector in `functions/index.js`. The actual interpolation lives in
    `src/app.jsx:9588` (the `extractBomPage` PDF-native path). Cloud Function `extractBomPage`
