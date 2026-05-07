@@ -1582,7 +1582,162 @@ function arcPrompt(message,opts){
 // can call them too without importing.
 window.arcAlert=arcAlert;window.arcConfirm=arcConfirm;window.arcPrompt=arcPrompt;
 
+// DECISION(v1.20.001): Popup-blocked detection + helpful modal. Real failure
+// case — Noah had Chrome's popup blocker enabled for matrix-arc.web.app and
+// every PDF / supplier portal / external link silently failed (window.open
+// returns null when blocked). Now: _safeOpen wraps window.open, detects
+// null return, and signals a PopupBlockedModal. The modal explains what
+// happened and offers a "Try Again" button (works if the user just
+// allow-listed the site in the address-bar popup-blocked indicator). No
+// JavaScript can disable the popup blocker — by design — so we can't
+// auto-fix it; we can only educate + retry.
+let _popupBlockedState=null; // {url, target, features, label, retry}
+const _popupBlockedSubs=new Set();
+function _setPopupBlocked(s){_popupBlockedState=s;_popupBlockedSubs.forEach(fn=>fn());}
+function _safeOpen(url,target,features,label){
+  // target defaults to "_blank" because anything else (e.g. "_self") never
+  // gets blocked by popup blockers. If the caller really wants _self they
+  // should call window.open directly.
+  const t=target||"_blank";
+  let win=null;
+  try{win=window.open(url,t,features||undefined);}catch(_){win=null;}
+  // Popup blocker manifests in two ways:
+  //   1. window.open returns null
+  //   2. window.open returns an object that's instantly closed
+  // Both are treated as blocked.
+  const blocked=!win||win.closed;
+  if(blocked){
+    console.warn(`[_safeOpen] popup blocked for ${label||url}`);
+    _setPopupBlocked({
+      url,target:t,features:features||"",
+      label:label||"the requested page",
+      // Capture a closure so the modal's Try Again button can re-fire the
+      // exact same call and surface the new result without us re-deriving.
+      retry:()=>{
+        let w=null;
+        try{w=window.open(url,t,features||undefined);}catch(_){}
+        if(!w||w.closed)return false;
+        // Success — clear the modal state.
+        _setPopupBlocked(null);
+        return true;
+      },
+    });
+    return null;
+  }
+  return win;
+}
+window._safeOpen=_safeOpen;
+function _dismissPopupBlocked(){_setPopupBlocked(null);}
+
 // ArcDialogHost — mounted once at App root. Renders the current head of the queue.
+// DECISION(v1.20.001): PopupBlockedModal — surfaces when _safeOpen detects a
+// blocked window.open(). Since browsers do not expose any API to disable
+// the popup blocker programmatically (security boundary), we can't auto-fix
+// it. Instead the modal:
+//   - Tells the user clearly that ARC tried to open a popup and the browser
+//     blocked it
+//   - Detects the browser via userAgent and shows the right one-click path
+//     (Chrome / Edge users: click the popup-blocked icon in the address bar)
+//   - Provides a "Try Again" button that re-fires the original window.open
+//     attempt — works the moment the user allow-lists the site
+//   - Shows the URL so the user can manually open it in a new tab if all
+//     else fails (with a copy-to-clipboard button)
+function PopupBlockedModal(){
+  const [,setTick]=useState(0);
+  useEffect(()=>{
+    const sub=()=>setTick(t=>t+1);
+    _popupBlockedSubs.add(sub);
+    return()=>{_popupBlockedSubs.delete(sub);};
+  },[]);
+  const state=_popupBlockedState;
+  if(!state)return null;
+  // Detect browser family for tailored instructions. Edge ships with Chromium
+  // so its UA includes both "Edg/" and "Chrome/" — match Edg first.
+  const ua=(typeof navigator!=="undefined"&&navigator.userAgent)||"";
+  let browser="generic";
+  if(/Edg\//.test(ua))browser="edge";
+  else if(/Chrome\//.test(ua))browser="chrome";
+  else if(/Firefox\//.test(ua))browser="firefox";
+  else if(/Safari\//.test(ua)&&!/Chrome\//.test(ua))browser="safari";
+  const instructionsByBrowser={
+    chrome:[
+      "Look for the popup-blocked icon in the address bar (right side, looks like a small window with an ✕)",
+      "Click the icon",
+      "Choose \"Always allow popups and redirects from matrix-arc.web.app\"",
+      "Click \"Done\", then click Try Again below",
+    ],
+    edge:[
+      "Look for the popup-blocked icon in the address bar (right side, small window with an ✕)",
+      "Click the icon",
+      "Choose \"Always allow popups and redirects from matrix-arc.web.app\"",
+      "Click \"Done\", then click Try Again below",
+    ],
+    firefox:[
+      "Look for the yellow info bar at the top of the page that says \"Firefox prevented this site from opening a popup window\"",
+      "Click \"Options\" → \"Allow popups for matrix-arc.web.app\"",
+      "Click Try Again below",
+    ],
+    safari:[
+      "Open Safari → Preferences (or Settings) → Websites → Pop-up Windows",
+      "Find matrix-arc.web.app in the list and set it to \"Allow\"",
+      "Close Preferences, then click Try Again below",
+    ],
+    generic:[
+      "Look in your browser's address bar or page header for a popup-blocked indicator",
+      "Click it and choose to allow popups from matrix-arc.web.app",
+      "Click Try Again below",
+    ],
+  };
+  const steps=instructionsByBrowser[browser];
+  const browserLabel={chrome:"Chrome",edge:"Microsoft Edge",firefox:"Firefox",safari:"Safari",generic:"Your browser"}[browser];
+  const handleTryAgain=()=>{
+    const ok=state.retry&&state.retry();
+    if(!ok){
+      // Retry also blocked — leave the modal open so the user can keep trying.
+      // The modal state hasn't changed; force a re-render to flash feedback.
+      setTick(t=>t+1);
+    }
+  };
+  const handleCopy=async()=>{
+    try{await navigator.clipboard.writeText(state.url);}catch(_){}
+  };
+  const handleClose=_dismissPopupBlocked;
+  return ReactDOM.createPortal(
+    <div onMouseDown={e=>{if(e.target===e.currentTarget)handleClose();}}
+      style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div onMouseDown={e=>e.stopPropagation()}
+        style={{background:"#0d0d1a",border:`2px solid #f59e0b`,borderRadius:14,padding:"24px 28px",maxWidth:560,width:"100%",boxShadow:"0 0 60px rgba(245,158,11,0.3)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:14}}>
+          <span style={{fontSize:32}}>🚫</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:18,fontWeight:800,color:"#fcd34d",letterSpacing:0.3}}>Popup Blocked</div>
+            <div style={{fontSize:12,color:"#a3a3a3",marginTop:2}}>{browserLabel} blocked ARC from opening a new window.</div>
+          </div>
+          <button onClick={handleClose} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 8px"}}>✕</button>
+        </div>
+        <div style={{fontSize:13,color:"#cbd5e1",marginBottom:14,lineHeight:1.55}}>
+          ARC tried to open <strong style={{color:"#f1f5f9"}}>{state.label}</strong> in a new tab/window, but your browser blocked it. There's no way for ARC to bypass this — you'll need to allow popups for the ARC site once, then it'll work going forward.
+        </div>
+        <div style={{background:"rgba(245,158,11,0.08)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:8,padding:"12px 14px",marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:0.6,marginBottom:8}}>How to allow popups in {browserLabel}</div>
+          <ol style={{margin:0,paddingLeft:18,fontSize:13,color:"#e5e7eb",lineHeight:1.7}}>
+            {steps.map((s,i)=><li key={i}>{s}</li>)}
+          </ol>
+        </div>
+        <div style={{background:"#0a0a14",border:`1px solid #2a2a3e`,borderRadius:6,padding:"8px 12px",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
+          <div style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:11,fontFamily:"ui-monospace,Menlo,monospace",color:"#94a3b8"}}>{state.url}</div>
+          <button onClick={handleCopy} style={{background:"none",border:`1px solid #475569`,color:"#94a3b8",fontSize:11,fontWeight:600,padding:"4px 10px",borderRadius:4,cursor:"pointer",flexShrink:0,fontFamily:"inherit"}}>📋 Copy URL</button>
+        </div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <button onClick={handleClose} style={{background:"none",border:`1px solid #475569`,color:"#94a3b8",fontSize:13,fontWeight:600,padding:"8px 16px",borderRadius:6,cursor:"pointer",fontFamily:"inherit"}}>Close</button>
+          <button onClick={handleTryAgain} style={{background:"#f59e0b",border:"none",color:"#0d0d1a",fontSize:13,fontWeight:800,padding:"8px 22px",borderRadius:6,cursor:"pointer",fontFamily:"inherit"}}>↻ Try Again</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function ArcDialogHost(){
   const [,setTick]=useState(0);
   const [inputValue,setInputValue]=useState("");
@@ -23814,7 +23969,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
           {(panel.otherDocs||[]).map((doc,di)=>(
-            <div key={di} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,display:"flex",alignItems:"center",gap:6,maxWidth:240,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)window.open(doc.storageUrl,"_blank");}}>
+            <div key={di} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,display:"flex",alignItems:"center",gap:6,maxWidth:240,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)_safeOpen(doc.storageUrl,"_blank",null,doc.name||"the document");}}>
               <span style={{color:"#94a3b8"}}>📄</span>
               <span style={{color:doc.storageUrl?"#38bdf8":C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textDecoration:doc.storageUrl?"underline":"none"}} title={doc.name}>{doc.name}</span>
               {!readOnly&&<button onClick={e=>{e.stopPropagation();removeOtherDoc(di);}} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
@@ -27488,7 +27643,7 @@ ${fullText.slice(0,8000)}`;
                 </div>
               );
             })()}
-            {pdfPreview&&<img src={pdfPreview} onClick={()=>{if(file){const u=URL.createObjectURL(file);window.open(u,'_blank','noopener,noreferrer');setTimeout(()=>URL.revokeObjectURL(u),60000);}}} style={{width:90,borderRadius:6,border:`1px solid ${C.border}`,margin:"16px auto 0",display:"block",opacity:0.75,cursor:"pointer"}} title="Click to open PDF in new tab"/>}
+            {pdfPreview&&<img src={pdfPreview} onClick={()=>{if(file){const u=URL.createObjectURL(file);_safeOpen(u,'_blank','noopener,noreferrer','the supplier quote PDF');setTimeout(()=>URL.revokeObjectURL(u),60000);}}} style={{width:90,borderRadius:6,border:`1px solid ${C.border}`,margin:"16px auto 0",display:"block",opacity:0.75,cursor:"pointer"}} title="Click to open PDF in new tab"/>}
           </div>
         )}
 
@@ -27508,8 +27663,8 @@ ${fullText.slice(0,8000)}`;
             </div>
             {(pdfPreview||quoteHeader.pdfUrl)&&(
               <div onClick={()=>{
-                if(quoteHeader.pdfUrl){window.open(quoteHeader.pdfUrl,'_blank','noopener,noreferrer');return;}
-                if(file){const u=URL.createObjectURL(file);window.open(u,'_blank','noopener,noreferrer');setTimeout(()=>URL.revokeObjectURL(u),60000);}
+                if(quoteHeader.pdfUrl){_safeOpen(quoteHeader.pdfUrl,'_blank','noopener,noreferrer','the supplier quote PDF');return;}
+                if(file){const u=URL.createObjectURL(file);_safeOpen(u,'_blank','noopener,noreferrer','the supplier quote PDF');setTimeout(()=>URL.revokeObjectURL(u),60000);}
               }} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:5,flexShrink:0,cursor:"pointer"}}>
                 {pdfPreview
                   ?<img src={pdfPreview} style={{width:90,borderRadius:6,border:`1px solid ${C.accent}`}} title="Click to open PDF in new tab"/>
@@ -41608,15 +41763,15 @@ function Root(){
     });
   },[joinPayload]);
 
-  if(rfqUploadToken)return(<><SupplierPortalPage token={rfqUploadToken}/><ArcDialogHost/></>);
+  if(rfqUploadToken)return(<><SupplierPortalPage token={rfqUploadToken}/><ArcDialogHost/><PopupBlockedModal/></>);
   if(user===undefined||!redirectDone)return(<>
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}>
       <div style={{color:C.muted,fontSize:14}}>Loading…</div>
     </div>
-    <ArcDialogHost/>
+    <ArcDialogHost/><PopupBlockedModal/>
   </>);
-  if(!user)return(<><LoginScreen invite={joinPayload}/><ArcDialogHost/></>);
-  return(<><App user={user}/><ArcDialogHost/></>);
+  if(!user)return(<><LoginScreen invite={joinPayload}/><ArcDialogHost/><PopupBlockedModal/></>);
+  return(<><App user={user}/><ArcDialogHost/><PopupBlockedModal/></>);
 }
 
 ReactDOM.createRoot(document.getElementById("root")).render(<Root/>);
