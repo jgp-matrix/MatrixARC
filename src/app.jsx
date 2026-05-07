@@ -9547,6 +9547,21 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   // see _trippedApiCreditExhausted near apiCall.
   if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
 
+  // SECURITY (audit Item #9, 2026-05-07): pageNumber flows from Firestore-stored
+  // panel.pages[] metadata into the Claude prompt at the PDF-native path below
+  // ("…from PAGE ${pageNumber} ONLY…"). A tampered or maliciously-stored value
+  // could carry prompt-injection text. Coerce to a bounded positive integer
+  // here, covering both the server-callable path and the direct-API path.
+  // Reject hard rather than silently nulling, so attacks/corruption surface as
+  // errors instead of silently extracting from the wrong page.
+  if(pageNumber!=null){
+    const n=Number(pageNumber);
+    if(!Number.isInteger(n)||n<1||n>10000){
+      throw new Error(`extractBomPage: invalid pageNumber (expected positive integer ≤10000, got ${JSON.stringify(pageNumber)})`);
+    }
+    pageNumber=n;
+  }
+
   // DECISION(v1.19.981): Server-side path FIRST. Eliminates per-browser
   // variance (stale bundles, region-learning drift, prompt versions). On
   // any server error, falls through to the legacy direct API path below
