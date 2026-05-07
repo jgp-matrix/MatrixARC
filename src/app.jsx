@@ -1143,6 +1143,16 @@ function computeControlPanelLeadTime(panel,project){
   // DECISION(v1.19.951): Source of truth moved to the Engineering Drawings
   // service card. Read MAX customerApprovalDays across engineering cards;
   // fall back to the legacy panel field if no engineering card defines one.
+  // DECISION(v1.20.000, customer approval gate): Customer approval days
+  // ONLY apply when an Engineering Design service card exists. Without one,
+  // there are no submittals to approve, so the 21-day approval window is
+  // not part of the lead-time chain. Real failure case: a project without
+  // engineering design was tacking on +21d to the lead-time, inflating
+  // ship-date estimates. Fix: track `hasEngineeringCard` from the service
+  // cards loop above; if false, force customerApprovalDays=0 regardless of
+  // any stale value still on `panel.customerApprovalDays`.
+  const hasEngineeringCard=Array.isArray(project?.serviceCards)
+    &&project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
   let _caRaw=null;
   if(Array.isArray(project?.serviceCards)){
     for(const sc of project.serviceCards){
@@ -1155,7 +1165,9 @@ function computeControlPanelLeadTime(panel,project){
     }
   }
   if(_caRaw==null)_caRaw=panel.customerApprovalDays; // legacy fallback
-  const customerApprovalDays=Math.max(21,Math.min(180,_caRaw==null?21:(+_caRaw||0)));
+  const customerApprovalDays=hasEngineeringCard
+    ?Math.max(21,Math.min(180,_caRaw==null?21:(+_caRaw||0)))
+    :0;
 
   // ── MILESTONE CHAIN (sequential days from today=PO Received) ──────────
   //   Eng → Submittals Sent → Customer Approval → Materials → Production
