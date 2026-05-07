@@ -1,33 +1,40 @@
 #!/bin/bash
 # ARC pre-commit hook
-# - Syntax-checks staged JS files (BLOCKS commit on failure)
+# - Syntax-checks staged .js files (BLOCKS commit on failure)
+#   .jsx is NOT syntax-checked (node --check can't parse JSX). See REVIEW_FINDINGS T1.
 # - Runs Claude review on risk-pattern files (advisory only, 60s timeout)
+#   Risk pattern matches .js AND .jsx files — `app\.jsx` is included explicitly because
+#   that's where ARC's pricing / BOM / Firestore logic actually lives.
 
-STAGED=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.js$' || true)
+STAGED_JS=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.js$' || true)
+STAGED_JSX=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.jsx$' || true)
 
-if [ -z "$STAGED" ]; then
+if [ -z "$STAGED_JS" ] && [ -z "$STAGED_JSX" ]; then
   exit 0
 fi
 
-# === BLOCKING: Syntax check ===
-echo "→ Syntax-checking staged JS files..."
-SYNTAX_ERRORS=0
-for file in $STAGED; do
-  if [ -f "$file" ]; then
-    if ! node --check "$file" 2>&1; then
-      SYNTAX_ERRORS=$((SYNTAX_ERRORS + 1))
+# === BLOCKING: Syntax check (.js only) ===
+if [ -n "$STAGED_JS" ]; then
+  echo "→ Syntax-checking staged JS files..."
+  SYNTAX_ERRORS=0
+  for file in $STAGED_JS; do
+    if [ -f "$file" ]; then
+      if ! node --check "$file" 2>&1; then
+        SYNTAX_ERRORS=$((SYNTAX_ERRORS + 1))
+      fi
     fi
-  fi
-done
+  done
 
-if [ $SYNTAX_ERRORS -gt 0 ]; then
-  echo "✗ Commit blocked: $SYNTAX_ERRORS file(s) have syntax errors"
-  exit 1
+  if [ $SYNTAX_ERRORS -gt 0 ]; then
+    echo "✗ Commit blocked: $SYNTAX_ERRORS file(s) have syntax errors"
+    exit 1
+  fi
+  echo "  ✓ All staged JS files parse cleanly"
 fi
-echo "  ✓ All staged files parse cleanly"
 
 # === ADVISORY: Claude review on risk-pattern files (60s timeout) ===
-RISK_FILES=$(echo "$STAGED" | grep -iE 'pricing|quote|margin|markup|bom|firestore|rules|deploy|functions/index' || true)
+ALL_STAGED=$(printf '%s\n%s\n' "$STAGED_JS" "$STAGED_JSX" | grep -v '^$' || true)
+RISK_FILES=$(echo "$ALL_STAGED" | grep -iE 'pricing|quote|margin|markup|bom|firestore|rules|deploy|functions/index|app\.jsx' || true)
 
 if [ -n "$RISK_FILES" ]; then
   echo "→ Risk-pattern files detected — running Claude review (60s timeout)..."
