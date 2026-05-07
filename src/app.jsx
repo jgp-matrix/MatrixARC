@@ -1127,24 +1127,25 @@ function computeControlPanelLeadTime(panel,project){
   const programmingTestingDays=Math.ceil((programmingHours*0.2)/dailyCrewHours);
 
   // ── CUSTOMER APPROVAL WINDOW ──────────────────────────────────────────
-  // DECISION(v1.19.933): Customer approvals are the primary lead-time driver.
-  // Default 3 weeks (21 days). Editable per panel via `customerApprovalDays`.
-  // If real approvals come back later, the user updates the field and the
-  // chain extends. Production rescheduling (TRAQS) handles the downstream
-  // effect — see productionInfeasible warning below.
-  // DECISION(v1.19.934): NaN-safe default. `+undefined === NaN` and `??`
-  // doesn't trigger on NaN, so the v1.19.933 expression poisoned the whole
-  // chain with NaN on any panel that didn't have customerApprovalDays set
-  // yet. Resolve the raw value first, then coerce + clamp.
-  // DECISION(v1.19.939): Enforce 3-week MINIMUM buffer on customer approval
-  // days. Engineering Design produces submittals; the minimum reasonable
-  // approval window is 21 days. Raw values below 21 are floored at 21
-  // automatically — keeps the Approval-due date on the Quote honest.
-  // DECISION(v1.19.951): Source of truth moved to the Engineering Drawings
-  // service card. Read MAX customerApprovalDays across engineering cards;
-  // fall back to the legacy panel field if no engineering card defines one.
+  // DECISION(2026-05-07): Customer approval days only contribute to the
+  // lead-time chain when the project includes an Engineering Design service
+  // card. Without engineering, there are no submittals to approve, so the
+  // 21-day default was otherwise inflating ship dates on direct-purchase
+  // projects with no design work. The 21-day floor (v1.19.939) was
+  // predicated on "Engineering Design produces submittals" — that premise
+  // doesn't hold when there's no engineering line item.
+  //
+  // Prior decisions preserved when an engineering card exists:
+  //   v1.19.933 — customer approvals are the primary lead-time driver.
+  //   v1.19.934 — NaN-safe default; coerce + clamp the raw value.
+  //   v1.19.939 — 21-day MINIMUM, 180-day MAX clamp on the approval window.
+  //   v1.19.951 — source of truth is the Engineering Drawings service card;
+  //               read MAX customerApprovalDays across engineering cards;
+  //               legacy panel.customerApprovalDays preserved as fallback.
+  const hasEngineeringCard=Array.isArray(project?.serviceCards)&&
+    project.serviceCards.some(sc=>sc&&sc.lineType==="engineering");
   let _caRaw=null;
-  if(Array.isArray(project?.serviceCards)){
+  if(hasEngineeringCard){
     for(const sc of project.serviceCards){
       if(!sc||sc.lineType!=="engineering")continue;
       const v=sc.customerApprovalDays;
@@ -1153,9 +1154,11 @@ function computeControlPanelLeadTime(panel,project){
       if(!isFinite(n))continue;
       if(_caRaw==null||n>_caRaw)_caRaw=n;
     }
+    if(_caRaw==null)_caRaw=panel.customerApprovalDays; // legacy fallback
   }
-  if(_caRaw==null)_caRaw=panel.customerApprovalDays; // legacy fallback
-  const customerApprovalDays=Math.max(21,Math.min(180,_caRaw==null?21:(+_caRaw||0)));
+  const customerApprovalDays=hasEngineeringCard
+    ?Math.max(21,Math.min(180,_caRaw==null?21:(+_caRaw||0)))
+    :0;
 
   // ── MILESTONE CHAIN (sequential days from today=PO Received) ──────────
   //   Eng → Submittals Sent → Customer Approval → Materials → Production
