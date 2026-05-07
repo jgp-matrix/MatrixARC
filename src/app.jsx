@@ -20832,7 +20832,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // Quote Rev = customer-facing version; Drawing Version = internal BOM iteration.
         const livePan=latestPanelRef.current||_stampPanel;
         const dwgV=livePan?.bomVersion;
-        const dwgVStr=dwgV!=null?` · v.${dwgV}`:"";
+        const dwgVStr=dwgV!=null?` · Dv.${dwgV}`:""; // v1.19.998: was `· v.${dwgV}` — renamed to Dv.NN for consistency with the panel pill
         const stampLabel=rev===0?`AS-QUOTED${dwgVStr} · ${scanned}`:`AS-QUOTED Q-REV ${String(rev).padStart(2,'0')}${dwgVStr} · ${scanned}`;
         const hazloc=(ctx&&'hazloc' in ctx)?!!ctx.hazloc:(latestPanelRef.current?.hazardousLocation?.found||_stampPanel.hazardousLocation?.found);
         const rightParts=[hazloc?'UL698/1203':null,_stampBcProjNo?`${_stampBcProjNo} - ${String((idx+1)*100)}`:null,_stampPanel.drawingNo,_stampPanel.requestedShipDate].filter(Boolean).join(' · ');
@@ -21000,7 +21000,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const stampPrefix=sMode==='quote_ready'?'QUOTE READY':sMode==='ready_to_produce'?'READY TO PRODUCE':sMode==='customer_reviewed'?'CUSTOMER REVIEWED':sMode==='customer_approved'?'CUSTOMER APPROVED':'AS-QUOTED';
           // DECISION(v1.19.743): Include Drawing Version (v.N) on the BC drawing stamp.
           const dwgV=panel?.bomVersion;
-          const dwgVStr=dwgV!=null?` · v.${dwgV}`:"";
+          const dwgVStr=dwgV!=null?` · Dv.${dwgV}`:""; // v1.19.998: was `· v.${dwgV}` — renamed to Dv.NN for consistency with the panel pill
           const stampLabel=rev===0?`${stampPrefix}${dwgVStr} · ${scanned}`:`${stampPrefix} Q-REV ${String(rev).padStart(2,'0')}${dwgVStr} · ${scanned}`;
           imgData=await burnStampCanvas(pg.dataUrl,{
             left:stampLabel,
@@ -23567,9 +23567,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               header. Bumps automatically when the BOM hash changes. Hidden when the panel
               has no version yet (existing pre-v1.19.743 panels until their first edit). */}
           {panel.bomVersion!=null&&(
-            <span title={`Drawing Version — bumps each time the BOM is changed (currently v.${panel.bomVersion})`}
+            // DECISION(v1.19.998): Renamed `v.NN` → `Dv.NN` so the pill
+            // unambiguously reads as "Drawing version" — pairs visually
+            // with the `Qv.NN` pill on the Quote Summary header.
+            <span title={`Drawing Version — bumps each time the BOM is changed (currently Dv.${panel.bomVersion})`}
               style={{fontSize:11,fontWeight:700,color:"#a78bfa",background:"rgba(167,139,250,0.12)",border:"1px solid #a78bfa55",borderRadius:6,padding:"2px 8px",letterSpacing:0.3}}>
-              v.{panel.bomVersion}
+              Dv.{panel.bomVersion}
             </span>
           )}
           {/* DECISION(v1.19.790): Show Re-Extract whenever ANY page is tagged BOM —
@@ -29635,7 +29638,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 const total=computeAllServiceCardsTotal(project);
                 return(
                   <div style={{padding:16,display:"flex",flexDirection:"column",gap:12,height:"100%",overflowY:"auto"}}>
-                    <div style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Rev ${String(project.quoteRev).padStart(2,'0')}`:""}</div>
+                    <div style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Qv.${String(project.quoteRev).padStart(2,'0')}`:""}</div>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       {_serviceCards.slice().sort((a,b)=>(+a.createdAt||0)-(+b.createdAt||0)).map(sc=>{
                         const isSel=sc.id===selectedPanelId;
@@ -29941,7 +29944,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               {/* Quote Summary — third pane, locked to bottom */}
               <div style={{flexShrink:0,borderTop:`2px solid ${C.accent}`,background:"#06060f",padding:"12px 16px 16px",display:"flex",flexDirection:"column",gap:8}}>
                 <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:2}}>
-                  <span style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Rev ${String(project.quoteRev).padStart(2,'0')}`:""}</span>
+                  <span style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Qv.${String(project.quoteRev).padStart(2,'0')}`:""}</span>
                   {(project.quoteRev||0)>(project.quoteRevAtPrint||0)&&<span style={{fontSize:10,fontWeight:700,color:"#f59e0b",letterSpacing:0.3}}>unsent revision</span>}
                   {/* DECISION(v1.19.907): scope indicator — matches Panel Summary's
                       BASE / ECO N pill so the user can see at a glance which tab's
