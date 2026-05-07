@@ -5617,7 +5617,8 @@ function arcDocHeader(ctx,opts){
   doc.setFontSize(22);doc.setTextColor(...ARC_DOC.colors.black);
   doc.text(opts.docNumber||"",rx,y+10,{align:"right"});
   doc.setFontSize(8);doc.setTextColor(...ARC_DOC.colors.grey);
-  if(opts.rev!=null)doc.text("Rev "+String(opts.rev).padStart(2,"0"),rx,y+14,{align:"right"});
+  // v1.19.998: "Rev NN" → "Qv.NN" on the Quote PDF header to match the on-screen Quote Form.
+  if(opts.rev!=null)doc.text("Qv."+String(opts.rev).padStart(2,"0"),rx,y+14,{align:"right"});
   doc.text(opts.date||"",rx,y+18,{align:"right"});
   // Blue line under header
   y+=22;
@@ -16990,7 +16991,10 @@ function QuoteTab({project,onUpdate}){
             <div className="qd-hdr-right">
               <div className="qd-qlabel" style={isProjectBudgetary?{fontSize:22,fontWeight:800,color:"#dc2626",letterSpacing:2}:{}}>{isProjectBudgetary?"BUDGETARY QUOTE":"Quote"}</div>
               <div className="qd-qnum"><input value={q.number||""} onChange={e=>setQ({number:e.target.value})} placeholder="MTX-Q2#####" style={{...qInp({width:220,fontSize:28,fontWeight:800,textAlign:"right",letterSpacing:"-0.5px"})}}/></div>
-              <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":"#64748b",letterSpacing:0.3}}>Rev {String(project.quoteRev||0).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>
+              {/* v1.19.998: "Rev NN" → "Qv.NN" on the Quote Form header to
+                  match the QUOTE SUMMARY pill and pair visually with the
+                  Drawing-version "Dv.NN" pill on each panel. */}
+              <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":"#64748b",letterSpacing:0.3}}>Qv.{String(project.quoteRev||0).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>
               {(()=>{const hasEq=(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-qmeta">{q.date||today}<br/>Page 1 of {totalPages}</div>;})()}
             </div>
           </div>
