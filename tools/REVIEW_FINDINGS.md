@@ -84,11 +84,12 @@ T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` sk
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
     a different syntax-check approach (Babel parse, esbuild --syntax, or a small wrapper).
-T2. **OPEN** — Pre-commit hook's risk-pattern grep
-    (`pricing|quote|margin|markup|bom|firestore|rules|deploy|functions/index`) doesn't match
-    `app.jsx` even though pricing/BOM/quote logic actually lives in there. Either expand the
-    pattern (e.g. include `app\.jsx`) or accept that `.jsx` coverage is a separate workstream
-    from `.js` coverage. Coupled with T1 — fix together.
+T2. **RESOLVED** — `150f75e` (2026-05-07). Pre-commit hook now collects `.js` and `.jsx`
+    files separately. Syntax check still runs on `.js` only (T1 still open — `node --check`
+    can't parse JSX). The advisory Claude review now scans both, with `app\.jsx` added
+    explicitly to the risk pattern. Re-installed via `./tools/install-hooks.sh`. Note: the
+    risk pattern is a basename-style match, so any path containing `app.jsx` qualifies —
+    intentional, since the file might be moved or referenced via worktree paths.
 T3. **OPEN** — `firestore.rules` and other non-JS files (`.rules`, `.json`, `.html`) get no
     coverage from the syntax check or the risk-pattern review. The rfqUploads fix (#1, commit
     `701d693`) committed without any pre-commit feedback. Low priority; add a separate
