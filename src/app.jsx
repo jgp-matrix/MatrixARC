@@ -1784,8 +1784,10 @@ async function _loadRfqUploadsTeamScoped(uid,{limit=100,statusFilter=null}={}){
 // fall back to the legacy user-shared path if the company-shared doc is
 // empty/missing — lazy migration on first write to the new path.
 //
-// Covers: supplierCantSupply, supplierCrossRef. Other docs in the audit
-// (sqCrossings, vendorConfig, vendorEmails, rfq_history) ship in a follow-up.
+// Covers all 6 supplier learning DBs from the audit:
+// supplierCantSupply, supplierCrossRef (v1.19.994), and
+// sqCrossings, vendorConfig, vendorEmails, rfq_history (v1.19.996).
+// rfq_history is a collection — uses _readRfqHistoryTeamScoped helper below.
 function _supplierDocPath(uid,docName){
   return(_appCtx&&_appCtx.configPath?`${_appCtx.configPath}/${docName}`:`users/${uid}/config/${docName}`);
 }
@@ -1807,6 +1809,38 @@ async function _readSupplierConfig(uid,docName){
     const u=await fbDb.doc(`users/${uid}/config/${docName}`).get();
     return{data:u.exists?(u.data()||{}):{},source:"user"};
   }catch(e){console.warn(`[supplier-config:${docName}/user]`,e.message);return{data:{},source:"user"};}
+}
+
+// DECISION(v1.19.996, audit Item D follow-up): rfq_history collection
+// migration. Writes go to the company-shared collection; reads merge both
+// company-shared and legacy user-shared collections so existing per-user
+// history isn't lost. Mirrors the rfqUploads team-scoping pattern.
+function _rfqHistoryCollectionPath(uid){
+  return(_appCtx&&_appCtx.configPath?`${_appCtx.configPath}/rfq_history`:`users/${uid}/rfq_history`);
+}
+async function _readRfqHistoryTeamScoped(uid,{limit=100,orderByField="sentAt"}={}){
+  if(!uid||!fbDb)return[];
+  const queries=[];
+  // 1) Company-shared
+  if(_appCtx&&_appCtx.configPath){
+    queries.push(
+      fbDb.collection(`${_appCtx.configPath}/rfq_history`)
+        .orderBy(orderByField,"desc").limit(limit).get()
+        .catch(e=>{console.warn("[rfq_history/company]",e.message);return{docs:[]};})
+    );
+  }
+  // 2) User-shared (legacy fallback — always queried so historical data is preserved)
+  queries.push(
+    fbDb.collection(`users/${uid}/rfq_history`)
+      .orderBy(orderByField,"desc").limit(limit).get()
+      .catch(e=>{console.warn("[rfq_history/user]",e.message);return{docs:[]};})
+  );
+  const snaps=await Promise.all(queries);
+  const m=new Map();
+  for(const s of snaps){for(const d of s.docs){m.set(d.id,{id:d.id,...d.data()});}}
+  // Sort merged set by orderByField desc, apply limit
+  const merged=[...m.values()].sort((a,b)=>(b[orderByField]||0)-(a[orderByField]||0));
+  return merged.slice(0,limit);
 }
 
 // onSnapshot variant — runs two parallel listeners and calls onMerged with
@@ -7176,14 +7210,19 @@ async function sqSavePushAudit(quoteDocId,supplier,quoteId,userId,auditItems){
     pushedAt:firebase.firestore.FieldValue.serverTimestamp(),pushedBy:userId,items:auditItems});
 }
 // Supplier quote part-number crossings — maps supplier PN → BC item
-// Path: users/{uid}/config/sqCrossings
+// DECISION(v1.19.996, audit Item D follow-up): Migrated from per-user
+// (users/{uid}/config/sqCrossings) to company-shared (with legacy fallback
+// on read) so teammates accumulate crossings together. Mirrors the
+// supplierCantSupply / supplierCrossRef migration in v1.19.994.
 async function sqGetCrossings(uid){
-  try{const snap=await fbDb.doc(`users/${uid}/config/sqCrossings`).get();return snap.exists?snap.data():{};
+  try{
+    const{data}=await _readSupplierConfig(uid,"sqCrossings");
+    return data||{};
   }catch(e){return{};}
 }
 async function sqSaveCrossing(uid,supplierPN,bcItem){
   const key=supplierPN.toLowerCase().trim();
-  await fbDb.doc(`users/${uid}/config/sqCrossings`).set(
+  await fbDb.doc(_supplierDocPath(uid,"sqCrossings")).set(
     {[key]:{bcItemId:bcItem.id||null,bcItemNumber:bcItem.number||'',bcItemDescription:bcItem.displayName||'',bcUnitCost:bcItem.unitCost??null}},
     {merge:true});
 }
@@ -15952,11 +15991,15 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
   useEffect(()=>{
     (async()=>{
       // Load saved default emails from Firestore
+      // DECISION(v1.19.996, audit Item D follow-up): Read from company-shared
+      // path (with legacy user-doc fallback) so teammates share vendor email
+      // overrides — when Noah adds bob@vendor.com, you don't keep emailing
+      // orders@vendor.com.
       const currentUid=uid||fbAuth.currentUser?.uid;
       if(currentUid){
         try{
-          const doc=await fbDb.doc(`users/${currentUid}/config/vendorEmails`).get();
-          const saved=doc.exists?doc.data():{};
+          const{data}=await _readSupplierConfig(currentUid,"vendorEmails");
+          const saved=data||{};
           const rem={};
           groups.forEach(g=>{
             if(saved[g.vendorName]){
@@ -16088,7 +16131,10 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     // Save to Firestore history
     if(uid&&historyEntries.length>0){
       const sessionRfqNum=historyEntries.find(e=>e.sent)?.rfqNum||`RFQ-${rfqBase}`;
-      fbDb.collection(`users/${uid}/rfq_history`).add({rfqNum:sessionRfqNum,sentAt:Date.now(),projectId:projectId||"",projectName:projectName||"",sentFrom:fromEmail,entries:historyEntries}).catch(e=>console.warn("RFQ history save failed:",e));
+      // v1.19.996 (audit Item D follow-up): write rfq_history to company-shared
+      // collection (with user-shared fallback for solo accounts). Existing
+      // user-collection data remains readable via _readRfqHistoryTeamScoped.
+      fbDb.collection(_rfqHistoryCollectionPath(uid)).add({rfqNum:sessionRfqNum,sentAt:Date.now(),projectId:projectId||"",projectName:projectName||"",sentFrom:fromEmail,entries:historyEntries}).catch(e=>console.warn("RFQ history save failed:",e));
       // Save supplier part cross-reference for crossed items
       const allCrossings=[];
       historyEntries.filter(e=>e.sent).forEach(entry=>{
@@ -16299,10 +16345,11 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                         const currentUid=uid||fbAuth.currentUser?.uid;
                         if(currentUid){
                           const emailVal=(emails[g.vendorName]||"").trim();
+                          // v1.19.996 (audit Item D follow-up): write to company-shared path
                           if(checked&&emailVal){
-                            fbDb.doc(`users/${currentUid}/config/vendorEmails`).set({[g.vendorName]:emailVal},{merge:true}).catch(()=>{});
+                            fbDb.doc(_supplierDocPath(currentUid,"vendorEmails")).set({[g.vendorName]:emailVal},{merge:true}).catch(()=>{});
                           }else if(!checked){
-                            fbDb.doc(`users/${currentUid}/config/vendorEmails`).set({[g.vendorName]:firebase.firestore.FieldValue.delete()},{merge:true}).catch(()=>{});
+                            fbDb.doc(_supplierDocPath(currentUid,"vendorEmails")).set({[g.vendorName]:firebase.firestore.FieldValue.delete()},{merge:true}).catch(()=>{});
                           }
                         }
                       }} style={{accentColor:"#4ade80",width:12,height:12,cursor:"pointer"}}/>
@@ -16661,9 +16708,11 @@ function RfqHistoryModal({uid,projectId,onClose}){
   // Used by the per-project RFQ History button. The Reports modal opens this same
   // component without `projectId` to show the cross-project view.
   useEffect(()=>{
-    fbDb.collection(`users/${uid}/rfq_history`).orderBy("sentAt","desc").limit(100).get()
-      .then(snap=>{
-        let docs=snap.docs.map(d=>({id:d.id,...d.data()}));
+    // v1.19.996 (audit Item D follow-up): team-scoped rfq_history read with
+    // legacy user-collection fallback merged in.
+    _readRfqHistoryTeamScoped(uid,{limit:100})
+      .then(allDocs=>{
+        let docs=[...allDocs];
         if(projectId)docs=docs.filter(d=>d.projectId===projectId);
         setHistory(docs);
       })
@@ -32245,7 +32294,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         crossData[key]={bcItemNumber:c.matrixPartNumber,bcItemDescription:c.description||'',confirmedAt:Date.now(),source:'supplier_portal'};
       });
       try{
-        await fbDb.doc(`users/${uid}/config/sqCrossings`).set(crossData,{merge:true});
+        // v1.19.996 (audit Item D follow-up): company-shared sqCrossings path
+        await fbDb.doc(_supplierDocPath(uid,"sqCrossings")).set(crossData,{merge:true});
         _dbg('PORTAL CROSSINGS: saved',crossings.length,'confirmed supplier→Matrix part crossings');
       }catch(e){
         console.warn("sqCrossings save failed:",e);
@@ -34268,11 +34318,11 @@ function VendorPricingSyncPanel({uid}){
   // Load vendor config from Firestore + auto-detect from BC on mount
   useEffect(()=>{
     if(!uid)return;
-    fbDb.doc(`users/${uid}/config/vendorConfig`).get().then(d=>{
-      if(d.exists){
-        const dat=d.data();
-        if(dat.digikeyVendorNo)setDkVendor(dat.digikeyVendorNo);
-        if(dat.mouserVendorNo)setMouserVendor(dat.mouserVendorNo);
+    // v1.19.996 (audit Item D follow-up): vendorConfig company-shared
+    _readSupplierConfig(uid,"vendorConfig").then(({data})=>{
+      if(data){
+        if(data.digikeyVendorNo)setDkVendor(data.digikeyVendorNo);
+        if(data.mouserVendorNo)setMouserVendor(data.mouserVendorNo);
       }
     });
     // Always attempt — component only mounts when panel is opened so BC should be connected
@@ -34322,7 +34372,8 @@ function VendorPricingSyncPanel({uid}){
     if(dk!==undefined)setDkVendor(dk);
     if(m!==undefined)setMouserVendor(m);
     try{
-      await fbDb.doc(`users/${uid}/config/vendorConfig`).set(
+      // v1.19.996 (audit Item D follow-up): write to company-shared path
+      await fbDb.doc(_supplierDocPath(uid,"vendorConfig")).set(
         {digikeyVendorNo:newDk,mouserVendorNo:newM},{merge:true});
     }catch(e){console.warn("saveVendors error:",e);}
   }
@@ -36877,8 +36928,9 @@ function ReportsModal({uid,onClose}){
       .then(({data})=>{setRecords(data.records||[]);setLoading(false);})
       .catch(()=>{setRecords([]);setLoading(false);});
     // RFQ history (lazy-loaded once when modal opens — small enough to load up front)
-    fbDb.collection(`users/${uid}/rfq_history`).orderBy("sentAt","desc").limit(500).get()
-      .then(snap=>setRfqHistory(snap.docs.map(d=>({id:d.id,...d.data()}))))
+    // v1.19.996 (audit Item D follow-up): team-scoped read with legacy fallback
+    _readRfqHistoryTeamScoped(uid,{limit:500})
+      .then(allDocs=>setRfqHistory(allDocs))
       .catch(()=>setRfqHistory([]));
     // DECISION(v1.19.994, audit Item C): team-scoped — Reports tab now
     // shows team-wide RFQ submissions, not just the current user's sends.
@@ -37914,10 +37966,10 @@ function VendorsPanel({uid,onVendorAdded}){
 
   useEffect(()=>{
     // Load saved vendor config from Firestore
-    if(uid)fbDb.doc(`users/${uid}/config/vendorConfig`).get().then(d=>{
-      if(d.exists){
-        const dat=d.data();
-        setVendorCodes(dat.vendorCodes||{});
+    // v1.19.996 (audit Item D follow-up): company-shared with legacy fallback
+    if(uid)_readSupplierConfig(uid,"vendorConfig").then(({data})=>{
+      if(data){
+        setVendorCodes(data.vendorCodes||{});
       }
     });
     if(_bcToken)fetchVendors();
@@ -37964,7 +38016,7 @@ function VendorsPanel({uid,onVendorAdded}){
     if(Object.keys(generated).length){
       const merged={...cur,...generated};
       setVendorCodes(merged);
-      if(uid)fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:merged},{merge:true});
+      if(uid)fbDb.doc(_supplierDocPath(uid,"vendorConfig")).set({vendorCodes:merged},{merge:true});
     }
   },[vendors]);
 
@@ -37974,7 +38026,7 @@ function VendorsPanel({uid,onVendorAdded}){
     setVendorCodes(updated);
     setEditingCode(null);
     // Save to Firestore
-    await fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:updated},{merge:true});
+    await fbDb.doc(_supplierDocPath(uid,"vendorConfig")).set({vendorCodes:updated},{merge:true});
     // Mirror to BC Search_Name field
     if(_bcToken&&clean){
       try{
@@ -38083,7 +38135,7 @@ function VendorsPanel({uid,onVendorAdded}){
         const updated={...vendorCodes};
         removedNos.forEach(no=>delete updated[no]);
         setVendorCodes(updated);
-        await fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:updated},{merge:true});
+        await fbDb.doc(_supplierDocPath(uid,"vendorConfig")).set({vendorCodes:updated},{merge:true});
       }
       setDupProgress(`Done — removed ${removedNos.length} duplicate vendor${removedNos.length!==1?'s':''}.`);
       setTimeout(()=>{
@@ -38289,7 +38341,7 @@ function VendorsPanel({uid,onVendorAdded}){
       if(newCode.trim()&&createdNo){
         const updated={...vendorCodes,[createdNo]:newCode.trim().toUpperCase().slice(0,10)};
         setVendorCodes(updated);
-        if(uid)fbDb.doc(`users/${uid}/config/vendorConfig`).set({vendorCodes:updated},{merge:true});
+        if(uid)fbDb.doc(_supplierDocPath(uid,"vendorConfig")).set({vendorCodes:updated},{merge:true});
       }
       setLastCreated({no:createdNo,name:newName.trim(),code:newCode.trim().toUpperCase()||null});
       setNewName('');setNewCode('');
