@@ -41171,11 +41171,21 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
           )}
           {/* DECISION(v1.19.702): Moved auto-fill Lead Time control from below the table to
              above the column header for discoverability — suppliers were typing lead times
-             line-by-line before noticing the fill-all helper at the bottom. */}
+             line-by-line before noticing the fill-all helper at the bottom.
+             DECISION(v1.19.995): Two behavior changes per supplier feedback —
+               1. Fill-all now OVERWRITES every row when its value changes,
+                  not just blank rows. Lets suppliers iterate ("try 14 → all
+                  rows fill to 14 → change to 21 → all rows update to 21")
+                  without per-row clearing. Per-row manual overrides happen
+                  AFTER the fill-all is set; if the supplier wants to preserve
+                  one row, they edit that row last.
+               2. Added "Clear all" button next to the input. Wipes the
+                  fill-all box AND every per-row input — safer than asking
+                  suppliers to clear 20 fields one by one. */}
           <div style={{background:"#fef9c3",border:`1px solid #fcd34d`,borderRadius:10,padding:"10px 16px",marginBottom:10,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap",boxShadow:"0 2px 8px rgba(0,0,0,0.04)"}}>
             <span style={{fontSize:18}}>📋</span>
             <div style={{flex:"1 1 220px",fontSize:13,color:"#78350f",lineHeight:1.4}}>
-              <strong>Fill all Lead Times at once</strong> — type a value and it will auto-fill any blank rows below. You can still override per line.
+              <strong>Fill all Lead Times at once</strong> — type a value and it will fill every row below. Changing the value updates all rows. Override per line below.
             </div>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               {/* DECISION(v1.19.988): type="number" has known input quirks on
@@ -41188,20 +41198,30 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                   const v=e.target.value;
                   if(v!==''&&!/^\d*$/.test(v))return; // reject non-digit characters
                   setLeadTime(v);
-                  // Live propagate to blank per-row entries so submit always sees it.
+                  // v1.19.995: OVERWRITE every per-row entry with the new
+                  // fill-all value (not just blanks). Per-row overrides made
+                  // after this still take precedence in the order the user
+                  // edits them — they edit the fill-all first, then any
+                  // per-row exceptions. When fill-all is cleared (v===""),
+                  // we leave per-row values alone — the "Clear all" button
+                  // is the explicit wipe action.
                   if(v.trim()){
                     const lineItems=info?.lineItems||[];
-                    setItemLeadTimes(prev=>{
-                      const next={...prev};
-                      lineItems.forEach((_,i)=>{if(!next[i]||next[i]==='')next[i]=v;});
-                      return next;
-                    });
+                    const next={};
+                    lineItems.forEach((_,i)=>{next[i]=v;});
+                    setItemLeadTimes(next);
                   }
                 }}
                 onFocus={e=>e.target.select()}
                 onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
                 style={{width:90,...inp,border:`1px solid ${(!info?.leadTimeOnly&&!leadTime.trim())?"#fca5a5":"#d97706"}`,background:"#fff"}}/>
               <span style={{fontSize:13,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>days ARO {!info?.leadTimeOnly&&<span style={{color:"#dc2626"}}>*</span>}</span>
+              {/* v1.19.995: Clear all — wipes fill-all + every per-row entry */}
+              <button onClick={()=>{setLeadTime("");setItemLeadTimes({});}}
+                title="Clear the fill-all value and every per-row Lead Time below"
+                style={{background:"#fff",border:`1px solid #d97706`,color:"#92400e",fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                ✕ Clear all
+              </button>
             </div>
           </div>
           <div style={{background:card,border:`1px solid ${border}`,borderRadius:10,marginBottom:20,boxShadow:"0 2px 8px rgba(0,0,0,0.05)"}}>
