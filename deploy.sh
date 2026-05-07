@@ -24,6 +24,16 @@ echo "Bumping $CURRENT → $NEW_VERSION"
 # Update APP_VERSION in index.html
 sed -i "s/APP_VERSION=\"$CURRENT\"/APP_VERSION=\"$NEW_VERSION\"/" "$HTML"
 
+# Verify the replacement actually happened (sed exits 0 even with no match — see
+# REVIEW_FINDINGS #14). Without this, the failure mode is a confusing
+# "nothing to commit" downstream instead of a clear sed-pattern-miss error.
+if ! grep -q "APP_VERSION=\"$NEW_VERSION\"" "$HTML"; then
+  echo "ERROR: sed did not replace APP_VERSION in $HTML"
+  echo "  Expected pattern after replace: APP_VERSION=\"$NEW_VERSION\""
+  echo "  Original APP_VERSION line may have shifted format. Inspect $HTML manually."
+  exit 1
+fi
+
 # Commit, tag, push
 cd "$REPO"
 git add public/index.html
