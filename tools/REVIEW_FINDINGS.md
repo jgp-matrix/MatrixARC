@@ -68,10 +68,10 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     of current branch. Running `deploy.sh` from a worktree branch would push the wrong ref or
     refuse the push. Fix: capture `git rev-parse --abbrev-ref HEAD` and either gate on `master`
     or push the current branch.
-14. **OPEN** — Silent sed. The `sed -i "s/APP_VERSION=.../APP_VERSION=.../"` exits 0 with no
-    replacement if the regex doesn't match. The downstream empty `git commit` trips `set -e`,
-    but with a confusing "nothing to commit" instead of a clear "couldn't find APP_VERSION line."
-    Fix: capture sed output, diff, abort with a real error if no replacement happened.
+14. **RESOLVED** — `b61eedf` (2026-05-07). Added a post-sed `grep -q` verification that the
+    replaced `APP_VERSION="$NEW_VERSION"` actually exists in `public/index.html`. If not,
+    aborts with a clear error message naming the expected pattern and the file to inspect,
+    rather than letting the failure cascade into a confusing downstream "nothing to commit".
 15. **OPEN** — No functions deploy + no preflight invocation. `deploy.sh` runs
     `firebase deploy --only hosting`. Cloud Functions changes need a separate manual
     `firebase deploy --only functions` (per CLAUDE.md). The toolkit's `tools/preflight-functions.sh`
