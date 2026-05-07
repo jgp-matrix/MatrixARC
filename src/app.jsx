@@ -5746,15 +5746,49 @@ function arcDocKeyValueRow(ctx,items){
   ctx.y+=10;
 }
 
-function arcDocOpen(doc){
-  // DECISION(v1.19.467): Use <a> download link instead of window.open to avoid popup blockers.
-  // The BC sync before print adds async delay that makes window.open lose "user-initiated" status.
+function arcDocOpen(doc,filename){
+  // DECISION(2026-05-07): Switched back to window.open so we can DETECT
+  // popup-blocker failures. The earlier <a target="_blank">.click() path
+  // (v1.19.467) was equally subject to popup blocking after async delays
+  // (BC sync, jsPDF build) but gave no detection signal — users saw nothing
+  // happen and didn't know why. window.open returns null/closed-immediately
+  // when blocked; we use that to surface a modal with download fallback.
+  // Note: browsers do NOT expose any JS API to programmatically toggle
+  // the user's popup-blocker setting — the modal can only instruct.
   const blob=doc.output("blob");
   const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url;a.target="_blank";a.rel="noopener";
-  document.body.appendChild(a);a.click();
-  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},1000);
+  const fname=filename||"document.pdf";
+  const win=window.open(url,"_blank","noopener,noreferrer");
+  if(!win||win.closed||typeof win.closed==="undefined"){
+    URL.revokeObjectURL(url);
+    if(typeof logDebugEntry==="function"){
+      try{logDebugEntry({severity:"warn",source:"arcDocOpen",message:"PDF preview popup blocked",extra:{filename:fname}});}catch(_){}
+    }
+    _showPopupBlockedFallback(blob,fname);
+    return;
+  }
+  // 60s window covers the time the browser may need to render the PDF
+  // viewer in the new tab before we can safely revoke the blob URL.
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+async function _showPopupBlockedFallback(blob,filename){
+  const ua=navigator.userAgent||"";
+  const browser=/Edg\//.test(ua)?"Edge":/Chrome\//.test(ua)?"Chrome":/Firefox\//.test(ua)?"Firefox":/Safari\//.test(ua)?"Safari":"your browser";
+  const settingsUrl=browser==="Edge"?"edge://settings/content/popups":browser==="Chrome"?"chrome://settings/content/popups":null;
+  const instructions=settingsUrl
+    ?`1. Click the blocked-popup icon in the address bar (top right).\n2. Choose "Always allow pop-ups and redirects from this site".\n3. Reload and try again.\n\nOr open ${browser} popup settings — paste this into a new tab (browsers don't let pages open settings directly):\n${settingsUrl}`
+    :`Allow pop-ups for this site in your browser's site settings, then try again.`;
+  const choice=await arcConfirm(
+    `Your browser blocked the PDF preview tab.\n\n${instructions}`,
+    {kind:"warning",title:"🚫 Pop-up Blocked",okLabel:"📥 Download PDF Instead",cancelLabel:"Close"}
+  );
+  if(choice){
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=filename;a.rel="noopener";
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{try{document.body.removeChild(a);}catch(_){}URL.revokeObjectURL(url);},1000);
+  }
 }
 
 function arcDocBase64(doc){
@@ -6550,7 +6584,8 @@ async function generateBomReportPdf(project){
   const jsPDF=await ensureJsPDF();
   const doc=new jsPDF({unit:"mm",format:"letter",orientation:"landscape"});
   await buildBomReportPdfDoc(doc,project);
-  arcDocOpen(doc);
+  const projName=(project?.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+  arcDocOpen(doc,`BOM Report - ${projName}.pdf`);
   return{printed:true};
 }
 if(typeof window!=="undefined"){window._buildBomReportPdfDoc=buildBomReportPdfDoc;window._generateBomReportPdf=generateBomReportPdf;}
@@ -6559,17 +6594,19 @@ async function generateQuotePdf(project){
   const jsPDF=await ensureJsPDF();
   const doc=new jsPDF({unit:"mm",format:"letter"});
   await buildQuotePdfDoc(doc,project);
-  arcDocOpen(doc);
-  // Auto-upload to BC (non-blocking — don't wait)
-  const bcNum=project.bcProjectNumber;
+  // DECISION(v1.19.375): QTE_C- prefix for client quotes — sorts with other quotes in BC.
+  // Hoisted out of the BC-only block (2026-05-07) so the same filename is used as the
+  // download fallback name when the popup blocker triggers _showPopupBlockedFallback.
   const q=project.quote||{};
   const rev=project.quoteRev||0;
+  const quoteNum=q.number||"Quote";
+  const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+  const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+  const fileName=`QTE_C-[${quoteNum} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
+  arcDocOpen(doc,fileName);
+  // Auto-upload to BC (non-blocking — don't wait)
+  const bcNum=project.bcProjectNumber;
   if(bcNum&&_bcToken){
-    const quoteNum=q.number||"Quote";
-    const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-    const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-    // DECISION(v1.19.375): QTE_C- prefix for client quotes — sorts with other quotes in BC.
-    const fileName=`QTE_C-[${quoteNum} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
     const pdfBytes=doc.output("arraybuffer");
     // DECISION(v1.19.334): Delete same-rev file before re-uploading to prevent duplicates.
     // Every "Print Client Quote" click re-generates and uploads — without deletion, identical copies accumulate.
