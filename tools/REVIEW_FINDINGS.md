@@ -22,6 +22,11 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
    check passes when `companyId == null`, but doesn't verify membership when companyId is set
    to an arbitrary value). Tighten CREATE: when `companyId` is present, require `_writerIsCompanyWriter`
    to pass on that exact value (it currently does, but the check should be hoisted to a precondition).
+5. **STALE** (verified 2026-05-07) — Firestore rules: "Missing `rfq_history` match rule." The
+   path `users/{uid}/rfq_history` is fully covered by the catch-all
+   `match /users/{uid}/{document=**}` rule at `firestore.rules:12-14`, which gates read/write
+   on `request.auth.uid == uid`. Same pattern as `users/{uid}/projects`, `users/{uid}/config`,
+   etc. No gap; no fix needed. Kept as a record of what was checked.
 
 ## Round 2 (functions/index.js diff)
 
