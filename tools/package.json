@@ -1,0 +1,9 @@
+{
+  "name": "matrixarc-admin-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local admin helpers — uses service-account key at ../.secrets/matrix-arc-admin.json",
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  }
+}
