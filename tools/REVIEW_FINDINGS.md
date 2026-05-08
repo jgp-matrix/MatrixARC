@@ -84,7 +84,17 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     moves the bundle to a `<link>` import or drops the query param). Same error-message format
     and abort behavior as the APP_VERSION verifier.
 
-## Toolkit gaps (deferred)
+## Round 4 (caught during pre-commit review of merge resolution, 2026-05-08)
+
+17. **OPEN** — Fire-and-forget call to async `_showPopupBlockedFallback` from the synchronous
+    `arcDocOpen` helper in `src/app.jsx`. Source commit `3fd29f6`
+    ("arcDocOpen: drop features string so window.open returns a normal tab"). The fallback is
+    invoked without `await` from a non-async caller, so any rejection inside it (e.g. an
+    `arcConfirm` rejection — unlikely in practice but possible if the dialog host unmounts mid-
+    prompt) surfaces as an unhandled promise rejection. Low severity — the popup-blocked path is
+    rare and the rejection wouldn't corrupt state. Fix: either wrap the call site in
+    `.catch(()=>{})` to swallow benign rejections, or refactor `arcDocOpen` itself to be `async`
+    and `await` the fallback. Not for the current deploy window.
 
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
