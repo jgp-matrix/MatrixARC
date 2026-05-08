@@ -10,6 +10,49 @@
 
 If anything looks unexpected — wrong directory, unfamiliar branch, untracked files you didn't create, commits you didn't make — **stop and surface the contradiction to the user before doing any task work**. Do not auto-clean, auto-checkout, or "fix" the state. The parallel testing/review CLI session may have written artifacts you should not touch.
 
+## Session shutdown procedure
+
+The shutdown is a two-step user command: "Close Out" (surface state) followed by "Closed" (confirm safe to end).
+
+### "Close Out" — surface state, no auto-actions
+
+When the user says "Close Out" (or any case-insensitive variant: close-out, closeout, etc.), run the following procedure and report results without auto-executing fixes:
+
+1. Show what was committed in this session: identify the earliest commit made since the session started (use git reflog if needed) and run `git log --oneline <start-SHA>..HEAD`. If unsure of the session-start SHA, show the last 10 commits and identify which were made this session.
+
+2. Confirm push status: `git status` and `git log master..origin/master` to identify any commits not yet pushed to origin. Flag pending pushes — do not auto-push.
+
+3. Verify working tree state: `git status`. Flag any modified, staged, or untracked files. Report the disposition (commit / stash / discard) the user should decide on. Do not auto-act.
+
+4. Identify TODO.md updates: based on what was accomplished in this session, list:
+   - Findings that should be marked RESOLVED with their commit SHAs
+   - New findings that should be captured (with proposed wording)
+   - Findings whose investigation notes should be updated
+   Do not auto-edit TODO.md — surface the proposed changes for user approval.
+
+5. Provide a one-paragraph summary: what was accomplished, what's still pending, what the next logical session would address.
+
+6. Stop. Wait for the user to either:
+   - Direct fixes (push pending commits, update TODO.md, deal with WIP) — execute as instructed
+   - Type "Closed" — confirm safe shutdown (see below)
+   - Continue working — abort the close-out
+
+### "Closed" — final confirmation
+
+When the user says "Closed" (or any case-insensitive variant: closed, close, done) AFTER a Close Out has been run, perform a final verification before treating the session as ended:
+
+1. Re-run `git status` — must be clean (no modified, staged, or untracked files apart from `.claude/worktrees/`).
+
+2. Re-run `git log master..origin/master` — must be empty (everything pushed).
+
+3. Confirm any TODO.md updates surfaced in Close Out have been either applied or explicitly waived by the user.
+
+4. If all checks pass: respond "✓ Session closed cleanly. All changes committed and pushed. Safe to end."
+
+5. If any check fails: respond with which specific check failed, what state needs to be addressed, and do not declare the session closed. Wait for the user to address it and type "Closed" again.
+
+The "Closed" command is the user's contract that the session is genuinely done. CCD's job is to verify the state matches that claim before agreeing.
+
 ## Parallel Claude session workflow
 The user runs **two Claude sessions in parallel** against this codebase:
 
