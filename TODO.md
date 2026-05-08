@@ -299,7 +299,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 8 (discovered while verifying #19 fix, 2026-05-08)
 
-22. **RESOLVED** (pending v1.19.1005 deploy) — `addPanel` does not create the per-panel BC Project Task block
+22. **RESOLVED** — `b4c6167` (2026-05-08, deployed in v1.19.1005) — `addPanel` does not create the per-panel BC Project Task block
     (20N00 / 20N10 / 20N20 / 20N99) in Business Central. User expected the
     same task-creation behavior as the New Project flow, where
     `bcCreatePanelTaskStructure` lays down all panel task scaffolding at
@@ -449,7 +449,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     in next session and implement the helper + three call-site changes
     above. Reference this BC dump when verifying the test plan.
 
-    **Resolution note (2026-05-08, pending v1.19.1005 deploy):**
+    **Resolution note (2026-05-08, deployed in v1.19.1005, master `b4c6167`):**
     Implemented exactly per the design sketch in steps (a)–(d) above:
 
     - (a) New helper `bcCreatePanelTaskBlock(projectNumber, panelIndex, panel,
