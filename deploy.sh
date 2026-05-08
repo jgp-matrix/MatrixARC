@@ -25,7 +25,7 @@ echo "Bumping $CURRENT → $NEW_VERSION"
 sed -i "s/APP_VERSION=\"$CURRENT\"/APP_VERSION=\"$NEW_VERSION\"/" "$HTML"
 
 # Verify the APP_VERSION replacement actually happened (sed exits 0 even with no match — see
-# REVIEW_FINDINGS #14). Without this, the failure mode is a confusing
+# TODO #14). Without this, the failure mode is a confusing
 # "nothing to commit" downstream instead of a clear sed-pattern-miss error.
 if ! grep -q "APP_VERSION=\"$NEW_VERSION\"" "$HTML"; then
   echo "ERROR: sed did not replace APP_VERSION in $HTML"
@@ -44,7 +44,7 @@ sed -i "s|index.bundle.js?v=[^\"']*|index.bundle.js?v=$NEW_VERSION|" "$HTML"
 # Verify the bundle ?v= replacement actually happened. sed exits 0 even with no match — so if the
 # index.bundle.js?v= pattern ever shifts (e.g. someone moves the bundle to a <link> import or drops
 # the query param), this would silently ship without busting the browser cache and users would stay
-# on the old bundle. Mirrors the APP_VERSION verification immediately above (REVIEW_FINDINGS #14).
+# on the old bundle. Mirrors the APP_VERSION verification immediately above (TODO #14).
 if ! grep -q "index.bundle.js?v=$NEW_VERSION" "$HTML"; then
   echo "ERROR: sed did not update index.bundle.js?v= in $HTML"
   echo "  Expected pattern after replace: index.bundle.js?v=$NEW_VERSION"

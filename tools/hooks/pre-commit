@@ -1,7 +1,7 @@
 #!/bin/bash
 # ARC pre-commit hook
 # - Syntax-checks staged .js files (BLOCKS commit on failure)
-#   .jsx is NOT syntax-checked (node --check can't parse JSX). See REVIEW_FINDINGS T1.
+#   .jsx is NOT syntax-checked (node --check can't parse JSX). See TODO T1.
 # - Runs Claude review on risk-pattern files (advisory only, 60s timeout)
 #   Risk pattern matches .js AND .jsx files — `app\.jsx` is included explicitly because
 #   that's where ARC's pricing / BOM / Firestore logic actually lives.

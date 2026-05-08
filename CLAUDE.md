@@ -5,7 +5,7 @@
 The user runs **two Claude sessions in parallel** against this codebase:
 
 - **Development session (Claude Code IDE / this session)** — owns code edits, deploys (`bash deploy.sh`), Firestore rule changes, Cloud Function deploys (`firebase deploy --only functions:...`), and live verification via Claude in Chrome browser tools. All `Edit`/`Write` operations originate here.
-- **Testing / review session (separate CLI)** — runs read-only scans, code review (`tools/review.sh`), test suites, and diagnostic queries. Does NOT modify source files. Generated artifacts (e.g. `tools/REVIEW_FINDINGS.md`) appear in the working tree and are imported into the dev session's todo list.
+- **Testing / review session (separate CLI)** — runs read-only scans, code review (`tools/review.sh`), test suites, and diagnostic queries. Does NOT modify source files. Generated artifacts (e.g. `TODO.md`) appear in the working tree and are imported into the dev session's todo list.
 
 **Coordination rules for the development session (this one):**
 - Re-read files before editing — the testing session may add review artifacts; tag them as input, not as files to ignore.
@@ -66,9 +66,9 @@ Located in `tools/`. Use these alongside development:
 - BLOCKS the commit if any staged `.js` file fails `node --check`.
 - Runs an advisory Claude review (60s timeout) on staged files matching the risk pattern `pricing|quote|margin|markup|bom|firestore|rules|deploy|functions/index`. Review is advisory only — never blocks the commit.
 
-**Outstanding findings**: see `tools/REVIEW_FINDINGS.md`. Each entry tagged OPEN / RESOLVED (with commit SHA) / STALE. Update when findings change state — don't delete history, mark it.
+**Outstanding findings**: see `TODO.md`. Each entry tagged OPEN / RESOLVED (with commit SHA) / STALE. Update when findings change state — don't delete history, mark it.
 
-**Known toolkit gap**: hook only covers `.js`, not `.jsx`. Most of `src/app.jsx` (~2 MB, the bulk of the codebase) is unreviewed by the automated hook. Tracked as deferred toolkit improvement T1/T2 in `tools/REVIEW_FINDINGS.md`.
+**Known toolkit gap**: hook only covers `.js`, not `.jsx`. Most of `src/app.jsx` (~2 MB, the bulk of the codebase) is unreviewed by the automated hook. Tracked as deferred toolkit improvement T1/T2 in `TODO.md`.
 
 ## Data Retention (CRITICAL)
 
