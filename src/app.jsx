@@ -29142,7 +29142,13 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   function addPanel(){
     const n=(project.panels||[]).length+1;
     const newPanel={id:'panel-'+Date.now(),name:`Panel ${n}`,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'};
-    onUpdate({...project,panels:[...(project.panels||[]),newPanel]});
+    const updated={...project,panels:[...(project.panels||[]),newPanel]};
+    onUpdate(updated);
+    // Persist immediately. Without this, the new panel is React-only until the
+    // user drops drawings and confirms — and any code path that overwrites
+    // React state from Firestore in the interim (e.g. firstSnapshot at the
+    // project-doc onSnapshot listener firing on re-subscribe) drops the panel.
+    safeSave(uid,updated);
   }
   // DECISION(v1.19.916, Step B): Add a service Quote Line of the given type.
   // Allocates a fresh BC task slot in the type's bucket (50100..50399 series).
@@ -31440,6 +31446,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const lastRemoteEditorAtRef=useRef(0);
   const [externalUpdateToast,setExternalUpdateToast]=useState(null); // {userName, updatedAt} | null
   useEffect(()=>{if(projectRemoteTasks&&projectRemoteTasks.length>0)lastRemoteEditorAtRef.current=Date.now();},[projectRemoteTasks&&projectRemoteTasks.length]);
+  // DECISION(v1.19.1004): Track whether the very-first Firestore sync has happened.
+  // This effect's deps include `projectRemoteTasks`, so it re-runs every time a teammate's
+  // active-extraction state changes (or the user starts their own bg task — see rbgUpdate
+  // throttle). On every re-subscribe, Firestore fires the initial snapshot synchronously
+  // with cached data, and the original `let firstSnapshot=true` (recreated each effect run)
+  // would unconditionally overwrite local React state with Firestore — clobbering any
+  // not-yet-persisted React-only state (e.g. a freshly-added panel before its first save).
+  // Promoting the flag to a ref makes "first" mean "first ever for this mount of the component"
+  // rather than "first per re-subscribe".
+  const didInitialFirestoreSyncRef=useRef(false);
   useEffect(()=>{
     if(!init.id)return;
     const path=_appCtx.projectsPath||`users/${uid}/projects`;
@@ -31447,12 +31463,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // The old "skip first load" logic meant ProjectView started with whatever stale copy
     // the dashboard had cached. If Jon opened Noah's project while Noah was mid-drop, Jon's
     // stale state could get auto-saved back over Noah's fresh data, wiping the drawings.
-    let firstSnapshot=true;
+    // DECISION(v1.19.1004): The "first snapshot" guard is now component-mount-scoped via
+    // didInitialFirestoreSyncRef, not effect-instance-scoped. See ref declaration above.
+    let firstSnapshot=!didInitialFirestoreSyncRef.current;
     const unsub=fbDb.doc(`${path}/${init.id}`).onSnapshot(snap=>{
       if(!snap.exists)return;
       const remote=snap.data();
       if(firstSnapshot){
         firstSnapshot=false;
+        didInitialFirestoreSyncRef.current=true;
         // Always refresh to Firestore's truth on mount, regardless of updatedBy.
         const migrated=migrateProject({...remote,id:init.id});
         projectRef.current=migrated;
