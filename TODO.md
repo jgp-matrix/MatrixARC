@@ -161,6 +161,40 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     source restoration is optional pending decision on whether the daily
     monitor is still wanted.
 
+## Round 6 (user-reported, 2026-05-08)
+
+19. **OPEN** — BOM line item disappears when drawings are dropped onto a project.
+    Reported by user, no investigation yet. Repro steps, affected panel/project,
+    and which drop path (initial upload vs. drag-add to existing project) all
+    TBD. Capture placeholder; investigate in a dedicated session. Likely
+    suspects to check first: `addFiles` merge logic, `runPanelValidation`
+    re-extraction overwriting existing rows, manual-edit preservation guard
+    (`priceSource: "manual"|"bc"`) — see Data Retention rule #6 in CLAUDE.md.
+
+20. **OPEN** — `deploy.sh` cache-bust verifier doesn't cover bundle regeneration.
+    The `grep -q "index.bundle.js?v=$NEW_VERSION"` check at `deploy.sh:48`
+    confirms the HTML's query string was updated, but does not confirm
+    `validate_jsx.js` produced a fresh `public/index.bundle.js`. Failure modes
+    that would slip past deploy: validate_jsx.js silently exits 0 without
+    writing the bundle (the HEAD validate_jsx.js bug — see CLEANUP_PLAN
+    Session 2 Phase 2A investigation, fixed in `cdceb17`); babel transform
+    emits an empty `compiled` and `fs.writeFileSync` writes a 0-byte bundle;
+    bundle write succeeds against an unintended path. In all cases the deploy
+    ships a stale or empty bundle with a fresh `?v=` token, forcing every
+    client to re-fetch broken content.
+
+    Suggested fix: capture `stat -c %Y public/index.bundle.js` (or a content
+    hash) before invoking `node validate_jsx.js`, then re-check after; require
+    both that the file exists, that its mtime changed, and that size > some
+    threshold (e.g., 100 KB — current bundle is ~2.4 MB). Optionally also
+    assert the bundle contains a known marker such as `APP_VERSION` or
+    `MTX-Q`.
+
+    Discovered while triaging WIP files in CLEANUP_PLAN Session 2 (Phase 2A);
+    HEAD's `validate_jsx.js` was found to silently no-op against the current
+    `index.html` structure, with deploys succeeding only because of
+    uncommitted WIP. The verifier did not catch the underlying broken script.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
