@@ -535,6 +535,73 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     quote/BOM. The auto-created task is now redundant and should be removed
     from whatever code path seeds default project tasks.
 
+## Round 9 (user-reported, 2026-05-08)
+
+25. **RESOLVED** — `4da7909` (2026-05-08, deployed in v1.19.1007) — BOM
+    extraction silently dropped pages where ENC and BOM share the same
+    drawing. The AI page-type detector (`PAGE_TYPE_DETECT_PROMPT` at
+    `src/app.jsx:12626`) is instructed via DECISION ORDER to pick ONE
+    primary purpose per page — drawing wins over BOM when both are present
+    — so a 3-page set with an ENC+BOM combined page returned
+    `{"types":["enclosure"]}`. The BOM extraction filter at
+    `src/app.jsx:11976` (`_bp.filter(p => getPageTypes(p).includes("bom") && p.dataUrl)`)
+    excluded the page entirely; user-drawn BOM regions on that page never
+    reached `getExtractionUnits` because the per-page extraction loop is
+    only entered for pages that pass the filter.
+
+    Discovered by user testing PRJ402089 Line 3: 3-page drawing set with
+    ENC + BOM combined; extraction failed despite a BOM region being
+    identified.
+
+    **Fix:** `getPageTypes()` (`src/app.jsx:12727`) now unions AI-detected
+    types with classifier-compatible region types (`bom` / `schematic` /
+    `backpanel` / `enclosure` / `pid`). User-drawn regions are
+    authoritative — they ADD types but never remove them, so pages with
+    no regions still rely on the AI classifier. The change is
+    centralized: every downstream filter (extraction at 11976, audit at
+    12434, validation, UI counters at 20796–20800, ~20+ callsites total)
+    automatically sees the user's truth. Multi-page case is handled by
+    the per-page nature of `getPageTypes` — N pages each with an ENC
+    region all land in `enclosurePages`; same for BOM.
+
+    Region annotation types that aren't classifier-compatible
+    (`zoomed_detail`, `label`, `spec`, `other`, `ignore`, `titleblock`)
+    are correctly ignored as page-type sources — they remain annotations,
+    not page classifications. `getExtractionUnits` (`src/app.jsx:9598`)
+    still independently crops user-drawn BOM rectangles, unaffected.
+
+    Side note: v1.19.1006 was an empty version bump — see #26 below for
+    the deploy.sh worktree-mismatch root cause.
+
+26. **OPEN** — `deploy.sh` builds from the main checkout
+    (`C:\Users\jon\AppDev\MatrixARC\src\app.jsx`), not from the cwd
+    worktree's source. If a fix is edited inside a worktree
+    (`.claude/worktrees/...`) and `bash deploy.sh` is invoked from that
+    worktree, the script silently builds and ships main's stale source
+    with only the version bump applied — the actual code change does NOT
+    deploy. v1.19.1006 was an empty release for exactly this reason
+    (commit `ee7721b`); the fix had to be re-applied in the main checkout
+    and re-deployed as v1.19.1007 (`4da7909`).
+
+    Discovered 2026-05-08 while shipping #25. The earlier session's
+    `node validate_jsx.js` log even hinted at this — output said "Source
+    length: 2747264" against the main checkout's app.jsx, not the
+    worktree's — but no abort or warning fired.
+
+    **Fix candidates:**
+    a. `deploy.sh` aborts (or prompts) if cwd is a worktree and the
+       worktree's `src/app.jsx` differs from the main checkout's. One
+       `diff -q` before the build is enough to detect this.
+    b. `deploy.sh` rsyncs the cwd's `src/app.jsx` to the main checkout
+       before building — riskier, could clobber unrelated edits in main.
+    c. Document loudly in CLAUDE.md that worktree edits must be applied
+       in main (or merged to master) before running deploy. Cheapest, but
+       relies on the operator remembering.
+
+    (a) is the recommended path — it's a 3-line guard, fails closed, and
+    makes the failure mode visible the moment it happens instead of after
+    the empty version is live.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
