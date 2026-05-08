@@ -528,6 +528,13 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     Low severity; out of scope for v1.19.1005 deploy. Pick up in a follow-up
     session.
 
+24. **OPEN** — Remove auto-creation of Project Task `20N20 Engineering Design`.
+    This task is auto-created on new projects (likely in the BC job/project
+    creation path or initial project template), but is no longer needed since
+    Engineering Design is now handled as a separate line item on the
+    quote/BOM. The auto-created task is now redundant and should be removed
+    from whatever code path seeds default project tasks.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
