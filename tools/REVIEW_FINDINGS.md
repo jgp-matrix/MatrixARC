@@ -96,6 +96,71 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     `.catch(()=>{})` to swallow benign rejections, or refactor `arcDocOpen` itself to be `async`
     and `await` the fallback. Not for the current deploy window.
 
+## Round 5 (orphan Cloud Functions, caught during 2026-05-07 deploy)
+
+18. **OPEN — HIGH PRIORITY (production code path, near-miss during 2026-05-07 deploy)** —
+    Two Cloud Functions in production have no local source. One (`extractBomPage`) is on
+    the active BOM extraction path — pressing Y at firebase's deletion prompt would have
+    broken production today.
+
+    The orphan functions are `extractBomPage(us-central1)` and
+    `monitorAnthropicModels(us-central1)`. `firebase deploy --only functions` prompts to
+    delete both on every run. **DO NOT press Y without investigation first.** Until
+    resolved, either skip `--only functions` deploys, or always answer N to the deletion
+    prompt.
+
+    Investigation needed:
+    (a) Where the deployed source for each function originally came from — check
+        `git log --all -- functions/index.js` for commits referencing these names
+        that may have been later removed/refactored.
+    (b) Whether each function is actively called by the app — search `src/app.jsx`
+        and `public/` for references to both function names.
+    (c) Once known, decide whether to restore source from history or deliberately
+        delete from production.
+
+    **Preliminary investigation (2026-05-07):**
+
+    *`functions/index.js` git history (`git log --all --oneline -- functions/index.js | head -20`):*
+    Last commit touching `functions/index.js` is `3b90e09` "Diagnostic backlog:
+    rules, functions, SW (deployed across v1.19.955-.964)". Nothing after that.
+    No commit on any branch references `extractBomPage` or `monitorAnthropicModels`
+    in the `functions/` tree. CLAUDE.md attributes `extractBomPage` to v1.19.981 —
+    so the function was added to production ~25 releases AFTER the most recent
+    `functions/index.js` commit. **The source was deployed via
+    `firebase deploy --only functions` from an uncommitted working tree and
+    never written back to git.** Same situation almost certainly applies to
+    `monitorAnthropicModels`. This is deploy-without-commit drift; the
+    deployed function bodies are recoverable only from a Firebase console
+    download or whatever local working copy originally produced them.
+
+    *`extractBomPage` references in source (`git grep -n 'extractBomPage'`):*
+    **Actively called from production code path.** `src/app.jsx:9702` instantiates
+    the callable: `fbFunctions.httpsCallable("extractBomPage", {timeout:300000})`.
+    Called via `extractBomPageViaServer` (line 9701), which is the server path
+    `extractBomPage` (client wrapper, line 9757) takes when `originalPdfPath`
+    + `pageNumber` are present. Falls back to direct Anthropic API only on
+    server error. The client wrapper is invoked from at least five extraction
+    flows (`src/app.jsx:11973, 11990, 14096, 21661, 21873`) — covers the
+    primary "first pass" extract, L3 auto-retry, native-PDF fast path, and
+    two re-extract paths. **Deleting the production function would break
+    BOM extraction for every user that lands on the server-side path.**
+    `storage.rules:11` and `CLAUDE.md:240` also reference it. Restore source
+    from history is mandatory before any next `--only functions` deploy.
+
+    *`monitorAnthropicModels` references in source (`git grep -n 'monitorAnthropicModels'`):*
+    **Zero matches.** No client code calls it; no docs reference it; no other
+    function references it. Most likely a scheduled function that runs
+    server-side only on a cron trigger (synthetic Anthropic model-health
+    monitor — referenced in earlier session notes as a daily monitor added
+    around v1.19.990). If kept, source still needs to be restored from
+    whatever working tree originally deployed it. If purpose is no longer
+    needed, deletion from production is safe — no caller will break.
+
+    Asymmetric resolution: `extractBomPage` source MUST be restored before
+    next functions deploy (production-critical); `monitorAnthropicModels`
+    source restoration is optional pending decision on whether the daily
+    monitor is still wanted.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
