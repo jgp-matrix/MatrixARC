@@ -299,7 +299,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 8 (discovered while verifying #19 fix, 2026-05-08)
 
-22. **OPEN** — `addPanel` does not create the per-panel BC Project Task block
+22. **RESOLVED** (pending v1.19.1005 deploy) — `addPanel` does not create the per-panel BC Project Task block
     (20N00 / 20N10 / 20N20 / 20N99) in Business Central. User expected the
     same task-creation behavior as the New Project flow, where
     `bcCreatePanelTaskStructure` lays down all panel task scaffolding at
@@ -448,6 +448,52 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     BC). Out of scope for the #19 fix; design is now nailed down — pick up
     in next session and implement the helper + three call-site changes
     above. Reference this BC dump when verifying the test plan.
+
+    **Resolution note (2026-05-08, pending v1.19.1005 deploy):**
+    Implemented exactly per the design sketch in steps (a)–(d) above:
+
+    - (a) New helper `bcCreatePanelTaskBlock(projectNumber, panelIndex, panel,
+      projectName)` added at `src/app.jsx` immediately after
+      `bcCreatePanelTaskStructure`. Idempotent: probes Begin-Total (20N00)
+      first as a fast path; if missing, falls through to per-task GET-by-key
+      probe + POST. Same `Project_No` → `Job_No` field-prefix fallback as
+      `bcCreatePanelTaskStructure`. Returns `{created, skipped, failed,
+      total:4}` summary; throws on partial failure so callers route to the
+      offline queue.
+
+    - (b) `addPanel` (in `ProjectView`) now calls `bcCreatePanelTaskBlock`
+      after `safeSave` when `project.bcProjectNumber` is set and BC env
+      matches. Token-missing path enqueues via
+      `bcEnqueue('createPanelTaskBlock', …)`; runtime failure also enqueues
+      with the same payload.
+
+    - (c) Backfill probe added to the top of
+      `bcSyncPanelTaskDescriptions` and `bcSyncPanelPlanningLines` —
+      `await bcCreatePanelTaskBlock(...)` runs first. Idempotent + fast-path
+      means already-scaffolded panels pay one GET; legacy panels with
+      missing tasks self-heal on first sync.
+
+    - (d) BC offline queue dispatcher (`_bcQueueExecute`) gained a
+      `case 'createPanelTaskBlock'` branch that calls the helper with the
+      enqueued params.
+
+    `panel.bcTasksSyncPending` flag from design item #3 NOT implemented this
+    session — the offline queue + BC queue badge already surface pending
+    state, and the helper's idempotency means re-runs don't double-create.
+    Defer the per-panel chip to a follow-up if needed once the fix is
+    field-tested.
+
+    Test plan from above is the verification path. Run after deploy:
+    1. **Fresh add** in any BC-connected project — verify 20N00/20N10/20N20/
+       20N99 appear within ~5s. Verify 99999 Totaling unchanged.
+    2. **Offline path** with `_bcToken=null` — verify queue badge increments
+       and drains on reconnect.
+    3. **Backfill** on PRJ402089 Panel 2 (currently has no BC tasks per
+       this session's BC dump) — trigger any sync and verify tasks land.
+    4. **Idempotency** — call helper twice; second call should report
+       skipped=4 from the fast-path probe.
+    5. **Cross-env mismatch** — `_bcEnvMismatched(project)===true`: helper
+       not invoked, no queue entry, no errors.
 
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest

@@ -2787,6 +2787,103 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
   return postTasks("Project");
 }
 
+// DECISION(v1.19.1005, TODO #22): Per-panel task-block creator for incremental
+// panel adds (vs. bcCreatePanelTaskStructure which lays down ALL panels at New
+// Project time). Idempotent: probes each task by key first; POSTs only missing
+// ones. Same Project_/Job_ field-prefix fallback as bcCreatePanelTaskStructure.
+// Used by addPanel and as a backfill from the per-panel sync helpers
+// (bcSyncPanelTaskDescriptions, bcSyncPanelPlanningLines) so legacy panels
+// without a task block self-heal on first BC sync.
+//
+// Returns {created, skipped, failed, total:4}. Throws on partial failure
+// (failed>0) so callers can route to the offline queue for retry.
+async function bcCreatePanelTaskBlock(projectNumber, panelIndex, panel, projectName){
+  const n=panelIndex;
+  const base=20000+n*100;
+  const beginNo=String(base), postingNo=String(base+10), engNo=String(base+20), endNo=String(base+99);
+  const suffix=n*100;
+  const pfx=`${projectNumber}-${suffix}`;
+  const panelDesc=projectName||panel.drawingDesc||panel.name||`Panel ${n}`;
+  const rev=panel.drawingRev||"-";
+  const pQty=panel.lineQty??1;
+
+  const allPages=await bcDiscoverODataPages();
+  const taskPage=allPages.find(p=>/^project.?task/i.test(p))||allPages.find(p=>/job.?task/i.test(p))||null;
+  if(!taskPage)throw new Error("bcCreatePanelTaskBlock: no project task OData page found");
+
+  // Probe Project_No vs Job_No prefix using $top=1 (cheap; cached effect via
+  // server-side query plan). Falls through to Project_ default if probe fails.
+  let FP="Project";
+  try{
+    const pr=await fetch(`${BC_ODATA_BASE}/${taskPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(pr.ok){
+      const pd=await pr.json();
+      const rec=(pd.value||[])[0];
+      if(rec&&"Job_No"in rec&&!("Project_No"in rec))FP="Job";
+    }
+  }catch(_){/* keep default */}
+
+  const taskDefs=[
+    {taskNo:beginNo,desc:`${pfx} - ${panelDesc}`,type:"Begin-Total",extra:{}},
+    {taskNo:postingNo,desc:`${panel.drawingNo||pfx} Rev ${rev} - ${panelDesc} [${pQty}]`,type:"Posting",extra:{}},
+    {taskNo:engNo,desc:`Engineering Design - ${panelDesc}`,type:"Posting",extra:{}},
+    {taskNo:endNo,desc:`TOTAL: ${pfx} - ${panelDesc}`,type:"End-Total",extra:{Totaling:`${beginNo}..${endNo}`}},
+  ];
+
+  // Fast path: probe Begin-Total. If it exists, assume the whole block does.
+  // Saves 3 round-trips on the common backfill-already-ran case.
+  const beginKeyUrl=`${BC_ODATA_BASE}/${taskPage}(${FP}_No='${encodeURIComponent(projectNumber)}',${FP}_Task_No='${encodeURIComponent(beginNo)}')`;
+  try{
+    const br=await fetch(beginKeyUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(br.ok){
+      console.log(`bcCreatePanelTaskBlock: panel ${n} block already present (${beginNo} found), skipping`);
+      return{created:0,skipped:4,failed:0,total:4};
+    }
+    if(br.status===400){
+      // Likely Project_/Job_ field mismatch — flip and retry the fast probe once.
+      const altFP=FP==="Project"?"Job":"Project";
+      const altUrl=`${BC_ODATA_BASE}/${taskPage}(${altFP}_No='${encodeURIComponent(projectNumber)}',${altFP}_Task_No='${encodeURIComponent(beginNo)}')`;
+      const br2=await fetch(altUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(br2.ok){console.log(`bcCreatePanelTaskBlock: panel ${n} block already present (${beginNo} via ${altFP}_No), skipping`);return{created:0,skipped:4,failed:0,total:4};}
+      if(br2.status===404){FP=altFP;}
+    }
+  }catch(_){/* fall through to per-task probe + create */}
+
+  let created=0,skipped=0,failed=0;
+  const errors=[];
+  for(const t of taskDefs){
+    const keyUrl=`${BC_ODATA_BASE}/${taskPage}(${FP}_No='${encodeURIComponent(projectNumber)}',${FP}_Task_No='${encodeURIComponent(t.taskNo)}')`;
+    let exists=false;
+    try{
+      const gr=await fetch(keyUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(gr.ok){exists=true;}
+    }catch(_){/* probe failed — proceed to POST */}
+    if(exists){skipped++;console.log(`bcCreatePanelTaskBlock: task ${t.taskNo} already exists, skipping`);continue;}
+    const body={[`${FP}_No`]:projectNumber,[`${FP}_Task_No`]:t.taskNo,Description:t.desc,[`${FP}_Task_Type`]:t.type,...t.extra};
+    const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(r.ok){created++;console.log(`bcCreatePanelTaskBlock: task ${t.taskNo} created (${FP}_No)`);continue;}
+    const txt=await r.text();
+    // Field-prefix mismatch fallback — retry this task with the other prefix.
+    if(created===0&&skipped===0&&/'(Project|Job)_No' does not exist/i.test(txt)){
+      const altFP=FP==="Project"?"Job":"Project";
+      console.log(`bcCreatePanelTaskBlock: ${FP}_No rejected, retrying task ${t.taskNo} with ${altFP}_No`);
+      FP=altFP;
+      const body2={[`${FP}_No`]:projectNumber,[`${FP}_Task_No`]:t.taskNo,Description:t.desc,[`${FP}_Task_Type`]:t.type,...t.extra};
+      const r2=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(body2)});
+      if(r2.ok){created++;console.log(`bcCreatePanelTaskBlock: task ${t.taskNo} created (${FP}_No fallback)`);continue;}
+      const txt2=await r2.text();
+      failed++;errors.push(`task ${t.taskNo}: ${r2.status} ${txt2}`);
+      console.warn(`bcCreatePanelTaskBlock: task ${t.taskNo} failed after fallback (${r2.status}):`,txt2);
+    }else{
+      failed++;errors.push(`task ${t.taskNo}: ${r.status} ${txt}`);
+      console.warn(`bcCreatePanelTaskBlock: task ${t.taskNo} POST failed (${r.status}):`,txt);
+    }
+  }
+  if(failed>0)throw new Error(`bcCreatePanelTaskBlock: ${failed}/4 task(s) failed for panel ${n}: ${errors[0]}`);
+  console.log(`bcCreatePanelTaskBlock: panel ${n} done — ${created} created, ${skipped} skipped`);
+  return{created,skipped,failed,total:4};
+}
+
 async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   // Adds a single ECO task line to BC for a specific panel.
   // Called on-demand when an ECO is created in ARC — NOT at project init.
@@ -3094,6 +3191,12 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, pro
   // (Begin-Total 20N00, Posting 20N10, Engineering 20N20, End-Total 20N99)
   // to match the current drawingDesc/drawingRev values.
   // Called automatically by bcSyncPanelPlanningLines to keep tasks in sync.
+  // DECISION(v1.19.1005, TODO #22): Backfill the panel task block first.
+  // bcCreatePanelTaskBlock is idempotent (per-task GET probe, fast-path on
+  // 20N00 found) so repeat calls are cheap. Heals legacy panels added before
+  // the addPanel-side fix landed.
+  try{await bcCreatePanelTaskBlock(projectNumber,panelIndex,panel,projectName);}
+  catch(e){console.warn("bcSyncPanelTaskDescriptions: backfill task block failed, proceeding to PATCH anyway:",e.message);}
   const n=panelIndex;
   const suffix=n*100;
   const pfx=`${projectNumber}-${suffix}`;
@@ -3128,6 +3231,12 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, pro
 async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projectName){
   // Full sync of BC Job Planning Lines for task 20N10 (where N = panelIndex, 1-based).
   // Strategy: delete all existing lines for the task, then recreate from current ARC state.
+  // DECISION(v1.19.1005, TODO #22): Backfill the panel task block first.
+  // Planning lines target task 20N10 — if that task doesn't exist, every POST
+  // below would 400. bcCreatePanelTaskBlock is idempotent so repeat calls on
+  // already-scaffolded panels are cheap (one GET fast-path).
+  try{await bcCreatePanelTaskBlock(projectNumber,panelIndex,panel,projectName);}
+  catch(e){console.warn("bcSyncPanelPlanningLines: backfill task block failed, proceeding anyway:",e.message);}
   //
   // Line structure:
   //   10000  Billable / Item  "PROGRESS BILLING"   unit price = panel sell price, qty = panel.lineQty
@@ -5467,6 +5576,13 @@ async function _bcQueueExecute(item){
     case 'syncServiceCardTask':{
       const{projectNumber,serviceCard}=item.params;
       await bcSyncServiceCardTask(projectNumber,serviceCard);
+      break;
+    }
+    case 'createPanelTaskBlock':{
+      // DECISION(v1.19.1005, TODO #22): Idempotent panel task-block create.
+      // Re-runs cheap when block already exists (one GET fast-path).
+      const{projectNumber,panelIndex,panel,projectName}=item.params;
+      await bcCreatePanelTaskBlock(projectNumber,panelIndex,panel,projectName);
       break;
     }
     default:
@@ -29149,6 +29265,24 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     // React state from Firestore in the interim (e.g. firstSnapshot at the
     // project-doc onSnapshot listener firing on re-subscribe) drops the panel.
     safeSave(uid,updated);
+    // DECISION(v1.19.1005, TODO #22): Mirror the BC task-block scaffolding that
+    // New Project creates via bcCreatePanelTaskStructure. Without this, the
+    // new panel has no 20N00/20N10/20N20/20N99 tasks in BC and downstream sync
+    // (planning lines, push BOM, sell-price PATCHes) targets task numbers that
+    // don't exist. Skipped when project isn't BC-bound or env is mismatched.
+    // Falls back to the offline queue when token is missing or the call fails.
+    if(project.bcProjectNumber&&!_bcEnvMismatched(project)){
+      if(_bcToken){
+        bcCreatePanelTaskBlock(project.bcProjectNumber,n,newPanel,project.name)
+          .then(r=>console.log(`[ADD PANEL] BC task block: ${r.created} created, ${r.skipped} skipped (panel ${n})`))
+          .catch(e=>{
+            console.warn("[ADD PANEL] BC task block create failed, queuing:",e.message);
+            bcEnqueue('createPanelTaskBlock',{projectNumber:project.bcProjectNumber,panelIndex:n,panel:newPanel,projectName:project.name},`Create panel ${n} BC tasks`);
+          });
+      }else{
+        bcEnqueue('createPanelTaskBlock',{projectNumber:project.bcProjectNumber,panelIndex:n,panel:newPanel,projectName:project.name},`Create panel ${n} BC tasks`);
+      }
+    }
   }
   // DECISION(v1.19.916, Step B): Add a service Quote Line of the given type.
   // Allocates a fresh BC task slot in the type's bucket (50100..50399 series).
