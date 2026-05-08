@@ -161,6 +161,59 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     source restoration is optional pending decision on whether the daily
     monitor is still wanted.
 
+    **Session 3 update (2026-05-08, CLEANUP_PLAN Phase 3B):**
+
+    *Latent deploy-blocker discovered and RESOLVED (`ee93e4c`):* The committed
+    `functions/index.js:25` was already calling `require('./ecos')`, but
+    `functions/ecos/index.js` (Phase-1 ECO Firestore-trigger module — defines
+    `onEcoCreatedCompany`, `onEcoCreatedUser`, `onEcoUpdatedCompany`,
+    `onEcoUpdatedUser`) was untracked. A `firebase deploy --only functions`
+    from a clean checkout would have failed at module load with
+    `Cannot find module './ecos'`. Same drift pattern as `validate_jsx.js`
+    (Session 2). Committed in `ee93e4c` alongside the orphan-support modules
+    `functions/bomPrompt.js` (mirrors `BOM_PROMPT` from `src/app.jsx`,
+    consumed by `extractBomPage`) and `functions/models.js` (defines
+    `ANTHROPIC_MODELS` + `MONITORED_MODELS`, consumed by
+    `monitorAnthropicModels`). `./tools/preflight-functions.sh` now passes
+    cleanly.
+
+    *Source recovery for `extractBomPage` and `monitorAnthropicModels` —
+    REMAINS OPEN, deferred to a dedicated session:* Phase 3C blocked on the
+    main-checkout machine — `gcloud` and `gsutil` are not installed
+    (`which gcloud` empty; standard Windows install paths absent;
+    `winget list --id Google.CloudSDK` hung). Three documented paths forward
+    when ready to resume:
+
+    1. **Install Google Cloud SDK + use `gsutil`/`gcloud`** (recommended).
+       Native installer at `https://cloud.google.com/sdk/docs/install#windows`.
+       After install + `gcloud auth login`:
+       ```
+       gcloud functions describe extractBomPage --region us-central1 \
+         --project matrix-arc --format=json
+       gcloud functions describe monitorAnthropicModels --region us-central1 \
+         --project matrix-arc --format=json
+       gsutil ls gs://gcf-sources-*matrix-arc*/
+       gsutil cp gs://gcf-sources-*/<archive>.zip ./recovered-source.zip
+       ```
+       Reliable, scriptable, exact bytes of deployed source. ~5 min one-time
+       setup; same tooling will be useful for any future Cloud Functions /
+       GCS recovery work.
+
+    2. **Firebase Console UI** (zero install). Open
+       `https://console.firebase.google.com/project/matrix-arc/functions`,
+       click each function, view "Source" tab, copy-paste back into
+       `functions/index.js`. Manual; copy-paste error risk; no checksum or
+       archive. Faster if gcloud install is undesirable.
+
+    3. **REST API via `firebase login:ci` token**. `sourceUploadUrl` and
+       `sourceArchiveUrl` are exposed by the Cloud Functions REST API.
+       Workable but more code than option 1 is worth.
+
+    The functional support modules are now committed, so once the consumers
+    are recovered, integration into `functions/index.js` should be
+    straightforward (`require('./bomPrompt')` and `require('./models')`
+    already-importable).
+
 ## Round 6 (user-reported, 2026-05-08)
 
 19. **OPEN** — BOM line item disappears when drawings are dropped onto a project.
