@@ -59,11 +59,11 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 Stale Round 1 findings #3, #4, #11 were dropped — they referenced a deploy.sh state that no
 longer matches what's committed. Re-reviewed deploy.sh against current reality and found:
 
-12. **OPEN** — No build/JSX validation step. CLAUDE.md claims `deploy.sh` runs `node validate_jsx.js`
-    before deploying, but the actual script bumps version → commits → tags → pushes → runs
-    `firebase deploy --only hosting` with no compile step. Risk: ships a broken `index.bundle.js`
-    if it's out of sync with `src/app.jsx` on disk. Fix: add `node validate_jsx.js` before the
-    git commit, with `set -e` already at the top to abort on failure.
+12. **RESOLVED** — `29bec5d` (2026-05-08). Adds the `node validate_jsx.js` build step before
+    `git commit`, plus the bundle `?v=` cache-bust sed (so the bumped bundle URL forces a fresh
+    fetch on every deploy). Same commit also rewrote the original DECISION(v1.19.769) comment
+    that claimed a nonexistent placeholder-restore step, and added the bundle `?v=` verifier
+    tracked separately as #16 below.
 13. **OPEN** — Hardcoded `git push origin master` and `git push origin "$NEW_VERSION"` regardless
     of current branch. Running `deploy.sh` from a worktree branch would push the wrong ref or
     refuse the push. Fix: capture `git rev-parse --abbrev-ref HEAD` and either gate on `master`
@@ -77,6 +77,12 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     `firebase deploy --only functions` (per CLAUDE.md). The toolkit's `tools/preflight-functions.sh`
     isn't wired in anywhere. Fix: either auto-detect functions changes and run the preflight,
     or add a `--with-functions` flag.
+16. **RESOLVED** — `29bec5d` (2026-05-08, caught during pre-merge review, resolved in same commit).
+    Added `grep -q` verification on the bundle `?v=` sed in `deploy.sh`, mirroring #14's APP_VERSION
+    verifier. sed exits 0 even with no match, so without this the deploy could silently ship
+    without busting the browser cache if the `index.bundle.js?v=` pattern ever shifts (e.g. someone
+    moves the bundle to a `<link>` import or drops the query param). Same error-message format
+    and abort behavior as the APP_VERSION verifier.
 
 ## Toolkit gaps (deferred)
 
