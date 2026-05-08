@@ -22,6 +22,32 @@ When the user says "Close Out" (or any case-insensitive variant: close-out, clos
 
 2. Confirm push status: `git status` and `git log master..origin/master` to identify any commits not yet pushed to origin. Flag pending pushes — do not auto-push.
 
+### Step 2.5 — Merge feature branch to master if applicable
+
+If the current session's commits exist on a feature branch (e.g., `claude/<random-name>`) but not on master:
+
+1. Surface to the user: "X commits on this session's branch are not yet on master: <list of commits>. Merge to master and push? (yes / no / not yet)"
+
+2. Wait for user response:
+   - "yes" or any affirmative → proceed with merge:
+     a. From the main checkout (`C:/Users/jon/AppDev/MatrixARC`):
+        ```
+        git checkout master
+        git merge <feature-branch>
+        git push origin master
+        git branch -d <feature-branch>
+        git push origin --delete <feature-branch>   # only if it was pushed
+        ```
+     b. After push, verify success:
+        - `git rev-parse master origin/master` (must match — fail and surface if not)
+        - `git log -1 --format="%H %s" master` (capture the new tip SHA and message)
+     c. Report verbatim:
+        > "✓ Merged and pushed. Master is now at `<SHA>` (`<commit message>`). Origin/master matches local. Branch `<feature-branch>` deleted locally and on origin."
+   - "no" or "not yet" → leave commits on feature branch, continue close-out, but flag in summary that commits are not on master.
+   - User specifies a different action → execute as instructed.
+
+3. If commits are already on master (or session produced no commits), skip the merge but still report current master tip in the close-out summary: "Master tip: `<SHA>` (`<commit message>`)."
+
 3. Verify working tree state: `git status`. Flag any modified, staged, or untracked files. Report the disposition (commit / stash / discard) the user should decide on. Do not auto-act.
 
 4. Identify TODO.md updates: based on what was accomplished in this session, list:
@@ -30,7 +56,10 @@ When the user says "Close Out" (or any case-insensitive variant: close-out, clos
    - Findings whose investigation notes should be updated
    Do not auto-edit TODO.md — surface the proposed changes for user approval.
 
-5. Provide a one-paragraph summary: what was accomplished, what's still pending, what the next logical session would address.
+5. Provide a one-paragraph summary: what was accomplished, what's still pending, what the next logical session would address. The summary must always include:
+   - Master's current tip SHA after any merges
+   - Confirmation that origin/master matches local
+   - Any branches that remain (feature branch retained per user choice, etc.)
 
 6. Stop. Wait for the user to either:
    - Direct fixes (push pending commits, update TODO.md, deal with WIP) — execute as instructed
@@ -45,6 +74,16 @@ When the user says "Closed" (or any case-insensitive variant: closed, close, don
 
 2. Re-run `git log master..origin/master` — must be empty (everything pushed).
 
+### Step 2.5 — Verify commits are on master (or intentionally on feature branch)
+
+If commits exist on a feature branch but not on master, AND the user did not explicitly choose "no" or "not yet" during Close Out, fail the close-out check with:
+
+> "Commits remain on feature branch `<name>` and were not merged. Either merge them now, or confirm 'leave on branch' to proceed."
+
+If user confirmed "leave on branch" during Close Out, allow Closed to proceed but note in the confirmation:
+
+> "✓ Session closed cleanly. Note: commits remain on feature branch `<name>` per user choice."
+
 3. Confirm any TODO.md updates surfaced in Close Out have been either applied or explicitly waived by the user.
 
 4. If all checks pass: respond "✓ Session closed cleanly. All changes committed and pushed. Safe to end."
@@ -52,6 +91,20 @@ When the user says "Closed" (or any case-insensitive variant: closed, close, don
 5. If any check fails: respond with which specific check failed, what state needs to be addressed, and do not declare the session closed. Wait for the user to address it and type "Closed" again.
 
 The "Closed" command is the user's contract that the session is genuinely done. CCD's job is to verify the state matches that claim before agreeing.
+
+## Commit destination
+
+CCD worktrees check out a feature branch by default (e.g., `claude/<random-name>`). Work landing only on that branch is invisible to master and to future sessions.
+
+The default sequence at the end of any session that produced commits:
+
+1. Commit the work in the CCD worktree (on the feature branch — this is fine and expected).
+2. Merge to master and push to origin via the Close Out procedure (see below).
+
+Exceptions (do not auto-merge):
+- Investigation-only sessions that produced no commits (no merge needed).
+- Work-in-progress sessions where the user explicitly says "leave on the branch for now."
+- Multi-day work spanning sessions where the branch is intentionally retained.
 
 ## Parallel Claude session workflow
 The user runs **two Claude sessions in parallel** against this codebase:
