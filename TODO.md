@@ -495,6 +495,39 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     5. **Cross-env mismatch** — `_bcEnvMismatched(project)===true`: helper
        not invoked, no queue entry, no errors.
 
+23. **OPEN** — Drawing delete/re-drop leaves BC planning line 10000 holding the
+    prior sell price until the next pricing run. `removePage` at
+    `src/app.jsx:21679` clears `panel.bom`, `pricing`, `laborData`, etc.
+    when `remaining.length===0`, but does NOT trigger a `bcSyncPanelPlanningLines`
+    push to BC. Result: BC's task Unit Price (sourced from planning line
+    10000's `Unit_Price` field, which carries `computePanelSellPrice(panel)`
+    at last sync) stays frozen at the pre-delete value through the entire
+    re-extraction window. Self-corrects on the next pricing run that fires
+    `bcSyncPanelPlanningLines`, so the bug is purely cosmetic / time-bounded —
+    but during a long re-extraction it can mislead anyone watching BC for
+    project status.
+
+    Discovered 2026-05-08 while smoke-testing the v1.19.1005 TODO #22 fix:
+    user re-dropped Panel 2 drawings on PRJ402089; BC continued to show the
+    prior $36,049.79 Unit Price on task 20210 throughout the new extraction.
+
+    **Suggested fix:** in `removePage`'s `remaining.length===0` branch
+    (after `onUpdate` / `onSaveImmediate`), if `project.bcProjectNumber` is
+    set and `_bcEnvMismatched(project)===false`, call
+    `bcSyncPanelPlanningLines(bcProjectNumber, panelIndex, updated, project.name)`
+    with the now-empty `updated` panel. Since the sync function recreates
+    line 10000 with `Unit_Price = computePanelSellPrice(panel)` and the panel's
+    BOM is empty + pricing nulled, the new Unit_Price will be 0. Same pattern
+    as other post-mutation BC syncs already in the codebase. Token-missing
+    path: `bcEnqueue('syncPanelPlanningLines', ...)` — note this queue type
+    isn't currently registered (the existing dispatcher has
+    `createPurchaseQuote`, `attachPdf`, `patchJob`, `syncTaskDescs`,
+    `syncServiceCardTask`, `createPanelTaskBlock`), so adding this fix may
+    also need a new queue branch wrapping `bcSyncPanelPlanningLines`.
+
+    Low severity; out of scope for v1.19.1005 deploy. Pick up in a follow-up
+    session.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
