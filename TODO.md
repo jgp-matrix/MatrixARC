@@ -323,34 +323,131 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
       their BC tasks (the 50100..50399 series). The Control Panel path is
       missing the equivalent call.
 
-    **Suggested fix sketch** (separate session):
-    - Extract a helper `bcCreatePanelTaskBlock(projectNumber, panelIndex,
-      panelName, drawingNo, drawingRev)` from the per-panel iteration of
-      `bcCreatePanelTaskStructure` (the loop body at `src/app.jsx:2746-2757`).
-    - Call it from `addPanel` after `safeSave`, with the new panel's index
-      = `(project.panels||[]).length` (the panel's 1-based position post-
-      add). Wrap in a guard `if(project.bcProjectNumber && _bcToken &&
-      !_bcEnvMismatched(project))` to match the offline / env-mismatch
-      patterns used elsewhere.
-    - Use the offline queue (`bcEnqueue`) on failure, mirroring how labor
-      patches handle BC outages.
-    - Verify against `bcSyncPanelPlanningLines` / `bcSyncPanelTaskDescriptions`
-      assumptions: those expect tasks to exist; the new helper must create
-      them before any of those run.
-    - Decide what to do about the 99999 End-Total task: it gets re-created
-      on each `bcCreatePanelTaskStructure` call but on incremental adds you
-      need to PATCH it (extend its `Totaling` range) rather than re-create.
+    **BC ground-truth verified for PRJ402089 (Lemay Pump Station)** via
+    direct ProjectTaskLines OData query during this session — Panel 2 (the
+    test panel added during v1.19.1004 verification) has zero BC tasks:
 
-    **Coverage gap to also address:** the same issue would affect any future
-    project where a user opens a Won/legacy project that pre-dates the
-    panel they want to add — currently the only remediation is to re-link
-    the project, which re-creates ALL tasks (potentially destroying historical
-    posted-task references). The new helper should be additive only.
+    | Task # | Type        | Description                               | Totaling          |
+    |--------|-------------|-------------------------------------------|-------------------|
+    | 10000  | Begin-Total | PRJ402089 - Lemay Pump Station            | (empty)           |
+    | 20100  | Begin-Total | PRJ402089-100 - Lemay Pump Station        | (empty)           |
+    | 20110  | Posting     | PRJ402089-100 Rev - - Lemay Pump Station [1] | (empty)        |
+    | 20120  | Posting     | Engineering Design - Lemay Pump Station   | (empty)           |
+    | 20199  | End-Total   | TOTAL: PRJ402089-100 - Lemay Pump Station | `20100..20199`    |
+    | 99999  | End-Total   | TOTAL: PRJ402089 - Lemay Pump Station     | `10000..99999`    |
+
+    **Design decisions** (resolved this session, ready for implementation):
+
+    **1. 99999 End-Total `Totaling` range** — NO PATCH NEEDED on incremental
+    adds. The project End-Total at 99999 already has `Totaling: "10000..99999"`
+    which is permissive (inclusive integer range) and covers all future panel
+    blocks at 20200, 20300, etc. Adding a new panel only requires creating
+    the 4 panel-specific tasks (20N00, 20N10, 20N20, 20N99). Per-panel
+    End-Total at 20N99 uses panel-specific range like `"20200..20299"`.
+
+    **2. Existing-project backfill** — Implicit self-heal on first BC sync.
+    The two existing per-panel BC sync calls (`bcSyncPanelTaskDescriptions`
+    and `bcSyncPanelPlanningLines`) already iterate panels by index and
+    construct task numbers via `20000 + panelIdx*100 + offset`. Add a
+    pre-check at the top of each: if the target task doesn't exist in BC,
+    call the new helper to create the panel's 4-task block first, THEN
+    proceed with the sync. This auto-fixes legacy projects without UI churn
+    and without firing unexpected writes on project open. New panels added
+    via the fixed `addPanel` get their tasks immediately; missing tasks on
+    existing panels get filled in on the next sync trigger.
+
+    **3. Partial-failure handling** — Offline queue + per-panel pending flag.
+    `bcCreatePanelTaskStructure` already supports two field-name prefixes
+    (`Project_*` then `Job_*`) with auto-retry — reuse that logic in the
+    extracted helper. If task creation fails on the network/auth layer:
+      - Enqueue via existing `bcEnqueue('createPanelTaskBlock', {...},
+        'Create panel ${idx} BC tasks')` — matches the labor/PO/PDF queue
+        pattern.
+      - Set `panel.bcTasksSyncPending: true` on the panel so a future UI
+        chip can surface "BC sync pending" without blocking workflow.
+        Cleared on successful create (or on idempotent re-create that finds
+        the task already exists).
+      - Do NOT roll back partial creates. If 2 of 4 tasks land before failure,
+        the offline queue retries the helper — which is idempotent (probes
+        existing task numbers via OData and skips any already present).
+
+    **Implementation sketch** (single session work, ~1-2 hrs):
+
+    a. Extract helper from `src/app.jsx:2743-2760` (the `buildTasks` loop body):
+       ```js
+       async function bcCreatePanelTaskBlock(projectNumber, panelIndex, panelData, projectName)
+         // panelData: {drawingNo, drawingRev, name, lineQty}
+         // panelIndex: 1-based
+         // Returns {created, skipped, failed} summary like bcCreatePanelTaskStructure does
+       ```
+       Internally probes both `Project_No`/`Job_No` field prefixes (existing
+       pattern). For each of the 4 tasks (20N00, 20N10, 20N20, 20N99): GET
+       to check existence first, POST if missing. PATCH the per-panel End-
+       Total's `Totaling` to `"20N00..20N99"` if it was created bare.
+
+    b. Call from `addPanel` (`src/app.jsx:29142`) after `safeSave`:
+       ```js
+       function addPanel(){
+         // ...existing build + onUpdate + safeSave...
+         if(project.bcProjectNumber && _bcToken && !_bcEnvMismatched(project)){
+           const newIdx = (project.panels||[]).length;  // 1-based after spread
+           bcCreatePanelTaskBlock(project.bcProjectNumber, newIdx, newPanel, project.name)
+             .catch(e => {
+               console.warn('[ADD PANEL] BC task block create failed, queuing:', e.message);
+               bcEnqueue('createPanelTaskBlock', {projectNumber: project.bcProjectNumber,
+                 panelIndex: newIdx, panelData: newPanel, projectName: project.name},
+                 `Create panel ${newIdx} BC tasks`);
+             });
+         }
+       }
+       ```
+
+    c. Add backfill check to `bcSyncPanelTaskDescriptions` (`src/app.jsx:3092`)
+       and `bcSyncPanelPlanningLines` (`src/app.jsx:3128`) — both compute
+       a base task number from `panelIndex`. Before their existing GET-
+       and-PATCH loop, run a probe: if the panel's Begin-Total (20N00)
+       doesn't exist in BC, call `bcCreatePanelTaskBlock` first. This
+       transparently fixes any legacy panel.
+
+    d. Add `bcCreatePanelTaskBlock` to the `bcEnqueue`/`bcProcessQueue`
+       handler list (CLAUDE.md mentions queue types: `createPurchaseQuote`,
+       `attachPdf`, `patchJob`, `syncTaskDescs` — find the dispatcher and
+       add the new type).
+
+    **Test plan** (post-implementation, run against the same sandbox tenant):
+
+    1. **Fresh add:** Open any BC-connected project. Add Quote Line → Control
+       Panel. Within ~5s, query `ProjectTaskLines?$filter=Job_No eq
+       'PRJ...'` and verify 4 new tasks appeared at 20N00, 20N10, 20N20,
+       20N99 with the panel-specific Totaling range on 20N99. Verify 99999
+       Totaling is unchanged at `"10000..99999"`.
+
+    2. **Offline path:** Open browser DevTools, set `_bcToken=null` to
+       simulate token loss. Add a panel. Observe console: should log
+       "[ADD PANEL] BC task block create failed, queuing" and the BC queue
+       badge in the toolbar should increment. Restore token (toggle BC
+       Connected). Observe queue drain and the new tasks appear.
+
+    3. **Backfill:** Use a project that has a panel without BC tasks
+       (e.g., PRJ402089 Panel 2 from this session, before fix). Trigger
+       any BC sync — push pricing, save BOM row, etc. Verify the panel's
+       BC task block gets created automatically before the sync runs.
+
+    4. **Idempotency:** Run the helper twice in a row for the same panel.
+       Second invocation should detect existing tasks via probe and skip
+       all four POSTs (just verify, don't error).
+
+    5. **Cross-env mismatch:** Open a project whose `bcEnv` differs from
+       the active env (`_bcEnvMismatched(project) === true`). Add a panel.
+       The helper should NOT fire (per the existing guard pattern at
+       `src/app.jsx:23229` and similar). No queue entry, no BC writes, no
+       errors.
 
     Discovered post-deploy of v1.19.1004 by user testing the bug-fix flow
-    (added Panel 2 via Add Quote Line, observed no 20200-series tasks in BC).
-    Out of scope for the #19 fix; tracked separately because it requires its
-    own design pass on idempotency / env-mismatch / offline-queue interaction.
+    (added Panel 2 via Add Quote Line, observed no 20200-series tasks in
+    BC). Out of scope for the #19 fix; design is now nailed down — pick up
+    in next session and implement the helper + three call-site changes
+    above. Reference this BC dump when verifying the test plan.
 
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
