@@ -46,7 +46,7 @@ If the current session's commits exist on a feature branch (e.g., `claude/<rando
    - "no" or "not yet" → leave commits on feature branch, continue close-out, but flag in summary that commits are not on master.
    - User specifies a different action → execute as instructed.
 
-3. If commits are already on master (or session produced no commits), skip the merge but still report current master tip in the close-out summary: "Master tip: `<SHA>` (`<commit message>`)."
+Note: If commits are already on master (or session produced no commits), skip the merge but still report current master tip in the close-out summary: "Master tip: `<SHA>` (`<commit message>`)."
 
 3. Verify working tree state: `git status`. Flag any modified, staged, or untracked files. Report the disposition (commit / stash / discard) the user should decide on. Do not auto-act.
 
@@ -151,11 +151,10 @@ When the brainstorming or writing-plans skill produces a design spec or implemen
 - **Deploy functions**: `firebase deploy --only functions` — must be run separately when `functions/index.js` changes
 - **User always wants deploy after changes**
 - **Git workflow**: `deploy.sh` handles commit + push + tag automatically. Never manually set a git tag before running deploy.sh (causes double version bump).
-- **Versioning**: `vMajor.Minor.Patch` (semver). Current: **v1.19.966**
+- **Versioning**: `vMajor.Minor.Patch` (semver). Current version lives in `APP_VERSION` constant in `public/index.html` — auto-bumped by `deploy.sh`, do not edit by hand.
   - **Patch** (x.x.+1): Bug fixes, cosmetic/wording tweaks, adjusting rates/thresholds, fixing a value that wasn't stored
   - **Minor** (x.+1.0): New AI prompt capabilities, new device types, new labor categories, new UI sections, restructuring data flow — anything that changes what the app can detect or output
   - **Major** (+1.0.0): Schema changes requiring migration, breaking changes to saved data format, `APP_SCHEMA_VERSION` bumps
-- **APP_VERSION** constant (~line 163) is updated automatically by `deploy.sh`
 - **JSX validation**: Run `node validate_jsx.js` before deploying to catch JSX errors early
 
 ## Verification toolkit
@@ -305,9 +304,6 @@ A row gets a red background if ANY of these are true (see `_isBomRowFlaggedRed`)
 - Quote-print lock (v1.19.965): `quotePrintLock = {lockedBy, lockedByName, lockedAt, expiresAt}` on the project doc; prevents two users from printing the same quote within a 30-second window.
 - ECO transactional create (v1.19.965): `+ New ECO` runs inside `runTransaction`; aborts if another draft already exists.
 
-### Debug Logging
-Console logs present in production (WIRE COUNT, MERGE LAYOUTS, DOOR DEVICES, ADDFILES, STORAGE UPLOAD, API ERROR, etc.) — can be removed when stable.
-
 ### JSX Fragment Rule (CRITICAL)
 When rendering a modal alongside a component's root `<div>`, the return MUST use a fragment:
 ```jsx
@@ -341,7 +337,7 @@ Functions deploy separately from hosting — `firebase deploy --only functions`.
 | `updateMemberRole` | HTTPS callable | Admin changes a member's role |
 | `sendInviteEmail` | HTTPS callable | Sends invite email via SendGrid |
 | `onSupplierQuoteSubmitted` | Firestore trigger on `rfqUploads/{token}` | Fires when status→"submitted": creates notification + sends email to ARC user |
-| `extractSupplierQuotePricing` | HTTPS callable | Sends PDF page images to Claude Haiku, returns extracted prices/lead times |
+| `extractSupplierQuotePricing` | HTTPS callable | Sends PDF page images to Claude Sonnet 4, returns extracted prices/lead times |
 | `extractBomPage` | HTTPS callable | **v1.19.981** Server-side BOM extraction. Accepts `{pdfPath, pageNumber}` (PDF native path) or `{imageBase64, imageMediaType, regionLearningParts}` (image fallback). Returns `{raw, stopReason, extractionPath, modelUsed, usage}`. Client (`extractBomPageViaServer` in app.jsx) calls this FIRST; falls back to legacy direct API path on any error. Centralizes the Anthropic call so all users take the same code path. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
 | `sendEngineerQuestionEmail` | HTTPS callable | Sends formatted engineering questions email via SendGrid + push notification |
 | `testTeamsWebhook` | HTTPS callable | Test endpoint to verify Teams webhook integration |
@@ -471,7 +467,7 @@ Notifications stored at `users/{uid}/notifications/{id}`:
 - **Persistent notifications**: All push notifications use `requireInteraction: true` — stay until user dismisses
 - **Push triggers**: Supplier quote submissions (`onSupplierQuoteSubmitted`) + engineer question emails (`sendEngineerQuestionEmail`)
 - **Teams webhook**: `postToTeams()` helper sends Adaptive Cards to Teams channel via Power Automate workflow
-- **Icons**: `public/icons/icon-192.png` and `icon-512.png` generated from `public/redpill_logo.png`
+- **Icons**: `public/icons/icon-192.png` and `icon-512.png` (generated from app logo)
 - **Sonnet 4.6 does NOT support assistant prefill** — use Haiku for prefill-based JSON extraction
 
 ### Engineering Questions System (v1.18.153+)
