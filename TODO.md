@@ -297,6 +297,61 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     (`.git/hooks/post-commit` removed). Hook was leftover from early-project
     main era.
 
+## Round 8 (discovered while verifying #19 fix, 2026-05-08)
+
+22. **OPEN** — `addPanel` does not create the per-panel BC Project Task block
+    (20N00 / 20N10 / 20N20 / 20N99) in Business Central. User expected the
+    same task-creation behavior as the New Project flow, where
+    `bcCreatePanelTaskStructure` lays down all panel task scaffolding at
+    once. Adding a Quote Line → Control Panel to an existing project leaves
+    the new panel with no BC tasks; downstream sync (planning lines, push
+    BOM, sell price patches) targets task numbers that don't exist.
+
+    **Code-path evidence:**
+    - `bcCreatePanelTaskStructure` (`src/app.jsx:2711`) is the only function
+      that creates the per-panel `20N00..20N99` task scaffolding. It is
+      called from exactly three sites: New Project creation
+      (`src/app.jsx:36417`), project copy (`src/app.jsx:8243`), and project
+      relink (`src/app.jsx:31917`). It is **not** called from `addPanel`.
+    - `addPanel` (`src/app.jsx:29142`) has had the same body since v1.19.762
+      (Mar 2026): build a panel object, `onUpdate({...project, panels:[...,
+      newPanel]})`, and (after v1.19.1004) `safeSave(uid, updated)`. No BC
+      side-effects. v1.19.916 added the modal but did not add BC sync.
+    - `addServiceCard` (`src/app.jsx:29152`) explicitly calls
+      `_syncServiceCardToBc(card, "create")` after `safeSave`. This is what
+      makes Engineering/Programming/Commissioning quote lines auto-create
+      their BC tasks (the 50100..50399 series). The Control Panel path is
+      missing the equivalent call.
+
+    **Suggested fix sketch** (separate session):
+    - Extract a helper `bcCreatePanelTaskBlock(projectNumber, panelIndex,
+      panelName, drawingNo, drawingRev)` from the per-panel iteration of
+      `bcCreatePanelTaskStructure` (the loop body at `src/app.jsx:2746-2757`).
+    - Call it from `addPanel` after `safeSave`, with the new panel's index
+      = `(project.panels||[]).length` (the panel's 1-based position post-
+      add). Wrap in a guard `if(project.bcProjectNumber && _bcToken &&
+      !_bcEnvMismatched(project))` to match the offline / env-mismatch
+      patterns used elsewhere.
+    - Use the offline queue (`bcEnqueue`) on failure, mirroring how labor
+      patches handle BC outages.
+    - Verify against `bcSyncPanelPlanningLines` / `bcSyncPanelTaskDescriptions`
+      assumptions: those expect tasks to exist; the new helper must create
+      them before any of those run.
+    - Decide what to do about the 99999 End-Total task: it gets re-created
+      on each `bcCreatePanelTaskStructure` call but on incremental adds you
+      need to PATCH it (extend its `Totaling` range) rather than re-create.
+
+    **Coverage gap to also address:** the same issue would affect any future
+    project where a user opens a Won/legacy project that pre-dates the
+    panel they want to add — currently the only remediation is to re-link
+    the project, which re-creates ALL tasks (potentially destroying historical
+    posted-task references). The new helper should be additive only.
+
+    Discovered post-deploy of v1.19.1004 by user testing the bug-fix flow
+    (added Panel 2 via Add Quote Line, observed no 20200-series tasks in BC).
+    Out of scope for the #19 fix; tracked separately because it requires its
+    own design pass on idempotency / env-mismatch / offline-queue interaction.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
