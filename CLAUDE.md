@@ -252,11 +252,6 @@ AI returns a classified wire list (`internal: true/false`), code filters program
 | Supplier quote price extraction | **Sonnet 4** (via Cloud Function) — was Haiku in earlier docs | Image | Prompt is split into static system block (cached) + dynamic user block (per-token line items). |
 | BC Item Browser row locate | Haiku (table boundaries + math) | Image | |
 
-### Anthropic API Resilience (v1.19.963+)
-- **Retry/backoff**: `apiCall` retries 429/5xx with exponential backoff (1s→2s→4s→8s, max 4 retries) and honors `Retry-After`. 401/403/404 fail immediately.
-- **Prompt caching**: BOM extract + supplier-portal calls use `system: [{text, cache_control: {type: 'ephemeral'}}]` — cached portion bills at ~10% on subsequent calls within 5 min.
-- **Spend ledger**: Every successful call calls `_recordAnthropicUsage(model, usage)` which updates `users/{uid}/config/anthropicLedger`. Toolbar pill displays running monthly spend.
-
 ### Anthropic Cost-Attack Hardening (v1.19.955+)
 The supplier portal Cloud Function `extractSupplierQuotePricing` is hardened against cost-attack via leaked tokens:
 - Hard-cap `pageImages.length > 25` per call
@@ -265,12 +260,6 @@ The supplier portal Cloud Function `extractSupplierQuotePricing` is hardened aga
 - Per-token call counter (`rfqUploads/{token}.aiCallCount`, max 10 lifetime)
 - Per-token spend ledger (`rfqUploads/{token}.aiSpendCents`, max 500¢ = $5 lifetime)
 - `maxInstances: 5` on the function — also applied (10 default, 1-3 for heavy scrapers) to every other callable
-
-### Firebase Storage
-- Bucket: `gs://matrix-arc.firebasestorage.app`
-- Rules require auth
-- Uses `putString(dataUrl, "data_url")` for uploads
-- CORS configured for web.app / firebaseapp.com / localhost
 
 ### Image Persistence
 - `ensureDataUrl`: loads storage images via `<img crossOrigin>` + canvas (avoids CORS fetch issues)
@@ -283,17 +272,6 @@ A row gets a red background if ANY of these are true (see `_isBomRowFlaggedRed`)
 1. `qty === 0` (excludes labor / customer-supplied)
 2. `unitPrice === 0` (excludes labor / customer-supplied)
 3. `priceDate` missing OR older than `_pricingConfig.defaultStaleDays` (default 60 days). Only applied to "priceable" rows — excludes labor, customer-supplied, contingency, job-buyoff, crate, Matrix Systems vendor.
-
-### Connection Quality Indicator
-- Yellow "Slow Connection" or red "Offline" pill in top menu bar
-- Three detection methods: `navigator.onLine` events, Network Information API, Firestore latency pings (every 30s)
-- Hidden when connection is good
-
-### BC Connection Watchdog (v1.19.965+)
-- 5-min ping to BC; differentiates transient (429, 5xx) from persistent (401 + refresh fail)
-- Transient errors → log only, flip `bcOnline=false` for the toolbar pill, no modal
-- Persistent errors → require 2 consecutive failures before showing the "BC Connection Lost" modal
-- BC offline queue (`_arc_bc_queue`) honors 429 with exponential backoff + `Retry-After`; permanent 4xx errors are dropped immediately rather than retried 5x
 
 ### Cross-User Save Guards (v1.19.960+)
 - `saveProject` reads current Firestore doc inside its save logic and PRESERVES admin-set fields that the incoming write would clobber:
