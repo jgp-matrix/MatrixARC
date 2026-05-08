@@ -31456,6 +31456,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // Promoting the flag to a ref makes "first" mean "first ever for this mount of the component"
   // rather than "first per re-subscribe".
   const didInitialFirestoreSyncRef=useRef(false);
+  // Reset the flag when init.id changes so that opening a different project (without an
+  // intervening unmount) still triggers the legitimate first-sync path. In practice nav
+  // always goes through the dashboard so ProjectView unmounts; this is defensive belt+
+  // suspenders against future code paths that swap openProject in place.
+  useEffect(()=>{didInitialFirestoreSyncRef.current=false;},[init.id]);
   useEffect(()=>{
     if(!init.id)return;
     const path=_appCtx.projectsPath||`users/${uid}/projects`;
