@@ -12724,10 +12724,17 @@ async function detectPageTypes(dataUrl,learningExamples=[]){
 }
 
 // ── PAGE TYPES HELPER (backward compat: old pages have type string, new have types array) ──
+// DECISION(v1.19.1007): User-drawn regions are authoritative and OVERRIDE AI classification.
+// The AI page-type detector picks ONE primary purpose (e.g. ENC over BOM when both are on
+// the same page), so a 3-page set with ENC+BOM combined would have the BOM page silently
+// dropped from extraction. Regions tagged by the user with a classifier-compatible type
+// (bom/schematic/backpanel/enclosure/pid) are merged into the page's type list so every
+// downstream filter (extraction, validation, audit, UI counters) sees the user's truth.
+const _CLASSIFIER_PAGE_TYPES=["bom","schematic","backpanel","enclosure","pid"];
 function getPageTypes(page){
-  if(Array.isArray(page.types))return page.types;
-  if(page.type&&page.type!=="untagged")return[page.type];
-  return[];
+  const aiTypes=Array.isArray(page.types)?page.types:(page.type&&page.type!=="untagged"?[page.type]:[]);
+  const regionTypes=(page.regions||[]).map(r=>r.type).filter(t=>_CLASSIFIER_PAGE_TYPES.includes(t));
+  return regionTypes.length?[...new Set([...aiTypes,...regionTypes])]:aiTypes;
 }
 // DECISION(v1.19.819, ECO Phase 2.J): _basePages filters out ECO-tagged drawings so
 // they don't leak into base-quote extraction/validation/UI counters. Pages tagged
