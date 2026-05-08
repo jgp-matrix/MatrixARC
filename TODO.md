@@ -216,13 +216,51 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 6 (user-reported, 2026-05-08)
 
-19. **OPEN** — BOM line item disappears when drawings are dropped onto a project.
-    Reported by user, no investigation yet. Repro steps, affected panel/project,
-    and which drop path (initial upload vs. drag-add to existing project) all
-    TBD. Capture placeholder; investigate in a dedicated session. Likely
-    suspects to check first: `addFiles` merge logic, `runPanelValidation`
-    re-extraction overwriting existing rows, manual-edit preservation guard
-    (`priceSource: "manual"|"bc"`) — see Data Retention rule #6 in CLAUDE.md.
+19. **RESOLVED** (b492069, 64ddd51, deployed in v1.19.1004 / a730a4e) —
+    Project Line Item disappears when drawings are dropped onto a freshly-added
+    panel. Original capture said "BOM line item" — incorrect; the actual
+    symptom is the entire Quote Line / panel card vanishing while the
+    "Awaiting confirmation…" bg-task chip persists in the toolbar.
+
+    **Root cause** (verified via Claude-in-Chrome instrumentation hooking
+    `DocumentReference.prototype.set/update` plus a React fiber walk):
+
+    1. `addPanel()` at `src/app.jsx:29142` did not call `safeSave` — the new
+       panel lived only in React state, never persisted to Firestore.
+    2. `addFiles` → `bgStart` → `rbgStart` writes to
+       `companies/{cid}/activeExtractions/{uid}_{taskId}` on every drop and
+       again on every `rbgUpdate` (~2s heartbeat).
+    3. The `activeExtractions` `onSnapshot` listener at line 31147 calls
+       `setProjectRemoteTasks(fresh)` with a NEW array reference each time
+       (`Object.is([], [])` is false), invalidating the project-doc effect's
+       deps `[init.id, uid, projectRemoteTasks]` at line 31480.
+    4. The project-doc `onSnapshot` effect re-runs: cleanup unsubs, new
+       listener subscribes, Firestore fires the initial snapshot synchronously
+       from cache.
+    5. The original `let firstSnapshot=true` (effect-instance-scoped, recreated
+       on every effect run) treated every re-subscribe as a fresh mount,
+       calling `setProject(migrated)` unconditionally with Firestore data —
+       which lacked Panel 2 because step (1) never persisted it. Result:
+       `ProjectView.state.panels` collapsed to `[P1]`. PanelListView received
+       the stale state as a prop and rendered only Panel 1. The chip persisted
+       because `_bgTasks[panelId]` is module-scope and outlives the unmounted
+       PanelCard.
+
+    **Forensic confirmation:** during repro, the console emitted exactly 8
+    `[CONCURRENT] Initial load — synced to Firestore truth` log messages
+    spaced ~2s apart — matching the `rbgUpdate` throttle interval and proving
+    the firstSnapshot path was firing repeatedly.
+
+    **Fix (v1.19.1004):**
+    - **A.** `addPanel` now calls `safeSave(uid, updated)` after `onUpdate`,
+      mirroring `addServiceCard`. New panels are persisted to Firestore
+      immediately, so any re-subscribe that does fire returns `[P1, P2]`.
+    - **C.** `firstSnapshot` promoted from effect-instance `let` to component-
+      mount `useRef` (`didInitialFirestoreSyncRef`). "First" now means "first
+      ever for this mount of ProjectView", not "first per re-subscribe".
+      Also: dedicated `useEffect(()=>{ref.current=false},[init.id])` resets
+      the flag if `ProjectView` ever receives a different `init.id` without
+      unmounting (defensive — current navigation always unmounts).
 
 20. **OPEN** — `deploy.sh` cache-bust verifier doesn't cover bundle regeneration.
     The `grep -q "index.bundle.js?v=$NEW_VERSION"` check at `deploy.sh:48`
