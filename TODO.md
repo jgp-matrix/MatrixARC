@@ -248,6 +248,17 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     `index.html` structure, with deploys succeeding only because of
     uncommitted WIP. The verifier did not catch the underlying broken script.
 
+## Round 7 (CLEANUP_PLAN follow-up, 2026-05-08)
+
+21. **RESOLVED** (no commit SHA — local hook deletion, not tracked in git) —
+    Post-commit hook auto-pushing deleted 'main' branch. The
+    `.git/hooks/post-commit` hook (31 bytes, created 2026-03-02) ran
+    `git push origin main` after every commit. After Session 5 deleted
+    `main`, this surfaced as a non-fatal `src refspec main does not match
+    any` error on every push. Resolution: hook deleted
+    (`.git/hooks/post-commit` removed). Hook was leftover from early-project
+    main era.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
