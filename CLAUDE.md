@@ -1,5 +1,4 @@
 # MatrixARC — Development Rules
-<!-- SYNC_KEY: THUNDERBOLT_2026 -->
 
 ## Session startup procedure
 **Before any task work, run `./tools/verify-state.sh`** and confirm the output matches expectations:
@@ -46,7 +45,7 @@ If the current session's commits exist on a feature branch (e.g., `claude/<rando
    - "no" or "not yet" → leave commits on feature branch, continue close-out, but flag in summary that commits are not on master.
    - User specifies a different action → execute as instructed.
 
-3. If commits are already on master (or session produced no commits), skip the merge but still report current master tip in the close-out summary: "Master tip: `<SHA>` (`<commit message>`)."
+Note: If commits are already on master (or session produced no commits), skip the merge but still report current master tip in the close-out summary: "Master tip: `<SHA>` (`<commit message>`)."
 
 3. Verify working tree state: `git status`. Flag any modified, staged, or untracked files. Report the disposition (commit / stash / discard) the user should decide on. Do not auto-act.
 
@@ -151,11 +150,10 @@ When the brainstorming or writing-plans skill produces a design spec or implemen
 - **Deploy functions**: `firebase deploy --only functions` — must be run separately when `functions/index.js` changes
 - **User always wants deploy after changes**
 - **Git workflow**: `deploy.sh` handles commit + push + tag automatically. Never manually set a git tag before running deploy.sh (causes double version bump).
-- **Versioning**: `vMajor.Minor.Patch` (semver). Current: **v1.19.966**
+- **Versioning**: `vMajor.Minor.Patch` (semver). Current version lives in `APP_VERSION` constant in `public/index.html` — auto-bumped by `deploy.sh`, do not edit by hand.
   - **Patch** (x.x.+1): Bug fixes, cosmetic/wording tweaks, adjusting rates/thresholds, fixing a value that wasn't stored
   - **Minor** (x.+1.0): New AI prompt capabilities, new device types, new labor categories, new UI sections, restructuring data flow — anything that changes what the app can detect or output
   - **Major** (+1.0.0): Schema changes requiring migration, breaking changes to saved data format, `APP_SCHEMA_VERSION` bumps
-- **APP_VERSION** constant (~line 163) is updated automatically by `deploy.sh`
 - **JSX validation**: Run `node validate_jsx.js` before deploying to catch JSX errors early
 
 ## Verification toolkit
@@ -250,13 +248,10 @@ AI returns a classified wire list (`internal: true/false`), code filters program
 | BOM extraction | Opus + thinking | **Native PDF document** when available (v1.19.959+); image fallback otherwise | Bypasses our render→JPEG→resize→re-encode pipeline for vector-text fidelity. Resolves OCR character-merging on dense D-size BOMs. Prompt cached via `cache_control: ephemeral` (v1.19.963). |
 | Schematic / layout / pricing analysis | Sonnet | Image | |
 | Page detection / part verification | Haiku | Image | |
-| Supplier quote price extraction | **Sonnet 4** (via Cloud Function) — was Haiku in earlier docs | Image | Prompt is split into static system block (cached) + dynamic user block (per-token line items). |
+| Supplier quote price extraction | **Sonnet 4** (via Cloud Function) | Image | Prompt is split into static system block (cached) + dynamic user block (per-token line items). |
 | BC Item Browser row locate | Haiku (table boundaries + math) | Image | |
 
-### Anthropic API Resilience (v1.19.963+)
-- **Retry/backoff**: `apiCall` retries 429/5xx with exponential backoff (1s→2s→4s→8s, max 4 retries) and honors `Retry-After`. 401/403/404 fail immediately.
-- **Prompt caching**: BOM extract + supplier-portal calls use `system: [{text, cache_control: {type: 'ephemeral'}}]` — cached portion bills at ~10% on subsequent calls within 5 min.
-- **Spend ledger**: Every successful call calls `_recordAnthropicUsage(model, usage)` which updates `users/{uid}/config/anthropicLedger`. Toolbar pill displays running monthly spend.
+**Model gotcha:** Sonnet 4.6 does NOT support assistant prefill — use Haiku for prefill-based JSON extraction.
 
 ### Anthropic Cost-Attack Hardening (v1.19.955+)
 The supplier portal Cloud Function `extractSupplierQuotePricing` is hardened against cost-attack via leaked tokens:
@@ -266,12 +261,6 @@ The supplier portal Cloud Function `extractSupplierQuotePricing` is hardened aga
 - Per-token call counter (`rfqUploads/{token}.aiCallCount`, max 10 lifetime)
 - Per-token spend ledger (`rfqUploads/{token}.aiSpendCents`, max 500¢ = $5 lifetime)
 - `maxInstances: 5` on the function — also applied (10 default, 1-3 for heavy scrapers) to every other callable
-
-### Firebase Storage
-- Bucket: `gs://matrix-arc.firebasestorage.app`
-- Rules require auth
-- Uses `putString(dataUrl, "data_url")` for uploads
-- CORS configured for web.app / firebaseapp.com / localhost
 
 ### Image Persistence
 - `ensureDataUrl`: loads storage images via `<img crossOrigin>` + canvas (avoids CORS fetch issues)
@@ -285,17 +274,6 @@ A row gets a red background if ANY of these are true (see `_isBomRowFlaggedRed`)
 2. `unitPrice === 0` (excludes labor / customer-supplied)
 3. `priceDate` missing OR older than `_pricingConfig.defaultStaleDays` (default 60 days). Only applied to "priceable" rows — excludes labor, customer-supplied, contingency, job-buyoff, crate, Matrix Systems vendor.
 
-### Connection Quality Indicator
-- Yellow "Slow Connection" or red "Offline" pill in top menu bar
-- Three detection methods: `navigator.onLine` events, Network Information API, Firestore latency pings (every 30s)
-- Hidden when connection is good
-
-### BC Connection Watchdog (v1.19.965+)
-- 5-min ping to BC; differentiates transient (429, 5xx) from persistent (401 + refresh fail)
-- Transient errors → log only, flip `bcOnline=false` for the toolbar pill, no modal
-- Persistent errors → require 2 consecutive failures before showing the "BC Connection Lost" modal
-- BC offline queue (`_arc_bc_queue`) honors 429 with exponential backoff + `Retry-After`; permanent 4xx errors are dropped immediately rather than retried 5x
-
 ### Cross-User Save Guards (v1.19.960+)
 - `saveProject` reads current Firestore doc inside its save logic and PRESERVES admin-set fields that the incoming write would clobber:
   - `ownerTakeoverActive` if server has unexpired takeover and incoming write doesn't include it
@@ -304,9 +282,6 @@ A row gets a red background if ANY of these are true (see `_isBomRowFlaggedRed`)
 - Same pattern as the storageUrl regression guard (v1.19.739) — single Firestore read per save, multiple guards layered on top.
 - Quote-print lock (v1.19.965): `quotePrintLock = {lockedBy, lockedByName, lockedAt, expiresAt}` on the project doc; prevents two users from printing the same quote within a 30-second window.
 - ECO transactional create (v1.19.965): `+ New ECO` runs inside `runTransaction`; aborts if another draft already exists.
-
-### Debug Logging
-Console logs present in production (WIRE COUNT, MERGE LAYOUTS, DOOR DEVICES, ADDFILES, STORAGE UPLOAD, API ERROR, etc.) — can be removed when stable.
 
 ### JSX Fragment Rule (CRITICAL)
 When rendering a modal alongside a component's root `<div>`, the return MUST use a fragment:
@@ -319,15 +294,10 @@ return(<>
 Missing `</>` or two root elements = site breaks. Always verify both `<>` AND `</>` match.
 
 ### Control Panel Lead Time (v1.19.706+)
-Pure function `computeControlPanelLeadTime(panel, project)` returns the panel's ship date from `longestItemLeadDays + laborDays + productionDays` (sum-based, not max). Feeds a live chip to the left of each panel's status pill in QUOTE SUMMARY. Click the chip → override popover with breakdown + revert-to-computed. `panel.productionDays` is a user-entered duration (0-365 days) next to Requested Ship Date. `dailyCrewHours` + `leadTimeBatchSeconds` live in `LABOR_RATES` (loaded from `laborRates` Firestore doc). Lead drivers note (items above BOM avg) auto-appended to `project.quote.lineNotes`, in-place regex replace so refresh doesn't duplicate.
+`computeControlPanelLeadTime(panel, project)` returns the panel's ship date from `longestItemLeadDays + laborDays + productionDays` (sum-based, not max). Feeds a live chip to the left of each panel's status pill in QUOTE SUMMARY; clicking opens an override popover. `panel.productionDays` is a user-entered duration (0-365 days). `dailyCrewHours` + `leadTimeBatchSeconds` live in `LABOR_RATES`. Full spec: `docs/superpowers/specs/2026-04-24-control-panel-lead-time-design.md`. Plan: `docs/superpowers/plans/2026-04-24-control-panel-lead-time.md`.
 
-Spec: `docs/superpowers/specs/2026-04-24-control-panel-lead-time-design.md`
-Plan: `docs/superpowers/plans/2026-04-24-control-panel-lead-time.md`
-
-### Batched BC Lead-Time Writeback (v1.19.711+ — replaces v1.19.693)
-Cell-level `leadTimeDays` edits enqueue into `_leadTimeBcQueue.current.pending` (Map keyed by rowId — rapid re-edits of the same row collapse to one write). A single 30-second debounced timer flushes the whole queue in a sequential batch. Amber pill `⏳ N pending BC sync` appears in the BOM toolbar while the queue has entries; click to force-flush immediately. `visibilitychange` triggers a best-effort flush when the tab is hidden. Configurable via `LABOR_RATES.leadTimeBatchSeconds` (default 30).
-
-Bulk paths (Push All, supplier portal Apply, Upload Supplier Quote) still push immediately — they are deliberate user-initiated actions on complete data.
+### Batched BC Lead-Time Writeback (v1.19.711+)
+Cell-level `leadTimeDays` edits enqueue in `_leadTimeBcQueue.current.pending` (Map keyed by rowId, dedupes re-edits) and flush via a 30-second debounced timer. Amber `⏳ N pending BC sync` pill in the BOM toolbar exposes manual force-flush; `visibilitychange` triggers best-effort flush when the tab hides. Configurable via `LABOR_RATES.leadTimeBatchSeconds`. Bulk paths (Push All, supplier portal Apply, Upload Supplier Quote) push immediately — deliberate user-initiated actions on complete data.
 
 ## Cloud Functions (`functions/index.js`)
 
@@ -341,8 +311,8 @@ Functions deploy separately from hosting — `firebase deploy --only functions`.
 | `updateMemberRole` | HTTPS callable | Admin changes a member's role |
 | `sendInviteEmail` | HTTPS callable | Sends invite email via SendGrid |
 | `onSupplierQuoteSubmitted` | Firestore trigger on `rfqUploads/{token}` | Fires when status→"submitted": creates notification + sends email to ARC user |
-| `extractSupplierQuotePricing` | HTTPS callable | Sends PDF page images to Claude Haiku, returns extracted prices/lead times |
-| `extractBomPage` | HTTPS callable | **v1.19.981** Server-side BOM extraction. Accepts `{pdfPath, pageNumber}` (PDF native path) or `{imageBase64, imageMediaType, regionLearningParts}` (image fallback). Returns `{raw, stopReason, extractionPath, modelUsed, usage}`. Client (`extractBomPageViaServer` in app.jsx) calls this FIRST; falls back to legacy direct API path on any error. Centralizes the Anthropic call so all users take the same code path. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
+| `extractSupplierQuotePricing` | HTTPS callable | Sends PDF page images to Claude Sonnet 4, returns extracted prices/lead times |
+| `extractBomPage` | HTTPS callable | Server-side BOM extraction (v1.19.981). Accepts native PDF (`{pdfPath, pageNumber}`) or image fallback. Client tries this first via `extractBomPageViaServer`; falls back to legacy direct API on error. Centralizes the Anthropic call. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
 | `sendEngineerQuestionEmail` | HTTPS callable | Sends formatted engineering questions email via SendGrid + push notification |
 | `testTeamsWebhook` | HTTPS callable | Test endpoint to verify Teams webhook integration |
 
@@ -373,156 +343,30 @@ Used by all RFQ document builders via `companyInfo` parameter.
 
 ## RFQ / Supplier Portal System
 
-### Supplier Portal Flow
+High-level flow:
 1. User sends RFQ emails → creates `rfqUploads/{token}` doc in Firestore with lineItems, expiry, etc.
 2. Supplier receives email with "Upload Quote →" button link (`?rfqUpload=TOKEN`)
 3. Supplier opens portal page, uploads PDF
 4. Auto-scan: all PDF pages processed in batches of 20 (Anthropic API limit), no user intervention needed
-5. Claude Haiku extracts prices/lead times with fuzzy part# matching
+5. Claude Sonnet 4 extracts prices/lead times with fuzzy part# matching
 6. Supplier reviews, corrects, marks "Cannot Supply" for unavailable items, enters lead time
 7. On submit: `rfqUploads/{token}` updated to `status: "submitted"`
 8. Cloud Function `onSupplierQuoteSubmitted` fires → creates notification + sends email to ARC user
 9. Bell badge appears in ARC toolbar; clicking notification navigates to project + opens submissions modal
 
-### Part Number Fuzzy Matching
-`normPart(s)` and `partMatch(a,b)` helper functions handle:
-- Spaces/dashes/dots stripped, uppercase: `"ARL 449"` → matches `"ARL449"`
-- Contains/substring: `"HOFF CEL550M"` → normalized `"HOFFCEL550M"` contains `"CEL550M"` → match
-- Used in: `processFile` (portal scan matching), `applyPortalPrices` (BOM matching)
-- Also instructed in AI prompt: AI returns BC part# (from requested list), not supplier's version
-
-### Cannot-Supply Tracking
-- Supplier checks "Cannot Supply" per line item in portal review
-- Saved as `cannotSupply: true` on each `pricedItem` in the submission
-- On "Apply Prices to BOM": cannot-supply items are skipped, saved to `users/{uid}/config/supplierCantSupply`
-- `PortalSubmissionsModal` shows cannot-supply items with strikethrough + red "Cannot Supply" label
-
-### RFQ Email Structure
-`buildRfqEmailHtml(group, projectName, rfqNum, rfqDate, responseBy, uploadUrl, companyInfo)`:
-- "Upload Quote →" button appears BOTH at the top (above line items) and bottom of email
-- Company logo or name from `_appCtx.company` / BC
-- "Request For Quote from" heading
-
-### Key Button Names
-- "Print Client Quote" — opens quote editor / print dialog
-- "Upload Supplier Quote" — opens portal submissions or import modal
-- "History" — compact button for RFQ send history
+Helper details (fuzzy matching, cannot-supply tracking, RFQ email structure, button names): see `docs/rfq-supplier-portal.md`.
 
 ## Project Kanban / Status System
 
-### Columns
-```js
-const order = ["draft","in_progress","evc","active","purchasing"];
-const labels = {
-  draft: "Draft",
-  in_progress: "In Progress",
-  evc: "Ready",
-  active: "Active (Ready for Purchasing)",
-  purchasing: "Purchasing In Progress"
-};
-```
-
-### Status Colors
-```js
-statusColColors = {
-  Draft: C.muted, "In Progress": C.yellow, Ready: C.green,
-  "Active (Ready for Purchasing)": "#38bdf8",
-  "Purchasing In Progress": "#f59e0b"
-}
-```
-
-### Routing Logic
-- `bcPoStatus === "purchasing"` → Purchasing In Progress column
-- `bcPoStatus === "Open"` → Active (Ready for Purchasing) column
-- Otherwise → status field value
+Five columns (`draft`, `in_progress`, `evc`, `active`, `purchasing`) drive the project board. Routing logic: `bcPoStatus === "purchasing"` → Purchasing In Progress; `bcPoStatus === "Open"` → Active (Ready for Purchasing); otherwise the project's `status` field value. Full column labels, color values, and the source snippets: see `docs/kanban-status.md`.
 
 ## Notification System
 
-### Firestore
-Notifications stored at `users/{uid}/notifications/{id}`:
-```js
-{
-  type: "supplier_quote",        // notification type
-  title: "New Quote from {vendor}",
-  body: "...",
-  createdAt: Date.now(),
-  read: false,
-  projectId: string,
-  rfqUploadId: token,
-  rfqNum: string,
-  vendorName: string,
-  projectName: string
-}
-```
-
-### Frontend
-- `App` component listens to unread notifications via `onSnapshot`
-- Bell icon turns amber + shows red badge count when unread notifications exist
-- Bell dropdown lists notifications with timestamp; supplier quote notifications are clickable
-- Clicking navigates to the project + auto-opens `PortalSubmissionsModal` via `autoOpenPortal` prop
-- "Mark all read" button in dropdown
-- Push notification toggle at bottom of bell dropdown
-
-### PWA + Push Notifications (v1.18.154+)
-- **PWA manifest**: `public/manifest.json` — Edge/Chromium can install to taskbar/Start Menu
-- **Service worker**: `public/sw.js` + `public/firebase-messaging-sw.js` — push notification handling only (no caching/offline)
-- **FCM tokens**: Stored at `users/{uid}/fcmTokens/{tokenHash}` in Firestore
-- **Push toggle**: In bell dropdown, persisted to localStorage `arc_push_{uid}`
-- **Persistent notifications**: All push notifications use `requireInteraction: true` — stay until user dismisses
-- **Push triggers**: Supplier quote submissions (`onSupplierQuoteSubmitted`) + engineer question emails (`sendEngineerQuestionEmail`)
-- **Teams webhook**: `postToTeams()` helper sends Adaptive Cards to Teams channel via Power Automate workflow
-- **Icons**: `public/icons/icon-192.png` and `icon-512.png` generated from `public/redpill_logo.png`
-- **Sonnet 4.6 does NOT support assistant prefill** — use Haiku for prefill-based JSON extraction
-
-### Engineering Questions System (v1.18.153+)
-- **Data**: `panel.engineeringQuestions[]` — unified array for BOM + compliance questions
-- **Statuses**: `open`, `answered`, `skipped`, `on_quote`
-- **Sources**: `bom` (from extraction) and `compliance` (from `runComplianceReview`)
-- **Modal**: `EngineeringQuestionsModal` — answer/skip/include-on-quote per question
-- **Pulsing badge**: Panels with open questions show pulsing yellow badge in QUOTE SUMMARY
-- **Print warning**: `handlePrintQuote` warns about unanswered questions before printing
-- **"Questions for Customer"**: Questions with `status:"on_quote"` appear on printed quote
-- **Email engineer**: `sendEngineerQuestionEmail` Cloud Function sends formatted email + push notification
+In-app + push notifications for MatrixARC. Bell icon in the toolbar turns amber with a red badge when unread; clicking a supplier-quote notification navigates to the project and auto-opens `PortalSubmissionsModal`. Push triggers: supplier-quote submissions and engineer-question emails. Optional Teams channel posting via `postToTeams()`. Engineering Questions workflow (`panel.engineeringQuestions[]`, statuses: `open` / `answered` / `skipped` / `on_quote`) drives the pulsing yellow badge in QUOTE SUMMARY and the "Questions for Customer" block on printed quotes. Full schema, FCM token storage, PWA manifest details, and Engineering Questions specifics: see `docs/notification-system.md`.
 
 ## Debug Logging (v1.19.584+)
 
-Client-side error capture + user-reported issue pipeline. Admins view logs in Settings → Debug Logs.
-
-### Firestore
-- `companies/{companyId}/debugLogs/{entryId}` — admin-readable, member-writable, **immutable** (no update/delete)
-- Fallback `users/{uid}/debugLogs/{entryId}` for users without a company (only writer can read)
-- Rules block all updates/deletes — logs are append-only by design
-
-### Entry schema
-```js
-{
-  createdAt, createdBy (uid), userEmail, userName,
-  severity: "error" | "warn" | "user_reported",
-  source: "uncaught" | "promise_rejection" | "console_error" | "manual" | "module",
-  message, stack, url, userAgent, appVersion,
-  projectId, panelId,            // null if none open
-  breadcrumbs: [{t, type, message}],  // last ~30 events
-  description                     // set for user-reported issues
-}
-```
-
-### Client capture (`public/index.html` + `public/modules/shared.js`)
-- `addBreadcrumb(type, message)` — rolling in-memory buffer, max 30
-- `console.error` / `console.warn` wrapped — breadcrumb + (for error) auto-emit
-- `window.addEventListener('error', ...)` — uncaught errors → emit
-- `window.addEventListener('unhandledrejection', ...)` → emit
-- Dedup: same `source + message` within 60s is skipped
-- Self-error flag: if `logDebugEntry()` itself throws, disable emits for 30s to prevent loops
-- Pre-auth drops writes silently (`fbAuth.currentUser` null → return)
-- Tracked context globals: `_currentProjectId`, `_currentPanelId` set by `ProjectView` mount / `selectedPanelId` effect
-
-### UI surfaces
-- **Floating `🐛 Report Issue` button** — bottom-right of every page (main app + all `/modules/` routes), dismissible per session
-- **`ReportIssueModal`** — textarea + submit; writes entry with `severity:"user_reported"` and auto-attaches last 30 breadcrumbs
-- **`DebugLogsModal`** (admin only, opened from Settings) — table of recent logs with range filters (24h / 7d / 30d / All), severity filter, user filter. Click row → detail panel with stack + breadcrumbs + device info.
-
-### No cleanup / retention
-Logs are kept forever for v1. If retention becomes a concern, add a scheduled Cloud Function that deletes entries where `createdAt < Date.now() - N * day`.
+Client-side error capture + user-reported issue pipeline. Captures uncaught errors, promise rejections, and `console.error` / `console.warn` calls automatically; users can also file reports via the floating `🐛 Report Issue` button. Logs are append-only at `companies/{companyId}/debugLogs/{entryId}` (or `users/{uid}/debugLogs/{entryId}` fallback) — admin-readable, immutable. Admins view the stream via **Settings → Debug Logs**. Each entry carries severity, source, breadcrumbs (last ~30 events), and project/panel context. Full schema, client-capture wiring, and UI surfaces: see `docs/debug-logging.md`.
 
 ## Quote / Print System
 
@@ -541,23 +385,8 @@ Logs are kept forever for v1. If retention becomes a concern, add a scheduled Cl
 - `#quote-doc` print override: `position:absolute;top:0;left:0;width:100%`
 - Inputs/textareas styled as plain text in print (no borders, transparent background)
 
-### Quote Form Font Sizes (current — +20% from original)
-| Element | Screen | Print |
-|---------|--------|-------|
-| Brand h1 | 29px | 29px |
-| Body text (info-detail, terms) | 14-15px | 14-15px |
-| Labels (uppercase) | 12px | 12px |
-| Spec fields | 13px | 13px |
-| Pricing values | 14px | 14px |
-| Grand total | 19px | 19px |
-
-### T&C Page Font Sizes (sized to fill one page)
-| Element | Size |
-|---------|------|
-| Title | 18px |
-| Subtitle | 12px |
-| Section headings | 10.5px |
-| Body paragraphs | 10px, line-height 1.6 |
+### Font Sizes
+Quote form sizes (+20% from original) and one-page T&C sizes are tabulated in `docs/quote-print-fonts.md`. Update that doc when changing sizes in `src/app.jsx`.
 
 ### Quote Numbering (v1.18.153+)
 - Format: `MTX-Q######` (e.g. `MTX-Q202000`), auto-assigned on first print via `getNextQuoteNumber()`
@@ -599,76 +428,7 @@ Company info is populated from BC on connect and from Firestore on load.
 - Status values: `draft`, `in_progress`, `extracted`, `validated`, `costed`, `quoted`
 
 ### Owner Priority Mode (v1.19.678–683)
-
-Soft-lockout that activates when the project owner is viewing. Sits between Hard Project Lock (task running) and free-for-all. See `docs/superpowers/specs/2026-04-23-owner-priority-mode-design.md` for full spec and `docs/superpowers/plans/2026-04-23-owner-priority-mode.md` for the implementation plan.
-
-**Trigger:** Owner's `projectPresence` doc has `lastSeen` within 90s OR `project.ownerLockActive === true`. Overridden by active admin takeover.
-
-**New fields on `project` doc:**
-- `ownerLockActive: boolean` — owner's "🔒 Hold priority while I'm away" checkbox (default false)
-- `ownerTakeoverActive: { byUid, byName, atMs, reason, expiresAt } | null` — active admin override; 15-min auto-expire
-- `ownerTakeoverLog: []` — append-only history of past takeovers on this project
-
-**New field on `projectPresence` doc:**
-- `lockActive: boolean` — mirrored from `project.ownerLockActive` for convenience
-
-**New Firestore collection:**
-- `companies/{companyId}/ownerTakeovers/{id}` — append-only audit trail. Read by all members, create by `takeoverBy` user only, immutable (`update, delete: if false`).
-
-**13 actions hard-locked when mode is active (see full list in spec):**
-re-extract, re-extract with feedback, refresh pricing (normal + force-fresh), apply supplier portal prices, delete panel, delete drawing, send quote (both callsites), send RFQs, PO received, approve pre/post review (4 buttons), unlock quote, push BOM to BC. Transfer/Copy is server-gated via Firestore rules instead of client-gated.
-
-**Allowed while mode is active:** view, BOM row edits (qty/price/PN/description), title block edits, quote field edits, review notes, answer questions, BC browser lookups, Just Print.
-
-**Firestore rules helper:** `isOwnerPriorityLocked(project)` inside `/companies/{companyId}` — rejects non-owner writes when `ownerLockActive=true` AND no active takeover. The 90s-presence-based lock is client-side only (can't query `projectPresence` from within a project rule).
-
-**Client-side state (ProjectView):** `ownerPriorityActive` (boolean), `takeoverActive` (null | takeover obj), `showTakeoverModal` (boolean), `ownerPriorityToast` ({ownerName, shownAt} | null), `chimeOnViewer` (boolean, localStorage-persisted, owner-side opt-in).
-
-**Chime helper:** `_playChime("owner-join" | "viewer-join")` — module-level, WebAudio, 250ms, volume 0.15. Silent-fail if autoplay blocked.
-
-**Shared constants:** `_OWNER_PRIORITY_ALERT`, `_OWNER_PRIORITY_TOOLTIP`, `_fireOwnerPriorityAlert()`.
+Soft-lockout that activates when the project owner is viewing — sits between Hard Project Lock (task running) and free-for-all. Triggered by owner's `projectPresence.lastSeen` within 90s OR `project.ownerLockActive === true`; overridden by active admin takeover (`project.ownerTakeoverActive`, 15-min auto-expire). Hard-locks 13 destructive actions (re-extract, refresh pricing, send quote, send RFQs, etc.); allows view + row/field edits. Server-side enforcement via Firestore rules helper `isOwnerPriorityLocked(project)`; audit trail at `companies/{companyId}/ownerTakeovers/{id}`. Full spec: `docs/superpowers/specs/2026-04-23-owner-priority-mode-design.md`. Plan: `docs/superpowers/plans/2026-04-23-owner-priority-mode.md`.
 
 ### Item Lead Times (v1.19.684–692)
-
-Per-item lead times populated from a ranked source precedence on every BOM row. See `docs/superpowers/specs/2026-04-23-item-lead-times-design.md` for the full spec and `docs/superpowers/plans/2026-04-23-item-lead-times.md` for the 10-task plan.
-
-**Precedence (best → worst):**
-1. `supplier` — supplier portal submission (already writes `leadTimeDays`)
-2. `scraper` — scraper output (Codale / custom-scraper framework returns `leadTime` via extract step)
-3. `bc_vendor` — BC `ItemVendorCatalog` (Page 114) per-vendor default
-4. `bc_item` — BC Item Card `Lead_Time_Calculation` (reference)
-5. `ai` — Haiku estimate, flagged `leadTimeEstimated:true`
-
-Manual edits override all auto-sources until explicit force-refresh.
-
-**New fields on BOM rows** (preserved on save per retention rule):
-- `leadTimeDays: number|null`
-- `leadTimeSource: "supplier"|"scraper"|"bc_vendor"|"bc_item"|"ai"|"manual"`
-- `leadTimeUpdatedAt: number` (ms epoch, for stale detection — reuses `defaultStaleDays`)
-- `leadTimeEstimated: boolean` (only true when source === "ai")
-
-**New fields on `rfqUploads/{token}` doc:**
-- `leadTimeOnly: boolean` — per-vendor "Request Lead Times Only" mode
-- Per-line `referencePrice` + `referencePriceSource` — BC prices frozen at RFQ send time when leadTimeOnly
-
-**New Firestore collection:**
-- `companies/{companyId}/bcLeadTimeWrites/{id}` — append-only audit trail for every BC `ItemVendorCatalog` writeback (success or skip). Members read; writer creates; immutable.
-
-**Helpers:** `_bcDateFormulaToDays`, `_daysToBcDateFormula`, `bcLookupLeadTime`, `bcLookupItemVendorLeadTime`, `bcUpsertItemVendorLeadTime`, `aiEstimateLeadTimes`.
-
-**Fetch pipeline:** Lead time fetch piggybacks on `runPricingOnPanel` — no separate button. BC phase pulls `bc_vendor` + `bc_item` sources in a batch after pricing matches complete. Scraper phase (Codale + custom) extracts `leadTime` alongside `price`. AI fallback runs at the very end for rows still missing data. Force-refresh also force-refreshes lead times.
-
-**Writeback:** `doApplyPortalPrices` (same transaction as BC price push) calls `bcUpsertItemVendorLeadTime` for each applied row with `leadTimeDays > 0` AND resolved `vendorNo` AND **non-blank `partNumber` (HARD REJECT)**. Audit entry always written to `bcLeadTimeWrites`, including skips.
-
-**RFQ "Lead Times Only" mode (per-vendor checkbox in `RfqEmailModal`):** When enabled:
-- Email subject: `[Lead Time Request] …`
-- PDF + email body show yellow "LEAD TIME REQUEST ONLY" banner
-- "Current Price (ref)" column populated from BC
-- Portal: prices shown read-only (grey); supplier fills lead times only
-- Submit validates per-line `leadTimeDays > 0` instead of the bulk order-lead-time field
-
-**BOM table:** New `Lead` column between `Ext $` and `Priced`. Editable inline. Source in hover tooltip. AI estimates render italic + asterisk (`14*`). Stale (>60d) renders with tilde prefix (`~14`).
-
-**BC Item Browser:** New `Lead` column between `Unit Cost` and `Last Purchased`. Read-only display. Selecting an item populates BOM row's lead time (source=`bc_item`).
-
-**Out of scope (future):** Quote-level lead time rollup (needs production schedule data); per-panel build time config; `requestedShipDate` feasibility warning; lead time history / diff view.
+Per-item lead times populated from a ranked source precedence on every BOM row: `supplier` → `scraper` → `bc_vendor` → `bc_item` → `ai`; manual edits override all auto-sources until force-refresh. Fields on BOM rows: `leadTimeDays`, `leadTimeSource`, `leadTimeUpdatedAt`, `leadTimeEstimated` (preserved on save). Fetch piggybacks on `runPricingOnPanel`. Writeback to BC `ItemVendorCatalog` happens during `doApplyPortalPrices` (HARD REJECT on blank partNumber); audit at `companies/{companyId}/bcLeadTimeWrites/{id}`. RFQ "Lead Times Only" mode adds a per-vendor checkbox that switches the portal to lead-time-only validation. Full spec: `docs/superpowers/specs/2026-04-23-item-lead-times-design.md`. Plan: `docs/superpowers/plans/2026-04-23-item-lead-times.md`.
