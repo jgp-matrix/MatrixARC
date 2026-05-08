@@ -53,6 +53,23 @@ When the brainstorming or writing-plans skill produces a design spec or implemen
 - **APP_VERSION** constant (~line 163) is updated automatically by `deploy.sh`
 - **JSX validation**: Run `node validate_jsx.js` before deploying to catch JSX errors early
 
+## Verification toolkit
+
+Located in `tools/`. Use these alongside development:
+
+- `./tools/check-syntax.sh` — sanity-check that all JS parses; run after pulls or refactors.
+- `./tools/review.sh [optional path]` — headless Claude review of uncommitted changes (`claude -p` with a diff). Run before non-trivial commits on pricing / Firestore / functions code.
+- `./tools/preflight-functions.sh` — always run before `firebase deploy --only functions`.
+- `./tools/install-hooks.sh` — one-time setup per checkout / per worktree. Installs the pre-commit hook into the active git hooks directory (worktree-aware via `git rev-parse --git-common-dir`). Re-run is idempotent.
+
+**Pre-commit hook** (auto-fires on every `git commit` once installed):
+- BLOCKS the commit if any staged `.js` file fails `node --check`.
+- Runs an advisory Claude review (60s timeout) on staged files matching the risk pattern `pricing|quote|margin|markup|bom|firestore|rules|deploy|functions/index`. Review is advisory only — never blocks the commit.
+
+**Outstanding findings**: see `tools/REVIEW_FINDINGS.md`. Each entry tagged OPEN / RESOLVED (with commit SHA) / STALE. Update when findings change state — don't delete history, mark it.
+
+**Known toolkit gap**: hook only covers `.js`, not `.jsx`. Most of `src/app.jsx` (~2 MB, the bulk of the codebase) is unreviewed by the automated hook. Tracked as deferred toolkit improvement T1/T2 in `tools/REVIEW_FINDINGS.md`.
+
 ## Data Retention (CRITICAL)
 
 This app is used for real production projects. **No user data may ever be lost due to code changes.**

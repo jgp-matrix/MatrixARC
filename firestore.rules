@@ -76,18 +76,46 @@ service cloud.firestore {
     //         supplier portal submit flow. No way to rewrite `uid`, `expiresAt`,
     //         `projectId`, or any field outside the submit payload.
     //   - DELETE: restricted to the authenticated owner.
+    // DECISION(audit Item #1, 2026-05-07): rfqUploads is a top-level collection
+    // (not under /companies/{companyId}/), so role gating happens via the doc's
+    // own `companyId` field added in v1.19.994. Legacy uid-only docs and solo
+    // accounts (no companyId) skip the role check and remain owner-only.
+    //
+    // Closes two gaps from the prior rule:
+    //   • CREATE was `auth != null` — any authenticated user (including view-only
+    //     members) could create rfqUploads docs and spoof someone else's `uid`.
+    //     Now requires the writer to set their own uid AND, when companyId is
+    //     set, to have a non-`view` role in that company.
+    //   • UPDATE/DELETE only matched `uid`, so a teammate with edit role couldn't
+    //     dismiss/delete a coworker's RFQ even though v1.19.994 made them visible
+    //     in team-scoped queries. Now extends the auth path to same-company
+    //     writers as well; view-only members remain blocked.
     match /rfqUploads/{token} {
-      allow read: if (request.auth != null && resource.data.get('uid', null) == request.auth.uid)
+      function _writerIsCompanyWriter(cid) {
+        return cid != null
+          && exists(/databases/$(database)/documents/companies/$(cid)/members/$(request.auth.uid))
+          && get(/databases/$(database)/documents/companies/$(cid)/members/$(request.auth.uid)).data.role != 'view';
+      }
+      function _isOwnerOrTeamWriter() {
+        return request.auth != null && (
+          resource.data.get('uid', null) == request.auth.uid
+          || _writerIsCompanyWriter(resource.data.get('companyId', null))
+        );
+      }
+      allow read: if _isOwnerOrTeamWriter()
                   || resource.data.get('expiresAt', 0) > request.time.toMillis();
-      allow create: if request.auth != null;
-      allow update: if (request.auth != null && resource.data.get('uid', null) == request.auth.uid)
+      allow create: if request.auth != null
+                     && request.resource.data.uid == request.auth.uid
+                     && (request.resource.data.get('companyId', null) == null
+                         || _writerIsCompanyWriter(request.resource.data.companyId));
+      allow update: if _isOwnerOrTeamWriter()
                     || (resource.data.get('expiresAt', 0) > request.time.toMillis() &&
                         resource.data.get('status', 'pending') == 'pending' &&
                         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                           'status','submittedAt','lineItems','leadTimeDays',
                           'confirmedCrossings','fileName','storageUrl'
                         ]));
-      allow delete: if request.auth != null && resource.data.get('uid', null) == request.auth.uid;
+      allow delete: if _isOwnerOrTeamWriter();
     }
 
     // DECISION(v1.19.734): Security audit finding C-2 — engineering review portal.
