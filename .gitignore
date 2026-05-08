@@ -3,3 +3,9 @@ functions/node_modules/
 .firebase/
 *.bak
 functions/.env
+# Service account keys & local admin creds — NEVER commit
+.secrets/
+*-service-account*.json
+*-admin-sdk*.json
+# Generated build artifact — regenerated from src/app.jsx by validate_jsx.js
+public/index.bundle.js
