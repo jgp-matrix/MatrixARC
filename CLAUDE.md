@@ -1,6 +1,15 @@
 # MatrixARC — Development Rules
 <!-- SYNC_KEY: THUNDERBOLT_2026 -->
 
+## Session startup procedure
+**Before any task work, run `./tools/verify-state.sh`** and confirm the output matches expectations:
+- `pwd` is the worktree the session was launched in
+- `git branch --show-current` matches the expected branch
+- `git log --oneline -5` shows the commits you expect (no surprise commits from the parallel CLI session)
+- `git status` is clean (or only contains files you know about)
+
+If anything looks unexpected — wrong directory, unfamiliar branch, untracked files you didn't create, commits you didn't make — **stop and surface the contradiction to the user before doing any task work**. Do not auto-clean, auto-checkout, or "fix" the state. The parallel testing/review CLI session may have written artifacts you should not touch.
+
 ## Parallel Claude session workflow
 The user runs **two Claude sessions in parallel** against this codebase:
 
