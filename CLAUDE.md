@@ -1,5 +1,4 @@
 # MatrixARC — Development Rules
-<!-- SYNC_KEY: THUNDERBOLT_2026 -->
 
 ## Session startup procedure
 **Before any task work, run `./tools/verify-state.sh`** and confirm the output matches expectations:
@@ -249,7 +248,7 @@ AI returns a classified wire list (`internal: true/false`), code filters program
 | BOM extraction | Opus + thinking | **Native PDF document** when available (v1.19.959+); image fallback otherwise | Bypasses our render→JPEG→resize→re-encode pipeline for vector-text fidelity. Resolves OCR character-merging on dense D-size BOMs. Prompt cached via `cache_control: ephemeral` (v1.19.963). |
 | Schematic / layout / pricing analysis | Sonnet | Image | |
 | Page detection / part verification | Haiku | Image | |
-| Supplier quote price extraction | **Sonnet 4** (via Cloud Function) — was Haiku in earlier docs | Image | Prompt is split into static system block (cached) + dynamic user block (per-token line items). |
+| Supplier quote price extraction | **Sonnet 4** (via Cloud Function) | Image | Prompt is split into static system block (cached) + dynamic user block (per-token line items). |
 | BC Item Browser row locate | Haiku (table boundaries + math) | Image | |
 
 **Model gotcha:** Sonnet 4.6 does NOT support assistant prefill — use Haiku for prefill-based JSON extraction.
@@ -295,15 +294,10 @@ return(<>
 Missing `</>` or two root elements = site breaks. Always verify both `<>` AND `</>` match.
 
 ### Control Panel Lead Time (v1.19.706+)
-Pure function `computeControlPanelLeadTime(panel, project)` returns the panel's ship date from `longestItemLeadDays + laborDays + productionDays` (sum-based, not max). Feeds a live chip to the left of each panel's status pill in QUOTE SUMMARY. Click the chip → override popover with breakdown + revert-to-computed. `panel.productionDays` is a user-entered duration (0-365 days) next to Requested Ship Date. `dailyCrewHours` + `leadTimeBatchSeconds` live in `LABOR_RATES` (loaded from `laborRates` Firestore doc). Lead drivers note (items above BOM avg) auto-appended to `project.quote.lineNotes`, in-place regex replace so refresh doesn't duplicate.
+`computeControlPanelLeadTime(panel, project)` returns the panel's ship date from `longestItemLeadDays + laborDays + productionDays` (sum-based, not max). Feeds a live chip to the left of each panel's status pill in QUOTE SUMMARY; clicking opens an override popover. `panel.productionDays` is a user-entered duration (0-365 days). `dailyCrewHours` + `leadTimeBatchSeconds` live in `LABOR_RATES`. Full spec: `docs/superpowers/specs/2026-04-24-control-panel-lead-time-design.md`. Plan: `docs/superpowers/plans/2026-04-24-control-panel-lead-time.md`.
 
-Spec: `docs/superpowers/specs/2026-04-24-control-panel-lead-time-design.md`
-Plan: `docs/superpowers/plans/2026-04-24-control-panel-lead-time.md`
-
-### Batched BC Lead-Time Writeback (v1.19.711+ — replaces v1.19.693)
-Cell-level `leadTimeDays` edits enqueue into `_leadTimeBcQueue.current.pending` (Map keyed by rowId — rapid re-edits of the same row collapse to one write). A single 30-second debounced timer flushes the whole queue in a sequential batch. Amber pill `⏳ N pending BC sync` appears in the BOM toolbar while the queue has entries; click to force-flush immediately. `visibilitychange` triggers a best-effort flush when the tab is hidden. Configurable via `LABOR_RATES.leadTimeBatchSeconds` (default 30).
-
-Bulk paths (Push All, supplier portal Apply, Upload Supplier Quote) still push immediately — they are deliberate user-initiated actions on complete data.
+### Batched BC Lead-Time Writeback (v1.19.711+)
+Cell-level `leadTimeDays` edits enqueue in `_leadTimeBcQueue.current.pending` (Map keyed by rowId, dedupes re-edits) and flush via a 30-second debounced timer. Amber `⏳ N pending BC sync` pill in the BOM toolbar exposes manual force-flush; `visibilitychange` triggers best-effort flush when the tab hides. Configurable via `LABOR_RATES.leadTimeBatchSeconds`. Bulk paths (Push All, supplier portal Apply, Upload Supplier Quote) push immediately — deliberate user-initiated actions on complete data.
 
 ## Cloud Functions (`functions/index.js`)
 
@@ -318,7 +312,7 @@ Functions deploy separately from hosting — `firebase deploy --only functions`.
 | `sendInviteEmail` | HTTPS callable | Sends invite email via SendGrid |
 | `onSupplierQuoteSubmitted` | Firestore trigger on `rfqUploads/{token}` | Fires when status→"submitted": creates notification + sends email to ARC user |
 | `extractSupplierQuotePricing` | HTTPS callable | Sends PDF page images to Claude Sonnet 4, returns extracted prices/lead times |
-| `extractBomPage` | HTTPS callable | **v1.19.981** Server-side BOM extraction. Accepts `{pdfPath, pageNumber}` (PDF native path) or `{imageBase64, imageMediaType, regionLearningParts}` (image fallback). Returns `{raw, stopReason, extractionPath, modelUsed, usage}`. Client (`extractBomPageViaServer` in app.jsx) calls this FIRST; falls back to legacy direct API path on any error. Centralizes the Anthropic call so all users take the same code path. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
+| `extractBomPage` | HTTPS callable | Server-side BOM extraction (v1.19.981). Accepts native PDF (`{pdfPath, pageNumber}`) or image fallback. Client tries this first via `extractBomPageViaServer`; falls back to legacy direct API on error. Centralizes the Anthropic call. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
 | `sendEngineerQuestionEmail` | HTTPS callable | Sends formatted engineering questions email via SendGrid + push notification |
 | `testTeamsWebhook` | HTTPS callable | Test endpoint to verify Teams webhook integration |
 
