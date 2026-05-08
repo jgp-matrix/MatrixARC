@@ -1,6 +1,18 @@
 # MatrixARC — Development Rules
 <!-- SYNC_KEY: THUNDERBOLT_2026 -->
 
+## Parallel Claude session workflow
+The user runs **two Claude sessions in parallel** against this codebase:
+
+- **Development session (Claude Code IDE / this session)** — owns code edits, deploys (`bash deploy.sh`), Firestore rule changes, Cloud Function deploys (`firebase deploy --only functions:...`), and live verification via Claude in Chrome browser tools. All `Edit`/`Write` operations originate here.
+- **Testing / review session (separate CLI)** — runs read-only scans, code review (`tools/review.sh`), test suites, and diagnostic queries. Does NOT modify source files. Generated artifacts (e.g. `tools/REVIEW_FINDINGS.md`) appear in the working tree and are imported into the dev session's todo list.
+
+**Coordination rules for the development session (this one):**
+- Re-read files before editing — the testing session may add review artifacts; tag them as input, not as files to ignore.
+- Don't assume the working tree is the same as last edit. Quick `git status` before risky changes is cheap insurance.
+- If the user says "the CLI is touching X," skip X until they say it's safe.
+- Do not run `tools/review.sh` or other test/scan scripts from the dev session — that's the CLI's job, and concurrent runs may corrupt their output files.
+
 ## Superpowers skills available (manual-load, local)
 Jesse Vincent's `obra/superpowers` skill pack is cloned at `C:\Users\jon\superpowers\skills\`. The Claude Code plugin system isn't available in this environment, so skills are loaded on-demand via `Read` on `C:\Users\jon\superpowers\skills\<skill-name>\SKILL.md`.
 
@@ -208,6 +220,7 @@ Functions deploy separately from hosting — `firebase deploy --only functions`.
 | `sendInviteEmail` | HTTPS callable | Sends invite email via SendGrid |
 | `onSupplierQuoteSubmitted` | Firestore trigger on `rfqUploads/{token}` | Fires when status→"submitted": creates notification + sends email to ARC user |
 | `extractSupplierQuotePricing` | HTTPS callable | Sends PDF page images to Claude Haiku, returns extracted prices/lead times |
+| `extractBomPage` | HTTPS callable | **v1.19.981** Server-side BOM extraction. Accepts `{pdfPath, pageNumber}` (PDF native path) or `{imageBase64, imageMediaType, regionLearningParts}` (image fallback). Returns `{raw, stopReason, extractionPath, modelUsed, usage}`. Client (`extractBomPageViaServer` in app.jsx) calls this FIRST; falls back to legacy direct API path on any error. Centralizes the Anthropic call so all users take the same code path. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
 | `sendEngineerQuestionEmail` | HTTPS callable | Sends formatted engineering questions email via SendGrid + push notification |
 | `testTeamsWebhook` | HTTPS callable | Test endpoint to verify Teams webhook integration |
 
