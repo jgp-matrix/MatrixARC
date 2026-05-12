@@ -22951,7 +22951,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // from the cross/correction dialog. It applies the BC item without saving to alternates or corrections DB,
   // and without setting isCrossed/isCorrection flags. This gives users an escape hatch when BC returns a
   // different part number but it's not truly a cross or correction (e.g. cosmetic differences).
-  function commitBcItem(bomRowId,bcItem,asCross,correctionType=null,skipLearning=false){
+  async function commitBcItem(bomRowId,bcItem,asCross,correctionType=null,skipLearning=false){
     const livePanel=latestPanelRef.current;
     let liveBom=livePanel.bom||[];
     // If row not found (stale ref from addBomRow race), find it in any panel version
@@ -22972,6 +22972,29 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(tailIdx>=0)liveBom.splice(tailIdx,0,newRow);else liveBom.push(newRow);
       console.log("commitBcItem: row not in latestPanelRef, inserted manually");
     }
+    // DECISION(v1.19.1025): Fetch PurchasePrices BEFORE applying the item so the
+    // row gets the correct price on first save. Previously the Item Card's unitCost
+    // was applied immediately (often stale — user doesn't maintain Unit Cost on the
+    // Item Card, only the Purchase Prices card) and the PP fetch was async/fire-and-
+    // forget, causing a visible revert to the old stale price when the user clicked
+    // USE. Now: PP price wins if available; Item Card unitCost is the fallback only
+    // when no PP record exists.
+    let ppPrice=null,ppDate=null;
+    const _commitPN=bcItem.number;
+    if(_commitPN&&_bcToken){
+      try{
+        const ppMap=await bcFetchPurchasePrices([_commitPN]);
+        const pp=ppMap.get(_commitPN);
+        if(pp&&pp.directUnitCost>0){
+          ppPrice=pp.directUnitCost;
+          ppDate=pp.startingDate||null;
+          console.log(`commitBcItem PP-prefetch: ${_commitPN} → $${pp.directUnitCost.toFixed(2)}${ppDate?" @ "+new Date(ppDate).toISOString().slice(0,10):""}`);
+        }
+      }catch(e){console.warn("commitBcItem PP prefetch failed:",e.message);}
+    }
+    // Re-read livePanel after await — another save may have landed while PP fetch ran
+    const livePanel2=latestPanelRef.current;
+    liveBom=livePanel2.bom||liveBom;
     const bom=liveBom.map(r=>{
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
@@ -22979,13 +23002,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const now=Date.now();
       // DECISION(v1.19.640/641): priceDate is driven EXCLUSIVELY by BC PurchasePrices
       // Starting_Date. commitBcItem sets partNumber/description/priceSource synchronously,
-      // but priceDate/bcPoDate are filled in by an async PP fetch below — only if BC has
+      // but priceDate/bcPoDate are filled in by the PP fetch above — only if BC has
       // a real PurchasePrice record for this item. No fabricated today's-date.
-      const bcCost=bcItem.unitCost;
+      // DECISION(v1.19.1025): Use PP price if available, fall back to Item Card unitCost.
+      const finalPrice=ppPrice!=null?ppPrice:(bcItem.unitCost!=null?+bcItem.unitCost:null);
       const updates={...r,
         ...(newPN?{partNumber:newPN}:{}),
         priceSource:"bc",
-        ...(bcCost!=null?{unitPrice:+bcCost}:{})
+        ...(finalPrice!=null?{unitPrice:finalPrice}:{}),
+        ...(ppDate?{priceDate:ppDate,bcPoDate:ppDate}:{})
       };
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
@@ -23056,8 +23081,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return updates;
     });
     // Clear fuzzy suggestion for this row before saving
-    const cleanedFuzzy={...(livePanel.bcFuzzySuggestions||{})};delete cleanedFuzzy[bomRowId];
-    const updated={...livePanel,bom,bcFuzzySuggestions:Object.keys(cleanedFuzzy).length?cleanedFuzzy:undefined};
+    const cleanedFuzzy={...(livePanel2.bcFuzzySuggestions||{})};delete cleanedFuzzy[bomRowId];
+    const updated={...livePanel2,bom,bcFuzzySuggestions:Object.keys(cleanedFuzzy).length?cleanedFuzzy:undefined};
     // Update local state AND save directly to Firestore (bypass parent chain to avoid stale state)
     latestPanelRef.current=updated;
     onUpdate(updated);
@@ -23065,29 +23090,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
     // Clear any BC sync error for this row — item has been fixed via Item Browser
     setBcSyncErrors(prev=>{const next={...prev};delete next[bomRowId];return next;});
-    // DECISION(v1.19.641): Async fetch BC PurchasePrices for the applied item. If PP has a
-    // Starting_Date, stamp it as priceDate/bcPoDate. This is the ONLY path that sets a BC
-    // priceDate from Item Browser flow — no fabricated today's-date.
-    const finalPN=bcItem.number;
-    if(finalPN&&_bcToken){
-      (async()=>{
-        try{
-          const ppMap=await bcFetchPurchasePrices([finalPN]);
-          const pp=ppMap.get(finalPN);
-          if(pp&&pp.startingDate&&pp.directUnitCost>0){
-            const lp=latestPanelRef.current;
-            const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,unitPrice:pp.directUnitCost,priceDate:pp.startingDate,bcPoDate:pp.startingDate,priceSource:"bc"}:r2);
-            const u2={...lp,bom:bom2};
-            latestPanelRef.current=u2;
-            onUpdate(u2);
-            saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});
-            console.log(`commitBcItem PP-date: ${finalPN} → $${pp.directUnitCost.toFixed(2)} @ ${new Date(pp.startingDate).toISOString().slice(0,10)}`);
-          }else{
-            console.log(`commitBcItem: ${finalPN} has no PurchasePrice record → no priceDate stamped`);
-          }
-        }catch(e){console.warn("commitBcItem PP fetch failed:",e.message);}
-      })();
-    }
+    // NOTE(v1.19.1025): PP fetch now happens ABOVE (before the BOM map) so the
+    // correct Purchase Price is applied on the first save. No redundant async fetch.
     // DECISION(v1.19.479): Only show "Push Update to BC" when ALL non-labor items are priced.
     // Previously flashed after every single item match — distracting when user is still working through BOM.
     if(bcProjectNumber&&_bcToken){
