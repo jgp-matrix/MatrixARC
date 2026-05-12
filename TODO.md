@@ -663,7 +663,12 @@ T2. **RESOLVED** — `150f75e` (2026-05-07). Pre-commit hook now collects `.js` 
     explicitly to the risk pattern. Re-installed via `./tools/install-hooks.sh`. Note: the
     risk pattern is a basename-style match, so any path containing `app.jsx` qualifies —
     intentional, since the file might be moved or referenced via worktree paths.
-T3. **OPEN** — `firestore.rules` and other non-JS files (`.rules`, `.json`, `.html`) get no
+T3. **OPEN** — BOM row ordering: JOB BUYOFF and CRATE rows should always sort to the bottom
+    of the BOM, just above CONTINGENCY. Currently they can appear at arbitrary positions
+    depending on extraction/insertion order, which causes them to show up in crossed-item
+    notes and lead-time drivers despite content-based filtering. Fix: enforce a stable
+    sort in the BOM display/save path that pins these utility rows to the end.
+T4. **OPEN** — `firestore.rules` and other non-JS files (`.rules`, `.json`, `.html`) get no
     coverage from the syntax check or the risk-pattern review. The rfqUploads fix (#1, commit
     `701d693`) committed without any pre-commit feedback. Low priority; add a separate
     rules-syntax check (`firebase deploy --only firestore --dry-run` or similar) if/when it
