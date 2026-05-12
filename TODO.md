@@ -642,6 +642,12 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     internal cost-category line items that should never appear in the alternates
     suggestion list.
 
+29. **OPEN** — Auto-add "ECO FEE STANDARD" line item on ECO creation. When a new
+    ECO is created, automatically insert a line item just below the Labor lines
+    called "ECO FEE STANDARD". This is an active BC Service Item representing a
+    standard fee applied to every ECO. The amount is variable (configurable), with
+    a default of $1,500.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
