@@ -23545,7 +23545,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const vName=await bcGetVendorName(vNo);
               if(vName)vendorPatches[String(row.id)]={bcVendorNo:vNo,bcVendorName:vName};
             }
-          }catch(e){}
+          }catch(e){console.warn("[VENDOR BACKFILL] row",pn,e);}
         }
         const patchCount=Object.keys(vendorPatches).length;
         if(patchCount>0){
