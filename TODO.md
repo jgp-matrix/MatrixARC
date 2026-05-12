@@ -648,6 +648,11 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     standard fee applied to every ECO. The amount is variable (configurable), with
     a default of $1,500.
 
+30. **OPEN** — Budgetary designation should be project-level, not per-panel. When a
+    project is marked as "Budgetary", apply the designation to the entire quote
+    rather than each individual panel. Move the "BUDGETARY" pill from inside each
+    Panel Line card in Quote Summary to sit next to the total price instead.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
