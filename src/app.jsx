@@ -40612,6 +40612,7 @@ INSTRUCTIONS:
             transform:splash==="shrinking"?"translateY(-44vh) scale(0.38)":"translateY(0) scale(1)"}}>
             <img src="/corevega_logo_stacked.png" alt="CoreVega Software" style={{height:200,objectFit:"contain",marginBottom:16}}/>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:80,fontWeight:900,letterSpacing:8,marginBottom:4,lineHeight:1,color:C.accent}}>ARC</span>
+            <span style={{fontSize:16,color:"#ffffff",letterSpacing:3,marginBottom:6,fontWeight:600,opacity:0.85}}>A.I. Recognition &amp; Capture</span>
             <span style={{fontSize:15,color:C.muted,letterSpacing:2,marginBottom:32}}>Powered by <span style={{color:C.accent,fontWeight:700}}>ARC Neural IQ</span></span>
           </div>
           {splash==="loading"&&(
@@ -40630,7 +40631,8 @@ INSTRUCTIONS:
           {/* ARC branding — centered */}
           <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1,pointerEvents:"none"}}>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:28,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
-            <span style={{fontSize:10,color:C.muted,letterSpacing:1.5,marginTop:4,fontWeight:600}}>Powered by <span style={{color:C.accent,fontWeight:700,letterSpacing:2}}>ARC Neural IQ</span></span>
+            <span style={{fontSize:9,color:"#ffffff",letterSpacing:2,marginTop:2,fontWeight:600,opacity:0.8}}>A.I. Recognition &amp; Capture</span>
+            <span style={{fontSize:10,color:C.muted,letterSpacing:1.5,marginTop:2,fontWeight:600}}>Powered by <span style={{color:C.accent,fontWeight:700,letterSpacing:2}}>ARC Neural IQ</span></span>
             <span style={{fontSize:10,fontWeight:600,color:"#ffffff",opacity:0.5,letterSpacing:0.3,marginTop:3}}>{APP_VERSION}</span>
           </div>
           {/* Flex spacer */}
