@@ -23929,6 +23929,26 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }
 
+    // DECISION(v1.19.1025, BC+ pills persist fix): Stamp bcVerify BEFORE the
+    // Firestore save so the stamps actually persist. Previously bcVerify was
+    // stamped AFTER onSaveImmediate — the stamps lived only in React state and
+    // were lost on navigation/reload, causing BC+ pills to "come back" after
+    // every page load even though Get New Pricing fixed them in-session.
+    try{
+      const _preFuzzyMap={...(panel.bcFuzzySuggestions||{}),...bcFuzzySuggestions};
+      updatedBom=updatedBom.map(r=>{
+        if(r.isLaborRow||r.isContingency)return r;
+        const pn=(r.partNumber||"").trim();
+        if(!pn)return r;
+        let bcVerify;
+        if(r.priceSource==="bc")bcVerify={status:"in-bc",at:Date.now()};
+        else if(_preFuzzyMap[r.id]&&_preFuzzyMap[r.id].length>0)bcVerify={status:"fuzzy",candidateCount:_preFuzzyMap[r.id].length,at:Date.now()};
+        else if(r.priceSource==="manual")bcVerify={status:"manual",at:Date.now()};
+        else bcVerify={status:"not-in-bc",at:Date.now()};
+        return{...r,bcVerify};
+      });
+    }catch(e){console.warn("[L8 bcVerify] stamp failed (non-fatal):",e?.message);}
+
     // AUTO-ASSIGN SUPPLIERS (v1.19.1023+) — request the project-level analyzer
     // re-run after pricing/backfill so any rows that BC couldn't resolve get
     // surfaced for user confirmation against the manufacturer→vendor learning
@@ -23951,44 +23971,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         items:aiMissed.map(r=>({pn:r.partNumber,reason:"AI could not estimate"})).slice(0,10)});
     }
     _pp({msg:`✓ ${totalPriced} of ${bom.length} priced${bcCount>0?` (${bcCount} BC, ${aiCount} AI est.)`:""}.`,pct:100});
-    // DECISION(v1.19.991, audit Item L8 — BC catalog cross-check): Stamp
-    // every row with a `bcVerify` status derived from existing pricing data
-    // so the UI can render an at-a-glance presence indicator. No new BC API
-    // calls — the pricing pass already collected all the signal needed:
-    //   • priceSource === "bc"                   → "in-bc" (green check)
-    //   • has fuzzy suggestions in panel state   → "fuzzy" (yellow ?)
-    //   • non-empty PN, no BC match, no fuzzy   → "not-in-bc" (red +)
-    // Real failure case from the user: "ABD122NUB extracted as needing to
-    // be added, but it was already in BC." That specific case was an exact-
-    // match miss (fixed in v1.19.985 with normalized startswith). This adds
-    // the visible OPPOSITE: the user can now see at a glance which parts
-    // ARC THINKS are missing from BC, so they can verify before manually
-    // re-adding a part that's already there.
-    try{
-      const fuzzyMap=updated.bcFuzzySuggestions||panel.bcFuzzySuggestions||{};
-      updatedBom=updatedBom.map(r=>{
-        if(r.isLaborRow||r.isContingency)return r;
-        const pn=(r.partNumber||"").trim();
-        if(!pn)return r;
-        let bcVerify;
-        if(r.priceSource==="bc")bcVerify={status:"in-bc",at:Date.now()};
-        else if(fuzzyMap[r.id]&&fuzzyMap[r.id].length>0)bcVerify={status:"fuzzy",candidateCount:fuzzyMap[r.id].length,at:Date.now()};
-        else if(r.priceSource==="manual")bcVerify={status:"manual",at:Date.now()};
-        else bcVerify={status:"not-in-bc",at:Date.now()};
-        return{...r,bcVerify};
-      });
-    }catch(e){console.warn("[L8 bcVerify] stamp failed (non-fatal):",e?.message);}
-    // Update the panel state with the bcVerify stamps so the UI re-renders
-    if(panelOverride){
-      // when called for a panel different from the React state, persist via
-      // saveProjectPanel in the existing post-pricing path
-    }else{
-      try{
-        const refreshed={...latestPanelRef.current,bom:updatedBom};
-        latestPanelRef.current=refreshed;
-        onUpdate(refreshed);
-      }catch(_){}
-    }
     setAiPricing(false);
     // Show pricing report if there were any issues
     if(_report.length>0)setPricingReport({sections:_report,totalPriced,totalItems:bom.length,bcCount,aiCount});
