@@ -236,6 +236,11 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     - Set `ANTHROPIC_API_KEY` env var in Firebase for the monitor
     - Node.js 20 runtime deprecated 2026-04-30, decommissioned 2026-10-30 —
       upgrade `functions/package.json` engines to Node 22 in a future session
+    - **WATCH:** On next BOM extraction, check browser console for
+      `[BOM EXTRACT/server] ok` confirming the restored `extractBomPage`
+      Cloud Function is being hit. If it shows the fallback warning instead
+      (`server path failed — falling back to direct API`), investigate.
+      Also check Settings → Debug Logs for the `extractBomPage` info entry.
 
 ## Round 6 (user-reported, 2026-05-08)
 
