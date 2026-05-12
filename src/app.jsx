@@ -1088,7 +1088,9 @@ function _isoDate(ts){const d=new Date(ts);return d.toISOString().slice(0,10);}
 function computeControlPanelLeadTime(panel,project){
   if(!panel)return{shipDate:null,leadDays:0,longestItemDays:0,laborDays:0,productionDays:0,engineeringDays:0,engineeringHours:0,programmingDays:0,programmingHours:0,programmingTestingDays:0,buyoffDays:3,customerApprovalDays:21,materialsCompleteDays:0,productionDoneDays:0,postProductionDays:3,programmingDrives:false,productionInfeasible:false,productionDateMissing:true,averageItemLeadDays:0,drivers:[],largestContributor:"material",hasAiLeads:false,noDataWarning:true};
   const today=_startOfDay(Date.now());
-  const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
+  const _ltAllBom=panel.bom||[];
+  const _ltLast3=new Set(_ltAllBom.slice(-3).map(r=>r.id));
+  const bom=_ltAllBom.filter(r=>!r.isLaborRow&&!_ltLast3.has(r.id)&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
   const longestItemDays=bom.reduce((m,r)=>Math.max(m,+r.leadTimeDays||0),0);
   const lab=(typeof computeLaborEstimate==="function")?computeLaborEstimate(panel):{totalHours:0};
   // DECISION(v1.19.713): Daily crew hours config lives in the app-level LABOR_RATES
@@ -1293,7 +1295,11 @@ function _formatLeadDriversNote(drivers){
   return`Lead Time Drivers:\n${lines.join("\n")}${anyAi?"\n* ARC estimate":""}`;
 }
 function _computePanelLeadDriversLine(panel){
-  const rows=(panel?.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
+  // DECISION(v1.19.1032): Also exclude last 3 BOM rows by position (utility rows:
+  // contingency, job buyoff, crate) in addition to _isExcludedFromPriceCheck regex.
+  const _allBom=panel?.bom||[];
+  const _last3=new Set(_allBom.slice(-3).map(r=>r.id));
+  const rows=_allBom.filter(r=>!r.isLaborRow&&!_last3.has(r.id)&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
   // DECISION(v1.19.736): Absolute threshold — only items with lead times > 30 days.
   const drivers=[...rows]
     .filter(r=>(+r.leadTimeDays||0)>LEAD_DRIVER_THRESHOLD_DAYS)
@@ -1308,8 +1314,10 @@ function _computeProjectLeadDriversLine(project){
   if(panels.length===1)return _computePanelLeadDriversLine(panels[0]);
   const allRows=[];
   for(const p of panels){
-    for(const r of (p.bom||[])){
-      if(!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0){
+    const _pBom=p.bom||[];
+    const _pLast3=new Set(_pBom.slice(-3).map(r=>r.id));
+    for(const r of _pBom){
+      if(!r.isLaborRow&&!_pLast3.has(r.id)&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0){
         allRows.push(r);
       }
     }
