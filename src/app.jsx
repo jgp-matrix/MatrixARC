@@ -20223,7 +20223,7 @@ function ScanResultsBanner({panel}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,bcOnline,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -20365,7 +20365,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   },[panel.id]);
   const _bcReVerifyRan=useRef(null);
   useEffect(()=>{
-    if(!bcOnline||!_bcToken)return;
+    if(!_bcToken)return;
     const bom=panel.bom||[];
     const stale=bom.filter(r=>r.bcVerify&&r.bcVerify.status==="not-in-bc"&&!r.isLaborRow&&!r.isContingency&&(r.partNumber||"").trim());
     if(!stale.length)return;
@@ -20383,7 +20383,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       try{onSaveImmediate(updated);}catch(e){}
     })();
     return()=>{cancelled=true;};
-  },[bcOnline,panel.id]);
+  },[panel.id]);
   // DECISION(v1.19.654): Sync draft title-block state from panel props when extraction
   // populates drawingNo/Desc/Rev AFTER the component already mounted with empty drafts.
   // Only fills EMPTY drafts — never overwrites a user's in-progress edit.
@@ -29252,7 +29252,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
 // service-card data). `card_style` is the shared module-level style helper.
 const card_style=card;
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,bcOnline}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -30083,7 +30083,6 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   projectName={project.name||''}
                   bcProjectNumber={project.bcProjectNumber||null}
                   bcDisconnected={!!(project.bcEnv&&project.bcEnv!==_bcConfig.env)}
-                  bcOnline={bcOnline}
                   quoteData={project.quote||{}}
                   quoteRev={project.quoteRev||0}
                   readOnly={readOnly}
@@ -33351,7 +33350,6 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             setSentQuoteAckGiven={setSentQuoteAckGiven}
             showSentEditConfirm={showSentEditConfirm}
             setShowSentEditConfirm={setShowSentEditConfirm}
-            bcOnline={bcOnline}
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {quoteSendModal&&ReactDOM.createPortal(
