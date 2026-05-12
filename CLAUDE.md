@@ -6,6 +6,7 @@
 - `git branch --show-current` matches the expected branch
 - `git log --oneline -5` shows the commits you expect (no surprise commits from the parallel CLI session)
 - `git status` is clean (or only contains files you know about)
+- Report the active site version (the `APP_VERSION` constant in `public/index.html`, e.g. `v1.19.1005`) alongside the verification output so the user knows which deployed build the session is starting from.
 
 If anything looks unexpected — wrong directory, unfamiliar branch, untracked files you didn't create, commits you didn't make — **stop and surface the contradiction to the user before doing any task work**. Do not auto-clean, auto-checkout, or "fix" the state. The parallel testing/review CLI session may have written artifacts you should not touch.
 
