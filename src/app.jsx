@@ -4501,6 +4501,41 @@ async function bcFuzzyLookup(partNumber){
   return{match:null,type:null,suggestions:[]};
 }
 
+async function _bcReVerifyNotInBc(bom){
+  if(!_bcToken)return null;
+  const stale=bom.filter(r=>r.bcVerify&&r.bcVerify.status==="not-in-bc"&&!r.isLaborRow&&!r.isContingency&&(r.partNumber||"").trim());
+  if(!stale.length)return null;
+  const updates={};
+  for(const row of stale){
+    if(!_bcToken)break;
+    const pn=(row.partNumber||"").trim();
+    const item=await bcLookupItem(pn);
+    if(item){
+      updates[String(row.id)]={
+        bcVerify:{status:"in-bc",at:Date.now(),reVerified:true},
+        ...(item.unitCost!=null&&item.unitCost>0?{priceSource:"bc",unitPrice:item.unitCost,bcVendorNo:item.vendorNo||row.bcVendorNo||""}:{priceSource:"bc"})
+      };
+    }
+  }
+  if(!Object.keys(updates).length)return null;
+  const matchedPns=[...new Set(Object.keys(updates).map(k=>{const r=bom.find(b=>String(b.id)===k);return r?(r.partNumber||"").trim():null;}).filter(Boolean))];
+  if(matchedPns.length){
+    try{
+      const ppMap=await bcFetchPurchasePrices(matchedPns);
+      for(const k of Object.keys(updates)){
+        const r=bom.find(b=>String(b.id)===k);
+        const pn=r?(r.partNumber||"").trim():null;
+        const pp=pn?ppMap.get(pn):null;
+        if(pp&&pp.startingDate&&pp.directUnitCost>0){
+          updates[k]={...updates[k],unitPrice:pp.directUnitCost,priceDate:pp.startingDate,bcPoDate:pp.startingDate};
+        }
+      }
+    }catch(e){console.warn("[BC RE-VERIFY] PurchasePrices fetch failed:",e.message);}
+  }
+  console.log(`[BC RE-VERIFY] ${Object.keys(updates).length}/${stale.length} items confirmed in BC`);
+  return updates;
+}
+
 async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUnitOfMeasureCode,vendorNo,genProdPostingGroup,inventoryPostingGroup,manufacturerCode}){
   if(!_bcToken)throw new Error("Not connected to Business Central");
   const compId=await bcGetCompanyId();
@@ -20188,7 +20223,7 @@ function ScanResultsBanner({panel}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,bcOnline,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -20328,6 +20363,27 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const changed=oldLabor.length!==newLabor.length||oldLabor.some((r,i)=>r.qty!==newLabor[i]?.qty||r.unitPrice!==newLabor[i]?.unitPrice);
     if(changed){onUpdate(synced);try{onSaveImmediate(synced);}catch(e){}}
   },[panel.id]);
+  const _bcReVerifyRan=useRef(null);
+  useEffect(()=>{
+    if(!bcOnline||!_bcToken)return;
+    const bom=panel.bom||[];
+    const stale=bom.filter(r=>r.bcVerify&&r.bcVerify.status==="not-in-bc"&&!r.isLaborRow&&!r.isContingency&&(r.partNumber||"").trim());
+    if(!stale.length)return;
+    const key=panel.id+":"+stale.length;
+    if(_bcReVerifyRan.current===key)return;
+    _bcReVerifyRan.current=key;
+    let cancelled=false;
+    (async()=>{
+      const updates=await _bcReVerifyNotInBc(bom);
+      if(cancelled||!updates)return;
+      const updatedBom=bom.map(r=>{const u=updates[String(r.id)];return u?{...r,...u}:r;});
+      const updated={...latestPanelRef.current,bom:updatedBom};
+      latestPanelRef.current=updated;
+      onUpdate(updated);
+      try{onSaveImmediate(updated);}catch(e){}
+    })();
+    return()=>{cancelled=true;};
+  },[bcOnline,panel.id]);
   // DECISION(v1.19.654): Sync draft title-block state from panel props when extraction
   // populates drawingNo/Desc/Rev AFTER the component already mounted with empty drafts.
   // Only fills EMPTY drafts — never overwrites a user's in-progress edit.
@@ -30027,6 +30083,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   projectName={project.name||''}
                   bcProjectNumber={project.bcProjectNumber||null}
                   bcDisconnected={!!(project.bcEnv&&project.bcEnv!==_bcConfig.env)}
+                  bcOnline={bcOnline}
                   quoteData={project.quote||{}}
                   quoteRev={project.quoteRev||0}
                   readOnly={readOnly}
