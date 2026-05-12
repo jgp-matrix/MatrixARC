@@ -23272,10 +23272,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // overwrite the user's typed value with BC's stale price.
       if(!bcPushOk){
         const lp=latestPanelRef.current;
-        const revertBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"manual",priceDate:null,bcPoDate:null}:r);
+        const revertBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"manual",priceDate:now,bcPoDate:null}:r);
         const reverted={...lp,bom:revertBom};
         latestPanelRef.current=reverted;onUpdate(reverted);
-        try{onSaveImmediate(reverted);}catch(e){}
+        try{onSaveImmediate(reverted);}catch(e){console.warn("BC push revert save failed:",e);}
         console.warn("BC push failed — reverted priceSource to manual for",partNumber);
       }
     }
