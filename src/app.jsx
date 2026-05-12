@@ -39015,14 +39015,16 @@ async function bcFetchManufacturers(){
   if(!_bcToken)return[];
   // Pull from BC Manufacturers table + merge with BC_MFR_MAP so all known codes appear
   const bcCodes=new Map();
+  let bcFetchOk=false;
   try{
     const allPages=await bcDiscoverODataPages();
     const mPage=allPages.find(n=>n==='Manufacturer'||n==='Manufacturers');
     if(mPage){
       const r=await fetch(`${BC_ODATA_BASE}/${mPage}?$select=Code,Name&$top=500`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(r.ok)(await r.json()).value?.forEach(m=>bcCodes.set(m.Code,m.Name));
+      if(r.ok){(await r.json()).value?.forEach(m=>bcCodes.set(m.Code,m.Name));bcFetchOk=true;}
+      else console.warn("bcFetchManufacturers: BC returned",r.status);
     }
-  }catch(e){}
+  }catch(e){console.warn("bcFetchManufacturers: fetch failed:",e.message);}
   // Merge: BC codes + any BC_MFR_MAP codes not yet in BC
   const mfrNames=Object.fromEntries(BC_MFR_MAP.map(m=>[m.code,m.terms[0].split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ')]));
   BC_MFR_MAP.forEach(m=>{if(!bcCodes.has(m.code))bcCodes.set(m.code,mfrNames[m.code]||m.code);});
@@ -39033,8 +39035,11 @@ async function bcFetchManufacturers(){
   const denied=new Set([..._BAD_MFR_CODES,...userList.map(c=>(c||"").toUpperCase())]);
   const filtered=Array.from(bcCodes.entries()).filter(([Code])=>!denied.has((Code||"").toUpperCase()));
   if(filtered.length<bcCodes.size)console.log(`bcFetchManufacturers: hid ${bcCodes.size-filtered.length} denylisted code(s) (${[...denied].join(", ")})`);
-  _bcManufacturers=filtered.map(([Code,Name])=>({Code,Name})).sort((a,b)=>a.Code.localeCompare(b.Code));
-  return _bcManufacturers;
+  const result=filtered.map(([Code,Name])=>({Code,Name})).sort((a,b)=>a.Code.localeCompare(b.Code));
+  // Only cache when BC actually responded — a failed/rate-limited fetch should retry next call
+  if(bcFetchOk)_bcManufacturers=result;
+  else console.warn("bcFetchManufacturers: BC data unavailable — returning",result.length,"hardcoded entries (not cached, will retry)");
+  return result;
 }
 
 // ── ITEMS TAB ──
