@@ -24238,7 +24238,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               onDragLeave={()=>setDocDragging(false)}
               onDrop={e=>{e.preventDefault();setDocDragging(false);uploadOtherDoc(e.dataTransfer.files);}}
               onClick={()=>!docUploading&&docFileRef.current?.click()}
-              style={{width:140,height:60,border:`2px dashed ${docDragging?C.accent:C.border}`,borderRadius:6,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:docUploading?"default":"pointer",transition:"all 0.15s",background:docDragging?C.accentDim+"33":"transparent",textAlign:"center",padding:6}}>
+              style={{width:77,height:100,border:`2px dashed ${docDragging?C.accent:C.border}`,borderRadius:6,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:docUploading?"default":"pointer",transition:"all 0.15s",background:docDragging?C.accentDim+"33":"transparent",textAlign:"center",padding:6}}>
               <input ref={docFileRef} type="file" multiple accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" onChange={e=>{uploadOtherDoc(e.target.files);e.target.value="";}} style={{display:"none"}}/>
               <div style={{fontSize:18,opacity:docUploading?1:0.35}}>{docUploading?"⏳":"+"}</div>
               <div style={{fontSize:10,color:C.muted}}>{docUploading?"Uploading…":"Specs · PDFs · Docs"}</div>
