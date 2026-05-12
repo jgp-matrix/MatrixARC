@@ -24229,7 +24229,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 </div>
               </div>}
               <div style={{fontSize:10,color:doc.storageUrl?"#38bdf8":C.text,fontWeight:600,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"center",maxWidth:120}} title={doc.name}>{doc.name}</div>
-              {!readOnly&&<button onClick={e=>{e.stopPropagation();removeOtherDoc(di);}} style={{position:"absolute",top:-6,right:-6,background:C.card,border:`1px solid ${C.border}`,borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",color:C.red,cursor:"pointer",fontSize:11,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
+              {!readOnly&&<button onClick={e=>{e.stopPropagation();removeOtherDoc(di);}} style={{position:"absolute",top:-6,right:-6,background:"#dc2626",border:"none",borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",cursor:"pointer",fontSize:11,fontWeight:700,padding:0,lineHeight:1,opacity:0.85}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>✕</button>}
             </div>);
           })}
           {!readOnly&&bcProjectNumber&&_bcToken&&(
