@@ -13280,8 +13280,12 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
 
 // DECISION(v1.19.510): Single source of truth for project effective status.
 // ALL status displays (Badge, Dashboard columns, Quote Summary, PanelCard) use this function.
+// DECISION(v1.19.1031): Broadened job buyoff + crate matching — check both
+// partNumber and description with substring match (no ^ $ anchors). Previous
+// exact-match on partNumber-only missed data variants.
 function _isExcludedFromPriceCheck(r){
-  return r.isLaborRow||r.customerSupplied||r.isContingency||/matrix\s*systems/i.test(r.bcVendorName||"")||/^job.?buyoff$/i.test(r.partNumber||"")||/crate/i.test(r.description||"");
+  const pn=(r.partNumber||"").toLowerCase(),desc=(r.description||"").toLowerCase();
+  return r.isLaborRow||r.customerSupplied||r.isContingency||/matrix\s*systems/i.test(r.bcVendorName||"")||/job.?buyoff/i.test(pn)||/job.?buyoff/i.test(desc)||/crat(e|ing)/i.test(pn)||/crat(e|ing)/i.test(desc);
 }
 // DECISION(v1.19.666): Rules for highlighting a BOM row RED in the table. Three conditions
 // (any one triggers red):
