@@ -20213,7 +20213,31 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           await ref.put(file,{contentType:file.type});
           storageUrl=await ref.getDownloadURL();
         }catch(e){console.warn("Storage upload for doc preview failed:",e.message);}
-        newDocs.push({name:file.name,bcFileName:fileName,uploadedAt:Date.now(),size:file.size,storageUrl,contentType:file.type||null});
+        // Generate first-page thumbnail
+        let thumbnailUrl=null;
+        try{
+          const isPdf=/^application\/pdf/i.test(file.type)||/\.pdf$/i.test(file.name);
+          const isImg=/^image\//i.test(file.type);
+          if(isPdf){
+            await window.pdfjsReady();
+            const pdfjs=window._pdfjs;
+            const pdf=await pdfjs.getDocument({data:arrayBuf.slice(0)}).promise;
+            const page=await pdf.getPage(1);
+            const vp=page.getViewport({scale:1.0});
+            const canvas=document.createElement("canvas");
+            canvas.width=vp.width;canvas.height=vp.height;
+            await page.render({canvasContext:canvas.getContext("2d"),viewport:vp}).promise;
+            const thumbBlob=await new Promise(r=>canvas.toBlob(r,"image/jpeg",0.7));
+            canvas.width=0;canvas.height=0;
+            const thumbPath=`pageImages/${uid}/${projectId}/docs/thumb_${Date.now()}_${file.name}.jpg`;
+            const thumbRef=fbStorage.ref(thumbPath);
+            await thumbRef.put(thumbBlob,{contentType:"image/jpeg"});
+            thumbnailUrl=await thumbRef.getDownloadURL();
+          }else if(isImg){
+            thumbnailUrl=storageUrl;
+          }
+        }catch(e){console.warn("Thumbnail generation failed:",e.message);}
+        newDocs.push({name:file.name,bcFileName:fileName,uploadedAt:Date.now(),size:file.size,storageUrl,contentType:file.type||null,thumbnailUrl});
       }catch(e){console.warn("Other doc upload failed:",file.name,e.message);}
     }
     const updated={...panel,otherDocs:newDocs};
@@ -24192,13 +24216,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
           {(panel.otherDocs||[]).map((doc,di)=>{
             const isImg=/^image\//i.test(doc.contentType||"")||(doc.storageUrl&&/\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(doc.storageUrl));
+            const thumbSrc=doc.thumbnailUrl||(isImg?doc.storageUrl:null);
+            const hasThumb=!!thumbSrc;
             const ext=(doc.name||"").split(".").pop().toUpperCase();
             return(
             <div key={di} style={{position:"relative",width:100,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)_safeOpen(doc.storageUrl,"_blank",null,doc.name||"the document");}}>
               <div style={{width:100,height:80,borderRadius:6,border:`1px solid ${C.border}`,overflow:"hidden",background:"#080810",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {isImg&&doc.storageUrl?<img src={doc.storageUrl} alt={doc.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                {hasThumb?<img src={thumbSrc} alt={doc.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
                 :<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-                  <span style={{fontSize:22,opacity:0.5}}>{ext==="PDF"?"📕":ext==="XLSX"||ext==="XLS"?"📊":ext==="DOCX"||ext==="DOC"?"📝":"📄"}</span>
+                  <span style={{fontSize:22,opacity:0.5}}>📄</span>
                   <span style={{fontSize:9,color:C.muted,fontWeight:700}}>{ext}</span>
                 </div>}
               </div>
