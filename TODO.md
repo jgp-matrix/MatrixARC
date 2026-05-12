@@ -602,6 +602,18 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     makes the failure mode visible the moment it happens instead of after
     the empty version is live.
 
+## Round 10 (user-reported, 2026-05-12)
+
+27. **OPEN** — Status pills in Quote Summary do not match the status pills on the
+    Panel Card. The two UI surfaces render panel status independently and their
+    styling / label logic has diverged. They should be visually identical for the
+    same underlying status value.
+
+28. **OPEN** — Auto-populating Crossed/Superseded list should exclude "CRATES" and
+    "JOB BUYOFF" entries entirely. These are not real part crosses — they are
+    internal cost-category line items that should never appear in the alternates
+    suggestion list.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
