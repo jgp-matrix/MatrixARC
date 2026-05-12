@@ -1088,9 +1088,7 @@ function _isoDate(ts){const d=new Date(ts);return d.toISOString().slice(0,10);}
 function computeControlPanelLeadTime(panel,project){
   if(!panel)return{shipDate:null,leadDays:0,longestItemDays:0,laborDays:0,productionDays:0,engineeringDays:0,engineeringHours:0,programmingDays:0,programmingHours:0,programmingTestingDays:0,buyoffDays:3,customerApprovalDays:21,materialsCompleteDays:0,productionDoneDays:0,postProductionDays:3,programmingDrives:false,productionInfeasible:false,productionDateMissing:true,averageItemLeadDays:0,drivers:[],largestContributor:"material",hasAiLeads:false,noDataWarning:true};
   const today=_startOfDay(Date.now());
-  const _ltAllBom=panel.bom||[];
-  const _ltLast3=new Set(_ltAllBom.slice(-3).map(r=>r.id));
-  const bom=_ltAllBom.filter(r=>!r.isLaborRow&&!_ltLast3.has(r.id)&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
+  const bom=(panel.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
   const longestItemDays=bom.reduce((m,r)=>Math.max(m,+r.leadTimeDays||0),0);
   const lab=(typeof computeLaborEstimate==="function")?computeLaborEstimate(panel):{totalHours:0};
   // DECISION(v1.19.713): Daily crew hours config lives in the app-level LABOR_RATES
@@ -1295,11 +1293,7 @@ function _formatLeadDriversNote(drivers){
   return`Lead Time Drivers:\n${lines.join("\n")}${anyAi?"\n* ARC estimate":""}`;
 }
 function _computePanelLeadDriversLine(panel){
-  // DECISION(v1.19.1032): Also exclude last 3 BOM rows by position (utility rows:
-  // contingency, job buyoff, crate) in addition to _isExcludedFromPriceCheck regex.
-  const _allBom=panel?.bom||[];
-  const _last3=new Set(_allBom.slice(-3).map(r=>r.id));
-  const rows=_allBom.filter(r=>!r.isLaborRow&&!_last3.has(r.id)&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
+  const rows=(panel?.bom||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0);
   // DECISION(v1.19.736): Absolute threshold — only items with lead times > 30 days.
   const drivers=[...rows]
     .filter(r=>(+r.leadTimeDays||0)>LEAD_DRIVER_THRESHOLD_DAYS)
@@ -1314,10 +1308,8 @@ function _computeProjectLeadDriversLine(project){
   if(panels.length===1)return _computePanelLeadDriversLine(panels[0]);
   const allRows=[];
   for(const p of panels){
-    const _pBom=p.bom||[];
-    const _pLast3=new Set(_pBom.slice(-3).map(r=>r.id));
-    for(const r of _pBom){
-      if(!r.isLaborRow&&!_pLast3.has(r.id)&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0){
+    for(const r of (p.bom||[])){
+      if(!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(+r.leadTimeDays||0)>0){
         allRows.push(r);
       }
     }
@@ -6562,8 +6554,7 @@ async function buildQuotePdfDoc(doc,project){
     ctx._currentLineNum=pi+1;
     // DECISION(v1.19.1030): Exclude the last 3 BOM rows (utility rows: contingency,
     // job buyoff, crate) from crossed/superseded notes by position rather than regex.
-    const _bomLastThree=new Set(panBom.slice(-3).map(r=>r.id));
-    const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_bomLastThree.has(r.id));
+    const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_isBuyoffOrCrate(r));
     const estCrossH=crossedPre.length>0?(4+crossedPre.length*1.8):0;
     const estSpecH=Math.ceil(6/2)*4.5; // 6 spec items in 2 cols
     const estNotesH=(pan.bomNotes?8:0)+(qp.lineNotes?5:0);
@@ -6743,7 +6734,7 @@ async function buildQuotePdfDoc(doc,project){
     // DECISION(v1.19.330): Crossed items render INSIDE the bordered box (between docs and pricing).
     // User wants crosses kept with their line item, not floating below. Font is 4.5pt with 1.8mm line
     // height to keep the box compact enough to fit on one page (see height pre-estimate above).
-    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_bomLastThree.has(r.id));
+    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_isBuyoffOrCrate(r));
     if(crossed.length>0){
       // DECISION(v1.19.941): Font bumped from 4.5/5pt to 7/7.5pt to match
       // "Documents Provided" — old size was illegible on paper.
@@ -7318,8 +7309,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
     if(!isNaN(an)&&!isNaN(bn))return an-bn;
     return(a.itemNo||"").localeCompare(b.itemNo||"");
   });
-  const _bomLastThree2=new Set((panel.bom||[]).slice(-3).map(r=>r.id));
-  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_bomLastThree2.has(r.id));
+  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_isBuyoffOrCrate(r));
   doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
   doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,laborDivY+m(7),{align:"right"});
   const accent=[0,0,0]; // B&W mode — used by autoTable
@@ -13291,9 +13281,17 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
 // DECISION(v1.19.1031): Broadened job buyoff + crate matching — check both
 // partNumber and description with substring match (no ^ $ anchors). Previous
 // exact-match on partNumber-only missed data variants.
+// DECISION(v1.19.1033): Unified buyoff/crate check used by crossed items filter,
+// lead time drivers, and price check exclusion. Checks partNumber, description,
+// AND crossedFrom — the crossed-from field holds the OLD part number (e.g.
+// "JOB BUYOFF") while the current partNumber may be just "BUYOFF".
+function _isBuyoffOrCrate(r){
+  const pn=(r.partNumber||"").toLowerCase(),desc=(r.description||"").toLowerCase(),cf=(r.crossedFrom||"").toLowerCase();
+  return /buyoff/i.test(pn)||/buyoff/i.test(desc)||/buyoff/i.test(cf)||/crat(e|ing)/i.test(pn)||/crat(e|ing)/i.test(desc)||/crat(e|ing)/i.test(cf);
+}
 function _isExcludedFromPriceCheck(r){
   const pn=(r.partNumber||"").toLowerCase(),desc=(r.description||"").toLowerCase();
-  return r.isLaborRow||r.customerSupplied||r.isContingency||/matrix\s*systems/i.test(r.bcVendorName||"")||/job.?buyoff/i.test(pn)||/job.?buyoff/i.test(desc)||/crat(e|ing)/i.test(pn)||/crat(e|ing)/i.test(desc);
+  return r.isLaborRow||r.customerSupplied||r.isContingency||/matrix\s*systems/i.test(r.bcVendorName||"")||_isBuyoffOrCrate(r);
 }
 // DECISION(v1.19.666): Rules for highlighting a BOM row RED in the table. Three conditions
 // (any one triggers red):
@@ -17871,8 +17869,7 @@ function QuoteTab({project,onUpdate}){
               const panBom=pan.bom||[];
               const qp=(q.panelOverrides||{})[pan.id]||{};
               const setQP=(updates)=>{const po={...(q.panelOverrides||{}),[pan.id]:{...qp,...updates}};setQ({panelOverrides:po});};
-              const _bomLastThree=new Set(panBom.slice(-3).map(r=>r.id));
-              const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_bomLastThree.has(r.id));
+              const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_isBuyoffOrCrate(r));
               // DECISION(v1.19.857, ECO Stage A): Surface draft ECOs on the printed
               // quote line. DECISION(v1.19.908, multi-ECO additive): List EVERY
               // draft ECO with rows on this panel separately (sorted by number)
@@ -25674,8 +25671,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>}
           {/* BOM Notes */}
           {(()=>{
-            const _bomLastThree=new Set((panel.bom||[]).slice(-3).map(r=>r.id));
-            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_bomLastThree.has(r.id));
+            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!_isBuyoffOrCrate(r));
             const formatCorrections=(panel.bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
             return(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
