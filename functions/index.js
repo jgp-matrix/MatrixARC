@@ -8,6 +8,8 @@ const { runCodaleScrape } = require('./codaleScheduler');
 const { scrapeBatch: codaleScrapeBatch } = require('./codaleScraper');
 const { mouserSearchPart, mouserSearchBatch } = require('./mouserApi');
 const { digikeySearchPart, digikeySearchBatch } = require('./digikeyApi');
+const { BOM_PROMPT } = require('./bomPrompt');
+const { ANTHROPIC_MODELS, MONITORED_MODELS } = require('./models');
 
 // Purchasing module functions
 const purchasing = require('./purchasing');
@@ -34,9 +36,83 @@ const DIGIKEY_CLIENT_ID = process.env.DIGIKEY_CLIENT_ID || '';
 const DIGIKEY_CLIENT_SECRET = process.env.DIGIKEY_CLIENT_SECRET || '';
 const APP_URL = process.env.APP_URL || 'https://matrix-arc.web.app';
 const TEAMS_WEBHOOK_URL = process.env.TEAMS_WEBHOOK_URL || '';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 if (SENDGRID_KEY) sgMail.setApiKey(SENDGRID_KEY);
 
 const db = admin.firestore();
+
+// ── ANTHROPIC HELPERS (shared by extractBomPage + monitorAnthropicModels) ──
+
+const ANTHROPIC_PRICING = {
+  opus:   { in: 1500, out: 7500, cacheWrite: 1875, cacheRead: 150 },
+  sonnet: { in: 300,  out: 1500, cacheWrite: 375,  cacheRead: 30 },
+  haiku:  { in: 100,  out: 500,  cacheWrite: 125,  cacheRead: 10 },
+};
+
+function modelPriceFamily(model) {
+  const m = String(model || '').toLowerCase();
+  if (m.includes('opus')) return 'opus';
+  if (m.includes('haiku')) return 'haiku';
+  return 'sonnet';
+}
+
+function computeAnthropicCents(model, usage) {
+  if (!usage) return 0;
+  const p = ANTHROPIC_PRICING[modelPriceFamily(model)] || ANTHROPIC_PRICING.sonnet;
+  const inputTokens = usage.input_tokens || 0;
+  const outputTokens = usage.output_tokens || 0;
+  const cacheWriteTokens = usage.cache_creation_input_tokens || 0;
+  const cacheReadTokens = usage.cache_read_input_tokens || 0;
+  return Math.ceil(
+    (inputTokens / 1_000_000) * p.in +
+    (outputTokens / 1_000_000) * p.out +
+    (cacheWriteTokens / 1_000_000) * p.cacheWrite +
+    (cacheReadTokens / 1_000_000) * p.cacheRead
+  );
+}
+
+async function resolveAnthropicKey(uid) {
+  const profileDoc = await db.doc(`users/${uid}/config/profile`).get();
+  const companyId = profileDoc.exists ? profileDoc.data().companyId : null;
+  if (companyId) {
+    try {
+      const compApi = await db.doc(`companies/${companyId}/config/api`).get();
+      if (compApi.exists && compApi.data().key) return compApi.data().key;
+    } catch (_) {}
+  }
+  const userApi = await db.doc(`users/${uid}/config/api`).get();
+  if (userApi.exists && userApi.data().key) return userApi.data().key;
+  return null;
+}
+
+async function recordAnthropicUsage(uid, model, usage) {
+  try {
+    const cents = computeAnthropicCents(model, usage);
+    if (cents <= 0) return;
+    const ref = db.doc(`users/${uid}/config/anthropicLedger`);
+    const now = new Date();
+    const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    let existingMonth = null;
+    try { const s = await ref.get(); if (s.exists) existingMonth = s.data().monthKey || null; } catch (_) {}
+    const isRollover = existingMonth && existingMonth !== monthKey;
+    await ref.set({
+      monthKey,
+      lastCallAt: Date.now(),
+      lastCallModel: model || 'unknown',
+      lastCallCents: cents,
+      lastCallUsage: {
+        input: usage.input_tokens || 0,
+        output: usage.output_tokens || 0,
+        cacheWrite: usage.cache_creation_input_tokens || 0,
+        cacheRead: usage.cache_read_input_tokens || 0,
+      },
+      monthCents: isRollover ? cents : admin.firestore.FieldValue.increment(cents),
+      totalCents: admin.firestore.FieldValue.increment(cents),
+    }, { merge: true });
+  } catch (e) {
+    functions.logger.warn('recordAnthropicUsage failed (non-fatal):', e.message);
+  }
+}
 
 // ── PUSH NOTIFICATION HELPER ──
 
@@ -1900,4 +1976,179 @@ exports.bulkMfrLookup = functions.runWith({
   }
 
   return { success: true, found: results.filter(r => r.manufacturer).length, patched, unknownMfr, results };
+});
+
+// ── extractBomPage — Server-side BOM extraction (v1.19.981) ──
+// Client tries this first via extractBomPageViaServer; falls back to direct
+// Anthropic API on error. Accepts native PDF ({pdfPath, pageNumber}) or
+// image fallback ({imageBase64, imageMediaType}). Prompt mirrored at
+// functions/bomPrompt.js — keep in sync with BOM_PROMPT in src/app.jsx.
+
+exports.extractBomPage = functions
+  .runWith({ timeoutSeconds: 540, memory: '1GB', maxInstances: 10 })
+  .https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+  const uid = context.auth.uid;
+  const { pdfPath, pageNumber, imageBase64, imageMediaType, feedback, userNotes, regionLearningParts } = data || {};
+
+  const hasPdf = !!(pdfPath && pageNumber != null);
+  const hasImage = !!(imageBase64 && imageMediaType);
+  if (!hasPdf && !hasImage) {
+    throw new functions.https.HttpsError('invalid-argument', 'Provide either {pdfPath, pageNumber} or {imageBase64, imageMediaType}');
+  }
+
+  if (pageNumber != null) {
+    const n = Number(pageNumber);
+    if (!Number.isInteger(n) || n < 1 || n > 50) {
+      throw new functions.https.HttpsError('invalid-argument', `Invalid pageNumber: expected integer 1-50, got ${pageNumber}`);
+    }
+  }
+
+  const apiKey = await resolveAnthropicKey(uid);
+  if (!apiKey) {
+    throw new functions.https.HttpsError('failed-precondition', 'No Anthropic API key configured — set one in Settings → API');
+  }
+
+  let extractionPath;
+  let userContent;
+
+  if (hasPdf) {
+    extractionPath = 'pdf-native';
+    const bucket = admin.storage().bucket();
+    const file = bucket.file(pdfPath);
+    const [exists] = await file.exists();
+    if (!exists) {
+      throw new functions.https.HttpsError('not-found', `PDF not found: ${pdfPath}`);
+    }
+    const [buf] = await file.download();
+    const pdfBase64 = buf.toString('base64');
+
+    const feedbackSection = feedback
+      ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
+    const notesSection = userNotes
+      ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.` : '';
+    const pageHint = `This drawing has multiple pages. Extract the Bill of Materials from PAGE ${pageNumber} ONLY. Other pages may contain schematics, layouts, enclosure views, or notes — do not extract from those. If page ${pageNumber} does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+
+    userContent = [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+      { type: 'text', text: pageHint + feedbackSection + notesSection },
+    ];
+  } else {
+    extractionPath = 'image-fallback';
+    const feedbackSection = feedback
+      ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
+    const notesSection = userNotes
+      ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.` : '';
+
+    const regionParts = Array.isArray(regionLearningParts) ? regionLearningParts : [];
+    userContent = [
+      ...regionParts,
+      { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageBase64 } },
+      { type: 'text', text: feedbackSection + notesSection },
+    ];
+  }
+
+  functions.logger.info('extractBomPage starting', { uid, extractionPath, hasPdf, pageNumber: pageNumber || null });
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'interleaved-thinking-2025-05-14',
+    },
+    body: JSON.stringify({
+      model: ANTHROPIC_MODELS.OPUS,
+      max_tokens: 16000,
+      thinking: { type: 'enabled', budget_tokens: 4000 },
+      system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: userContent }],
+    }),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    functions.logger.error('extractBomPage Anthropic API error', { status: response.status, error: errBody.error?.message });
+    throw new functions.https.HttpsError('internal', `Anthropic API error: ${response.status} — ${errBody.error?.message || 'unknown'}`);
+  }
+
+  const result = await response.json();
+  const raw = (result.content || []).find(b => b.type === 'text')?.text || '';
+  const modelUsed = result.model || ANTHROPIC_MODELS.OPUS;
+  const stopReason = result.stop_reason || 'unknown';
+
+  functions.logger.info('extractBomPage complete', { uid, extractionPath, rawChars: raw.length, modelUsed, stopReason });
+
+  recordAnthropicUsage(uid, modelUsed, result.usage).catch(() => {});
+
+  return { raw, extractionPath, modelUsed, stopReason, usage: result.usage || {} };
+});
+
+// ── monitorAnthropicModels — Daily synthetic probe of model aliases ──
+// Detects deprecation/outage before it breaks production extraction.
+// Uses ANTHROPIC_API_KEY env var (not a user key) so it runs unattended.
+
+exports.monitorAnthropicModels = functions
+  .runWith({ timeoutSeconds: 60, memory: '256MB', maxInstances: 1 })
+  .pubsub.schedule('every day 06:00')
+  .timeZone('America/Denver')
+  .onRun(async () => {
+  if (!ANTHROPIC_API_KEY) {
+    functions.logger.warn('monitorAnthropicModels skipped: ANTHROPIC_API_KEY not set');
+    return null;
+  }
+
+  const results = [];
+  for (const model of MONITORED_MODELS) {
+    const t0 = Date.now();
+    try {
+      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'ping' }],
+        }),
+      });
+      const elapsed = Date.now() - t0;
+      if (resp.ok) {
+        results.push({ model, status: 'ok', elapsed });
+        functions.logger.info(`monitorAnthropicModels: ${model} OK (${elapsed}ms)`);
+      } else {
+        const body = await resp.json().catch(() => ({}));
+        results.push({ model, status: 'error', httpStatus: resp.status, error: body.error?.message, elapsed });
+        functions.logger.error(`monitorAnthropicModels: ${model} FAILED`, { httpStatus: resp.status, error: body.error?.message, elapsed });
+      }
+    } catch (e) {
+      const elapsed = Date.now() - t0;
+      results.push({ model, status: 'error', error: e.message, elapsed });
+      functions.logger.error(`monitorAnthropicModels: ${model} EXCEPTION`, { error: e.message, elapsed });
+    }
+  }
+
+  const failures = results.filter(r => r.status !== 'ok');
+  if (failures.length > 0 && TEAMS_WEBHOOK_URL) {
+    try {
+      const lines = failures.map(f => `- **${f.model}**: ${f.error || `HTTP ${f.httpStatus}`}`);
+      await fetch(TEAMS_WEBHOOK_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: `⚠️ **Anthropic Model Monitor** — ${failures.length} model(s) failed:\n${lines.join('\n')}`,
+        }),
+      });
+    } catch (e) {
+      functions.logger.warn('monitorAnthropicModels: Teams webhook post failed', { error: e.message });
+    }
+  }
+
+  return null;
 });
