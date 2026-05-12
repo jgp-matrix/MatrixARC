@@ -24222,7 +24222,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             return(
             <div key={di} style={{position:"relative",width:100,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)_safeOpen(doc.storageUrl,"_blank",null,doc.name||"the document");}}>
               <div style={{width:100,height:80,borderRadius:6,border:`1px solid ${C.border}`,overflow:"hidden",background:"#080810",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {hasThumb?<img src={thumbSrc} alt={doc.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                {hasThumb?<img src={thumbSrc} alt={doc.name} style={{width:"100%",height:"100%",objectFit:"contain"}}/>
                 :<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                   <span style={{fontSize:22,opacity:0.5}}>📄</span>
                   <span style={{fontSize:9,color:C.muted,fontWeight:700}}>{ext}</span>
