@@ -19010,6 +19010,19 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [inlineVendorErr,setInlineVendorErr]=useState("");
   const bomPages=((pages||[]).filter(p=>getPageTypes(p).includes('bom')&&(p.dataUrl||p.storageUrl)));
 
+  useEffect(()=>{
+    let cancelled=false;
+    Promise.all([
+      bcListItemCategories().then(v=>{if(!cancelled&&v.length)setBcCategories(v);}),
+      bcListUnitsOfMeasure().then(v=>{if(!cancelled&&v.length)setBcUoms(v);}),
+      bcListVendors().then(v=>{if(!cancelled&&v.length)setBcVendors(v);}),
+      bcListGenProdPostingGroups().then(v=>{if(!cancelled&&v.length)setBcGenProdGroups(v);}),
+      bcListInventoryPostingGroups().then(v=>{if(!cancelled&&v.length)setBcInvPostingGroups(v);}),
+      bcFetchManufacturers().then(v=>{if(!cancelled&&v.length)setBcManufacturers(v);}),
+    ]).then(()=>{if(!cancelled)setDropdownsLoaded(true);});
+    return()=>{cancelled=true;};
+  },[]);
+
   async function locateInDrawing(pgIdx){
     const idx=pgIdx!=null?pgIdx:drawingPageIdx;
     const pg=bomPages[idx];
@@ -19314,17 +19327,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             style={btn(C.accent,"#fff",{padding:"9px 20px",opacity:loading||query.trim().length<3?0.5:1})}>
             {loading?"Searching…":"Search"}
           </button>
-          <button onClick={()=>{setShowCreate(true);setCreateNumber(query||"");setCreateErr("");
-            if(!dropdownsLoaded){setDropdownsLoaded(true);
-              Promise.all([
-                bcListItemCategories().then(v=>{if(v.length)setBcCategories(v);else setDropdownsLoaded(false);}),
-                bcListUnitsOfMeasure().then(v=>{if(v.length)setBcUoms(v);else setDropdownsLoaded(false);}),
-                bcListVendors().then(v=>{if(v.length)setBcVendors(v);else setDropdownsLoaded(false);}),
-                bcListGenProdPostingGroups().then(v=>{if(v.length)setBcGenProdGroups(v);else setDropdownsLoaded(false);}),
-                bcListInventoryPostingGroups().then(v=>{if(v.length)setBcInvPostingGroups(v);else setDropdownsLoaded(false);}),
-                bcFetchManufacturers().then(v=>{if(v.length)setBcManufacturers(v);}),
-              ]);
-            }}}
+          <button onClick={()=>{setShowCreate(true);setCreateNumber(query||"");setCreateErr("");}}
             style={btn("#1a2a1a","#4ade80",{padding:"9px 16px",border:"1px solid #4ade8044",fontSize:13,fontWeight:600})}>
             + New Item
           </button>
@@ -19343,6 +19346,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
         {showCreate&&(
           <div style={{marginBottom:14,padding:14,borderRadius:8,border:`1px solid ${C.border}`,background:"#0a0a12"}}>
             <div style={{fontSize:13,fontWeight:700,marginBottom:10,color:C.text}}>Create New BC Item</div>
+            {!dropdownsLoaded&&<div style={{color:C.muted,fontSize:12,marginBottom:10}}>Loading BC field options…</div>}
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
               <div style={{flex:1,minWidth:140}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Part Number</label>
@@ -19519,8 +19523,8 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName});
                 }catch(e){setCreateErr(e.message||"Failed to create item");}
                 finally{setCreating(false);}
-              }} disabled={creating||!createNumber.trim()||!createGenProd||!createInvPosting} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!createNumber.trim()||!createGenProd||!createInvPosting?0.5:1})}>
-                {creating?"Creating…":"Create in BC"}
+              }} disabled={creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting?0.5:1})}>
+                {creating?"Creating…":!dropdownsLoaded?"Loading…":"Create in BC"}
               </button>
               <button onClick={()=>{setShowCreate(false);setCreateErr("");}}
                 style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,textDecoration:"underline"}}>Cancel</button>
