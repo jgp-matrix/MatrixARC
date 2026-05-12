@@ -4513,7 +4513,7 @@ async function _bcReVerifyNotInBc(bom){
     if(item){
       updates[String(row.id)]={
         bcVerify:{status:"in-bc",at:Date.now(),reVerified:true},
-        ...(item.unitCost!=null&&item.unitCost>0?{priceSource:"bc",unitPrice:item.unitCost,bcVendorNo:item.vendorNo||row.bcVendorNo||""}:{priceSource:"bc"})
+        ...(item.unitCost!=null&&item.unitCost>0?{priceSource:"bc",unitPrice:item.unitCost,bcVendorNo:item.vendorNo||row.bcVendorNo||""}:{})
       };
     }
   }
@@ -20369,7 +20369,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const bom=panel.bom||[];
     const stale=bom.filter(r=>r.bcVerify&&r.bcVerify.status==="not-in-bc"&&!r.isLaborRow&&!r.isContingency&&(r.partNumber||"").trim());
     if(!stale.length)return;
-    const key=panel.id+":"+stale.length;
+    const key=panel.id+":"+stale.map(r=>r.id).sort().join(",");
     if(_bcReVerifyRan.current===key)return;
     _bcReVerifyRan.current=key;
     let cancelled=false;
