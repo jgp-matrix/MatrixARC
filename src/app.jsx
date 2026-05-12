@@ -1212,7 +1212,13 @@ function computeControlPanelLeadTime(panel,project){
   // If programmingDays > productionDoneDaysFromChain, Programming gates
   // Production Done — warn the user.
   const programmingPathDays=programmingDays;
-  const productionDoneDays=Math.max(productionDoneDaysFromChain,programmingPathDays);
+  // DECISION(v1.19.1027): Materials-complete is a hard floor on production-done.
+  // When a TRAQS absolute date is earlier than the material chain (eng +
+  // approval + longest item lead), the panel physically cannot ship before
+  // materials arrive. Previously leadDays could be < longestItemDays (e.g.
+  // 82 when the longest item is 91 days), which is impossible. Floor at
+  // materialsCompleteDays so the displayed lead time is always realistic.
+  const productionDoneDays=Math.max(productionDoneDaysFromChain,programmingPathDays,materialsCompleteDays);
   const programmingDrives=programmingPathDays>productionDoneDaysFromChain&&programmingPathDays>0;
 
   // ── POST-PRODUCTION (Buyoff + Programming Testing in parallel) ────────
