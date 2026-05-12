@@ -5274,6 +5274,189 @@ async function bcGetVendorName(vendorNo){
   }catch(e){return"";}
 }
 
+// ============================================================================
+// AUTO-ASSIGN SUPPLIERS (v1.19.1023+) — manufacturer→vendor learning system
+// ----------------------------------------------------------------------------
+// Learns the user's "preferred vendor per manufacturer" pattern from project
+// BOM-row history (e.g. "Allen Bradley → CODALE"), then suggests vendor
+// assignments on new BOMs where BC has no answer. Confirmation goes through
+// AutoAssignVendorsModal; Stage 2 will push picks to BC ItemVendorCatalog.
+// ============================================================================
+
+// Hardcoded manufacturer alias table — collapses common naming variants so the
+// learning map keys cleanly. Expand as new manufacturers show up in the field.
+const _MFR_ALIASES={
+  "AB":"ALLEN-BRADLEY","ALLEN BRADLEY":"ALLEN-BRADLEY","ALLEN-BRADLEY":"ALLEN-BRADLEY",
+  "ROCKWELL":"ALLEN-BRADLEY","ROCKWELL AUTOMATION":"ALLEN-BRADLEY",
+  "SQUARE D":"SQUARE-D","SQUARED":"SQUARE-D","SQUARE-D":"SQUARE-D",
+  "SCHNEIDER":"SCHNEIDER-ELECTRIC","SCHNEIDER ELECTRIC":"SCHNEIDER-ELECTRIC","SCHNEIDER-ELECTRIC":"SCHNEIDER-ELECTRIC",
+  "PHOENIX":"PHOENIX-CONTACT","PHOENIX CONTACT":"PHOENIX-CONTACT","PHOENIX-CONTACT":"PHOENIX-CONTACT",
+  "EATON":"EATON","CUTLER-HAMMER":"EATON","CUTLER HAMMER":"EATON",
+  "AUTOMATION DIRECT":"AUTOMATIONDIRECT","AUTOMATIONDIRECT":"AUTOMATIONDIRECT",
+  "HOFFMAN":"HOFFMAN","RITTAL":"RITTAL","SAGINAW":"SAGINAW",
+  "WAGO":"WAGO","SIEMENS":"SIEMENS","ABB":"ABB","OMRON":"OMRON","IDEC":"IDEC",
+  "BANNER":"BANNER","BANNER ENGINEERING":"BANNER",
+  "TURCK":"TURCK","BALLUFF":"BALLUFF","SICK":"SICK","KEYENCE":"KEYENCE",
+  "PEPPERL+FUCHS":"PEPPERL-FUCHS","PEPPERL FUCHS":"PEPPERL-FUCHS","PEPPERL-FUCHS":"PEPPERL-FUCHS",
+  "WEIDMULLER":"WEIDMULLER","WEIDMÜLLER":"WEIDMULLER",
+  "PANDUIT":"PANDUIT","THOMAS & BETTS":"THOMAS-BETTS","THOMAS AND BETTS":"THOMAS-BETTS","T&B":"THOMAS-BETTS",
+  "MERSEN":"MERSEN","FERRAZ":"MERSEN","FERRAZ SHAWMUT":"MERSEN",
+  "LITTELFUSE":"LITTELFUSE","BUSSMANN":"BUSSMANN","COOPER BUSSMANN":"BUSSMANN",
+  "GE":"GE","GENERAL ELECTRIC":"GE","ABB GE":"GE"
+};
+function _normalizeManufacturer(s){
+  if(!s)return"";
+  const k=String(s).trim().toUpperCase().replace(/[.,]/g,"").replace(/\s+/g," ");
+  return _MFR_ALIASES[k]||k;
+}
+
+// Module-level state for the manufacturer→vendor map
+let _mfrVendorMapCache=null;
+let _mfrVendorMapLoadedForUid=null;
+
+// Loads map from Firestore; lazy-rebuilds on first access if missing.
+async function getManufacturerVendorMap(uid){
+  if(!uid)return{records:{}};
+  if(_mfrVendorMapCache&&_mfrVendorMapLoadedForUid===uid)return _mfrVendorMapCache;
+  const ref=fbDb.doc(`users/${uid}/config/manufacturerVendorMap`);
+  try{
+    const d=await ref.get();
+    if(d.exists){
+      const data=d.data()||{};
+      _mfrVendorMapCache={records:data.records||{},rebuiltAt:data.rebuiltAt||null,rebuiltFromProjectCount:data.rebuiltFromProjectCount||0};
+      _mfrVendorMapLoadedForUid=uid;
+      return _mfrVendorMapCache;
+    }
+    // Lazy bootstrap — doc missing, rebuild once from history
+    console.log("[AUTO-ASSIGN] manufacturerVendorMap missing, rebuilding from project history…");
+    const map=await rebuildManufacturerVendorMap(uid);
+    return map;
+  }catch(e){
+    console.warn("[AUTO-ASSIGN] getManufacturerVendorMap failed:",e);
+    return{records:{}};
+  }
+}
+
+// Walks every project's panels' BOM rows, aggregates (manufacturer→vendor) counts.
+async function rebuildManufacturerVendorMap(uid){
+  if(!uid)return{records:{}};
+  const projectsPath=_appCtx.projectsPath||`users/${uid}/projects`;
+  const records={};
+  let projectCount=0;
+  try{
+    const snap=await fbDb.collection(projectsPath).get();
+    snap.forEach(doc=>{
+      projectCount++;
+      const p=doc.data()||{};
+      const panels=p.panels||[];
+      for(const panel of panels){
+        const bom=panel.bom||[];
+        for(const row of bom){
+          if(row.isLaborRow)continue;
+          const mfr=row.manufacturer&&String(row.manufacturer).trim();
+          const vNo=row.bcVendorNo&&String(row.bcVendorNo).trim();
+          const vName=row.bcVendorName&&String(row.bcVendorName).trim();
+          if(!mfr||!vNo)continue;
+          const k=_normalizeManufacturer(mfr);
+          if(!k)continue;
+          if(!records[k])records[k]={manufacturer:k,vendors:{},totalCount:0};
+          if(!records[k].vendors[vNo])records[k].vendors[vNo]={vendorNo:vNo,vendorName:vName||vNo,count:0,lastUsedAt:null};
+          records[k].vendors[vNo].count++;
+          if(vName)records[k].vendors[vNo].vendorName=vName;
+          const t=p.updatedAt||p.createdAt||Date.now();
+          if(!records[k].vendors[vNo].lastUsedAt||t>records[k].vendors[vNo].lastUsedAt){
+            records[k].vendors[vNo].lastUsedAt=t;
+          }
+          records[k].totalCount++;
+        }
+      }
+    });
+    const out={records,rebuiltAt:Date.now(),rebuiltFromProjectCount:projectCount};
+    await fbDb.doc(`users/${uid}/config/manufacturerVendorMap`).set(out);
+    _mfrVendorMapCache=out;
+    _mfrVendorMapLoadedForUid=uid;
+    const mfrCount=Object.keys(records).length;
+    console.log(`[AUTO-ASSIGN] Rebuilt map: ${mfrCount} manufacturers across ${projectCount} projects`);
+    return out;
+  }catch(e){
+    console.warn("[AUTO-ASSIGN] rebuildManufacturerVendorMap failed:",e);
+    return{records:{}};
+  }
+}
+
+// Increment counts for a confirmed assignment. Fire-and-forget.
+async function bumpManufacturerVendorMap(uid,manufacturer,vendorNo,vendorName){
+  if(!uid||!manufacturer||!vendorNo)return;
+  const k=_normalizeManufacturer(manufacturer);
+  if(!k)return;
+  try{
+    const map=await getManufacturerVendorMap(uid);
+    if(!map.records[k])map.records[k]={manufacturer:k,vendors:{},totalCount:0};
+    if(!map.records[k].vendors[vendorNo])map.records[k].vendors[vendorNo]={vendorNo,vendorName:vendorName||vendorNo,count:0,lastUsedAt:null};
+    map.records[k].vendors[vendorNo].count++;
+    if(vendorName)map.records[k].vendors[vendorNo].vendorName=vendorName;
+    map.records[k].vendors[vendorNo].lastUsedAt=Date.now();
+    map.records[k].totalCount++;
+    _mfrVendorMapCache=map;
+    await fbDb.doc(`users/${uid}/config/manufacturerVendorMap`).set(map);
+  }catch(e){console.warn("[AUTO-ASSIGN] bump failed:",e);}
+}
+
+// Walks every panel in project, finds blank-vendor rows with known manufacturers,
+// groups by normalized manufacturer, looks up vendor candidates from the map,
+// returns suggestion data for the modal.
+//
+// Rules:
+//   0 vendors known → leave blank, no modal entry
+//   1 vendor known (any count) → suggested (single radio pre-selected)
+//   2+ vendors, top ≥70% share AND ≥3 count → suggested (top pre-selected)
+//   2+ vendors, otherwise → ambiguous (user must pick)
+function analyzeBomForVendorAutoAssign(project,mfrMap){
+  const groups={};
+  const panels=project?.panels||[];
+  const records=mfrMap?.records||{};
+  for(const panel of panels){
+    const bom=panel.bom||[];
+    for(const row of bom){
+      if(row.isLaborRow)continue;
+      if(row.bcVendorName&&String(row.bcVendorName).trim())continue;
+      if((row.qty||0)===0)continue;
+      const mfrRaw=row.manufacturer&&String(row.manufacturer).trim();
+      if(!mfrRaw)continue;
+      const k=_normalizeManufacturer(mfrRaw);
+      if(!k)continue;
+      const rec=records[k];
+      if(!rec||!rec.vendors||Object.keys(rec.vendors).length===0)continue;
+      if(!groups[k]){
+        const vendors=Object.values(rec.vendors).sort((a,b)=>b.count-a.count);
+        const total=rec.totalCount||vendors.reduce((s,v)=>s+v.count,0);
+        const top=vendors[0];
+        let suggested=null,ambiguous=false;
+        if(vendors.length===1){
+          suggested=top.vendorNo;
+        }else{
+          const share=top.count/(total||1);
+          if(top.count>=3&&share>=0.70)suggested=top.vendorNo;
+          else ambiguous=true;
+        }
+        groups[k]={manufacturer:k,manufacturerDisplay:mfrRaw,candidates:vendors,suggested,ambiguous,rows:[]};
+      }
+      groups[k].rows.push({panelId:panel.id,rowId:row.id,partNumber:row.partNumber||"",description:row.description||"",qty:row.qty||0});
+    }
+  }
+  const groupsArr=Object.values(groups).sort((a,b)=>b.rows.length-a.rows.length);
+  const totalRows=groupsArr.reduce((s,g)=>s+g.rows.length,0);
+  return{groups:groupsArr,totalRows,manufacturerCount:groupsArr.length};
+}
+
+// Module-level trigger setter: ProjectView injects its setState here so
+// PanelCard's runPricingOnPanel can request the modal open after backfill.
+let _autoAssignTriggerSetter=null;
+
+// Count of rows project-wide that have manufacturer set but no vendor — drives
+// the toolbar pill. PanelCard sets this via _autoAssignPendingCountSetter.
+let _autoAssignPendingCountSetter=null;
+
 const _vendorEmailCache={};
 async function bcGetVendorEmail(vendorNo){
   if(!_bcToken||!vendorNo)return"";
@@ -17102,6 +17285,117 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
   ,document.body);
 }
 
+// ── AUTO-ASSIGN VENDORS MODAL (v1.19.1023+) ──
+// Surfaces the analyzer's manufacturer→vendor suggestions for user confirmation.
+// On Apply: writes bcVendorName/bcVendorNo to every matching BOM row in the
+// project, saves, and increments the learning map. Stage 1 = local writes only;
+// BC ItemVendorCatalog writeback ships in Stage 2.
+function AutoAssignVendorsModal({uid,project,analysis,mfrMap,onClose,onApply}){
+  const [picks,setPicks]=useState(()=>{
+    // Initial picks: pre-select each group's suggested vendor (null if ambiguous)
+    const p={};
+    for(const g of analysis.groups){p[g.manufacturer]=g.suggested||"";}
+    return p;
+  });
+  const [expanded,setExpanded]=useState({}); // manufacturer → bool for "show rows"
+  const [applying,setApplying]=useState(false);
+  const fmtAgo=ts=>{if(!ts)return"";const days=Math.floor((Date.now()-ts)/(24*60*60*1000));if(days<1)return"today";if(days<7)return`${days}d ago`;if(days<30)return`${Math.floor(days/7)}w ago`;return`${Math.floor(days/30)}mo ago`;};
+  const totalSelected=analysis.groups.reduce((s,g)=>{const v=picks[g.manufacturer];return s+(v?g.rows.length:0);},0);
+  const totalManufacturersSelected=Object.values(picks).filter(v=>v&&v!=="skip").length;
+  async function doApply(mode){
+    setApplying(true);
+    try{
+      // Build pickMap: only include manufacturers with a non-skip selection
+      const pickMap={};
+      for(const g of analysis.groups){
+        const v=picks[g.manufacturer];
+        if(!v||v==="skip")continue;
+        if(mode==="suggested"&&v!==g.suggested)continue; // suggestions-only: skip user-overridden picks
+        const cand=g.candidates.find(c=>c.vendorNo===v);
+        if(!cand)continue;
+        pickMap[g.manufacturer]={vendorNo:cand.vendorNo,vendorName:cand.vendorName,rows:g.rows};
+      }
+      await onApply(pickMap);
+    }finally{setApplying(false);}
+  }
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:760,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(245,158,11,0.45),0 8px 40px rgba(0,0,0,0.7)"}}>
+        <div style={{display:"flex",alignItems:"center",marginBottom:8}}>
+          <div style={{fontSize:15,fontWeight:800,color:"#fcd34d",flex:1}}>🔗 Auto-assign Suppliers</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#94a3b8",cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px"}}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:"#94a3b8",marginBottom:14,lineHeight:1.5}}>
+          Based on <strong style={{color:"#f1f5f9"}}>{mfrMap?.rebuiltFromProjectCount||0} projects</strong> of history, ARC found supplier suggestions for{" "}
+          <strong style={{color:"#f1f5f9"}}>{analysis.totalRows} row{analysis.totalRows!==1?"s":""}</strong> across{" "}
+          <strong style={{color:"#f1f5f9"}}>{analysis.manufacturerCount} manufacturer{analysis.manufacturerCount!==1?"s":""}</strong>.
+          Confirm picks below — assignments save to the BOM only (BC writeback comes later).
+        </div>
+        <div style={{flex:1,overflowY:"auto",paddingRight:6}}>
+          {analysis.groups.map(g=>{
+            const isExp=!!expanded[g.manufacturer];
+            const currentPick=picks[g.manufacturer]||"";
+            return(
+              <div key={g.manufacturer} style={{background:"#0a0a18",border:`1px solid ${g.ambiguous&&!currentPick?"#ef4444":"#3d6090"}`,borderRadius:8,padding:"12px 14px",marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+                  <div style={{fontWeight:800,color:"#f1f5f9",fontSize:13,letterSpacing:0.3}}>{g.manufacturer}</div>
+                  <div style={{fontSize:11,color:"#94a3b8"}}>· {g.rows.length} row{g.rows.length!==1?"s":""} in this project</div>
+                  {g.ambiguous&&!currentPick&&<div style={{marginLeft:"auto",fontSize:10,color:"#ef4444",fontWeight:700,letterSpacing:0.5}}>NEEDS PICK</div>}
+                  {currentPick&&currentPick!=="skip"&&<div style={{marginLeft:"auto",fontSize:10,color:"#4ade80",fontWeight:700,letterSpacing:0.5}}>✓ READY</div>}
+                  {currentPick==="skip"&&<div style={{marginLeft:"auto",fontSize:10,color:"#64748b",fontWeight:700,letterSpacing:0.5}}>SKIPPED</div>}
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:6}}>
+                  {g.candidates.map(c=>{
+                    const checked=currentPick===c.vendorNo;
+                    const isSuggested=c.vendorNo===g.suggested;
+                    return(
+                      <label key={c.vendorNo} style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"4px 8px",background:checked?"#0d2010":"transparent",border:`1px solid ${checked?"#4ade80":"transparent"}`,borderRadius:5}}>
+                        <input type="radio" name={`mfr-${g.manufacturer}`} checked={checked} onChange={()=>setPicks(p=>({...p,[g.manufacturer]:c.vendorNo}))} style={{accentColor:"#4ade80",cursor:"pointer"}}/>
+                        <span style={{fontSize:12,color:"#f1f5f9",fontWeight:600}}>{c.vendorName}</span>
+                        <span style={{fontSize:11,color:"#94a3b8"}}>· {c.count} historical assignment{c.count!==1?"s":""}{c.lastUsedAt?` · last ${fmtAgo(c.lastUsedAt)}`:""}</span>
+                        {isSuggested&&<span style={{marginLeft:"auto",fontSize:10,color:"#fcd34d",fontWeight:700,letterSpacing:0.4}}>SUGGESTED</span>}
+                      </label>
+                    );
+                  })}
+                  <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",padding:"4px 8px",background:currentPick==="skip"?"#1a1a2a":"transparent",border:`1px solid ${currentPick==="skip"?"#64748b":"transparent"}`,borderRadius:5}}>
+                    <input type="radio" name={`mfr-${g.manufacturer}`} checked={currentPick==="skip"} onChange={()=>setPicks(p=>({...p,[g.manufacturer]:"skip"}))} style={{accentColor:"#64748b",cursor:"pointer"}}/>
+                    <span style={{fontSize:12,color:"#94a3b8",fontStyle:"italic"}}>Skip — don't assign for this manufacturer</span>
+                  </label>
+                </div>
+                <button onClick={()=>setExpanded(e=>({...e,[g.manufacturer]:!isExp}))} style={{background:"none",border:"none",color:"#94a3b8",fontSize:11,fontFamily:"inherit",cursor:"pointer",padding:"2px 0",fontWeight:600}}>
+                  {isExp?"▾":"▸"} {isExp?"Hide":"Show"} {g.rows.length} affected row{g.rows.length!==1?"s":""}
+                </button>
+                {isExp&&(
+                  <div style={{marginTop:6,background:"#070710",border:"1px solid #1a1a2e",borderRadius:5,padding:"6px 10px",maxHeight:140,overflowY:"auto"}}>
+                    {g.rows.map((r,i)=>(
+                      <div key={i} style={{fontSize:11,color:"#94a3b8",padding:"2px 0",borderBottom:i<g.rows.length-1?"1px solid #1a1a2e":"none"}}>
+                        <span style={{fontFamily:"monospace",color:"#f1f5f9",fontWeight:600}}>{r.partNumber||"—"}</span>
+                        {r.description&&<span style={{marginLeft:8}}>{r.description}</span>}
+                        <span style={{marginLeft:8,color:"#64748b"}}>· qty {r.qty}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{paddingTop:14,borderTop:"1px solid #1a1a2e",marginTop:8,display:"flex",gap:8,alignItems:"center"}}>
+          <div style={{fontSize:11,color:"#94a3b8"}}>
+            <strong style={{color:"#f1f5f9"}}>{totalManufacturersSelected}</strong> manufacturer{totalManufacturersSelected!==1?"s":""},{" "}
+            <strong style={{color:"#f1f5f9"}}>{totalSelected}</strong> row{totalSelected!==1?"s":""} selected
+          </div>
+          <button onClick={onClose} disabled={applying} style={{marginLeft:"auto",background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"6px 16px",borderRadius:6,cursor:applying?"wait":"pointer",fontSize:12,fontFamily:"inherit",opacity:applying?0.6:1}}>Close</button>
+          <button onClick={()=>doApply("suggested")} disabled={applying} style={{background:"#0d1a2a",border:"1px solid #38bdf8",color:"#38bdf8",padding:"6px 16px",borderRadius:6,cursor:applying?"wait":"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600,opacity:applying?0.6:1}}>Apply Suggestions Only</button>
+          <button onClick={()=>doApply("all")} disabled={applying||totalSelected===0} style={{background:totalSelected>0?"#0d2010":"#1a1a2a",border:`1px solid ${totalSelected>0?"#4ade80":"#3d6090"}`,color:totalSelected>0?"#4ade80":"#64748b",padding:"6px 16px",borderRadius:6,cursor:(applying||totalSelected===0)?"not-allowed":"pointer",fontSize:12,fontFamily:"inherit",fontWeight:700,opacity:applying?0.6:1}}>
+            {applying?"Applying…":`✓ Apply ${totalSelected} Row${totalSelected!==1?"s":""}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  ,document.body);
+}
+
 // ── RFQ HISTORY MODAL ──
 function RfqHistoryModal({uid,projectId,onClose}){
   const [history,setHistory]=useState(null);
@@ -23635,6 +23929,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }
 
+    // AUTO-ASSIGN SUPPLIERS (v1.19.1023+) — request the project-level analyzer
+    // re-run after pricing/backfill so any rows that BC couldn't resolve get
+    // surfaced for user confirmation against the manufacturer→vendor learning
+    // map. Fire-and-forget — actual modal open is owned by PanelListView.
+    // Defer slightly so the panel's own save/state propagation lands first.
+    setTimeout(()=>{try{if(_autoAssignTriggerSetter)_autoAssignTriggerSetter();}catch(e){console.warn("[AUTO-ASSIGN] trigger failed:",e);}},600);
+
     const panelBase=panelOverride||panelRef.current;
     const mergedFuzzy={...(panelBase.bcFuzzySuggestions||{}),...bcFuzzySuggestions};
     const updated={...panelBase,bom:updatedBom,status:"costed",bcFuzzySuggestions:Object.keys(mergedFuzzy).length?mergedFuzzy:undefined};
@@ -29577,6 +29878,74 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     setValidateMsg("");
   }
   const panels=project.panels||[];
+
+  // ── AUTO-ASSIGN SUPPLIERS (v1.19.1023+) ──────────────────────────────────
+  // Loads the manufacturer→vendor map on mount, runs the analyzer whenever
+  // the project changes, and exposes a module-level trigger so PanelCard's
+  // post-pricing hook can request the modal open.
+  const [autoAssignMfrMap,setAutoAssignMfrMap]=useState(null);
+  const [autoAssignAnalysis,setAutoAssignAnalysis]=useState(null);
+  const [autoAssignOpen,setAutoAssignOpen]=useState(false);
+  useEffect(()=>{
+    let cancelled=false;
+    getManufacturerVendorMap(uid).then(m=>{if(!cancelled)setAutoAssignMfrMap(m);}).catch(()=>{});
+    return()=>{cancelled=true;};
+  },[uid]);
+  useEffect(()=>{
+    if(!autoAssignMfrMap){setAutoAssignAnalysis(null);return;}
+    try{
+      const a=analyzeBomForVendorAutoAssign(project,autoAssignMfrMap);
+      setAutoAssignAnalysis(a);
+    }catch(e){console.warn("[AUTO-ASSIGN] analyzer failed:",e);setAutoAssignAnalysis(null);}
+  },[project,autoAssignMfrMap]);
+  // Register module-level setter so runPricingOnPanel can open the modal
+  useEffect(()=>{
+    _autoAssignTriggerSetter=()=>{
+      // Re-run analyzer one more time in case panels changed since last render
+      if(!autoAssignMfrMap)return;
+      const a=analyzeBomForVendorAutoAssign(project,autoAssignMfrMap);
+      setAutoAssignAnalysis(a);
+      if(a.totalRows>0)setAutoAssignOpen(true);
+    };
+    return()=>{if(_autoAssignTriggerSetter)_autoAssignTriggerSetter=null;};
+  },[project,autoAssignMfrMap]);
+  // Apply confirmed picks: patch BOM rows project-wide, save, bump map counts
+  async function doAutoAssignApply(pickMap){
+    const mfrKeys=Object.keys(pickMap);
+    if(mfrKeys.length===0){setAutoAssignOpen(false);return;}
+    // Build a row → patch lookup keyed by `${panelId}::${rowId}`
+    const rowPatches={};
+    const bumps=[];
+    for(const mfr of mfrKeys){
+      const{vendorNo,vendorName,rows}=pickMap[mfr];
+      for(const r of rows){rowPatches[`${r.panelId}::${r.rowId}`]={bcVendorNo:vendorNo,bcVendorName:vendorName};}
+      bumps.push({manufacturer:mfr,vendorNo,vendorName,count:rows.length});
+    }
+    // Apply patches across every panel
+    let patchedCount=0;
+    const newPanels=(project.panels||[]).map(panel=>{
+      const newBom=(panel.bom||[]).map(row=>{
+        const k=`${panel.id}::${row.id}`;
+        if(rowPatches[k]){patchedCount++;return{...row,...rowPatches[k]};}
+        return row;
+      });
+      return{...panel,bom:newBom};
+    });
+    const upd={...project,panels:newPanels};
+    onUpdate(upd);
+    try{await saveProject(uid,upd);}catch(e){console.warn("[AUTO-ASSIGN] saveProject failed:",e);}
+    // Bump map counts (fire-and-forget per manufacturer)
+    for(const b of bumps){
+      // Bump once per affected row to reflect real assignments
+      for(let i=0;i<b.count;i++){bumpManufacturerVendorMap(uid,b.manufacturer,b.vendorNo,b.vendorName);}
+    }
+    // Refresh local map cache so the pill / next analysis reflect the new state
+    try{const fresh=await getManufacturerVendorMap(uid);setAutoAssignMfrMap(fresh);}catch(e){}
+    console.log(`[AUTO-ASSIGN] Applied ${patchedCount} row patches across ${mfrKeys.length} manufacturers`);
+    setAutoAssignOpen(false);
+  }
+  // ── END AUTO-ASSIGN ─────────────────────────────────────────────────────
+
   return(<>
     <div style={{height:"calc(100vh - 130px)",display:"flex",background:C.bg,overflow:"hidden"}}>
         <div style={{flex:1,overflowY:"auto",padding:24,minWidth:0}}>
@@ -29773,6 +30142,16 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       <span style={{fontSize:20,fontWeight:700,color:C.text}}>{project.name}</span>
                       {!readOnly&&<button onClick={()=>{setDraftName(project.name);setEditingName(true);}} title="Edit project name" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:"0 4px"}}>✏️</button>}
                       {project.importedFromBC&&<Badge status="imported"/>}
+                      {/* AUTO-ASSIGN SUPPLIERS pill (v1.19.1023+) — appears when project
+                          has rows with known manufacturer but blank vendor AND the learning
+                          map can suggest a supplier. Click to open the review modal. */}
+                      {!readOnly&&autoAssignAnalysis&&autoAssignAnalysis.totalRows>0&&(
+                        <button onClick={()=>setAutoAssignOpen(true)}
+                          title={`${autoAssignAnalysis.totalRows} row${autoAssignAnalysis.totalRows!==1?"s":""} across ${autoAssignAnalysis.manufacturerCount} manufacturer${autoAssignAnalysis.manufacturerCount!==1?"s":""} can have a supplier auto-assigned based on project history. Click to review.`}
+                          style={{background:"#3a2800",border:"1px solid #f59e0b",borderRadius:12,color:"#fcd34d",padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",animation:"pulseYellow 2s ease-in-out infinite",whiteSpace:"nowrap"}}>
+                          🔗 {autoAssignAnalysis.totalRows} row{autoAssignAnalysis.totalRows!==1?"s":""} need supplier
+                        </button>
+                      )}
                     </div>
                     <span style={{fontSize:13,color:C.muted}}>Created: {project.createdAt?new Date(project.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):project.updatedAt?new Date(project.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</span>
                   </div>
@@ -31223,6 +31602,18 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
         </div>
       </div>
     ,document.body)}
+    {/* AUTO-ASSIGN SUPPLIERS modal (v1.19.1023+) — opens via the project-header pill
+        or via the post-pricing trigger in PanelCard's runPricingOnPanel. */}
+    {autoAssignOpen&&autoAssignAnalysis&&autoAssignAnalysis.totalRows>0&&(
+      <AutoAssignVendorsModal
+        uid={uid}
+        project={project}
+        analysis={autoAssignAnalysis}
+        mfrMap={autoAssignMfrMap}
+        onClose={()=>setAutoAssignOpen(false)}
+        onApply={doAutoAssignApply}
+      />
+    )}
   </>);
 }
 
