@@ -24215,7 +24215,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
           {(panel.otherDocs||[]).map((doc,di)=>{
-            const thumbSrc=doc.thumbnailUrl||doc.storageUrl;
+            const isImg=/^image\//i.test(doc.contentType||"")||(doc.storageUrl&&/\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(doc.storageUrl));
+            const thumbSrc=doc.thumbnailUrl||(isImg?doc.storageUrl:null);
             const hasThumb=!!thumbSrc;
             const ext=(doc.name||"").split(".").pop().toUpperCase();
             return(
