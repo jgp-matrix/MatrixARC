@@ -2006,6 +2006,10 @@ exports.extractBomPage = functions
     }
   }
 
+  if (hasPdf && !pdfPath.startsWith(`originalPdfs/${uid}/`)) {
+    throw new functions.https.HttpsError('permission-denied', 'Cannot access PDFs outside your account');
+  }
+
   const apiKey = await resolveAnthropicKey(uid);
   if (!apiKey) {
     throw new functions.https.HttpsError('failed-precondition', 'No Anthropic API key configured — set one in Settings → API');
