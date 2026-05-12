@@ -637,10 +637,16 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     styling / label logic has diverged. They should be visually identical for the
     same underlying status value.
 
-28. **OPEN** — Auto-populating Crossed/Superseded list should exclude "CRATES" and
-    "JOB BUYOFF" entries entirely. These are not real part crosses — they are
-    internal cost-category line items that should never appear in the alternates
-    suggestion list.
+28. **RESOLVED** — `b077999f` (2026-05-12, deployed in v1.19.1034) — Auto-populating
+    Crossed/Superseded list should exclude "CRATES" and "JOB BUYOFF" entries.
+    Fix: new `_isBuyoffOrCrate(r)` helper checks `partNumber`, `description`,
+    AND `crossedFrom` fields for `/buyoff/` and `/crat(e|ing)/` patterns. Applied
+    to all 5 crossed-items filters, `_isExcludedFromPriceCheck`, lead time drivers
+    (`_computePanelLeadDriversLine`/`_computeProjectLeadDriversLine`), and
+    `computeControlPanelLeadTime`. Earlier attempts using narrow regexes and
+    positional last-3 exclusion failed because: (a) `crossedFrom` held the OLD
+    part number (e.g. "JOB BUYOFF") while the new `partNumber` was just "BUYOFF";
+    (b) these rows weren't always at the end of the BOM array.
 
 29. **OPEN** — Auto-add "ECO FEE STANDARD" line item on ECO creation. When a new
     ECO is created, automatically insert a line item just below the Labor lines
@@ -652,6 +658,41 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     project is marked as "Budgetary", apply the designation to the entire quote
     rather than each individual panel. Move the "BUDGETARY" pill from inside each
     Panel Line card in Quote Summary to sit next to the total price instead.
+
+## Round 11 (BC integration fixes, 2026-05-12)
+
+31. **RESOLVED** — `5d459657` (2026-05-12, deployed in v1.19.1025) — BC+ pills
+    (red "+" indicators) not persisting after "Get New Pricing" / "Sync BC".
+    Root cause: `bcVerify` stamping in `runPricingOnPanel` ran AFTER the
+    Firestore save (`onSaveImmediate`), so stamps only existed in React state
+    and were lost on reload. Fix: moved stamping block BEFORE the save.
+
+32. **RESOLVED** — `a7c10da6` (2026-05-12, deployed in v1.19.1026) — Item
+    Browser USE applying stale Item Card price over Purchase Price. `commitBcItem`
+    applied `bcItem.unitCost` (Item Card `Unit_Cost`, often stale) immediately,
+    then did an async PP fetch that arrived too late. Fix: made `commitBcItem`
+    async, fetches Purchase Prices BEFORE the first save, uses PP
+    `directUnitCost` when available (falls back to `unitCost` if PP unavailable).
+
+33. **RESOLVED** — `f95d319c` (2026-05-12, deployed in v1.19.1025) — Manual
+    price entry via confirmed price dialog set `priceSource:"manual"`, causing
+    an "M" pill and exclusion from RFQs. Since the price IS pushed to BC,
+    `applyConfirmedPrice` now sets `priceSource:"bc"` with `bcPoDate`. If BC
+    push fails, safely reverts to `priceSource:"manual"` with valid `priceDate`.
+
+34. **RESOLVED** — `be6ff11f` (2026-05-12, deployed in v1.19.1028) — Panel lead
+    time calculation showing less than longest item lead time. When a TRAQS
+    absolute production date was earlier than the material chain
+    (engineering + approval + longest item lead), `leadDays` could be less than
+    `longestItemDays`. Fix: `productionDoneDays` now floored at
+    `materialsCompleteDays`.
+
+35. **RESOLVED** — `f436d9e6` (2026-05-12, deployed in v1.19.1029) — Admin
+    override for AI-estimated lead time budgetary enforcement. Admins can now
+    bypass the forced BUDGETARY flag when AI-estimated lead times are present.
+    On send: two-step confirm (Cancel → "Override, Send as Firm"). On print:
+    "Mark Budgetary" vs "Print as Firm (Admin)" choice. Non-admins retain
+    existing forced-budgetary behavior.
 
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
