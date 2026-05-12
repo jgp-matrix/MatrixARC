@@ -20213,7 +20213,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           await ref.put(file,{contentType:file.type});
           storageUrl=await ref.getDownloadURL();
         }catch(e){console.warn("Storage upload for doc preview failed:",e.message);}
-        newDocs.push({name:file.name,bcFileName:fileName,uploadedAt:Date.now(),size:file.size,storageUrl});
+        newDocs.push({name:file.name,bcFileName:fileName,uploadedAt:Date.now(),size:file.size,storageUrl,contentType:file.type||null});
       }catch(e){console.warn("Other doc upload failed:",file.name,e.message);}
     }
     const updated={...panel,otherDocs:newDocs};
@@ -24190,13 +24190,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           <div style={{fontSize:12,color:C.muted,fontWeight:700,letterSpacing:0.7}}>OTHER DOCUMENTS{(panel.otherDocs||[]).length>0?` — ${(panel.otherDocs||[]).length}`:""}</div>
         </div>
         <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-start"}}>
-          {(panel.otherDocs||[]).map((doc,di)=>(
-            <div key={di} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,display:"flex",alignItems:"center",gap:6,maxWidth:240,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)_safeOpen(doc.storageUrl,"_blank",null,doc.name||"the document");}}>
-              <span style={{color:"#94a3b8"}}>📄</span>
-              <span style={{color:doc.storageUrl?"#38bdf8":C.text,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,textDecoration:doc.storageUrl?"underline":"none"}} title={doc.name}>{doc.name}</span>
-              {!readOnly&&<button onClick={e=>{e.stopPropagation();removeOtherDoc(di);}} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:14,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
-            </div>
-          ))}
+          {(panel.otherDocs||[]).map((doc,di)=>{
+            const isImg=/^image\//i.test(doc.contentType||"")||(doc.storageUrl&&/\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(doc.storageUrl));
+            const ext=(doc.name||"").split(".").pop().toUpperCase();
+            return(
+            <div key={di} style={{position:"relative",width:100,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)_safeOpen(doc.storageUrl,"_blank",null,doc.name||"the document");}}>
+              <div style={{width:100,height:80,borderRadius:6,border:`1px solid ${C.border}`,overflow:"hidden",background:"#080810",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                {isImg&&doc.storageUrl?<img src={doc.storageUrl} alt={doc.name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+                :<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+                  <span style={{fontSize:22,opacity:0.5}}>{ext==="PDF"?"📕":ext==="XLSX"||ext==="XLS"?"📊":ext==="DOCX"||ext==="DOC"?"📝":"📄"}</span>
+                  <span style={{fontSize:9,color:C.muted,fontWeight:700}}>{ext}</span>
+                </div>}
+              </div>
+              <div style={{fontSize:10,color:doc.storageUrl?"#38bdf8":C.text,fontWeight:600,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"center"}} title={doc.name}>{doc.name}</div>
+              {!readOnly&&<button onClick={e=>{e.stopPropagation();removeOtherDoc(di);}} style={{position:"absolute",top:-6,right:-6,background:C.card,border:`1px solid ${C.border}`,borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",color:C.red,cursor:"pointer",fontSize:11,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
+            </div>);
+          })}
           {!readOnly&&bcProjectNumber&&_bcToken&&(
             <div
               onDragOver={e=>{e.preventDefault();setDocDragging(true);}}
