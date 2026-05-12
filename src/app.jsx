@@ -6546,7 +6546,7 @@ async function buildQuotePdfDoc(doc,project){
     // leaving Line 2+ with no visible border. The border draws at line ~3340 with an
     // if(ctx.pageNum===lineItemStartPage) guard — so the box MUST fit on one page.
     ctx._currentLineNum=pi+1;
-    const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
+    const crossedPre=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!/^job.?buyoff$/i.test(r.partNumber||"")&&!/^crat(e|ing)$/i.test((r.description||"").trim()));
     const estCrossH=crossedPre.length>0?(4+crossedPre.length*1.8):0;
     const estSpecH=Math.ceil(6/2)*4.5; // 6 spec items in 2 cols
     const estNotesH=(pan.bomNotes?8:0)+(qp.lineNotes?5:0);
@@ -6726,7 +6726,7 @@ async function buildQuotePdfDoc(doc,project){
     // DECISION(v1.19.330): Crossed items render INSIDE the bordered box (between docs and pricing).
     // User wants crosses kept with their line item, not floating below. Font is 4.5pt with 1.8mm line
     // height to keep the box compact enough to fit on one page (see height pre-estimate above).
-    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
+    const crossed=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!/^job.?buyoff$/i.test(r.partNumber||"")&&!/^crat(e|ing)$/i.test((r.description||"").trim()));
     if(crossed.length>0){
       // DECISION(v1.19.941): Font bumped from 4.5/5pt to 7/7.5pt to match
       // "Documents Provided" — old size was illegible on paper.
@@ -7301,7 +7301,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
     if(!isNaN(an)&&!isNaN(bn))return an-bn;
     return(a.itemNo||"").localeCompare(b.itemNo||"");
   });
-  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
+  const hasCrosses=bom.some(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!/^job.?buyoff$/i.test(r.partNumber||"")&&!/^crat(e|ing)$/i.test((r.description||"").trim()));
   doc.setFontSize(fs(8));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
   doc.text(`${bom.length} items${hasCrosses?` · ${bom.filter(r=>r.isCrossed).length} crossed`:""}`,W-margin,laborDivY+m(7),{align:"right"});
   const accent=[0,0,0]; // B&W mode — used by autoTable
@@ -17849,7 +17849,7 @@ function QuoteTab({project,onUpdate}){
               const panBom=pan.bom||[];
               const qp=(q.panelOverrides||{})[pan.id]||{};
               const setQP=(updates)=>{const po={...(q.panelOverrides||{}),[pan.id]:{...qp,...updates}};setQ({panelOverrides:po});};
-              const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
+              const crossedItems=panBom.filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!/^job.?buyoff$/i.test(r.partNumber||"")&&!/^crat(e|ing)$/i.test((r.description||"").trim()));
               // DECISION(v1.19.857, ECO Stage A): Surface draft ECOs on the printed
               // quote line. DECISION(v1.19.908, multi-ECO additive): List EVERY
               // draft ECO with rows on this panel separately (sorted by number)
@@ -23234,9 +23234,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const vendorName=priceConfirmVendor.trim();
     // Confirmed: update BOM with priceDate, push to BC Item Card + Purchase Price
     const now=Date.now();
+    // DECISION(v1.19.1026): Set priceSource:"bc" immediately. The v1.19.905 concern
+    // about the PP poll overwriting the typed value is no longer valid — we push the
+    // price to BC below, so BC's price matches. With priceSource:"manual" the row
+    // showed an "M" pill and was excluded from RFQs, which is wrong for a confirmed
+    // price that's been pushed to BC.
     const updatedBom=(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
-      const next={...r,unitPrice:price,priceSource:"manual",priceDate:now,bcVendorName:vendorName||r.bcVendorName};
+      const next={...r,unitPrice:price,priceSource:"bc",priceDate:now,bcPoDate:now,bcVendorName:vendorName||r.bcVendorName};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
@@ -23244,37 +23249,34 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const updated={...panel,bom:updatedBom};onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     setPriceConfirmPending(null);
-    // Push to BC Item Card
-    // DECISION(v1.19.904 → v1.19.905): Two iterations needed to fully fix
-    // Noah's "price keeps reverting" report:
-    //   v1.19.904 — removed the post-PATCH re-read that was overwriting the
-    //               row with a stale BC value. Helped immediately, BUT…
-    //   v1.19.905 — flipping priceSource → "bc" made the row eligible for
-    //               the 5-minute BC PurchasePrice poll (line ~17274), which
-    //               re-overwrote the typed value with BC's stale wrong cost
-    //               every 5 min. Now: keep priceSource = "manual" so the
-    //               poll's `priceSource === "bc"` filter skips the row.
-    //               BC push remains a side effect. priceDate + bcVendorName
-    //               are still stamped so the user has audit context.
+    // Push to BC Item Card + Purchase Price
     if(partNumber&&_bcToken){
+      let bcPushOk=false;
       try{
         await bcPatchItemOData(partNumber,{Unit_Cost:price});
-        // Don't mutate unitPrice or priceSource here — the row was already
-        // saved with the user's value as "manual" in the first update.
-        // Just no-op on success; on failure the catch logs and the row
-        // still has the user's typed price.
+        bcPushOk=true;
       }catch(e){console.warn("BC unit cost update failed:",partNumber,e);}
       // Push to Purchase Price card if vendor provided
       if(vendorName){
         try{
-          // Resolve vendor number from name
           const vendors=await bcListVendors();
           const v=vendors.find(v=>v.displayName===vendorName);
           if(v?.number){
             await bcPushPurchasePrice(partNumber,v.number,price,new Date().toISOString().split('T')[0],"EA");
+            bcPushOk=true;
             console.log("BC PURCHASE PRICE pushed:",partNumber,v.number,price);
           }
         }catch(e){console.warn("BC purchase price push failed:",partNumber,e);}
+      }
+      // If both BC pushes failed, revert to "manual" so the PP poll doesn't
+      // overwrite the user's typed value with BC's stale price.
+      if(!bcPushOk){
+        const lp=latestPanelRef.current;
+        const revertBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"manual",priceDate:null,bcPoDate:null}:r);
+        const reverted={...lp,bom:revertBom};
+        latestPanelRef.current=reverted;onUpdate(reverted);
+        try{onSaveImmediate(reverted);}catch(e){}
+        console.warn("BC push failed — reverted priceSource to manual for",partNumber);
       }
     }
   }
@@ -25649,7 +25651,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>}
           {/* BOM Notes */}
           {(()=>{
-            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||""));
+            const crossedItems=(panel.bom||[]).filter(r=>r.isCrossed&&r.crossedFrom&&normPart(r.crossedFrom)!==normPart(r.partNumber)&&!r.isContingency&&!/contingency/i.test(r.partNumber||"")&&!/contingency/i.test(r.description||"")&&!/\b(din\s*rail|duct)\b/i.test(r.description||"")&&!/^(din|duct)/i.test(r.partNumber||"")&&!/^job.?buyoff$/i.test(r.partNumber||"")&&!/^crat(e|ing)$/i.test((r.description||"").trim()));
             const formatCorrections=(panel.bom||[]).filter(r=>r.isCorrection&&(r.correctionType==='format'||r.correctionType==='formatting')&&r.correctionFrom);
             return(
               <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
