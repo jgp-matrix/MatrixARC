@@ -29052,6 +29052,10 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
     // Budgetary mode (with an ARC-set sentinel) before the PDF is generated so the
     // BUDGETARY banner renders. One confirm dialog gives the user a chance to cancel
     // and replace the AI values first.
+    // DECISION(v1.19.1028): Admin override — admins can bypass the auto-budgetary
+    // flip and send as FIRM despite AI-estimated lead times. Two-step confirm:
+    // first dialog offers Budgetary or Cancel; if admin cancels, second dialog
+    // offers "Override (Send as Firm)".
     const aiCount=_countAiLeadTimes(project);
     if(aiCount>0){
       const proceed=await arcConfirm(
@@ -29060,11 +29064,22 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         "OK to continue, or Cancel to review the Lead column first.",
         {kind:"warning",okLabel:"Continue (Budgetary)"}
       );
-      if(!proceed)return;
-      const{updatedProject,changed}=_markProjectBudgetaryForAiLeads(project);
-      if(changed){
-        onUpdate(updatedProject);
-        try{await safeSave(uid,updatedProject);}catch(e){console.warn("[BUDGETARY AUTO] save failed:",e);}
+      if(!proceed){
+        if(isAdmin()){
+          const override=await arcConfirm(
+            `Admin Override: Send as FIRM despite ${aiCount} AI-estimated lead time${aiCount>1?"s":""}?\n\n`+
+            "This bypasses the budgetary safeguard. The quote will NOT be marked Budgetary.",
+            {kind:"warning",okLabel:"Override (Send as Firm)",destructive:true}
+          );
+          if(!override)return;
+          // Skip budgetary marking — proceed as firm
+        }else{return;}
+      }else{
+        const{updatedProject,changed}=_markProjectBudgetaryForAiLeads(project);
+        if(changed){
+          onUpdate(updatedProject);
+          try{await safeSave(uid,updatedProject);}catch(e){console.warn("[BUDGETARY AUTO] save failed:",e);}
+        }
       }
     }
     if(sendMode==="new"&&!m.to.trim()){arcAlert("Enter a recipient email.");return;}
@@ -32879,11 +32894,25 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // estimates. Flip every panel into Budgetary (with an auto-set sentinel) before the
     // pre-print checklist so the quote PDF renders with the BUDGETARY banner. The user
     // is warned about the auto-flip via a checklist entry below.
+    // DECISION(v1.19.1028): Admin override — admins can bypass the auto-budgetary
+    // flip and print as FIRM despite AI-estimated lead times.
     if(_hasAiLeadTimes(projectRef.current)){
-      const{updatedProject,changed}=_markProjectBudgetaryForAiLeads(projectRef.current);
-      if(changed){
-        setProject(updatedProject);projectRef.current=updatedProject;onChange(updatedProject);
-        safeSave(uid,updatedProject).catch(e=>console.warn("[BUDGETARY AUTO] save failed:",e));
+      let _skipBudgFlip=false;
+      if(isAdmin()){
+        const _aiC=_countAiLeadTimes(projectRef.current);
+        const doBudg=await arcConfirm(
+          `This quote has ${_aiC} AI-estimated lead time${_aiC>1?"s":""}.\n\n`+
+          "Mark as BUDGETARY (recommended) or cancel to print as FIRM?",
+          {kind:"warning",okLabel:"Mark Budgetary",cancelLabel:"Print as Firm (Admin)"}
+        );
+        if(!doBudg)_skipBudgFlip=true;
+      }
+      if(!_skipBudgFlip){
+        const{updatedProject,changed}=_markProjectBudgetaryForAiLeads(projectRef.current);
+        if(changed){
+          setProject(updatedProject);projectRef.current=updatedProject;onChange(updatedProject);
+          safeSave(uid,updatedProject).catch(e=>console.warn("[BUDGETARY AUTO] save failed:",e));
+        }
       }
     }
 
