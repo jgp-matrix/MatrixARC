@@ -24220,15 +24220,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const hasThumb=!!thumbSrc;
             const ext=(doc.name||"").split(".").pop().toUpperCase();
             return(
-            <div key={di} style={{position:"relative",width:100,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)_safeOpen(doc.storageUrl,"_blank",null,doc.name||"the document");}}>
-              <div style={{width:100,height:80,borderRadius:6,border:`1px solid ${C.border}`,overflow:"hidden",background:"#080810",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {hasThumb?<img src={thumbSrc} alt={doc.name} style={{width:"100%",height:"100%",objectFit:"contain"}}/>
-                :<div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+            <div key={di} style={{position:"relative",maxWidth:120,cursor:doc.storageUrl?"pointer":"default"}} onClick={()=>{if(doc.storageUrl)_safeOpen(doc.storageUrl,"_blank",null,doc.name||"the document");}}>
+              {hasThumb?<img src={thumbSrc} alt={doc.name} style={{display:"block",maxWidth:120,maxHeight:100,borderRadius:6,border:`1px solid ${C.border}`}}/>
+              :<div style={{width:100,height:80,borderRadius:6,border:`1px solid ${C.border}`,background:"#080810",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
                   <span style={{fontSize:22,opacity:0.5}}>📄</span>
                   <span style={{fontSize:9,color:C.muted,fontWeight:700}}>{ext}</span>
-                </div>}
-              </div>
-              <div style={{fontSize:10,color:doc.storageUrl?"#38bdf8":C.text,fontWeight:600,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"center"}} title={doc.name}>{doc.name}</div>
+                </div>
+              </div>}
+              <div style={{fontSize:10,color:doc.storageUrl?"#38bdf8":C.text,fontWeight:600,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"center",maxWidth:120}} title={doc.name}>{doc.name}</div>
               {!readOnly&&<button onClick={e=>{e.stopPropagation();removeOtherDoc(di);}} style={{position:"absolute",top:-6,right:-6,background:C.card,border:`1px solid ${C.border}`,borderRadius:"50%",width:18,height:18,display:"flex",alignItems:"center",justifyContent:"center",color:C.red,cursor:"pointer",fontSize:11,padding:0,lineHeight:1,opacity:0.6}} onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.6}>✕</button>}
             </div>);
           })}
