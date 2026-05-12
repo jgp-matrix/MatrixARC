@@ -98,10 +98,10 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 5 (orphan Cloud Functions, caught during 2026-05-07 deploy)
 
-18. **OPEN — HIGH PRIORITY (production code path, near-miss during 2026-05-07 deploy)** —
-    Two Cloud Functions in production have no local source. One (`extractBomPage`) is on
+18. **RESOLVED** — `904a60b`, `edeede1` (2026-05-12, deployed to production) —
+    Two Cloud Functions in production had no local source. One (`extractBomPage`) is on
     the active BOM extraction path — pressing Y at firebase's deletion prompt would have
-    broken production today.
+    broken production.
 
     The orphan functions are `extractBomPage(us-central1)` and
     `monitorAnthropicModels(us-central1)`. `firebase deploy --only functions` prompts to
@@ -213,6 +213,29 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     are recovered, integration into `functions/index.js` should be
     straightforward (`require('./bomPrompt')` and `require('./models')`
     already-importable).
+
+    **Resolution (2026-05-12, deployed to production):**
+
+    Both functions restored in `functions/index.js` and deployed. Firebase
+    no longer prompts to delete them on `firebase deploy --only functions`.
+
+    `extractBomPage` (`904a60b`): HTTPS callable, Opus + thinking, PDF-native
+    and image-fallback paths, 540s timeout, 1GB memory, max 10 instances.
+    pageNumber capped at 50 (server-side). Shared `resolveAnthropicKey`
+    helper (company-first, user-fallback) and `recordAnthropicUsage` (atomic
+    FieldValue.increment ledger update). Security fix (`edeede1`): `pdfPath`
+    scoped to `originalPdfs/{uid}/` — blocks cross-account file reads.
+
+    `monitorAnthropicModels` (`904a60b`): PubSub scheduled daily 06:00 MDT,
+    probes each model in `MONITORED_MODELS` with a minimal 1-token call,
+    posts failures to Teams webhook if configured. Uses dedicated
+    `ANTHROPIC_API_KEY` env var for unattended operation — gracefully skips
+    if not set. Env var still needs to be configured in Firebase to activate.
+
+    Remaining housekeeping (non-blocking):
+    - Set `ANTHROPIC_API_KEY` env var in Firebase for the monitor
+    - Node.js 20 runtime deprecated 2026-04-30, decommissioned 2026-10-30 —
+      upgrade `functions/package.json` engines to Node 22 in a future session
 
 ## Round 6 (user-reported, 2026-05-08)
 
