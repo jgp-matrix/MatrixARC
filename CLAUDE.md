@@ -13,57 +13,51 @@ If anything looks unexpected — wrong directory, unfamiliar branch, untracked f
 
 The shutdown is a two-step user command: "Close Out" (surface state) followed by "Closed" (confirm safe to end).
 
-### "Close Out" — surface state, no auto-actions
+### "Close Out" — commit, merge, push, deploy, and surface state
 
-When the user says "Close Out" (or any case-insensitive variant: close-out, closeout, etc.), run the following procedure and report results without auto-executing fixes:
+When the user says "Close Out" (or any case-insensitive variant: close-out, closeout, etc.), run the following procedure. The default behavior is to **execute** the full commit→merge→push→deploy pipeline, not just surface state. Only pause for user input when something is ambiguous or fails.
 
-1. Show what was committed in this session: identify the earliest commit made since the session started (use git reflog if needed) and run `git log --oneline <start-SHA>..HEAD`. If unsure of the session-start SHA, show the last 10 commits and identify which were made this session.
+1. **Commit uncommitted work**: Run `git status`. If there are modified or staged files:
+   - Stage the relevant files and commit with an appropriate message.
+   - If the commit message or scope is ambiguous, ask the user before committing.
+   - If the working tree is already clean, note that and proceed.
 
-2. Confirm push status: `git status` and `git log master..origin/master` to identify any commits not yet pushed to origin. Flag pending pushes — do not auto-push.
+2. **Merge feature branch to master**: If the current session's commits exist on a feature branch (e.g., `claude/<random-name>`) but not on master:
+   a. From the main checkout (`C:/Users/jon/AppDev/MatrixARC`):
+      ```
+      git checkout master
+      git merge <feature-branch>
+      git push origin master
+      ```
+   b. After push, verify: `git rev-parse master origin/master` (must match).
+   c. Attempt branch cleanup: `git branch -d <feature-branch>` (will fail if worktree is active — that's fine, note it).
+   d. If commits are already on master (or session produced no commits), skip the merge.
 
-### Step 2.5 — Merge feature branch to master if applicable
+3. **Deploy**: Run `bash deploy.sh` from the main checkout (`C:/Users/jon/AppDev/MatrixARC`). This auto-bumps the patch version, commits the version bump, tags, pushes, and deploys to Firebase hosting.
 
-If the current session's commits exist on a feature branch (e.g., `claude/<random-name>`) but not on master:
+4. **Show what was committed**: List all commits made this session (use `git log --oneline <start-SHA>..HEAD` or last 10 if unsure of session start).
 
-1. Surface to the user: "X commits on this session's branch are not yet on master: <list of commits>. Merge to master and push? (yes / no / not yet)"
-
-2. Wait for user response:
-   - "yes" or any affirmative → proceed with merge:
-     a. From the main checkout (`C:/Users/jon/AppDev/MatrixARC`):
-        ```
-        git checkout master
-        git merge <feature-branch>
-        git push origin master
-        git branch -d <feature-branch>
-        git push origin --delete <feature-branch>   # only if it was pushed
-        ```
-     b. After push, verify success:
-        - `git rev-parse master origin/master` (must match — fail and surface if not)
-        - `git log -1 --format="%H %s" master` (capture the new tip SHA and message)
-     c. Report verbatim:
-        > "✓ Merged and pushed. Master is now at `<SHA>` (`<commit message>`). Origin/master matches local. Branch `<feature-branch>` deleted locally and on origin."
-   - "no" or "not yet" → leave commits on feature branch, continue close-out, but flag in summary that commits are not on master.
-   - User specifies a different action → execute as instructed.
-
-Note: If commits are already on master (or session produced no commits), skip the merge but still report current master tip in the close-out summary: "Master tip: `<SHA>` (`<commit message>`)."
-
-3. Verify working tree state: `git status`. Flag any modified, staged, or untracked files. Report the disposition (commit / stash / discard) the user should decide on. Do not auto-act.
-
-4. Identify TODO.md updates: based on what was accomplished in this session, list:
+5. **Identify TODO.md updates**: Based on what was accomplished, list:
    - Findings that should be marked RESOLVED with their commit SHAs
    - New findings that should be captured (with proposed wording)
    - Findings whose investigation notes should be updated
    Do not auto-edit TODO.md — surface the proposed changes for user approval.
 
-5. Provide a one-paragraph summary: what was accomplished, what's still pending, what the next logical session would address. The summary must always include:
-   - Master's current tip SHA after any merges
+6. **Provide a one-paragraph summary**: What was accomplished, what's still pending, what the next logical session would address. Must include:
+   - Master's current tip SHA after deploy
+   - Deployed version number
    - Confirmation that origin/master matches local
-   - Any branches that remain (feature branch retained per user choice, etc.)
+   - Any branches that remain (feature branch retained due to active worktree, etc.)
 
-6. Stop. Wait for the user to either:
-   - Direct fixes (push pending commits, update TODO.md, deal with WIP) — execute as instructed
+7. **Stop.** Wait for the user to either:
+   - Direct additional actions (update TODO.md, etc.) — execute as instructed
    - Type "Closed" — confirm safe shutdown (see below)
    - Continue working — abort the close-out
+
+**Exceptions** (pause and ask instead of auto-executing):
+- If `git status` shows files the user might not want committed (e.g., unrecognized files, .env, WIP experiments), ask before committing.
+- If the user previously said "leave on the branch for now" during the session, skip merge and flag it in the summary.
+- If `deploy.sh` fails, surface the error and wait for direction.
 
 ### "Closed" — final confirmation
 
