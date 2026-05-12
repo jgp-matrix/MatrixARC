@@ -5198,7 +5198,12 @@ function bcResolveVendorName(vendorNo){
 async function bcGetItemVendorNo(itemNo){
   if(!_bcToken||!itemNo)return"";
   try{
-    const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    let r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.status===401){
+      _bcToken=await acquireBcToken(false)||null;
+      if(!_bcToken)return"";
+      r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    }
     if(!r.ok)return"";
     const d=await r.json();
     const rec=(d.value||[])[0];
@@ -5216,7 +5221,12 @@ async function bcGetVendorName(vendorNo){
   const compId=await bcGetCompanyId();
   if(!compId)return"";
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    let r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.status===401){
+      _bcToken=await acquireBcToken(false)||null;
+      if(!_bcToken)return"";
+      r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    }
     if(!r.ok)return"";
     const d=await r.json();
     const v=(d.value||[])[0];
@@ -23127,7 +23137,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             if(row.priceSource==="bc"){
               const exact=await bcLookupItem(pn);
               if(exact&&exact.unitCost!=null){
-                const vNo=await bcGetItemVendorNo(pn);
+                const vNo=exact.vendorNo||await bcGetItemVendorNo(pn);
                 bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
               }
               continue;
@@ -23135,7 +23145,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const result=await bcFuzzyLookup(pn);
             if(result.match&&result.match.unitCost!=null){
               const matchNo=result.match.number||pn;
-              const vNo=await bcGetItemVendorNo(matchNo);
+              const vNo=result.match.vendorNo||await bcGetItemVendorNo(matchNo);
               bcMap[String(row.id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
             } else if(result.suggestions.length>0){
               fuzzySugg[String(row.id)]=result.suggestions;
@@ -23518,6 +23528,31 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           return r;
         });
       }catch(e){console.warn("AI lead time fallback failed:",e);}
+    }
+
+    // Batch vendor backfill: catch any BC-priced rows that missed vendor resolution
+    if(_bcToken){
+      const needVendor=updatedBom.filter(r=>r.priceSource==="bc"&&!r.bcVendorName&&!r.isLaborRow&&(r.partNumber||"").trim());
+      if(needVendor.length>0){
+        console.log(`[VENDOR BACKFILL] ${needVendor.length} BC-priced rows missing vendor — resolving…`);
+        const vendorPatches={};
+        for(const row of needVendor){
+          const pn=(row.partNumber||"").trim();
+          if(!pn)continue;
+          try{
+            const vNo=await bcGetItemVendorNo(pn);
+            if(vNo){
+              const vName=await bcGetVendorName(vNo);
+              if(vName)vendorPatches[String(row.id)]={bcVendorNo:vNo,bcVendorName:vName};
+            }
+          }catch(e){}
+        }
+        const patchCount=Object.keys(vendorPatches).length;
+        if(patchCount>0){
+          updatedBom=updatedBom.map(r=>{const k=String(r.id);return k in vendorPatches?{...r,...vendorPatches[k]}:r;});
+          console.log(`[VENDOR BACKFILL] Resolved ${patchCount}/${needVendor.length} vendors`);
+        }
+      }
     }
 
     const panelBase=panelOverride||panelRef.current;
