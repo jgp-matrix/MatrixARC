@@ -19019,7 +19019,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       bcListGenProdPostingGroups().then(v=>{if(!cancelled&&v.length)setBcGenProdGroups(v);}),
       bcListInventoryPostingGroups().then(v=>{if(!cancelled&&v.length)setBcInvPostingGroups(v);}),
       bcFetchManufacturers().then(v=>{if(!cancelled&&v.length)setBcManufacturers(v);}),
-    ]).then(()=>{if(!cancelled)setDropdownsLoaded(true);});
+    ]).then(()=>{if(!cancelled)setDropdownsLoaded(true);}).catch(()=>{if(!cancelled)setDropdownsLoaded(true);});
     return()=>{cancelled=true;};
   },[]);
 
