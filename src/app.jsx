@@ -10422,7 +10422,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       messages:[{role:"user",content:[
         ...regionLearningParts,
         {type:"image",source:{type:"base64",media_type:mediaType,data:b64}},
-        {type:"text",text:feedbackSection+notesSection}
+        ...((feedbackSection+notesSection)?[{type:"text",text:feedbackSection+notesSection}]:[])
       ]}]
     })
   });
