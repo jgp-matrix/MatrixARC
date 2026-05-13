@@ -9454,6 +9454,73 @@ function filterNonBomRows(bom){
   return{kept,dropped};
 }
 
+// ── INTERNAL PART NUMBER RESOLUTION ──
+// Some BOMs (e.g. FLS) use a "Part No" column that contains the customer's internal
+// catalog code (uniform NNNN-NNNN or 9-digit format) rather than the manufacturer's
+// part number. The actual MFR PN is embedded in the Description field. This filter
+// detects that pattern and extracts the MFR PN from the description, preserving the
+// original internal code in customerPartNumber.
+const _INTERNAL_PN_RE=/^\d{3,4}-\d{3,5}$|^\d{7,12}$/;
+const _MEAS_RE=/^[\d.,]+\s*(mm2?|cm|m|kg|kw|kva|kvar|vdc|vac|v|a|hz|w|ohm|hp|mtr|k|kohm|ma|uf|nf|pf|awg|ga|sqmm)$/i;
+const _DIM_RE=/^\d+(\.\d+)?\s*x\s*\d/i;
+const _SPEC_WORDS=new Set(["AC","DC","LINEAR","NYLON","BRASS","STEEL","SS","BLACK","WHITE","RED","BLUE","GREEN","GREY","GRAY","ORANGE","YELLOW","CLEAR","DUAL","SINGLE","HEAVY","DUTY","APPROVED","RATED","FLAT","HEX","CORE","WIRE","CABLE","EARTH","NUMBERED","DWG"]);
+function _looksLikeMfrPn(tok){
+  if(!tok||tok.length<2)return false;
+  if(_MEAS_RE.test(tok))return false;
+  if(_DIM_RE.test(tok))return false;
+  if(/^\d+(\.\d+)?%$/.test(tok))return false;
+  if(/^(1ph|3ph|1pole|2pole|3pole|4pole|n\/o|n\/c|no|nc)$/i.test(tok))return false;
+  if(_SPEC_WORDS.has(tok.toUpperCase()))return false;
+  const hasDigit=/\d/.test(tok),hasLetter=/[a-zA-Z]/.test(tok);
+  if(hasLetter&&hasDigit)return true;
+  if(/-/.test(tok)&&hasDigit)return true;
+  if(/^#?\d{4,}$/.test(tok))return true;
+  return false;
+}
+function _extractMfrPnFromDesc(desc){
+  if(!desc)return null;
+  const clean=desc.replace(/[.,;:]+$/,"").trim();
+  const clauses=clean.split(/[,;]\s*/);
+  for(let ci=clauses.length-1;ci>=0;ci--){
+    const words=clauses[ci].trim().split(/\s+/);
+    const pnTokens=[];
+    for(let wi=words.length-1;wi>=0;wi--){
+      const w=words[wi].replace(/^[("']+|[)"']+$/g,"");
+      if(_looksLikeMfrPn(w)){pnTokens.unshift(w);}
+      else if(pnTokens.length>0){
+        if(/^[A-Z]{2,6}$/.test(w)&&!_SPEC_WORDS.has(w.toUpperCase()))pnTokens.unshift(w);
+        break;
+      }
+    }
+    if(pnTokens.length>0)return pnTokens.join(" ");
+  }
+  return null;
+}
+function resolveInternalPartNumbers(bom){
+  const eligible=bom.filter(r=>!r.isLaborRow&&!r.isContingency&&!r.autoLoaded);
+  const pns=eligible.map(r=>(r.partNumber||"").trim()).filter(Boolean);
+  if(pns.length<3)return bom;
+  const internalCount=pns.filter(pn=>_INTERNAL_PN_RE.test(pn)).length;
+  if(internalCount/pns.length<=0.5)return bom;
+  console.log(`BOM FILTER: Detected internal/customer part numbers (${internalCount}/${pns.length} match pattern) — extracting MFR PNs from descriptions`);
+  let resolved=0,unresolved=0;
+  const result=bom.map(r=>{
+    if(r.isLaborRow||r.isContingency||r.autoLoaded)return r;
+    const origPn=(r.partNumber||"").trim();
+    if(!origPn||!_INTERNAL_PN_RE.test(origPn))return r;
+    const mfrPn=_extractMfrPnFromDesc(r.description);
+    if(mfrPn){
+      resolved++;
+      console.log(`  PN RESOLVE: "${origPn}" → "${mfrPn}" (from: "${(r.description||"").slice(0,80)}")`);
+      return{...r,partNumber:mfrPn,customerPartNumber:origPn};
+    }
+    unresolved++;
+    return{...r,customerPartNumber:origPn,confidence:"low"};
+  });
+  console.log(`BOM FILTER: Resolved ${resolved} MFR PNs from descriptions, ${unresolved} unresolved`);
+  return result;
+}
+
 // ── FIRESTORE TEAM HELPERS ──
 async function loadUserProfile(uid){
   try{const d=await fbDb.doc(`users/${uid}/config/profile`).get();return d.exists?d.data():null;}catch(e){return null;}
@@ -12478,9 +12545,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // DECISION(v1.19.646): Filter non-BOM rows (sheet identifiers, title block artifacts,
         // drawing references) based on the 4-field structural rule + pattern + spatial checks.
         const {kept:filtered,dropped:nonBomRows}=filterNonBomRows(fuzzy);
+        const resolved=resolveInternalPartNumbers(filtered);
         console.log(`BOM MERGE: ${all.length} raw → ${positional.length} positional → ${exact.length} exact → ${fuzzy.length} fuzzy → ${filtered.length} after non-BOM filter (${nonBomRows.length} dropped)`);
         // DECISION(v1.19.629): Sort by drawing Y-position so ARC BOM matches drawing row order.
-        const sorted=sortBomByDrawingPosition(filtered);
+        const sorted=sortBomByDrawingPosition(resolved);
         // DECISION(v1.19.672): Split companion parts (e.g. RH2B-ULC-DC24 relay + SH2B-05 base
         // both on the same BOM line). The AI prompt already asks for this split, but this pass
         // catches cases the AI missed. Runs AFTER sort so the companion inserts directly after
@@ -22231,8 +22299,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const fuzzyDedup=fuzzyReport.items;
     // DECISION(v1.19.646): Non-BOM row filter (structural + pattern + spatial).
     const {kept:reFiltered,dropped:reNonBomRows}=filterNonBomRows(fuzzyDedup);
+    const reResolved=resolveInternalPartNumbers(reFiltered);
     console.log(`BOM MERGE: ${all.length} raw → ${positionalDedup.length} positional → ${exactDedup.length} exact → ${fuzzyDedup.length} fuzzy → ${reFiltered.length} after non-BOM filter (${reNonBomRows.length} dropped)`);
-    const corrected=applyPartCorrections(partCorrections,reFiltered.map(row=>{
+    const corrected=applyPartCorrections(partCorrections,reResolved.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     }));
@@ -22429,8 +22498,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const fbFuzzy=fbFuzzyReport.items;
     // DECISION(v1.19.646): Non-BOM row filter (structural + pattern + spatial).
     const {kept:fbFiltered,dropped:fbNonBomRows}=filterNonBomRows(fbFuzzy);
+    const fbResolved=resolveInternalPartNumbers(fbFiltered);
     console.log(`BOM MERGE (feedback): ${fbFuzzy.length} fuzzy → ${fbFiltered.length} after non-BOM filter (${fbNonBomRows.length} dropped)`);
-    const fbCorrected=applyPartCorrections(partCorrections,fbFiltered.map(row=>{
+    const fbCorrected=applyPartCorrections(partCorrections,fbResolved.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
       return sugg?{...row,suggestedPartNumber:sugg}:row;
     }));
