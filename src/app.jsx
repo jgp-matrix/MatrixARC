@@ -24487,6 +24487,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               <div key={pg.id} style={{flexShrink:0,width:420,display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{position:"relative",cursor:"zoom-in"}} onClick={()=>setLightboxId(pg.id)}>
                   <img src={pg.dataUrl||pg.storageUrl} alt={pg.name} style={{width:420,height:381,objectFit:"contain",borderRadius:6,background:"#080810",display:"block"}}/>
+                  <button data-tip="Print this drawing" onClick={(e)=>{e.stopPropagation();const src=pg.dataUrl||pg.storageUrl;if(!src)return;const w=window.open("","_blank");if(!w)return;w.document.write("<html><head><title>"+(pg.name||"Drawing")+"</title><style>@page{margin:0.25in}body{margin:0;display:flex;align-items:center;justify-content:center;height:100vh}img{max-width:100%;max-height:100%;object-fit:contain}</style></head><body><img src='"+src.replace(/'/g,"&#39;")+"' onload='window.print()'/></body></html>");w.document.close();}}
+                    style={{position:"absolute",top:4,right:36,background:"rgba(0,0,0,0.75)",border:"none",color:"#38bdf8",cursor:"pointer",borderRadius:4,padding:"1px 7px",fontSize:13,lineHeight:"20px",zIndex:2}}>🖨</button>
                   {!readOnly&&<button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Remove this drawing page"}
                     onClick={ownerPriorityActive?(e=>{e.stopPropagation();_fireOwnerPriorityAlert();}):(e=>{e.stopPropagation();removePage(pg.id);})}
                     disabled={ownerPriorityActive}
