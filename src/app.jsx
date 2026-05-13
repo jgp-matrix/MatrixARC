@@ -23176,12 +23176,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // DECISION(v1.19.376): Manual price entry shows a confirmation popup asking if the cost is
   // Confirmed (push to BC Item Card + Purchase Price) or Budgetary (BOM only, no BC, no priceDate).
   // DECISION(v1.19.405): Price validation — reject negative, warn on high values.
-  function updatePrice(id,val){
+  async function updatePrice(id,val){
     const parsed=val===""?null:parseFloat(val);
     const row=(panel.bom||[]).find(r=>r.id===id);
     if(parsed!=null&&!isNaN(parsed)){
       if(parsed<0){arcAlert("Price cannot be negative.");return;}
-      if(parsed>100000&&!window.confirm(`$${parsed.toLocaleString()} seems very high for a single unit. Are you sure?`))return;
+      if(parsed>100000&&!await arcConfirm(`$${parsed.toLocaleString()} seems very high for a single unit. Are you sure?`,{kind:"warning"}))return;
     }
     if(parsed==null||isNaN(parsed)){
       // Clearing price — no popup needed
@@ -23417,7 +23417,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return;
     }
     const skippedCount=stillNoVendor.length;
-    if(!window.confirm(`Push ${qualifying.length} lead time${qualifying.length>1?"s":""} to BC ItemVendorCatalog?\n\nThis will create/update per-vendor lead time records in BC so next time ARC or anyone else looks up these items, the lead time is there.${resolvedExtra.length>0?`\n\n(${resolvedExtra.length} row${resolvedExtra.length>1?"s":""} had vendor resolved live from BC Item Card.)`:""}${skippedCount>0?`\n\n(${skippedCount} row${skippedCount>1?"s":""} will be skipped — no vendor on BC Item Card.)`:""}`)){setPushingLeadTimes(false);return;}
+    if(!await arcConfirm(`Push ${qualifying.length} lead time${qualifying.length>1?"s":""} to BC ItemVendorCatalog?\n\nThis will create/update per-vendor lead time records in BC so next time ARC or anyone else looks up these items, the lead time is there.${resolvedExtra.length>0?`\n\n(${resolvedExtra.length} row${resolvedExtra.length>1?"s":""} had vendor resolved live from BC Item Card.)`:""}${skippedCount>0?`\n\n(${skippedCount} row${skippedCount>1?"s":""} will be skipped — no vendor on BC Item Card.)`:""}`,{title:"Push Lead Times to BC"})){setPushingLeadTimes(false);return;}
     const cid=_appCtx.companyId;
     let created=0,updated=0,failed=0;
     const failures=[];
@@ -24964,7 +24964,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     <div style={{fontSize:10,color:C.muted}}>{new Date(s.createdAt).toLocaleString()} · {(s.bom||[]).length} BOM items</div>
                   </div>
                   <button onClick={async()=>{
-                    if(!window.confirm(`Restore BOM to "${s.reason}" from ${new Date(s.createdAt).toLocaleString()}? This will replace the current BOM.`))return;
+                    if(!await arcConfirm(`Restore BOM to "${s.reason}" from ${new Date(s.createdAt).toLocaleString()}? This will replace the current BOM.`,{kind:"warning",destructive:true}))return;
                     await restoreSnapshot(uid,projectId,s,panel,onUpdate,onSaveImmediate);
                     setShowSnapshots(false);
                   }} style={btn("#0d2a1a","#4ade80",{fontSize:11,padding:"3px 10px",border:"1px solid #4ade8044"})}>Restore</button>
@@ -27412,7 +27412,7 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,pro
 
   // Delete all saved quotes except the most recent
   async function deleteAllButLatest(){
-    if(!window.confirm(`Delete all but the most recent quote? This cannot be undone.`))return;
+    if(!await arcConfirm(`Delete all but the most recent quote? This cannot be undone.`,{kind:"error",destructive:true}))return;
     const toDelete=savedQuotes.slice(1); // already sorted newest-first
     for(const q of toDelete){
       try{
@@ -29143,7 +29143,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       const approxBytes=Math.floor((pdfBase64?.length||0)*0.75);
       if(approxBytes>3*1024*1024){
         const mb=(approxBytes/(1024*1024)).toFixed(1);
-        const cont=window.confirm(`Warning: the quote PDF is ${mb} MB. Microsoft 365 sendMail inline attachments are limited to ~4 MB. Sending may fail.\n\nClick OK to attempt send anyway, or Cancel to reduce the PDF (remove drawing pages from the quote or contact engineering to compress images).`);
+        const cont=await arcConfirm(`Warning: the quote PDF is ${mb} MB. Microsoft 365 sendMail inline attachments are limited to ~4 MB. Sending may fail.\n\nCancel to reduce the PDF (remove drawing pages from the quote or contact engineering to compress images).`,{kind:"warning",okLabel:"Send Anyway"});
         if(!cont){setSending(false);return;}
       }
       const q=project.quote||{};
@@ -29801,8 +29801,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
       bcEnqueue('syncServiceCardTask',{projectNumber:project.bcProjectNumber,serviceCard:card},`Sync ${label} (task ${card.bcProjectTaskNo})`);
     }
   }
-  function deletePanel(id){
-    if(!window.confirm("Delete this panel and all its data?"))return;
+  async function deletePanel(id){
+    if(!await arcConfirm("Delete this panel and all its data?",{kind:"error",destructive:true}))return;
     // Save snapshot before deletion so user can potentially recover
     const panelToDelete=(project.panels||[]).find(p=>p.id===id);
     if(panelToDelete)saveSnapshot(uid,project.id,panelToDelete,"Before panel deletion").catch(()=>{});
@@ -32526,10 +32526,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(_budgPromptShownRef.current)return;
     _budgPromptShownRef.current=true;
     // Debounce a beat so the prompt fires once per transition, not on every character.
-    const t=setTimeout(()=>{
+    const t=setTimeout(async()=>{
       const latest=projectRef.current;
       if(!latest||_hasAiLeadTimes(latest)||!_hasArcAutoBudgetary(latest))return;
-      const ok=window.confirm(
+      const ok=await arcConfirm(
         "All AI-estimated lead times on this quote have been replaced with firm values.\n\n"+
         "ARC had automatically marked the panel(s) as Budgetary because of the AI estimates.\n\n"+
         "Remove the Budgetary flag now?"
@@ -33200,10 +33200,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       const currentUpdatedAt=projectRef.current?.updatedAt||null;
       if(reviewStartedAt&&currentUpdatedAt&&currentUpdatedAt!==reviewStartedAt){
         const secs=Math.max(1,Math.round((currentUpdatedAt-reviewStartedAt)/1000));
-        const cont=window.confirm(
+        const cont=await arcConfirm(
           `This project was edited ${secs<60?secs+" seconds":Math.round(secs/60)+" minutes"} after you opened this review — possibly by another team member or another tab.\n\n`+
           `Applying these prices will overwrite any concurrent changes to the BOM.\n\n`+
-          `Click OK to apply anyway, or Cancel to close this review and re-open it to see the latest data.`
+          `Cancel to close this review and re-open it to see the latest data.`,
+          {kind:"warning",okLabel:"Apply Anyway"}
         );
         if(!cont){setQuoteReview(null);setShowPortalModal(false);return;}
       }
@@ -36326,7 +36327,7 @@ function TemplateRegionRow({field,label,region,customerName,onCleared,onSaved}){
     setSaving(false);
   }
   async function handleClear(){
-    if(!window.confirm(`Clear ${label} region for ${customerName}?`))return;
+    if(!await arcConfirm(`Clear ${label} region for ${customerName}?`,{kind:"warning",destructive:true}))return;
     try{await deleteTemplateRegion(customerName,field);if(onCleared)await onCleared();}
     catch(e){arcAlert("Clear failed: "+e.message);}
   }
@@ -36456,7 +36457,7 @@ function CustomerTemplatesModal({uid,onClose}){
     setSaving(false);
   }
   async function handleDelete(custNorm){
-    if(!window.confirm(`Delete template for "${templates[custNorm]?.customerName||custNorm}"? Future extractions for this customer will start fresh.`))return;
+    if(!await arcConfirm(`Delete template for "${templates[custNorm]?.customerName||custNorm}"? Future extractions for this customer will start fresh.`,{kind:"error",destructive:true}))return;
     const next={...templates};delete next[custNorm];
     try{await persist(next);setTemplates(next);setDeleted({...deleted,[custNorm]:true});if(selectedCust===custNorm)setSelectedCust(null);}
     catch(e){arcAlert("Delete failed: "+e.message);}
@@ -41102,7 +41103,7 @@ INSTRUCTIONS:
         async function safeRefresh(){
           if(hasRunning){
             const msg=`You have ${runningTasks.length} task${runningTasks.length>1?'s':''} running:\n\n${runningTasks.map(t=>'• '+(t.panelName||'Task')+': '+t.msg).join('\n')}\n\nRefreshing NOW will cancel them. Refresh anyway?`;
-            if(!window.confirm(msg))return;
+            if(!await arcConfirm(msg,{kind:"warning",destructive:true}))return;
             // Gracefully abort so Firestore orphans get cleaned up
             for(const t of runningTasks){try{bgError(t.taskId,'Cancelled by version refresh');}catch(e){}}
             // Give rbgError a moment to write to Firestore, then reload
