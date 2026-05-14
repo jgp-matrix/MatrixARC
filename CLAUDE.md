@@ -31,12 +31,13 @@ When the user says "Close Out" (or any case-insensitive variant: close-out, clos
       git push origin master
       ```
    b. After push, verify: `git rev-parse master origin/master` (must match).
-   c. **Worktree + branch cleanup**: Remove the session's worktree first, then delete the branch. The worktree lock prevents `git branch -d` from succeeding, so order matters:
+   c. **Worktree + branch cleanup**: The current session runs inside its own worktree directory, so the OS holds a file lock on it — `rm` / `git worktree remove` will fail with "Device busy". This is expected and unavoidable. **Do not leave a manual cleanup note** — instead, clean up *other* sessions' orphaned worktrees now, and the current session's directory will be auto-removed by Claude Code when the session ends.
       ```
-      git worktree remove --force .claude/worktrees/<worktree-name>
-      git branch -d <feature-branch>
+      git worktree prune
+      # Remove any leftover dirs from prior sessions (skip the current one):
+      for d in .claude/worktrees/*/; do [ "$d" != ".claude/worktrees/<current-worktree>/" ] && rm -rf "$d"; done
+      git branch -d <feature-branch>   # may fail if current worktree still references it — OK
       ```
-      If the worktree remove fails with "Permission denied" or "Device busy" (this session is running inside it), note it — the directory will be cleaned up after the session ends. Also prune any orphaned worktree directories from prior sessions: `git worktree prune` then remove leftover dirs under `.claude/worktrees/` that are no longer registered.
    d. If commits are already on master (or session produced no commits), skip the merge.
 
 3. **Deploy**: Run `bash deploy.sh` from the main checkout (`C:/Users/jon/AppDev/MatrixARC`). This auto-bumps the patch version, commits the version bump, tags, pushes, and deploys to Firebase hosting.
