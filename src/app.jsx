@@ -23098,9 +23098,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // a real PurchasePrice record for this item. No fabricated today's-date.
       // DECISION(v1.19.1025): Use PP price if available, fall back to Item Card unitCost.
       const finalPrice=ppPrice!=null?ppPrice:(bcItem.unitCost!=null?+bcItem.unitCost:null);
+      // DECISION(v1.19.1039): Stamp bcVerify immediately so the BC+ pill
+      // clears as soon as the user selects a BC item. Previously bcVerify was
+      // only stamped during runPricingOnPanel, leaving a stale "not-in-bc"
+      // pill visible until the next pricing run.
       const updates={...r,
         ...(newPN?{partNumber:newPN}:{}),
         priceSource:"bc",
+        bcVerify:{status:"in-bc",at:Date.now()},
         ...(finalPrice!=null?{unitPrice:finalPrice}:{}),
         ...(ppDate?{priceDate:ppDate,bcPoDate:ppDate}:{})
       };
@@ -23333,7 +23338,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // price that's been pushed to BC.
     const updatedBom=(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
-      const next={...r,unitPrice:price,priceSource:"bc",priceDate:now,bcPoDate:now,bcVendorName:vendorName||r.bcVendorName};
+      const next={...r,unitPrice:price,priceSource:"bc",priceDate:now,bcPoDate:now,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"in-bc",at:now}};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
@@ -23364,7 +23369,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // overwrite the user's typed value with BC's stale price.
       if(!bcPushOk){
         const lp=latestPanelRef.current;
-        const revertBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"manual",priceDate:now,bcPoDate:null}:r);
+        const revertBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"manual",priceDate:now,bcPoDate:null,bcVerify:{status:"manual",at:now}}:r);
         const reverted={...lp,bom:revertBom};
         latestPanelRef.current=reverted;onUpdate(reverted);
         try{onSaveImmediate(reverted);}catch(e){console.warn("BC push revert save failed:",e);}
