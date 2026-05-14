@@ -8704,7 +8704,7 @@ async function uploadOriginalPdf(uid,projectId,fileName,arrayBuffer){
 let _pdfLibPromise=null;
 function _ensurePdfLib(){
   if(_pdfLibPromise)return _pdfLibPromise;
-  _pdfLibPromise=import("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm").then(m=>m);
+  _pdfLibPromise=import("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm").catch(e=>{_pdfLibPromise=null;throw e;});
   return _pdfLibPromise;
 }
 async function loadOriginalPdfAsBase64(storagePath,pageNumber){
