@@ -20607,7 +20607,7 @@ function ScanResultsBanner({panel}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -21763,6 +21763,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   // Expose buildAndAttachPdf to parent via ref (supports opts for production mode)
   useEffect(()=>{if(bcUploadRef)bcUploadRef.current=buildAndAttachPdf;});
+  useEffect(()=>{if(bcUploadRefsMap)bcUploadRefsMap.current[panel.id]=buildAndAttachPdf;return()=>{if(bcUploadRefsMap)delete bcUploadRefsMap.current[panel.id];};},[panel.id]);
   async function buildAndAttachPdf(uploadOpts={}){
     if(!pages.length||!bcProjectNumber)return;
     setAttachingPdf(true);
@@ -24460,20 +24461,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               re-uploads + duplicate cleanup. This was briefly made always-clickable in v1.19.335 but reverted because
               every click re-uploads the same file, defeating the purpose of the duplicate prevention. */}
           {pages.length>0&&!readOnly&&bcProjectNumber&&!bcDisconnected&&!extracting&&!aiPricing&&!validatingPanel&&(panel.bom||[]).some(r=>!r.isLaborRow)&&(()=>{
-            const hasUnsent=panel.bcPdfAttached&&!bcPdfMissing&&(quoteRev||0)>(panel.bcUploadQuoteRev||0);
-            const needsUpload=hasUnsent||bcPdfMissing||(!panel.bcPdfAttached);
+            const hasPendingSync=panel.bcPdfAttached&&!bcPdfMissing&&(quoteRev||0)>(panel.bcUploadQuoteRev||0);
+            const needsUpload=bcPdfMissing||(!panel.bcPdfAttached);
+            const canUpload=needsUpload||hasPendingSync;
             return(
             <span style={{display:"inline-flex",alignItems:"center",gap:0}}>
-            <button data-tip={bcPdfMissing?"File deleted from BC — click to re-upload":hasUnsent?"BOM changed — click to upload updated drawings to BC":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:"Upload drawings to BC"}
-              onClick={needsUpload?()=>buildAndAttachPdf():undefined} disabled={attachingPdf||!needsUpload}
-              style={{background:bcPdfMissing?"#3a0a0a":hasUnsent?"#3a1f00":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",
-                border:`1px solid ${bcPdfMissing?"#ef444488":hasUnsent?"#f59e0b88":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,
-                color:bcPdfMissing?C.red:hasUnsent?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",
-                cursor:needsUpload?"pointer":"default",borderRadius:needsUpload?20:"20px 0 0 20px",padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
-                opacity:attachingPdf?0.5:1,animation:needsUpload&&!attachingPdf?"pulseYellow 2s ease-in-out infinite":"none"}}>
-              {attachingPdf?"Uploading…":bcPdfMissing?"⚠ Deleted — Click to Re-Upload":hasUnsent?"⚠ Unsent Revision — Click to Update":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
+            <button data-tip={bcPdfMissing?"File deleted from BC — click to re-upload":hasPendingSync?"Sync pending — auto-syncs on exit or every 5 min":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:"Upload drawings to BC"}
+              onClick={canUpload?()=>buildAndAttachPdf():undefined} disabled={attachingPdf||!canUpload}
+              style={{background:bcPdfMissing?"#3a0a0a":hasPendingSync?"#1a1500":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",
+                border:`1px solid ${bcPdfMissing?"#ef444488":hasPendingSync?"#f59e0b44":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,
+                color:bcPdfMissing?C.red:hasPendingSync?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",
+                cursor:canUpload?"pointer":"default",borderRadius:canUpload&&!hasPendingSync?20:panel.bcPdfAttached&&!bcPdfMissing&&!hasPendingSync?"20px 0 0 20px":20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
+                opacity:attachingPdf?0.5:1,animation:bcPdfMissing&&!attachingPdf?"pulseYellow 2s ease-in-out infinite":"none"}}>
+              {attachingPdf?"Uploading…":bcPdfMissing?"⚠ Deleted — Click to Re-Upload":hasPendingSync?"⏳ Pending Sync":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
             </button>
-            {panel.bcPdfAttached&&!bcPdfMissing&&!needsUpload&&!attachingPdf&&(
+            {panel.bcPdfAttached&&!bcPdfMissing&&!hasPendingSync&&!needsUpload&&!attachingPdf&&(
               <button data-tip="Force re-upload drawings & clean duplicates in BC" onClick={()=>buildAndAttachPdf()}
                 style={{background:C.greenDim,border:`1px solid ${C.green}88`,borderLeft:"none",color:C.green,cursor:"pointer",borderRadius:"0 20px 20px 0",padding:"2px 6px",fontSize:11,fontWeight:700}}>↻</button>
             )}
@@ -29649,7 +29651,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
 // service-card data). `card_style` is the shared module-level style helper.
 const card_style=card;
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -30595,6 +30597,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   rfqLoading={rfqLoading}
                   onOpenSupplierQuote={onOpenSupplierQuote}
                   bcUploadRef={bcUploadRef}
+                  bcUploadRefsMap={bcUploadRefsMap}
                   customerReviewData={customerReviewData}
                   project={project}
                   activeScope={activeScope}
@@ -31250,6 +31253,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     // Set review status
                     const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid};
                     onUpdate(upd);safeSave(uid,upd);
+                    if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                     // Look up designer email — check Salesperson cache first (has E_Mail), then BC User page
                     try{
                       const designerName=project.bcDesigner||designerCode;
@@ -31938,6 +31942,30 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [ownerPriorityToast,setOwnerPriorityToast]=useState(null); // {ownerName, shownAt} | null
   const iAmOwner=!project.createdBy||project.createdBy===uid;
   const iAmAdmin=_appCtx.role==="admin";
+  // Auto-sync BC drawings: push updated PDFs for any panel where quoteRev > bcUploadQuoteRev
+  const _bcAutoSyncRunning=useRef(false);
+  async function _autoSyncBcDrawings(){
+    if(_bcAutoSyncRunning.current||!_bcToken)return;
+    const proj=projectRef.current;
+    if(!proj||!proj.bcProjectNumber)return;
+    const bcDisc=proj.bcEnv&&proj.bcEnv!==_bcConfig.env;
+    if(bcDisc)return;
+    const rev=proj.quoteRev||0;
+    const stalePanels=(proj.panels||[]).filter(p=>p.bcPdfAttached&&(rev>(p.bcUploadQuoteRev||0))&&(p.pages||[]).length>0);
+    if(!stalePanels.length)return;
+    _bcAutoSyncRunning.current=true;
+    try{
+      for(const p of stalePanels){
+        const fn=bcUploadRefsMap.current[p.id];
+        if(fn){try{await fn();}catch(e){console.warn("[BC AUTO-SYNC] panel",p.id,"failed:",e.message);}}
+      }
+      console.log(`[BC AUTO-SYNC] synced ${stalePanels.length} panel(s)`);
+    }finally{_bcAutoSyncRunning.current=false;}
+  }
+  useEffect(()=>{
+    const iv=setInterval(_autoSyncBcDrawings,5*60*1000);
+    return()=>clearInterval(iv);
+  },[]);
   useEffect(()=>{
     const cid=_appCtx.companyId;const projectId=init&&init.id;
     if(!cid||!projectId||!uid)return;
@@ -32055,6 +32083,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [bcUploading,setBcUploading]=useState(false);
   const [showProductionUpload,setShowProductionUpload]=useState(null); // null=hidden, {poNumber,dueDate}
   const bcUploadRef=useRef(null); // ref to selected PanelCard's buildAndAttachPdf — shared with PanelListView
+  const bcUploadRefsMap=useRef({}); // panelId → buildAndAttachPdf for all panels (auto-sync)
   const [showSqModal,setShowSqModal]=useState(false);
   const [sqPanelBom,setSqPanelBom]=useState(null);
   const [sqPanelId,setSqPanelId]=useState(null);
@@ -33772,7 +33801,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 {projectLockTask.msg}{projectLockTask.pct>0?` (${projectLockTask.pct}%)`:""}
               </div>
             )}
-            <button onClick={onBack} style={{marginTop:12,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>← Back to Dashboard</button>
+            <button onClick={()=>{_autoSyncBcDrawings();onBack();}} style={{marginTop:12,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>← Back to Dashboard</button>
           </div>
         </div>
       ):(
@@ -33821,7 +33850,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             onSetLockOverrideSession={setLockOverrideSession}
             onShowRequestUnlockModal={()=>setShowRequestUnlockModal(true)}
             unlockRequestSent={unlockRequestSent}
-            onBack={onBack}
+            onBack={()=>{_autoSyncBcDrawings();onBack();}}
             onViewQuote={handlePrintQuote}
             quotePrinting={quotePrinting}
             onPrintRfq={onPrintRfq}
@@ -33848,6 +33877,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             relinkMsg={relinkMsg}
             onRelink={relinkToBC}
             bcUploadRef={bcUploadRef}
+            bcUploadRefsMap={bcUploadRefsMap}
+            onAutoSyncBcDrawings={_autoSyncBcDrawings}
             sentQuoteAckGiven={sentQuoteAckGiven}
             setSentQuoteAckGiven={setSentQuoteAckGiven}
             showSentEditConfirm={showSentEditConfirm}
