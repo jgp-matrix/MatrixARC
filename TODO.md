@@ -723,3 +723,8 @@ T4. **OPEN** — `firestore.rules` and other non-JS files (`.rules`, `.json`, `.
     `701d693`) committed without any pre-commit feedback. Low priority; add a separate
     rules-syntax check (`firebase deploy --only firestore --dry-run` or similar) if/when it
     becomes a real risk.
+T5. **OPEN** — Quote package enhancement: investigate sending the client a copy of the
+    ARC-stamped drawings and ARC BOM alongside the quote PDF. Customers may find it valuable
+    to receive the stamped drawings (with ARC markups/redlines) and the extracted BOM as part
+    of the quote package. Would require bundling or attaching additional PDFs to the quote
+    email or print output.
