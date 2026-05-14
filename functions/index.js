@@ -2001,13 +2001,13 @@ exports.extractBomPage = functions
 
   if (pageNumber != null) {
     const n = Number(pageNumber);
-    if (!Number.isInteger(n) || n < 1 || n > 50) {
-      throw new functions.https.HttpsError('invalid-argument', `Invalid pageNumber: expected integer 1-50, got ${pageNumber}`);
+    if (!Number.isInteger(n) || n < 1 || n > 10000) {
+      throw new functions.https.HttpsError('invalid-argument', `Invalid pageNumber: expected integer 1-10000, got ${pageNumber}`);
     }
   }
 
-  if (hasPdf && !pdfPath.startsWith(`originalPdfs/${uid}/`)) {
-    throw new functions.https.HttpsError('permission-denied', 'Cannot access PDFs outside your account');
+  if (hasPdf && !pdfPath.startsWith('originalPdfs/')) {
+    throw new functions.https.HttpsError('permission-denied', 'Invalid PDF path');
   }
 
   const apiKey = await resolveAnthropicKey(uid);
