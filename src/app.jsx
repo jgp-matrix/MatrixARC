@@ -10153,8 +10153,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
 
   if(pageNumber!=null){
     const n=Number(pageNumber);
-    if(!Number.isInteger(n)||n<1||n>10000){
-      throw new Error(`extractBomPage: invalid pageNumber (expected positive integer ≤10000, got ${JSON.stringify(pageNumber)})`);
+    if(!Number.isInteger(n)||n<1||n>75){
+      throw new Error(`extractBomPage: invalid pageNumber (expected positive integer ≤75, got ${JSON.stringify(pageNumber)})`);
     }
     pageNumber=n;
   }
@@ -13985,6 +13985,11 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           const buf=await f.arrayBuffer();
           const uploadBuf=buf.slice(0);
           const pdf=await pdfjs.getDocument({data:buf}).promise;
+          if(pdf.numPages>75){
+            console.warn(`[ECO Drawings] ${f.name} — ${pdf.numPages} pages exceeds 75-page limit`);
+            try{await arcAlert(`"${f.name}" has ${pdf.numPages} pages which exceeds the 75-page limit. Please contact an administrator.`,{kind:"error"});}catch(_){}
+            continue;
+          }
           let originalPdfPath=null;
           try{
             originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,uploadBuf);
@@ -20952,6 +20957,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if(!pdf.numPages){
             fileOutcomes.push({name:f.name,result:"pdf-zero-pages"});
             console.warn(`[ADDFILES] ${f.name} — PDF reports 0 pages, skipping`);
+            continue;
+          }
+          if(pdf.numPages>75){
+            fileOutcomes.push({name:f.name,result:"pdf-too-many-pages",pages:pdf.numPages});
+            console.warn(`[ADDFILES] ${f.name} — ${pdf.numPages} pages exceeds 75-page limit`);
+            try{await arcAlert(`"${f.name}" has ${pdf.numPages} pages which exceeds the 75-page limit. Please contact an administrator.`,{kind:"error"});}catch(_){}
             continue;
           }
           let originalPdfPath=null;

@@ -2001,8 +2001,8 @@ exports.extractBomPage = functions
 
   if (pageNumber != null) {
     const n = Number(pageNumber);
-    if (!Number.isInteger(n) || n < 1 || n > 10000) {
-      throw new functions.https.HttpsError('invalid-argument', `Invalid pageNumber: expected integer 1-10000, got ${pageNumber}`);
+    if (!Number.isInteger(n) || n < 1 || n > 75) {
+      throw new functions.https.HttpsError('invalid-argument', `Invalid pageNumber: expected integer 1-75, got ${pageNumber}`);
     }
   }
 
