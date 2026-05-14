@@ -8698,16 +8698,34 @@ async function uploadOriginalPdf(uid,projectId,fileName,arrayBuffer){
     }
   }
 }
-// Download a retained PDF as base64. Used by extractBomPage when sending native
-// PDF input to Anthropic. Throws on failure so the caller can fall back cleanly.
-async function loadOriginalPdfAsBase64(storagePath){
+// Download a retained PDF and extract a single page as base64.
+// Uses pdf-lib (loaded from CDN on first call) to slice the requested page,
+// sending only ~1 page to Anthropic instead of the full 20+ page drawing.
+let _pdfLibPromise=null;
+function _ensurePdfLib(){
+  if(_pdfLibPromise)return _pdfLibPromise;
+  _pdfLibPromise=import("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm").then(m=>m);
+  return _pdfLibPromise;
+}
+async function loadOriginalPdfAsBase64(storagePath,pageNumber){
   if(!fbStorage||!storagePath)throw new Error("No PDF path provided");
   const ref=fbStorage.ref(storagePath);
   const url=await ref.getDownloadURL();
   const r=await fetch(url);
   if(!r.ok)throw new Error("PDF fetch failed: "+r.status);
-  const blob=await r.blob();
-  if(!blob.size)throw new Error("PDF file is empty (0 bytes) at "+storagePath+" — re-upload the source PDF");
+  const fullBuf=await r.arrayBuffer();
+  if(!fullBuf.byteLength)throw new Error("PDF file is empty (0 bytes) at "+storagePath+" — re-upload the source PDF");
+  if(!pageNumber)throw new Error("pageNumber is required for single-page PDF extraction");
+  const pdfLib=await _ensurePdfLib();
+  const fullPdf=await pdfLib.PDFDocument.load(fullBuf);
+  const totalPages=fullPdf.getPageCount();
+  if(pageNumber>totalPages)throw new Error(`Page ${pageNumber} exceeds PDF page count (${totalPages})`);
+  const singlePdf=await pdfLib.PDFDocument.create();
+  const [copied]=await singlePdf.copyPages(fullPdf,[pageNumber-1]);
+  singlePdf.addPage(copied);
+  const singleBytes=await singlePdf.save();
+  console.log(`[PDF SLICE] page ${pageNumber}/${totalPages}: ${Math.round(fullBuf.byteLength/1024)}KB → ${Math.round(singleBytes.length/1024)}KB`);
+  const blob=new Blob([singleBytes],{type:"application/pdf"});
   return await new Promise((resolve,reject)=>{
     const fr=new FileReader();
     fr.onload=()=>{
@@ -10184,10 +10202,10 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   // Native PDF extraction — the ONLY extraction path.
   {
     try{
-      const pdfBase64=await loadOriginalPdfAsBase64(originalPdfPath);
+      const pdfBase64=await loadOriginalPdfAsBase64(originalPdfPath,pageNumber);
       const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
       const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
-      const pageHint=`This drawing has multiple pages. Extract the Bill of Materials from PAGE ${pageNumber} ONLY. Other pages may contain schematics, layouts, enclosure views, or notes — do not extract from those. If page ${pageNumber} does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+      const pageHint=`Extract ALL Bill of Materials (BOM) items from this page. If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
       console.log(`[BOM EXTRACT] using native PDF input — page ${pageNumber}, pdf=${originalPdfPath}`);
       // DECISION(v1.19.963, cost report A4): Prompt caching on BOM_PROMPT. The prompt
       // is ~3500 tokens of carefully-tuned extraction logic (column mapping, character

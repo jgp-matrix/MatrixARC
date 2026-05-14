@@ -10,6 +10,7 @@ const { mouserSearchPart, mouserSearchBatch } = require('./mouserApi');
 const { digikeySearchPart, digikeySearchBatch } = require('./digikeyApi');
 const { BOM_PROMPT } = require('./bomPrompt');
 const { ANTHROPIC_MODELS, MONITORED_MODELS } = require('./models');
+const { PDFDocument } = require('pdf-lib');
 
 // Purchasing module functions
 const purchasing = require('./purchasing');
@@ -2027,13 +2028,23 @@ exports.extractBomPage = functions
       throw new functions.https.HttpsError('not-found', `PDF not found: ${pdfPath}`);
     }
     const [buf] = await file.download();
-    const pdfBase64 = buf.toString('base64');
+    const fullPdf = await PDFDocument.load(buf);
+    const totalPages = fullPdf.getPageCount();
+    if (pageNumber > totalPages) {
+      throw new functions.https.HttpsError('invalid-argument', `Page ${pageNumber} exceeds PDF page count (${totalPages})`);
+    }
+    const singlePagePdf = await PDFDocument.create();
+    const [copiedPage] = await singlePagePdf.copyPages(fullPdf, [pageNumber - 1]);
+    singlePagePdf.addPage(copiedPage);
+    const singlePageBytes = await singlePagePdf.save();
+    const pdfBase64 = Buffer.from(singlePageBytes).toString('base64');
+    functions.logger.info('extractBomPage PDF sliced', { totalPages, extractedPage: pageNumber, fullSizeKB: Math.round(buf.length / 1024), slicedSizeKB: Math.round(singlePageBytes.length / 1024) });
 
     const feedbackSection = feedback
       ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
     const notesSection = userNotes
       ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.` : '';
-    const pageHint = `This drawing has multiple pages. Extract the Bill of Materials from PAGE ${pageNumber} ONLY. Other pages may contain schematics, layouts, enclosure views, or notes — do not extract from those. If page ${pageNumber} does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+    const pageHint = `Extract ALL Bill of Materials (BOM) items from this page. If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
 
     userContent = [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
