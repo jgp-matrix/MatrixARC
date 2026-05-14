@@ -8880,7 +8880,7 @@ async function applyLearnedCorrections(bom,uid){
       const alt=userAlts.find(a=>a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
       if(alt){
         appliedLog.push({rowId:r.id,kind:"alternate",from:pn,to:alt.replacement.partNumber,reason:"auto-cross from learning DB"});
-        return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true};
+        const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
       }
       // v1.19.977: log when an alternate exists for this PN but isn't set to
       // auto-replace — surfaces a UX bug (user crossed a part but uncheck auto)
@@ -20579,7 +20579,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const alt=alts.find(a=>a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
         if(alt){
           changed=true;appliedAlt++;
-          return{...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true};
+          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
         }
         const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn));
         if(corr){
@@ -22428,6 +22428,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(r.id!==id)return r;
       const next={...r,[field]:val};
       if(field==="qty"&&r.suspectQty){delete next.suspectQty;delete next.suspectQtyReason;}
+      if(field==="partNumber"){next.confidence="high";delete next._confDowngradeReason;}
       // DECISION(v1.19.687): Manual edit of leadTimeDays — stamp source, timestamp, clear estimate flag.
       if(field==="leadTimeDays"){
         next.leadTimeSource="manual";
@@ -22671,8 +22672,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         priceSource:"bc",
         bcVerify:{status:"in-bc",at:Date.now()},
         ...(finalPrice!=null?{unitPrice:finalPrice}:{}),
-        ...(ppDate?{priceDate:ppDate,bcPoDate:ppDate}:{})
+        ...(ppDate?{priceDate:ppDate,bcPoDate:ppDate}:{}),
+        confidence:"high",
       };
+      delete updates._confDowngradeReason;
       if(bcItem._customerSupplied){updates.customerSupplied=true;updates.unitPrice=0;}
       if(bcItem._vendorName)updates.bcVendorName=bcItem._vendorName;
       // DECISION(v1.19.814): Apply manufacturer code from the bcItem's _mfrCode IMMEDIATELY
