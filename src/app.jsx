@@ -4110,8 +4110,15 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
               if(pr.status!==404)break;
             }catch(e){lastErr=`PATCH exception: ${e.message||String(e)}`;break;}
           }
-          if(!ok)auditEntry.error=lastErr||"PATCH failed";
-        }else{
+          if(!ok&&lastErr&&/PATCH 404/.test(lastErr)){
+            // BC NAV-type compound-key 404 — record exists in filter but can't be
+            // addressed for PATCH; fall through to POST (create) instead.
+            existingRec=null;
+          }else if(!ok){
+            auditEntry.error=lastErr||"PATCH failed";
+          }
+        }
+        if(!existingRec&&!auditEntry.error){
           const cr=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog`,{
             method:"POST",
             headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","Accept":"application/json"},
