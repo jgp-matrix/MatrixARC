@@ -24822,11 +24822,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         </div>;
       })()}
 
-      {/* Scan Results Banner — shows extraction concerns (OCR dedups, title block gaps, suspect parts) */}
-      {/* DECISION(v1.19.617): Also require pages — if the user deletes all drawings, the
-          old extractionReport is stale and shouldn't surface concerns about a scan whose
-          subject matter no longer exists. */}
-      {!extracting&&!validatingPanel&&(panel.bom||[]).length>0&&_basePages(panel).length>0&&<ScanResultsBanner panel={panel}/>}
+      {/* Scan Results Banner hidden — no longer useful (v1.19.1041) */}
       {/* v1.19.983: ZERO-ITEM extraction failure banner. Renders when extraction
           completed but produced no BOM rows AND there were BOM-tagged pages.
           Surfaces the per-page reason and remediation hint so users understand
