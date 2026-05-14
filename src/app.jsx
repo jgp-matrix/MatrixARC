@@ -13983,13 +13983,11 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           await window.pdfjsReady();
           const pdfjs=window._pdfjs;
           const buf=await f.arrayBuffer();
+          const uploadBuf=buf.slice(0);
           const pdf=await pdfjs.getDocument({data:buf}).promise;
-          // v1.19.959: retain original PDF for native AI extraction. Same logic as
-          // addFiles main upload path. ECO drawings benefit from the same accuracy
-          // gains for redline-vs-base BOM diff'ing.
           let originalPdfPath=null;
           try{
-            originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,buf);
+            originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,uploadBuf);
           }catch(retErr){
             console.error(`[ECO Drawings] PDF retention FAILED after retries: ${retErr.message}`);
             _logRemote("error","ECO PDF retention failed — BOM extraction will be blocked",{file:f.name,error:retErr.message});
@@ -20949,22 +20947,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           await window.pdfjsReady();
           const pdfjs=window._pdfjs;
           const buf=await f.arrayBuffer();
+          const uploadBuf=buf.slice(0);
           const pdf=await pdfjs.getDocument({data:buf}).promise;
           if(!pdf.numPages){
             fileOutcomes.push({name:f.name,result:"pdf-zero-pages"});
             console.warn(`[ADDFILES] ${f.name} — PDF reports 0 pages, skipping`);
             continue;
           }
-          // DECISION(v1.19.959): Retain the original PDF in Firebase Storage so AI
-          // extraction can use Anthropic's native document input. The page-image
-          // pipeline below is unchanged — those images still drive display, stamping,
-          // redlining, customer review, and quote rendering. PDF retention is purely
-          // additive: it gives the AI a lossless source for OCR-critical workflows.
-          // If retention fails (network, quota, etc.), pages still get the standard
-          // image extraction path — no regression.
           let originalPdfPath=null;
           try{
-            originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,buf);
+            originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,uploadBuf);
             console.log(`[ADDFILES] PDF retained for native AI input: ${originalPdfPath}`);
           }catch(retErr){
             console.error(`[ADDFILES] PDF retention FAILED after retries: ${retErr.message}`);
