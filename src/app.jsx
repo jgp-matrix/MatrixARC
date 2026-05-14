@@ -8671,18 +8671,25 @@ async function uploadPageImage(uid,projectId,pageId,dataUrl){
 // The page images at pageImages/{uid}/{projectId}/{pageId}.jpg are NOT replaced —
 // they remain the source for stamping, redlining, customer review, thumbnails, and
 // quote rendering. Only AI extraction switches to the PDF path.
-// Falls back to image-based extraction if PDF retention fails or for legacy projects
-// uploaded before v1.19.959.
 async function uploadOriginalPdf(uid,projectId,fileName,arrayBuffer){
-  if(!fbStorage)return null;
+  if(!fbStorage)throw new Error("Firebase Storage not initialized");
   const safeName=(fileName||"drawing.pdf").replace(/[^a-zA-Z0-9._-]/g,"_");
   const stamp=Date.now()+"_"+Math.random().toString(36).slice(2,8);
   const path=`originalPdfs/${uid}/${projectId}/${stamp}_${safeName}`;
   const ref=fbStorage.ref(path);
   _dbg("UPLOAD PDF: starting",path,"size="+arrayBuffer.byteLength);
-  await ref.put(new Blob([arrayBuffer],{type:"application/pdf"}));
-  _dbg("UPLOAD PDF: uploaded",path);
-  return path;
+  const MAX_RETRIES=3;
+  for(let attempt=1;attempt<=MAX_RETRIES;attempt++){
+    try{
+      await ref.put(new Blob([arrayBuffer],{type:"application/pdf"}));
+      _dbg("UPLOAD PDF: uploaded",path);
+      return path;
+    }catch(e){
+      console.warn(`[UPLOAD PDF] attempt ${attempt}/${MAX_RETRIES} failed: ${e.message}`);
+      if(attempt===MAX_RETRIES)throw e;
+      await new Promise(r=>setTimeout(r,1000*attempt));
+    }
+  }
 }
 // Download a retained PDF as base64. Used by extractBomPage when sending native
 // PDF input to Anthropic. Throws on failure so the caller can fall back cleanly.
@@ -9901,31 +9908,15 @@ function cropRegionFromImage(dataUrl,region){
 async function getExtractionUnits(pg){
   const regions=(pg.regions||[]).filter(r=>r.type==="bom");
   if(regions.length){
-    // User has drawn a region — crop the image and use the image extraction path.
-    // Native PDF input is not used here because the region is a SUBSET of the page
-    // and we want the model to focus only on the user-cropped area. The image-based
-    // path correctly receives just the cropped image.
-    const units=[];
-    for(const r of regions){
-      const cropped=await cropRegionFromImage(pg.dataUrl,r);
-      if(cropped)units.push({dataUrl:cropped,regionNote:r.note||null,originalPdfPath:null,pageNumber:null});
-    }
-    return units.length?units:[{dataUrl:pg.dataUrl,regionNote:null,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null}];
+    // User drew BOM regions — still use native PDF for extraction accuracy,
+    // but pass the region note so the AI knows which area to focus on.
+    return regions.map(r=>({
+      dataUrl:pg.dataUrl,
+      regionNote:r.note||null,
+      originalPdfPath:pg.originalPdfPath||null,
+      pageNumber:pg.pageNumber||null
+    }));
   }
-  // DECISION(v1.19.622): REVERTED v1.19.603 auto-quadrant split. Quadrants fixed one-off
-  // character-misread bugs (P5PN3Y→P5PKJY) but created much worse problems:
-  //   1. QUANTITY INFLATION — a qty-of-3 row appearing in 4 quadrants got summed to 12 in
-  //      exact-PN dedup when positional dedup missed it (Y-coord noise across quadrants).
-  //   2. FIELD SCRAMBLING — when two quadrant readings disagreed, positional dedup picked
-  //      max-length PN and max-length description INDEPENDENTLY, so the wrong description
-  //      got glued to the wrong part number.
-  // Quadrants were the WRONG trade-off: the character-accuracy gains aren't worth silently
-  // corrupted quantities and descriptions on every row. Full-page single-image extraction
-  // is the original behavior that had been reliable since the program was written. Users
-  // who need higher character detail on a specific BOM table can draw a user region on
-  // that page — the user-region code path above is preserved.
-  // v1.19.959: also surface originalPdfPath + pageNumber so the caller can opt into
-  // native PDF extraction when the page was uploaded with PDF retention enabled.
   return [{dataUrl:pg.dataUrl,regionNote:null,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null}];
 }
 
@@ -10118,33 +10109,10 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
 // throws (deploy lag, transient error, network), the caller falls back
 // to the legacy direct API path, preserving zero-regression behavior.
 async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber){
+  if(!originalPdfPath||!pageNumber)throw new Error("BOM extraction requires native PDF — originalPdfPath is missing. Re-upload the source PDF.");
   const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:300000});
-  let payload;
-  let intendedPath;
-  if(originalPdfPath&&pageNumber){
-    payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
-    intendedPath="pdf-native";
-  } else {
-    // Image-fallback path — resize to ≤4500px PNG (matches direct path) and
-    // strip the data URL prefix.
-    const small=await resizeForAnalysis(dataUrl,4500,"png");
-    if(!small)throw new Error("server: empty resized image");
-    const b64=small.split(",")[1]||"";
-    const isPng=small.startsWith("data:image/png");
-    payload={imageBase64:b64,imageMediaType:isPng?"image/png":"image/jpeg",feedback:feedback||"",userNotes:userNotes||""};
-    intendedPath="image-fallback";
-    // Region-learning multimodal context — pass through to the function so
-    // the server call sees the same examples the client would have sent.
-    try{
-      const uid=fbAuth.currentUser?.uid;
-      if(uid){
-        const examples=await loadRegionLearning(uid);
-        const bomFirst=[...examples.filter(e=>e.type==="bom"),...examples.filter(e=>e.type!=="bom"&&e.type!=="ignore")];
-        const parts=buildRegionLearningContext(bomFirst,{pageTypeContext:"bom",maxExamples:3});
-        if(parts&&parts.length)payload.regionLearningParts=parts;
-      }
-    }catch(_e){}
-  }
+  const payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
+  const intendedPath="pdf-native";
   const t0=Date.now();
   const result=await callable(payload);
   const elapsedMs=Date.now()-t0;
@@ -10174,17 +10142,9 @@ async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPat
 }
 
 async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=null,pageNumber=null){
-  // DECISION(v1.19.899): Fail fast if the global credit-exhausted latch is set —
-  // see _trippedApiCreditExhausted near apiCall.
   if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
+  if(!originalPdfPath||!pageNumber)throw new Error("BOM extraction requires native PDF — originalPdfPath is missing. Re-upload the source PDF to fix this.");
 
-  // SECURITY (audit Item #9, 2026-05-07): pageNumber flows from Firestore-stored
-  // panel.pages[] metadata into the Claude prompt at the PDF-native path below
-  // ("…from PAGE ${pageNumber} ONLY…"). A tampered or maliciously-stored value
-  // could carry prompt-injection text. Coerce to a bounded positive integer
-  // here, covering both the server-callable path and the direct-API path.
-  // Reject hard rather than silently nulling, so attacks/corruption surface as
-  // errors instead of silently extracting from the wrong page.
   if(pageNumber!=null){
     const n=Number(pageNumber);
     if(!Number.isInteger(n)||n<1||n>10000){
@@ -10193,10 +10153,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
     pageNumber=n;
   }
 
-  // DECISION(v1.19.981): Server-side path FIRST. Eliminates per-browser
-  // variance (stale bundles, region-learning drift, prompt versions). On
-  // any server error, falls through to the legacy direct API path below
-  // so a function deploy lag or transient outage doesn't block users.
+  // Server-side path FIRST. On error, falls through to direct API.
   try{
     return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber);
   }catch(serverErr){
@@ -10218,15 +10175,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
     }catch(_){}
   }
 
-  // DECISION(v1.19.959, BULLETPROOF BOM extraction): If the page has a retained
-  // original PDF, send it as native document input to Anthropic. This bypasses
-  // our entire render → JPEG → resize → re-encode pipeline that was producing
-  // ~30% character accuracy on dense BOMs (CSW1807-121 case study). Anthropic's
-  // PDF support gives the model crisp vector text and an internally-optimized
-  // OCR pipeline. Falls back to the image-based path if PDF retention failed,
-  // is unavailable for legacy projects (uploaded before v1.19.959), or if the
-  // PDF call itself errors. The image-based path is preserved unchanged below.
-  if(originalPdfPath&&pageNumber&&_apiKey){
+  // Native PDF extraction — the ONLY extraction path.
+  {
     try{
       const pdfBase64=await loadOriginalPdfAsBase64(originalPdfPath);
       const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
@@ -10257,403 +10207,19 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       });
       const d=await resp.json();
       if(!resp.ok){
-        console.warn("[BOM EXTRACT] PDF native call failed, falling back to image:",d.error?.message||resp.status);
-        // Fall through to the image-based path below.
-      }else{
+        throw new Error(`PDF native API call failed: ${d.error?.message||resp.status}`);
+      }{
         if(d.stop_reason==="max_tokens")console.warn("BOM extraction (PDF): response TRUNCATED (hit max_tokens limit) — some items may be lost");
         const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
         console.log("BOM extraction (PDF) response:",raw.length,"chars, stop_reason:",d.stop_reason);
         // v1.19.965: record per-call usage to spend ledger (best-effort).
         _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
-        // Reuse the same parse logic as the image path. Wrap in a small helper-style block.
-        try{
-          const cleaned=raw.replace(/```json|```/gi,"").trim();
-          let items=[],questions=[],noBomReason=null,detectedLineCount=null;
-          try{
-            const direct=JSON.parse(cleaned);
-            if(direct&&Array.isArray(direct.items)){
-              items=direct.items;questions=direct.questions||[];
-              if(direct.noBomReason)noBomReason=direct.noBomReason;
-              if(direct.detectedLineCount!=null)detectedLineCount=+direct.detectedLineCount;
-            }
-            else if(Array.isArray(direct)){items=direct;}
-          }catch(_e1){}
-          if(!items.length){
-            const wStart=cleaned.indexOf('{"items"');
-            if(wStart>=0){
-              let depth=0,endIdx=-1;
-              for(let i=wStart;i<cleaned.length;i++){
-                if(cleaned[i]==='{')depth++;
-                if(cleaned[i]==='}'){depth--;if(depth===0){endIdx=i;break;}}
-              }
-              if(endIdx>wStart){
-                try{
-                  const parsed=JSON.parse(cleaned.slice(wStart,endIdx+1));
-                  items=parsed.items||[];questions=parsed.questions||[];
-                  if(parsed.noBomReason)noBomReason=parsed.noBomReason;
-                  if(parsed.detectedLineCount!=null)detectedLineCount=+parsed.detectedLineCount;
-                }catch(_e2){}
-              }
-            }
-          }
-          if(items.length){
-            console.log(`[BOM EXTRACT] PDF native success — ${items.length} items extracted from page ${pageNumber}, detectedLineCount=${detectedLineCount}`);
-            // v1.19.969: same Layer 2 verification as the image path.
-            const verification={
-              status:"ok",detectedLineCount,extractedCount:items.length,
-              countMismatch:false,sequenceGaps:[],
-              lowConfidenceRows:[],mediumConfidenceRows:[],placeholderRows:[],
-              questions:questions.length,
-            };
-            if(detectedLineCount!=null&&items.length!==detectedLineCount){
-              verification.countMismatch=true;verification.status="needs-review";
-              console.warn(`[BOM VERIFY/PDF] count mismatch: AI counted ${detectedLineCount} but returned ${items.length}`);
-            }
-            const numericItemNos=items.map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10)).filter(n=>!isNaN(n)&&n>0);
-            if(numericItemNos.length>=3){
-              const sorted=[...new Set(numericItemNos)].sort((a,b)=>a-b);
-              for(let i=0;i<sorted.length-1;i++){
-                if(sorted[i+1]-sorted[i]>1){
-                  for(let g=sorted[i]+1;g<sorted[i+1];g++)verification.sequenceGaps.push(g);
-                }
-              }
-              if(verification.sequenceGaps.length>0){
-                verification.status="needs-review";
-                console.warn(`[BOM VERIFY/PDF] sequence gaps in itemNo: ${verification.sequenceGaps.join(", ")}`);
-              }
-            }
-            // v1.19.973-.975: same auto-downgrade as image path.
-            const _enclosureKwPdf=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
-            const _confusableAnyPdf=/[S0O8BIZG6T7HN5DC2QlIL1]/i;
-            for(const it of items){
-              if(String(it.confidence||"").toLowerCase()!=="high")continue;
-              const stripped=String(it.partNumber||"").replace(/[^A-Z0-9]/gi,"");
-              if(!stripped||stripped==="?")continue;
-              const hasConfusable=_confusableAnyPdf.test(stripped);
-              const isEnclosure=_enclosureKwPdf.test(String(it.description||""));
-              if(hasConfusable||isEnclosure){
-                it.confidence="medium";
-                it._confDowngradeReason=isEnclosure?"enclosure-row":"contains-confusable-glyph";
-              }
-            }
-            for(const it of items){
-              const c=String(it.confidence||"").toLowerCase();
-              if(c==="low")verification.lowConfidenceRows.push(it.itemNo||it.partNumber||"?");
-              else if(c==="medium")verification.mediumConfidenceRows.push(it.itemNo||it.partNumber||"?");
-              if(it.partNumber==="?"||/EXTRACTION_FAILED/i.test(it.notes||""))verification.placeholderRows.push(it.itemNo||"?");
-            }
-            if(verification.lowConfidenceRows.length>0||verification.placeholderRows.length>0){
-              verification.status=verification.status==="ok"?"low-confidence":verification.status;
-            }
-            // v1.19.980: tag the extraction path so the UI can surface which
-            // pipeline ran. PDF native = high accuracy; image fallback = lower.
-            verification.extractionPath="pdf-native";
-            return{items,questions,noBomReason:noBomReason||null,extractionVerification:verification,extractionPath:"pdf-native"};
-          }
-          // Empty items — return immediately if we got an explicit noBomReason
-          // (means model confirmed page has no BOM); else fall through to image
-          // path which may try harder.
-          if(noBomReason){
-            console.log(`[BOM EXTRACT] PDF native returned no items (reason: ${noBomReason})`);
-            return{items:[],questions:[],noBomReason,extractionVerification:{status:"empty",detectedLineCount,extractionPath:"pdf-native"},extractionPath:"pdf-native"};
-          }
-          console.warn("[BOM EXTRACT] PDF native returned empty result, falling back to image");
-        }catch(parseErr){
-          console.warn("[BOM EXTRACT] PDF native parse failed, falling back to image:",parseErr.message);
-        }
+        return _parseAndVerifyBomRaw(raw,"pdf-native");
       }
     }catch(pdfErr){
-      console.warn("[BOM EXTRACT] PDF native path failed, falling back to image:",pdfErr.message);
-      // Fall through to image-based path.
+      throw new Error(`PDF native extraction failed: ${pdfErr.message}`);
     }
   }
-  // ── Image-based extraction (legacy path, also fallback) ──
-  // Used when: no original PDF retained (legacy projects), PDF download fails,
-  // or PDF native API call fails. Preserves backward compatibility.
-  // DECISION(v1.19.958, BOM OCR accuracy): Two changes vs v1.19.955:
-  //   1. Bumped 2400 → 4500 px on long edge — more pixels per character on dense BOMs.
-  //   2. Switched output format JPEG → PNG — eliminates a SECOND JPEG compression on
-  //      top of the PDF-render JPEG, which was creating ringing artifacts on character
-  //      edges that visibly merged adjacent letters (C↔l, 0↔8, etc). PNG is lossless;
-  //      character edges stay sharp through the pipeline. Confirmed scoreboard at 30%
-  //      accuracy under JPEG-only fix; this should close most of the remaining gap.
-  // PDF source is rasterized at scale 4.0 (~9800px on D-size), so 4500px still discards
-  // ~half the rendered detail but the PNG format keeps what we do send pristine.
-  // PNG file size is larger (~2-5 MB at 4500px) but Anthropic bills by token count
-  // (image dimensions), not by file size, so cost impact is purely the dimension bump.
-  // The 5 MB per-image API limit is honored — 4500px PNG of a typical D-sheet is ~3 MB.
-  // The legacy "Claude caps internally at 1568px" comment is from 2024-era guidance and
-  // no longer applies for OCR-style tasks.
-  const small=await resizeForAnalysis(dataUrl,4500,"png");
-  const b64=small&&small.split(",")[1];
-  // Detect PNG vs JPEG from the data URL prefix so the API sees the correct media_type.
-  const mediaType=small&&small.startsWith("data:image/png")?"image/png":"image/jpeg";
-  if(!b64){console.warn("extractBomPage: skipping — empty or invalid dataUrl");return[];}
-  const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
-  const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
-  // DECISION(v1.19.896, Region Learning Phase 3): Pull cross-project region examples
-  // and prepend as multimodal context. The user's past curation work (BOM table
-  // labels, column observations, "ignore this section" notes, etc.) compounds
-  // across projects via this pathway.
-  let regionLearningParts=[];
-  try{
-    const uid=fbAuth.currentUser?.uid;
-    if(uid){
-      const examples=await loadRegionLearning(uid);
-      // Prefer examples tagged as BOM since this is BOM extraction
-      const bomFirst=[...examples.filter(e=>e.type==="bom"),...examples.filter(e=>e.type!=="bom"&&e.type!=="ignore")];
-      regionLearningParts=buildRegionLearningContext(bomFirst,{pageTypeContext:"bom",maxExamples:3});
-    }
-  }catch(e){console.warn("[REGION LEARNING] load failed for extractBomPage:",e.message);}
-  // DECISION(v1.19.623): Restored Opus + thinking per CLAUDE.md spec ("BOM extraction | Opus + thinking").
-  // Was accidentally switched to Sonnet in an earlier edit. Opus's stronger visual reasoning is
-  // what made BOM extraction reliable historically (qty + description integrity). Sonnet was
-  // ~30% cheaper but demonstrably worse on small-text row-alignment tasks, which compounded
-  // once quadrant crops added cross-source merging on top.
-  // v1.19.963: BOM_PROMPT moved to cached system block (cost report A4).
-  const resp=await fetch("https://api.anthropic.com/v1/messages",{
-    method:"POST",
-    headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
-    body:JSON.stringify({
-      model:ANTHROPIC_MODELS.OPUS,
-      max_tokens:16000,
-      thinking:{type:"enabled",budget_tokens:4000},
-      system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
-      messages:[{role:"user",content:[
-        ...regionLearningParts,
-        {type:"image",source:{type:"base64",media_type:mediaType,data:b64}},
-        ...((feedbackSection+notesSection)?[{type:"text",text:feedbackSection+notesSection}]:[])
-      ]}]
-    })
-  });
-  const d=await resp.json();
-  if(!resp.ok)throw new Error(d.error?.message||"API error");
-  if(d.stop_reason==="max_tokens")console.warn("BOM extraction: response TRUNCATED (hit max_tokens limit) — some items may be lost");
-  // v1.19.965: record per-call usage to spend ledger (best-effort).
-  _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
-  // Find the text block (thinking blocks come first)
-  const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
-  console.log("BOM extraction response:",raw.length,"chars, stop_reason:",d.stop_reason);
-  try{
-    const cleaned=raw.replace(/```json|```/gi,"").trim();
-    let items=[],questions=[],noBomReason=null,detectedLineCount=null;
-    // Strategy 1: Try direct JSON.parse (works when AI returns clean JSON)
-    try{
-      const direct=JSON.parse(cleaned);
-      if(direct&&Array.isArray(direct.items)){
-        items=direct.items;questions=direct.questions||[];
-        if(direct.noBomReason)noBomReason=direct.noBomReason;
-        if(direct.detectedLineCount!=null)detectedLineCount=+direct.detectedLineCount;
-        console.log("BOM extraction: direct parse OK,",items.length,"items,",questions.length,"questions, detectedLineCount=",detectedLineCount);
-      }
-      else if(Array.isArray(direct)){items=direct;console.log("BOM extraction: direct parse bare array,",items.length,"items");}
-    }catch(e1){/* not clean JSON, try extraction */}
-    // Strategy 2: Find wrapper object {"items":[...],"questions":[...]}
-    if(!items.length){
-      const wStart=cleaned.indexOf('{"items"');
-      if(wStart===-1){}
-      else{
-        // Find matching closing brace via depth counting
-        let depth=0,endIdx=-1;
-        for(let i=wStart;i<cleaned.length;i++){
-          if(cleaned[i]==='{')depth++;
-          if(cleaned[i]==='}'){depth--;if(depth===0){endIdx=i;break;}}
-        }
-        if(endIdx>wStart){
-          try{
-            const parsed=JSON.parse(cleaned.slice(wStart,endIdx+1));
-            items=parsed.items||[];questions=parsed.questions||[];
-            if(parsed.noBomReason)noBomReason=parsed.noBomReason;
-            if(parsed.detectedLineCount!=null)detectedLineCount=+parsed.detectedLineCount;
-            console.log("BOM extraction: wrapper parse OK,",items.length,"items,",questions.length,"questions, detectedLineCount=",detectedLineCount);
-          }catch(e2){console.warn("Wrapper parse failed:",e2.message);}
-        }
-      }
-    }
-    // Strategy 3: Bare array fallback
-    if(!items.length){
-      const arrMatch=cleaned.match(/\[[\s\S]*\]/);
-      if(arrMatch){
-        try{items=JSON.parse(arrMatch[0]);}catch(e3){console.warn("Array parse failed:",e3.message);}
-        // Also try to find questions
-        const qMatch=cleaned.match(/"questions"\s*:\s*(\[[\s\S]*?\])/);
-        if(qMatch){try{questions=JSON.parse(qMatch[1]);}catch(qe){}}
-        // Also try to find noBomReason in the raw text even if items array parse succeeded
-        const reasonMatch=cleaned.match(/"noBomReason"\s*:\s*"([^"]+)"/);
-        if(reasonMatch&&!noBomReason)noBomReason=reasonMatch[1];
-        const lcMatch=cleaned.match(/"detectedLineCount"\s*:\s*(\d+)/);
-        if(lcMatch)detectedLineCount=+lcMatch[1];
-        console.log("BOM extraction: array fallback,",items.length,"items,",questions.length,"questions, detectedLineCount=",detectedLineCount);
-      } else {
-        // Strategy 4: Truncated JSON — extract individual complete item objects
-        const itemMatches=[...cleaned.matchAll(/\{"itemNo"[^}]*\}/g)];
-        if(itemMatches.length){
-          for(const m of itemMatches){try{items.push(JSON.parse(m[0]));}catch(e4){}}
-          // Best-effort recovery of detectedLineCount from a truncated response.
-          const lcMatch=cleaned.match(/"detectedLineCount"\s*:\s*(\d+)/);
-          if(lcMatch)detectedLineCount=+lcMatch[1];
-          console.log("BOM extraction: salvaged",items.length,"items from truncated response, detectedLineCount=",detectedLineCount);
-        } else {
-          console.warn("No JSON found in response. Raw:",cleaned.slice(0,200));return{items:[],questions:[],noBomReason:"parse-failure",extractionVerification:{status:"parse-failure"}};
-        }
-      }
-    }
-    // DECISION(v1.19.792): When AI returns 0 items, log the structured reason — gives
-    // us telemetry on whether the page-type detector is sending non-BOM pages through
-    // (the looser title-agnostic detector in v1.19.791 increased that risk).
-    if(!items.length){
-      console.warn(`[BOM EXTRACT] page produced 0 rows. AI reason: ${noBomReason||"not-supplied"}`);
-    }
-    if(!questions.length&&items.length>=3)console.log("BOM extraction:",items.length,"items extracted, no clarifying questions");
-
-    // ═══════════════════════════════════════════════════════════════════
-    // DECISION(v1.19.969): Layer 2 — post-extraction verification.
-    // The user explicitly stated BOM accuracy is THE most important feature
-    // and a missed line item costs thousands. We run three structural checks:
-    //   1. items.length must equal detectedLineCount (AI's self-reported count)
-    //   2. itemNo sequence must have no gaps (e.g. 1,2,4 means we missed 3)
-    //   3. Confidence aggregate — what % of rows are low-confidence
-    // Findings are bundled into extractionVerification on the return value
-    // and surfaced in the UI as "⚠ N rows need review" pills.
-    // ═══════════════════════════════════════════════════════════════════
-    const verification={
-      status:"ok",
-      detectedLineCount,
-      extractedCount:items.length,
-      countMismatch:false,
-      sequenceGaps:[],
-      lowConfidenceRows:[],
-      mediumConfidenceRows:[],
-      placeholderRows:[],
-      questions:questions.length,
-    };
-    if(detectedLineCount!=null&&items.length!==detectedLineCount){
-      verification.countMismatch=true;
-      verification.status="needs-review";
-      console.warn(`[BOM VERIFY] count mismatch: AI counted ${detectedLineCount} BOM rows but returned ${items.length} items — extraction may be incomplete`);
-    }
-    // Sequence gap check — only meaningful when itemNo values are numeric.
-    const numericItemNos=items
-      .map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10))
-      .filter(n=>!isNaN(n)&&n>0);
-    if(numericItemNos.length>=3){
-      const sorted=[...new Set(numericItemNos)].sort((a,b)=>a-b);
-      // DECISION(v1.19.971, multi-column BOM detection): If the smallest extracted
-      // itemNo is > 1, the AI almost certainly missed an earlier column/box (real
-      // case: OVIVO CSW1807-121 has items 1-50 in left box and 51-84 in right box;
-      // AI extracted only 51-84 and confidently passed self-verification because
-      // detectedLineCount matched the (incorrect) 34-row count). Flag as missing
-      // even when count and sequence agree internally.
-      const minItemNo=sorted[0];
-      if(minItemNo>1){
-        verification.status="needs-review";
-        verification.missingFromStart=minItemNo-1;
-        console.warn(`[BOM VERIFY] smallest itemNo is ${minItemNo} — items 1..${minItemNo-1} appear to be missing (likely an earlier BOM column was not extracted)`);
-        for(let g=1;g<minItemNo;g++)verification.sequenceGaps.push(g);
-      }
-      for(let i=0;i<sorted.length-1;i++){
-        if(sorted[i+1]-sorted[i]>1){
-          for(let g=sorted[i]+1;g<sorted[i+1];g++)verification.sequenceGaps.push(g);
-        }
-      }
-      if(verification.sequenceGaps.length>0){
-        verification.status="needs-review";
-        console.warn(`[BOM VERIFY] sequence gaps in itemNo — items ${verification.sequenceGaps.slice(0,20).join(", ")}${verification.sequenceGaps.length>20?` (+${verification.sequenceGaps.length-20} more)`:""} appear to be missing`);
-      }
-    }
-    // DECISION(v1.19.973-.975): Auto-downgrade confidence for rows where the AI
-    // tagged "high" but the PN contains characters that could plausibly be misread.
-    // Real failure cases:
-    //   v1.19.973 — A62H6012SSLP3PT misread as A62H60125SLPPT (dropped '3', S→5)
-    //   v1.19.974 — ACHI238S misread as AHCI2385 (HC↔CH transpose, S→5)
-    // v1.19.975: dropped composition/length gates — part numbers come in all shapes
-    // and lengths; ANY confusable glyph anywhere in the PN is the real risk signal.
-    // Categories that auto-downgrade high→medium:
-    //   (a) ANY confusable glyph (S/5, 0/O/Q, 8/B, 1/I/L, Z/2, 6/G, T/7, H/N, D/0, C/G)
-    //       anywhere in the PN — these are the documented OCR failure points.
-    //   (b) Enclosure / cabinet / backpan rows — single highest-cost line, wrong PN
-    //       ships wrong metal — flag regardless of glyph composition.
-    // Downgrade is one notch (high→medium); doesn't override an AI-set "low".
-    const _enclosureKw=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
-    // Confusable set covers every glyph pair in the prompt's character matrix.
-    const _confusableAny=/[S0O8BIZG6T7HN5DC2QlIL1]/i;
-    for(const it of items){
-      const pn=String(it.partNumber||"").trim();
-      const desc=String(it.description||"");
-      const cur=String(it.confidence||"").toLowerCase();
-      if(cur!=="high")continue;
-      const stripped=pn.replace(/[^A-Z0-9]/gi,"");
-      if(!stripped||stripped==="?")continue; // skip empty / placeholder
-      const hasConfusable=_confusableAny.test(stripped);
-      const isEnclosure=_enclosureKw.test(desc);
-      if(hasConfusable||isEnclosure){
-        it.confidence="medium";
-        it._confDowngradeReason=isEnclosure?"enclosure-row":"contains-confusable-glyph";
-      }
-    }
-    // Confidence aggregate
-    for(const it of items){
-      const c=String(it.confidence||"").toLowerCase();
-      if(c==="low"){verification.lowConfidenceRows.push(it.itemNo||it.partNumber||"?");}
-      else if(c==="medium"){verification.mediumConfidenceRows.push(it.itemNo||it.partNumber||"?");}
-      if(it.partNumber==="?"||/EXTRACTION_FAILED/i.test(it.notes||""))verification.placeholderRows.push(it.itemNo||"?");
-    }
-    if(verification.lowConfidenceRows.length>0||verification.placeholderRows.length>0){
-      verification.status=verification.status==="ok"?"low-confidence":verification.status;
-      console.warn(`[BOM VERIFY] ${verification.lowConfidenceRows.length} low-conf, ${verification.placeholderRows.length} placeholder, ${verification.mediumConfidenceRows.length} medium-conf rows`);
-    }
-    if(verification.status==="ok"){
-      console.log(`[BOM VERIFY] PASS — ${items.length} items, all high confidence, no gaps, count matches detectedLineCount=${detectedLineCount}`);
-    }
-    // Post-process: split any rows where partNumber still contains multiple values
-    const expanded=[];
-    for(const item of items){
-      const pn=(item.partNumber||"").trim();
-      // Detect multiple part numbers: split on " / " or ", " but only when each segment looks like a part number
-      // (contains letters+numbers, not just a description phrase)
-      const segments=pn.split(/\s*\/\s*|\s*,\s*/).map(s=>s.trim()).filter(s=>s&&/[A-Z0-9]{3,}/i.test(s));
-      if(segments.length>1){
-        for(let si=0;si<segments.length;si++){
-          const base=item.description||"";
-        const alreadyLabeled=base.includes("(sub-part from above)");
-        const desc=si===0?base:(alreadyLabeled?base:base+" (sub-part from above)");
-          expanded.push({...item,partNumber:segments[si],description:desc});
-        }
-      } else {
-        expanded.push(item);
-      }
-    }
-    // Normalize "A/R" / "AR" / "As Required" quantities to 1
-    for(const item of expanded){
-      const q=String(item.qty||"").trim().toUpperCase();
-      if(q==="A/R"||q==="AR"||q==="AS REQUIRED"||q==="AS REQ'D"||q==="A.R."||q==="A\\R"){item.qty=1;}
-    }
-    // DECISION(v1.19.643): Fallback y_top from array index when AI omits coordinates.
-    // The AI almost always returns rows in top-to-bottom table order even when it forgets
-    // to emit y_top/y_bottom. Without this fallback, coord-less rows fell into the
-    // "unpositioned" bucket at the end of the sort → BOM appeared out of drawing order.
-    // Proxy y-values are small fractional offsets (0..0.999) so real coordinates, when
-    // present, still win the sort (they'd be >0.001 apart from these indexed fallbacks).
-    if(expanded.length>0){
-      const count=expanded.length;
-      for(let i=0;i<count;i++){
-        const it=expanded[i];
-        if(typeof it.y_top!=="number"||isNaN(it.y_top)){
-          it.y_top=(i+0.5)/count; // center of this "slot" in 0..1
-          it.y_bottom=(i+0.95)/count;
-          it._yEstimated=true;
-        }
-        if(typeof it.x_left!=="number"||isNaN(it.x_left))it.x_left=0;
-        if(typeof it.x_right!=="number"||isNaN(it.x_right))it.x_right=1;
-      }
-    }
-    // DECISION(v1.19.969): Re-allow questions for legitimate clarification cases (was
-    // suppressed in v1.19.601). The new prompt only emits questions when extraction
-    // truly cannot proceed — most uncertainty maps to per-row confidence instead.
-    // v1.19.980: tag the extraction path so the UI can surface which pipeline ran.
-    verification.extractionPath="image-fallback";
-    return{items:expanded,questions,noBomReason:expanded.length?null:noBomReason,extractionVerification:verification,extractionPath:"image-fallback"};
-  }catch(e){console.error("JSON parse error:",e,raw);return{items:[],questions:[],noBomReason:"parse-error",extractionVerification:{status:"parse-error",extractionPath:"image-fallback"},extractionPath:"image-fallback"};}
 }
 
 // ── PER-ROW SNIPPET SELF-CORRECTION ──
@@ -12356,10 +11922,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
 
     // BOM extraction — use cropped regions if available
     let bomMergePromise=Promise.resolve([]);
-    // v1.19.980: track extraction path (PDF native vs image fallback) per page so
-    // the panel UI can surface which pipeline ran. PDF native = high accuracy,
-    // image fallback = lower. If any page falls back to image, the panel is
-    // tagged "image-fallback" so the warning appears.
+    // v1.19.980: track extraction path per page for diagnostics.
     const _extractionPathsSeen=new Set();
     // v1.19.983: collect per-page outcomes so the panel-level summary log
     // captures EVERY data point an admin needs to diagnose silent extraction
@@ -12486,10 +12049,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // with cover-page text). sourcePageId is unambiguous.
         return pageItems.map(item=>({...item,sourcePageIdx:pgIdx,sourcePageId:pg.id}));
       },3).then(results=>{
-        // v1.19.980: roll up extraction path — image fallback wins (worst-case).
-        const _extractionPath=_extractionPathsSeen.has("image-fallback")?"image-fallback":(_extractionPathsSeen.has("pdf-native")?"pdf-native":"unknown");
-        if(_extractionPath==="image-fallback")console.warn(`[BOM EXTRACT] panel used IMAGE FALLBACK on at least one page — accuracy is lower than PDF native. Causes: PDF retention failed, or PDF native call errored.`);
-        else if(_extractionPath==="pdf-native")console.log(`[BOM EXTRACT] panel used PDF NATIVE path on all pages — best accuracy.`);
+        const _extractionPath=_extractionPathsSeen.has("pdf-native")?"pdf-native":"unknown";
+        console.log(`[BOM EXTRACT] panel extraction path: ${_extractionPath}`);
         const all=results.flat();
         // v1.19.983: panel-level summary log — fires every time extraction
         // completes, with the full per-page outcome breakdown. This is the
@@ -12676,9 +12237,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       learnedCorrectionsLog:learnedLog.slice(-50),
       snippetCorrectionCount:snippetCorrections.length, // DECISION(v1.19.639)
       snippetCorrectionsLog:snippetCorrections.slice(-50),
-      // DECISION(v1.19.980): tag the extraction path used so the panel UI can
-      // surface PDF native (high accuracy) vs image fallback (lower) — lets
-      // users on the same drawing diagnose discrepancies between teammates.
+      // DECISION(v1.19.980): tag the extraction path used for diagnostics.
       extractionPath:mergeStats.extractionPath||"unknown",
       // DECISION(v1.19.983): per-page outcome breakdown so the UI can show a
       // clear "0 BOM items found" banner when a panel had pages tagged as BOM
@@ -14426,7 +13985,8 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           try{
             originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,buf);
           }catch(retErr){
-            console.warn(`[ECO Drawings] PDF retention failed: ${retErr.message}`);
+            console.error(`[ECO Drawings] PDF retention FAILED after retries: ${retErr.message}`);
+            _logRemote("error","ECO PDF retention failed — BOM extraction will be blocked",{file:f.name,error:retErr.message});
           }
           for(let pg=1;pg<=pdf.numPages;pg++){
             setEcoExtractMsg(`${f.name} p${pg}/${pdf.numPages}`);
@@ -20281,9 +19841,6 @@ function ZeroBomBanner({panel,onTriggerReextract}){
     else if(rsn==="no-table-on-page")hint="No tabular content was found on the tagged page. Verify the right page is tagged BOM.";
     else if(rsn==="sheet-index-not-bom")hint="The AI sees a table, but it lists OTHER drawing sheets, not parts.";
   }
-  if(path==="image-fallback"){
-    hint+=" ⚠ This panel used the IMAGE-FALLBACK extraction path — accuracy is significantly lower than PDF-native. PDF retention may have failed at upload. Re-uploading the source PDF often resolves this.";
-  }
   return(
     <div style={{background:"#3a0a0a",border:"2px solid #ef4444",borderRadius:10,padding:"14px 16px",marginBottom:12,animation:"fadeIn 0.3s ease-out"}}>
       <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
@@ -21400,8 +20957,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,buf);
             console.log(`[ADDFILES] PDF retained for native AI input: ${originalPdfPath}`);
           }catch(retErr){
-            console.warn(`[ADDFILES] PDF retention failed (extraction will fall back to image-based): ${retErr.message}`);
-            _logRemote("warn","PDF retention upload failed",{file:f.name,error:retErr.message});
+            console.error(`[ADDFILES] PDF retention FAILED after retries: ${retErr.message}`);
+            _logRemote("error","PDF retention upload failed — BOM extraction will be blocked until re-upload",{file:f.name,error:retErr.message});
+            try{await arcAlert(`⚠ PDF upload failed for "${f.name}": ${retErr.message}\n\nBOM extraction requires the original PDF. Try re-dropping the file. If it keeps failing, check your network connection.`,{kind:"error"});}catch(_){}
           }
           let pageCount=0;
           for(let pg=1;pg<=pdf.numPages;pg++){
@@ -22332,9 +21890,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }catch(e){console.warn("re-extract snippet self-correct failed:",e.message);}
     const bom=appendDefaultBomItems(bomSorted);
     // v1.19.980: roll up re-extract path
-    const _reExtractionPath=_reExtractionPathsSeen.has("image-fallback")?"image-fallback":(_reExtractionPathsSeen.has("pdf-native")?"pdf-native":"unknown");
-    if(_reExtractionPath==="image-fallback")console.warn(`[RE-EXTRACT] panel used IMAGE FALLBACK on at least one page — accuracy is lower. Causes: PDF retention failed, or PDF native call errored.`);
-    else if(_reExtractionPath==="pdf-native")console.log(`[RE-EXTRACT] panel used PDF NATIVE path on all pages — best accuracy.`);
+    const _reExtractionPath=_reExtractionPathsSeen.has("pdf-native")?"pdf-native":"unknown";
+    console.log(`[RE-EXTRACT] panel extraction path: ${_reExtractionPath}`);
     const reExtractionReport={
       rawCount:all.length,exactCount:exactDedup.length,finalCount:fuzzyDedup.length,
       fuzzyMerges:fuzzyReport.merges,bomPageCount:bomPages.length,
@@ -24878,27 +24435,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 </span>
               );
             })()}
-            {/* DECISION(v1.19.980): Extraction-path pill — surfaces whether the
-                AI used the high-accuracy PDF native input or fell back to the
-                lower-accuracy image pipeline. Lets users diagnose why two
-                teammates' extractions of the same drawing differ. Pill only
-                shows when an extractionReport with extractionPath exists. */}
-            {panel.extractionReport?.extractionPath&&panel.extractionReport.extractionPath!=="unknown"&&(()=>{
-              const ep=panel.extractionReport.extractionPath;
-              const isPdf=ep==="pdf-native";
-              const tone=isPdf
-                ?{bg:"#0d2a18",border:"#22c55e88",fg:"#86efac",label:"PDF native"}
-                :{bg:"#3a1f00",border:"#f59e0b88",fg:"#fcd34d",label:"⚠ Image fallback"};
-              const tip=isPdf
-                ?"Extraction used PDF native input (Anthropic's high-accuracy document API). All teammates on the same drawing should see consistent results."
-                :"Extraction fell back to the IMAGE pipeline — accuracy is lower than PDF native. Common causes: PDF retention failed at upload, or the PDF native API call errored. Re-uploading the PDF and re-extracting usually moves to the PDF native path.";
-              return(
-                <span title={tip}
-                  style={{background:tone.bg,border:`1px solid ${tone.border}`,color:tone.fg,borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
-                  {tone.label}
-                </span>
-              );
-            })()}
+            {panel.extractionReport?.extractionPath==="pdf-native"&&(
+              <span title="Extraction used PDF native input (Anthropic's high-accuracy document API)."
+                style={{background:"#0d2a18",border:"1px solid #22c55e88",color:"#86efac",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
+                PDF native
+              </span>
+            )}
             {/* DECISION(v1.19.969): BOM extraction verification badge. Reads each row's
                 `confidence` field (set by the AI per Layer 1 prompt) plus placeholder
                 markers ("?" partNumber + EXTRACTION_FAILED note) to compute how many
