@@ -41502,6 +41502,7 @@ function SupplierPortalPage({token}){
   const [openSpnDrop,setOpenSpnDrop]=useState(null); // which row's supplier PN dropdown is open (index or null)
   const [spnDropRect,setSpnDropRect]=useState(null); // bounding rect of the open dropdown button
   const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
+  const [longLeadConfirm,setLongLeadConfirm]=useState(null); // {items:[{partNumber,row,days}]} when >60d items detected
   const pdfRef=useRef(null);
 
   useEffect(()=>{
@@ -41638,7 +41639,7 @@ function SupplierPortalPage({token}){
     if(f)processFile(f);
   }
 
-  async function handleSubmit(){
+  async function handleSubmit(bypassLongLeadCheck){
     if(uploading)return;
     // DECISION(v1.19.988, supplier-portal lead-time fix): Auto-propagate the
     // order-level "Fill all Lead Times" value into any blank per-row entries
@@ -41678,6 +41679,17 @@ function SupplierPortalPage({token}){
     }else{
       if(!leadTime.trim()){arcAlert("Please enter the lead time in days ARO for this order before submitting.");return;}
     }
+    if(!bypassLongLeadCheck){
+      const lineItems=info?.lineItems||[];
+      const longItems=[];
+      lineItems.forEach((item,i)=>{
+        if(cannotSupply[i]===true)return;
+        const days=parseInt(_itemLeadTimesEffective[i])||parseInt(leadTime)||0;
+        if(days>60)longItems.push({partNumber:item.partNumber||"(no PN)",row:i+1,days});
+      });
+      if(longItems.length>0){setLongLeadConfirm({items:longItems});return;}
+    }
+    setLongLeadConfirm(null);
     setUploading(true);
     try{
       let storageUrl=null,fileName=null;
@@ -41779,7 +41791,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
     const extractedCount=Object.keys(unitPrices).filter(i=>unitPrices[i]!=='').length;
     const unmatchedRfqCount=lineItems.length-extractedCount;
     const unmatchedSupplierCount=allExtractedItems.filter(ex=>ex.confidence==='unmatched').length;
-    return(
+    return(<>
       <div style={{minHeight:"100vh",background:bg,padding:"32px 16px"}}>
         <div style={{maxWidth:1200,margin:"0 auto"}}>
           <Header/>
@@ -42085,7 +42097,44 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
           <div style={{fontSize:13,color:muted,textAlign:"center",marginTop:8,lineHeight:1.5}}>Confirming each item is helpful, but not required.<br/>Your uploaded quote will be reviewed by the Matrix Sales Team.</div>
         </div>
       </div>
-    );
+      {longLeadConfirm&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+        <div style={{background:"#fff",borderRadius:12,padding:"28px 24px",maxWidth:500,width:"100%",maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 40px rgba(0,0,0,0.3)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:16}}>
+            <span style={{fontSize:28}}>⚠️</span>
+            <span style={{fontSize:17,fontWeight:700,color:"#92400e"}}>Long Lead Times Detected</span>
+          </div>
+          <div style={{fontSize:14,color:"#44403c",marginBottom:12,lineHeight:1.5}}>
+            The following {longLeadConfirm.items.length===1?"item has a":"items have"} lead time over 60 days. Please confirm {longLeadConfirm.items.length===1?"this is":"these are"} correct before submitting.
+          </div>
+          <div style={{flex:1,overflowY:"auto",marginBottom:16,border:"1px solid #e7e5e4",borderRadius:8}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+              <thead><tr style={{background:"#fef3c7"}}>
+                <th style={{padding:"8px 10px",textAlign:"left",fontWeight:700,color:"#92400e"}}>Row</th>
+                <th style={{padding:"8px 10px",textAlign:"left",fontWeight:700,color:"#92400e"}}>Part Number</th>
+                <th style={{padding:"8px 10px",textAlign:"right",fontWeight:700,color:"#92400e"}}>Lead Time</th>
+              </tr></thead>
+              <tbody>{longLeadConfirm.items.map((it,i)=>(
+                <tr key={i} style={{borderTop:"1px solid #e7e5e4",background:i%2===0?"#fffbeb":"#fff"}}>
+                  <td style={{padding:"6px 10px",color:"#78716c"}}>{it.row}</td>
+                  <td style={{padding:"6px 10px",fontFamily:"monospace",fontWeight:600,color:"#1c1917"}}>{it.partNumber}</td>
+                  <td style={{padding:"6px 10px",textAlign:"right",fontWeight:700,color:"#dc2626"}}>{it.days} days</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={()=>setLongLeadConfirm(null)}
+              style={{flex:1,background:"#fff",border:"1px solid #d6d3d1",color:"#44403c",padding:"12px",borderRadius:8,fontSize:14,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+              ← Go Back & Fix
+            </button>
+            <button onClick={()=>handleSubmit(true)}
+              style={{flex:1,background:"#dc2626",border:"none",color:"#fff",padding:"12px",borderRadius:8,fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              Confirm & Submit
+            </button>
+          </div>
+        </div>
+      </div>}
+    </>);
   }
 
   // ── UPLOAD PHASE ──
