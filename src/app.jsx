@@ -16307,6 +16307,8 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         const ltOnly=!!leadTimeOnly[group.vendorName];
         const lineItemsPayload=group.items.map(i=>{
           const base={partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""};
+          if(i.leadTimeDays!=null)base.referenceLeadTimeDays=+i.leadTimeDays;
+          if(i.leadTimeSource)base.referenceLeadTimeSource=i.leadTimeSource;
           if(ltOnly){
             base.referencePrice=i.unitPrice!=null?+i.unitPrice:null;
             base.referencePriceSource=i.unitPrice!=null?"bc":null;
@@ -16363,10 +16365,10 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         await sendGraphEmail(graphToken,to,subject,html,pdfBase64,pdfName);
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent"}}));
         group.items.forEach(item=>sentItemIds.push(item.id));
-        historyEntries.push({rfqNum,vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:true,skipped:false,uploadToken:uploadToken||null});
+        historyEntries.push({rfqNum,vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id,leadTimeDays:i.leadTimeDays!=null?+i.leadTimeDays:null})),sent:true,skipped:false,uploadToken:uploadToken||null});
       }catch(e){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:String(e.message||e)}}));
-        historyEntries.push({rfqNum:makeRfqNum(group.vendorName),vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:false,error:String(e.message||e)});
+        historyEntries.push({rfqNum:makeRfqNum(group.vendorName),vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id,leadTimeDays:i.leadTimeDays!=null?+i.leadTimeDays:null})),sent:false,skipped:false,error:String(e.message||e)});
       }
     }
     // Save to Firestore history
@@ -17156,8 +17158,8 @@ function RfqHistoryModal({uid,projectId,onClose}){
                       </div>
                       {expandedItems[h.id+"-"+i]&&(e.items||[]).length>0&&<div style={{marginLeft:22,marginTop:4,marginBottom:4,background:"#0a0a14",border:"1px solid #3d609044",borderRadius:4,padding:"4px 8px",fontSize:10}}>
                         <table style={{width:"100%",borderCollapse:"collapse"}}>
-                          <thead><tr style={{color:"#94a3b8"}}><th style={{textAlign:"left",padding:"2px 6px",fontWeight:600}}>Part #</th><th style={{textAlign:"left",padding:"2px 6px",fontWeight:600}}>Qty</th></tr></thead>
-                          <tbody>{(e.items||[]).map((it,j)=><tr key={j}><td style={{padding:"1px 6px",color:"#e2e8f0"}}>{it.partNumber||"—"}</td><td style={{padding:"1px 6px",color:"#94a3b8"}}>{it.qty||1}</td></tr>)}</tbody>
+                          <thead><tr style={{color:"#94a3b8"}}><th style={{textAlign:"left",padding:"2px 6px",fontWeight:600}}>Part #</th><th style={{textAlign:"left",padding:"2px 6px",fontWeight:600}}>Qty</th><th style={{textAlign:"right",padding:"2px 6px",fontWeight:600}}>Lead</th></tr></thead>
+                          <tbody>{(e.items||[]).map((it,j)=><tr key={j}><td style={{padding:"1px 6px",color:"#e2e8f0"}}>{it.partNumber||"—"}</td><td style={{padding:"1px 6px",color:"#94a3b8"}}>{it.qty||1}</td><td style={{padding:"1px 6px",textAlign:"right",color:it.leadTimeDays!=null?"#fbbf24":"#475569",fontSize:10}}>{it.leadTimeDays!=null?it.leadTimeDays+"d":"—"}</td></tr>)}</tbody>
                         </table>
                       </div>}
                     </div>
@@ -17186,6 +17188,7 @@ function RfqHistoryModal({uid,projectId,onClose}){
                     <th style={{padding:"4px 8px",textAlign:"left",color:"#94a3b8",fontWeight:600}}>Supplier PN</th>
                     <th style={{padding:"4px 8px",textAlign:"left",color:"#94a3b8",fontWeight:600}}>Description</th>
                     <th style={{padding:"4px 8px",textAlign:"right",color:"#94a3b8",fontWeight:600}}>Price</th>
+                    <th style={{padding:"4px 8px",textAlign:"right",color:"#94a3b8",fontWeight:600}}>Lead</th>
                     <th style={{padding:"4px 8px",textAlign:"left",color:"#94a3b8",fontWeight:600}}>Notes</th>
                   </tr></thead>
                   <tbody>{(sub.lineItems||[]).map((item,i)=>(
@@ -17194,6 +17197,7 @@ function RfqHistoryModal({uid,projectId,onClose}){
                       <td style={{padding:"3px 8px",fontFamily:"monospace",color:"#94a3b8",fontSize:10}}>{item.supplierPartNumber||"—"}</td>
                       <td style={{padding:"3px 8px",color:"#94a3b8",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.description||"—"}</td>
                       <td style={{padding:"3px 8px",textAlign:"right",color:item.cannotSupply?"#ef4444":item.unitPrice!=null?"#4ade80":"#475569",fontWeight:700}}>{item.cannotSupply?"N/A":fmtPrice(item.unitPrice)}</td>
+                      <td style={{padding:"3px 8px",textAlign:"right",color:item.leadTimeDays!=null?"#fbbf24":"#475569",fontWeight:600,fontSize:10}}>{item.cannotSupply?"—":item.leadTimeDays!=null?item.leadTimeDays+"d":"—"}</td>
                       <td style={{padding:"3px 8px",color:"#94a3b8",fontSize:10,maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.supplierNote||"—"}</td>
                     </tr>
                   ))}</tbody>
@@ -41870,25 +41874,32 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                   const v=e.target.value;
                   if(v!==''&&!/^\d*$/.test(v))return; // reject non-digit characters
                   setLeadTime(v);
-                  // v1.19.995: OVERWRITE every per-row entry with the new
-                  // fill-all value (not just blanks). Per-row overrides made
-                  // after this still take precedence in the order the user
-                  // edits them — they edit the fill-all first, then any
-                  // per-row exceptions. When fill-all is cleared (v===""),
-                  // we leave per-row values alone — the "Clear all" button
-                  // is the explicit wipe action.
                   if(v.trim()){
                     const lineItems=info?.lineItems||[];
-                    const next={};
-                    lineItems.forEach((_,i)=>{next[i]=v;});
-                    setItemLeadTimes(next);
+                    setItemLeadTimes(prev=>{
+                      const next={...prev};
+                      lineItems.forEach((_,i)=>{
+                        if(!next[i]||String(next[i]).trim()==='')next[i]=v;
+                      });
+                      return next;
+                    });
                   }
                 }}
                 onFocus={e=>e.target.select()}
                 onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
                 style={{width:90,...inp,border:`1px solid ${(!info?.leadTimeOnly&&!leadTime.trim())?"#fca5a5":"#d97706"}`,background:"#fff"}}/>
               <span style={{fontSize:13,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>days ARO {!info?.leadTimeOnly&&<span style={{color:"#dc2626"}}>*</span>}</span>
-              {/* v1.19.995: Clear all — wipes fill-all + every per-row entry */}
+              <button onClick={()=>{
+                  if(!leadTime.trim())return;
+                  const lineItems=info?.lineItems||[];
+                  const next={};
+                  lineItems.forEach((_,i)=>{next[i]=leadTime;});
+                  setItemLeadTimes(next);
+                }}
+                title="Override every per-row Lead Time with the fill-all value"
+                style={{background:leadTime.trim()?"#fff":"#f5f5f4",border:`1px solid ${leadTime.trim()?"#d97706":"#d6d3d1"}`,color:leadTime.trim()?"#92400e":"#a8a29e",fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:6,cursor:leadTime.trim()?"pointer":"default",fontFamily:"inherit",whiteSpace:"nowrap",opacity:leadTime.trim()?1:0.6}}>
+                Override All
+              </button>
               <button onClick={()=>{setLeadTime("");setItemLeadTimes({});}}
                 title="Clear the fill-all value and every per-row Lead Time below"
                 style={{background:"#fff",border:`1px solid #d97706`,color:"#92400e",fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:6,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
