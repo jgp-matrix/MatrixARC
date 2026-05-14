@@ -28613,6 +28613,7 @@ function CADLinkSendModal({project,onClose}){
 // DECISION(v1.19.338): Extracted as a proper component (not IIFE) because React hooks require
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
 function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,ownerPriorityActive}){
+  function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
   const [sendMode,setSendMode]=useState("new");
   const [threadSearch,setThreadSearch]=useState(project.quote?.company||project.bcCustomerName||project.name||"");
   const [threadResults,setThreadResults]=useState([]);
@@ -28788,7 +28789,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       // Sales rep needs to know "email went out but lock didn't save" vs "email never sent".
       const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true};
       try{
-        onUpdate(upd);safeSave(uid,upd);
+        persistProject(upd);
       }catch(saveErr){
         console.error("[QUOTE SEND] Firestore save failed after email succeeded:",saveErr);
         arcAlert(`⚠ Email was sent successfully to ${sentTo}, but the quote-lock record failed to save (${saveErr.message}). The quote may still appear unsent in the dashboard. Refresh and if the lock is missing, click Send again (the customer will get a duplicate — let them know).`);
@@ -29239,6 +29240,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [newContactPhone,setNewContactPhone]=useState("");
   const [creatingContact,setCreatingContact]=useState(false);
   const [newContactErr,setNewContactErr]=useState("");
+  function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
   // Customer review state
   const [customerReviewData,setCustomerReviewData]=useState(null);
   const [showCustomerResponses,setShowCustomerResponses]=useState(false);
@@ -29297,7 +29299,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           bcCustomerName:_bcName,
           ..._shouldUpdateQuoteCompany?{quote:{...(project.quote||{}),company:_bcName}}:{}
         };
-        onUpdate(upd);safeSave(uid,upd);
+        persistProject(upd);
       }catch(e){}
     })();
   },[project.id]);
@@ -29327,8 +29329,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     if(dirty){
       console.log("SCRUB: clearing dupe crosses from",project.name);
       const updated={...project,panels:cleaned};
-      onUpdate(updated);
-      safeSave(uid,updated);
+      persistProject(updated);
     }
   },[project.id]);
 
@@ -29336,12 +29337,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const n=(project.panels||[]).length+1;
     const newPanel={id:'panel-'+Date.now(),name:`Panel ${n}`,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'};
     const updated={...project,panels:[...(project.panels||[]),newPanel]};
-    onUpdate(updated);
-    // Persist immediately. Without this, the new panel is React-only until the
-    // user drops drawings and confirms — and any code path that overwrites
-    // React state from Firestore in the interim (e.g. firstSnapshot at the
-    // project-doc onSnapshot listener firing on re-subscribe) drops the panel.
-    safeSave(uid,updated);
+    persistProject(updated);
     // DECISION(v1.19.1005, TODO #22): Mirror the BC task-block scaffolding that
     // New Project creates via bcCreatePanelTaskStructure. Without this, the
     // new panel has no 20N00/20N10/20N20/20N99 tasks in BC and downstream sync
@@ -29371,8 +29367,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const card=createServiceCard(lineType,existing);
     if(!card)return;
     const updated={...project,serviceCards:[...existing,card]};
-    onUpdate(updated);
-    safeSave(uid,updated);
+    persistProject(updated);
     _syncServiceCardToBc(card,"create");
   }
   // DECISION(v1.19.917, Step C): Delete a service Quote Line. Confirmation
@@ -29383,8 +29378,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const label=SERVICE_CARD_LABELS[card.lineType]||"Service";
     if(!(await arcConfirm(`Delete this ${label} line?`,{destructive:true,okLabel:"Delete"})))return;
     const updated={...project,serviceCards:(project.serviceCards||[]).filter(sc=>sc.id!==id)};
-    onUpdate(updated);
-    safeSave(uid,updated);
+    persistProject(updated);
   }
   // DECISION(v1.19.918, Step D): Update a service Quote Line in place.
   // Persisted via the same safeSave path as addServiceCard / deleteServiceCard.
@@ -29394,8 +29388,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   function updateServiceCard(updatedCard){
     if(!updatedCard||!updatedCard.id)return;
     const updated={...project,serviceCards:(project.serviceCards||[]).map(sc=>sc.id===updatedCard.id?updatedCard:sc)};
-    onUpdate(updated);
-    safeSave(uid,updated);
+    persistProject(updated);
     _syncServiceCardToBc(updatedCard,"update");
   }
   // BC sync helper — used by both add and update paths.
@@ -29427,7 +29420,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     // Mark panel as deleted so saveProjectPanel won't re-add it
     if(!window._deletedPanelIds)window._deletedPanelIds=new Set();
     window._deletedPanelIds.add(id);
-    onUpdate({...project,panels:(project.panels||[]).filter(p=>p.id!==id)});
+    const updated={...project,panels:(project.panels||[]).filter(p=>p.id!==id)};
+    persistProject(updated);
   }
   async function saveImmediatePanel(panelId,updatedPanel){
     // Skip notify — local state is already correct from onUpdate, don't overwrite with Firestore read
@@ -29488,8 +29482,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   async function saveName(){
     if(!draftName.trim())return;
     const updated={...project,name:draftName.trim()};
-    onUpdate(updated);
-    await saveProject(uid,updated);
+    await persistProject(updated);
     setEditingName(false);
     if(project.bcProjectId){
       setBcSyncMsg({ok:null,text:"Syncing to BC…"});
@@ -29511,8 +29504,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
       if(result.validation||result.laborData){const bom=appendDefaultBomItems(p.bom||[]);panels[i]={...p,bom,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};}
     }
     const updatedProject={...project,panels};
-    onUpdate(updatedProject);
-    await saveProject(uid,updatedProject);
+    await persistProject(updatedProject);
     setValidating(false);
     setValidateMsg("");
   }
@@ -29619,7 +29611,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                   const upd={...project,preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
-                  onUpdate(upd);safeSave(uid,upd);
+                  persistProject(upd);
                   // Re-stamp drawings as QUOTE READY and upload to BC (archive old AS-QUOTED)
                   if(bcUploadRef?.current){
                     try{await bcUploadRef.current({stampMode:"quote_ready",archiveOld:true});}catch(e){console.warn("QUOTE READY stamp upload failed:",e);}
@@ -29630,7 +29622,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   const notes=await arcPrompt("Notes for the salesperson (reason for return):",{multiline:true,placeholder:"What needs to be fixed?",okLabel:"Return"});
                   if(notes===null)return;
                   const upd={...project,preReviewStatus:"rejected",preReviewNotes:notes};
-                  onUpdate(upd);safeSave(uid,upd);
+                  persistProject(upd);
                 }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✗ Return</button>
               </div>
             )}
@@ -29640,7 +29632,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           <div style={{marginBottom:12,background:"#2a0a0a",border:"2px solid #ef4444",borderRadius:10,padding:"14px 18px"}}>
             <div style={{fontSize:14,fontWeight:800,color:"#ef4444"}}>⚠ PRE-REVIEW RETURNED FOR CHANGES</div>
             {project.preReviewNotes&&<div style={{fontSize:12,color:"#fca5a5",marginTop:4}}>{project.preReviewNotes}</div>}
-            <button onClick={()=>{const upd={...project,preReviewStatus:null,preReviewNotes:null};onUpdate(upd);safeSave(uid,upd);}} style={btn("#1a1020","#a78bfa",{fontSize:12,fontWeight:700,marginTop:8,padding:"4px 14px"})}>Re-submit for Review</button>
+            <button onClick={()=>{const upd={...project,preReviewStatus:null,preReviewNotes:null};persistProject(upd);}} style={btn("#1a1020","#a78bfa",{fontSize:12,fontWeight:700,marginTop:8,padding:"4px 14px"})}>Re-submit for Review</button>
           </div>
         )}
         {project.postReviewStatus==="pending"&&(
@@ -29665,7 +29657,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                   const upd={...project,postReviewStatus:"approved",postReviewApprovedAt:Date.now(),postReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
-                  onUpdate(upd);safeSave(uid,upd);
+                  persistProject(upd);
                   // Re-stamp drawings as READY TO PRODUCE and upload to BC (archive QUOTE READY)
                   if(bcUploadRef?.current){
                     try{await bcUploadRef.current({stampMode:"ready_to_produce",archiveOld:true});}catch(e){console.warn("READY TO PRODUCE stamp upload failed:",e);}
@@ -29676,7 +29668,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   const notes=await arcPrompt("Notes (reason for return):",{multiline:true,placeholder:"What needs to be fixed?",okLabel:"Return"});
                   if(notes===null)return;
                   const upd={...project,postReviewStatus:"rejected",postReviewNotes:notes};
-                  onUpdate(upd);safeSave(uid,upd);
+                  persistProject(upd);
                 }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✗ Return</button>
               </div>
             )}
@@ -29725,7 +29717,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   📐 Bake & Re-upload to BC
                 </button>
               )}
-              <button onClick={()=>{const upd={...project,customerReviewDismissed:true};onUpdate(upd);safeSave(uid,upd);}} style={btn("#1a1020","#94a3b8",{fontSize:12,fontWeight:600,border:"1px solid #334155",padding:"6px 12px"})}>Dismiss</button>
+              <button onClick={()=>{const upd={...project,customerReviewDismissed:true};persistProject(upd);}} style={btn("#1a1020","#94a3b8",{fontSize:12,fontWeight:600,border:"1px solid #334155",padding:"6px 12px"})}>Dismiss</button>
             </div>
           </div>
         )}
@@ -29766,7 +29758,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                               const val=(e.target.textContent||"").trim();
                               if(val&&val!==project.bcCustomerName){
                                 const upd={...project,bcCustomerName:val,quote:{...(project.quote||{}),company:val}};
-                                onUpdate(upd);safeSave(uid,upd);
+                                persistProject(upd);
                                 // Update BC project card customer name if connected
                                 if(project.bcProjectNumber&&_bcToken)bcPatchJobOData(project.bcProjectNumber,{Bill_to_Name:val}).catch(()=>{});
                               }
@@ -29819,7 +29811,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                           // Auto-select the new contact
                           const upd={...project,bcContactNo:c.number,bcContactName:c.displayName,bcContactEmail:c.email,bcContactPhone:c.phone,
                             quote:{...(project.quote||{}),contact:c.displayName,email:c.email||"",phone:c.phone||""}};
-                          onUpdate(upd);safeSave(uid,upd);
+                          persistProject(upd);
                           if(project.bcProjectNumber&&_bcToken)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:c.number}).catch(()=>{});
                           setShowNewContact(false);setNewContactName("");setNewContactEmail("");setNewContactPhone("");
                         }catch(e){setNewContactErr(e.message||"Failed");}
@@ -29842,7 +29834,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                           // DECISION(v1.19.402): Always use the selected contact's email/phone — never fall back
                           // to previous person's info. If the contact has no email, leave it blank.
                           quote:{...(project.quote||{}),contact:c?c.displayName:"",email:c?.email||"",phone:c?.phone||""}};
-                        onUpdate(upd);safeSave(uid,upd);
+                        persistProject(upd);
                         if(project.bcProjectNumber&&_bcToken&&no)bcPatchJobOData(project.bcProjectNumber,{Sell_to_Contact_No:no}).catch(()=>{});
                       }} style={{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",minWidth:220,maxWidth:360}}>
                         <option value="">— Select Person —</option>
@@ -29880,7 +29872,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     },
                       React.createElement("input",{type:"checkbox",checked:!!project.ownerLockActive,onChange:function(e){
                         var upd=Object.assign({},project,{ownerLockActive:e.target.checked,updatedAt:Date.now()});
-                        onUpdate(upd);safeSave(uid,upd);
+                        persistProject(upd);
                       },style:{cursor:"pointer"}}),
                       React.createElement("span",null,"🔒 Hold priority while I'm away"),
                       project.ownerLockActive&&React.createElement("span",{style:{fontSize:10,color:"#fcd34d",fontWeight:700,background:"#3a2800",borderRadius:4,padding:"1px 6px",marginLeft:4}},"ACTIVE")
@@ -29916,7 +29908,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                           if(cached.E_Mail)upd.quote.salesEmail=cached.E_Mail;
                           if(cached.Phone_No)upd.quote.salesPhone=cached.Phone_No;
                         }
-                        onUpdate(upd);safeSave(uid,upd);
+                        persistProject(upd);
                         if(bcField&&project.bcProjectNumber&&_bcToken){var patch={};patch[bcField]=code;bcPatchJobOData(project.bcProjectNumber,patch).catch(function(){});}
                       },style:{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:150}},opts)
                     );
@@ -30793,7 +30785,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     if(!hasDrawings){arcAlert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
                     // Set review status
                     const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid};
-                    onUpdate(upd);safeSave(uid,upd);
+                    persistProject(upd);
                     if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                     // Look up designer email — check Salesperson cache first (has E_Mail), then BC User page
                     try{
@@ -30894,7 +30886,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         if(match.displayName)contactName=match.displayName;
                         // Update project if email was missing
                         if(match.email&&!project.bcContactEmail){
-                          onUpdate({...project,bcContactEmail:match.email,quote:{...(project.quote||{}),email:match.email}});
+                          persistProject({...project,bcContactEmail:match.email,quote:{...(project.quote||{}),email:match.email}});
                         }
                       }
                     }catch(e){}
@@ -31158,7 +31150,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             <button onClick={()=>setShowUnlockConfirm(false)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
             <button onClick={()=>{
               const upd={...project,quoteLocked:false,quoteRev:(project.quoteRev||0)+1};
-              onUpdate(upd);safeSave(uid,upd);
+              persistProject(upd);
               setShowUnlockConfirm(false);
             }} style={{background:"#7c2d12",border:"1px solid #f59e0b",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Unlock &amp; Edit</button>
           </div>
@@ -31235,7 +31227,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             <button onClick={()=>{setShowCustomerResponses(false);setShowDrawingReview(true);setReviewPageIdx(0);}} style={{background:"#a78bfa",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📐 Open Drawing Review</button>
             <button onClick={()=>{
               const upd={...project,customerReviewReviewed:true,customerReviewReviewedAt:Date.now()};
-              onUpdate(upd);safeSave(uid,upd);
+              persistProject(upd);
               setShowCustomerResponses(false);
             }} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>✓ Mark as Reviewed</button>
             <button onClick={()=>setShowCustomerResponses(false)} style={{background:"transparent",color:C.muted,border:"1px solid "+C.border,borderRadius:7,padding:"8px 16px",fontSize:13,cursor:"pointer"}}>Close</button>
