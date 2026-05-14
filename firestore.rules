@@ -219,6 +219,7 @@ service cloud.firestore {
         let allowedKeys = [
           'preReviewStatus','preReviewApprovedAt','preReviewApprovedBy','preReviewNotes',
           'preReviewSubmittedAt','preReviewSubmittedBy',
+          'preReviewAssignedTo','preReviewAssignedToName',
           'postReviewStatus','postReviewApprovedAt','postReviewApprovedBy','postReviewNotes',
           'updatedAt','updatedBy','schemaVersion','lastQuoteHash','quoteRev'
         ];

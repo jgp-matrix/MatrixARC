@@ -29276,6 +29276,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [creatingContact,setCreatingContact]=useState(false);
   const [newContactErr,setNewContactErr]=useState("");
   function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
+  const [showReassignPicker,setShowReassignPicker]=useState(false);
   // Customer review state
   const [customerReviewData,setCustomerReviewData]=useState(null);
   const [showCustomerResponses,setShowCustomerResponses]=useState(false);
@@ -29612,6 +29613,13 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   }
   // ── END AUTO-ASSIGN ─────────────────────────────────────────────────────
 
+  // Pre-review assignment: who currently owns the review (assignee, or fallback to project designer)
+  const _isPreReviewAssignee=project.preReviewAssignedTo
+    ?project.preReviewAssignedTo===_appCtx.uid
+    :((project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid)||project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code));
+  const _preReviewAssigneeName=project.preReviewAssignedToName||project.bcDesigner||"—";
+  const _preReviewWasReassigned=!!(project.preReviewAssignedTo&&project.bcDesignerUid&&project.preReviewAssignedTo!==project.bcDesignerUid);
+
   return(<>
     <div style={{height:"calc(100vh - 130px)",display:"flex",background:C.bg,overflow:"hidden"}}>
         <div style={{flex:1,overflowY:"auto",padding:24,minWidth:0}}>
@@ -29621,44 +29629,79 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <span style={{fontSize:20}}>📐</span>
             <div style={{flex:1,minWidth:200}}>
-              {/* DECISION(v1.19.761): Banner reads differently for reviewers vs. sales. */}
-              {(_appCtx.role==="admin"||hasPermission("reviewer"))?(<>
+              {(_appCtx.role==="admin"||hasPermission("reviewer")||_isPreReviewAssignee)?(<>
                 <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>📐 PRE-QUOTE REVIEW IN PROGRESS — REVIEWER EDIT MODE</div>
-                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Engineer/Designer: {project.bcDesigner||"—"}. You can edit BOMs, prices, and drawings before approving or returning to Sales.</div>
+                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. {_preReviewWasReassigned?"Reassigned to: "+_preReviewAssigneeName:"Engineer/Designer: "+(project.bcDesigner||"—")}. You can edit BOMs, prices, and drawings before approving or returning to Sales.</div>
               </>):(<>
                 <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 PRE-QUOTE REVIEW REQUESTED — EDITS LOCKED</div>
-                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. Engineer/Designer: {project.bcDesigner||"—"}. Edits resume once the reviewer approves or returns the project.</div>
+                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. {_preReviewWasReassigned?"Reassigned to: "+_preReviewAssigneeName:"Engineer/Designer: "+(project.bcDesigner||"—")}. Edits resume once the reviewer approves or returns the project.</div>
               </>)}
             </div>
-            {/* DECISION(v1.19.756): Approve/Return bypass `readOnly` (which is true during
-                pending review) — these buttons ARE the way to release the lock, so they
-                must stay clickable. Gated only on the reviewer's role.
-                DECISION(v1.19.758): Eligibility broadened to also include anyone with
-                the granular `permissions.reviewer` flag (set in the Team & Permissions
-                modal). Admins still pass via the existing role check. */}
-            {/* DECISION(v1.19.770): Designer-edit-review eligibility prefers the new
-                bcDesignerUid match (set when the project's Designer is a linked ARC
-                member). Falls back to the legacy displayName→BC code match for projects
-                created before the BC mapping cache existed. Admin + reviewer paths
-                unchanged. */}
-            {!isReadOnly()&&((project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid)||project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code)||_appCtx.role==="admin"||hasPermission("reviewer"))&&(
-              <div style={{display:"flex",gap:6}}>
-                <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
-                  const upd={...project,preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
-                  persistProject(upd);
-                  // Re-stamp drawings as QUOTE READY and upload to BC (archive old AS-QUOTED)
-                  if(bcUploadRef?.current){
-                    try{await bcUploadRef.current({stampMode:"quote_ready",archiveOld:true});}catch(e){console.warn("QUOTE READY stamp upload failed:",e);}
-                  }
-                }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✓ Approve</button>
-                <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
-                  const notes=await arcPrompt("Notes for the salesperson (reason for return):",{multiline:true,placeholder:"What needs to be fixed?",okLabel:"Return"});
-                  if(notes===null)return;
-                  const upd={...project,preReviewStatus:"rejected",preReviewNotes:notes};
-                  persistProject(upd);
-                }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✗ Return</button>
+            {!isReadOnly()&&(_isPreReviewAssignee||_appCtx.role==="admin"||hasPermission("reviewer"))&&(
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                <div style={{display:"flex",gap:6}}>
+                  <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                    onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
+                    const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",updatedAt:Date.now(),updatedBy:uid};
+                    onUpdate({...project,...reviewFields});
+                    const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
+                    try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
+                    catch(e){console.error("Pre-review approve save failed:",e);onUpdate({...project});}
+                    if(bcUploadRef?.current){
+                      try{await bcUploadRef.current({stampMode:"quote_ready",archiveOld:true});}catch(e){console.warn("QUOTE READY stamp upload failed:",e);}
+                    }
+                  }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✓ Approve</button>
+                  <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                    onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
+                    const notes=await arcPrompt("Notes for the salesperson (reason for return):",{multiline:true,placeholder:"What needs to be fixed?",okLabel:"Return"});
+                    if(notes===null)return;
+                    const reviewFields={preReviewStatus:"rejected",preReviewNotes:notes,updatedAt:Date.now(),updatedBy:uid};
+                    onUpdate({...project,...reviewFields});
+                    const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
+                    try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
+                    catch(e){console.error("Pre-review return save failed:",e);onUpdate({...project});}
+                  }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✗ Return</button>
+                  <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Reassign this review to another engineer"}
+                    onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>setShowReassignPicker(!showReassignPicker)}
+                    style={btn("#1a1040","#94a3b8",{fontSize:13,fontWeight:700,border:"1px solid #94a3b844",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>↗ Reassign</button>
+                </div>
+                {showReassignPicker&&(
+                  <select autoFocus style={{background:"#1e1b4b",color:"#e2e8f0",border:"1px solid #a78bfa",borderRadius:6,padding:"6px 10px",fontSize:13,width:"100%"}}
+                    value="" onChange={async(e)=>{
+                    const newUid=e.target.value;if(!newUid)return;
+                    const match=(window._arcDesignerCache||[]).find(d=>(window._arcUidForBcUser?.(d.Code))===newUid);
+                    const newName=match?.Name||newUid;
+                    const reviewFields={preReviewAssignedTo:newUid,preReviewAssignedToName:newName,updatedAt:Date.now(),updatedBy:uid};
+                    onUpdate({...project,...reviewFields});
+                    setShowReassignPicker(false);
+                    const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
+                    try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
+                    catch(e2){console.error("Pre-review reassign save failed:",e2);onUpdate({...project});}
+                    // Notify the new assignee
+                    try{
+                      await fbDb.collection(`users/${newUid}/notifications`).add({
+                        type:"pre_review",title:"Pre-Quote Review Reassigned to You",
+                        body:`${project.bcProjectNumber||""} — ${project.name||""} review reassigned by ${fbAuth.currentUser?.displayName||"a team member"}`,
+                        projectId:project.id,projectName:project.name||"",createdAt:Date.now(),read:false,from:uid});
+                      // Email via Graph
+                      const memberSnap=await fbDb.collection(`companies/${_appCtx.companyId}/members`).doc(newUid).get();
+                      const memberEmail=memberSnap.exists?memberSnap.data().email:null;
+                      if(memberEmail){
+                        const graphToken=await acquireGraphToken();
+                        if(graphToken){
+                          const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Reassigned</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">This review has been reassigned to you by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p><a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
+                          await sendGraphEmail(graphToken,memberEmail,`Pre-Quote Review Reassigned: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
+                        }
+                      }
+                    }catch(ne){console.warn("Reassign notification failed:",ne);}
+                  }}>
+                    <option value="">Select engineer…</option>
+                    {(window._arcDesignerCache||[]).filter(d=>{const dUid=window._arcUidForBcUser?.(d.Code);return dUid&&dUid!==_appCtx.uid;}).map(d=>{
+                      const dUid=window._arcUidForBcUser(d.Code);
+                      return <option key={d.Code} value={dUid}>{d.Name}</option>;
+                    })}
+                  </select>
+                )}
               </div>
             )}
           </div>
@@ -30812,14 +30855,15 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 {!readOnly&&(()=>{
                   const reviewStatus=project.preReviewStatus;
                   if(reviewStatus==="approved")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:C.green,padding:"4px 0"}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</div>;
-                  if(reviewStatus==="pending")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#a78bfa",padding:"4px 0",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting Engineer/Designer approval</div>;
+                  if(reviewStatus==="pending")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#a78bfa",padding:"4px 0",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting {_preReviewAssigneeName} approval</div>;
                   return <button onClick={async()=>{
                     const designerCode=project.bcDesignerCode;
                     if(!designerCode){arcAlert("No Engineer/Designer assigned to this project. Assign an Engineer/Designer first.");return;}
                     const hasDrawings=(project.panels||[]).some(p=>(p.pages||[]).length>0);
                     if(!hasDrawings){arcAlert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
-                    // Set review status
-                    const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid};
+                    // Set review status + initial assignment to the project's designer
+                    const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid,
+                      preReviewAssignedTo:project.bcDesignerUid||null,preReviewAssignedToName:project.bcDesigner||project.bcDesignerCode||null};
                     persistProject(upd);
                     if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                     // Look up designer email — check Salesperson cache first (has E_Mail), then BC User page
@@ -31908,8 +31952,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // review-locked state — they need to edit BOMs / prices / drawings during the review
   // pass to implement engineering changes before approving. Sales / non-reviewer users
   // remain blocked. Status flip out of "pending" auto-clears the lock for everyone.
+  const _outerIsPreReviewAssignee=project.preReviewStatus==="pending"&&(
+    project.preReviewAssignedTo?project.preReviewAssignedTo===_appCtx.uid
+    :(project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid));
   const reviewReadOnly=(project.preReviewStatus==="pending"||project.postReviewStatus==="pending")
-                       &&!(_appCtx.role==="admin"||hasPermission("reviewer"));
+                       &&!(_appCtx.role==="admin"||hasPermission("reviewer")||_outerIsPreReviewAssignee);
   // DECISION(v1.19.834, ECO Stage A.3): scope-aware readOnly. The base
   // computation (lock/sent/review) still applies; on top of that, when ECOs
   // exist on the project we add scope-derived rules:
