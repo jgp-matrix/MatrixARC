@@ -875,7 +875,7 @@ exports.extractSupplierQuotePricing = functions
 
 MATCHING RULES:
 - Ignore spaces, dashes, case: "ARL 449" = "ARL449"
-- Strip manufacturer prefixes: "HOFF CEL550M" → "CEL550M"
+- Strip manufacturer prefixes: "HOFF CEL550M" → "CEL550M", "PHXCT 2891035" → "2891035", "ABB 1SVR405..." → "1SVR405..."
 - Substring match: requested part# inside supplier part# = match
 - Match by description if part numbers differ but item is clearly the same
 - "partNumber" = ALWAYS use the exact part# from the requested list (never the supplier's version)
@@ -1758,7 +1758,7 @@ const BC_MFR_MAP = [
   {code:'RITTAL',terms:['rittal']},
   {code:'HAMMOND',terms:['hammond']},
   {code:'SAGINAW',terms:['saginaw','saginaw control']},
-  {code:'PHX',terms:['phoenix contact','phoenix','phoenixcontact']},
+  {code:'PHX',terms:['phoenix contact','phoenix','phoenixcontact','phxct']},
   {code:'WEIDMULLER',terms:['weidmuller','weidmüller']},
   {code:'TURCK',terms:['turck','banner']},
   {code:'OMRON',terms:['omron']},
