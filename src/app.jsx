@@ -12141,7 +12141,27 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         const withCompanions=splitCompanionParts(sorted);
         // DECISION(v1.19.638): Flag column-alignment qty errors (e.g. qty=143 on a window kit).
         flagSuspectQuantities(withCompanions);
-        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes}};
+        // DECISION(v1.19.1056): Final sequence gap check on the POST-PROCESSED BOM.
+        // The per-page L3 check catches gaps in the raw AI output, but items can also
+        // be lost during dedup, non-BOM filtering, or companion splitting. This check
+        // runs on the final BOM that gets saved — if itemNo gaps exist, the user MUST
+        // be warned so they can spot-check.
+        const finalItemNos=withCompanions.map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10)).filter(n=>!isNaN(n)&&n>0);
+        let finalSequenceGaps=[];
+        let finalMaxItemNo=0;
+        if(finalItemNos.length>=3){
+          const sortedNos=[...new Set(finalItemNos)].sort((a,b)=>a-b);
+          finalMaxItemNo=sortedNos[sortedNos.length-1];
+          for(let i=0;i<sortedNos.length-1;i++){
+            if(sortedNos[i+1]-sortedNos[i]>1){
+              for(let g=sortedNos[i]+1;g<sortedNos[i+1];g++)finalSequenceGaps.push(g);
+            }
+          }
+        }
+        if(finalSequenceGaps.length>0){
+          console.warn(`[BOM FINAL] sequence gaps in final BOM: items ${finalSequenceGaps.join(", ")} missing (${withCompanions.length} items, max itemNo ${finalMaxItemNo})`);
+        }
+        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes,finalSequenceGaps,finalMaxItemNo,finalItemCount:withCompanions.length}};
       }).catch(ex=>{
         console.error("BOM extraction failed:",ex);
         // v1.19.983: surface the catch-all failure to remote debug logs so
@@ -12270,6 +12290,9 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       // either an image-quality issue, a page-type misclassification, or a
       // legitimate "wrong-page-type" result.
       perPageOutcomes:mergeStats.perPageOutcomes||null,
+      finalSequenceGaps:mergeStats.finalSequenceGaps||[],
+      finalMaxItemNo:mergeStats.finalMaxItemNo||0,
+      finalItemCount:mergeStats.finalItemCount||0,
       timestamp:Date.now(),
       version:APP_VERSION,
     }:null;
@@ -19971,6 +19994,12 @@ function ScanResultsBanner({panel}){
   if(auditCorrectionCount>0&&auditCleanOnRound)concerns.push(`audit auto-corrected ${auditCorrectionCount} row${auditCorrectionCount>1?"s":""}`);
   if(auditFlagged.length>0)concerns.push(`audit: ${auditFlagged.length} unresolved error${auditFlagged.length>1?"s":""}`);
   if(auditMissing.length>0)concerns.push(`audit: ${auditMissing.length} missing row${auditMissing.length>1?"s":""} could not be added`);
+  // DECISION(v1.19.1056): Warn user about missing BOM line items (sequence gaps).
+  const seqGaps=r.finalSequenceGaps||[];
+  if(seqGaps.length>0){
+    const sample=seqGaps.slice(0,10).join(", ");
+    concerns.push(`⚠ ${seqGaps.length} missing item${seqGaps.length>1?"s":""} — line${seqGaps.length>1?"s":""} ${sample}${seqGaps.length>10?` (+${seqGaps.length-10} more)`:""} not found in extraction`);
+  }
   if(concerns.length===0)return null;
   const fmtTs=()=>{try{return new Date(r.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});}catch(e){return "";}};
   return(
@@ -20040,6 +20069,20 @@ function ScanResultsBanner({panel}){
           )}
           {/* DECISION(v1.19.646): Non-BOM rows filtered out — sheet identifiers, title-block
              artifacts, drawing-index references. Shown so user can see what was dropped. */}
+          {seqGaps.length>0&&(
+            <div style={{marginTop:10,padding:"8px 12px",background:"#3a0a0a",border:"1px solid #ef444488",borderRadius:6}}>
+              <div style={{color:"#fca5a5",fontWeight:700,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>⚠ Missing BOM Line Items ({seqGaps.length})</div>
+              <div style={{color:"#fecaca",fontSize:11,marginBottom:8,lineHeight:1.5}}>
+                The following drawing item numbers were not found in the extracted BOM. These items may have been missed by the AI scan. <strong>Spot-check the drawing to verify whether these items exist and add them manually if needed.</strong>
+              </div>
+              <div style={{color:"#fca5a5",fontSize:12,fontWeight:600,fontFamily:"ui-monospace,Menlo,Consolas,monospace"}}>
+                Missing items: {seqGaps.slice(0,30).join(", ")}{seqGaps.length>30?` (+${seqGaps.length-30} more)`:""}
+              </div>
+              <div style={{color:"#fecaca",fontSize:10,marginTop:6}}>
+                Extracted {r.finalItemCount||0} items · highest item # is {r.finalMaxItemNo||"?"} · {seqGaps.length} gap{seqGaps.length>1?"s":""}
+              </div>
+            </div>
+          )}
           {nonBomRowsFiltered.length>0&&(
             <div style={{marginTop:10,padding:"8px 12px",background:"#1f0e2a",border:`1px solid #a78bfa55`,borderRadius:6}}>
               <div style={{color:"#c4b5fd",fontWeight:700,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>🚫 Filtered {nonBomRowsFiltered.length} Non-BOM Row{nonBomRowsFiltered.length>1?"s":""}</div>
@@ -21923,6 +21966,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // v1.19.980: roll up re-extract path
     const _reExtractionPath=_reExtractionPathsSeen.has("pdf-native")?"pdf-native":"unknown";
     console.log(`[RE-EXTRACT] panel extraction path: ${_reExtractionPath}`);
+    // Final sequence gap check on re-extracted BOM
+    const _reItemNos=bomSorted.map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10)).filter(n=>!isNaN(n)&&n>0);
+    let _reSeqGaps=[];let _reMaxItemNo=0;
+    if(_reItemNos.length>=3){
+      const _reSorted=[...new Set(_reItemNos)].sort((a,b)=>a-b);
+      _reMaxItemNo=_reSorted[_reSorted.length-1];
+      for(let i=0;i<_reSorted.length-1;i++){if(_reSorted[i+1]-_reSorted[i]>1){for(let g=_reSorted[i]+1;g<_reSorted[i+1];g++)_reSeqGaps.push(g);}}
+    }
+    if(_reSeqGaps.length>0)console.warn(`[RE-EXTRACT] sequence gaps in final BOM: items ${_reSeqGaps.join(", ")} missing`);
     const reExtractionReport={
       rawCount:all.length,exactCount:exactDedup.length,finalCount:fuzzyDedup.length,
       fuzzyMerges:fuzzyReport.merges,bomPageCount:bomPages.length,
@@ -21932,6 +21984,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       snippetCorrectionsLog:reSnippetCorrections.slice(-50),
       nonBomRowsFiltered:reNonBomRows,
       extractionPath:_reExtractionPath,
+      finalSequenceGaps:_reSeqGaps,finalMaxItemNo:_reMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
     };
     ep.set(80,"Saving BOM…");
@@ -22115,6 +22168,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       fbSnippetCorrections=res.corrections||[];
     }catch(e){console.warn("feedback snippet self-correct failed:",e.message);}
     const bom=appendDefaultBomItems(bomSorted);
+    // Final sequence gap check on feedback re-extracted BOM
+    const _fbItemNos=bomSorted.map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10)).filter(n=>!isNaN(n)&&n>0);
+    let _fbSeqGaps=[];let _fbMaxItemNo=0;
+    if(_fbItemNos.length>=3){
+      const _fbSorted=[...new Set(_fbItemNos)].sort((a,b)=>a-b);
+      _fbMaxItemNo=_fbSorted[_fbSorted.length-1];
+      for(let i=0;i<_fbSorted.length-1;i++){if(_fbSorted[i+1]-_fbSorted[i]>1){for(let g=_fbSorted[i]+1;g<_fbSorted[i+1];g++)_fbSeqGaps.push(g);}}
+    }
+    if(_fbSeqGaps.length>0)console.warn(`[FEEDBACK EXTRACT] sequence gaps in final BOM: items ${_fbSeqGaps.join(", ")} missing`);
     const fbReport={
       rawCount:all.length,exactCount:fbExact.length,finalCount:fbFuzzy.length,
       fuzzyMerges:fbFuzzyReport.merges,bomPageCount:bomPages.length,
@@ -22123,6 +22185,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       snippetCorrectionCount:fbSnippetCorrections.length,
       snippetCorrectionsLog:fbSnippetCorrections.slice(-50),
       nonBomRowsFiltered:fbNonBomRows,
+      finalSequenceGaps:_fbSeqGaps,finalMaxItemNo:_fbMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
     };
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
