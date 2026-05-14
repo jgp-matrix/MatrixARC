@@ -8700,8 +8700,7 @@ async function loadOriginalPdfAsBase64(storagePath){
   const r=await fetch(url);
   if(!r.ok)throw new Error("PDF fetch failed: "+r.status);
   const blob=await r.blob();
-  // FileReader-based base64 conversion handles large files (avoids stack overflow
-  // from String.fromCharCode(...new Uint8Array(buf)) on 5+ MB PDFs).
+  if(!blob.size)throw new Error("PDF file is empty (0 bytes) at "+storagePath+" — re-upload the source PDF");
   return await new Promise((resolve,reject)=>{
     const fr=new FileReader();
     fr.onload=()=>{
