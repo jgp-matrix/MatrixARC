@@ -694,6 +694,15 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     "Mark Budgetary" vs "Print as Firm (Admin)" choice. Non-admins retain
     existing forced-budgetary behavior.
 
+## Round 12 (user-reported, 2026-05-14)
+
+36. **OPEN** — Service line items (Commissioning, Programming, Design) need a proper
+    status lifecycle. Currently they lack progression tracking. Desired flow:
+    **DRAFT** (initial creation) → **READY** (when costs and qty are entered) →
+    **IN PRE_REVIEW** (when sent for review) → **QUOTES SENT** (once the quote is
+    sent). Status should update automatically based on data completeness and
+    workflow actions.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
