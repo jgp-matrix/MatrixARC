@@ -31,7 +31,12 @@ When the user says "Close Out" (or any case-insensitive variant: close-out, clos
       git push origin master
       ```
    b. After push, verify: `git rev-parse master origin/master` (must match).
-   c. Attempt branch cleanup: `git branch -d <feature-branch>` (will fail if worktree is active — that's fine, note it).
+   c. **Worktree + branch cleanup**: Remove the session's worktree first, then delete the branch. The worktree lock prevents `git branch -d` from succeeding, so order matters:
+      ```
+      git worktree remove --force .claude/worktrees/<worktree-name>
+      git branch -d <feature-branch>
+      ```
+      If the worktree remove fails with "Permission denied" or "Device busy" (this session is running inside it), note it — the directory will be cleaned up after the session ends. Also prune any orphaned worktree directories from prior sessions: `git worktree prune` then remove leftover dirs under `.claude/worktrees/` that are no longer registered.
    d. If commits are already on master (or session produced no commits), skip the merge.
 
 3. **Deploy**: Run `bash deploy.sh` from the main checkout (`C:/Users/jon/AppDev/MatrixARC`). This auto-bumps the patch version, commits the version bump, tags, pushes, and deploys to Firebase hosting.
