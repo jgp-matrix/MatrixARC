@@ -30140,7 +30140,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
         {showQvHistory&&(()=>{
           const _allQv=[...(project.qvHistory||[])].sort((a,b)=>(a.at||0)-(b.at||0));
           const _qvGroups=[];let _cg={v:0,label:"Initial",entries:[],at:null};
-          for(const e of _allQv){if(e.type==="review_submit"&&e.field){if(_cg.entries.length>0)_qvGroups.push(_cg);const vn=parseInt((e.field.match(/\d+/)||["0"])[0])||0;_cg={v:vn,label:"Qv."+String(vn).padStart(2,"0"),entries:[e],at:e.at};}else{_cg.entries.push(e);if(!_cg.at&&e.at)_cg.at=e.at;}}
+          for(const e of _allQv){if(e.type==="review_submit"&&e.field){if(_cg.entries.length>0)_qvGroups.push(_cg);const vn=parseInt((e.field.match(/\d+/)||["0"])[0])||0;_cg={v:vn,label:"Rv."+String(vn).padStart(2,"0"),entries:[e],at:e.at};}else{_cg.entries.push(e);if(!_cg.at&&e.at)_cg.at=e.at;}}
           if(_cg.entries.length>0)_qvGroups.push(_cg);
           _qvGroups.reverse();
           const typeLabel={edit:"Edit",add:"Item Added",delete:"Item Deleted",re_extract:"Re-Extract",refresh_pricing:"Refresh Pricing",bc_push_lead_times:"Push Lead Times",supplier_apply:"Supplier Apply",review_submit:"Review Submitted",review_approve:"Review Approved",review_cancel:"Review Cancelled",review_edit:"Reviewer Edit"};
@@ -30152,8 +30152,40 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 const up=()=>{document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
                 document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);}}>
               <div data-drag="header" style={{padding:"12px 16px",background:"#1a1a28",borderBottom:"1px solid #f59e0b44",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"grab",userSelect:"none"}}>
-                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>{project.bcProjectNumber||project.name||"Project"} — Rv.{project.reviewRev||project.preReviewRev||1} History</span>
-                <button onClick={()=>setShowQvHistory(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
+                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>{project.bcProjectNumber||project.name||"Project"} — Review Revision History</span>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <button onClick={()=>{
+                    const w=window.open("","_blank","width=560,height=700,scrollbars=yes,resizable=yes");
+                    if(!w)return;
+                    const title=(project.bcProjectNumber||project.name||"Project")+" — Review Revision History";
+                    const rows=_qvGroups.map(g=>{
+                      const gd=g.at?new Date(g.at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"";
+                      const items=g.entries.slice().reverse().map(c=>{
+                        const pn=c.panelName||"";const part=c.partNumber||"";
+                        const fl={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",notes:"Notes",unitPrice:"Unit Price",leadTimeDays:"Lead Time"}[c.field]||c.field||"";
+                        let ln="";
+                        if(c.type==="edit"&&c.field)ln=pn+(pn&&(part||fl)?" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):"");
+                        else if(c.type==="add")ln=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
+                        else if(c.type==="delete")ln=(pn?pn+" — ":"")+(part||"Item")+" removed";
+                        else if(c.type==="review_submit")ln="Sent for review"+(c.to?" → "+c.to:"")+(c.field?" ("+c.field+")":"");
+                        else if(c.type==="review_edit"){const efl={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",unitPrice:"Unit Price",leadTimeDays:"Lead Time"}[c.editType]||c.editType||"";if(c.editType==="add")ln=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");else if(c.editType==="delete")ln=(pn?pn+" — ":"")+(part||"Item")+" removed";else ln=pn+(pn&&(part||efl)?" — ":"")+(part?part+" ":"")+(efl?efl+" change":"edited")+(c.from!=null||c.to!=null?" "+c.from+"→"+c.to:"");}
+                        else if(c.type==="review_approve")ln="Review Approved";
+                        else if(c.type==="review_cancel")ln="Review Cancelled";
+                        else if(c.type==="re_extract")ln=(pn?pn+" — ":"")+"BOM re-extracted";
+                        else if(c.type==="refresh_pricing")ln=(pn?pn+" — ":"")+"Pricing refreshed";
+                        else if(c.type==="supplier_apply")ln="Supplier prices applied"+(c.field?" — "+c.field:"");
+                        else ln=c.type;
+                        const badge=c.type==="review_edit"?(c.reviewType==="post_review"?"POST-REVIEW":"PRE-REVIEW"):"";
+                        const byLine=c.byName||"";
+                        return "<div style='padding:5px 12px;border-bottom:1px solid #ffffff0a;font-size:12px;"+(c.type==="review_edit"?"border-left:3px solid #fbbf24;":"")+"'><div style='color:"+(c.type==="review_edit"?"#fbbf24":"#e2e8f0")+";font-weight:600'>"+ln.replace(/</g,"&lt;")+"</div>"+(badge||byLine?"<div style='color:#64748b;font-size:11px;margin-top:2px'>"+(badge?"<span style='background:#fbbf2422;color:#fbbf24;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700;margin-right:6px'>"+badge+"</span>":"")+(byLine?"<span>"+byLine.replace(/</g,"&lt;")+"</span>":"")+"</div>":"")+"</div>";
+                      }).join("");
+                      return "<div style='padding:6px 12px;background:#0d0d18;border-bottom:1px solid #f59e0b33;display:flex;justify-content:space-between;position:sticky;top:0;z-index:1'><span style='font-size:12px;font-weight:800;color:#f59e0b'>"+g.label+"</span><span style='font-size:11px;color:#64748b'>"+gd+"</span></div>"+items;
+                    }).join("");
+                    w.document.write("<!DOCTYPE html><html><head><title>"+title.replace(/</g,"&lt;")+"</title><style>*{margin:0;padding:0;box-sizing:border-box}body{background:#111118;color:#e2e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}::-webkit-scrollbar{width:8px}::-webkit-scrollbar-track{background:#1e1e2e}::-webkit-scrollbar-thumb{background:#5a5a78;border-radius:4px}</style></head><body><div style='padding:12px 16px;background:#1a1a28;border-bottom:1px solid #f59e0b44;font-size:14px;font-weight:800;color:#f59e0b;position:sticky;top:0;z-index:2'>"+title.replace(/</g,"&lt;")+"</div>"+rows+"</body></html>");
+                    w.document.close();
+                  }} style={{background:"none",border:"1px solid #f59e0b44",color:"#f59e0b",fontSize:11,cursor:"pointer",padding:"2px 8px",borderRadius:4,fontWeight:600}} title="Pop out to separate window">⧉ Pop Out</button>
+                  <button onClick={()=>setShowQvHistory(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
+                </div>
               </div>
               <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
                 {_qvGroups.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"#64748b",fontSize:12}}>No changes recorded yet. Edits, system actions, and review events will appear here.</div>}
