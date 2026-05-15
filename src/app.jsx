@@ -22654,7 +22654,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(!onPreReviewInvalidated)return;
     const rev=project.preReviewRev||0;
     const st=project.preReviewStatus;
-    if(st==="approved"||(rev>=1&&st!=="pending"))onPreReviewInvalidated({...entry,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),at:Date.now()});
+    if(st==="approved"||st==="pending"||(rev>=1&&!st))onPreReviewInvalidated({...entry,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),at:Date.now()});
   }
   function _logBomEdit(type,rowId,partNumber,description,field,from,to){
     _logQvHistory(project.id,{type,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),rowId:rowId||null,partNumber:partNumber||"",description:description||"",field:field||null,from:String(from??""),to:String(to??"")});
@@ -30549,11 +30549,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       if(ei>=0){log[ei]={...log[ei],to:entry.to,at:entry.at};}else{log.push(entry);}
                     }else{log.push(entry);}
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
-                    if(project.preReviewStatus==="approved"){
+                    if(project.preReviewStatus==="approved"||project.preReviewStatus==="pending"){
                       const fields={preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,preReviewChangeLog:log};
                       _pendingPreReviewOverrides[project.id]=fields;
                       onUpdate({...project,...fields});
                       fbDb.collection(_prjPath).doc(project.id).update(fields).catch(e=>console.error("[PRE-REVIEW] cancel+log save failed:",e));
+                      _logQvHistory(project.id,{type:"review_cancel",field:"auto",description:"BOM changed while review was "+project.preReviewStatus});
                     }else{
                       _pendingPreReviewOverrides[project.id]={preReviewChangeLog:log};
                       onUpdate({...project,preReviewChangeLog:log});
