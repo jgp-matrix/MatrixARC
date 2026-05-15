@@ -8223,10 +8223,7 @@ async function saveProject(uid,project){
         // Also apply in-memory review overrides (covers the window before the review submit's
         // write reaches Firestore — server doc is still stale, but local flag has the truth).
         const _prOvrSP=_pendingPreReviewOverrides[data.id];
-        if(_prOvrSP){
-          if(data.preReviewStatus===undefined)Object.assign(data,_prOvrSP);
-          delete _pendingPreReviewOverrides[data.id];
-        }
+        if(_prOvrSP&&data.preReviewStatus===undefined)Object.assign(data,_prOvrSP);
         // (3) quoteRev bump — compute hash AFTER bomVersion has been applied so
         // version changes are part of the quote-state hash. Compare to the last-
         // persisted hash; if different, bump quoteRev and record the new hash. First
@@ -8290,6 +8287,7 @@ async function saveProject(uid,project){
   const toSave=JSON.parse(JSON.stringify(stripped));
   await ref.set(toSave);
   _flushQvHistory(project.id);
+  if(_pendingPreReviewOverrides[project.id]&&data.preReviewStatus!==undefined)delete _pendingPreReviewOverrides[project.id];
   return data; // return with dataUrls intact for in-memory use
 }
 // DECISION(v1.19.405): Safe save wrapper — retries on failure and shows user notification.
