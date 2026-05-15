@@ -31197,7 +31197,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                       style={btn("#1e1b4b","#818cf8",{fontSize:12,padding:"8px 12px",flex:2,opacity:(rfqLoading||ownerPriorityActive)?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>{rfqLoading?"Building…":"Send/Print RFQs"}</button>
                     <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:12,padding:"8px 12px",flex:2,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
-                    <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"8px 6px",flex:0,whiteSpace:"nowrap",minWidth:28})}>📜</button>
+                    <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"4px 10px",flex:0,whiteSpace:"nowrap",fontWeight:700,border:"1px solid #64748b44"})}>RFQ Hist.</button>
                   </div>;
                 })()}
                 {!readOnly&&(()=>{
