@@ -22653,8 +22653,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   function _trackBomChange(entry){
     if(!onPreReviewInvalidated)return;
     const rev=project.preReviewRev||0;
-    const st=project.preReviewStatus;
-    if(st==="approved"||st==="pending"||(rev>=1&&!st))onPreReviewInvalidated({...entry,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),at:Date.now()});
+    const preSt=project.preReviewStatus;
+    const postSt=project.postReviewStatus;
+    const _me=_appCtx.uid;
+    const isReviewer=_appCtx.role==="admin"||hasPermission("reviewer")||(project.preReviewAssignedTo?project.preReviewAssignedTo===_me:!!(project.bcDesignerUid&&project.bcDesignerUid===_me));
+    const _pn=panel.name||("Panel "+(idx+1));
+    if(isReviewer&&(preSt==="pending"||postSt==="pending")){
+      _logQvHistory(project.id,{type:"review_edit",reviewType:postSt==="pending"?"post_review":"pre_review",reviewQv:rev,editType:entry.type,panelId:panel.id,panelName:_pn,rowId:entry.rowId||null,partNumber:entry.partNumber||"",description:entry.description||"",from:entry.from!=null?String(entry.from):"",to:entry.to!=null?String(entry.to):""});
+      return;
+    }
+    if(preSt==="approved"||preSt==="pending"||(rev>=1&&!preSt))onPreReviewInvalidated({...entry,panelId:panel.id,panelName:_pn,at:Date.now()});
   }
   function _logBomEdit(type,rowId,partNumber,description,field,from,to){
     _logQvHistory(project.id,{type,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),rowId:rowId||null,partNumber:partNumber||"",description:description||"",field:field||null,from:String(from??""),to:String(to??"")});
@@ -30001,8 +30009,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
         })()}
         {showQvHistory&&(()=>{
           const hist=[...(project.qvHistory||[])].sort((a,b)=>(b.at||0)-(a.at||0));
-          const typeLabel={edit:"Edit",add:"Item Added",delete:"Item Deleted",re_extract:"Re-Extract",refresh_pricing:"Refresh Pricing",bc_push_lead_times:"Push Lead Times",supplier_apply:"Supplier Apply",review_submit:"Review Submitted",review_approve:"Review Approved",review_cancel:"Review Cancelled"};
-          const typeColor={edit:"#818cf8",add:"#4ade80",delete:"#ef4444",re_extract:"#f472b6",refresh_pricing:"#38bdf8",bc_push_lead_times:"#2dd4bf",supplier_apply:"#a78bfa",review_submit:"#a78bfa",review_approve:"#4ade80",review_cancel:"#ef4444"};
+          const typeLabel={edit:"Edit",add:"Item Added",delete:"Item Deleted",re_extract:"Re-Extract",refresh_pricing:"Refresh Pricing",bc_push_lead_times:"Push Lead Times",supplier_apply:"Supplier Apply",review_submit:"Review Submitted",review_approve:"Review Approved",review_cancel:"Review Cancelled",review_edit:"Reviewer Edit"};
+          const typeColor={edit:"#818cf8",add:"#4ade80",delete:"#ef4444",re_extract:"#f472b6",refresh_pricing:"#38bdf8",bc_push_lead_times:"#2dd4bf",supplier_apply:"#a78bfa",review_submit:"#a78bfa",review_approve:"#4ade80",review_cancel:"#ef4444",review_edit:"#fbbf24"};
           return ReactDOM.createPortal(
             <div style={{position:"fixed",top:80,right:40,width:520,maxHeight:"75vh",background:"#111118",border:"2px solid #f59e0b88",borderRadius:12,boxShadow:"0 8px 32px #000a",zIndex:9999,display:"flex",flexDirection:"column",overflow:"hidden"}}
               onMouseDown={e=>{if(e.target.dataset.drag!=="header")return;const el=e.currentTarget;const sx=e.clientX-el.offsetLeft,sy=e.clientY-el.offsetTop;
@@ -30029,12 +30037,16 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   else if(c.type==="re_extract")line=(pn?pn+" — ":"")+"BOM re-extracted";
                   else if(c.type==="refresh_pricing")line=(pn?pn+" — ":"")+"Pricing refreshed"+(c.field==="force"?" (force)":"");
                   else if(c.type==="bc_push_lead_times")line=(pn?pn+" — ":"")+"Lead times pushed to BC";
+                  else if(c.type==="review_edit"){const _efl=fieldLabel[c.editType]||c.editType||"";if(c.editType==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");else if(c.editType==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";else line=pn+(pn&&(part||_efl)?" — ":"")+(part?part+" ":"")+(c.editType==="qty"||c.editType==="partNumber"?(_efl?_efl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):""):"edited");}
                   else line=typeLabel[c.type]||c.type;
-                  return <div key={c.id||i} style={{padding:"8px 16px",borderBottom:"1px solid #ffffff0a",fontSize:12}}>
-                  <div style={{color:"#e2e8f0",fontWeight:600,lineHeight:1.5}}>{line}</div>
+                  const _isRevEdit=c.type==="review_edit";
+                  return <div key={c.id||i} style={{padding:"8px 16px",borderBottom:"1px solid #ffffff0a",fontSize:12,...(_isRevEdit?{borderLeft:"3px solid #fbbf24"}:{})}}>
+                  <div style={{color:_isRevEdit?"#fbbf24":"#e2e8f0",fontWeight:600,lineHeight:1.5}}>{line}</div>
                   <div style={{color:"#64748b",fontSize:11,marginTop:2}}>
+                    {_isRevEdit&&<span style={{background:"#fbbf2422",color:"#fbbf24",borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700,marginRight:6}}>{c.reviewType==="post_review"?"POST-REVIEW":"PRE-REVIEW"}</span>}
                     {c.byName&&<span>{c.byName} · </span>}
                     {c.at&&<span>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
+                    {_isRevEdit&&c.reviewQv&&<span> · Qv{c.reviewQv}</span>}
                   </div>
                   {c.type==="review_submit"&&c.description&&<div style={{color:"#c4b5fd",fontSize:11,marginTop:4,padding:"4px 8px",background:"#1a103088",borderRadius:4,borderLeft:"2px solid #a78bfa",whiteSpace:"pre-wrap"}}>{c.description}</div>}
                 </div>;}
