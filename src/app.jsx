@@ -29559,8 +29559,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [showSendForReview,setShowSendForReview]=useState(false);
   const [sendReviewEngineer,setSendReviewEngineer]=useState("");
   const [sendReviewNotes,setSendReviewNotes]=useState("");
+  const [reviewOverrideSession,setReviewOverrideSession]=useState(false);
   const [showQvHistory,setShowQvHistory]=useState(false);
   const [drawingReviewTrigger,setDrawingReviewTrigger]=useState({id:null,c:0});
+  useEffect(()=>{setReviewOverrideSession(false);},[project.id,project.preReviewStatus,project.postReviewStatus]);
   // Customer review state
   const [customerReviewData,setCustomerReviewData]=useState(null);
   const [showCustomerResponses,setShowCustomerResponses]=useState(false);
@@ -29909,6 +29911,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     :((project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid)||project.bcDesignerCode===(_appCtx.uid&&(window._arcDesignerCache||[]).find(d=>d.Name===fbAuth.currentUser?.displayName)?.Code));
   const _preReviewAssigneeName=project.preReviewAssignedToName||project.bcDesigner||"—";
   const _preReviewWasReassigned=!!(project.preReviewAssignedTo&&project.bcDesignerUid&&project.preReviewAssignedTo!==project.bcDesignerUid);
+  const _isPostReviewAssignee=project.postReviewAssignedTo
+    ?project.postReviewAssignedTo===_appCtx.uid
+    :(project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid);
 
   return(<>
     <div style={{height:"calc(100vh - 130px)",display:"flex",background:C.bg,overflow:"hidden"}}>
@@ -29919,19 +29924,23 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <span style={{fontSize:20}}>📐</span>
             <div style={{flex:1,minWidth:200}}>
-              {(_appCtx.role==="admin"||hasPermission("reviewer")||_isPreReviewAssignee)?(<>
-                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>📐 PRE-QUOTE REVIEW IN PROGRESS — REVIEWER EDIT MODE</div>
-                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. {_preReviewWasReassigned?"Reassigned to: "+_preReviewAssigneeName:"Engineer/Designer: "+(project.bcDesigner||"—")}. You can edit BOMs, prices, and drawings before approving or returning to Sales.</div>
+              {(_isPreReviewAssignee||reviewOverrideSession)?(<>
+                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>📐 PRE-QUOTE REVIEW IN PROGRESS — REVIEWER EDIT MODE{reviewOverrideSession?" (ADMIN OVERRIDE)":""}</div>
+                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. {_preReviewWasReassigned?"Reassigned to: "+_preReviewAssigneeName:"Reviewer: "+_preReviewAssigneeName}. You can edit BOMs, prices, and drawings before approving or returning to Sales.</div>
               </>):(<>
-                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 PRE-QUOTE REVIEW REQUESTED — EDITS LOCKED</div>
-                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. {_preReviewWasReassigned?"Reassigned to: "+_preReviewAssigneeName:"Engineer/Designer: "+(project.bcDesigner||"—")}. Edits resume once the reviewer approves or returns the project.</div>
+                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 PRE-QUOTE REVIEW IN PROGRESS — EDITS LOCKED</div>
+                <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. {_preReviewWasReassigned?"Reassigned to: "+_preReviewAssigneeName:"Reviewer: "+_preReviewAssigneeName}. Edits resume once the reviewer approves or returns the project.</div>
               </>)}
             </div>
             {project.preReviewNotes&&<div style={{width:"100%",background:"#1a1030",border:"1px solid #a78bfa44",borderRadius:8,padding:"8px 12px",marginTop:4}}>
               <div style={{fontSize:10,fontWeight:700,color:"#a78bfa",marginBottom:2}}>NOTES FROM SALES</div>
               <div style={{fontSize:12,color:"#e2e8f0",whiteSpace:"pre-wrap",lineHeight:1.4}}>{project.preReviewNotes}</div>
             </div>}
-            {!isReadOnly()&&(_isPreReviewAssignee||_appCtx.role==="admin"||hasPermission("reviewer"))&&(
+            {_appCtx.role==="admin"&&!_isPreReviewAssignee&&!reviewOverrideSession&&(
+              <button onClick={()=>setReviewOverrideSession(true)}
+                style={btn("#2a0a0a","#ef4444",{fontSize:11,fontWeight:700,border:"1px solid #ef444466",padding:"4px 12px"})}>🔓 Admin Override</button>
+            )}
+            {!isReadOnly()&&(_isPreReviewAssignee||reviewOverrideSession)&&(
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{display:"flex",gap:6}}>
                   <button onClick={()=>{const p=(project.panels||[]).find(p=>(p.pages||[]).length>0);if(!p){arcAlert("No drawings uploaded yet.");return;}setDrawingReviewTrigger(prev=>({id:p.id,c:prev.c+1}));}}
@@ -29988,7 +29997,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       if(memberEmail){
                         const graphToken=await acquireGraphToken();
                         if(graphToken){
-                          const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Reassigned</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">This review has been reassigned to you by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p><a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
+                          const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Reassigned</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">This review has been reassigned to you by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p><a href="${window.location.origin}?openProject=${project.id}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
                           await sendGraphEmail(graphToken,memberEmail,`Pre-Quote Review Reassigned: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
                         }
                       }
@@ -30109,7 +30118,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         const graphToken=await acquireGraphToken();
                         if(graphToken){
                           const _notesHtml=reviewNotes?`<div style="background:#f5f3ff;border-left:4px solid #7c3aed;padding:12px 16px;margin:16px 0;border-radius:4px"><div style="font-weight:700;color:#5b21b6;font-size:13px;margin-bottom:4px">Notes from ${fbAuth.currentUser?.displayName||"Sales"}:</div><p style="color:#334155;margin:0;white-space:pre-wrap">${reviewNotes.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p></div>`:"";
-                          const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p>${_notesHtml}<a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
+                          const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p>${_notesHtml}<a href="${window.location.origin}?openProject=${project.id}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
                           await sendGraphEmail(graphToken,designerEmail,`Pre-Quote Review: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
                           arcAlert("Submitted for pre-quote review. "+designerName+" has been notified at "+designerEmail);
                         }else{arcAlert("Submitted for review. Email notification requires Microsoft 365 sign-in.");}
@@ -30183,20 +30192,19 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <span style={{fontSize:20}}>🔧</span>
             <div style={{flex:1,minWidth:200}}>
-              {/* DECISION(v1.19.761): Banner reads differently for reviewers vs. others. */}
-              {(_appCtx.role==="admin"||hasPermission("reviewer"))?(<>
-                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔧 POST-PO REVIEW IN PROGRESS — REVIEWER EDIT MODE</div>
+              {(_isPostReviewAssignee||reviewOverrideSession)?(<>
+                <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔧 POST-PO REVIEW IN PROGRESS — REVIEWER EDIT MODE{reviewOverrideSession&&!_isPostReviewAssignee?" (ADMIN OVERRIDE)":""}</div>
                 <div style={{fontSize:12,color:"#94a3b8"}}>PO #{project.bcPoNumber||"—"} received. You can edit project data while validating production readiness, then approve or return.</div>
               </>):(<>
                 <div style={{fontSize:14,fontWeight:800,color:"#a78bfa"}}>🔒 POST-PO REVIEW IN PROGRESS — EDITS LOCKED</div>
                 <div style={{fontSize:12,color:"#94a3b8"}}>PO #{project.bcPoNumber||"—"} received. Awaiting production readiness approval. Edits resume once the reviewer approves or returns the project.</div>
               </>)}
             </div>
-            {/* DECISION(v1.19.756): Same bypass as pre-review — admins must be able to
-                approve post-review even though `readOnly` is true during pending review.
-                DECISION(v1.19.758): Anyone with `permissions.reviewer` can also approve
-                post-review (granted via the Team & Permissions modal). */}
-            {!isReadOnly()&&(_appCtx.role==="admin"||hasPermission("reviewer"))&&(
+            {_appCtx.role==="admin"&&!_isPostReviewAssignee&&!reviewOverrideSession&&(
+              <button onClick={()=>setReviewOverrideSession(true)}
+                style={btn("#2a0a0a","#ef4444",{fontSize:11,fontWeight:700,border:"1px solid #ef444466",padding:"4px 12px"})}>🔓 Admin Override</button>
+            )}
+            {!isReadOnly()&&(_isPostReviewAssignee||reviewOverrideSession)&&(
               <div style={{display:"flex",gap:6}}>
                 <button onClick={()=>{const p=(project.panels||[]).find(p=>(p.pages||[]).length>0);if(!p){arcAlert("No drawings uploaded yet.");return;}setDrawingReviewTrigger(prev=>({id:p.id,c:prev.c+1}));}}
                   style={btn("#1a1040","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa88",padding:"6px 16px"})}>📐 Review Drawings</button>
@@ -31381,16 +31389,17 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"4px 10px",flex:0,whiteSpace:"nowrap",fontWeight:700,border:"1px solid #64748b44",minWidth:72,textAlign:"center"})}>RFQ Hist.</button>
                   </div>;
                 })()}
-                {!readOnly&&(()=>{
+                {(()=>{
                   const reviewStatus=project.preReviewStatus;
                   const _qvHist=(project.qvHistory||[]);
                   const _qvHistBtn=<button onClick={()=>setShowQvHistory(true)} style={btn("#1a1020","#f59e0b",{fontSize:10,padding:"4px 10px",whiteSpace:"nowrap",fontWeight:700,border:"1px solid #f59e0b44",minWidth:72,textAlign:"center"})}>Qv Hist.{_qvHist.length>0?" ("+_qvHist.length+")":""}</button>;
                   if(reviewStatus==="approved")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}>
                     <span style={{fontSize:11,fontWeight:700,color:C.green}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</span>
-                    <button onClick={()=>{_logQvHistory(project.id,{type:"review_cancel"});const upd={...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,reviewChangeLog:[],reviewRevBumpedThisCycle:false};persistProject(upd);}} style={{fontSize:10,padding:"2px 8px",borderRadius:10,border:"1px solid #ef444466",background:"#1a0a0a",color:"#ef4444",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>Cancel</button>
+                    {!readOnly&&<button onClick={()=>{_logQvHistory(project.id,{type:"review_cancel"});const upd={...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,reviewChangeLog:[],reviewRevBumpedThisCycle:false};persistProject(upd);}} style={{fontSize:10,padding:"2px 8px",borderRadius:10,border:"1px solid #ef444466",background:"#1a0a0a",color:"#ef4444",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>Cancel</button>}
                     {_qvHistBtn}
                   </div>;
                   if(reviewStatus==="pending")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}><span style={{fontSize:11,fontWeight:700,color:"#a78bfa",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting {_preReviewAssigneeName} approval</span>{_qvHistBtn}</div>;
+                  if(readOnly)return null;
                   return <div style={{display:"flex",gap:6,alignItems:"stretch"}}><button onClick={()=>{
                     const hasDrawings=(project.panels||[]).some(p=>(p.pages||[]).length>0);
                     if(!hasDrawings){arcAlert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
@@ -32432,17 +32441,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   useEffect(()=>{setLockOverrideSession(false);setUnlockRequestSent(false);},[project.id,project.wonAt,project.lostAt,project.editUnlocked]);
   const lockReadOnly=isProjectLocked&&!editUnlockedForAll&&!(iAmOwnerOrAdmin&&lockOverrideSession);
   const sentReadOnly=!!project.quoteSentAt&&!sentQuoteAckGiven&&!isProjectLocked;
-  // DECISION(v1.19.756): Pre-Review and Post-Review hard-block user edits until the
-  // reviewer approves or rejects (returns the project to the Sales team).
-  // DECISION(v1.19.761): Exempt anyone with Reviewer permission (or admin) from the
-  // review-locked state — they need to edit BOMs / prices / drawings during the review
-  // pass to implement engineering changes before approving. Sales / non-reviewer users
-  // remain blocked. Status flip out of "pending" auto-clears the lock for everyone.
+  // DECISION(v1.19.1084): During pre/post-review, ONLY the assigned reviewer can edit.
+  // Everyone else (including admins) is locked out. Admins get an override button.
   const _outerIsPreReviewAssignee=project.preReviewStatus==="pending"&&(
     project.preReviewAssignedTo?project.preReviewAssignedTo===_appCtx.uid
     :(project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid));
+  const _outerIsPostReviewAssignee=project.postReviewStatus==="pending"&&(
+    project.postReviewAssignedTo?project.postReviewAssignedTo===_appCtx.uid
+    :(project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid));
   const reviewReadOnly=(project.preReviewStatus==="pending"||project.postReviewStatus==="pending")
-                       &&!(_appCtx.role==="admin"||hasPermission("reviewer")||_outerIsPreReviewAssignee);
+                       &&!(_outerIsPreReviewAssignee||_outerIsPostReviewAssignee)
+                       &&!reviewOverrideSession;
   const customerReviewReadOnly=project.customerReviewStatus==="pending";
   // DECISION(v1.19.834, ECO Stage A.3): scope-aware readOnly. The base
   // computation (lock/sent/review) still applies; on top of that, when ECOs
@@ -40565,6 +40574,21 @@ function App({user}){
       setPendingCustomerReviewOpen(pid);
       const url=new URL(window.location.href);
       url.searchParams.delete('openCustomerReview');
+      window.history.replaceState({},document.title,url.pathname+(url.search?url.search:'')+url.hash);
+    }catch(e){}
+  },[projects.length]);
+
+  // ?openProject=<projectId> — deep-link from review notification emails.
+  useEffect(()=>{
+    try{
+      const p=new URLSearchParams(window.location.search);
+      const pid=p.get('openProject');
+      if(!pid||!projects||projects.length===0)return;
+      const proj=projects.find(x=>x.id===pid);
+      if(!proj)return;
+      handleOpen(proj);
+      const url=new URL(window.location.href);
+      url.searchParams.delete('openProject');
       window.history.replaceState({},document.title,url.pathname+(url.search?url.search:'')+url.hash);
     }catch(e){}
   },[projects.length]);
