@@ -26026,6 +26026,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   <div style={{marginLeft:"auto",display:"flex",gap:6,alignItems:"center",color:C.muted,fontSize:11}}>
                     <span>{n.initials}</span>
                     <span>{n.date}</span>
+                    {!readOnly&&<span onClick={e=>{e.stopPropagation();if(!confirm("Delete note #"+n.number+"?"))return;
+                      const updatedNotes=(pages[n.pageNum-1]?.reviewNotes||[]).filter(rn=>rn.id!==n.id);
+                      const updatedPages=pages.map((p,pi)=>pi===n.pageNum-1?{...p,reviewNotes:updatedNotes}:p);
+                      const updatedPanel={...panel,pages:updatedPages};onUpdate(updatedPanel);try{onSaveImmediate(updatedPanel);}catch(e){}
+                    }} style={{cursor:"pointer",color:"#ef4444",fontSize:13,marginLeft:4}} title="Delete note">✕</span>}
                   </div>
                 </div>
                 {/* Row 2: Note text */}
@@ -29551,6 +29556,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
   const [showReassignPicker,setShowReassignPicker]=useState(false);
   const [showPreReviewChanges,setShowPreReviewChanges]=useState(false);
+  const [showSendForReview,setShowSendForReview]=useState(false);
+  const [sendReviewEngineer,setSendReviewEngineer]=useState("");
+  const [sendReviewNotes,setSendReviewNotes]=useState("");
   const [showQvHistory,setShowQvHistory]=useState(false);
   const [drawingReviewTrigger,setDrawingReviewTrigger]=useState({id:null,c:0});
   // Customer review state
@@ -30038,6 +30046,81 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               </div>
             </div>,document.body);
         })()}
+        {showSendForReview&&ReactDOM.createPortal(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center"}} onMouseDown={e=>{if(e.target===e.currentTarget)setShowSendForReview(false);}}>
+            <div style={{background:"#12121f",border:"1px solid "+C.border,borderRadius:12,padding:"24px 28px",maxWidth:480,width:"90%",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}} onMouseDown={e=>e.stopPropagation()}>
+              <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:16}}>📋 Send for Technical Review</div>
+              <label style={{fontSize:12,fontWeight:600,color:C.sub,display:"block",marginBottom:4}}>Assign to Engineer</label>
+              <select value={sendReviewEngineer} onChange={e=>setSendReviewEngineer(e.target.value)}
+                style={{width:"100%",padding:"8px 10px",borderRadius:6,border:"1px solid "+C.border,background:"#1a1a2e",color:C.text,fontSize:13,fontFamily:"inherit",marginBottom:14,outline:"none"}}>
+                <option value="">Select engineer…</option>
+                {(window._arcDesignerCache||[]).filter(d=>{const dUid=window._arcUidForBcUser?.(d.Code);return !!dUid;}).map(d=>{
+                  const dUid=window._arcUidForBcUser(d.Code);
+                  return <option key={d.Code} value={dUid}>{d.Name}</option>;
+                })}
+              </select>
+              <label style={{fontSize:12,fontWeight:600,color:C.sub,display:"block",marginBottom:4}}>Notes for the reviewing engineer</label>
+              <textarea value={sendReviewNotes} onChange={e=>setSendReviewNotes(e.target.value)} placeholder="Optional — describe what to focus on, recent changes, etc." rows={3}
+                style={{width:"100%",padding:"8px 10px",borderRadius:6,border:"1px solid "+C.border,background:"#1a1a2e",color:C.text,fontSize:13,fontFamily:"inherit",resize:"vertical",minHeight:60,outline:"none",boxSizing:"border-box"}}/>
+              <div style={{display:"flex",gap:8,marginTop:16}}>
+                <button onClick={async()=>{
+                  if(!sendReviewEngineer){arcAlert("Please select an engineer.");return;}
+                  const designers=(window._arcDesignerCache||[]);
+                  const selectedDesigner=designers.find(d=>window._arcUidForBcUser?.(d.Code)===sendReviewEngineer);
+                  const designerCode=selectedDesigner?.Code||project.bcDesignerCode||"";
+                  const designerName=selectedDesigner?.Name||project.bcDesigner||designerCode;
+                  const reviewNotes=sendReviewNotes.trim();
+                  setShowSendForReview(false);
+                  const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid,
+                    preReviewAssignedTo:sendReviewEngineer,preReviewAssignedToName:designerName,
+                    preReviewRev:(project.preReviewRev||0)+1,preReviewNotes:reviewNotes||null,reviewRevBumpedThisCycle:false,reviewChangeLog:[]};
+                  _logQvHistory(project.id,{type:"review_submit",field:"Qv"+((project.preReviewRev||0)+1),to:designerName,description:reviewNotes||""});
+                  persistProject(upd);
+                  if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
+                  try{
+                    let designerEmail=null;
+                    const spMatch=(window._arcSalespersonCache||[]).find(s=>s.Name===designerName||s.Code===designerCode);
+                    if(spMatch?.E_Mail)designerEmail=spMatch.E_Mail;
+                    if(!designerEmail&&_bcToken){
+                      try{
+                        const uR=await fetch(`${BC_ODATA_BASE}/User?$filter=User_Name eq '${designerCode}'&$select=User_Name,Contact_Email&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                        if(uR.ok){const uD=((await uR.json()).value||[])[0];if(uD?.Contact_Email)designerEmail=uD.Contact_Email;}
+                      }catch(e){}
+                    }
+                    if(!designerEmail){
+                      const membersSnap=await fbDb.collection(`companies/${_appCtx.companyId}/members`).get();
+                      const memberMatch=membersSnap.docs.find(d=>{const m=d.data();return(m.email||"").toLowerCase().includes(designerName.toLowerCase().split(" ")[0]);});
+                      if(memberMatch)designerEmail=memberMatch.data().email;
+                    }
+                    if(designerEmail){
+                      const membersSnap2=await fbDb.collection(`companies/${_appCtx.companyId}/members`).get();
+                      const designerMember=membersSnap2.docs.find(d=>d.data().email===designerEmail);
+                      if(designerMember){
+                        await fbDb.collection(`users/${designerMember.id}/notifications`).add({
+                          type:"pre_review",title:"Pre-Quote Review Requested",
+                          body:`${project.bcProjectNumber||""} — ${project.name||""} needs engineering review`,
+                          projectId:project.id,projectName:project.name||"",createdAt:Date.now(),read:false,
+                          from:uid
+                        });
+                      }
+                    }
+                    if(designerEmail){
+                      try{
+                        const graphToken=await acquireGraphToken();
+                        if(graphToken){
+                          const _notesHtml=reviewNotes?`<div style="background:#f5f3ff;border-left:4px solid #7c3aed;padding:12px 16px;margin:16px 0;border-radius:4px"><div style="font-weight:700;color:#5b21b6;font-size:13px;margin-bottom:4px">Notes from ${fbAuth.currentUser?.displayName||"Sales"}:</div><p style="color:#334155;margin:0;white-space:pre-wrap">${reviewNotes.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p></div>`:"";
+                          const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p>${_notesHtml}<a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
+                          await sendGraphEmail(graphToken,designerEmail,`Pre-Quote Review: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
+                          arcAlert("Submitted for pre-quote review. "+designerName+" has been notified at "+designerEmail);
+                        }else{arcAlert("Submitted for review. Email notification requires Microsoft 365 sign-in.");}
+                      }catch(e){console.warn("Review email failed:",e);arcAlert("Submitted for review. Email failed: "+e.message);}
+                    }else{arcAlert("Submitted for review. Could not find email — please notify "+designerName+" manually.");}
+                  }catch(e){console.warn("Review notification failed:",e);arcAlert("Review submitted but notification failed: "+(e.message||e));}
+                }} style={{flex:1,...btn("#1a1020","#a78bfa",{fontSize:14,fontWeight:700,padding:"10px 20px",border:"1px solid #a78bfa44"})}}>Send for Review</button>
+                <button onClick={()=>setShowSendForReview(false)} style={{padding:"10px 20px",borderRadius:8,border:"1px solid "+C.border,background:"transparent",color:C.muted,fontSize:13,cursor:"pointer"}}>Cancel</button>
+              </div>
+            </div>
+          </div>,document.body)}
         {showQvHistory&&(()=>{
           const _allQv=[...(project.qvHistory||[])].sort((a,b)=>(a.at||0)-(b.at||0));
           const _qvGroups=[];let _cg={v:0,label:"Initial",entries:[],at:null};
@@ -31308,67 +31391,13 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     {_qvHistBtn}
                   </div>;
                   if(reviewStatus==="pending")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}><span style={{fontSize:11,fontWeight:700,color:"#a78bfa",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting {_preReviewAssigneeName} approval</span>{_qvHistBtn}</div>;
-                  return <div style={{display:"flex",gap:6,alignItems:"stretch"}}><button onClick={async()=>{
-                    const designerCode=project.bcDesignerCode;
-                    if(!designerCode){arcAlert("No Engineer/Designer assigned to this project. Assign an Engineer/Designer first.");return;}
+                  return <div style={{display:"flex",gap:6,alignItems:"stretch"}}><button onClick={()=>{
                     const hasDrawings=(project.panels||[]).some(p=>(p.pages||[]).length>0);
                     if(!hasDrawings){arcAlert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
-                    const reviewNotes=await arcPrompt("Notes for the reviewing engineer:",{multiline:true,placeholder:"Optional — describe what to focus on, recent changes, etc.",okLabel:"Send for Review",title:"Send for Technical Review"});
-                    if(reviewNotes===null)return;
-                    // Set review status + initial assignment to the project's designer
-                    const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid,
-                      preReviewAssignedTo:project.bcDesignerUid||null,preReviewAssignedToName:project.bcDesigner||project.bcDesignerCode||null,
-                      preReviewRev:(project.preReviewRev||0)+1,preReviewNotes:reviewNotes.trim()||null,reviewRevBumpedThisCycle:false,reviewChangeLog:[]};
-                    _logQvHistory(project.id,{type:"review_submit",field:"Qv"+((project.preReviewRev||0)+1),to:project.bcDesigner||project.bcDesignerCode||"",description:reviewNotes.trim()||""});
-                    persistProject(upd);
-                    if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
-                    // Look up designer email — check Salesperson cache first (has E_Mail), then BC User page
-                    try{
-                      const designerName=project.bcDesigner||designerCode;
-                      let designerEmail=null;
-                      // Check salesperson cache (salespersons have E_Mail)
-                      const spMatch=(window._arcSalespersonCache||[]).find(s=>s.Name===designerName||s.Code===designerCode);
-                      if(spMatch?.E_Mail)designerEmail=spMatch.E_Mail;
-                      // Fallback: fetch from BC User page
-                      if(!designerEmail&&_bcToken){
-                        try{
-                          const uR=await fetch(`${BC_ODATA_BASE}/User?$filter=User_Name eq '${designerCode}'&$select=User_Name,Contact_Email&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                          if(uR.ok){const uD=((await uR.json()).value||[])[0];if(uD?.Contact_Email)designerEmail=uD.Contact_Email;}
-                        }catch(e){}
-                      }
-                      // Fallback: look up member email from Firestore
-                      if(!designerEmail){
-                        const membersSnap=await fbDb.collection(`companies/${_appCtx.companyId}/members`).get();
-                        const memberMatch=membersSnap.docs.find(d=>{const m=d.data();return(m.email||"").toLowerCase().includes(designerName.toLowerCase().split(" ")[0]);});
-                        if(memberMatch)designerEmail=memberMatch.data().email;
-                      }
-                      // Create in-app notification for designer
-                      if(designerEmail){
-                        // Find designer UID from members
-                        const membersSnap2=await fbDb.collection(`companies/${_appCtx.companyId}/members`).get();
-                        const designerMember=membersSnap2.docs.find(d=>d.data().email===designerEmail);
-                        if(designerMember){
-                          await fbDb.collection(`users/${designerMember.id}/notifications`).add({
-                            type:"pre_review",title:"Pre-Quote Review Requested",
-                            body:`${project.bcProjectNumber||""} — ${project.name||""} needs engineering review`,
-                            projectId:project.id,projectName:project.name||"",createdAt:Date.now(),read:false,
-                            from:uid // v1.19.963: required by tightened notifications create rule
-                          });
-                        }
-                      }
-                      // Send email notification via Graph
-                      if(designerEmail){
-                        try{
-                          const graphToken=await acquireGraphToken();
-                          if(graphToken){
-                            const _notesHtml=reviewNotes.trim()?`<div style="background:#f5f3ff;border-left:4px solid #7c3aed;padding:12px 16px;margin:16px 0;border-radius:4px"><div style="font-weight:700;color:#5b21b6;font-size:13px;margin-bottom:4px">Notes from ${fbAuth.currentUser?.displayName||"Sales"}:</div><p style="color:#334155;margin:0;white-space:pre-wrap">${reviewNotes.trim().replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p></div>`:"";
-                            const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p>${_notesHtml}<a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
-                            await sendGraphEmail(graphToken,designerEmail,`Pre-Quote Review: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
-                            arcAlert("Submitted for pre-quote review. "+designerName+" has been notified at "+designerEmail);
-                          }else{arcAlert("Submitted for review. Email notification requires Microsoft 365 sign-in.");}
-                        }catch(e){console.warn("Review email failed:",e);arcAlert("Submitted for review. Email failed: "+e.message);}
-                      }else{arcAlert("Submitted for review. Could not find Engineer/Designer email — please notify "+designerName+" manually.");}
-                    }catch(e){console.warn("Review notification failed:",e);arcAlert("Review submitted but notification failed: "+(e.message||e)+"\n\nThe project status has been updated. Please notify the Engineer/Designer manually.");}
+                    const designers=(window._arcDesignerCache||[]).filter(d=>{const dUid=window._arcUidForBcUser?.(d.Code);return !!dUid;});
+                    if(designers.length===0){arcAlert("No engineers available. Connect to Business Central first.");return;}
+                    const defaultUid=project.bcDesignerUid||(project.bcDesignerCode&&window._arcUidForBcUser?.(project.bcDesignerCode))||"";
+                    setSendReviewEngineer(defaultUid);setSendReviewNotes("");setShowSendForReview(true);
                   }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",flex:1,border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>{_qvHistBtn}</div>;
                 })()}
                 {/* DECISION(v1.19.667): Pre-gate the Send button on the main view so sales sees
