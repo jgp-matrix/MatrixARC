@@ -225,7 +225,13 @@ You MUST extract from ALL BOM boxes/columns/sections on the page. Specific rules
 BEFORE emitting items, COUNT the total number of BOM line items visible on this page,
 SUMMING ACROSS ALL BOM BOXES/COLUMNS. Set "detectedLineCount" to that total.
 
-★ HARD CONSTRAINT: items.length MUST equal detectedLineCount.
+★ CRITICAL: detectedLineCount must reflect the TRUE number of line items you can SEE
+on the page — even if you were unable to extract all of them. Do NOT adjust
+detectedLineCount downward to match the number of items you extracted. If the page
+shows 75 line items but you could only extract 72, set detectedLineCount:75 and
+items.length will be 72. The downstream system uses this mismatch to trigger a
+targeted re-extraction for the missing rows. Lying about the count is worse than
+admitting a gap — it causes silent data loss.
 
 If a specific row is too unreadable to extract cleanly, emit a PLACEHOLDER row instead of
 dropping it. Placeholder format:
