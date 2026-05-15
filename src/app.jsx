@@ -29956,7 +29956,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     }catch(ne){console.warn("Reassign notification failed:",ne);}
                   }}>
                     <option value="">Select engineer…</option>
-                    {(window._arcDesignerCache||[]).filter(d=>{const dUid=window._arcUidForBcUser?.(d.Code);return dUid&&dUid!==_appCtx.uid;}).map(d=>{
+                    {(window._arcDesignerCache||[]).filter(d=>{const dUid=window._arcUidForBcUser?.(d.Code);return !!dUid;}).map(d=>{
                       const dUid=window._arcUidForBcUser(d.Code);
                       return <option key={d.Code} value={dUid}>{d.Name}</option>;
                     })}
