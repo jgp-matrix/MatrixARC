@@ -8200,6 +8200,30 @@ async function saveProject(uid,project){
           console.warn(`SAVE GUARD: preserving owner-set lock — incoming save by ${uid} would have cleared it`);
           data.ownerLockActive=true;
         }
+        // SAVE GUARD: Preserve review fields from server when incoming save has no review state.
+        // Race: review submit writes preReviewStatus="pending" via saveProject, but a concurrent
+        // save (e.g. BC drawing sync, auto-save) reads stale Firestore and overwrites with a doc
+        // missing review fields. undefined = field absent (stale, preserve); null = intentional clear.
+        const _srvReviewStatus=_curDoc.data().preReviewStatus;
+        if(_srvReviewStatus&&data.preReviewStatus===undefined){
+          const _srvD=_curDoc.data();
+          for(const _rf of ['preReviewStatus','preReviewSubmittedAt','preReviewSubmittedBy','preReviewAssignedTo','preReviewAssignedToName','preReviewRev','preReviewNotes','preReviewApprovedAt','preReviewApprovedBy','preReviewChangeLog','reviewRev','reviewRevBumpedThisCycle','reviewChangeLog']){
+            if(_srvD[_rf]!==undefined)data[_rf]=_srvD[_rf];
+          }
+          console.warn(`SAVE GUARD: preserving pre-review fields (status=${_srvReviewStatus}) — incoming save by ${uid} would have wiped them`);
+        }
+        const _srvPostReviewStatus=_curDoc.data().postReviewStatus;
+        if(_srvPostReviewStatus&&data.postReviewStatus===undefined){
+          const _srvD=_curDoc.data();
+          for(const _rf of ['postReviewStatus','postReviewSubmittedAt','postReviewSubmittedBy','postReviewAssignedTo','postReviewAssignedToName','postReviewNotes','postReviewApprovedAt','postReviewApprovedBy']){
+            if(_srvD[_rf]!==undefined)data[_rf]=_srvD[_rf];
+          }
+          console.warn(`SAVE GUARD: preserving post-review fields (status=${_srvPostReviewStatus}) — incoming save by ${uid} would have wiped them`);
+        }
+        // Also apply in-memory review overrides (covers the window before the review submit's
+        // write reaches Firestore — server doc is still stale, but local flag has the truth).
+        const _prOvrSP=_pendingPreReviewOverrides[data.id];
+        if(_prOvrSP)Object.assign(data,_prOvrSP);
         // (3) quoteRev bump — compute hash AFTER bomVersion has been applied so
         // version changes are part of the quote-state hash. Compare to the last-
         // persisted hash; if different, bump quoteRev and record the new hash. First
@@ -30091,6 +30115,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     preReviewAssignedTo:sendReviewEngineer,preReviewAssignedToName:designerName,
                     preReviewRev:(project.preReviewRev||0)+1,reviewRev:_nextRv,preReviewNotes:reviewNotes||null,reviewRevBumpedThisCycle:false,reviewChangeLog:[]};
                   _logQvHistory(project.id,{type:"review_submit",field:"Rv"+_nextRv,to:designerName,description:reviewNotes||""});
+                  _pendingPreReviewOverrides[project.id]={preReviewStatus:"pending",preReviewSubmittedAt:upd.preReviewSubmittedAt,preReviewSubmittedBy:upd.preReviewSubmittedBy,preReviewAssignedTo:upd.preReviewAssignedTo,preReviewAssignedToName:upd.preReviewAssignedToName,preReviewRev:upd.preReviewRev,reviewRev:_nextRv,preReviewNotes:upd.preReviewNotes,reviewRevBumpedThisCycle:false,reviewChangeLog:[]};
                   persistProject(upd);
                   if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                   try{
