@@ -8235,9 +8235,11 @@ async function saveProject(uid,project){
   // Don't store page images in Firestore — strip dataUrls from panels
   // DECISION(v1.19.421): Include updatedBy (uid) so concurrent editing detection can
   // distinguish own saves from other users' saves.
+  data.qvHistory=_mergeQvHistory(project.id,data,_curDoc&&_curDoc.exists?_curDoc.data():null);
   const stripped={...data,updatedBy:uid,updatedAt:Date.now(),panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
   const toSave=JSON.parse(JSON.stringify(stripped));
   await ref.set(toSave);
+  _flushQvHistory(project.id);
   return data; // return with dataUrls intact for in-memory use
 }
 // DECISION(v1.19.405): Safe save wrapper — retries on failure and shows user notification.
@@ -8294,12 +8296,24 @@ async function restoreSnapshot(uid,projectId,snapshot,panel,onUpdate,onSaveImmed
 // Uses a mutex to prevent concurrent saves from racing
 const _panelSaveLocks={};
 const _pendingPreReviewOverrides={};
+const _pendingQvHistory={};
 function _logQvHistory(projectId,entry){
   if(!projectId)return;
   const path=_appCtx.projectsPath||`users/${_appCtx.uid}/projects`;
   const full={...entry,id:Date.now()+'-'+Math.random().toString(36).slice(2,8),by:_appCtx.uid||'',byName:(typeof fbAuth!=='undefined'&&fbAuth.currentUser?.displayName)||'',at:Date.now()};
+  if(!_pendingQvHistory[projectId])_pendingQvHistory[projectId]=[];
+  _pendingQvHistory[projectId].push(full);
   fbDb.collection(path).doc(projectId).update({qvHistory:firebase.firestore.FieldValue.arrayUnion(full)}).catch(e=>console.error("[QV-HIST] save failed:",e));
 }
+function _mergeQvHistory(projectId,target,serverDoc){
+  const merged=[...(target.qvHistory||[])];
+  const ids=new Set(merged.map(e=>e.id));
+  if(serverDoc){const sv=serverDoc.qvHistory||[];for(const e of sv)if(!ids.has(e.id)){merged.push(e);ids.add(e.id);}}
+  const pq=_pendingQvHistory[projectId];
+  if(pq){for(const e of pq)if(!ids.has(e.id)){merged.push(e);ids.add(e.id);}}
+  return merged;
+}
+function _flushQvHistory(projectId){delete _pendingQvHistory[projectId];}
 async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=false){
   // Skip if panel was deleted
   if(window._deletedPanelIds&&window._deletedPanelIds.has(panelId)){console.log("saveProjectPanel: skipped — panel",panelId,"was deleted");return;}
@@ -8436,8 +8450,10 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     }
     const _prOvr=_pendingPreReviewOverrides[projectId];
     if(_prOvr)Object.assign(liveProject,_prOvr);
+    liveProject.qvHistory=_mergeQvHistory(projectId,liveProject,null);
     const stripped=JSON.parse(JSON.stringify({...liveProject,panels:liveProject.panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
     await ref.set(stripped);
+    _flushQvHistory(projectId);
     if(_prOvr)delete _pendingPreReviewOverrides[projectId];
     if(!skipNotify)notifyProjectListeners(projectId,liveProject);
   }finally{resolve();delete _panelSaveLocks[lockKey];}
