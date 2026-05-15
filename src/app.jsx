@@ -29983,7 +29983,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               </div>
             </div>,document.body);
         })()}
-        {showQvHistory&&(project.qvHistory||[]).length>0&&(()=>{
+        {showQvHistory&&(()=>{
           const hist=[...(project.qvHistory||[])].sort((a,b)=>(b.at||0)-(a.at||0));
           const typeLabel={edit:"Edit",add:"Item Added",delete:"Item Deleted",re_extract:"Re-Extract",refresh_pricing:"Refresh Pricing",bc_push_lead_times:"Push Lead Times",supplier_apply:"Supplier Apply",review_submit:"Review Submitted",review_approve:"Review Approved",review_cancel:"Review Cancelled"};
           const typeColor={edit:"#818cf8",add:"#4ade80",delete:"#ef4444",re_extract:"#f472b6",refresh_pricing:"#38bdf8",bc_push_lead_times:"#2dd4bf",supplier_apply:"#a78bfa",review_submit:"#a78bfa",review_approve:"#4ade80",review_cancel:"#ef4444"};
@@ -29998,6 +29998,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 <button onClick={()=>setShowQvHistory(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
               </div>
               <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
+                {hist.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"#64748b",fontSize:12}}>No changes recorded yet. Edits, system actions, and review events will appear here.</div>}
                 {hist.map((c,i)=>{
                   const pn=c.panelName||"";
                   const part=c.partNumber||"";
@@ -31185,7 +31186,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 {!readOnly&&(()=>{
                   const reviewStatus=project.preReviewStatus;
                   const _qvHist=(project.qvHistory||[]);
-                  const _qvHistBtn=_qvHist.length>0?<button onClick={()=>setShowQvHistory(true)} style={btn("#1a1020","#f59e0b",{fontSize:10,padding:"4px 10px",whiteSpace:"nowrap",fontWeight:700,border:"1px solid #f59e0b44"})}>Qv Hist. ({_qvHist.length})</button>:null;
+                  const _qvHistBtn=<button onClick={()=>setShowQvHistory(true)} style={btn("#1a1020","#f59e0b",{fontSize:10,padding:"4px 10px",whiteSpace:"nowrap",fontWeight:700,border:"1px solid #f59e0b44"})}>Qv Hist.{_qvHist.length>0?" ("+_qvHist.length+")":""}</button>;
                   if(reviewStatus==="approved")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}>
                     <span style={{fontSize:11,fontWeight:700,color:C.green}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</span>
                     <button onClick={()=>{_logQvHistory(project.id,{type:"review_cancel"});const upd={...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null};persistProject(upd);}} style={{fontSize:10,padding:"2px 8px",borderRadius:10,border:"1px solid #ef444466",background:"#1a0a0a",color:"#ef4444",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>Cancel</button>
