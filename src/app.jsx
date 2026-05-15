@@ -5980,6 +5980,23 @@ function buildReviewEmailHtml(projectName,bcProjectNumber,designerName,notes,rev
 </div></body></html>`;
 }
 
+function buildReviewRetractedEmailHtml(projectName,bcProjectNumber,companyInfo){
+  const ci=companyInfo||{};
+  const safeLogoUrl=_safeUrl(ci.logoUrl);
+  const logoHtml=safeLogoUrl?`<img src="${safeLogoUrl}" alt="${_esc(ci.name||'ARC')}" style="height:40px;max-width:200px"/>`:`<span style="font-weight:900;font-size:22px;color:#1e293b">${_esc(ci.name||'ARC')}</span>`;
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;background:#f8fafc">
+<div style="max-width:600px;margin:24px auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">
+<div style="padding:20px 28px;background:#0f172a;text-align:center">${logoHtml}</div>
+<div style="padding:28px">
+<h2 style="margin:0 0 12px;color:#1e293b;font-size:20px">Review Retracted</h2>
+<p style="color:#475569;font-size:14px;line-height:1.6">The engineering review for <strong>${_esc(bcProjectNumber||projectName||"your project")}</strong> has been retracted by the engineering team. No further action is required on your part.</p>
+<p style="color:#475569;font-size:14px;line-height:1.6">If you have already begun your review, please disregard it. The review link is no longer active.</p>
+<p style="color:#475569;font-size:14px;line-height:1.6">If you have any questions, please reply to this email.</p>
+</div>
+<div style="padding:16px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;text-align:center;font-size:12px;color:#94a3b8">${_esc(ci.name||"")}${ci.phone?" · "+_esc(ci.phone):""}</div>
+</div></body></html>`;
+}
+
 function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl=null,companyInfo=null,opts={}){
   // DECISION(v1.19.692): opts.leadTimeOnly — when true, render a "Current Price" reference
   // column with BC prices, mark Lead Time as the field to fill, and swap banner + body.
@@ -26165,8 +26182,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   await sendGraphEmail(graphTok,sendReviewEmail.trim(),subject,html);
                   // Save to project (direct Firestore update — project-level fields)
                   const projPath=_appCtx.projectsPath||`users/${uid}/projects`;
-                  await fbDb.doc(`${projPath}/${project.id}`).update({customerReviewToken:tok,customerReviewSentAt:Date.now(),customerReviewEmail:sendReviewEmail.trim()});
+                  await fbDb.doc(`${projPath}/${project.id}`).update({customerReviewToken:tok,customerReviewSentAt:Date.now(),customerReviewEmail:sendReviewEmail.trim(),customerReviewStatus:"pending",customerReviewDismissed:false});
                   setSendReviewModal(false);
+                  setShowDrawingReview(false);
                   arcAlert("✓ Review sent to "+sendReviewEmail.trim());
                 }catch(e){
                   console.error("Send review error:",e);
@@ -29562,6 +29580,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
       onCustomerReviewOpened&&onCustomerReviewOpened();
     }
   },[autoOpenCustomerReview,customerReviewData]);
+  useEffect(()=>{
+    if(customerReviewData&&customerReviewData.status==="submitted"&&project.customerReviewStatus==="pending"){
+      const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
+      fbDb.doc(`${_prjPath}/${project.id}`).update({customerReviewStatus:null}).catch(e=>console.warn("auto-clear customerReviewStatus:",e));
+    }
+  },[customerReviewData?.status,project.customerReviewStatus]);
   // Fetch contacts when project has a customer number
   useEffect(()=>{
     if(!project.bcCustomerNumber||!_bcToken)return;
@@ -30165,10 +30189,34 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             </div>
           </div>
         )}
-        {project.customerReviewToken&&customerReviewData&&customerReviewData.status==="pending"&&(
-          <div style={{marginBottom:12,background:"#172554",border:"1px solid #3b82f6",borderRadius:10,padding:"10px 16px",display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:16}}>📧</span>
-            <div style={{fontSize:12,color:"#93c5fd"}}>Customer review sent to <strong>{project.customerReviewEmail||"customer"}</strong> on {project.customerReviewSentAt?new Date(project.customerReviewSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—"} — awaiting response</div>
+        {project.customerReviewStatus==="pending"&&(
+          <div style={{marginBottom:12,background:"#172554",border:"2px solid #3b82f6",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+            <span style={{fontSize:20}}>🔒</span>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{fontSize:14,fontWeight:800,color:"#3b82f6"}}>CLIENT REVIEW IN PROGRESS — EDITS LOCKED</div>
+              <div style={{fontSize:12,color:"#93c5fd"}}>Sent to <strong>{project.customerReviewEmail||"customer"}</strong> on {project.customerReviewSentAt?new Date(project.customerReviewSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):"—"}. All edits are locked until the customer responds or the review is cancelled.</div>
+            </div>
+            <button onClick={async()=>{
+              const ok=await arcConfirm("Cancel the customer review and send a retraction notice to "+(project.customerReviewEmail||"the customer")+"?",{kind:"warning",okLabel:"Retract Review"});
+              if(!ok)return;
+              try{
+                const graphTok=await acquireGraphToken();
+                if(!graphTok)throw new Error("Microsoft Graph not connected. Sign into Microsoft first (Settings → Microsoft 365).");
+                const ci=_appCtx.company||{};
+                const html=buildReviewRetractedEmailHtml(project.name||"",project.bcProjectNumber||"",ci);
+                const subject="Review Retracted — "+(project.bcProjectNumber||project.name||"Project");
+                await sendGraphEmail(graphTok,project.customerReviewEmail,subject,html);
+                if(project.customerReviewToken){
+                  await fbDb.collection("reviewUploads").doc(project.customerReviewToken).update({status:"retracted",retractedAt:Date.now(),retractedBy:fbAuth.currentUser?.displayName||""}).catch(e=>console.warn("retract reviewUpload:",e));
+                }
+                const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
+                await fbDb.doc(`${_prjPath}/${project.id}`).update({customerReviewStatus:null});
+                arcAlert("Review retracted. Customer has been notified.");
+              }catch(e){
+                console.error("Retract review error:",e);
+                arcAlert("Failed to retract: "+(e.message||e));
+              }
+            }} style={btn("#2a0a0a","#ef4444",{fontSize:13,fontWeight:700,border:"1px solid #ef4444",padding:"6px 16px"})}>✗ Cancel Review</button>
           </div>
         )}
         <div style={{maxWidth:1400,margin:"0 auto"}}>
@@ -32369,6 +32417,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     :(project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid));
   const reviewReadOnly=(project.preReviewStatus==="pending"||project.postReviewStatus==="pending")
                        &&!(_appCtx.role==="admin"||hasPermission("reviewer")||_outerIsPreReviewAssignee);
+  const customerReviewReadOnly=project.customerReviewStatus==="pending";
   // DECISION(v1.19.834, ECO Stage A.3): scope-aware readOnly. The base
   // computation (lock/sent/review) still applies; on top of that, when ECOs
   // exist on the project we add scope-derived rules:
@@ -32402,7 +32451,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     :_ecoScopeReadOnly
       ?"This ECO is not the active draft"
       :null;
-  const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly;
+  const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||customerReviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly;
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
 
   // DECISION(v1.19.755): Send "Unlock requested" notification to project owner + all
