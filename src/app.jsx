@@ -25664,12 +25664,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             // Also update pendingPages so regions persist during review phase
             setPendingPages(pp=>pp.length>0?pp.map(p=>p.id===pgId?{...p,regions:newRegions}:p):pp);
           }}
-          onNotesChange={!readOnly?(pgId,newNotes)=>{
-            const fresh=latestPanelRef.current;
-            const updated={...fresh,pages:(fresh.pages||[]).map(p=>p.id===pgId?{...p,reviewNotes:newNotes}:p)};
-            onUpdate(updated);
-            try{onSaveImmediate(updated);}catch(e){}
-          }:undefined}
+          onNotesChange={undefined}
         />
       )}
       {showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
@@ -25804,9 +25799,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             </div>
             {/* Markup toolbar */}
             {!readOnly&&<div style={{display:"flex",gap:2,background:"#1a1040",borderRadius:6,padding:"2px 4px",alignItems:"center"}}>
-              {[{id:null,label:"📌",tip:"Note (click to place)"},{id:"line",label:"─",tip:"Line"},{id:"circle",label:"○",tip:"Circle"},{id:"rect",label:"□",tip:"Rectangle"},{id:"triangle",label:"△",tip:"Triangle"}].map(t=>(
+              {[{id:null,label:"+ Note",tip:"Add Note (click to place)"},{id:"line",label:"─",tip:"Line"},{id:"circle",label:"○",tip:"Circle"},{id:"rect",label:"□",tip:"Rectangle"},{id:"triangle",label:"△",tip:"Triangle"}].map(t=>(
                 <button key={t.id||"note"} onClick={()=>{setMarkupTool(t.id);setDrawingShape(null);setNewShapeData(null);setPolylinePoints([]);setPolylinePreview(null);}} title={t.tip}
-                  style={{background:markupTool===t.id?"#a78bfa33":"transparent",color:markupTool===t.id?"#a78bfa":"#64748b",border:markupTool===t.id?"1px solid #a78bfa":"1px solid transparent",borderRadius:4,padding:"3px 8px",fontSize:14,cursor:"pointer",fontWeight:700,fontFamily:"inherit",lineHeight:1}}>{t.label}</button>
+                  style={{background:markupTool===t.id?"#a78bfa33":"transparent",color:markupTool===t.id?"#a78bfa":"#64748b",border:markupTool===t.id?"1px solid #a78bfa":"1px solid transparent",borderRadius:4,padding:t.id===null?"3px 10px":"3px 8px",fontSize:t.id===null?11:14,cursor:"pointer",fontWeight:700,fontFamily:"inherit",lineHeight:1}}>{t.label}</button>
               ))}
             </div>}
             {!readOnly&&<button onClick={()=>{
