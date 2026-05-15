@@ -29866,6 +29866,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 <div style={{fontSize:12,color:"#94a3b8"}}>Submitted {project.preReviewSubmittedAt?new Date(project.preReviewSubmittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric"}):""}. {_preReviewWasReassigned?"Reassigned to: "+_preReviewAssigneeName:"Engineer/Designer: "+(project.bcDesigner||"—")}. Edits resume once the reviewer approves or returns the project.</div>
               </>)}
             </div>
+            {project.preReviewNotes&&<div style={{width:"100%",background:"#1a1030",border:"1px solid #a78bfa44",borderRadius:8,padding:"8px 12px",marginTop:4}}>
+              <div style={{fontSize:10,fontWeight:700,color:"#a78bfa",marginBottom:2}}>NOTES FROM SALES</div>
+              <div style={{fontSize:12,color:"#e2e8f0",whiteSpace:"pre-wrap",lineHeight:1.4}}>{project.preReviewNotes}</div>
+            </div>}
             {!isReadOnly()&&(_isPreReviewAssignee||_appCtx.role==="admin"||hasPermission("reviewer"))&&(
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{display:"flex",gap:6}}>
@@ -30006,6 +30010,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       {c.byName&&<span>{c.byName} · </span>}
                       {c.at&&<span>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
                     </div>
+                    {c.type==="review_submit"&&c.description&&<div style={{color:"#c4b5fd",fontSize:11,marginTop:4,padding:"4px 8px",background:"#1a103088",borderRadius:4,borderLeft:"2px solid #a78bfa",whiteSpace:"pre-wrap"}}>{c.description}</div>}
                   </div>
                 </div>)}
               </div>
@@ -31183,11 +31188,13 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     if(!designerCode){arcAlert("No Engineer/Designer assigned to this project. Assign an Engineer/Designer first.");return;}
                     const hasDrawings=(project.panels||[]).some(p=>(p.pages||[]).length>0);
                     if(!hasDrawings){arcAlert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
+                    const reviewNotes=await arcPrompt("Notes for the reviewing engineer:",{multiline:true,placeholder:"Optional — describe what to focus on, recent changes, etc.",okLabel:"Send for Review",title:"Send for Technical Review"});
+                    if(reviewNotes===null)return;
                     // Set review status + initial assignment to the project's designer
                     const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid,
                       preReviewAssignedTo:project.bcDesignerUid||null,preReviewAssignedToName:project.bcDesigner||project.bcDesignerCode||null,
-                      preReviewRev:(project.preReviewRev||0)+1};
-                    _logQvHistory(project.id,{type:"review_submit",field:"Qv"+((project.preReviewRev||0)+1),to:project.bcDesigner||project.bcDesignerCode||""});
+                      preReviewRev:(project.preReviewRev||0)+1,preReviewNotes:reviewNotes.trim()||null};
+                    _logQvHistory(project.id,{type:"review_submit",field:"Qv"+((project.preReviewRev||0)+1),to:project.bcDesigner||project.bcDesignerCode||"",description:reviewNotes.trim()||""});
                     persistProject(upd);
                     if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                     // Look up designer email — check Salesperson cache first (has E_Mail), then BC User page
@@ -31229,7 +31236,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         try{
                           const graphToken=await acquireGraphToken();
                           if(graphToken){
-                            const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p><a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
+                            const _notesHtml=reviewNotes.trim()?`<div style="background:#f5f3ff;border-left:4px solid #7c3aed;padding:12px 16px;margin:16px 0;border-radius:4px"><div style="font-weight:700;color:#5b21b6;font-size:13px;margin-bottom:4px">Notes from ${fbAuth.currentUser?.displayName||"Sales"}:</div><p style="color:#334155;margin:0;white-space:pre-wrap">${reviewNotes.trim().replace(/</g,"&lt;").replace(/>/g,"&gt;")}</p></div>`:"";
+                            const html=`<div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px"><h2 style="color:#1e293b">Pre-Quote Review Requested</h2><p style="color:#64748b"><strong>${project.bcProjectNumber||""}</strong> — ${project.name||"Project"}</p><p style="color:#334155">A pre-quote engineering review has been requested by ${fbAuth.currentUser?.displayName||"a team member"}. Please review the drawings and BOM in ARC.</p>${_notesHtml}<a href="${window.location.origin}" style="display:inline-block;background:#7c3aed;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Open ARC to Review →</a></div>`;
                             await sendGraphEmail(graphToken,designerEmail,`Pre-Quote Review: ${project.bcProjectNumber||""} — ${project.name||""}`,html);
                             arcAlert("Submitted for pre-quote review. "+designerName+" has been notified at "+designerEmail);
                           }else{arcAlert("Submitted for review. Email notification requires Microsoft 365 sign-in.");}
