@@ -22690,9 +22690,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       editedRow=next;
       return next;
     })};
+    if((field==="qty"||field==="partNumber")&&editedRow&&String(_oldVal)!==String(val))_trackBomChange({type:field,rowId:id,partNumber:editedRow.partNumber||"",description:editedRow.description||"",from:String(_oldVal??""),to:String(val??"")});
     onUpdate(updated);
     latestPanelRef.current=updated;
-    if((field==="qty"||field==="partNumber")&&editedRow&&String(_oldVal)!==String(val))_trackBomChange({type:field,rowId:id,partNumber:editedRow.partNumber||"",description:editedRow.description||"",from:String(_oldVal??""),to:String(val??"")});
     if(editedRow&&String(_oldVal)!==String(val))_logBomEdit("edit",id,editedRow.partNumber,editedRow.description,field,_oldVal,val);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     // DECISION(v1.19.729): Save latestPanelRef.current at flush time, NOT the closure
@@ -25369,9 +25369,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                                   return next;
                                 })(),...(_src.bom||[])];
                               const updated={..._src,bom:updatedBom};
+                              if(f==="qty"||f==="partNumber")_trackBomChange({type:f,rowId:row.id,partNumber:row.partNumber||"",description:row.description||"",from:String(row[f]??""),to:String(val??"")});
                               onUpdate(updated);
                               saveBomRow(updated);
-                              if(f==="qty"||f==="partNumber")_trackBomChange({type:f,rowId:row.id,partNumber:row.partNumber||"",description:row.description||"",from:String(row[f]??""),to:String(val??"")});
                               _logBomEdit("edit",row.id,row.partNumber,row.description,f,row[f],val);
                               if(f==="partNumber"&&val.trim()){
                                 savePartLibraryEntry(uid,{manufacturer:row.manufacturer||"",description:row.description||"",partNumber:val.trim()})
@@ -29705,8 +29705,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     persistProject(updated);
   }
   async function saveImmediatePanel(panelId,updatedPanel){
-    // Skip notify — local state is already correct from onUpdate, don't overwrite with Firestore read
-    await saveProjectPanel(uid,project.id,panelId,updatedPanel,true);
+    const hasOverrides=!!_pendingPreReviewOverrides[project.id];
+    await saveProjectPanel(uid,project.id,panelId,updatedPanel,!hasOverrides);
   }
   function saveSelectedPricing(patch){
     const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);
@@ -30552,12 +30552,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     if(project.preReviewStatus==="approved"||project.preReviewStatus==="pending"){
                       const fields={preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,preReviewChangeLog:log};
                       _pendingPreReviewOverrides[project.id]=fields;
-                      onUpdate({...project,...fields});
+                      setProject(prev=>({...prev,...fields}));
                       fbDb.collection(_prjPath).doc(project.id).update(fields).catch(e=>console.error("[PRE-REVIEW] cancel+log save failed:",e));
                       _logQvHistory(project.id,{type:"review_cancel",field:"auto",description:"BOM changed while review was "+project.preReviewStatus});
                     }else{
                       _pendingPreReviewOverrides[project.id]={preReviewChangeLog:log};
-                      onUpdate({...project,preReviewChangeLog:log});
+                      setProject(prev=>({...prev,preReviewChangeLog:log}));
                       fbDb.collection(_prjPath).doc(project.id).update({preReviewChangeLog:log}).catch(e=>console.error("[PRE-REVIEW] changelog save failed:",e));
                     }
                   }}
