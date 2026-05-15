@@ -31446,7 +31446,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     if(designers.length===0){arcAlert("No engineers available. Connect to Business Central first.");return;}
                     const defaultUid=project.bcDesignerUid||(project.bcDesignerCode&&window._arcUidForBcUser?.(project.bcDesignerCode))||"";
                     setSendReviewEngineer(defaultUid);setSendReviewNotes("");setShowSendForReview(true);
-                  }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",flex:1,border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>{_qvHistBtn}</div>;
+                  }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",flex:1,border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Tech. Review (Rv.{String(project.reviewRev||0).padStart(2,"0")})</button>{_qvHistBtn}</div>;
                 })()}
                 {/* DECISION(v1.19.667): Pre-gate the Send button on the main view so sales sees
                    the incomplete-items warning BEFORE opening the modal and typing a recipient.
@@ -31517,7 +31517,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
-                }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700,opacity:_sendBlocked?0.45:1,cursor:_sendBlocked?"not-allowed":"pointer"})}>{ownerPriorityActive?"✉ Send (blocked — owner working)":(_incompleteItems.length>0?"✉ Send (blocked — "+_incompleteItems.length+" incomplete)":"✉ "+(project.quoteSentAt?"Resend":"Send")+" / Print Quote — Rev "+String(project.quoteRev||0).padStart(2,"0"))}</button>
+                }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700,opacity:_sendBlocked?0.45:1,cursor:_sendBlocked?"not-allowed":"pointer"})}>{ownerPriorityActive?"✉ Send (blocked — owner working)":(_incompleteItems.length>0?"✉ Send (blocked — "+_incompleteItems.length+" incomplete)":"✉ "+(project.quoteSentAt?"Resend":"Send")+" / Print Quote — Qv."+String(project.quoteRev||0).padStart(2,"0"))}</button>
                   </>);
                 })()}
                 {/* DECISION(v1.19.849, ECO Stage A): Suppress all "Customer has
