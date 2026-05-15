@@ -30527,8 +30527,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   onSelect={()=>setSelectedPanelId(panel.id)}
                   onDelete={()=>deletePanel(panel.id)}
                   onUpdate={updatedPanel=>{
-                    const newPanels=panels.map(p=>p.id===panel.id?updatedPanel:p);
-                    setProject(prev=>({...prev,panels:newPanels}));
+                    onUpdate(prev=>({...prev,panels:(prev.panels||[]).map(p=>p.id===panel.id?updatedPanel:p)}));
                   }}
                   onSaveImmediate={updatedPanel=>saveImmediatePanel(panel.id,updatedPanel)}
                   onViewQuote={onViewQuote}
@@ -32662,7 +32661,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // function just propagates state and lets the next save fire the bump on its own.
   function update(p){
     lastSavedAt.current=Date.now();
-    setProject(p);projectRef.current=p;onChange(p);
+    if(typeof p==="function"){setProject(prev=>{const next=p(prev);projectRef.current=next;onChange(next);return next;});}
+    else{setProject(p);projectRef.current=p;onChange(p);}
   }
 
   const [relinking,setRelinking]=useState(false);
