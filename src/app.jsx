@@ -29952,30 +29952,34 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
         {showPreReviewChanges&&(project.preReviewChangeLog||[]).length>0&&(()=>{
           const log=project.preReviewChangeLog;
           const rev=project.preReviewRev||1;
-          const typeLabel={qty:"Qty Changed",partNumber:"Part # Changed",add:"Item Added",delete:"Item Deleted"};
-          const typeColor={qty:"#f59e0b",partNumber:"#818cf8",add:"#4ade80",delete:"#ef4444"};
+          const fieldLabel={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer"};
           return ReactDOM.createPortal(
-            <div style={{position:"fixed",top:80,right:40,width:460,maxHeight:"70vh",background:"#111118",border:"2px solid #f59e0b88",borderRadius:12,boxShadow:"0 8px 32px #000a",zIndex:9999,display:"flex",flexDirection:"column",overflow:"hidden"}}
+            <div style={{position:"fixed",top:80,right:40,width:520,maxHeight:"70vh",background:"#111118",border:"2px solid #f59e0b88",borderRadius:12,boxShadow:"0 8px 32px #000a",zIndex:9999,display:"flex",flexDirection:"column",overflow:"hidden"}}
               onMouseDown={e=>{if(e.target.dataset.drag!=="header")return;const el=e.currentTarget;const sx=e.clientX-el.offsetLeft,sy=e.clientY-el.offsetTop;
                 const mv=e2=>{el.style.left=e2.clientX-sx+"px";el.style.top=e2.clientY-sy+"px";el.style.right="auto";};
                 const up=()=>{document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
                 document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);}}>
               <div data-drag="header" style={{padding:"12px 16px",background:"#1a1a28",borderBottom:"1px solid #f59e0b44",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"grab",userSelect:"none"}}>
-                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>Qv{rev} Changes ({log.length})</span>
+                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>{project.bcProjectNumber||project.name||"Project"} — Qv.{rev} Changes ({log.length})</span>
                 <button onClick={()=>setShowPreReviewChanges(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
               </div>
               <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
-                {log.map((c,i)=><div key={i} style={{padding:"8px 16px",borderBottom:"1px solid #ffffff0a",display:"flex",gap:10,alignItems:"flex-start",fontSize:12}}>
-                  <span style={{background:typeColor[c.type]||"#94a3b8",color:"#000",borderRadius:4,padding:"1px 6px",fontWeight:700,fontSize:10,whiteSpace:"nowrap",flexShrink:0,marginTop:1}}>{typeLabel[c.type]||c.type}</span>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{color:"#e2e8f0",fontWeight:600}}>{c.partNumber||"—"}{c.description?" — "+c.description:""}</div>
-                    <div style={{color:"#94a3b8",fontSize:11,marginTop:2}}>
-                      {c.panelName&&<span>{c.panelName}</span>}
-                      {(c.type==="qty"||c.type==="partNumber")&&<span style={{marginLeft:8}}>{c.from} → {c.to}</span>}
-                      {c.at&&<span style={{marginLeft:8}}>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
+                {log.map((c,i)=>{
+                  const pn=c.panelName||"";
+                  const part=c.partNumber||"";
+                  const fl=fieldLabel[c.type]||c.type||"";
+                  let line="";
+                  if(c.type==="qty"||c.type==="partNumber")line=(pn?pn+" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Change")+(c.from!=null||c.to!=null?" from "+(c.from||"—")+" to "+(c.to||"—"):"");
+                  else if(c.type==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
+                  else if(c.type==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";
+                  else line=fl+(pn?" — "+pn:"");
+                  return <div key={i} style={{padding:"8px 16px",borderBottom:"1px solid #ffffff0a",fontSize:12}}>
+                    <div style={{color:"#e2e8f0",fontWeight:600,lineHeight:1.5}}>{line}</div>
+                    <div style={{color:"#64748b",fontSize:11,marginTop:2}}>
+                      {c.at&&<span>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
                     </div>
-                  </div>
-                </div>)}
+                  </div>;
+                })}
               </div>
             </div>,document.body);
         })()}
