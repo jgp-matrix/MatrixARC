@@ -20361,7 +20361,7 @@ function ScanResultsBanner({panel}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -22623,6 +22623,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     return true;
   }
 
+  function _trackBomChange(entry){
+    if(!onPreReviewInvalidated)return;
+    const rev=project.preReviewRev||0;
+    const st=project.preReviewStatus;
+    if(st==="approved"||(rev>=1&&st!=="pending"))onPreReviewInvalidated({...entry,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),at:Date.now()});
+  }
+
   function updateBomRow(id,field,val){
     // DECISION(v1.19.873, ECO delta-row model): If we're in active ECO scope and the
     // edited row is an untagged BASE row, redirect the change onto a linked ECO
@@ -22634,9 +22641,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // user's edit is an implicit confirmation — clear the flag so the ⚠ qty badge goes
     // away. If the new qty is still obviously wrong, flagSuspectQuantities will re-flag
     // it on next extraction pass.
-    let editedRow=null;
+    let editedRow=null;let _oldVal=null;
     const updated={...panel,bom:(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
+      if(field==="qty"||field==="partNumber")_oldVal=r[field];
       const next={...r,[field]:val};
       if(field==="qty"&&r.suspectQty){delete next.suspectQty;delete next.suspectQtyReason;}
       if(field==="partNumber"){next.confidence="high";delete next._confDowngradeReason;}
@@ -22654,6 +22662,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     })};
     onUpdate(updated);
     latestPanelRef.current=updated;
+    if((field==="qty"||field==="partNumber")&&editedRow&&String(_oldVal)!==String(val))_trackBomChange({type:field,rowId:id,partNumber:editedRow.partNumber||"",description:editedRow.description||"",from:String(_oldVal??""),to:String(val??"")});
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     // DECISION(v1.19.729): Save latestPanelRef.current at flush time, NOT the closure
     // snapshot. Otherwise, if another flow (SqModal Apply, supplier portal Apply, etc.)
@@ -22765,6 +22774,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(tailIdx>=0)bom.splice(tailIdx,0,newRow);else bom.push(newRow);
     const updated={...panel,bom};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+    _trackBomChange({type:"add",rowId:newId,partNumber:"",description:"(new row)"});
     // Open BC browser after a short delay to let React re-render with the new row first
     if(_bcToken){setTimeout(()=>{setBcBrowserTarget(newId);setBcBrowserQuery("");setBcBrowserOpen(true);},300);}
   }
@@ -22798,8 +22808,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }
     // BASE scope — physical delete (existing behavior).
+    const delRow=(panel.bom||[]).find(r=>r.id===id);
     const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+    if(delRow)_trackBomChange({type:"delete",rowId:id,partNumber:delRow.partNumber||"",description:delRow.description||""});
   }
   function confirmSuggestion(id){
     const row=(panel.bom||[]).find(r=>r.id===id);
@@ -29469,6 +29481,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [newContactErr,setNewContactErr]=useState("");
   function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
   const [showReassignPicker,setShowReassignPicker]=useState(false);
+  const [showPreReviewChanges,setShowPreReviewChanges]=useState(false);
   // Customer review state
   const [customerReviewData,setCustomerReviewData]=useState(null);
   const [showCustomerResponses,setShowCustomerResponses]=useState(false);
@@ -29834,7 +29847,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 <div style={{display:"flex",gap:6}}>
                   <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
-                    const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",updatedAt:Date.now(),updatedBy:uid};
+                    const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",preReviewChangeLog:[],updatedAt:Date.now(),updatedBy:uid};
                     onUpdate({...project,...reviewFields});
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
                     try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
@@ -29856,6 +29869,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Reassign this review to another engineer"}
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>setShowReassignPicker(!showReassignPicker)}
                     style={btn("#1a1040","#94a3b8",{fontSize:13,fontWeight:700,border:"1px solid #94a3b844",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>↗ Reassign</button>
+                  {(project.preReviewChangeLog||[]).length>0&&<button onClick={()=>setShowPreReviewChanges(true)}
+                    style={btn("#1a1040","#f59e0b",{fontSize:13,fontWeight:700,border:"1px solid #f59e0b88",padding:"6px 16px"})}>Qv{project.preReviewRev||1} Changes ({(project.preReviewChangeLog||[]).length})</button>}
                 </div>
                 {showReassignPicker&&(
                   <select autoFocus style={{background:"#1e1b4b",color:"#e2e8f0",border:"1px solid #a78bfa",borderRadius:6,padding:"6px 10px",fontSize:13,width:"100%"}}
@@ -29905,6 +29920,36 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             <button onClick={()=>{const upd={...project,preReviewStatus:null,preReviewNotes:null};persistProject(upd);}} style={btn("#1a1020","#a78bfa",{fontSize:12,fontWeight:700,marginTop:8,padding:"4px 14px"})}>Re-submit for Review</button>
           </div>
         )}
+        {showPreReviewChanges&&(project.preReviewChangeLog||[]).length>0&&(()=>{
+          const log=project.preReviewChangeLog;
+          const rev=project.preReviewRev||1;
+          const typeLabel={qty:"Qty Changed",partNumber:"Part # Changed",add:"Item Added",delete:"Item Deleted"};
+          const typeColor={qty:"#f59e0b",partNumber:"#818cf8",add:"#4ade80",delete:"#ef4444"};
+          return ReactDOM.createPortal(
+            <div style={{position:"fixed",top:80,right:40,width:460,maxHeight:"70vh",background:"#111118",border:"2px solid #f59e0b88",borderRadius:12,boxShadow:"0 8px 32px #000a",zIndex:9999,display:"flex",flexDirection:"column",overflow:"hidden"}}
+              onMouseDown={e=>{if(e.target.dataset.drag!=="header")return;const el=e.currentTarget;const sx=e.clientX-el.offsetLeft,sy=e.clientY-el.offsetTop;
+                const mv=e2=>{el.style.left=e2.clientX-sx+"px";el.style.top=e2.clientY-sy+"px";el.style.right="auto";};
+                const up=()=>{document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
+                document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);}}>
+              <div data-drag="header" style={{padding:"12px 16px",background:"#1a1a28",borderBottom:"1px solid #f59e0b44",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"grab",userSelect:"none"}}>
+                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>Qv{rev} Changes ({log.length})</span>
+                <button onClick={()=>setShowPreReviewChanges(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
+              </div>
+              <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
+                {log.map((c,i)=><div key={i} style={{padding:"8px 16px",borderBottom:"1px solid #ffffff0a",display:"flex",gap:10,alignItems:"flex-start",fontSize:12}}>
+                  <span style={{background:typeColor[c.type]||"#94a3b8",color:"#000",borderRadius:4,padding:"1px 6px",fontWeight:700,fontSize:10,whiteSpace:"nowrap",flexShrink:0,marginTop:1}}>{typeLabel[c.type]||c.type}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{color:"#e2e8f0",fontWeight:600}}>{c.partNumber||"—"}{c.description?" — "+c.description:""}</div>
+                    <div style={{color:"#94a3b8",fontSize:11,marginTop:2}}>
+                      {c.panelName&&<span>{c.panelName}</span>}
+                      {(c.type==="qty"||c.type==="partNumber")&&<span style={{marginLeft:8}}>{c.from} → {c.to}</span>}
+                      {c.at&&<span style={{marginLeft:8}}>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
+                    </div>
+                  </div>
+                </div>)}
+              </div>
+            </div>,document.body);
+        })()}
         {project.postReviewStatus==="pending"&&(
           <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
             <span style={{fontSize:20}}>🔧</span>
@@ -30405,6 +30450,18 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   project={project}
                   activeScope={activeScope}
                   onOpenEcoEditor={onOpenEcoEditor}
+                  onPreReviewInvalidated={(entry)=>{
+                    const log=[...(project.preReviewChangeLog||[])];
+                    if(entry.type==="qty"||entry.type==="partNumber"){
+                      const ei=log.findIndex(e=>e.panelId===entry.panelId&&e.rowId===entry.rowId&&e.type===entry.type);
+                      if(ei>=0){log[ei]={...log[ei],to:entry.to,at:entry.at};}else{log.push(entry);}
+                    }else{log.push(entry);}
+                    if(project.preReviewStatus==="approved"){
+                      persistProject({...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,preReviewChangeLog:log});
+                    }else{
+                      persistProject({...project,preReviewChangeLog:log});
+                    }
+                  }}
                 />
                   );
                 });
@@ -31046,7 +31103,10 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 })()}
                 {!readOnly&&(()=>{
                   const reviewStatus=project.preReviewStatus;
-                  if(reviewStatus==="approved")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:C.green,padding:"4px 0"}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</div>;
+                  if(reviewStatus==="approved")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.green}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</span>
+                    <button onClick={()=>{const upd={...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null};persistProject(upd);}} style={{fontSize:10,padding:"2px 8px",borderRadius:10,border:"1px solid #ef444466",background:"#1a0a0a",color:"#ef4444",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>Cancel</button>
+                  </div>;
                   if(reviewStatus==="pending")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#a78bfa",padding:"4px 0",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting {_preReviewAssigneeName} approval</div>;
                   return <button onClick={async()=>{
                     const designerCode=project.bcDesignerCode;
@@ -31055,7 +31115,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     if(!hasDrawings){arcAlert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
                     // Set review status + initial assignment to the project's designer
                     const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid,
-                      preReviewAssignedTo:project.bcDesignerUid||null,preReviewAssignedToName:project.bcDesigner||project.bcDesignerCode||null};
+                      preReviewAssignedTo:project.bcDesignerUid||null,preReviewAssignedToName:project.bcDesigner||project.bcDesignerCode||null,
+                      preReviewRev:(project.preReviewRev||0)+1};
                     persistProject(upd);
                     if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                     // Look up designer email — check Salesperson cache first (has E_Mail), then BC User page
