@@ -25334,6 +25334,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               const updated={..._src,bom:updatedBom};
                               onUpdate(updated);
                               saveBomRow(updated);
+                              if(f==="qty"||f==="partNumber")_trackBomChange({type:f,rowId:row.id,partNumber:row.partNumber||"",description:row.description||"",from:String(row[f]??""),to:String(val??"")});
                               if(f==="partNumber"&&val.trim()){
                                 savePartLibraryEntry(uid,{manufacturer:row.manufacturer||"",description:row.description||"",partNumber:val.trim()})
                                   .then(()=>loadPartLibrary(uid).then(setPartLibrary)).catch(()=>{});
