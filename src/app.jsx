@@ -30203,9 +30203,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 const graphTok=await acquireGraphToken();
                 if(!graphTok)throw new Error("Microsoft Graph not connected. Sign into Microsoft first (Settings → Microsoft 365).");
                 const ci=_appCtx.company||{};
+                const custEmail=project.customerReviewEmail;
+                if(!custEmail){throw new Error("No customer email on record.");}
                 const html=buildReviewRetractedEmailHtml(project.name||"",project.bcProjectNumber||"",ci);
                 const subject="Review Retracted — "+(project.bcProjectNumber||project.name||"Project");
-                await sendGraphEmail(graphTok,project.customerReviewEmail,subject,html);
+                await sendGraphEmail(graphTok,custEmail,subject,html);
                 if(project.customerReviewToken){
                   await fbDb.collection("reviewUploads").doc(project.customerReviewToken).update({status:"retracted",retractedAt:Date.now(),retractedBy:fbAuth.currentUser?.displayName||""}).catch(e=>console.warn("retract reviewUpload:",e));
                 }
@@ -32450,7 +32452,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     ?"BASE editing locked while ECOs exist"
     :_ecoScopeReadOnly
       ?"This ECO is not the active draft"
-      :null;
+      :customerReviewReadOnly
+        ?"Client review in progress — edits locked"
+        :null;
   const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||customerReviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly;
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
 
