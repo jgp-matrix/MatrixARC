@@ -18581,7 +18581,7 @@ Return ONLY valid JSON (no markdown):
 }
 
 // ── DRAWING LIGHTBOX ──
-function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
+function DrawingLightbox({pages,startId,onClose,onRegionsChange,onNotesChange,customerName}){
   const [idx,setIdx]=useState(()=>{const i=pages.findIndex(p=>p.id===startId);return i>=0?i:0;});
   const pg=pages[idx]||pages[0];
   const typeColors={bom:C.accent,schematic:C.green,backpanel:C.purple,enclosure:C.teal||"#0d9488",layout:C.purple,pid:C.muted,zoomed_detail:"#fde047",label:"#f97316",spec:"#38bdf8",titleblock:"#f472b6",other:"#a78bfa",ignore:"#6b7280"};
@@ -18920,11 +18920,12 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
             </div>
           )}
 
-          {/* Review note overlays (read-only in lightbox) */}
-          {!regionMode&&(pg.reviewNotes||[]).length>0&&(
+          {/* Review note overlays */}
+          {(pg.reviewNotes||[]).length>0&&(
             <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:2}}>
               {(pg.reviewNotes||[]).map(n=>(
-                <div key={n.id} style={{position:"absolute",left:n.x+"%",top:n.y+"%",
+                <div key={n.id} onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}
+                  style={{position:"absolute",left:n.x+"%",top:n.y+"%",
                   background:n.visibility==="external"?"#fecaca":"#fef9c3",
                   border:n.visibility==="external"?"2px solid #ef4444":"2px dashed #eab308",
                   borderRadius:4,padding:"2px 6px",
@@ -18934,6 +18935,8 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
                   <span style={{fontSize:11,fontWeight:800,color:"#ef4444",flexShrink:0}}>#{n.number}</span>
                   <span style={{fontSize:11,color:"#1e293b",whiteSpace:"nowrap"}}>{(n.text||"").slice(0,60)||"(empty)"}</span>
                   {n.visibility==="external"&&<span style={{fontSize:9,fontWeight:700,color:"#ef4444",border:"1px solid #ef444466",borderRadius:3,padding:"0 3px",flexShrink:0}}>EXT</span>}
+                  {onNotesChange&&<button onClick={e=>{e.stopPropagation();onNotesChange(pg.id,(pg.reviewNotes||[]).filter(rn=>rn.id!==n.id));}}
+                    style={{background:"none",border:"none",color:"#ef4444",fontSize:13,cursor:"pointer",padding:"0 2px",flexShrink:0,lineHeight:1}} title="Delete note">✕</button>}
                 </div>
               ))}
             </div>
@@ -25576,6 +25579,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             // Also update pendingPages so regions persist during review phase
             setPendingPages(pp=>pp.length>0?pp.map(p=>p.id===pgId?{...p,regions:newRegions}:p):pp);
           }}
+          onNotesChange={!readOnly?(pgId,newNotes)=>{
+            const fresh=latestPanelRef.current;
+            const updated={...fresh,pages:(fresh.pages||[]).map(p=>p.id===pgId?{...p,reviewNotes:newNotes}:p)};
+            onUpdate(updated);
+            try{onSaveImmediate(updated);}catch(e){}
+          }:undefined}
         />
       )}
       {showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
