@@ -30114,12 +30114,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   const reviewNotes=sendReviewNotes.trim();
                   setShowSendForReview(false);
                   const _nextRv=(project.reviewRev||0)+1;
-                  const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid,
+                  const reviewFields={preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid,
                     preReviewAssignedTo:sendReviewEngineer,preReviewAssignedToName:designerName,
-                    preReviewRev:(project.preReviewRev||0)+1,reviewRev:_nextRv,preReviewNotes:reviewNotes||null,reviewRevBumpedThisCycle:false,reviewChangeLog:[]};
+                    preReviewRev:(project.preReviewRev||0)+1,reviewRev:_nextRv,preReviewNotes:reviewNotes||null,reviewRevBumpedThisCycle:false,reviewChangeLog:[],updatedAt:Date.now(),updatedBy:uid};
                   _logQvHistory(project.id,{type:"review_submit",field:"Rv"+_nextRv,to:designerName,description:reviewNotes||""});
-                  _pendingPreReviewOverrides[project.id]={preReviewStatus:"pending",preReviewSubmittedAt:upd.preReviewSubmittedAt,preReviewSubmittedBy:upd.preReviewSubmittedBy,preReviewAssignedTo:upd.preReviewAssignedTo,preReviewAssignedToName:upd.preReviewAssignedToName,preReviewRev:upd.preReviewRev,reviewRev:_nextRv,preReviewNotes:upd.preReviewNotes,reviewRevBumpedThisCycle:false,reviewChangeLog:[]};
-                  persistProject(upd);
+                  _pendingPreReviewOverrides[project.id]=reviewFields;
+                  onUpdate({...project,...reviewFields});
+                  const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
+                  fbDb.collection(_prjPath).doc(project.id).update(reviewFields).catch(e=>console.error("[PRE-REVIEW] submit save failed:",e));
                   if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                   try{
                     let designerEmail=null;
