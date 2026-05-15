@@ -30154,7 +30154,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 const up=()=>{document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
                 document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);}}>
               <div data-drag="header" style={{padding:"12px 16px",background:"#1a1a28",borderBottom:"1px solid #f59e0b44",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"grab",userSelect:"none"}}>
-                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>{project.bcProjectNumber||project.name||"Project"} — Rv.{project.preReviewRev||1} History</span>
+                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>{project.bcProjectNumber||project.name||"Project"} — Rv.{project.reviewRev||project.preReviewRev||1} History</span>
                 <button onClick={()=>setShowQvHistory(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
               </div>
               <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
