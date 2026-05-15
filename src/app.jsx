@@ -8429,9 +8429,10 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
       liveProject={...liveProject,quoteRev:liveProject.quoteRev||1,lastQuoteHash:newQuoteHash};
     }
     const _prOvr=_pendingPreReviewOverrides[projectId];
-    if(_prOvr){Object.assign(liveProject,_prOvr);delete _pendingPreReviewOverrides[projectId];}
+    if(_prOvr)Object.assign(liveProject,_prOvr);
     const stripped=JSON.parse(JSON.stringify({...liveProject,panels:liveProject.panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
     await ref.set(stripped);
+    if(_prOvr)delete _pendingPreReviewOverrides[projectId];
     if(!skipNotify)notifyProjectListeners(projectId,liveProject);
   }finally{resolve();delete _panelSaveLocks[lockKey];}
 }
