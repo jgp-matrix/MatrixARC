@@ -30176,7 +30176,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             w.document.write("<!DOCTYPE html><html><head><title>"+_esc(title)+"</title><style>*{margin:0;padding:0;box-sizing:border-box}body{background:#111118;color:#e2e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}::-webkit-scrollbar{width:8px}::-webkit-scrollbar-track{background:#1e1e2e}::-webkit-scrollbar-thumb{background:#5a5a78;border-radius:4px}</style></head><body><div style='padding:12px 16px;background:#1a1a28;border-bottom:1px solid #f59e0b44;font-size:14px;font-weight:800;color:#f59e0b;position:sticky;top:0;z-index:2'>"+_esc(title)+"</div>"+emptyMsg+rows+"</body></html>");
             w.document.close();
           }
-          setShowQvHistory(false);
+          if(w){setShowQvHistory(false);}
+          else{alert("Pop-up blocked — please allow pop-ups for this site and try again.");}
           return null;
         })()}
         {project.postReviewStatus==="pending"&&(
