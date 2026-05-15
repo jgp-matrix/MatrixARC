@@ -52,6 +52,9 @@ if ! grep -q "index.bundle.js?v=$NEW_VERSION" "$HTML"; then
   exit 1
 fi
 
+# Write version.json so the app can detect stale cached HTML on load
+echo "{\"version\":\"$NEW_VERSION\"}" > "$REPO/public/version.json"
+
 # DECISION(v1.19.767): Build the JSX bundle (src/app.jsx → public/index.bundle.js)
 # BEFORE git commit and firebase deploy. validate_jsx.js validates syntax and writes
 # the compiled JS — replaces the in-browser babel-standalone transform that used to
@@ -61,7 +64,7 @@ echo "Building JSX bundle…"
 node validate_jsx.js
 
 # Commit, tag, push (bundle is gitignored, regenerated each deploy)
-git add public/index.html src/app.jsx 2>/dev/null || git add public/index.html
+git add public/index.html public/version.json src/app.jsx 2>/dev/null || git add public/index.html public/version.json
 git commit -m "Release $NEW_VERSION"
 git tag "$NEW_VERSION"
 git push origin master
