@@ -29514,7 +29514,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
 // service-card data). `card_style` is the shared module-level style helper.
 const card_style=card;
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -29567,10 +29567,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [showSendForReview,setShowSendForReview]=useState(false);
   const [sendReviewEngineer,setSendReviewEngineer]=useState("");
   const [sendReviewNotes,setSendReviewNotes]=useState("");
-  const [reviewOverrideSession,setReviewOverrideSession]=useState(false);
   const [showQvHistory,setShowQvHistory]=useState(false);
   const [drawingReviewTrigger,setDrawingReviewTrigger]=useState({id:null,c:0});
-  useEffect(()=>{setReviewOverrideSession(false);},[project.id,project.preReviewStatus,project.postReviewStatus]);
   // Customer review state
   const [customerReviewData,setCustomerReviewData]=useState(null);
   const [showCustomerResponses,setShowCustomerResponses]=useState(false);
@@ -29945,7 +29943,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               <div style={{fontSize:12,color:"#e2e8f0",whiteSpace:"pre-wrap",lineHeight:1.4}}>{project.preReviewNotes}</div>
             </div>}
             {_appCtx.role==="admin"&&!_isPreReviewAssignee&&!reviewOverrideSession&&(
-              <button onClick={()=>setReviewOverrideSession(true)}
+              <button onClick={()=>onSetReviewOverrideSession(true)}
                 style={btn("#2a0a0a","#ef4444",{fontSize:11,fontWeight:700,border:"1px solid #ef444466",padding:"4px 12px"})}>🔓 Admin Override</button>
             )}
             {!isReadOnly()&&(_isPreReviewAssignee||reviewOverrideSession)&&(
@@ -30210,7 +30208,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               </>)}
             </div>
             {_appCtx.role==="admin"&&!_isPostReviewAssignee&&!reviewOverrideSession&&(
-              <button onClick={()=>setReviewOverrideSession(true)}
+              <button onClick={()=>onSetReviewOverrideSession(true)}
                 style={btn("#2a0a0a","#ef4444",{fontSize:11,fontWeight:700,border:"1px solid #ef444466",padding:"4px 12px"})}>🔓 Admin Override</button>
             )}
             {!isReadOnly()&&(_isPostReviewAssignee||reviewOverrideSession)&&(
@@ -32017,6 +32015,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // for the current tab to handle exceptional fixes that legitimately belong
   // on BASE rather than under an ECO scope. Resets when the project is closed.
   const [baseUnlocked,setBaseUnlocked]=useState(false);
+  const [reviewOverrideSession,setReviewOverrideSession]=useState(false);
+  useEffect(()=>{setReviewOverrideSession(false);},[init&&init.id,init&&init.preReviewStatus,init&&init.postReviewStatus]);
   // DECISION(v1.19.584): Track current project/panel for debug log context
   useEffect(()=>{_currentProjectId=init&&init.id||null;addBreadcrumb('nav',`Project opened: ${init&&init.id}`);return()=>{_currentProjectId=null;_currentPanelId=null;};},[init&&init.id]);
   // DECISION(v1.19.599): Track active tasks by OTHER users on this project — used to
@@ -34007,6 +34007,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             setSentQuoteAckGiven={setSentQuoteAckGiven}
             showSentEditConfirm={showSentEditConfirm}
             setShowSentEditConfirm={setShowSentEditConfirm}
+            reviewOverrideSession={reviewOverrideSession}
+            onSetReviewOverrideSession={setReviewOverrideSession}
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {quoteSendModal&&ReactDOM.createPortal(
