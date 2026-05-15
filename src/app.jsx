@@ -8294,6 +8294,12 @@ async function restoreSnapshot(uid,projectId,snapshot,panel,onUpdate,onSaveImmed
 // Uses a mutex to prevent concurrent saves from racing
 const _panelSaveLocks={};
 const _pendingPreReviewOverrides={};
+function _logQvHistory(projectId,entry){
+  if(!projectId)return;
+  const path=_appCtx.projectsPath||`users/${_appCtx.uid}/projects`;
+  const full={...entry,id:Date.now()+'-'+Math.random().toString(36).slice(2,8),by:_appCtx.uid||'',byName:(typeof fbAuth!=='undefined'&&fbAuth.currentUser?.displayName)||'',at:Date.now()};
+  fbDb.collection(path).doc(projectId).update({qvHistory:firebase.firestore.FieldValue.arrayUnion(full)}).catch(e=>console.error("[QV-HIST] save failed:",e));
+}
 async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=false){
   // Skip if panel was deleted
   if(window._deletedPanelIds&&window._deletedPanelIds.has(panelId)){console.log("saveProjectPanel: skipped — panel",panelId,"was deleted");return;}
@@ -21966,6 +21972,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
 
   async function runExtraction(startMsg){
+    _logQvHistory(project.id,{type:"re_extract",panelId:panel.id,panelName:panel.name||("Panel "+(idx+1))});
     // DECISION(v1.19.611): Wrap the entire re-extract in try/finally so a thrown error anywhere
     // (pricing, validation, save) can't leave an orphan activeExtractions doc as "running".
     // The finally runs bgDone only if bgError hasn't already fired.
@@ -22633,6 +22640,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const st=project.preReviewStatus;
     if(st==="approved"||(rev>=1&&st!=="pending"))onPreReviewInvalidated({...entry,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),at:Date.now()});
   }
+  function _logBomEdit(type,rowId,partNumber,description,field,from,to){
+    _logQvHistory(project.id,{type,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),rowId:rowId||null,partNumber:partNumber||"",description:description||"",field:field||null,from:String(from??""),to:String(to??"")});
+  }
 
   function updateBomRow(id,field,val){
     // DECISION(v1.19.873, ECO delta-row model): If we're in active ECO scope and the
@@ -22648,7 +22658,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     let editedRow=null;let _oldVal=null;
     const updated={...panel,bom:(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
-      if(field==="qty"||field==="partNumber")_oldVal=r[field];
+      _oldVal=r[field];
       const next={...r,[field]:val};
       if(field==="qty"&&r.suspectQty){delete next.suspectQty;delete next.suspectQtyReason;}
       if(field==="partNumber"){next.confidence="high";delete next._confDowngradeReason;}
@@ -22667,6 +22677,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     onUpdate(updated);
     latestPanelRef.current=updated;
     if((field==="qty"||field==="partNumber")&&editedRow&&String(_oldVal)!==String(val))_trackBomChange({type:field,rowId:id,partNumber:editedRow.partNumber||"",description:editedRow.description||"",from:String(_oldVal??""),to:String(val??"")});
+    if(editedRow&&String(_oldVal)!==String(val))_logBomEdit("edit",id,editedRow.partNumber,editedRow.description,field,_oldVal,val);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     // DECISION(v1.19.729): Save latestPanelRef.current at flush time, NOT the closure
     // snapshot. Otherwise, if another flow (SqModal Apply, supplier portal Apply, etc.)
@@ -22779,6 +22790,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const updated={...panel,bom};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
     _trackBomChange({type:"add",rowId:newId,partNumber:"",description:"(new row)"});
+    _logBomEdit("add",newId,"","(new row)",null,null,null);
     // Open BC browser after a short delay to let React re-render with the new row first
     if(_bcToken){setTimeout(()=>{setBcBrowserTarget(newId);setBcBrowserQuery("");setBcBrowserOpen(true);},300);}
   }
@@ -22815,7 +22827,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const delRow=(panel.bom||[]).find(r=>r.id===id);
     const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
-    if(delRow)_trackBomChange({type:"delete",rowId:id,partNumber:delRow.partNumber||"",description:delRow.description||""});
+    if(delRow){
+      _trackBomChange({type:"delete",rowId:id,partNumber:delRow.partNumber||"",description:delRow.description||""});
+      _logBomEdit("delete",id,delRow.partNumber,delRow.description,null,null,null);
+    }
   }
   function confirmSuggestion(id){
     const row=(panel.bom||[]).find(r=>r.id===id);
@@ -23240,6 +23255,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   async function pushAllLeadTimesToBc(){
     if(pushingLeadTimes)return;
     if(!_bcToken){arcAlert("BC not connected. Sign in to Business Central first.");return;}
+    _logQvHistory(project.id,{type:"bc_push_lead_times",panelId:panel.id,panelName:panel.name||("Panel "+(idx+1))});
     // DECISION(v1.19.697): Pre-flight Web Service check. Previously every row failed with
     // a 404 if Page 114 wasn't published — one clear error is better than N cryptic ones.
     const allPages=await bcDiscoverODataPages().catch(()=>[]);
@@ -23336,6 +23352,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const forceFresh=!!(opts&&opts.forceFresh);
     const bom=bomOverride||panel.bom||[];
     if(!bom.length||!_apiKey)return;
+    _logQvHistory(project.id,{type:"refresh_pricing",panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),field:forceFresh?"force":"normal"});
     // Save snapshot before bulk pricing so user can revert
     if(!bomOverride)saveSnapshot(uid,projectId,panel,"Before Get New Pricing").catch(()=>{});
     if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
@@ -25339,6 +25356,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               onUpdate(updated);
                               saveBomRow(updated);
                               if(f==="qty"||f==="partNumber")_trackBomChange({type:f,rowId:row.id,partNumber:row.partNumber||"",description:row.description||"",from:String(row[f]??""),to:String(val??"")});
+                              _logBomEdit("edit",row.id,row.partNumber,row.description,f,row[f],val);
                               if(f==="partNumber"&&val.trim()){
                                 savePartLibraryEntry(uid,{manufacturer:row.manufacturer||"",description:row.description||"",partNumber:val.trim()})
                                   .then(()=>loadPartLibrary(uid).then(setPartLibrary)).catch(()=>{});
@@ -29487,6 +29505,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
   const [showReassignPicker,setShowReassignPicker]=useState(false);
   const [showPreReviewChanges,setShowPreReviewChanges]=useState(false);
+  const [showQvHistory,setShowQvHistory]=useState(false);
   // Customer review state
   const [customerReviewData,setCustomerReviewData]=useState(null);
   const [showCustomerResponses,setShowCustomerResponses]=useState(false);
@@ -29853,6 +29872,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                     const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",preReviewChangeLog:[],updatedAt:Date.now(),updatedBy:uid};
+                    _logQvHistory(project.id,{type:"review_approve"});
                     onUpdate({...project,...reviewFields});
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
                     try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
@@ -29949,6 +29969,42 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       {c.panelName&&<span>{c.panelName}</span>}
                       {(c.type==="qty"||c.type==="partNumber")&&<span style={{marginLeft:8}}>{c.from} → {c.to}</span>}
                       {c.at&&<span style={{marginLeft:8}}>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
+                    </div>
+                  </div>
+                </div>)}
+              </div>
+            </div>,document.body);
+        })()}
+        {showQvHistory&&(project.qvHistory||[]).length>0&&(()=>{
+          const hist=[...(project.qvHistory||[])].sort((a,b)=>(b.at||0)-(a.at||0));
+          const typeLabel={edit:"Edit",add:"Item Added",delete:"Item Deleted",re_extract:"Re-Extract",refresh_pricing:"Refresh Pricing",bc_push_lead_times:"Push Lead Times",supplier_apply:"Supplier Apply",review_submit:"Review Submitted",review_approve:"Review Approved",review_cancel:"Review Cancelled"};
+          const typeColor={edit:"#818cf8",add:"#4ade80",delete:"#ef4444",re_extract:"#f472b6",refresh_pricing:"#38bdf8",bc_push_lead_times:"#2dd4bf",supplier_apply:"#a78bfa",review_submit:"#a78bfa",review_approve:"#4ade80",review_cancel:"#ef4444"};
+          return ReactDOM.createPortal(
+            <div style={{position:"fixed",top:80,right:40,width:520,maxHeight:"75vh",background:"#111118",border:"2px solid #f59e0b88",borderRadius:12,boxShadow:"0 8px 32px #000a",zIndex:9999,display:"flex",flexDirection:"column",overflow:"hidden"}}
+              onMouseDown={e=>{if(e.target.dataset.drag!=="header")return;const el=e.currentTarget;const sx=e.clientX-el.offsetLeft,sy=e.clientY-el.offsetTop;
+                const mv=e2=>{el.style.left=e2.clientX-sx+"px";el.style.top=e2.clientY-sy+"px";el.style.right="auto";};
+                const up=()=>{document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
+                document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);}}>
+              <div data-drag="header" style={{padding:"12px 16px",background:"#1a1a28",borderBottom:"1px solid #f59e0b44",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"grab",userSelect:"none"}}>
+                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>Qv History ({hist.length} entries)</span>
+                <button onClick={()=>setShowQvHistory(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
+              </div>
+              <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
+                {hist.map((c,i)=><div key={c.id||i} style={{padding:"8px 16px",borderBottom:"1px solid #ffffff0a",display:"flex",gap:10,alignItems:"flex-start",fontSize:12}}>
+                  <span style={{background:typeColor[c.type]||"#94a3b8",color:"#000",borderRadius:4,padding:"1px 6px",fontWeight:700,fontSize:10,whiteSpace:"nowrap",flexShrink:0,marginTop:1}}>{typeLabel[c.type]||c.type}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{color:"#e2e8f0",fontWeight:600}}>
+                      {c.type==="edit"&&c.field?<>{c.field}: <span style={{color:"#ef4444"}}>{c.from||"—"}</span> → <span style={{color:"#4ade80"}}>{c.to||"—"}</span>{c.partNumber?" — "+c.partNumber:""}</>
+                        :c.type==="add"?"New row added"+(c.partNumber?" — "+c.partNumber:"")
+                        :c.type==="delete"?(c.partNumber||"Row")+" removed"
+                        :c.type==="supplier_apply"?"Supplier prices applied"+(c.field?" — "+c.field:"")
+                        :c.type==="review_submit"?"Sent for review"+(c.to?" → "+c.to:"")+(c.field?" ("+c.field+")":"")
+                        :typeLabel[c.type]||c.type}
+                    </div>
+                    <div style={{color:"#64748b",fontSize:11,marginTop:2}}>
+                      {c.panelName&&<span>{c.panelName} · </span>}
+                      {c.byName&&<span>{c.byName} · </span>}
+                      {c.at&&<span>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
                     </div>
                   </div>
                 </div>)}
@@ -31114,12 +31170,15 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 })()}
                 {!readOnly&&(()=>{
                   const reviewStatus=project.preReviewStatus;
+                  const _qvHist=(project.qvHistory||[]);
+                  const _qvHistBtn=_qvHist.length>0?<button onClick={()=>setShowQvHistory(true)} style={btn("#1a1020","#f59e0b",{fontSize:10,padding:"4px 10px",whiteSpace:"nowrap",fontWeight:700,border:"1px solid #f59e0b44"})}>Qv Hist. ({_qvHist.length})</button>:null;
                   if(reviewStatus==="approved")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}>
                     <span style={{fontSize:11,fontWeight:700,color:C.green}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</span>
-                    <button onClick={()=>{const upd={...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null};persistProject(upd);}} style={{fontSize:10,padding:"2px 8px",borderRadius:10,border:"1px solid #ef444466",background:"#1a0a0a",color:"#ef4444",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>Cancel</button>
+                    <button onClick={()=>{_logQvHistory(project.id,{type:"review_cancel"});const upd={...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null};persistProject(upd);}} style={{fontSize:10,padding:"2px 8px",borderRadius:10,border:"1px solid #ef444466",background:"#1a0a0a",color:"#ef4444",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>Cancel</button>
+                    {_qvHistBtn}
                   </div>;
-                  if(reviewStatus==="pending")return <div style={{textAlign:"center",fontSize:11,fontWeight:700,color:"#a78bfa",padding:"4px 0",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting {_preReviewAssigneeName} approval</div>;
-                  return <button onClick={async()=>{
+                  if(reviewStatus==="pending")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}><span style={{fontSize:11,fontWeight:700,color:"#a78bfa",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting {_preReviewAssigneeName} approval</span>{_qvHistBtn}</div>;
+                  return <div style={{display:"flex",gap:6,alignItems:"stretch"}}><button onClick={async()=>{
                     const designerCode=project.bcDesignerCode;
                     if(!designerCode){arcAlert("No Engineer/Designer assigned to this project. Assign an Engineer/Designer first.");return;}
                     const hasDrawings=(project.panels||[]).some(p=>(p.pages||[]).length>0);
@@ -31128,6 +31187,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid,
                       preReviewAssignedTo:project.bcDesignerUid||null,preReviewAssignedToName:project.bcDesigner||project.bcDesignerCode||null,
                       preReviewRev:(project.preReviewRev||0)+1};
+                    _logQvHistory(project.id,{type:"review_submit",field:"Qv"+((project.preReviewRev||0)+1),to:project.bcDesigner||project.bcDesignerCode||""});
                     persistProject(upd);
                     if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                     // Look up designer email — check Salesperson cache first (has E_Mail), then BC User page
@@ -31176,7 +31236,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         }catch(e){console.warn("Review email failed:",e);arcAlert("Submitted for review. Email failed: "+e.message);}
                       }else{arcAlert("Submitted for review. Could not find Engineer/Designer email — please notify "+designerName+" manually.");}
                     }catch(e){console.warn("Review notification failed:",e);arcAlert("Review submitted but notification failed: "+(e.message||e)+"\n\nThe project status has been updated. Please notify the Engineer/Designer manually.");}
-                  }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>;
+                  }} style={btn("#1a1020","#a78bfa",{fontSize:14,padding:"8px 18px",flex:1,border:"1px solid #a78bfa44",fontWeight:700})}>📋 Send for Technical Review</button>{_qvHistBtn}</div>;
                 })()}
                 {/* DECISION(v1.19.667): Pre-gate the Send button on the main view so sales sees
                    the incomplete-items warning BEFORE opening the modal and typing a recipient.
@@ -33172,6 +33232,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   }
 
   async function doApplyPortalPrices(submission){
+    _logQvHistory(project.id,{type:"supplier_apply",field:submission?.vendorName||"supplier"});
     // DECISION(v1.19.664): Stale-state guard. If the project was edited between the time
     // the review was opened (applyPortalPrices) and now (doApplyPortalPrices), prompt the
     // user before writing — otherwise the BOM edits from another session would be clobbered.
