@@ -30551,12 +30551,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     if(project.preReviewStatus==="approved"||project.preReviewStatus==="pending"){
                       const fields={preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,preReviewChangeLog:log};
                       _pendingPreReviewOverrides[project.id]=fields;
-                      setProject(prev=>({...prev,...fields}));
+                      onUpdate(prev=>({...prev,...fields}));
                       fbDb.collection(_prjPath).doc(project.id).update(fields).catch(e=>console.error("[PRE-REVIEW] cancel+log save failed:",e));
                       _logQvHistory(project.id,{type:"review_cancel",field:"auto",description:"BOM changed while review was "+project.preReviewStatus});
                     }else{
                       _pendingPreReviewOverrides[project.id]={preReviewChangeLog:log};
-                      setProject(prev=>({...prev,preReviewChangeLog:log}));
+                      onUpdate(prev=>({...prev,preReviewChangeLog:log}));
                       fbDb.collection(_prjPath).doc(project.id).update({preReviewChangeLog:log}).catch(e=>console.error("[PRE-REVIEW] changelog save failed:",e));
                     }
                   }}
