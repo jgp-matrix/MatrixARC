@@ -29969,7 +29969,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   const part=c.partNumber||"";
                   const fl=fieldLabel[c.type]||c.type||"";
                   let line="";
-                  if(c.type==="qty"||c.type==="partNumber")line=(pn?pn+" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Change")+(c.from!=null||c.to!=null?" from "+(c.from||"—")+" to "+(c.to||"—"):"");
+                  if(c.type==="qty"||c.type==="partNumber")line=(pn?pn+" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Change")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):"");
                   else if(c.type==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
                   else if(c.type==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";
                   else line=fl+(pn?" — "+pn:"");
@@ -30004,7 +30004,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   const fieldLabel={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",notes:"Notes",unitPrice:"Unit Price",leadTimeDays:"Lead Time"};
                   const fl=fieldLabel[c.field]||c.field||"";
                   let line="";
-                  if(c.type==="edit"&&c.field)line=pn+(pn&&(part||fl)?" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from||"—")+" to "+(c.to||"—"):"");
+                  if(c.type==="edit"&&c.field)line=pn+(pn&&(part||fl)?" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):"");
                   else if(c.type==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
                   else if(c.type==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";
                   else if(c.type==="supplier_apply")line="Supplier prices applied"+(c.field?" — "+c.field:"");
