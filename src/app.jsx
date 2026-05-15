@@ -30015,7 +30015,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             </div>,document.body);
         })()}
         {showQvHistory&&(()=>{
-          const hist=[...(project.qvHistory||[])].sort((a,b)=>(b.at||0)-(a.at||0));
+          const _allQv=[...(project.qvHistory||[])].sort((a,b)=>(a.at||0)-(b.at||0));
+          const _qvGroups=[];let _cg={v:0,label:"Initial",entries:[],at:null};
+          for(const e of _allQv){if(e.type==="review_submit"&&e.field){if(_cg.entries.length>0)_qvGroups.push(_cg);const vn=parseInt((e.field.match(/\d+/)||["0"])[0])||0;_cg={v:vn,label:"Qv."+String(vn).padStart(2,"0"),entries:[e],at:e.at};}else{_cg.entries.push(e);if(!_cg.at&&e.at)_cg.at=e.at;}}
+          if(_cg.entries.length>0)_qvGroups.push(_cg);
+          _qvGroups.reverse();
           const typeLabel={edit:"Edit",add:"Item Added",delete:"Item Deleted",re_extract:"Re-Extract",refresh_pricing:"Refresh Pricing",bc_push_lead_times:"Push Lead Times",supplier_apply:"Supplier Apply",review_submit:"Review Submitted",review_approve:"Review Approved",review_cancel:"Review Cancelled",review_edit:"Reviewer Edit"};
           const typeColor={edit:"#818cf8",add:"#4ade80",delete:"#ef4444",re_extract:"#f472b6",refresh_pricing:"#38bdf8",bc_push_lead_times:"#2dd4bf",supplier_apply:"#a78bfa",review_submit:"#a78bfa",review_approve:"#4ade80",review_cancel:"#ef4444",review_edit:"#fbbf24"};
           return ReactDOM.createPortal(
@@ -30029,35 +30033,42 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 <button onClick={()=>setShowQvHistory(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
               </div>
               <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
-                {hist.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"#64748b",fontSize:12}}>No changes recorded yet. Edits, system actions, and review events will appear here.</div>}
-                {hist.map((c,i)=>{
-                  const pn=c.panelName||"";
-                  const part=c.partNumber||"";
-                  const fieldLabel={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",notes:"Notes",unitPrice:"Unit Price",leadTimeDays:"Lead Time"};
-                  const fl=fieldLabel[c.field]||c.field||"";
-                  let line="";
-                  if(c.type==="edit"&&c.field)line=pn+(pn&&(part||fl)?" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):"");
-                  else if(c.type==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
-                  else if(c.type==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";
-                  else if(c.type==="supplier_apply")line="Supplier prices applied"+(c.field?" — "+c.field:"");
-                  else if(c.type==="review_submit")line="Sent for review"+(c.to?" → "+c.to:"")+(c.field?" ("+c.field+")":"");
-                  else if(c.type==="re_extract")line=(pn?pn+" — ":"")+"BOM re-extracted";
-                  else if(c.type==="refresh_pricing")line=(pn?pn+" — ":"")+"Pricing refreshed"+(c.field==="force"?" (force)":"");
-                  else if(c.type==="bc_push_lead_times")line=(pn?pn+" — ":"")+"Lead times pushed to BC";
-                  else if(c.type==="review_edit"){const _efl=fieldLabel[c.editType]||c.editType||"";if(c.editType==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");else if(c.editType==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";else line=pn+(pn&&(part||_efl)?" — ":"")+(part?part+" ":"")+(c.editType==="qty"||c.editType==="partNumber"?(_efl?_efl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):""):"edited");}
-                  else line=typeLabel[c.type]||c.type;
-                  const _isRevEdit=c.type==="review_edit";
-                  return <div key={c.id||i} style={{padding:"8px 16px",borderBottom:"1px solid #ffffff0a",fontSize:12,...(_isRevEdit?{borderLeft:"3px solid #fbbf24"}:{})}}>
-                  <div style={{color:_isRevEdit?"#fbbf24":"#e2e8f0",fontWeight:600,lineHeight:1.5}}>{line}</div>
-                  <div style={{color:"#64748b",fontSize:11,marginTop:2}}>
-                    {_isRevEdit&&<span style={{background:"#fbbf2422",color:"#fbbf24",borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700,marginRight:6}}>{c.reviewType==="post_review"?"POST-REVIEW":"PRE-REVIEW"}</span>}
-                    {c.byName&&<span>{c.byName} · </span>}
-                    {c.at&&<span>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
-                    {_isRevEdit&&c.reviewQv&&<span> · Qv{c.reviewQv}</span>}
-                  </div>
-                  {c.type==="review_submit"&&c.description&&<div style={{color:"#c4b5fd",fontSize:11,marginTop:4,padding:"4px 8px",background:"#1a103088",borderRadius:4,borderLeft:"2px solid #a78bfa",whiteSpace:"pre-wrap"}}>{c.description}</div>}
-                </div>;}
-                )}
+                {_qvGroups.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"#64748b",fontSize:12}}>No changes recorded yet. Edits, system actions, and review events will appear here.</div>}
+                {_qvGroups.map((g,gi)=>{
+                  const gDate=g.at?new Date(g.at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"";
+                  return <div key={gi}>
+                    <div style={{padding:"6px 16px",background:"#0d0d18",borderBottom:"1px solid #f59e0b33",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:1}}>
+                      <span style={{fontSize:12,fontWeight:800,color:"#f59e0b"}}>{g.label}</span>
+                      {gDate&&<span style={{fontSize:11,color:"#64748b"}}>{gDate}</span>}
+                    </div>
+                    {g.entries.slice().reverse().map((c,i)=>{
+                      const pn=c.panelName||"";
+                      const part=c.partNumber||"";
+                      const fieldLabel={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",notes:"Notes",unitPrice:"Unit Price",leadTimeDays:"Lead Time"};
+                      const fl=fieldLabel[c.field]||c.field||"";
+                      let line="";
+                      if(c.type==="edit"&&c.field)line=pn+(pn&&(part||fl)?" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):"");
+                      else if(c.type==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
+                      else if(c.type==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";
+                      else if(c.type==="supplier_apply")line="Supplier prices applied"+(c.field?" — "+c.field:"");
+                      else if(c.type==="review_submit")line="Sent for review"+(c.to?" → "+c.to:"")+(c.field?" ("+c.field+")":"");
+                      else if(c.type==="re_extract")line=(pn?pn+" — ":"")+"BOM re-extracted";
+                      else if(c.type==="refresh_pricing")line=(pn?pn+" — ":"")+"Pricing refreshed"+(c.field==="force"?" (force)":"");
+                      else if(c.type==="bc_push_lead_times")line=(pn?pn+" — ":"")+"Lead times pushed to BC";
+                      else if(c.type==="review_edit"){const _efl=fieldLabel[c.editType]||c.editType||"";if(c.editType==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");else if(c.editType==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";else line=pn+(pn&&(part||_efl)?" — ":"")+(part?part+" ":"")+(c.editType==="qty"||c.editType==="partNumber"?(_efl?_efl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):""):"edited");}
+                      else line=typeLabel[c.type]||c.type;
+                      const _isRevEdit=c.type==="review_edit";
+                      return <div key={c.id||i} style={{padding:"6px 16px",borderBottom:"1px solid #ffffff0a",fontSize:12,...(_isRevEdit?{borderLeft:"3px solid #fbbf24"}:{})}}>
+                      <div style={{color:_isRevEdit?"#fbbf24":"#e2e8f0",fontWeight:600,lineHeight:1.5}}>{line}</div>
+                      <div style={{color:"#64748b",fontSize:11,marginTop:2}}>
+                        {_isRevEdit&&<span style={{background:"#fbbf2422",color:"#fbbf24",borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700,marginRight:6}}>{c.reviewType==="post_review"?"POST-REVIEW":"PRE-REVIEW"}</span>}
+                        {c.byName&&<span>{c.byName}</span>}
+                      </div>
+                      {c.type==="review_submit"&&c.description&&<div style={{color:"#c4b5fd",fontSize:11,marginTop:4,padding:"4px 8px",background:"#1a103088",borderRadius:4,borderLeft:"2px solid #a78bfa",whiteSpace:"pre-wrap"}}>{c.description}</div>}
+                    </div>;}
+                    )}
+                  </div>;
+                })}
               </div>
             </div>,document.body);
         })()}
