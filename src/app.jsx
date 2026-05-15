@@ -30143,89 +30143,42 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
           for(const e of _allQv){if(e.type==="review_submit"&&e.field){if(_cg.entries.length>0)_qvGroups.push(_cg);const vn=parseInt((e.field.match(/\d+/)||["0"])[0])||0;_cg={v:vn,label:"Rv."+String(vn).padStart(2,"0"),entries:[e],at:e.at};}else{_cg.entries.push(e);if(!_cg.at&&e.at)_cg.at=e.at;}}
           if(_cg.entries.length>0)_qvGroups.push(_cg);
           _qvGroups.reverse();
-          const typeLabel={edit:"Edit",add:"Item Added",delete:"Item Deleted",re_extract:"Re-Extract",refresh_pricing:"Refresh Pricing",bc_push_lead_times:"Push Lead Times",supplier_apply:"Supplier Apply",review_submit:"Review Submitted",review_approve:"Review Approved",review_cancel:"Review Cancelled",review_edit:"Reviewer Edit"};
-          const typeColor={edit:"#818cf8",add:"#4ade80",delete:"#ef4444",re_extract:"#f472b6",refresh_pricing:"#38bdf8",bc_push_lead_times:"#2dd4bf",supplier_apply:"#a78bfa",review_submit:"#a78bfa",review_approve:"#4ade80",review_cancel:"#ef4444",review_edit:"#fbbf24"};
-          return ReactDOM.createPortal(
-            <div style={{position:"fixed",top:80,right:40,width:520,maxHeight:"75vh",background:"#111118",border:"2px solid #f59e0b88",borderRadius:12,boxShadow:"0 8px 32px #000a",zIndex:9999,display:"flex",flexDirection:"column",overflow:"hidden"}}
-              onMouseDown={e=>{if(e.target.dataset.drag!=="header")return;const el=e.currentTarget;const sx=e.clientX-el.offsetLeft,sy=e.clientY-el.offsetTop;
-                const mv=e2=>{el.style.left=e2.clientX-sx+"px";el.style.top=e2.clientY-sy+"px";el.style.right="auto";};
-                const up=()=>{document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
-                document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);}}>
-              <div data-drag="header" style={{padding:"12px 16px",background:"#1a1a28",borderBottom:"1px solid #f59e0b44",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"grab",userSelect:"none"}}>
-                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>{project.bcProjectNumber||project.name||"Project"} — Review Revision History</span>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <button onClick={()=>{
-                    const w=window.open("","_blank","width=560,height=700,scrollbars=yes,resizable=yes");
-                    if(!w)return;
-                    const title=(project.bcProjectNumber||project.name||"Project")+" — Review Revision History";
-                    const rows=_qvGroups.map(g=>{
-                      const gd=g.at?new Date(g.at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"";
-                      const items=g.entries.slice().reverse().map(c=>{
-                        const pn=c.panelName||"";const part=c.partNumber||"";
-                        const fl={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",notes:"Notes",unitPrice:"Unit Price",leadTimeDays:"Lead Time"}[c.field]||c.field||"";
-                        let ln="";
-                        if(c.type==="edit"&&c.field)ln=pn+(pn&&(part||fl)?" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):"");
-                        else if(c.type==="add")ln=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
-                        else if(c.type==="delete")ln=(pn?pn+" — ":"")+(part||"Item")+" removed";
-                        else if(c.type==="review_submit")ln="Sent for review"+(c.to?" → "+c.to:"")+(c.field?" ("+c.field+")":"");
-                        else if(c.type==="review_edit"){const efl={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",unitPrice:"Unit Price",leadTimeDays:"Lead Time"}[c.editType]||c.editType||"";if(c.editType==="add")ln=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");else if(c.editType==="delete")ln=(pn?pn+" — ":"")+(part||"Item")+" removed";else ln=pn+(pn&&(part||efl)?" — ":"")+(part?part+" ":"")+(efl?efl+" change":"edited")+(c.from!=null||c.to!=null?" "+c.from+"→"+c.to:"");}
-                        else if(c.type==="review_approve")ln="Review Approved";
-                        else if(c.type==="review_cancel")ln="Review Cancelled";
-                        else if(c.type==="re_extract")ln=(pn?pn+" — ":"")+"BOM re-extracted";
-                        else if(c.type==="refresh_pricing")ln=(pn?pn+" — ":"")+"Pricing refreshed";
-                        else if(c.type==="supplier_apply")ln="Supplier prices applied"+(c.field?" — "+c.field:"");
-                        else ln=c.type;
-                        const badge=c.type==="review_edit"?(c.reviewType==="post_review"?"POST-REVIEW":"PRE-REVIEW"):"";
-                        const byLine=c.byName||"";
-                        return "<div style='padding:5px 12px;border-bottom:1px solid #ffffff0a;font-size:12px;"+(c.type==="review_edit"?"border-left:3px solid #fbbf24;":"")+"'><div style='color:"+(c.type==="review_edit"?"#fbbf24":"#e2e8f0")+";font-weight:600'>"+ln.replace(/</g,"&lt;")+"</div>"+(badge||byLine?"<div style='color:#64748b;font-size:11px;margin-top:2px'>"+(badge?"<span style='background:#fbbf2422;color:#fbbf24;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700;margin-right:6px'>"+badge+"</span>":"")+(byLine?"<span>"+byLine.replace(/</g,"&lt;")+"</span>":"")+"</div>":"")+"</div>";
-                      }).join("");
-                      return "<div style='padding:6px 12px;background:#0d0d18;border-bottom:1px solid #f59e0b33;display:flex;justify-content:space-between;position:sticky;top:0;z-index:1'><span style='font-size:12px;font-weight:800;color:#f59e0b'>"+g.label+"</span><span style='font-size:11px;color:#64748b'>"+gd+"</span></div>"+items;
-                    }).join("");
-                    w.document.write("<!DOCTYPE html><html><head><title>"+title.replace(/</g,"&lt;")+"</title><style>*{margin:0;padding:0;box-sizing:border-box}body{background:#111118;color:#e2e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}::-webkit-scrollbar{width:8px}::-webkit-scrollbar-track{background:#1e1e2e}::-webkit-scrollbar-thumb{background:#5a5a78;border-radius:4px}</style></head><body><div style='padding:12px 16px;background:#1a1a28;border-bottom:1px solid #f59e0b44;font-size:14px;font-weight:800;color:#f59e0b;position:sticky;top:0;z-index:2'>"+title.replace(/</g,"&lt;")+"</div>"+rows+"</body></html>");
-                    w.document.close();
-                  }} style={{background:"none",border:"1px solid #f59e0b44",color:"#f59e0b",fontSize:11,cursor:"pointer",padding:"2px 8px",borderRadius:4,fontWeight:600}} title="Pop out to separate window">⧉ Pop Out</button>
-                  <button onClick={()=>setShowQvHistory(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
-                </div>
-              </div>
-              <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
-                {_qvGroups.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"#64748b",fontSize:12}}>No changes recorded yet. Edits, system actions, and review events will appear here.</div>}
-                {_qvGroups.map((g,gi)=>{
-                  const gDate=g.at?new Date(g.at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"";
-                  return <div key={gi}>
-                    <div style={{padding:"6px 16px",background:"#0d0d18",borderBottom:"1px solid #f59e0b33",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:1}}>
-                      <span style={{fontSize:12,fontWeight:800,color:"#f59e0b"}}>{g.label}</span>
-                      {gDate&&<span style={{fontSize:11,color:"#64748b"}}>{gDate}</span>}
-                    </div>
-                    {g.entries.slice().reverse().map((c,i)=>{
-                      const pn=c.panelName||"";
-                      const part=c.partNumber||"";
-                      const fieldLabel={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",notes:"Notes",unitPrice:"Unit Price",leadTimeDays:"Lead Time"};
-                      const fl=fieldLabel[c.field]||c.field||"";
-                      let line="";
-                      if(c.type==="edit"&&c.field)line=pn+(pn&&(part||fl)?" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):"");
-                      else if(c.type==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
-                      else if(c.type==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";
-                      else if(c.type==="supplier_apply")line="Supplier prices applied"+(c.field?" — "+c.field:"");
-                      else if(c.type==="review_submit")line="Sent for review"+(c.to?" → "+c.to:"")+(c.field?" ("+c.field+")":"");
-                      else if(c.type==="re_extract")line=(pn?pn+" — ":"")+"BOM re-extracted";
-                      else if(c.type==="refresh_pricing")line=(pn?pn+" — ":"")+"Pricing refreshed"+(c.field==="force"?" (force)":"");
-                      else if(c.type==="bc_push_lead_times")line=(pn?pn+" — ":"")+"Lead times pushed to BC";
-                      else if(c.type==="review_edit"){const _efl=fieldLabel[c.editType]||c.editType||"";if(c.editType==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");else if(c.editType==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";else line=pn+(pn&&(part||_efl)?" — ":"")+(part?part+" ":"")+(c.editType==="qty"||c.editType==="partNumber"?(_efl?_efl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):""):"edited");}
-                      else line=typeLabel[c.type]||c.type;
-                      const _isRevEdit=c.type==="review_edit";
-                      return <div key={c.id||i} style={{padding:"6px 16px",borderBottom:"1px solid #ffffff0a",fontSize:12,...(_isRevEdit?{borderLeft:"3px solid #fbbf24"}:{})}}>
-                      <div style={{color:_isRevEdit?"#fbbf24":"#e2e8f0",fontWeight:600,lineHeight:1.5}}>{line}</div>
-                      <div style={{color:"#64748b",fontSize:11,marginTop:2}}>
-                        {_isRevEdit&&<span style={{background:"#fbbf2422",color:"#fbbf24",borderRadius:8,padding:"1px 6px",fontSize:10,fontWeight:700,marginRight:6}}>{c.reviewType==="post_review"?"POST-REVIEW":"PRE-REVIEW"}</span>}
-                        {c.byName&&<span>{c.byName}</span>}
-                      </div>
-                      {c.type==="review_submit"&&c.description&&<div style={{color:"#c4b5fd",fontSize:11,marginTop:4,padding:"4px 8px",background:"#1a103088",borderRadius:4,borderLeft:"2px solid #a78bfa",whiteSpace:"pre-wrap"}}>{c.description}</div>}
-                    </div>;}
-                    )}
-                  </div>;
-                })}
-              </div>
-            </div>,document.body);
+          const title=(project.bcProjectNumber||project.name||"Project")+" — Review Revision History";
+          const _esc=s=>(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+          const rows=_qvGroups.map(g=>{
+            const gd=g.at?new Date(g.at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"";
+            const items=g.entries.slice().reverse().map(c=>{
+              const pn=c.panelName||"";const part=c.partNumber||"";
+              const fl={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",notes:"Notes",unitPrice:"Unit Price",leadTimeDays:"Lead Time"}[c.field]||c.field||"";
+              let ln="";
+              if(c.type==="edit"&&c.field)ln=pn+(pn&&(part||fl)?" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from!=null?c.from:"—")+" to "+(c.to!=null?c.to:"—"):"");
+              else if(c.type==="add")ln=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
+              else if(c.type==="delete")ln=(pn?pn+" — ":"")+(part||"Item")+" removed";
+              else if(c.type==="review_submit")ln="Sent for review"+(c.to?" → "+c.to:"")+(c.field?" ("+c.field+")":"");
+              else if(c.type==="review_edit"){const efl={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",unitPrice:"Unit Price",leadTimeDays:"Lead Time"}[c.editType]||c.editType||"";if(c.editType==="add")ln=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");else if(c.editType==="delete")ln=(pn?pn+" — ":"")+(part||"Item")+" removed";else ln=pn+(pn&&(part||efl)?" — ":"")+(part?part+" ":"")+(efl?efl+" change":"edited")+(c.from!=null||c.to!=null?" "+c.from+"→"+c.to:"");}
+              else if(c.type==="review_approve")ln="Review Approved";
+              else if(c.type==="review_cancel")ln="Review Cancelled";
+              else if(c.type==="re_extract")ln=(pn?pn+" — ":"")+"BOM re-extracted";
+              else if(c.type==="refresh_pricing")ln=(pn?pn+" — ":"")+"Pricing refreshed"+(c.field==="force"?" (force)":"");
+              else if(c.type==="bc_push_lead_times")ln=(pn?pn+" — ":"")+"Lead times pushed to BC";
+              else if(c.type==="supplier_apply")ln="Supplier prices applied"+(c.field?" — "+c.field:"");
+              else ln=c.type;
+              const badge=c.type==="review_edit"?(c.reviewType==="post_review"?"POST-REVIEW":"PRE-REVIEW"):"";
+              const byLine=c.byName||"";
+              const noteHtml=c.type==="review_submit"&&c.description?"<div style='color:#c4b5fd;font-size:11px;margin-top:4px;padding:4px 8px;background:#1a103088;border-radius:4px;border-left:2px solid #a78bfa;white-space:pre-wrap'>"+_esc(c.description)+"</div>":"";
+              return "<div style='padding:5px 12px;border-bottom:1px solid #ffffff0a;font-size:12px;"+(c.type==="review_edit"?"border-left:3px solid #fbbf24;":"")+"'><div style='color:"+(c.type==="review_edit"?"#fbbf24":"#e2e8f0")+";font-weight:600'>"+_esc(ln)+"</div>"+(badge||byLine?"<div style='color:#64748b;font-size:11px;margin-top:2px'>"+(badge?"<span style='background:#fbbf2422;color:#fbbf24;border-radius:8px;padding:1px 6px;font-size:10px;font-weight:700;margin-right:6px'>"+badge+"</span>":"")+(byLine?"<span>"+_esc(byLine)+"</span>":"")+"</div>":"")+noteHtml+"</div>";
+            }).join("");
+            return "<div style='padding:6px 12px;background:#0d0d18;border-bottom:1px solid #f59e0b33;display:flex;justify-content:space-between;position:sticky;top:0;z-index:1'><span style='font-size:12px;font-weight:800;color:#f59e0b'>"+_esc(g.label)+"</span><span style='font-size:11px;color:#64748b'>"+gd+"</span></div>"+items;
+          }).join("");
+          const emptyMsg=_qvGroups.length===0?"<div style='padding:24px 16px;text-align:center;color:#64748b;font-size:12px'>No changes recorded yet. Edits, system actions, and review events will appear here.</div>":"";
+          const w=window.open("","_blank","width=560,height=700,scrollbars=yes,resizable=yes");
+          if(w){
+            w.document.write("<!DOCTYPE html><html><head><title>"+_esc(title)+"</title><style>*{margin:0;padding:0;box-sizing:border-box}body{background:#111118;color:#e2e8f0;font-family:-apple-system,'Inter',sans-serif;font-size:14px}::-webkit-scrollbar{width:8px}::-webkit-scrollbar-track{background:#1e1e2e}::-webkit-scrollbar-thumb{background:#5a5a78;border-radius:4px}</style></head><body><div style='padding:12px 16px;background:#1a1a28;border-bottom:1px solid #f59e0b44;font-size:14px;font-weight:800;color:#f59e0b;position:sticky;top:0;z-index:2'>"+_esc(title)+"</div>"+emptyMsg+rows+"</body></html>");
+            w.document.close();
+          }
+          if(w){setShowQvHistory(false);}
+          else{alert("Pop-up blocked — please allow pop-ups for this site and try again.");}
+          return null;
         })()}
         {project.postReviewStatus==="pending"&&(
           <div style={{marginBottom:12,background:"#1a1040",border:"2px solid #a78bfa",borderRadius:10,padding:"14px 18px",display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
