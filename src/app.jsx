@@ -9819,7 +9819,13 @@ You MUST extract from ALL BOM boxes/columns/sections on the page. Specific rules
 BEFORE emitting items, COUNT the total number of BOM line items visible on this page,
 SUMMING ACROSS ALL BOM BOXES/COLUMNS. Set "detectedLineCount" to that total.
 
-★ HARD CONSTRAINT: items.length MUST equal detectedLineCount.
+★ CRITICAL: detectedLineCount must reflect the TRUE number of line items you can SEE
+on the page — even if you were unable to extract all of them. Do NOT adjust
+detectedLineCount downward to match the number of items you extracted. If the page
+shows 75 line items but you could only extract 72, set detectedLineCount:75 and
+items.length will be 72. The downstream system uses this mismatch to trigger a
+targeted re-extraction for the missing rows. Lying about the count is worse than
+admitting a gap — it causes silent data loss.
 
 If a specific row is too unreadable to extract cleanly, emit a PLACEHOLDER row instead of
 dropping it. Placeholder format:
@@ -11966,24 +11972,26 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         let pageItems=[],pageQs=[];
         let pageRejectReasons=[];
         let pageExtractionPath=null;
-        // DECISION(v1.19.992, audit Item L3): Auto-retry tiebreaker. After
-        // every extraction unit, if the verification flagged a count mismatch
-        // or sequence gap (e.g. items 41-50 missing in a multi-column BOM),
-        // automatically re-extract the unit ONCE with structured feedback
-        // describing the gap. If the retry yields more items, use it instead.
-        // This catches the silent "missed an entire BOM box on the right side
-        // of the page" failure mode without requiring the user to spot it.
+        // DECISION(v1.19.1057, L3 merge + gap-fill): Two-phase retry strategy.
+        // Phase 1 (broad retry): If verification flags count mismatch or sequence
+        // gaps, re-extract with feedback. MERGE results from both passes (union by
+        // itemNo) instead of picking a winner — this recovers items that one pass
+        // caught but the other missed.
+        // Phase 2 (targeted gap-fill): After merge, if sequence gaps STILL exist,
+        // do a third pass asking ONLY for the specific missing item numbers. This
+        // is lightweight (small output) and precisely targets the blind spot.
+        // Supports BOMs with 100+ items where a single pass may not capture all rows.
         let pageRetryAttempts=0;
         for(const unit of units){
           const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):userNotes;
           let result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber);
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
-          // L3 retry check
+          // L3 Phase 1: broad retry + merge
           const verif=result?.extractionVerification;
           const shouldRetry=verif&&verif.status==="needs-review"&&pageRetryAttempts<1;
           if(shouldRetry){
             const reasons=[];
-            if(verif.countMismatch)reasons.push(`Your previous read returned ${verif.extractedCount} items but you reported detectedLineCount=${verif.detectedLineCount}. The numbers should match — recount and re-extract every BOM row.`);
+            if(verif.countMismatch)reasons.push(`Your previous read returned ${verif.extractedCount} items but you reported detectedLineCount=${verif.detectedLineCount}. You missed ${verif.detectedLineCount-verif.extractedCount} row(s). Re-read the ENTIRE page and extract every BOM row.`);
             if(verif.missingFromStart)reasons.push(`Items 1..${verif.missingFromStart} appear to be MISSING from your previous read — the smallest itemNo you returned was ${verif.missingFromStart+1}. Look for an additional BOM box/column to the LEFT or ABOVE the one you scanned. Multi-column BOMs are common on D-size drawings.`);
             if(Array.isArray(verif.sequenceGaps)&&verif.sequenceGaps.length>0){
               const sample=verif.sequenceGaps.slice(0,15).join(", ");
@@ -11991,28 +11999,99 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             }
             if(reasons.length){
               const retryFeedback=`AUTO-RETRY (your previous extraction was flagged for review):\n\n${reasons.join("\n\n")}\n\nThis is a SECOND PASS — you have full memory of your previous attempt. Identify which BOM rows you missed and capture them this time. Specifically look for additional BOM boxes/columns elsewhere on the page that you may have skipped.`;
-              console.warn(`[BOM EXTRACT] L3 auto-retry triggered for page "${pg.name||pgIdx+1}": ${reasons[0]}`);
+              console.warn(`[BOM EXTRACT] L3 Phase 1 retry triggered for page "${pg.name||pgIdx+1}": ${reasons[0]}`);
               pageRetryAttempts++;
               const retryResult=await extractBomPage(unit.dataUrl,retryFeedback,notes,unit.originalPdfPath,unit.pageNumber);
               if(retryResult?.extractionPath){_extractionPathsSeen.add(retryResult.extractionPath);pageExtractionPath=retryResult.extractionPath;}
-              const firstCount=(result.items||[]).length;
-              const retryCount=(retryResult.items||[]).length;
-              if(retryCount>firstCount){
-                console.log(`[BOM EXTRACT] L3 retry SUCCESS — first attempt: ${firstCount} items, retry: ${retryCount} items. Using retry result.`);
-                // Tag retry result items for admin visibility
-                if(Array.isArray(retryResult.items))retryResult.items.forEach(it=>{it._extractionRetried=true;});
-                result=retryResult;
+              const firstItems=result.items||[];
+              const retryItems=(retryResult.items||[]);
+              // MERGE both passes by itemNo — union, not pick-winner. When both passes
+              // have the same itemNo, keep whichever has a real partNumber (non-placeholder).
+              const mergedMap=new Map();
+              for(const it of firstItems){
+                const key=String(it.itemNo||"").replace(/\D/g,"").trim();
+                if(key)mergedMap.set(key,it);
+              }
+              let retryNewCount=0;
+              for(const it of retryItems){
+                const key=String(it.itemNo||"").replace(/\D/g,"").trim();
+                if(!key)continue;
+                if(!mergedMap.has(key)){
+                  it._extractionRetried=true;
+                  mergedMap.set(key,it);
+                  retryNewCount++;
+                } else {
+                  // If existing is placeholder but retry has real data, prefer retry
+                  const existing=mergedMap.get(key);
+                  if((existing.partNumber==="?"||/EXTRACTION_FAILED/i.test(existing.notes||""))&&it.partNumber!=="?"){
+                    it._extractionRetried=true;
+                    mergedMap.set(key,it);
+                  }
+                }
+              }
+              const mergedItems=[...mergedMap.values()];
+              console.log(`[BOM EXTRACT] L3 Phase 1 merge — pass1: ${firstItems.length}, pass2: ${retryItems.length}, merged: ${mergedItems.length} (${retryNewCount} new from retry)`);
+              result={...result,items:mergedItems,extractionVerification:{...result.extractionVerification,l3Merged:true,l3Pass1Count:firstItems.length,l3Pass2Count:retryItems.length,l3MergedCount:mergedItems.length}};
+              try{
+                if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+                  window.logDebugEntry({severity:"info",source:"extractBomPage(L3 merge)",message:`L3 merge: ${firstItems.length}+${retryItems.length}→${mergedItems.length} items on page "${pg.name||pgIdx+1}" (${retryNewCount} new from retry)`,extra:{
+                    pageId:pg.id,pageName:pg.name,
+                    firstCount:firstItems.length,retryCount:retryItems.length,mergedCount:mergedItems.length,retryNewCount,
+                    reasons,
+                  }});
+                }
+              }catch(_){}
+            }
+          }
+          // L3 Phase 2: targeted gap-fill. After merge, check if sequence gaps remain.
+          // If so, ask specifically for ONLY the missing item numbers — a small, focused
+          // extraction that doesn't require re-reading the entire BOM.
+          const mergedItems=result.items||[];
+          const mergedNums=mergedItems.map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10)).filter(n=>!isNaN(n)&&n>0);
+          if(mergedNums.length>=3&&pageRetryAttempts<=1){
+            const sortedMerged=[...new Set(mergedNums)].sort((a,b)=>a-b);
+            const remainingGaps=[];
+            for(let gi=0;gi<sortedMerged.length-1;gi++){
+              if(sortedMerged[gi+1]-sortedMerged[gi]>1){
+                for(let g=sortedMerged[gi]+1;g<sortedMerged[gi+1];g++)remainingGaps.push(g);
+              }
+            }
+            if(remainingGaps.length>0&&remainingGaps.length<=20){
+              const gapList=remainingGaps.join(", ");
+              const gapFeedback=`TARGETED GAP-FILL — extract ONLY the following missing item numbers: ${gapList}\n\nYour previous extraction captured ${mergedItems.length} items successfully but missed these specific line items. Look carefully at the BOM table for rows with these item numbers. They may be:\n- In a different column/section of the BOM\n- Between rows you already extracted (tightly spaced)\n- Near the boundary between two BOM columns\n- At the very top or bottom of a BOM box\n\nReturn ONLY the missing items listed above. Do NOT re-extract items you already found.`;
+              console.warn(`[BOM EXTRACT] L3 Phase 2 gap-fill for page "${pg.name||pgIdx+1}": missing items ${gapList}`);
+              pageRetryAttempts++;
+              const gapResult=await extractBomPage(unit.dataUrl,gapFeedback,notes,unit.originalPdfPath,unit.pageNumber);
+              if(gapResult?.extractionPath){_extractionPathsSeen.add(gapResult.extractionPath);pageExtractionPath=gapResult.extractionPath;}
+              const gapItems=(gapResult.items||[]).filter(it=>{
+                const num=parseInt(String(it.itemNo||"").replace(/\D/g,""),10);
+                return remainingGaps.includes(num);
+              });
+              if(gapItems.length>0){
+                const existingMap=new Map();
+                for(const it of mergedItems){
+                  const key=String(it.itemNo||"").replace(/\D/g,"").trim();
+                  if(key)existingMap.set(key,it);
+                }
+                for(const it of gapItems){
+                  const key=String(it.itemNo||"").replace(/\D/g,"").trim();
+                  if(key&&!existingMap.has(key)){
+                    it._extractionGapFill=true;
+                    mergedItems.push(it);
+                  }
+                }
+                console.log(`[BOM EXTRACT] L3 Phase 2 gap-fill recovered ${gapItems.length} item(s): ${gapItems.map(it=>it.itemNo).join(", ")}`);
+                result={...result,items:mergedItems,extractionVerification:{...(result.extractionVerification||{}),l3GapFillRecovered:gapItems.length,l3GapFillRequested:remainingGaps.length}};
                 try{
                   if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
-                    window.logDebugEntry({severity:"info",source:"extractBomPage(L3 retry)",message:`L3 auto-retry produced ${retryCount-firstCount} additional row(s) on page "${pg.name||pgIdx+1}" — first pass missed them`,extra:{
+                    window.logDebugEntry({severity:"info",source:"extractBomPage(L3 gap-fill)",message:`L3 gap-fill recovered ${gapItems.length}/${remainingGaps.length} missing items on page "${pg.name||pgIdx+1}": items ${gapItems.map(it=>it.itemNo).join(", ")}`,extra:{
                       pageId:pg.id,pageName:pg.name,
-                      firstCount,retryCount,
-                      reasons,
+                      requestedGaps:remainingGaps,recoveredItems:gapItems.map(it=>it.itemNo),
                     }});
                   }
                 }catch(_){}
               } else {
-                console.log(`[BOM EXTRACT] L3 retry produced ${retryCount} items vs original ${firstCount} — keeping original (no improvement).`);
+                console.log(`[BOM EXTRACT] L3 Phase 2 gap-fill found 0 of ${remainingGaps.length} missing items — gaps are genuine missing rows on the drawing.`);
               }
             }
           }
@@ -12161,7 +12240,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         if(finalSequenceGaps.length>0){
           console.warn(`[BOM FINAL] sequence gaps in final BOM: items ${finalSequenceGaps.join(", ")} missing (${withCompanions.length} items, max itemNo ${finalMaxItemNo})`);
         }
-        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes,finalSequenceGaps,finalMaxItemNo,finalItemCount:withCompanions.length}};
+        // DECISION(v1.19.1057): Count L3-recovered items for extraction report
+        const l3MergeRecovered=withCompanions.filter(it=>it._extractionRetried).length;
+        const l3GapFillRecovered=withCompanions.filter(it=>it._extractionGapFill).length;
+        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes,finalSequenceGaps,finalMaxItemNo,finalItemCount:withCompanions.length,l3MergeRecovered,l3GapFillRecovered}};
       }).catch(ex=>{
         console.error("BOM extraction failed:",ex);
         // v1.19.983: surface the catch-all failure to remote debug logs so
@@ -12293,6 +12375,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       finalSequenceGaps:mergeStats.finalSequenceGaps||[],
       finalMaxItemNo:mergeStats.finalMaxItemNo||0,
       finalItemCount:mergeStats.finalItemCount||0,
+      l3MergeRecovered:mergeStats.l3MergeRecovered||0,
+      l3GapFillRecovered:mergeStats.l3GapFillRecovered||0,
       timestamp:Date.now(),
       version:APP_VERSION,
     }:null;
@@ -19994,6 +20078,9 @@ function ScanResultsBanner({panel}){
   if(auditCorrectionCount>0&&auditCleanOnRound)concerns.push(`audit auto-corrected ${auditCorrectionCount} row${auditCorrectionCount>1?"s":""}`);
   if(auditFlagged.length>0)concerns.push(`audit: ${auditFlagged.length} unresolved error${auditFlagged.length>1?"s":""}`);
   if(auditMissing.length>0)concerns.push(`audit: ${auditMissing.length} missing row${auditMissing.length>1?"s":""} could not be added`);
+  // DECISION(v1.19.1057): L3 recovery stats — inform user when auto-retry recovered items.
+  const l3Recovered=(r.l3MergeRecovered||0)+(r.l3GapFillRecovered||0);
+  if(l3Recovered>0)concerns.push(`✓ auto-retry recovered ${l3Recovered} item${l3Recovered>1?"s":""} the first pass missed`);
   // DECISION(v1.19.1056): Warn user about missing BOM line items (sequence gaps).
   const seqGaps=r.finalSequenceGaps||[];
   if(seqGaps.length>0){
