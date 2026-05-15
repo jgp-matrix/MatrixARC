@@ -30456,10 +30456,14 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       const ei=log.findIndex(e=>e.panelId===entry.panelId&&e.rowId===entry.rowId&&e.type===entry.type);
                       if(ei>=0){log[ei]={...log[ei],to:entry.to,at:entry.at};}else{log.push(entry);}
                     }else{log.push(entry);}
+                    const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
                     if(project.preReviewStatus==="approved"){
-                      persistProject({...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,preReviewChangeLog:log});
+                      const fields={preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,preReviewChangeLog:log};
+                      onUpdate({...project,...fields});
+                      fbDb.collection(_prjPath).doc(project.id).update(fields).catch(e=>console.error("[PRE-REVIEW] cancel+log save failed:",e));
                     }else{
-                      persistProject({...project,preReviewChangeLog:log});
+                      onUpdate({...project,preReviewChangeLog:log});
+                      fbDb.collection(_prjPath).doc(project.id).update({preReviewChangeLog:log}).catch(e=>console.error("[PRE-REVIEW] changelog save failed:",e));
                     }
                   }}
                 />
