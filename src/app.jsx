@@ -8223,7 +8223,10 @@ async function saveProject(uid,project){
         // Also apply in-memory review overrides (covers the window before the review submit's
         // write reaches Firestore — server doc is still stale, but local flag has the truth).
         const _prOvrSP=_pendingPreReviewOverrides[data.id];
-        if(_prOvrSP)Object.assign(data,_prOvrSP);
+        if(_prOvrSP){
+          if(data.preReviewStatus===undefined)Object.assign(data,_prOvrSP);
+          delete _pendingPreReviewOverrides[data.id];
+        }
         // (3) quoteRev bump — compute hash AFTER bomVersion has been applied so
         // version changes are part of the quote-state hash. Compare to the last-
         // persisted hash; if different, bump quoteRev and record the new hash. First
@@ -8496,12 +8499,14 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
       liveProject={...liveProject,quoteRev:liveProject.quoteRev||1,lastQuoteHash:newQuoteHash};
     }
     const _prOvr=_pendingPreReviewOverrides[projectId];
-    if(_prOvr)Object.assign(liveProject,_prOvr);
+    if(_prOvr){
+      if(!liveProject.preReviewStatus)Object.assign(liveProject,_prOvr);
+      delete _pendingPreReviewOverrides[projectId];
+    }
     liveProject.qvHistory=_mergeQvHistory(projectId,liveProject,null);
     const stripped=JSON.parse(JSON.stringify({...liveProject,panels:liveProject.panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
     await ref.set(stripped);
     _flushQvHistory(projectId);
-    if(_prOvr)delete _pendingPreReviewOverrides[projectId];
     if(!skipNotify)notifyProjectListeners(projectId,liveProject);
   }finally{resolve();delete _panelSaveLocks[lockKey];}
 }
@@ -29979,6 +29984,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                     const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",preReviewChangeLog:[],reviewChangeLog:[],reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid};
                     _logQvHistory(project.id,{type:"review_approve"});
+                    delete _pendingPreReviewOverrides[project.id];
                     onUpdate({...project,...reviewFields});
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
                     try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
@@ -29992,6 +29998,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     const notes=await arcPrompt("Notes for the salesperson (reason for return):",{multiline:true,placeholder:"What needs to be fixed?",okLabel:"Return"});
                     if(notes===null)return;
                     const reviewFields={preReviewStatus:"rejected",preReviewNotes:notes,reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid};
+                    delete _pendingPreReviewOverrides[project.id];
                     onUpdate({...project,...reviewFields});
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
                     try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
