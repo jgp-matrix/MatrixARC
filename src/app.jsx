@@ -20393,7 +20393,7 @@ function ScanResultsBanner({panel}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -20633,6 +20633,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [reExtractWarn,setReExtractWarn]=useState(false);
   const [attachingPdf,setAttachingPdf]=useState(false);
   const [showDrawingReview,setShowDrawingReview]=useState(false);
+  const _drTrigRef=useRef(0);
+  useEffect(()=>{if(openDrawingReviewTrigger>0&&openDrawingReviewTrigger>_drTrigRef.current){setShowDrawingReview(true);_drTrigRef.current=openDrawingReviewTrigger;}},[openDrawingReviewTrigger]);
   const [reviewPageIdx,setReviewPageIdx]=useState(0);
   const [newNotePos,setNewNotePos]=useState(null); // {x,y} — shows inline input at click position
   const [newNoteText,setNewNoteText]=useState("");
@@ -29537,6 +29539,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [showReassignPicker,setShowReassignPicker]=useState(false);
   const [showPreReviewChanges,setShowPreReviewChanges]=useState(false);
   const [showQvHistory,setShowQvHistory]=useState(false);
+  const [drawingReviewTrigger,setDrawingReviewTrigger]=useState({id:null,c:0});
   // Customer review state
   const [customerReviewData,setCustomerReviewData]=useState(null);
   const [showCustomerResponses,setShowCustomerResponses]=useState(false);
@@ -29904,6 +29907,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             {!isReadOnly()&&(_isPreReviewAssignee||_appCtx.role==="admin"||hasPermission("reviewer"))&&(
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>{const p=(project.panels||[]).find(p=>(p.pages||[]).length>0);if(!p){arcAlert("No drawings uploaded yet.");return;}setDrawingReviewTrigger(prev=>({id:p.id,c:prev.c+1}));}}
+                    style={btn("#1a1040","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa88",padding:"6px 16px"})}>📐 Review Drawings</button>
                   <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                     const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",preReviewChangeLog:[],reviewChangeLog:[],reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid};
@@ -30091,6 +30096,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 post-review (granted via the Team & Permissions modal). */}
             {!isReadOnly()&&(_appCtx.role==="admin"||hasPermission("reviewer"))&&(
               <div style={{display:"flex",gap:6}}>
+                <button onClick={()=>{const p=(project.panels||[]).find(p=>(p.pages||[]).length>0);if(!p){arcAlert("No drawings uploaded yet.");return;}setDrawingReviewTrigger(prev=>({id:p.id,c:prev.c+1}));}}
+                  style={btn("#1a1040","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa88",padding:"6px 16px"})}>📐 Review Drawings</button>
                 <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                   const upd={...project,postReviewStatus:"approved",postReviewApprovedAt:Date.now(),postReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer"};
@@ -30571,6 +30578,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   project={project}
                   activeScope={activeScope}
                   onOpenEcoEditor={onOpenEcoEditor}
+                  openDrawingReviewTrigger={drawingReviewTrigger.id===panel.id?drawingReviewTrigger.c:0}
                   onPreReviewInvalidated={(entry)=>{
                     const log=[...(project.preReviewChangeLog||[])];
                     if(entry.type==="qty"||entry.type==="partNumber"){
