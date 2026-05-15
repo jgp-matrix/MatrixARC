@@ -26098,10 +26098,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const icons={line:"─",circle:"○",rect:"□",triangle:"△"};
               return <><div style={{fontSize:12,fontWeight:700,color:"#ef4444",letterSpacing:0.5,marginTop:12,marginBottom:6,paddingTop:8,borderTop:"1px solid #ef444433"}}>MARKUP — ALL PAGES ({allShapes.length})</div>
                 {allShapes.map((s,si)=>(
-                  <div key={s.id||si} style={{background:"#2a0a0a",border:"1px solid #ef444444",borderRadius:6,padding:"6px 10px",marginBottom:4,fontSize:12,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}} onClick={()=>{setReviewPageIdx(s.pageNum-1);}}>
+                  <div key={s.id||si} style={{background:s.visibility==="external"?"#2a0a0a":"#2a2200",border:s.visibility==="external"?"1px solid #ef444444":"1px dashed #ef444444",borderRadius:6,padding:"6px 10px",marginBottom:4,fontSize:12,display:"flex",alignItems:"center",gap:6,cursor:"pointer"}} onClick={()=>{setReviewPageIdx(s.pageNum-1);}}>
                     <span style={{fontSize:16,color:"#ef4444"}}>{icons[s.type]||"?"}</span>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{color:C.text,fontWeight:600}}>{s.type.charAt(0).toUpperCase()+s.type.slice(1)} — Page {s.pageNum}</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{color:C.text,fontWeight:600}}>{s.type.charAt(0).toUpperCase()+s.type.slice(1)} — Page {s.pageNum}</span>
+                        {!readOnly?<button onClick={e=>{e.stopPropagation();
+                          const updatedShapes=(pages[s.pageNum-1]?.reviewShapes||[]).map(sh=>sh.id===s.id?{...sh,visibility:sh.visibility==="external"?"internal":"external"}:sh);
+                          const updatedPages=pages.map((p,i)=>i===s.pageNum-1?{...p,reviewShapes:updatedShapes}:p);
+                          onUpdate({...panel,pages:updatedPages});try{onSaveImmediate({...panel,pages:updatedPages});}catch(e){}
+                        }} style={{fontSize:10,color:"#ef4444",background:s.visibility==="external"?"#ef444422":"#ef444411",border:"1px solid #ef444444",borderRadius:3,padding:"0 6px",cursor:"pointer"}} title={s.visibility==="external"?"Switch to Internal":"Switch to External"}>{s.visibility==="external"?"EXT":"INT"}</button>
+                        :<span style={{fontSize:10,color:"#ef4444",background:"#ef444411",borderRadius:3,padding:"0 4px"}}>{s.visibility==="external"?"EXT":"INT"}</span>}
+                      </div>
                       {s.note&&<div style={{color:C.sub,fontSize:11,marginTop:1}}>{s.note.slice(0,60)}{s.note.length>60?"…":""}</div>}
                     </div>
                     {!readOnly&&<span onClick={e=>{e.stopPropagation();
@@ -30080,10 +30088,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   const designerName=selectedDesigner?.Name||project.bcDesigner||designerCode;
                   const reviewNotes=sendReviewNotes.trim();
                   setShowSendForReview(false);
+                  const _nextRv=(project.reviewRev||0)+1;
                   const upd={...project,preReviewStatus:"pending",preReviewSubmittedAt:Date.now(),preReviewSubmittedBy:uid,
                     preReviewAssignedTo:sendReviewEngineer,preReviewAssignedToName:designerName,
-                    preReviewRev:(project.preReviewRev||0)+1,preReviewNotes:reviewNotes||null,reviewRevBumpedThisCycle:false,reviewChangeLog:[]};
-                  _logQvHistory(project.id,{type:"review_submit",field:"Qv"+((project.preReviewRev||0)+1),to:designerName,description:reviewNotes||""});
+                    preReviewRev:(project.preReviewRev||0)+1,reviewRev:_nextRv,preReviewNotes:reviewNotes||null,reviewRevBumpedThisCycle:false,reviewChangeLog:[]};
+                  _logQvHistory(project.id,{type:"review_submit",field:"Rv"+_nextRv,to:designerName,description:reviewNotes||""});
                   persistProject(upd);
                   if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                   try{
@@ -30145,7 +30154,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 const up=()=>{document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
                 document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);}}>
               <div data-drag="header" style={{padding:"12px 16px",background:"#1a1a28",borderBottom:"1px solid #f59e0b44",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"grab",userSelect:"none"}}>
-                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>{project.bcProjectNumber||project.name||"Project"} — Qv.{project.preReviewRev||1} Changes</span>
+                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>{project.bcProjectNumber||project.name||"Project"} — Rv.{project.preReviewRev||1} History</span>
                 <button onClick={()=>setShowQvHistory(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
               </div>
               <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
@@ -31392,7 +31401,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 {(()=>{
                   const reviewStatus=project.preReviewStatus;
                   const _qvHist=(project.qvHistory||[]);
-                  const _qvHistBtn=<button onClick={()=>setShowQvHistory(true)} style={btn("#1a1020","#f59e0b",{fontSize:10,padding:"4px 10px",whiteSpace:"nowrap",fontWeight:700,border:"1px solid #f59e0b44",minWidth:72,textAlign:"center"})}>Qv Hist.{_qvHist.length>0?" ("+_qvHist.length+")":""}</button>;
+                  const _qvHistBtn=<button onClick={()=>setShowQvHistory(true)} style={btn("#1a1020","#f59e0b",{fontSize:10,padding:"4px 10px",whiteSpace:"nowrap",fontWeight:700,border:"1px solid #f59e0b44",minWidth:72,textAlign:"center"})}>Rv. Hist.{_qvHist.length>0?" ("+_qvHist.length+")":""}</button>;
                   if(reviewStatus==="approved")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}>
                     <span style={{fontSize:11,fontWeight:700,color:C.green}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</span>
                     {!readOnly&&<button onClick={()=>{_logQvHistory(project.id,{type:"review_cancel"});const upd={...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,reviewChangeLog:[],reviewRevBumpedThisCycle:false};persistProject(upd);}} style={{fontSize:10,padding:"2px 8px",borderRadius:10,border:"1px solid #ef444466",background:"#1a0a0a",color:"#ef4444",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>Cancel</button>}
