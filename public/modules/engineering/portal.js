@@ -11,7 +11,7 @@
  * Data: reviewUploads/{token}
  */
 
-const PORTAL_VERSION = '0.8.0';
+const PORTAL_VERSION = '0.9.0';
 let _customerNotes = []; // customer-added notes
 let _customerNoteCounter = 0;
 let _currentPage = 0;
@@ -34,6 +34,7 @@ let _autoSaveTimer = null;
 let _db = null;
 let _token = null;
 let _saveIndicator = null;
+let _reviewInfo = null;
 
 function autosaveDrafts() {
   clearTimeout(_autoSaveTimer);
@@ -119,6 +120,7 @@ function renderSubmitted(info) {
 function renderReview(info, token, db) {
   _db = db;
   _token = token;
+  _reviewInfo = info;
   _engineeringNotes = info.notes || [];
   _drawingPages = info.drawingPages || [];
 
@@ -205,8 +207,8 @@ function renderReview(info, token, db) {
   // Markup toolbar
   const toolbar = document.getElementById('markup-toolbar');
   if (toolbar) {
-    const tools = [{id:'',label:'📌',tip:'Note'},{id:'line',label:'─',tip:'Line'},{id:'circle',label:'○',tip:'Circle'},{id:'rect',label:'□',tip:'Rectangle'},{id:'triangle',label:'△',tip:'Triangle'}];
-    toolbar.innerHTML = tools.map(t => `<button onclick="setMarkupTool('${t.id}')" id="tool-${t.id||'note'}" title="${t.tip}" style="background:${_markupTool===t.id?'#dbeafe':'transparent'};color:${_markupTool===t.id?'#2563eb':'#64748b'};border:${_markupTool===t.id?'1px solid #2563eb':'1px solid transparent'};border-radius:4px;padding:3px 8px;font-size:14px;cursor:pointer;font-weight:700;line-height:1">${t.label}</button>`).join('');
+    const tools = [{id:'',label:'+ Note',tip:'Add Note (click to place)'},{id:'line',label:'─',tip:'Line'},{id:'circle',label:'○',tip:'Circle'},{id:'rect',label:'□',tip:'Rectangle'},{id:'triangle',label:'△',tip:'Triangle'}];
+    toolbar.innerHTML = tools.map(t => `<button onclick="setMarkupTool('${t.id}')" id="tool-${t.id||'note'}" title="${t.tip}" style="background:${_markupTool===t.id?'#dbeafe':'transparent'};color:${_markupTool===t.id?'#2563eb':'#64748b'};border:${_markupTool===t.id?'1px solid #2563eb':'1px solid transparent'};border-radius:6px;padding:6px 14px;font-size:${t.id===''?'13px':'20px'};cursor:pointer;font-weight:700;line-height:1">${t.label}</button>`).join('');
   }
 
   window.setMarkupTool = function(id) {
@@ -557,7 +559,7 @@ function renderDrawingPage(idx) {
   });
 
   // SVG overlay for shapes
-  const engShapes = (info?.drawingShapes || []).filter(s => s.pageNum === pageNum); // engineering shapes from main app (future)
+  const engShapes = (_reviewInfo?.drawingShapes || []).filter(s => s.pageNum === pageNum);
   const custShapes = _customerShapes.filter(s => s.pageNum === pageNum);
   const allShapes = [...engShapes, ...custShapes];
   let svgContent = '';
