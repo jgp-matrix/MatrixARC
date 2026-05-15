@@ -31197,13 +31197,13 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                       title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                       style={btn("#1e1b4b","#818cf8",{fontSize:12,padding:"8px 12px",flex:2,opacity:(rfqLoading||ownerPriorityActive)?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>{rfqLoading?"Building…":"Send/Print RFQs"}</button>
                     <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:12,padding:"8px 12px",flex:2,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
-                    <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"4px 10px",flex:0,whiteSpace:"nowrap",fontWeight:700,border:"1px solid #64748b44"})}>RFQ Hist.</button>
+                    <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"4px 10px",flex:0,whiteSpace:"nowrap",fontWeight:700,border:"1px solid #64748b44",minWidth:72,textAlign:"center"})}>RFQ Hist.</button>
                   </div>;
                 })()}
                 {!readOnly&&(()=>{
                   const reviewStatus=project.preReviewStatus;
                   const _qvHist=(project.qvHistory||[]);
-                  const _qvHistBtn=<button onClick={()=>setShowQvHistory(true)} style={btn("#1a1020","#f59e0b",{fontSize:10,padding:"4px 10px",whiteSpace:"nowrap",fontWeight:700,border:"1px solid #f59e0b44"})}>Qv Hist.{_qvHist.length>0?" ("+_qvHist.length+")":""}</button>;
+                  const _qvHistBtn=<button onClick={()=>setShowQvHistory(true)} style={btn("#1a1020","#f59e0b",{fontSize:10,padding:"4px 10px",whiteSpace:"nowrap",fontWeight:700,border:"1px solid #f59e0b44",minWidth:72,textAlign:"center"})}>Qv Hist.{_qvHist.length>0?" ("+_qvHist.length+")":""}</button>;
                   if(reviewStatus==="approved")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}>
                     <span style={{fontSize:11,fontWeight:700,color:C.green}}>✓ Pre-Review Approved{project.preReviewApprovedBy?" by "+project.preReviewApprovedBy:""}</span>
                     <button onClick={()=>{_logQvHistory(project.id,{type:"review_cancel"});const upd={...project,preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null};persistProject(upd);}} style={{fontSize:10,padding:"2px 8px",borderRadius:10,border:"1px solid #ef444466",background:"#1a0a0a",color:"#ef4444",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>Cancel</button>
