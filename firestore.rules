@@ -122,8 +122,10 @@ service cloud.firestore {
     // Same model as rfqUploads: public read while unexpired, public update restricted
     // to the draft + submit field allow-lists, create/delete require auth.
     match /reviewUploads/{token} {
+      allow read: if request.auth != null;
       allow read: if resource.data.get('expiresAt', 0) > request.time.toMillis();
       allow create: if request.auth != null;
+      allow update: if request.auth != null;
       allow update: if resource.data.get('expiresAt', 0) > request.time.toMillis() &&
                        resource.data.get('status', 'pending') == 'pending' &&
                        request.resource.data.diff(resource.data).affectedKeys().hasOnly([

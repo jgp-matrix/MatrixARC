@@ -91,6 +91,7 @@ function showSaveIndicator(text) {
     return;
   }
 
+  if (info.status === 'retracted') { renderError('This review has been retracted by the engineering team. No further action is required.'); return; }
   if (info.status === 'submitted') { renderSubmitted(info); return; }
 
   renderReview(info, token, db);
