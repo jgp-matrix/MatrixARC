@@ -30118,10 +30118,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     preReviewAssignedTo:sendReviewEngineer,preReviewAssignedToName:designerName,
                     preReviewRev:(project.preReviewRev||0)+1,reviewRev:_nextRv,preReviewNotes:reviewNotes||null,reviewRevBumpedThisCycle:false,reviewChangeLog:[],updatedAt:Date.now(),updatedBy:uid};
                   _logQvHistory(project.id,{type:"review_submit",field:"Rv"+_nextRv,to:designerName,description:reviewNotes||""});
-                  _pendingPreReviewOverrides[project.id]=reviewFields;
+                  const{updatedAt:_u,updatedBy:_b,..._rvOverride}=reviewFields;
+                  _pendingPreReviewOverrides[project.id]=_rvOverride;
                   onUpdate({...project,...reviewFields});
                   const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
-                  fbDb.collection(_prjPath).doc(project.id).update(reviewFields).catch(e=>console.error("[PRE-REVIEW] submit save failed:",e));
+                  fbDb.collection(_prjPath).doc(project.id).update(reviewFields).catch(e=>{console.error("[PRE-REVIEW] submit save failed:",e);onUpdate({...project});arcAlert("Review submit failed to save: "+e.message);});
                   if(onAutoSyncBcDrawings)onAutoSyncBcDrawings();
                   try{
                     let designerEmail=null;
