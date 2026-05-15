@@ -30528,7 +30528,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   onDelete={()=>deletePanel(panel.id)}
                   onUpdate={updatedPanel=>{
                     const newPanels=panels.map(p=>p.id===panel.id?updatedPanel:p);
-                    onUpdate({...project,panels:newPanels});
+                    setProject(prev=>({...prev,panels:newPanels}));
                   }}
                   onSaveImmediate={updatedPanel=>saveImmediatePanel(panel.id,updatedPanel)}
                   onViewQuote={onViewQuote}
