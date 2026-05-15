@@ -8497,7 +8497,7 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
       liveProject={...liveProject,quoteRev:liveProject.quoteRev||1,lastQuoteHash:newQuoteHash};
     }
     const _prOvr=_pendingPreReviewOverrides[projectId];
-    if(_prOvr&&liveProject.preReviewStatus===undefined)Object.assign(liveProject,_prOvr);
+    if(_prOvr&&!liveProject.preReviewStatus)Object.assign(liveProject,_prOvr);
     liveProject.qvHistory=_mergeQvHistory(projectId,liveProject,null);
     const stripped=JSON.parse(JSON.stringify({...liveProject,panels:liveProject.panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
     await ref.set(stripped);
