@@ -29990,29 +29990,34 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                 const up=()=>{document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);};
                 document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);}}>
               <div data-drag="header" style={{padding:"12px 16px",background:"#1a1a28",borderBottom:"1px solid #f59e0b44",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"grab",userSelect:"none"}}>
-                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>Qv History ({hist.length} entries)</span>
+                <span style={{fontSize:14,fontWeight:800,color:"#f59e0b"}}>{project.bcProjectNumber||project.name||"Project"} — Qv.{project.preReviewRev||1} Changes</span>
                 <button onClick={()=>setShowQvHistory(false)} style={{background:"none",border:"none",color:"#94a3b8",fontSize:18,cursor:"pointer",padding:"0 4px",lineHeight:1}}>✕</button>
               </div>
               <div style={{overflowY:"auto",padding:"8px 0",flex:1}}>
-                {hist.map((c,i)=><div key={c.id||i} style={{padding:"8px 16px",borderBottom:"1px solid #ffffff0a",display:"flex",gap:10,alignItems:"flex-start",fontSize:12}}>
-                  <span style={{background:typeColor[c.type]||"#94a3b8",color:"#000",borderRadius:4,padding:"1px 6px",fontWeight:700,fontSize:10,whiteSpace:"nowrap",flexShrink:0,marginTop:1}}>{typeLabel[c.type]||c.type}</span>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{color:"#e2e8f0",fontWeight:600}}>
-                      {c.type==="edit"&&c.field?<>{c.field}: <span style={{color:"#ef4444"}}>{c.from||"—"}</span> → <span style={{color:"#4ade80"}}>{c.to||"—"}</span>{c.partNumber?" — "+c.partNumber:""}</>
-                        :c.type==="add"?"New row added"+(c.partNumber?" — "+c.partNumber:"")
-                        :c.type==="delete"?(c.partNumber||"Row")+" removed"
-                        :c.type==="supplier_apply"?"Supplier prices applied"+(c.field?" — "+c.field:"")
-                        :c.type==="review_submit"?"Sent for review"+(c.to?" → "+c.to:"")+(c.field?" ("+c.field+")":"")
-                        :typeLabel[c.type]||c.type}
-                    </div>
-                    <div style={{color:"#64748b",fontSize:11,marginTop:2}}>
-                      {c.panelName&&<span>{c.panelName} · </span>}
-                      {c.byName&&<span>{c.byName} · </span>}
-                      {c.at&&<span>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
-                    </div>
-                    {c.type==="review_submit"&&c.description&&<div style={{color:"#c4b5fd",fontSize:11,marginTop:4,padding:"4px 8px",background:"#1a103088",borderRadius:4,borderLeft:"2px solid #a78bfa",whiteSpace:"pre-wrap"}}>{c.description}</div>}
+                {hist.map((c,i)=>{
+                  const pn=c.panelName||"";
+                  const part=c.partNumber||"";
+                  const fieldLabel={qty:"Qty",partNumber:"Part #",description:"Description",manufacturer:"Manufacturer",notes:"Notes",unitPrice:"Unit Price",leadTimeDays:"Lead Time"};
+                  const fl=fieldLabel[c.field]||c.field||"";
+                  let line="";
+                  if(c.type==="edit"&&c.field)line=pn+(pn&&(part||fl)?" — ":"")+(part?part+" ":"")+(fl?fl+" change":"Edit")+(c.from!=null||c.to!=null?" from "+(c.from||"—")+" to "+(c.to||"—"):"");
+                  else if(c.type==="add")line=(pn?pn+" — ":"")+"Item added"+(part?" — "+part:"");
+                  else if(c.type==="delete")line=(pn?pn+" — ":"")+(part||"Item")+" removed";
+                  else if(c.type==="supplier_apply")line="Supplier prices applied"+(c.field?" — "+c.field:"");
+                  else if(c.type==="review_submit")line="Sent for review"+(c.to?" → "+c.to:"")+(c.field?" ("+c.field+")":"");
+                  else if(c.type==="re_extract")line=(pn?pn+" — ":"")+"BOM re-extracted";
+                  else if(c.type==="refresh_pricing")line=(pn?pn+" — ":"")+"Pricing refreshed"+(c.field==="force"?" (force)":"");
+                  else if(c.type==="bc_push_lead_times")line=(pn?pn+" — ":"")+"Lead times pushed to BC";
+                  else line=typeLabel[c.type]||c.type;
+                  return <div key={c.id||i} style={{padding:"8px 16px",borderBottom:"1px solid #ffffff0a",fontSize:12}}>
+                  <div style={{color:"#e2e8f0",fontWeight:600,lineHeight:1.5}}>{line}</div>
+                  <div style={{color:"#64748b",fontSize:11,marginTop:2}}>
+                    {c.byName&&<span>{c.byName} · </span>}
+                    {c.at&&<span>{new Date(c.at).toLocaleDateString("en-US",{month:"short",day:"numeric"})+" "+new Date(c.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"})}</span>}
                   </div>
-                </div>)}
+                  {c.type==="review_submit"&&c.description&&<div style={{color:"#c4b5fd",fontSize:11,marginTop:4,padding:"4px 8px",background:"#1a103088",borderRadius:4,borderLeft:"2px solid #a78bfa",whiteSpace:"pre-wrap"}}>{c.description}</div>}
+                </div>;}
+                )}
               </div>
             </div>,document.body);
         })()}
