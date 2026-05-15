@@ -18920,6 +18920,39 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,customerName}){
             </div>
           )}
 
+          {/* Review note overlays (read-only in lightbox) */}
+          {!regionMode&&(pg.reviewNotes||[]).length>0&&(
+            <div style={{position:"absolute",inset:0,pointerEvents:"none",zIndex:2}}>
+              {(pg.reviewNotes||[]).map(n=>(
+                <div key={n.id} style={{position:"absolute",left:n.x+"%",top:n.y+"%",
+                  background:n.visibility==="external"?"#fecaca":"#fef9c3",
+                  border:n.visibility==="external"?"2px solid #ef4444":"2px dashed #eab308",
+                  borderRadius:4,padding:"2px 6px",
+                  zIndex:10,boxShadow:"0 1px 6px rgba(0,0,0,0.4)",
+                  display:"flex",alignItems:"center",gap:4,pointerEvents:"auto"}}
+                  title={(n.author||"")+" — "+(n.date||"")}>
+                  <span style={{fontSize:11,fontWeight:800,color:"#ef4444",flexShrink:0}}>#{n.number}</span>
+                  <span style={{fontSize:11,color:"#1e293b",whiteSpace:"nowrap"}}>{(n.text||"").slice(0,60)||"(empty)"}</span>
+                  {n.visibility==="external"&&<span style={{fontSize:9,fontWeight:700,color:"#ef4444",border:"1px solid #ef444466",borderRadius:3,padding:"0 3px",flexShrink:0}}>EXT</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {/* Review shape overlays (read-only in lightbox) */}
+          {!regionMode&&(pg.reviewShapes||[]).length>0&&(
+            <svg style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",zIndex:2}}>
+              {(pg.reviewShapes||[]).map((shp,si)=>{
+                const stroke=shp.color||"#ef4444";const sw=shp.strokeWidth||2;
+                if(shp.type==="line"&&shp.points){const pts=shp.points.map(p=>p.x+"%,"+p.y+"%").join(" ");return <polyline key={shp.id||si} points={pts} stroke={stroke} strokeWidth={sw} fill="none" strokeLinejoin="round" strokeLinecap="round"/>;}
+                if(shp.type==="line")return <line key={shp.id||si} x1={shp.x1+"%"} y1={shp.y1+"%"} x2={shp.x2+"%"} y2={shp.y2+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;
+                if(shp.type==="circle")return <circle key={shp.id||si} cx={shp.cx+"%"} cy={shp.cy+"%"} r={shp.r+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;
+                if(shp.type==="rect"){const x=Math.min(shp.x1,shp.x2),y=Math.min(shp.y1,shp.y2),w=Math.abs(shp.x2-shp.x1),h=Math.abs(shp.y2-shp.y1);return <rect key={shp.id||si} x={x+"%"} y={y+"%"} width={w+"%"} height={h+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;}
+                if(shp.type==="triangle"){const cx=(shp.x1+shp.x2)/2,cy=shp.y1,bx1=shp.x1,by=shp.y2,bx2=shp.x2;return <polygon key={shp.id||si} points={`${cx}%,${cy}% ${bx1}%,${by}% ${bx2}%,${by}%`} stroke={stroke} strokeWidth={sw} fill="none"/>;}
+                return null;
+              })}
+            </svg>
+          )}
+
           {/* Type picker popup — two-step: pick type, then optional note — portal to avoid overflow */}
           {pendingRect&&(()=>{
             const imgRect=imgRef.current?.getBoundingClientRect();
