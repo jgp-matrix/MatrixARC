@@ -8293,6 +8293,7 @@ async function restoreSnapshot(uid,projectId,snapshot,panel,onUpdate,onSaveImmed
 // Save a single panel into its project in Firestore (used by background extraction tasks)
 // Uses a mutex to prevent concurrent saves from racing
 const _panelSaveLocks={};
+const _pendingPreReviewOverrides={};
 async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=false){
   // Skip if panel was deleted
   if(window._deletedPanelIds&&window._deletedPanelIds.has(panelId)){console.log("saveProjectPanel: skipped — panel",panelId,"was deleted");return;}
@@ -8427,6 +8428,8 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     }else{
       liveProject={...liveProject,quoteRev:liveProject.quoteRev||1,lastQuoteHash:newQuoteHash};
     }
+    const _prOvr=_pendingPreReviewOverrides[projectId];
+    if(_prOvr){Object.assign(liveProject,_prOvr);delete _pendingPreReviewOverrides[projectId];}
     const stripped=JSON.parse(JSON.stringify({...liveProject,panels:liveProject.panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
     await ref.set(stripped);
     if(!skipNotify)notifyProjectListeners(projectId,liveProject);
@@ -30460,9 +30463,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
                     if(project.preReviewStatus==="approved"){
                       const fields={preReviewStatus:null,preReviewApprovedBy:null,preReviewApprovedAt:null,preReviewSubmittedAt:null,preReviewSubmittedBy:null,preReviewAssignedTo:null,preReviewAssignedToName:null,preReviewNotes:null,preReviewChangeLog:log};
+                      _pendingPreReviewOverrides[project.id]=fields;
                       onUpdate({...project,...fields});
                       fbDb.collection(_prjPath).doc(project.id).update(fields).catch(e=>console.error("[PRE-REVIEW] cancel+log save failed:",e));
                     }else{
+                      _pendingPreReviewOverrides[project.id]={preReviewChangeLog:log};
                       onUpdate({...project,preReviewChangeLog:log});
                       fbDb.collection(_prjPath).doc(project.id).update({preReviewChangeLog:log}).catch(e=>console.error("[PRE-REVIEW] changelog save failed:",e));
                     }
