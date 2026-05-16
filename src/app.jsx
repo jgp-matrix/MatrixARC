@@ -30285,6 +30285,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                         customerShapes:customerReviewData.customerShapes||[],
                       });
                       await arcAlert("Drawings re-uploaded with customer markup.",{kind:"success"});
+                      const upd={...project,customerReviewDismissed:true};persistProject(upd);
                     }catch(e){
                       console.warn("CUSTOMER REVIEWED upload failed:",e);
                       await arcAlert("Bake failed: "+(e&&e.message?e.message:String(e)),{kind:"error"});
