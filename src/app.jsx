@@ -31764,7 +31764,6 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
               <div style={{fontSize:12,color:C.muted}}>{customerReviewData.customerName||"Customer"} — submitted {customerReviewData.submittedAt?new Date(customerReviewData.submittedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—"}</div>
               <div style={{fontSize:11,color:C.muted,marginTop:2}}>Sent: {customerReviewData.sentAt?new Date(customerReviewData.sentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—"}</div>
             </div>
-            <button onClick={()=>{setShowCustomerResponses(false);setShowDrawingReview(true);setReviewPageIdx(0);}} style={{background:"#a78bfa22",color:"#a78bfa",border:"1px solid #a78bfa44",borderRadius:6,padding:"6px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>📐 Open Drawing Review</button>
             <button onClick={()=>setShowCustomerResponses(false)} style={{background:"none",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>✕</button>
           </div>
           {/* Engineering notes + customer responses */}
@@ -31821,7 +31820,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             </div>
           )}
           <div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}>
-            <button onClick={()=>{setShowCustomerResponses(false);setShowDrawingReview(true);setReviewPageIdx(0);}} style={{background:"#a78bfa",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📐 Open Drawing Review</button>
+            <button onClick={()=>{const p=(project.panels||[]).find(p=>(p.pages||[]).length>0);if(!p){arcAlert("No drawings uploaded yet.");return;}setShowCustomerResponses(false);setDrawingReviewTrigger(prev=>({id:p.id,c:prev.c+1}));}} style={{background:"#a78bfa",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📐 Open Drawing Review</button>
             <button onClick={()=>{
               const upd={...project,customerReviewReviewed:true,customerReviewReviewedAt:Date.now()};
               persistProject(upd);
