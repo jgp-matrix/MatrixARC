@@ -31820,7 +31820,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
             </div>
           )}
           <div style={{display:"flex",gap:8,marginTop:16,justifyContent:"flex-end"}}>
-            <button onClick={()=>{setShowCustomerResponses(false);const p=(project.panels||[]).find(p=>(p.pages||[]).length>0);if(!p){arcAlert("No drawings uploaded yet.");return;}setDrawingReviewTrigger(prev=>({id:p.id,c:prev.c+1}));}} style={{background:"#a78bfa",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📐 Open Drawing Review</button>
+            <button onClick={()=>{const p=(project.panels||[]).find(p=>(p.pages||[]).length>0);if(!p){arcAlert("No drawings uploaded yet.");return;}setShowCustomerResponses(false);setDrawingReviewTrigger(prev=>({id:p.id,c:prev.c+1}));}} style={{background:"#a78bfa",color:"#fff",border:"none",borderRadius:7,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>📐 Open Drawing Review</button>
             <button onClick={()=>{
               const upd={...project,customerReviewReviewed:true,customerReviewReviewedAt:Date.now()};
               persistProject(upd);
