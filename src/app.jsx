@@ -29605,7 +29605,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [rfqUploading,setRfqUploading]=useState(false);
   const [rfqExtracting,setRfqExtracting]=useState(false);
   const [rfqError,setRfqError]=useState("");
-  const [rfqCollapsed,setRfqCollapsed]=useState(!project.rfqDetails&&!project.rfqEmailFile);
+  const [rfqCollapsed,setRfqCollapsed]=useState(true);
   const [rfqDraftText,setRfqDraftText]=useState(project.rfqDetails||"");
   const rfqFileRef=useRef(null);
   const [rfqOutlookOpen,setRfqOutlookOpen]=useState(false);
@@ -38658,9 +38658,11 @@ function ReportsModal({uid,onClose}){
   );
 }
 
-function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,teamViewers,forceView}){
+function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,teamViewers,forceView,myProjectsOnly:myProjectsOnlyProp,setMyProjectsOnly:setMyProjectsOnlyProp}){
   const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":forceView==="engineering"?"engineering":forceView==="purchasing_kanban"?"purchasing_kanban":"status");
-  const [myProjectsOnly,setMyProjectsOnly]=useState(false);
+  const [myProjectsOnlyLocal,setMyProjectsOnlyLocal]=useState(false);
+  const myProjectsOnly=myProjectsOnlyProp!=null?myProjectsOnlyProp:myProjectsOnlyLocal;
+  const setMyProjectsOnly=setMyProjectsOnlyProp||setMyProjectsOnlyLocal;
   const [projectSearch,setProjectSearch]=useState("");
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
@@ -40832,6 +40834,7 @@ function App({user}){
   const [openProject,setOpenProject]=useState(null);
   const [revWarnModal,setRevWarnModal]=useState(null); // {project, pendingAction}
   const [revSnoozed,setRevSnoozed]=useState({}); // {[projectId]: true} per session
+  const [myProjectsOnly,setMyProjectsOnly]=useState(false);
   const [showNew,setShowNew]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
   const [showApiSetup,setShowApiSetup]=useState(false);
@@ -42036,7 +42039,7 @@ INSTRUCTIONS:
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks} teamViewers={teamViewers}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks} teamViewers={teamViewers} myProjectsOnly={myProjectsOnly} setMyProjectsOnly={setMyProjectsOnly}/>
         </>
       )}
       {/* ProjectView render moved out of the navTab==="projects" block (v1.19.787) so the
