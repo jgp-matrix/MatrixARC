@@ -29590,6 +29590,133 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [creatingContact,setCreatingContact]=useState(false);
   const [newContactErr,setNewContactErr]=useState("");
   function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
+  // ── RFQ Email Details state ──
+  const [rfqDragging,setRfqDragging]=useState(false);
+  const [rfqUploading,setRfqUploading]=useState(false);
+  const [rfqExtracting,setRfqExtracting]=useState(false);
+  const [rfqError,setRfqError]=useState("");
+  const [rfqCollapsed,setRfqCollapsed]=useState(!project.rfqDetails&&!project.rfqEmailFile);
+  const [rfqDraftText,setRfqDraftText]=useState(project.rfqDetails||"");
+  const rfqFileRef=useRef(null);
+  useEffect(()=>{setRfqDraftText(project.rfqDetails||"");},[project.rfqDetails]);
+  async function handleRfqEmailDrop(files){
+    if(!files||!files.length||readOnly)return;
+    const file=files[0];
+    setRfqUploading(true);setRfqError("");setRfqCollapsed(false);
+    let fileMetadata=null;
+    try{
+      const storagePath=`pageImages/${uid}/${project.id}/rfqEmail/${Date.now()}_${file.name}`;
+      const ref=fbStorage.ref(storagePath);
+      await ref.put(file,{contentType:file.type});
+      const storageUrl=await ref.getDownloadURL();
+      fileMetadata={name:file.name,uploadedAt:Date.now(),size:file.size,storageUrl,contentType:file.type||null};
+      persistProject({...project,rfqEmailFile:fileMetadata});
+    }catch(e){setRfqError("Upload failed: "+e.message);setRfqUploading(false);return;}
+    setRfqUploading(false);setRfqExtracting(true);
+    try{
+      let fileText="";
+      const isPdf=/\.pdf$/i.test(file.name)||/^application\/pdf/i.test(file.type);
+      if(isPdf){
+        try{
+          await window.pdfjsReady();
+          const pdfjs=window._pdfjs;
+          const pdf=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise;
+          const maxPages=Math.min(pdf.numPages,20);
+          const parts=[];
+          for(let i=1;i<=maxPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();parts.push(tc.items.map(t=>t.str).join(" "));}
+          fileText=parts.join("\n\n");
+        }catch(e){fileText="[PDF text extraction failed]";}
+      }else{
+        fileText=await new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsText(file);});
+      }
+      const prompt=`You are analyzing an RFQ (Request for Quote) email or document sent by a customer to an electrical panel building company. Extract and organize the key information.
+
+RAW EMAIL/DOCUMENT CONTENT:
+---
+${fileText.slice(0,12000)}
+---
+
+Extract and summarize the following in a clean, readable format. Use the exact section headers shown. If a section has no relevant info, write "Not specified".
+
+CUSTOMER: [company name and contact person if mentioned]
+PROJECT: [project name/description/title]
+SCOPE: [what they're requesting — panels, assemblies, engineering, etc.]
+ITEMS/QUANTITIES: [list of requested items with quantities if specified]
+SPECIFICATIONS: [UL/CSA standards, voltage, enclosure ratings, any technical specs]
+DELIVERY: [requested delivery date, schedule, or timeline]
+DEADLINE: [quote due date / response deadline]
+SPECIAL INSTRUCTIONS: [any special requirements, notes, shipping instructions]
+BUDGET: [any budget or target pricing mentioned]
+ATTACHMENTS REFERENCED: [any drawings, specs, or documents mentioned in the email]
+
+Be concise but thorough. Include part numbers, drawing numbers, and specific quantities when mentioned. Do not add information that isn't in the source text.`;
+      const raw=await apiCall({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:4000,messages:[{role:"user",content:prompt}]});
+      const extracted=raw.trim();
+      setRfqDraftText(extracted);
+      persistProject({...project,rfqEmailFile:fileMetadata,rfqDetails:extracted});
+    }catch(e){setRfqError("Extraction failed: "+e.message);}
+    setRfqExtracting(false);
+  }
+  async function reExtractRfqDetails(){
+    if(!project.rfqEmailFile?.storageUrl||readOnly)return;
+    setRfqExtracting(true);setRfqError("");
+    try{
+      const resp=await fetch(project.rfqEmailFile.storageUrl);
+      const blob=await resp.blob();
+      const file=new File([blob],project.rfqEmailFile.name||"rfq",{type:project.rfqEmailFile.contentType||""});
+      const isPdf=/\.pdf$/i.test(file.name)||/^application\/pdf/i.test(file.type);
+      let fileText="";
+      if(isPdf){
+        try{
+          await window.pdfjsReady();
+          const pdfjs=window._pdfjs;
+          const pdf=await pdfjs.getDocument({data:await file.arrayBuffer()}).promise;
+          const maxPages=Math.min(pdf.numPages,20);
+          const parts=[];
+          for(let i=1;i<=maxPages;i++){const pg=await pdf.getPage(i);const tc=await pg.getTextContent();parts.push(tc.items.map(t=>t.str).join(" "));}
+          fileText=parts.join("\n\n");
+        }catch(e){fileText="[PDF text extraction failed]";}
+      }else{
+        fileText=await file.text();
+      }
+      const prompt=`You are analyzing an RFQ (Request for Quote) email or document sent by a customer to an electrical panel building company. Extract and organize the key information.
+
+RAW EMAIL/DOCUMENT CONTENT:
+---
+${fileText.slice(0,12000)}
+---
+
+Extract and summarize the following in a clean, readable format. Use the exact section headers shown. If a section has no relevant info, write "Not specified".
+
+CUSTOMER: [company name and contact person if mentioned]
+PROJECT: [project name/description/title]
+SCOPE: [what they're requesting — panels, assemblies, engineering, etc.]
+ITEMS/QUANTITIES: [list of requested items with quantities if specified]
+SPECIFICATIONS: [UL/CSA standards, voltage, enclosure ratings, any technical specs]
+DELIVERY: [requested delivery date, schedule, or timeline]
+DEADLINE: [quote due date / response deadline]
+SPECIAL INSTRUCTIONS: [any special requirements, notes, shipping instructions]
+BUDGET: [any budget or target pricing mentioned]
+ATTACHMENTS REFERENCED: [any drawings, specs, or documents mentioned in the email]
+
+Be concise but thorough. Include part numbers, drawing numbers, and specific quantities when mentioned. Do not add information that isn't in the source text.`;
+      const raw=await apiCall({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:4000,messages:[{role:"user",content:prompt}]});
+      const extracted=raw.trim();
+      setRfqDraftText(extracted);
+      persistProject({...project,rfqDetails:extracted});
+    }catch(e){setRfqError("Re-extraction failed: "+e.message);}
+    setRfqExtracting(false);
+  }
+  function commitRfqDetails(){
+    const trimmed=rfqDraftText.trim();
+    if(trimmed!==(project.rfqDetails||"").trim())persistProject({...project,rfqDetails:trimmed});
+  }
+  async function removeRfqFile(){
+    if(!(await arcConfirm("Remove the attached RFQ email file?",{destructive:true,okLabel:"Remove"})))return;
+    if(project.rfqEmailFile?.storageUrl){try{await fbStorage.refFromURL(project.rfqEmailFile.storageUrl).delete();}catch(e){}}
+    persistProject({...project,rfqEmailFile:null,rfqDetails:""});
+    setRfqDraftText("");
+  }
   const [showReassignPicker,setShowReassignPicker]=useState(false);
   const [showPreReviewChanges,setShowPreReviewChanges]=useState(false);
   const [showSendForReview,setShowSendForReview]=useState(false);
@@ -30522,6 +30649,51 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
                   }
                   return React.createElement("div",{key:label,style:{display:"flex",flexDirection:"column",gap:0}},rowEl,holdEl);
                 })}
+              </div>
+              {/* ── PROJECT RFQ DETAILS ── */}
+              <div style={{marginTop:8,marginBottom:4}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>setRfqCollapsed(v=>!v)}>
+                  <span style={{fontSize:11,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted}}>Project RFQ Details</span>
+                  {project.rfqEmailFile&&<span style={{fontSize:10,color:C.green,fontWeight:600}}>✓ {project.rfqEmailFile.name}</span>}
+                  <span style={{fontSize:10,color:C.muted}}>{rfqCollapsed?"▶":"▼"}</span>
+                </div>
+                {!rfqCollapsed&&(
+                  <div style={{marginTop:6}}>
+                    {!readOnly&&(
+                      <div
+                        onDragOver={e=>{e.preventDefault();setRfqDragging(true);}}
+                        onDragLeave={()=>setRfqDragging(false)}
+                        onDrop={e=>{e.preventDefault();setRfqDragging(false);handleRfqEmailDrop(e.dataTransfer.files);}}
+                        onClick={()=>!rfqUploading&&!rfqExtracting&&rfqFileRef.current?.click()}
+                        style={{border:`2px dashed ${rfqDragging?C.accent:C.border}`,borderRadius:8,padding:"10px 16px",textAlign:"center",cursor:rfqUploading||rfqExtracting?"default":"pointer",background:rfqDragging?C.accentDim+"33":"transparent",transition:"all 0.15s",marginBottom:8}}>
+                        <input ref={rfqFileRef} type="file" accept=".eml,.msg,.txt,.pdf,.html,.htm" onChange={e=>{handleRfqEmailDrop(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+                        {rfqUploading?<span style={{fontSize:12,color:C.muted}}>⏳ Uploading…</span>
+                        :rfqExtracting?<span style={{fontSize:12,color:C.accent}}>🤖 Extracting RFQ details…</span>
+                        :<div>
+                          <div style={{fontSize:13,opacity:0.5}}>📧</div>
+                          <div style={{fontSize:11,color:C.muted}}>Drop RFQ email here (.eml, .msg, .txt, .pdf) or click to browse</div>
+                        </div>}
+                      </div>
+                    )}
+                    {project.rfqEmailFile&&(
+                      <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,marginBottom:6,color:C.sub}}>
+                        <span>📎 {project.rfqEmailFile.name}</span>
+                        <span style={{color:C.muted}}>({(project.rfqEmailFile.size/1024).toFixed(0)} KB)</span>
+                        {project.rfqEmailFile.storageUrl&&<a href={project.rfqEmailFile.storageUrl} target="_blank" rel="noopener" style={{color:C.accent,fontSize:10}} onClick={e=>e.stopPropagation()}>Download</a>}
+                        {!readOnly&&<button onClick={removeRfqFile} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:11,padding:"0 4px"}}>✕</button>}
+                      </div>
+                    )}
+                    {rfqError&&(
+                      <div style={{fontSize:11,color:C.red,marginBottom:4}}>{rfqError} <button onClick={()=>setRfqError("")} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:11,marginLeft:4}}>✕</button></div>
+                    )}
+                    <textarea value={rfqDraftText} onChange={e=>setRfqDraftText(e.target.value)} onBlur={commitRfqDetails} readOnly={readOnly}
+                      placeholder={readOnly?"No RFQ details":"Drop an RFQ email above, or type/paste RFQ details here…"} rows={6}
+                      style={{width:"100%",boxSizing:"border-box",background:"rgba(255,255,255,0.04)",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:12,lineHeight:1.5,resize:"vertical",outline:"none",fontFamily:"inherit",opacity:readOnly?0.7:1}}/>
+                    {!readOnly&&project.rfqEmailFile&&!rfqExtracting&&(
+                      <button onClick={reExtractRfqDetails} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer",marginTop:4}}>🔄 Re-extract from file</button>
+                    )}
+                  </div>
+                )}
               </div>
               {/* DECISION(v1.19.845, ECO Stage A): EcoScopeTabs MOVED to the top of
                   the project card (just above the project-name row) — see the
