@@ -29711,6 +29711,38 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
     const trimmed=rfqDraftText.trim();
     if(trimmed!==(project.rfqDetails||"").trim())persistProject({...project,rfqDetails:trimmed});
   }
+  async function extractRfqFromText(textData){
+    if(!textData||!textData.trim())return;
+    setRfqCollapsed(false);setRfqExtracting(true);setRfqError("");
+    try{
+      const prompt=`You are analyzing an RFQ (Request for Quote) email or document sent by a customer to an electrical panel building company. Extract and organize the key information.
+
+RAW EMAIL/DOCUMENT CONTENT:
+---
+${textData.slice(0,12000)}
+---
+
+Extract and summarize the following in a clean, readable format. Use the exact section headers shown. If a section has no relevant info, write "Not specified".
+
+CUSTOMER: [company name and contact person if mentioned]
+PROJECT: [project name/description/title]
+SCOPE: [what they're requesting — panels, assemblies, engineering, etc.]
+ITEMS/QUANTITIES: [list of requested items with quantities if specified]
+SPECIFICATIONS: [UL/CSA standards, voltage, enclosure ratings, any technical specs]
+DELIVERY: [requested delivery date, schedule, or timeline]
+DEADLINE: [quote due date / response deadline]
+SPECIAL INSTRUCTIONS: [any special requirements, notes, shipping instructions]
+BUDGET: [any budget or target pricing mentioned]
+ATTACHMENTS REFERENCED: [any drawings, specs, or documents mentioned in the email]
+
+Be concise but thorough. Include part numbers, drawing numbers, and specific quantities when mentioned. Do not add information that isn't in the source text.`;
+      const raw=await apiCall({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:4000,messages:[{role:"user",content:prompt}]});
+      const extracted=raw.trim();
+      setRfqDraftText(extracted);
+      persistProject({...project,rfqDetails:extracted});
+    }catch(err){setRfqError("Extraction failed: "+err.message);}
+    setRfqExtracting(false);
+  }
   async function removeRfqFile(){
     if(!(await arcConfirm("Remove the attached RFQ email file?",{destructive:true,okLabel:"Remove"})))return;
     if(project.rfqEmailFile?.storageUrl){try{await fbStorage.refFromURL(project.rfqEmailFile.storageUrl).delete();}catch(e){}}
@@ -30686,29 +30718,23 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                             }
                           }catch(dropErr){console.warn("Outlook RFQ drop detection failed:",dropErr);}
                           const textData=e.dataTransfer.getData("text/plain")||e.dataTransfer.getData("text/html")||"";
-                          if(textData.trim()){
-                            setRfqCollapsed(false);setRfqExtracting(true);setRfqError("");
-                            (async()=>{
-                              try{
-                                const prompt=`You are analyzing an RFQ (Request for Quote) email or document sent by a customer to an electrical panel building company. Extract and organize the key information.\n\nRAW EMAIL/DOCUMENT CONTENT:\n---\n${textData.slice(0,12000)}\n---\n\nExtract and summarize the following in a clean, readable format. Use the exact section headers shown. If a section has no relevant info, write "Not specified".\n\nCUSTOMER: [company name and contact person if mentioned]\nPROJECT: [project name/description/title]\nSCOPE: [what they're requesting — panels, assemblies, engineering, etc.]\nITEMS/QUANTITIES: [list of requested items with quantities if specified]\nSPECIFICATIONS: [UL/CSA standards, voltage, enclosure ratings, any technical specs]\nDELIVERY: [requested delivery date, schedule, or timeline]\nDEADLINE: [quote due date / response deadline]\nSPECIAL INSTRUCTIONS: [any special requirements, notes, shipping instructions]\nBUDGET: [any budget or target pricing mentioned]\nATTACHMENTS REFERENCED: [any drawings, specs, or documents mentioned in the email]\n\nBe concise but thorough. Include part numbers, drawing numbers, and specific quantities when mentioned. Do not add information that isn't in the source text.`;
-                                const raw=await apiCall({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:4000,messages:[{role:"user",content:prompt}]});
-                                const extracted=raw.trim();
-                                setRfqDraftText(extracted);
-                                persistProject({...project,rfqDetails:extracted});
-                              }catch(err){setRfqError("Extraction failed: "+err.message);}
-                              setRfqExtracting(false);
-                            })();
-                            return;
-                          }
+                          if(textData.trim()){extractRfqFromText(textData);return;}
+                        }}
+                        onPaste={e=>{
+                          const files=Array.from(e.clipboardData.files||[]);
+                          if(files.length>0){e.preventDefault();handleRfqEmailDrop(files);return;}
+                          const text=e.clipboardData.getData("text/html")||e.clipboardData.getData("text/plain")||"";
+                          if(text.trim()){e.preventDefault();extractRfqFromText(text);}
                         }}
                         onClick={()=>!rfqUploading&&!rfqExtracting&&rfqFileRef.current?.click()}
-                        style={{border:`2px dashed ${rfqDragging?C.accent:C.border}`,borderRadius:8,padding:"10px 16px",textAlign:"center",cursor:rfqUploading||rfqExtracting?"default":"pointer",background:rfqDragging?C.accentDim+"33":"transparent",transition:"all 0.15s",marginBottom:8}}>
+                        tabIndex={0}
+                        style={{border:`2px dashed ${rfqDragging?C.accent:C.border}`,borderRadius:8,padding:"10px 16px",textAlign:"center",cursor:rfqUploading||rfqExtracting?"default":"pointer",background:rfqDragging?C.accentDim+"33":"transparent",transition:"all 0.15s",marginBottom:8,outline:"none"}}>
                         <input ref={rfqFileRef} type="file" accept=".eml,.msg,.txt,.pdf,.html,.htm" onChange={e=>{handleRfqEmailDrop(e.target.files);e.target.value="";}} style={{display:"none"}}/>
                         {rfqUploading?<span style={{fontSize:12,color:C.muted}}>⏳ Uploading…</span>
                         :rfqExtracting?<span style={{fontSize:12,color:C.accent}}>🤖 Extracting RFQ details…</span>
                         :<div>
                           <div style={{fontSize:13,opacity:0.5}}>📧</div>
-                          <div style={{fontSize:11,color:C.muted}}>Drop RFQ email here (.eml, .msg, .txt, .pdf) or click to browse</div>
+                          <div style={{fontSize:11,color:C.muted}}>Copy email in Outlook, click here, then Ctrl+V to paste — or drop a file / click to browse</div>
                         </div>}
                       </div>
                     )}
