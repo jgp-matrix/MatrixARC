@@ -13138,9 +13138,9 @@ function _isExcludedFromPriceCheck(r){
 // rows where bcVendorNo matches project.bcCustomerNumber (vendor IS the customer, so
 // zero cost is expected). Rule 3 uses the broader _isExcludedFromPriceCheck and also
 // exempts vendor=customer rows (no BC pricing dates expected).
-function _isBomRowFlaggedRed(r,customerNo){
+function _isBomRowFlaggedRed(r,customerNo,customerName){
   if(!r||r.isLaborRow)return false;
-  const vendorIsCustomer=customerNo&&r.bcVendorNo&&String(r.bcVendorNo).trim()===String(customerNo).trim();
+  const vendorIsCustomer=(customerNo&&r.bcVendorNo&&String(r.bcVendorNo).trim()===String(customerNo).trim())||(customerName&&r.bcVendorName&&String(r.bcVendorName).trim().toLowerCase()===String(customerName).trim().toLowerCase());
   if(!r.customerSupplied&&+r.qty===0)return true;
   if(!r.customerSupplied&&!vendorIsCustomer&&+r.unitPrice===0)return true;
   if(!_isExcludedFromPriceCheck(r)&&!vendorIsCustomer){
@@ -13202,7 +13202,7 @@ function findIncompleteQuoteItems(project){
       const desc=(r.description||"").trim();
       // Skip entirely-blank rows — they aren't real items
       if(!pn&&!desc)continue;
-      const _vic=project.bcCustomerNumber&&r.bcVendorNo&&String(r.bcVendorNo).trim()===String(project.bcCustomerNumber).trim();
+      const _vic=(project.bcCustomerNumber&&r.bcVendorNo&&String(r.bcVendorNo).trim()===String(project.bcCustomerNumber).trim())||(project.bcCustomerName&&r.bcVendorName&&String(r.bcVendorName).trim().toLowerCase()===String(project.bcCustomerName).trim().toLowerCase());
       if(!r.qty||+r.qty===0)reasons.push("qty");
       if(!_vic&&(!r.unitPrice||+r.unitPrice===0))reasons.push("price");
       if(!_vic){
@@ -25136,7 +25136,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     //   add    → purple tint
                     //   remove → red tint + reduced opacity (struck-through downstream)
                     const _ecoTint=row.ecoOp==="modify"?"rgba(252,211,77,0.16)":row.ecoOp==="add"?"rgba(168,85,247,0.16)":row.ecoOp==="remove"?"rgba(248,113,113,0.18)":null;
-                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:_isBomRowFlaggedRed(row,project.bcCustomerNumber)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
                     // Strikethrough on the row text for ecoOp:"remove" so the
                     // "this is being removed" intent is visible at a glance.
                     const _rowTextDecoration=row.ecoOp==="remove"?"line-through":undefined;
