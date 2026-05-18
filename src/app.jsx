@@ -13138,9 +13138,15 @@ function _isExcludedFromPriceCheck(r){
 // rows where bcVendorNo matches project.bcCustomerNumber (vendor IS the customer, so
 // zero cost is expected). Rule 3 uses the broader _isExcludedFromPriceCheck and also
 // exempts vendor=customer rows (no BC pricing dates expected).
+function _vendorMatchesCustomer(vNo,vName,cNo,cName){
+  if(cNo&&vNo&&String(vNo).trim()===String(cNo).trim())return true;
+  const vn=(vName||"").trim().toLowerCase(),cn=(cName||"").trim().toLowerCase();
+  if(vn.length>=3&&cn.length>=3&&(cn.startsWith(vn)||vn.startsWith(cn)))return true;
+  return false;
+}
 function _isBomRowFlaggedRed(r,customerNo,customerName){
   if(!r||r.isLaborRow)return false;
-  const vendorIsCustomer=(customerNo&&r.bcVendorNo&&String(r.bcVendorNo).trim()===String(customerNo).trim())||(customerName&&r.bcVendorName&&String(r.bcVendorName).trim().toLowerCase()===String(customerName).trim().toLowerCase());
+  const vendorIsCustomer=_vendorMatchesCustomer(r.bcVendorNo,r.bcVendorName,customerNo,customerName);
   if(!r.customerSupplied&&+r.qty===0)return true;
   if(!r.customerSupplied&&!vendorIsCustomer&&+r.unitPrice===0)return true;
   if(!_isExcludedFromPriceCheck(r)&&!vendorIsCustomer){
@@ -13202,7 +13208,7 @@ function findIncompleteQuoteItems(project){
       const desc=(r.description||"").trim();
       // Skip entirely-blank rows — they aren't real items
       if(!pn&&!desc)continue;
-      const _vic=(project.bcCustomerNumber&&r.bcVendorNo&&String(r.bcVendorNo).trim()===String(project.bcCustomerNumber).trim())||(project.bcCustomerName&&r.bcVendorName&&String(r.bcVendorName).trim().toLowerCase()===String(project.bcCustomerName).trim().toLowerCase());
+      const _vic=_vendorMatchesCustomer(r.bcVendorNo,r.bcVendorName,project.bcCustomerNumber,project.bcCustomerName);
       if(!r.qty||+r.qty===0)reasons.push("qty");
       if(!_vic&&(!r.unitPrice||+r.unitPrice===0))reasons.push("price");
       if(!_vic){
