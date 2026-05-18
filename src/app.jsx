@@ -29598,6 +29598,62 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [rfqCollapsed,setRfqCollapsed]=useState(!project.rfqDetails&&!project.rfqEmailFile);
   const [rfqDraftText,setRfqDraftText]=useState(project.rfqDetails||"");
   const rfqFileRef=useRef(null);
+  const [rfqOutlookOpen,setRfqOutlookOpen]=useState(false);
+  const [rfqThreadSearch,setRfqThreadSearch]=useState(project.quote?.company||project.bcCustomerName||project.name||"");
+  const [rfqThreadResults,setRfqThreadResults]=useState([]);
+  const [rfqThreadSearching,setRfqThreadSearching]=useState(false);
+  const [rfqPreviewEmail,setRfqPreviewEmail]=useState(null);
+  const [rfqPreviewLoading,setRfqPreviewLoading]=useState(false);
+  const rfqSearchDebounce=useRef(null);
+  async function rfqSearchThreads(q){
+    if(!q||q.length<2){setRfqThreadResults([]);return;}
+    setRfqThreadSearching(true);
+    const token=await acquireGraphToken();
+    if(token){const results=await graphSearchEmails(token,q,20);setRfqThreadResults(results);}
+    setRfqThreadSearching(false);
+  }
+  useEffect(()=>{
+    if(!rfqOutlookOpen)return;
+    if(rfqSearchDebounce.current)clearTimeout(rfqSearchDebounce.current);
+    if(!rfqThreadSearch||rfqThreadSearch.length<2){setRfqThreadResults([]);return;}
+    rfqSearchDebounce.current=setTimeout(()=>rfqSearchThreads(rfqThreadSearch),500);
+    return()=>{if(rfqSearchDebounce.current)clearTimeout(rfqSearchDebounce.current);};
+  },[rfqThreadSearch,rfqOutlookOpen]);
+  async function rfqLoadEmailPreview(msg){
+    setRfqPreviewLoading(true);setRfqPreviewEmail({subject:msg.subject,from:msg.from,date:msg.date,bodyHtml:null});
+    try{
+      const token=await acquireGraphToken();
+      if(!token){setRfqPreviewLoading(false);return;}
+      const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${msg.id}?$select=subject,body,from,receivedDateTime,toRecipients,ccRecipients`,{
+        headers:{"Authorization":`Bearer ${token}`}
+      });
+      if(r.ok){
+        const d=await r.json();
+        setRfqPreviewEmail({subject:d.subject||msg.subject,from:msg.from,fromEmail:msg.fromEmail,
+          to:(d.toRecipients||[]).map(t=>t.emailAddress?.name||t.emailAddress?.address).join(", "),
+          cc:(d.ccRecipients||[]).map(t=>t.emailAddress?.name||t.emailAddress?.address).join(", "),
+          date:d.receivedDateTime||msg.date,bodyHtml:d.body?.content||""});
+      }
+    }catch(e){console.warn("RFQ email preview fetch failed:",e);}
+    setRfqPreviewLoading(false);
+  }
+  async function rfqSelectEmail(msg){
+    setRfqExtracting(true);setRfqError("");setRfqOutlookOpen(false);setRfqCollapsed(false);
+    try{
+      const token=await acquireGraphToken();
+      if(!token){setRfqError("Could not get Microsoft 365 token.");setRfqExtracting(false);return;}
+      const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${msg.id}?$select=subject,body,from,receivedDateTime,toRecipients`,{
+        headers:{"Authorization":`Bearer ${token}`}
+      });
+      if(!r.ok){setRfqError("Failed to fetch email body ("+r.status+")");setRfqExtracting(false);return;}
+      const d=await r.json();
+      const bodyHtml=d.body?.content||"";
+      const bodyText=bodyHtml.replace(/<style[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<[^>]+>/g," ").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&#\d+;/g,"").replace(/\s+/g," ").trim();
+      const header=`Subject: ${d.subject||msg.subject}\nFrom: ${msg.from} <${msg.fromEmail||""}>\nTo: ${(d.toRecipients||[]).map(t=>t.emailAddress?.address).join(", ")}\nDate: ${d.receivedDateTime||msg.date}\n\n`;
+      await extractRfqFromText(header+bodyText);
+    }catch(e){setRfqError("Failed to process email: "+e.message);setRfqExtracting(false);}
+  }
+  function rfqFmtDate(iso){if(!iso)return"";try{return new Date(iso).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit",hour:"numeric",minute:"2-digit"});}catch(e){return"";}}
   useEffect(()=>{setRfqDraftText(project.rfqDetails||"");},[project.rfqDetails]);
   async function handleRfqEmailDrop(files){
     if(!files||!files.length||readOnly)return;
@@ -30691,53 +30747,80 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                 </div>
                 {!rfqCollapsed&&(
                   <div style={{marginTop:6}}>
-                    {!readOnly&&(
-                      <div
-                        onDragOver={e=>{e.preventDefault();setRfqDragging(true);}}
-                        onDragLeave={()=>setRfqDragging(false)}
-                        onDrop={e=>{e.preventDefault();setRfqDragging(false);
-                          const files=[];
-                          if(e.dataTransfer.files)for(const f of Array.from(e.dataTransfer.files))files.push(f);
-                          if(files.length===0&&e.dataTransfer.items){for(const item of Array.from(e.dataTransfer.items)){if(item.kind==='file'){const f=item.getAsFile();if(f)files.push(f);}}}
-                          if(files.length>0){handleRfqEmailDrop(files);return;}
-                          try{
-                            const outlookItem=Array.from(e.dataTransfer.items||[]).find(i=>i.kind==='string'&&i.type==='attachment');
-                            if(outlookItem){
-                              setRfqError("Fetching from Outlook…");setRfqCollapsed(false);
-                              outlookItem.getAsString(async(s)=>{
-                                try{
-                                  const result=await fetchOutlookAttachment(s);
-                                  if(result.ok){setRfqError("");handleRfqEmailDrop([result.file]);return;}
-                                  const n=result.attachmentName||"the email";
-                                  const saveHint="Save it to your Desktop first (right-click → Save As), then drag from File Explorer — or click the drop zone to browse.";
-                                  const msgs={"no-graph-token":`To drag ${n} directly from Outlook, open Settings and sign in with Microsoft first. ${saveHint}`,"not-found":`Couldn't find "${n}" in your Outlook mailbox. ${saveHint}`,"search-failed":`Outlook search returned status ${result.status}. ${saveHint}`,"download-failed":`Couldn't download "${n}" from Outlook (status ${result.status}). ${saveHint}`};
-                                  setRfqError(msgs[result.reason]||`Couldn't fetch "${n}" from Outlook. ${saveHint}`);
-                                }catch(err){setRfqError("Failed to process Outlook drop: "+(err.message||err)+". Save it to your Desktop first, then drag from File Explorer.");}
-                              });
-                              return;
-                            }
-                          }catch(dropErr){console.warn("Outlook RFQ drop detection failed:",dropErr);}
-                          const textData=e.dataTransfer.getData("text/plain")||e.dataTransfer.getData("text/html")||"";
-                          if(textData.trim()){extractRfqFromText(textData);return;}
-                        }}
-                        onPaste={e=>{
-                          const files=Array.from(e.clipboardData.files||[]);
-                          if(files.length>0){e.preventDefault();handleRfqEmailDrop(files);return;}
-                          const text=e.clipboardData.getData("text/html")||e.clipboardData.getData("text/plain")||"";
-                          if(text.trim()){e.preventDefault();extractRfqFromText(text);}
-                        }}
-                        onClick={()=>!rfqUploading&&!rfqExtracting&&rfqFileRef.current?.click()}
-                        tabIndex={0}
-                        style={{border:`2px dashed ${rfqDragging?C.accent:C.border}`,borderRadius:8,padding:"10px 16px",textAlign:"center",cursor:rfqUploading||rfqExtracting?"default":"pointer",background:rfqDragging?C.accentDim+"33":"transparent",transition:"all 0.15s",marginBottom:8,outline:"none"}}>
-                        <input ref={rfqFileRef} type="file" accept=".eml,.msg,.txt,.pdf,.html,.htm" onChange={e=>{handleRfqEmailDrop(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+                    {!readOnly&&(rfqUploading||rfqExtracting?(
+                      <div style={{border:`2px dashed ${C.border}`,borderRadius:8,padding:"14px 16px",textAlign:"center",marginBottom:8}}>
                         {rfqUploading?<span style={{fontSize:12,color:C.muted}}>⏳ Uploading…</span>
-                        :rfqExtracting?<span style={{fontSize:12,color:C.accent}}>🤖 Extracting RFQ details…</span>
-                        :<div>
-                          <div style={{fontSize:13,opacity:0.5}}>📧</div>
-                          <div style={{fontSize:11,color:C.muted}}>Copy email in Outlook, click here, then Ctrl+V to paste — or drop a file / click to browse</div>
-                        </div>}
+                        :<span style={{fontSize:12,color:C.accent}}>🤖 Extracting RFQ details…</span>}
                       </div>
-                    )}
+                    ):rfqOutlookOpen?(
+                      <div style={{border:`1px solid ${C.accent}55`,borderRadius:8,padding:12,marginBottom:8,background:"rgba(56,189,248,0.03)"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                          <span style={{fontSize:12,fontWeight:700,color:C.accent}}>📧 Select Email from Outlook</span>
+                          <button onClick={()=>setRfqOutlookOpen(false)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:10,color:C.muted,cursor:"pointer"}}>✕ Close</button>
+                        </div>
+                        <div style={{position:"relative",marginBottom:8}}>
+                          <input value={rfqThreadSearch} onChange={e=>setRfqThreadSearch(e.target.value)}
+                            placeholder="Search emails by customer, project, subject…" autoFocus
+                            style={{width:"100%",boxSizing:"border-box",background:"#0d1526",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",paddingRight:rfqThreadSearching?30:10,color:C.text,fontSize:12,outline:"none",fontFamily:"inherit"}}/>
+                          {rfqThreadSearching&&<div style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",fontSize:11,color:C.accent}}>⏳</div>}
+                        </div>
+                        <div style={{maxHeight:220,overflow:"auto",borderRadius:6,border:`1px solid ${C.border}`}}>
+                          {rfqThreadResults.length===0&&!rfqThreadSearching&&(
+                            <div style={{padding:16,textAlign:"center",color:C.muted,fontSize:11}}>
+                              {rfqThreadSearch&&rfqThreadSearch.length>=2?"No results — try a different search":"Type at least 2 characters to search"}
+                            </div>
+                          )}
+                          {rfqThreadSearching&&<div style={{padding:16,textAlign:"center",color:C.accent,fontSize:11}}>Searching Outlook…</div>}
+                          {rfqThreadResults.map((t,i)=>(
+                            <div key={t.id} onClick={()=>rfqSelectEmail(t)}
+                              style={{padding:"7px 10px",borderBottom:`1px solid ${C.border}33`,cursor:"pointer",
+                                background:i%2===0?"transparent":"rgba(255,255,255,0.015)"}}
+                              onMouseEnter={e=>e.currentTarget.style.background=C.accentDim+"44"}
+                              onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)"}>
+                              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{fontSize:11,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.subject}</div>
+                                  <div style={{fontSize:10,color:C.muted,marginTop:1}}>{t.from}</div>
+                                </div>
+                                <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+                                  <button title="Preview email" onClick={e=>{e.stopPropagation();rfqLoadEmailPreview(t);}}
+                                    style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 6px",fontSize:10,color:C.muted,cursor:"pointer"}}
+                                    onMouseEnter={e=>{e.target.style.borderColor=C.accent;e.target.style.color=C.accent;}}
+                                    onMouseLeave={e=>{e.target.style.borderColor=C.border;e.target.style.color=C.muted;}}>👁</button>
+                                  <div style={{fontSize:9,color:C.muted,whiteSpace:"nowrap"}}>{rfqFmtDate(t.date)}</div>
+                                </div>
+                              </div>
+                              <div style={{fontSize:10,color:C.muted,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",opacity:0.7}}>{t.preview}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ):(
+                      <div style={{display:"flex",gap:8,marginBottom:8}}>
+                        <button onClick={()=>{setRfqOutlookOpen(true);setRfqThreadSearch(project.quote?.company||project.bcCustomerName||project.name||"");}}
+                          style={{flex:1,border:`1px solid ${C.accent}55`,borderRadius:8,padding:"10px 12px",background:"rgba(56,189,248,0.05)",cursor:"pointer",textAlign:"center"}}>
+                          <div style={{fontSize:13}}>📧</div>
+                          <div style={{fontSize:11,color:C.accent,fontWeight:600}}>Import from Outlook</div>
+                        </button>
+                        <div
+                          onDragOver={e=>{e.preventDefault();setRfqDragging(true);}}
+                          onDragLeave={()=>setRfqDragging(false)}
+                          onDrop={e=>{e.preventDefault();setRfqDragging(false);
+                            const files=[];
+                            if(e.dataTransfer.files)for(const f of Array.from(e.dataTransfer.files))files.push(f);
+                            if(files.length===0&&e.dataTransfer.items){for(const item of Array.from(e.dataTransfer.items)){if(item.kind==='file'){const f=item.getAsFile();if(f)files.push(f);}}}
+                            if(files.length>0){handleRfqEmailDrop(files);return;}
+                            const textData=e.dataTransfer.getData("text/plain")||e.dataTransfer.getData("text/html")||"";
+                            if(textData.trim()){extractRfqFromText(textData);}
+                          }}
+                          onClick={()=>rfqFileRef.current?.click()}
+                          style={{flex:1,border:`2px dashed ${rfqDragging?C.accent:C.border}`,borderRadius:8,padding:"10px 12px",textAlign:"center",cursor:"pointer",background:rfqDragging?C.accentDim+"33":"transparent",transition:"all 0.15s"}}>
+                          <input ref={rfqFileRef} type="file" accept=".eml,.msg,.txt,.pdf,.html,.htm" onChange={e=>{handleRfqEmailDrop(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+                          <div style={{fontSize:13}}>📎</div>
+                          <div style={{fontSize:11,color:C.muted}}>Drop file or browse</div>
+                        </div>
+                      </div>
+                    ))}
                     {project.rfqEmailFile&&(
                       <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,marginBottom:6,color:C.sub}}>
                         <span>📎 {project.rfqEmailFile.name}</span>
@@ -30758,6 +30841,44 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   </div>
                 )}
               </div>
+              {/* RFQ Email Preview Overlay */}
+              {rfqPreviewEmail&&(
+                <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}
+                  onClick={()=>setRfqPreviewEmail(null)}>
+                  <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,width:"95%",maxWidth:800,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 60px 15px rgba(56,189,248,0.5)"}}
+                    onClick={e=>e.stopPropagation()}>
+                    <div style={{padding:"16px 20px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:12}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:6}}>{rfqPreviewEmail.subject}</div>
+                          <div style={{fontSize:12,color:C.sub}}>From: <span style={{fontWeight:600}}>{rfqPreviewEmail.from}</span>{rfqPreviewEmail.fromEmail?` <${rfqPreviewEmail.fromEmail}>`:""}</div>
+                          {rfqPreviewEmail.to&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>To: {rfqPreviewEmail.to}</div>}
+                          {rfqPreviewEmail.cc&&<div style={{fontSize:11,color:C.muted}}>Cc: {rfqPreviewEmail.cc}</div>}
+                          <div style={{fontSize:11,color:C.muted,marginTop:2}}>{rfqFmtDate(rfqPreviewEmail.date)}</div>
+                        </div>
+                        <div style={{display:"flex",gap:6,flexShrink:0}}>
+                          <button onClick={()=>{const t=rfqThreadResults.find(r=>r.subject===rfqPreviewEmail.subject);if(t){rfqSelectEmail(t);}setRfqPreviewEmail(null);}}
+                            style={{background:"#0d2a1a",color:"#4ade80",border:"1px solid #4ade8066",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                            📧 Use This Email
+                          </button>
+                          <button onClick={()=>setRfqPreviewEmail(null)}
+                            style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 10px",color:C.muted,fontSize:14,cursor:"pointer"}}>✕</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{flex:1,overflow:"auto",padding:"16px 20px"}}>
+                      {rfqPreviewLoading?(
+                        <div style={{textAlign:"center",color:C.accent,padding:40,fontSize:13}}>Loading email…</div>
+                      ):rfqPreviewEmail.bodyHtml?(
+                        <div style={{background:"#fff",borderRadius:6,padding:16,fontSize:13,lineHeight:1.6,color:"#1e293b",maxWidth:"100%",overflow:"auto"}}
+                          dangerouslySetInnerHTML={{__html:rfqPreviewEmail.bodyHtml}}/>
+                      ):(
+                        <div style={{textAlign:"center",color:C.muted,padding:40,fontSize:12}}>Could not load email body</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               {/* DECISION(v1.19.845, ECO Stage A): EcoScopeTabs MOVED to the top of
                   the project card (just above the project-name row) — see the
                   insertion point right after the maxWidth wrapper. Header section
