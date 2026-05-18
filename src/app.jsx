@@ -29620,7 +29620,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     return()=>{if(rfqSearchDebounce.current)clearTimeout(rfqSearchDebounce.current);};
   },[rfqThreadSearch,rfqOutlookOpen]);
   async function rfqLoadEmailPreview(msg){
-    setRfqPreviewLoading(true);setRfqPreviewEmail({subject:msg.subject,from:msg.from,date:msg.date,bodyHtml:null});
+    setRfqPreviewLoading(true);setRfqPreviewEmail({id:msg.id,subject:msg.subject,from:msg.from,date:msg.date,bodyHtml:null});
     try{
       const token=await acquireGraphToken();
       if(!token){setRfqPreviewLoading(false);return;}
@@ -30857,7 +30857,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                           <div style={{fontSize:11,color:C.muted,marginTop:2}}>{rfqFmtDate(rfqPreviewEmail.date)}</div>
                         </div>
                         <div style={{display:"flex",gap:6,flexShrink:0}}>
-                          <button onClick={()=>{const t=rfqThreadResults.find(r=>r.subject===rfqPreviewEmail.subject);if(t){rfqSelectEmail(t);}setRfqPreviewEmail(null);}}
+                          <button onClick={()=>{const t=rfqThreadResults.find(r=>r.id===rfqPreviewEmail.id);if(t){rfqSelectEmail(t);}setRfqPreviewEmail(null);}}
                             style={{background:"#0d2a1a",color:"#4ade80",border:"1px solid #4ade8066",borderRadius:6,padding:"5px 12px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
                             📧 Use This Email
                           </button>
@@ -30870,8 +30870,8 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       {rfqPreviewLoading?(
                         <div style={{textAlign:"center",color:C.accent,padding:40,fontSize:13}}>Loading email…</div>
                       ):rfqPreviewEmail.bodyHtml?(
-                        <div style={{background:"#fff",borderRadius:6,padding:16,fontSize:13,lineHeight:1.6,color:"#1e293b",maxWidth:"100%",overflow:"auto"}}
-                          dangerouslySetInnerHTML={{__html:rfqPreviewEmail.bodyHtml}}/>
+                        <iframe sandbox="" srcDoc={`<!DOCTYPE html><html><head><style>body{font-family:-apple-system,sans-serif;font-size:13px;line-height:1.6;color:#1e293b;margin:0;padding:16px;background:#fff;}img{max-width:100%;}</style></head><body>${rfqPreviewEmail.bodyHtml}</body></html>`}
+                          style={{width:"100%",minHeight:300,flex:1,border:"none",borderRadius:6,background:"#fff"}}/>
                       ):(
                         <div style={{textAlign:"center",color:C.muted,padding:40,fontSize:12}}>Could not load email body</div>
                       )}
