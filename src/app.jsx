@@ -30663,7 +30663,44 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       <div
                         onDragOver={e=>{e.preventDefault();setRfqDragging(true);}}
                         onDragLeave={()=>setRfqDragging(false)}
-                        onDrop={e=>{e.preventDefault();setRfqDragging(false);handleRfqEmailDrop(e.dataTransfer.files);}}
+                        onDrop={e=>{e.preventDefault();setRfqDragging(false);
+                          const files=[];
+                          if(e.dataTransfer.files)for(const f of Array.from(e.dataTransfer.files))files.push(f);
+                          if(files.length===0&&e.dataTransfer.items){for(const item of Array.from(e.dataTransfer.items)){if(item.kind==='file'){const f=item.getAsFile();if(f)files.push(f);}}}
+                          if(files.length>0){handleRfqEmailDrop(files);return;}
+                          try{
+                            const outlookItem=Array.from(e.dataTransfer.items||[]).find(i=>i.kind==='string'&&i.type==='attachment');
+                            if(outlookItem){
+                              setRfqError("Fetching from Outlook…");setRfqCollapsed(false);
+                              outlookItem.getAsString(async(s)=>{
+                                try{
+                                  const result=await fetchOutlookAttachment(s);
+                                  if(result.ok){setRfqError("");handleRfqEmailDrop([result.file]);return;}
+                                  const n=result.attachmentName||"the email";
+                                  const saveHint="Save it to your Desktop first (right-click → Save As), then drag from File Explorer — or click the drop zone to browse.";
+                                  const msgs={"no-graph-token":`To drag ${n} directly from Outlook, open Settings and sign in with Microsoft first. ${saveHint}`,"not-found":`Couldn't find "${n}" in your Outlook mailbox. ${saveHint}`,"search-failed":`Outlook search returned status ${result.status}. ${saveHint}`,"download-failed":`Couldn't download "${n}" from Outlook (status ${result.status}). ${saveHint}`};
+                                  setRfqError(msgs[result.reason]||`Couldn't fetch "${n}" from Outlook. ${saveHint}`);
+                                }catch(err){setRfqError("Failed to process Outlook drop: "+(err.message||err)+". Save it to your Desktop first, then drag from File Explorer.");}
+                              });
+                              return;
+                            }
+                          }catch(dropErr){console.warn("Outlook RFQ drop detection failed:",dropErr);}
+                          const textData=e.dataTransfer.getData("text/plain")||e.dataTransfer.getData("text/html")||"";
+                          if(textData.trim()){
+                            setRfqCollapsed(false);setRfqExtracting(true);setRfqError("");
+                            (async()=>{
+                              try{
+                                const prompt=`You are analyzing an RFQ (Request for Quote) email or document sent by a customer to an electrical panel building company. Extract and organize the key information.\n\nRAW EMAIL/DOCUMENT CONTENT:\n---\n${textData.slice(0,12000)}\n---\n\nExtract and summarize the following in a clean, readable format. Use the exact section headers shown. If a section has no relevant info, write "Not specified".\n\nCUSTOMER: [company name and contact person if mentioned]\nPROJECT: [project name/description/title]\nSCOPE: [what they're requesting — panels, assemblies, engineering, etc.]\nITEMS/QUANTITIES: [list of requested items with quantities if specified]\nSPECIFICATIONS: [UL/CSA standards, voltage, enclosure ratings, any technical specs]\nDELIVERY: [requested delivery date, schedule, or timeline]\nDEADLINE: [quote due date / response deadline]\nSPECIAL INSTRUCTIONS: [any special requirements, notes, shipping instructions]\nBUDGET: [any budget or target pricing mentioned]\nATTACHMENTS REFERENCED: [any drawings, specs, or documents mentioned in the email]\n\nBe concise but thorough. Include part numbers, drawing numbers, and specific quantities when mentioned. Do not add information that isn't in the source text.`;
+                                const raw=await apiCall({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:4000,messages:[{role:"user",content:prompt}]});
+                                const extracted=raw.trim();
+                                setRfqDraftText(extracted);
+                                persistProject({...project,rfqDetails:extracted});
+                              }catch(err){setRfqError("Extraction failed: "+err.message);}
+                              setRfqExtracting(false);
+                            })();
+                            return;
+                          }
+                        }}
                         onClick={()=>!rfqUploading&&!rfqExtracting&&rfqFileRef.current?.click()}
                         style={{border:`2px dashed ${rfqDragging?C.accent:C.border}`,borderRadius:8,padding:"10px 16px",textAlign:"center",cursor:rfqUploading||rfqExtracting?"default":"pointer",background:rfqDragging?C.accentDim+"33":"transparent",transition:"all 0.15s",marginBottom:8}}>
                         <input ref={rfqFileRef} type="file" accept=".eml,.msg,.txt,.pdf,.html,.htm" onChange={e=>{handleRfqEmailDrop(e.target.files);e.target.value="";}} style={{display:"none"}}/>
