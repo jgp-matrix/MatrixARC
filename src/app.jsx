@@ -13131,18 +13131,19 @@ function _isExcludedFromPriceCheck(r){
 // DECISION(v1.19.666): Rules for highlighting a BOM row RED in the table. Three conditions
 // (any one triggers red):
 //   (1) qty === 0     — row has no quantity
-//   (2) unitPrice === 0 — row has no price
+//   (2) unitPrice === 0 — row has no price (UNLESS vendor = project customer)
 //   (3) priceDate missing OR older than _pricingConfig.defaultStaleDays (default 60 days)
 // Rules 1 & 2 use the original exclusion (labor + customerSupplied only — contingency/crate/
-// job-buyoff with qty=0 still flag red as they always have). Rule 3 uses the broader
-// _isExcludedFromPriceCheck so contingency/crate/job-buyoff aren't flagged for missing dates
-// (they legitimately don't have priceDates from BC).
-function _isBomRowFlaggedRed(r){
+// job-buyoff with qty=0 still flag red as they always have). Rule 2 additionally exempts
+// rows where bcVendorNo matches project.bcCustomerNumber (vendor IS the customer, so
+// zero cost is expected). Rule 3 uses the broader _isExcludedFromPriceCheck and also
+// exempts vendor=customer rows (no BC pricing dates expected).
+function _isBomRowFlaggedRed(r,customerNo){
   if(!r||r.isLaborRow)return false;
-  // Rules 1 & 2 — existing behavior
-  if(!r.customerSupplied&&(+r.qty===0||+r.unitPrice===0))return true;
-  // Rule 3 — NEW: missing or outdated priceDate (only for rows that should have one)
-  if(!_isExcludedFromPriceCheck(r)){
+  const vendorIsCustomer=customerNo&&r.bcVendorNo&&String(r.bcVendorNo).trim()===String(customerNo).trim();
+  if(!r.customerSupplied&&+r.qty===0)return true;
+  if(!r.customerSupplied&&!vendorIsCustomer&&+r.unitPrice===0)return true;
+  if(!_isExcludedFromPriceCheck(r)&&!vendorIsCustomer){
     if(!r.priceDate)return true;
     const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
     if((Date.now()-r.priceDate)>staleMs)return true;
@@ -13201,10 +13202,13 @@ function findIncompleteQuoteItems(project){
       const desc=(r.description||"").trim();
       // Skip entirely-blank rows — they aren't real items
       if(!pn&&!desc)continue;
+      const _vic=project.bcCustomerNumber&&r.bcVendorNo&&String(r.bcVendorNo).trim()===String(project.bcCustomerNumber).trim();
       if(!r.qty||+r.qty===0)reasons.push("qty");
-      if(!r.unitPrice||+r.unitPrice===0)reasons.push("price");
-      if(!r.priceDate)reasons.push("priced date");
-      else if((Date.now()-r.priceDate)>staleMs)reasons.push("stale price (>"+(staleMs/(24*60*60*1000))+"d)");
+      if(!_vic&&(!r.unitPrice||+r.unitPrice===0))reasons.push("price");
+      if(!_vic){
+        if(!r.priceDate)reasons.push("priced date");
+        else if((Date.now()-r.priceDate)>staleMs)reasons.push("stale price (>"+(staleMs/(24*60*60*1000))+"d)");
+      }
       if(reasons.length){
         issues.push({
           panelName:pan.name||`Panel ${pi+1}`,
@@ -25132,7 +25136,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     //   add    → purple tint
                     //   remove → red tint + reduced opacity (struck-through downstream)
                     const _ecoTint=row.ecoOp==="modify"?"rgba(252,211,77,0.16)":row.ecoOp==="add"?"rgba(168,85,247,0.16)":row.ecoOp==="remove"?"rgba(248,113,113,0.18)":null;
-                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:_isBomRowFlaggedRed(row)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:_isBomRowFlaggedRed(row,project.bcCustomerNumber)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
                     // Strikethrough on the row text for ecoOp:"remove" so the
                     // "this is being removed" intent is visible at a glance.
                     const _rowTextDecoration=row.ecoOp==="remove"?"line-through":undefined;
