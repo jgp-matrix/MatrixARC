@@ -8076,6 +8076,7 @@ async function saveProject(uid,project){
   const ref=project.id?col.doc(project.id):col.doc();
   const data={...project,id:ref.id,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION,...(!project.id&&{createdBy:uid})};
   // SAFETY: Use in-memory high-water marks to prevent data loss from stale saves
+  let _curDoc=null;
   if(project.id){
     const newPanels=data.panels||[];
     const hw=_saveHighWater[project.id];
@@ -8109,7 +8110,6 @@ async function saveProject(uid,project){
     //   (3) quoteRev bump (v1.19.744) — bump project-level Quote Rev when ANY quote-
     //       relevant content has changed since the last persisted state.
     // Single ref.get() per save to keep latency low.
-    let _curDoc=null;
     try{
       _curDoc=await ref.get();
       if(_curDoc.exists){
@@ -8278,6 +8278,9 @@ async function saveProject(uid,project){
       drawingNo:p.drawingNo||null,drawingDesc:p.drawingDesc||null,drawingRev:p.drawingRev||null,
       validation:p.validation||null,laborData:p.laborData||null,complianceReview:p.complianceReview||null
     }))};
+  }else{
+    data.quoteRev=1;
+    data.lastQuoteHash=_computeQuoteHash(data);
   }
   // Don't store page images in Firestore — strip dataUrls from panels
   // DECISION(v1.19.421): Include updatedBy (uid) so concurrent editing detection can
