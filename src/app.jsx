@@ -43041,7 +43041,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
             <div>
               <div style={{fontSize:14,fontWeight:700,color:"#92400e",marginBottom:3}}>Review Extracted Pricing</div>
               {aiError
-                ?<div style={{fontSize:14,color:"#991b1b"}}>AI extraction encountered an issue: {aiError}. Please enter prices manually below.</div>
+                ?<div style={{fontSize:14,color:"#991b1b"}}>We couldn't auto-extract pricing from your quote — our team has been notified and will review it. Please enter prices manually below to keep things moving.</div>
                 :<div style={{fontSize:14,color:"#78350f"}}>AI found prices for <strong>{extractedCount} of {lineItems.length}</strong> items. Please review for accuracy, correct any errors, and fill in any missing prices before submitting.</div>
               }
             </div>
