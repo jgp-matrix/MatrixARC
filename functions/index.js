@@ -115,6 +115,54 @@ async function recordAnthropicUsage(uid, model, usage) {
   }
 }
 
+async function warnAdminsTokenUsage(uid, functionName, usage, maxTokens) {
+  try {
+    const outputTokens = usage?.output_tokens || 0;
+    const threshold = Math.round(maxTokens * 0.75);
+    if (outputTokens < threshold) return;
+    const pct = Math.round((outputTokens / maxTokens) * 100);
+    functions.logger.warn(`${functionName} token warning: ${outputTokens}/${maxTokens} (${pct}%)`, { uid, outputTokens, maxTokens, pct });
+    if (!SENDGRID_KEY) return;
+    const profileDoc = await db.doc(`users/${uid}/config/profile`).get();
+    const companyId = profileDoc.exists ? profileDoc.data().companyId : null;
+    if (!companyId) return;
+    const membersSnap = await db.collection(`companies/${companyId}/members`).get();
+    const adminUids = membersSnap.docs.filter(d => d.data().role === 'admin').map(d => d.id);
+    if (!adminUids.length) return;
+    let userName = 'Unknown user';
+    try { const u = await admin.auth().getUser(uid); userName = u.displayName || u.email || uid; } catch (_) {}
+    const emailHtml = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;color:#1e293b">
+      <h2 style="color:#d97706;margin:0 0 8px 0;font-size:20px">⚠️ AI Token Usage Warning</h2>
+      <p style="color:#64748b;margin:0 0 20px 0;font-size:13px"><strong>${functionName}</strong> used <strong>${pct}%</strong> of the token limit during extraction.</p>
+      <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:14px 18px;border-radius:4px;margin-bottom:16px">
+        <table style="border-collapse:collapse;font-size:13px;color:#422006">
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Output tokens:</td><td>${outputTokens.toLocaleString()} / ${maxTokens.toLocaleString()}</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Usage:</td><td>${pct}%</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">User:</td><td>${userName}</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Function:</td><td>${functionName}</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Input tokens:</td><td>${(usage?.input_tokens || 0).toLocaleString()}</td></tr>
+        </table>
+      </div>
+      <p style="color:#64748b;font-size:12px;line-height:1.5">If this reaches 100%, the AI response will be truncated and extraction may return incomplete or zero results. Consider whether the drawing package has unusually large BOM tables.</p>
+      <p style="color:#94a3b8;font-size:11px;margin-top:24px">MatrixARC automated warning</p>
+    </div>`;
+    for (const adminUid of adminUids) {
+      try {
+        const rec = await admin.auth().getUser(adminUid);
+        if (!rec.email) continue;
+        await sgMail.send({
+          to: rec.email,
+          from: 'sales@matrixpci.com',
+          subject: `⚠️ ARC Token Warning: ${functionName} at ${pct}% capacity`,
+          html: emailHtml,
+        });
+      } catch (e) { functions.logger.warn(`Token warning email failed for ${adminUid}:`, e.message); }
+    }
+  } catch (e) {
+    functions.logger.warn('warnAdminsTokenUsage failed (non-fatal):', e.message);
+  }
+}
+
 // ── PUSH NOTIFICATION HELPER ──
 
 /**
@@ -929,7 +977,7 @@ You MUST return one entry per requested item. Also include extra supplier items 
     },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 16000,
+      max_tokens: 64000,
       system: [{ type: 'text', text: STATIC_PROMPT, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: messageContent }],
     }),
@@ -946,6 +994,8 @@ You MUST return one entry per requested item. Also include extra supplier items 
   // supplier part numbers / pricing data into log infrastructure. Length alone is enough to
   // detect truncation issues without exposing the content.
   functions.logger.info('extractSupplierQuotePricing AI response length:', text.length);
+
+  warnAdminsTokenUsage(uid, 'extractSupplierQuotePricing', result.usage, 64000).catch(() => {});
 
   // DECISION(v1.19.955): Update per-token usage ledger after the Anthropic call so future
   // calls on this token can be capped against the running totals. Sonnet 4 pricing as of
@@ -2093,8 +2143,8 @@ exports.extractBomPage = functions
     },
     body: JSON.stringify({
       model: ANTHROPIC_MODELS.OPUS,
-      max_tokens: 16000,
-      thinking: { type: 'enabled', budget_tokens: 4000 },
+      max_tokens: 64000,
+      thinking: { type: 'enabled', budget_tokens: 16000 },
       system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: userContent }],
     }),
@@ -2114,6 +2164,7 @@ exports.extractBomPage = functions
   functions.logger.info('extractBomPage complete', { uid, extractionPath, rawChars: raw.length, modelUsed, stopReason });
 
   recordAnthropicUsage(uid, modelUsed, result.usage).catch(() => {});
+  warnAdminsTokenUsage(uid, 'extractBomPage', result.usage, 64000).catch(() => {});
 
   return { raw, extractionPath, modelUsed, stopReason, usage: result.usage || {} };
 });

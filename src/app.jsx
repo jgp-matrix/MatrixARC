@@ -10355,7 +10355,13 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
 
   // Server-side path FIRST. On error, falls through to direct API.
   try{
-    return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl);
+    const serverResult=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl);
+    if((serverResult.items||[]).length===0&&croppedBomDataUrl&&originalPdfPath&&pageNumber){
+      console.warn("[BOM EXTRACT] server crop path returned 0 items — retrying via PDF-native");
+      try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,null);}
+      catch(retryErr){console.warn("[BOM EXTRACT] PDF-native retry also failed:",retryErr?.message||retryErr);}
+    }
+    return serverResult;
   }catch(serverErr){
     const msg=serverErr?.message||String(serverErr);
     console.warn(`[BOM EXTRACT] server path failed: ${msg} — falling back to direct API`);
@@ -10388,8 +10394,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
         body:JSON.stringify({
           model:ANTHROPIC_MODELS.OPUS,
-          max_tokens:16000,
-          thinking:{type:"enabled",budget_tokens:4000},
+          max_tokens:64000,
+          thinking:{type:"enabled",budget_tokens:16000},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
             {type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},
@@ -10403,9 +10409,11 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
         console.log("BOM extraction (cropped region) response:",raw.length,"chars, stop_reason:",d.stop_reason);
         _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
-        return _parseAndVerifyBomRaw(raw,"bom-region-crop");
-      }
-      console.warn(`[BOM EXTRACT] cropped region API call failed (${d.error?.message||resp.status}), falling back to full PDF`);
+        const cropResult=_parseAndVerifyBomRaw(raw,"bom-region-crop");
+        if((cropResult.items||[]).length>0)return cropResult;
+        console.warn("[BOM EXTRACT] cropped region returned 0 items — falling back to full PDF");
+      } else {
+      console.warn(`[BOM EXTRACT] cropped region API call failed (${d.error?.message||resp.status}), falling back to full PDF`);}
     }catch(cropErr){
       console.warn(`[BOM EXTRACT] cropped region failed: ${cropErr.message}, falling back to full PDF`);
     }
@@ -10432,8 +10440,8 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
         body:JSON.stringify({
           model:ANTHROPIC_MODELS.OPUS,
-          max_tokens:16000,
-          thinking:{type:"enabled",budget_tokens:4000},
+          max_tokens:64000,
+          thinking:{type:"enabled",budget_tokens:16000},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
             {type:"document",source:{type:"base64",media_type:"application/pdf",data:pdfBase64}},
