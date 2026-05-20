@@ -6,7 +6,7 @@
 - `git branch --show-current` matches the expected branch
 - `git log --oneline -5` shows the commits you expect (no surprise commits from the parallel CLI session)
 - `git status` is clean (or only contains files you know about)
-- Report the active site version (the `APP_VERSION` constant in `public/index.html`, e.g. `v1.19.1005`) alongside the verification output so the user knows which deployed build the session is starting from.
+- Report the active site version (the `APP_VERSION` constant in `public/index.html`, e.g. `v1.19.1107`) alongside the verification output so the user knows which deployed build the session is starting from.
 
 If anything looks unexpected — wrong directory, unfamiliar branch, untracked files you didn't create, commits you didn't make — **stop and surface the contradiction to the user before doing any task work**. Do not auto-clean, auto-checkout, or "fix" the state. The parallel testing/review CLI session may have written artifacts you should not touch.
 
@@ -74,21 +74,19 @@ When the user says "Closed" (or any case-insensitive variant: closed, close, don
 
 2. Re-run `git log master..origin/master` — must be empty (everything pushed).
 
-### Step 2.5 — Verify commits are on master (or intentionally on feature branch)
+3. **Verify commits are on master (or intentionally on feature branch).** If commits exist on a feature branch but not on master, AND the user did not explicitly choose "no" or "not yet" during Close Out, fail the close-out check with:
 
-If commits exist on a feature branch but not on master, AND the user did not explicitly choose "no" or "not yet" during Close Out, fail the close-out check with:
+   > "Commits remain on feature branch `<name>` and were not merged. Either merge them now, or confirm 'leave on branch' to proceed."
 
-> "Commits remain on feature branch `<name>` and were not merged. Either merge them now, or confirm 'leave on branch' to proceed."
+   If user confirmed "leave on branch" during Close Out, allow Closed to proceed but note in the confirmation:
 
-If user confirmed "leave on branch" during Close Out, allow Closed to proceed but note in the confirmation:
+   > "✓ Session closed cleanly. Note: commits remain on feature branch `<name>` per user choice."
 
-> "✓ Session closed cleanly. Note: commits remain on feature branch `<name>` per user choice."
+4. Confirm any TODO.md updates surfaced in Close Out have been either applied or explicitly waived by the user.
 
-3. Confirm any TODO.md updates surfaced in Close Out have been either applied or explicitly waived by the user.
+5. If all checks pass: respond "✓ Session closed cleanly. All changes committed and pushed. Safe to end."
 
-4. If all checks pass: respond "✓ Session closed cleanly. All changes committed and pushed. Safe to end."
-
-5. If any check fails: respond with which specific check failed, what state needs to be addressed, and do not declare the session closed. Wait for the user to address it and type "Closed" again.
+6. If any check fails: respond with which specific check failed, what state needs to be addressed, and do not declare the session closed. Wait for the user to address it and type "Closed" again.
 
 The "Closed" command is the user's contract that the session is genuinely done. CCD's job is to verify the state matches that claim before agreeing.
 
@@ -234,9 +232,6 @@ All learning is persisted to Firestore and applied automatically:
 
 ## Key Architecture Notes
 
-### Two Code Paths for laborData
-`runPanelValidation()` AND the Fast Quote pipeline (~line 1790) both build laborData independently — changes must be applied to BOTH.
-
 ### Schematic Authority
 Schematic is the authority for door device count — layout analysis often misclassifies backpanel devices as door cutouts.
 
@@ -304,23 +299,82 @@ Cell-level `leadTimeDays` edits enqueue in `_leadTimeBcQueue.current.pending` (M
 
 Functions deploy separately from hosting — `firebase deploy --only functions`.
 
+**Team & Admin**
+
 | Function | Trigger | Purpose |
 |----------|---------|---------|
 | `inviteTeamMember` | HTTPS callable | Creates pending invite, returns token |
 | `acceptTeamInvite` | HTTPS callable | Validates token, adds user to company |
 | `removeTeamMember` | HTTPS callable | Admin removes a member |
 | `updateMemberRole` | HTTPS callable | Admin changes a member's role |
+| `resetTeamApiKeys` | HTTPS callable | Resets API keys for team members |
 | `sendInviteEmail` | HTTPS callable | Sends invite email via SendGrid |
+| `diagnoseMemberApiKey` | HTTPS callable | Debug tool for API key issues |
+| `testTeamsWebhook` | HTTPS callable | Test endpoint to verify Teams webhook integration |
+
+**Supplier Portal & RFQ**
+
+| Function | Trigger | Purpose |
+|----------|---------|---------|
 | `onSupplierQuoteSubmitted` | Firestore trigger on `rfqUploads/{token}` | Fires when status→"submitted": creates notification + sends email to ARC user |
 | `extractSupplierQuotePricing` | HTTPS callable | Sends PDF page images to Claude Sonnet 4, returns extracted prices/lead times |
-| `extractBomPage` | HTTPS callable | Server-side BOM extraction (v1.19.981). Accepts native PDF (`{pdfPath, pageNumber}`) or image fallback. Client tries this first via `extractBomPageViaServer`; falls back to legacy direct API on error. Centralizes the Anthropic call. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
 | `sendEngineerQuestionEmail` | HTTPS callable | Sends formatted engineering questions email via SendGrid + push notification |
-| `testTeamsWebhook` | HTTPS callable | Test endpoint to verify Teams webhook integration |
+
+**BOM Extraction**
+
+| Function | Trigger | Purpose |
+|----------|---------|---------|
+| `extractBomPage` | HTTPS callable | Server-side BOM extraction. Accepts native PDF (`{pdfPath, pageNumber}`) or image fallback. Client tries this first via `extractBomPageViaServer`; falls back to legacy direct API on error. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
+
+**Purchasing & Engineering**
+
+| Function | Trigger | Purpose |
+|----------|---------|---------|
+| `poCreateOrder` | HTTPS callable | Creates BC purchase order (via `./purchasing` module) |
+| `poUpdateStatus` | HTTPS callable | Updates BC purchase order status (via `./purchasing` module) |
+| `onCustomerReviewSubmitted` | Firestore trigger | Fires on customer review submission (via `./engineering` module) |
+| `engSendReviewEmail` | HTTPS callable | Sends engineering review email (via `./engineering` module) |
+
+**ECOs** (via `./ecos` module)
+
+| Function | Trigger | Purpose |
+|----------|---------|---------|
+| `onEcoCreatedCompany` | Firestore trigger | Logs ECO creation at company level |
+| `onEcoCreatedUser` | Firestore trigger | Logs ECO creation at user level |
+| `onEcoUpdatedCompany` | Firestore trigger | Logs ECO update at company level |
+| `onEcoUpdatedUser` | Firestore trigger | Logs ECO update at user level |
+
+**Scrapers & Vendor Pricing**
+
+| Function | Trigger | Purpose |
+|----------|---------|---------|
+| `codaleRunScrape` | HTTPS callable | On-demand Codale scrape (540s timeout, 2GB) |
+| `codaleScheduledScrape` | Pub/Sub schedule | Scheduled Codale price scrape (540s timeout, 2GB) |
+| `codaleTestScrape` | HTTPS callable | Test scrape for Codale (300s timeout, 2GB) |
+| `customScraperLookup` | HTTPS callable | Single-item custom scraper lookup (300s, 2GB) |
+| `customScraperBatch` | HTTPS callable | Batch custom scraper (540s, 2GB) |
+| `mouserSearch` | HTTPS callable | Mouser part search (120s) |
+| `digikeySearch` | HTTPS callable | DigiKey part search (120s) |
+| `searchVendorPricing` | HTTPS callable | Multi-vendor pricing aggregation (300s, 512MB) |
+| `bulkMfrList` | HTTPS callable | Bulk manufacturer listing |
+| `bulkMfrLookup` | HTTPS callable | Bulk manufacturer part lookup |
+
+**Monitoring & Debug**
+
+| Function | Trigger | Purpose |
+|----------|---------|---------|
+| `onIssueReported` | Firestore trigger | Fires when a debug log entry is created |
+| `monitorAnthropicModels` | Scheduled | Monitors Anthropic model availability/changes |
 
 ### Environment Variables (set via Firebase, in `functions/.env`)
 - `SENDGRID_API_KEY` — required for email sending
 - `APP_URL` — defaults to `https://matrix-arc.web.app`
 - `TEAMS_WEBHOOK_URL` — Power Automate webhook URL for Teams channel notifications (optional)
+- `ANTHROPIC_API_KEY` — required for server-side AI calls (`extractBomPage`, `extractSupplierQuotePricing`, `monitorAnthropicModels`)
+- `CODALE_USERNAME` / `CODALE_PASSWORD` — Codale scraper authentication
+- `MOUSER_API_KEY` — Mouser part search API
+- `DIGIKEY_CLIENT_ID` / `DIGIKEY_CLIENT_SECRET` — DigiKey part search API
+- `OEMSECRETS_API_KEY` — OEMSecrets pricing API
 
 ## Business Central (BC) Integration
 
