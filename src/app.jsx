@@ -10356,6 +10356,34 @@ async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPat
   return _parseAndVerifyBomRaw(data.raw,data.extractionPath||intendedPath);
 }
 
+async function extractBomBatchViaServer(pdfPath,pages,feedback,userNotes){
+  const callable=fbFunctions.httpsCallable("extractBomBatch",{timeout:540000});
+  const payload={pdfPath,pages:pages.map(pg=>({pageNumber:pg.pageNumber,croppedBomImage:pg.croppedBomImage||null,croppedBomMediaType:pg.croppedBomMediaType||null,notes:pg.notes||null})),feedback:feedback||"",userNotes:userNotes||""};
+  const t0=Date.now();
+  const result=await callable(payload);
+  const elapsedMs=Date.now()-t0;
+  const data=result?.data||{};
+  const results=data.results||[];
+  console.log(`[BOM BATCH/server] ${pages.length} pages requested, ${results.filter(r=>r.raw).length} succeeded, ${results.filter(r=>r.error).length} failed, ${elapsedMs}ms`);
+  try{
+    if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+      window.logDebugEntry({severity:"info",source:"extractBomBatch",message:`Batch extraction: ${pages.length} pages, ${results.filter(r=>r.raw).length} ok, ${results.filter(r=>r.error).length} failed, ${elapsedMs}ms`,extra:{
+        pdfPath,pagesRequested:pages.length,pagesSucceeded:results.filter(r=>r.raw).length,pagesFailed:results.filter(r=>r.error).length,elapsedMs,
+      }});
+    }
+  }catch(_){}
+  const parsed={};
+  for(const r of results){
+    if(r.raw){
+      try{parsed[r.pageNumber]={..._parseAndVerifyBomRaw(r.raw,r.extractionPath||"pdf-native"),extractionPath:r.extractionPath,modelUsed:r.modelUsed,stopReason:r.stopReason};}
+      catch(e){parsed[r.pageNumber]={error:e.message};}
+    } else if(r.error){
+      parsed[r.pageNumber]={error:r.error};
+    }
+  }
+  return parsed;
+}
+
 async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=null,pageNumber=null,croppedBomDataUrl=null){
   if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
   if(!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF to fix this.");
@@ -12192,6 +12220,42 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     if(hasBom){
       let bomDone=0;
       let allQuestions=[];
+      // v1.20.5: Batch server extraction — pre-fetch all BOM pages in one Cloud Function
+      // call when they share a pdfPath. Eliminates redundant PDF downloads.
+      let _batchResults=null;
+      const _batchEligible=bomPages.filter(pg=>pg.originalPdfPath&&pg.pageNumber);
+      if(_batchEligible.length>=2){
+        const commonPdf=_batchEligible[0].originalPdfPath;
+        const allSamePdf=_batchEligible.every(pg=>pg.originalPdfPath===commonPdf);
+        if(allSamePdf){
+          try{
+            bgUpdate(panel.id,`Batch extracting ${_batchEligible.length} BOM pages…`);
+            const batchPages=await Promise.all(_batchEligible.map(async pg=>{
+              const units=await getExtractionUnits(pg);
+              const unit=units[0]||{};
+              let croppedBomImage=null,croppedBomMediaType=null;
+              if(unit.croppedBomDataUrl){
+                croppedBomImage=unit.croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
+                croppedBomMediaType="image/jpeg";
+              }
+              const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
+              return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
+            }));
+            _batchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",userNotes);
+            console.log(`[BOM BATCH] pre-fetched ${Object.keys(_batchResults).length} results for ${_batchEligible.length} pages`);
+          }catch(batchErr){
+            console.warn(`[BOM BATCH] batch extraction failed, falling back to per-page: ${batchErr.message}`);
+            try{
+              if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+                window.logDebugEntry({severity:"warn",source:"extractBomBatch",message:`Batch extraction failed — falling back to per-page: ${(batchErr.message||"").slice(0,200)}`,extra:{
+                  pagesAttempted:_batchEligible.length,errorCode:batchErr?.code||null,
+                }});
+              }
+            }catch(_){}
+            _batchResults=null;
+          }
+        }
+      }
       bomMergePromise=parallelMap(bomPages,async (pg,pgIdx)=>{
         bomDone++;
         phasePct("bom",bomDone/bomPages.length);
@@ -12215,7 +12279,15 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           const cropInfo=unit.bomRegion?`region-crop (${unit.bomRegion.source}, ${Math.round(unit.bomRegion.w*100)}×${Math.round(unit.bomRegion.h*100)}%)`:"full-page";
           console.log(`[BOM EXTRACT] page="${pg.name||pgIdx+1}" mode=${cropInfo} hasPdf=${!!unit.originalPdfPath} hasCrop=${!!unit.croppedBomDataUrl}`);
           const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):userNotes;
-          let result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
+          // v1.20.5: Use pre-fetched batch result if available; fall back to per-page call
+          let result;
+          const _batchHit=_batchResults&&unit.pageNumber&&_batchResults[unit.pageNumber]&&!_batchResults[unit.pageNumber].error;
+          if(_batchHit){
+            result=_batchResults[unit.pageNumber];
+            console.log(`[BOM EXTRACT] page="${pg.name||pgIdx+1}" using BATCH result (${(result.items||[]).length} items)`);
+          } else {
+            result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
+          }
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
           // L3 Phase 1: broad retry + merge
           const verif=result?.extractionVerification;
@@ -22301,6 +22373,35 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     let completedUnits=0;
     const estUnitsPerPage=4; // matches the 4 quadrant crops in getExtractionUnits
     const totalUnitsEst=Math.max(1,bomPages.length*estUnitsPerPage);
+    // v1.20.5: Batch server extraction for re-extract
+    let _reBatchResults=null;
+    const _reBatchEligible=bomPages.filter(pg=>pg.originalPdfPath&&pg.pageNumber);
+    if(_reBatchEligible.length>=2){
+      const commonPdf=_reBatchEligible[0].originalPdfPath;
+      const allSamePdf=_reBatchEligible.every(pg=>pg.originalPdfPath===commonPdf);
+      if(allSamePdf){
+        try{
+          bgSetPct(panel.id,2,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
+          ep.set(2,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
+          const batchPages=await Promise.all(_reBatchEligible.map(async pg=>{
+            const units=await getExtractionUnits(pg);
+            const unit=units[0]||{};
+            let croppedBomImage=null,croppedBomMediaType=null;
+            if(unit.croppedBomDataUrl){
+              croppedBomImage=unit.croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
+              croppedBomMediaType="image/jpeg";
+            }
+            const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
+            return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
+          }));
+          _reBatchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",rgnNotes);
+          console.log(`[RE-EXTRACT BATCH] pre-fetched ${Object.keys(_reBatchResults).length} results`);
+        }catch(batchErr){
+          console.warn(`[RE-EXTRACT BATCH] failed, falling back to per-page: ${batchErr.message}`);
+          _reBatchResults=null;
+        }
+      }
+    }
     try{
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         const units=await getExtractionUnits(pg);
@@ -22308,7 +22409,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         let pageItems=[],pageQs=[];
         for(const unit of units){
           const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):rgnNotes;
-          const result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
+          // v1.20.5: Use batch result if available
+          let result;
+          const _reBatchHit=_reBatchResults&&unit.pageNumber&&_reBatchResults[unit.pageNumber]&&!_reBatchResults[unit.pageNumber].error;
+          if(_reBatchHit){
+            result=_reBatchResults[unit.pageNumber];
+            console.log(`[RE-EXTRACT] Page ${pgIdx+1} using BATCH result (${(result.items||[]).length} items)`);
+          } else {
+            result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
+          }
           if(result?.extractionPath)_reExtractionPathsSeen.add(result.extractionPath);
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           console.log(`[RE-EXTRACT] Page ${pgIdx+1} unit: ${items.length} items, ${(result.questions||[]).length} questions`);
