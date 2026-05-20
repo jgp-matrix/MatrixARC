@@ -37556,6 +37556,103 @@ function CustomerTemplatesModal({uid,onClose}){
   ,document.body);
 }
 
+// DECISION(v1.20.7): Extracted as a proper component (not an IIFE) to satisfy
+// React's Rules of Hooks — useState/useEffect can't live inside a conditional IIFE.
+function AdminBudgetSection({uid}){
+  const [budgetInput,setBudgetInput]=useState("");
+  const [budgetLoading,setBudgetLoading]=useState(false);
+  const [budgetSaved,setBudgetSaved]=useState(false);
+  const [ledgerData,setLedgerData]=useState(null);
+  useEffect(()=>{
+    const unsub=fbDb.doc(`users/${uid}/config/anthropicLedger`).onSnapshot(snap=>{
+      if(snap.exists){
+        const d=snap.data();
+        setLedgerData(d);
+        if(budgetInput==="")setBudgetInput(d.monthlyBudgetDollars!=null?String(d.monthlyBudgetDollars):"300");
+      }
+    });
+    return()=>unsub();
+  },[uid]);
+  const curMonth=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
+  const monthCents=(ledgerData&&ledgerData.monthKey===curMonth)?(ledgerData.monthCents||0):0;
+  const monthDollars=monthCents/100;
+  const totalCents=ledgerData?.totalCents||0;
+  const totalDollars=totalCents/100;
+  const capDollars=Number(budgetInput)||300;
+  const pct=capDollars>0?Math.min(100,Math.round((monthDollars/capDollars)*100)):0;
+  const tone=pct>=90?{bg:"#3a0a0a",border:"#ef4444",fg:"#fca5a5",bar:"#ef4444",label:"CRITICAL"}
+            :pct>=50?{bg:"#3a1f00",border:"#f59e0b",fg:"#fcd34d",bar:"#f59e0b",label:"WARNING"}
+            :{bg:"#0d2a18",border:"#22c55e",fg:"#86efac",bar:"#22c55e",label:"OK"};
+  const saveBudget=async()=>{
+    const val=Number(budgetInput);
+    if(!val||val<1){arcAlert("Enter a valid monthly budget (minimum $1).");return;}
+    setBudgetLoading(true);
+    try{
+      await fbDb.doc(`users/${uid}/config/anthropicLedger`).set({monthlyBudgetDollars:val},{merge:true});
+      setBudgetSaved(true);setTimeout(()=>setBudgetSaved(false),3000);
+    }catch(e){arcAlert("Failed to save budget: "+e.message);}
+    setBudgetLoading(false);
+  };
+  return(
+    <div style={{marginTop:20,padding:"14px 16px",background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:10}}>
+      <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+        📊 API Usage & Budget <span style={{fontSize:10,fontWeight:600,color:"#a78bfa",background:"#1a1033",borderRadius:10,padding:"1px 8px"}}>ADMIN</span>
+      </div>
+      {/* Usage meter */}
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+          <span style={{fontSize:20,fontWeight:800,color:tone.fg}}>${monthDollars.toFixed(2)}</span>
+          <span style={{fontSize:13,color:C.muted}}>of <strong style={{color:C.text}}>${capDollars.toFixed(0)}</strong> monthly budget</span>
+        </div>
+        <div style={{width:"100%",height:8,borderRadius:4,background:"#1e293b",overflow:"hidden"}}>
+          <div style={{width:`${pct}%`,height:"100%",borderRadius:4,background:tone.bar,transition:"width 0.5s ease"}}/>
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+          <span style={{fontSize:10,color:tone.fg,fontWeight:600}}>{pct}% used</span>
+          <span style={{fontSize:10,fontWeight:600,color:tone.fg,background:tone.bg,border:`1px solid ${tone.border}`,borderRadius:8,padding:"1px 8px"}}>{tone.label}</span>
+        </div>
+      </div>
+      {/* Details row */}
+      <div style={{display:"flex",gap:16,marginBottom:14,flexWrap:"wrap"}}>
+        <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
+          <div style={{fontSize:10,color:C.muted,marginBottom:2}}>This Month</div>
+          <div style={{fontSize:16,fontWeight:700,color:C.text}}>${monthDollars.toFixed(2)}</div>
+        </div>
+        <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
+          <div style={{fontSize:10,color:C.muted,marginBottom:2}}>All Time</div>
+          <div style={{fontSize:16,fontWeight:700,color:C.text}}>${totalDollars.toFixed(2)}</div>
+        </div>
+        <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
+          <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Remaining</div>
+          <div style={{fontSize:16,fontWeight:700,color:monthDollars>=capDollars?"#ef4444":"#86efac"}}>${Math.max(0,capDollars-monthDollars).toFixed(2)}</div>
+        </div>
+        {ledgerData?.lastCallAt&&(
+          <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Last Call</div>
+            <div style={{fontSize:12,fontWeight:600,color:C.text}}>{new Date(ledgerData.lastCallAt).toLocaleDateString()}</div>
+            <div style={{fontSize:10,color:C.muted}}>{ledgerData.lastCallModel||""}</div>
+          </div>
+        )}
+      </div>
+      {/* Budget setting */}
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <span style={{fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>Monthly budget:</span>
+        <div style={{display:"flex",alignItems:"center",gap:4}}>
+          <span style={{fontSize:13,color:C.text,fontWeight:600}}>$</span>
+          <input type="number" min="1" step="50" value={budgetInput} onChange={e=>setBudgetInput(e.target.value)}
+            style={{width:80,padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:"#111827",color:C.text,fontSize:13,fontWeight:600}}
+            onKeyDown={e=>{if(e.key==="Enter")saveBudget();}}/>
+        </div>
+        <button onClick={saveBudget} disabled={budgetLoading}
+          style={{padding:"5px 14px",borderRadius:6,border:"none",background:budgetSaved?"#22c55e":C.accent,color:"#fff",fontSize:12,fontWeight:600,cursor:budgetLoading?"wait":"pointer",opacity:budgetLoading?0.6:1}}>
+          {budgetSaved?"Saved ✓":budgetLoading?"Saving…":"Save"}
+        </button>
+        <span style={{fontSize:10,color:C.muted}}>Matches your Anthropic console workspace limit</span>
+      </div>
+    </div>
+  );
+}
+
 function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs}){
   // v1.19.986 (audit Item E): saveErr surfaces API-key save failures inline.
   const [saveErr,setSaveErr]=useState(null);
@@ -37797,100 +37894,7 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs}){
         </div>
 
         {/* Admin: API Usage & Budget — DECISION(v1.20.7) */}
-        {isAdmin()&&(()=>{
-          const [budgetInput,setBudgetInput]=useState("");
-          const [budgetLoading,setBudgetLoading]=useState(false);
-          const [budgetSaved,setBudgetSaved]=useState(false);
-          const [ledgerData,setLedgerData]=useState(null);
-          useEffect(()=>{
-            const unsub=fbDb.doc(`users/${uid}/config/anthropicLedger`).onSnapshot(snap=>{
-              if(snap.exists){
-                const d=snap.data();
-                setLedgerData(d);
-                if(budgetInput==="")setBudgetInput(d.monthlyBudgetDollars!=null?String(d.monthlyBudgetDollars):"300");
-              }
-            });
-            return()=>unsub();
-          },[uid]);
-          const curMonth=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
-          const monthCents=(ledgerData&&ledgerData.monthKey===curMonth)?(ledgerData.monthCents||0):0;
-          const monthDollars=monthCents/100;
-          const totalCents=ledgerData?.totalCents||0;
-          const totalDollars=totalCents/100;
-          const capDollars=Number(budgetInput)||300;
-          const pct=capDollars>0?Math.min(100,Math.round((monthDollars/capDollars)*100)):0;
-          const tone=pct>=90?{bg:"#3a0a0a",border:"#ef4444",fg:"#fca5a5",bar:"#ef4444",label:"CRITICAL"}
-                    :pct>=50?{bg:"#3a1f00",border:"#f59e0b",fg:"#fcd34d",bar:"#f59e0b",label:"WARNING"}
-                    :{bg:"#0d2a18",border:"#22c55e",fg:"#86efac",bar:"#22c55e",label:"OK"};
-          const saveBudget=async()=>{
-            const val=Number(budgetInput);
-            if(!val||val<1){arcAlert("Enter a valid monthly budget (minimum $1).");return;}
-            setBudgetLoading(true);
-            try{
-              await fbDb.doc(`users/${uid}/config/anthropicLedger`).set({monthlyBudgetDollars:val},{merge:true});
-              setBudgetSaved(true);setTimeout(()=>setBudgetSaved(false),3000);
-            }catch(e){arcAlert("Failed to save budget: "+e.message);}
-            setBudgetLoading(false);
-          };
-          return(
-            <div style={{marginTop:20,padding:"14px 16px",background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:10}}>
-              <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
-                📊 API Usage & Budget <span style={{fontSize:10,fontWeight:600,color:"#a78bfa",background:"#1a1033",borderRadius:10,padding:"1px 8px"}}>ADMIN</span>
-              </div>
-              {/* Usage meter */}
-              <div style={{marginBottom:14}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
-                  <span style={{fontSize:20,fontWeight:800,color:tone.fg}}>${monthDollars.toFixed(2)}</span>
-                  <span style={{fontSize:13,color:C.muted}}>of <strong style={{color:C.text}}>${capDollars.toFixed(0)}</strong> monthly budget</span>
-                </div>
-                <div style={{width:"100%",height:8,borderRadius:4,background:"#1e293b",overflow:"hidden"}}>
-                  <div style={{width:`${pct}%`,height:"100%",borderRadius:4,background:tone.bar,transition:"width 0.5s ease"}}/>
-                </div>
-                <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
-                  <span style={{fontSize:10,color:tone.fg,fontWeight:600}}>{pct}% used</span>
-                  <span style={{fontSize:10,fontWeight:600,color:tone.fg,background:tone.bg,border:`1px solid ${tone.border}`,borderRadius:8,padding:"1px 8px"}}>{tone.label}</span>
-                </div>
-              </div>
-              {/* Details row */}
-              <div style={{display:"flex",gap:16,marginBottom:14,flexWrap:"wrap"}}>
-                <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
-                  <div style={{fontSize:10,color:C.muted,marginBottom:2}}>This Month</div>
-                  <div style={{fontSize:16,fontWeight:700,color:C.text}}>${monthDollars.toFixed(2)}</div>
-                </div>
-                <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
-                  <div style={{fontSize:10,color:C.muted,marginBottom:2}}>All Time</div>
-                  <div style={{fontSize:16,fontWeight:700,color:C.text}}>${totalDollars.toFixed(2)}</div>
-                </div>
-                <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
-                  <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Remaining</div>
-                  <div style={{fontSize:16,fontWeight:700,color:monthDollars>=capDollars?"#ef4444":"#86efac"}}>${Math.max(0,capDollars-monthDollars).toFixed(2)}</div>
-                </div>
-                {ledgerData?.lastCallAt&&(
-                  <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
-                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Last Call</div>
-                    <div style={{fontSize:12,fontWeight:600,color:C.text}}>{new Date(ledgerData.lastCallAt).toLocaleDateString()}</div>
-                    <div style={{fontSize:10,color:C.muted}}>{ledgerData.lastCallModel||""}</div>
-                  </div>
-                )}
-              </div>
-              {/* Budget setting */}
-              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                <span style={{fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>Monthly budget:</span>
-                <div style={{display:"flex",alignItems:"center",gap:4}}>
-                  <span style={{fontSize:13,color:C.text,fontWeight:600}}>$</span>
-                  <input type="number" min="1" step="50" value={budgetInput} onChange={e=>setBudgetInput(e.target.value)}
-                    style={{width:80,padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:"#111827",color:C.text,fontSize:13,fontWeight:600}}
-                    onKeyDown={e=>{if(e.key==="Enter")saveBudget();}}/>
-                </div>
-                <button onClick={saveBudget} disabled={budgetLoading}
-                  style={{padding:"5px 14px",borderRadius:6,border:"none",background:budgetSaved?"#22c55e":C.accent,color:"#fff",fontSize:12,fontWeight:600,cursor:budgetLoading?"wait":"pointer",opacity:budgetLoading?0.6:1}}>
-                  {budgetSaved?"Saved ✓":budgetLoading?"Saving…":"Save"}
-                </button>
-                <span style={{fontSize:10,color:C.muted}}>Matches your Anthropic console workspace limit</span>
-              </div>
-            </div>
-          );
-        })()}
+        {isAdmin()&&<AdminBudgetSection uid={uid}/>}
 
         {/* Admin: Debug Logs — DECISION(v1.19.584) */}
         {isAdmin()&&onShowDebugLogs&&(
