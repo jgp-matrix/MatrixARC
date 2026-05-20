@@ -1470,6 +1470,7 @@ function _invalidateUserScopedCaches(reason){
     }
     _altCache=null;
     _correctionsCache=null;
+    _descCrossCache=null;
     console.log(`[cache-invalidate] cleared user-scoped caches (reason: ${reason||"unspecified"})`);
   }catch(e){console.warn("_invalidateUserScopedCaches failed:",e?.message);}
 }
@@ -2127,6 +2128,37 @@ function guessCorrection(origPN,newPN){
   for(const c of shorter){if(longer.includes(c))matches++;}
   const ratio=matches/Math.max(a.length,b.length,1);
   return ratio>=0.55?'format':'extraction';
+}
+
+// ── DESCRIPTION CROSS DATABASE ──
+// When a user fills a Part# for a BOM row that had no Part# extracted (blank or "N/A"),
+// save the description→part# mapping for auto-population on future extractions.
+let _descCrossCache=null;
+function _descCrossPath(uid){return(_appCtx.configPath||`users/${uid}/config`)+"/descriptionCrosses";}
+function _descCrossNorm(desc){return(desc||"").toUpperCase().replace(/[^A-Z0-9\s]/g,"").replace(/\s+/g," ").trim();}
+function _invalidateDescCrossCache(){_descCrossCache=null;}
+async function loadDescriptionCrosses(uid){
+  if(_descCrossCache)return _descCrossCache;
+  try{const d=await fbDb.doc(_descCrossPath(uid)).get();_descCrossCache=d.exists?(d.data().crosses||[]):[];}
+  catch(e){_descCrossCache=[];}
+  return _descCrossCache;
+}
+async function saveDescriptionCrossEntry(uid,description,replacement){
+  if(!description||!replacement?.partNumber)return await loadDescriptionCrosses(uid);
+  const crosses=await loadDescriptionCrosses(uid);
+  const normDesc=_descCrossNorm(description);
+  if(normDesc.length<5)return crosses;
+  const idx=crosses.findIndex(c=>_descCrossNorm(c.description)===normDesc);
+  if(idx>=0){
+    crosses[idx]={...crosses[idx],replacement,updatedAt:Date.now()};
+    console.log(`[DESC CROSS] updated: "${description}" → "${replacement.partNumber}"`);
+  }else{
+    crosses.push({description,replacement,createdAt:Date.now()});
+    console.log(`[DESC CROSS] new entry: "${description}" → "${replacement.partNumber}"`);
+  }
+  _descCrossCache=[...crosses];
+  await fbDb.doc(_descCrossPath(uid)).set({crosses:_descCrossCache});
+  return _descCrossCache;
 }
 
 // ── QUOTE NUMBER COUNTER ──
@@ -8944,13 +8976,14 @@ function applyPartCorrections(corrections,bom){
 // the audit's self-healing NOT to override these rows — the user has already vetted them.
 async function applyLearnedCorrections(bom,uid){
   if(!bom||!bom.length||!uid)return{bom,appliedLog:[]};
-  let userAlts=[],userCorrs=[],userPartCorrs=[];
-  try{[userAlts,userCorrs,userPartCorrs]=await Promise.all([
+  let userAlts=[],userCorrs=[],userPartCorrs=[],userDescCrosses=[];
+  try{[userAlts,userCorrs,userPartCorrs,userDescCrosses]=await Promise.all([
     loadAlternates(uid).catch(()=>[]),
     loadCorrectionDB(uid).catch(()=>[]),
     loadPartCorrections(uid).catch(()=>[]),
+    loadDescriptionCrosses(uid).catch(()=>[]),
   ]);}catch(e){console.warn("applyLearnedCorrections: load failed:",e.message);return{bom,appliedLog:[]};}
-  if(!userAlts.length&&!userCorrs.length&&!userPartCorrs.length)return{bom,appliedLog:[]};
+  if(!userAlts.length&&!userCorrs.length&&!userPartCorrs.length&&!userDescCrosses.length)return{bom,appliedLog:[]};
   // v1.19.977: use the same _altNorm/normPN normalization throughout (strips
   // -, _, space, dot, slash, backslash, comma; uppercases). normPart inside the
   // module strips a smaller set; using a shared normalizer prevents drift.
@@ -8958,13 +8991,16 @@ async function applyLearnedCorrections(bom,uid){
   // v1.19.977: surface diagnostic counts for the cache and auto-replace state.
   const autoCount=userAlts.filter(a=>a.autoReplace&&a.replacement).length;
   const totalAlt=userAlts.length;
-  console.log(`[LEARNING DB] alternates=${totalAlt} (autoReplace=${autoCount}), corrections=${userCorrs.length}, partCorrections=${userPartCorrs.length} | uid=${uid?.slice?.(0,6)} configPath=${_appCtx.configPath||"(user-default)"}`);
+  console.log(`[LEARNING DB] alternates=${totalAlt} (autoReplace=${autoCount}), corrections=${userCorrs.length}, partCorrections=${userPartCorrs.length}, descCrosses=${userDescCrosses.length} | uid=${uid?.slice?.(0,6)} configPath=${_appCtx.configPath||"(user-default)"}`);
   const appliedLog=[];
   const skippedNonAuto=[];
   const result=bom.map(r=>{
     if(r.isLaborRow||r.isContingency)return r;
     const pn=(r.partNumber||"").trim();
-    if(!pn)return r;
+    const pnUpper=pn.toUpperCase();
+    const isBlankPN=!pn||pnUpper==="?"||pnUpper==="N/A"||pnUpper==="EXTRACTION_FAILED";
+    // Steps 1-3 only apply to rows that have a part number
+    if(!isBlankPN){
     // 1. Auto-replace alternates (part crosses)
     // DECISION(v1.19.635/638): Swap PN/description + flag as crossed/BC-locked. Carry over
     // the cached unitPrice from the learning DB (so the row isn't momentarily blank before
@@ -8998,6 +9034,16 @@ async function applyLearnedCorrections(bom,uid){
       if(pc&&pc.correctValue){
         appliedLog.push({rowId:r.id,kind:"partCorrection",from:pn,to:pc.correctValue,reason:"auto-fix from part library"});
         return{...r,partNumber:pc.correctValue,correctedByLibrary:true};
+      }
+    }
+    }// end if(!isBlankPN)
+    // 4. Description cross — auto-fill part# for rows extracted without a part number
+    if(isBlankPN&&r.description&&userDescCrosses.length){
+      const normDesc=_descCrossNorm(r.description);
+      const match=userDescCrosses.find(c=>_descCrossNorm(c.description)===normDesc);
+      if(match&&match.replacement?.partNumber){
+        appliedLog.push({rowId:r.id,kind:"descriptionCross",from:`(no PN) "${r.description}"`,to:match.replacement.partNumber,reason:"auto-fill from description cross DB"});
+        return{...r,partNumber:match.replacement.partNumber,manufacturer:match.replacement.manufacturer||r.manufacturer,unitPrice:match.replacement.unitCost??r.unitPrice,priceSource:"bc",isDescriptionCross:true,descriptionCrossFrom:r.description,confidence:"high"};
       }
     }
     return r;
@@ -9762,6 +9808,43 @@ STEP 4 — EXTRACT EVERY ROW (no skipping):
   e.g. "ABB KXTBRHEBFP, OXP10X225, OH865L10B" → three rows, each with same qty/manufacturer/notes
   First row: original description unchanged
   Each extra row: append " (sub-part)" to description
+★ COMBINED MFG/PART NO. COLUMNS (CRITICAL for some drawing formats):
+Some BOM tables use a single column headed "MFG/PART NO." or "MFR/PART NO." that contains
+BOTH the manufacturer name AND the catalog number in the same cell. When you see this column
+header pattern:
+
+1. The FIRST word(s) in the cell are usually the manufacturer name/abbreviation.
+   Split them from the catalog number that follows.
+
+2. Common manufacturer prefixes to recognize and split:
+   SAGINAW, HOFFMAN, ABB, IDEC, EATON, SCHNEIDER, SQUARE D, SIEMENS, ALLEN-BRADLEY, AB,
+   ROCKWELL, PHOENIX, PHOENIX CONTACT, WAGO, AUTOMATION DIRECT, AUTOMATIONDIRECT, PILZ,
+   TURCK, SICK, BANNER, OMRON, KEYENCE, MURR, RITTAL, PANDUIT, BRADY, BELDEN, MOLEX,
+   WEIDMULLER, HUBBELL, FEDERAL, FEDERAL SIGNAL, LITTLE FUSE, LITTELFUSE, IMPERVITRAN,
+   HAMMOND, TRUMETER, EMEC, CPU, STAHLIN, NVENT, MERSEN, BUSSMANN, FERRAZ SHAWMUT,
+   GE, MITSUBISHI, CUTLER-HAMMER, LEVITON, COOPER, LUTZE, MEANWELL,
+   MEAN WELL, RED LION, CROUSE-HINDS, APPLETON
+
+3. When a cell contains MULTIPLE catalog codes separated by commas:
+   e.g. "ABB AF09-30-10-13, CA4-22M, TF42-1.0"
+   This means: main item AF09-30-10-13 (ABB), PLUS companion parts CA4-22M and TF42-1.0
+   (also ABB). ALL share the same manufacturer prefix from the beginning of the cell.
+   - First part: main item row with original description
+   - Additional parts: additionalPartNumbers entries with relationship "accessory"
+
+   e.g. "FEDERAL 350B-120-30, KB435666A, TR"
+   Main part 350B-120-30 (FEDERAL), additional parts KB435666A and TR (both FEDERAL).
+
+   e.g. "TRUMETER 722-0004, 5003-011"
+   Main part 722-0004 (TRUMETER), additional part 5003-011 (TRUMETER).
+
+4. Some cells have NO manufacturer prefix — just the catalog number(s):
+   e.g. "ALD2QH211DNUG" or "G85K" or "XT1NU3020AAA000XXX"
+   When the cell has no recognizable manufacturer prefix, set manufacturer to ""
+   and put the entire cell value as partNumber.
+
+5. If the column header is "MFG/PART NO." but a row's value is "N/A":
+   This means no part number exists for that item. Set partNumber to "" and manufacturer to "N/A".
 • COMPANION PARTS — capture genuine secondary catalog codes ONLY from these two places:
     1. The PART NUMBER column itself, when it contains multiple codes separated by ", " or " / "
        (e.g. "ABB KXTBRHEBFP, OXP10X225, OH865L10B" — emit 3 separate items)
@@ -9992,8 +10075,9 @@ Do NOT return a bare JSON array.
 
 If no BOM table exists on this page, return {"items":[], "questions":[], "noBomReason":"<one of the categories above>", "detectedLineCount": 0}.`;
 
-// Crop a region from an image using normalized coordinates (0-1)
-function cropRegionFromImage(dataUrl,region){
+// Crop a region from an image using normalized coordinates (0-1).
+// minWidth scales up the crop so the BOM text is at least minWidth px wide (default 2000).
+function cropRegionFromImage(dataUrl,region,minWidth=2000){
   return new Promise((resolve,reject)=>{
     const img=new Image();
     img.onload=()=>{
@@ -10001,9 +10085,11 @@ function cropRegionFromImage(dataUrl,region){
       const sx=Math.round(region.x*W),sy=Math.round(region.y*H);
       const sw=Math.round(region.w*W),sh=Math.round(region.h*H);
       if(sw<10||sh<10){resolve(null);return;}
+      const scale=Math.max(1,minWidth/sw);
+      const cw=Math.round(sw*scale),ch=Math.round(sh*scale);
       const canvas=document.createElement('canvas');
-      canvas.width=sw;canvas.height=sh;
-      canvas.getContext('2d').drawImage(img,sx,sy,sw,sh,0,0,sw,sh);
+      canvas.width=cw;canvas.height=ch;
+      canvas.getContext('2d').drawImage(img,sx,sy,sw,sh,0,0,cw,ch);
       resolve(canvas.toDataURL('image/jpeg',0.92));
     };
     img.onerror=()=>resolve(null);
@@ -10011,20 +10097,22 @@ function cropRegionFromImage(dataUrl,region){
   });
 }
 
-// Build extraction units from a page — if BOM regions exist, crop them; otherwise use full page
+// Build extraction units from a page — if a BOM region is known (user-drawn or AI-detected),
+// crop the page image to just the BOM area for higher effective resolution.
 async function getExtractionUnits(pg){
-  const regions=(pg.regions||[]).filter(r=>r.type==="bom");
-  if(regions.length){
-    // User drew BOM regions — still use native PDF for extraction accuracy,
-    // but pass the region note so the AI knows which area to focus on.
-    return regions.map(r=>({
-      dataUrl:pg.dataUrl,
-      regionNote:r.note||null,
-      originalPdfPath:pg.originalPdfPath||null,
-      pageNumber:pg.pageNumber||null
-    }));
+  const bomRegion=resolveBomRegion(pg);
+  if(bomRegion){
+    let croppedBomDataUrl=null;
+    try{
+      let dataUrl=pg.dataUrl;
+      if(!dataUrl){const loaded=await ensureDataUrl(pg);dataUrl=loaded.dataUrl;}
+      if(dataUrl)croppedBomDataUrl=await cropRegionFromImage(dataUrl,bomRegion,2000);
+      if(croppedBomDataUrl)console.log(`[BOM REGION] Cropped BOM area (${bomRegion.source}) — ${Math.round(bomRegion.w*100)}%×${Math.round(bomRegion.h*100)}% of page`);
+    }catch(e){console.warn("[BOM REGION] crop failed, falling back to full page:",e.message);}
+    const regionNote=(pg.regions||[]).find(r=>r.type==="bom")?.note||null;
+    return[{dataUrl:pg.dataUrl,croppedBomDataUrl,regionNote,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null,bomRegion}];
   }
-  return [{dataUrl:pg.dataUrl,regionNote:null,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null}];
+  return[{dataUrl:pg.dataUrl,croppedBomDataUrl:null,regionNote:null,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null,bomRegion:null}];
 }
 
 // Build region context string for extraction notes
@@ -10215,10 +10303,15 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
 // region-learning context) take the IDENTICAL code path. If the function
 // throws (deploy lag, transient error, network), the caller falls back
 // to the legacy direct API path, preserving zero-regression behavior.
-async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber){
-  if(!originalPdfPath||!pageNumber)throw new Error("BOM extraction requires native PDF — originalPdfPath is missing. Re-upload the source PDF.");
+async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl){
+  if(!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF.");
   const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:300000});
   const payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
+  if(croppedBomDataUrl){
+    const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
+    payload.croppedBomImage=base64;
+    payload.croppedBomMediaType="image/jpeg";
+  }
   const intendedPath="pdf-native";
   const t0=Date.now();
   const result=await callable(payload);
@@ -10248,9 +10341,9 @@ async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPat
   return _parseAndVerifyBomRaw(data.raw,data.extractionPath||intendedPath);
 }
 
-async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=null,pageNumber=null){
+async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=null,pageNumber=null,croppedBomDataUrl=null){
   if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
-  if(!originalPdfPath||!pageNumber)throw new Error("BOM extraction requires native PDF — originalPdfPath is missing. Re-upload the source PDF to fix this.");
+  if(!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF to fix this.");
 
   if(pageNumber!=null){
     const n=Number(pageNumber);
@@ -10262,7 +10355,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
 
   // Server-side path FIRST. On error, falls through to direct API.
   try{
-    return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber);
+    return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl);
   }catch(serverErr){
     const msg=serverErr?.message||String(serverErr);
     console.warn(`[BOM EXTRACT] server path failed: ${msg} — falling back to direct API`);
@@ -10282,7 +10375,43 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
     }catch(_){}
   }
 
-  // Native PDF extraction — the ONLY extraction path.
+  // Cropped BOM region — preferred when available (higher resolution of just the BOM)
+  if(croppedBomDataUrl){
+    try{
+      const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
+      const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
+      const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting.`:"";
+      const pageHint=`This image is a CROPPED region showing ONLY the BOM table from a UL508A control panel drawing. Extract ALL items from this table.\n\n`;
+      console.log(`[BOM EXTRACT] using cropped BOM region image (direct API fallback)`);
+      const resp=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({
+          model:ANTHROPIC_MODELS.OPUS,
+          max_tokens:16000,
+          thinking:{type:"enabled",budget_tokens:4000},
+          system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
+          messages:[{role:"user",content:[
+            {type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},
+            {type:"text",text:pageHint+feedbackSection+notesSection}
+          ]}]
+        })
+      });
+      const d=await resp.json();
+      if(resp.ok){
+        if(d.stop_reason==="max_tokens")console.warn("BOM extraction (cropped): response TRUNCATED");
+        const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
+        console.log("BOM extraction (cropped region) response:",raw.length,"chars, stop_reason:",d.stop_reason);
+        _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
+        return _parseAndVerifyBomRaw(raw,"bom-region-crop");
+      }
+      console.warn(`[BOM EXTRACT] cropped region API call failed (${d.error?.message||resp.status}), falling back to full PDF`);
+    }catch(cropErr){
+      console.warn(`[BOM EXTRACT] cropped region failed: ${cropErr.message}, falling back to full PDF`);
+    }
+  }
+
+  // Native PDF extraction — fallback when cropped region unavailable or failed.
   {
     try{
       const pdfBase64=await loadOriginalPdfAsBase64(originalPdfPath,pageNumber);
@@ -12060,8 +12189,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // Supports BOMs with 100+ items where a single pass may not capture all rows.
         let pageRetryAttempts=0;
         for(const unit of units){
+          const cropInfo=unit.bomRegion?`region-crop (${unit.bomRegion.source}, ${Math.round(unit.bomRegion.w*100)}×${Math.round(unit.bomRegion.h*100)}%)`:"full-page";
+          console.log(`[BOM EXTRACT] page="${pg.name||pgIdx+1}" mode=${cropInfo} hasPdf=${!!unit.originalPdfPath} hasCrop=${!!unit.croppedBomDataUrl}`);
           const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):userNotes;
-          let result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber);
+          let result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
           // L3 Phase 1: broad retry + merge
           const verif=result?.extractionVerification;
@@ -12078,7 +12209,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
               const retryFeedback=`AUTO-RETRY (your previous extraction was flagged for review):\n\n${reasons.join("\n\n")}\n\nThis is a SECOND PASS — you have full memory of your previous attempt. Identify which BOM rows you missed and capture them this time. Specifically look for additional BOM boxes/columns elsewhere on the page that you may have skipped.`;
               console.warn(`[BOM EXTRACT] L3 Phase 1 retry triggered for page "${pg.name||pgIdx+1}": ${reasons[0]}`);
               pageRetryAttempts++;
-              const retryResult=await extractBomPage(unit.dataUrl,retryFeedback,notes,unit.originalPdfPath,unit.pageNumber);
+              const retryResult=await extractBomPage(unit.dataUrl,retryFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
               if(retryResult?.extractionPath){_extractionPathsSeen.add(retryResult.extractionPath);pageExtractionPath=retryResult.extractionPath;}
               const firstItems=result.items||[];
               const retryItems=(retryResult.items||[]);
@@ -12750,10 +12881,17 @@ DECISION ORDER:
   4. CRITICAL: a sheet index (SHEET NO. + TITLE columns) is NEVER "bom". A drawing with a small reference table is NEVER "bom".
   5. When you genuinely can't tell whether a page is a drawing or a parts table — re-examine for the QTY + alphanumeric-PART-NUMBER signature. If the rows are catalog codes and quantities, it's "bom". If the rows are sheet titles or symbol descriptions, it's [].
 
+When "bom" is detected, also return the bounding box of the BOM table:
+  "bomRegion": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
+where x,y is the top-left corner and w,h is width/height, ALL as fractions (0.0 to 1.0) of the full page dimensions.
+If the BOM table occupies the ENTIRE page, return {"x":0,"y":0,"w":1,"h":1}.
+If the BOM table occupies only a portion (common on busy pages with schematics, title blocks, etc.), return the tightest rectangle that contains ALL BOM rows including headers.
+If multiple BOM tables exist on the page, return one bounding box that encompasses ALL of them.
+
 Example response: {"types":["schematic"]}
 Example response: {"types":["backpanel"]}
 Example response: {"types":["enclosure"]}
-Example response: {"types":["bom"]}
+Example response: {"types":["bom"],"bomRegion":{"x":0.55,"y":0.0,"w":0.45,"h":0.65}}
 Example response: {"types":[]}`;
 
 async function detectPageTypes(dataUrl,learningExamples=[]){
@@ -12779,8 +12917,9 @@ async function detectPageTypes(dataUrl,learningExamples=[]){
       // downstream. Sonnet's structural-classification accuracy is materially better.
       // DECISION(v1.19.659): Lowered max_tokens to 100 now that sheetNo is removed from
       // the response — smaller JSON, no need for generous budget.
+      // Bumped to 200 for bomRegion bounding-box JSON in the response.
       model:ANTHROPIC_MODELS.SONNET,
-      max_tokens:100,
+      max_tokens:200,
       messages:[{role:"user",content:[
         ...regionParts,
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
@@ -12790,7 +12929,16 @@ async function detectPageTypes(dataUrl,learningExamples=[]){
     const m=raw.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
     if(!m)return{types:[]};
     const obj=JSON.parse(m[0]);
-    return{types:(obj.types||[]).filter(t=>["bom","schematic","backpanel","enclosure","pid"].includes(t))};
+    const types=(obj.types||[]).filter(t=>["bom","schematic","backpanel","enclosure","pid"].includes(t));
+    let bomRegion=null;
+    if(types.includes("bom")&&obj.bomRegion){
+      const br=obj.bomRegion;
+      if(typeof br.x==="number"&&typeof br.y==="number"&&typeof br.w==="number"&&typeof br.h==="number"
+        &&br.x>=0&&br.y>=0&&br.w>0&&br.h>0&&br.x+br.w<=1.01&&br.y+br.h<=1.01){
+        bomRegion={x:Math.max(0,br.x),y:Math.max(0,br.y),w:Math.min(br.w,1-br.x),h:Math.min(br.h,1-br.y)};
+      }
+    }
+    return{types,bomRegion};
   }catch(e){return{types:[]};}
 }
 
@@ -12806,6 +12954,17 @@ function getPageTypes(page){
   const aiTypes=Array.isArray(page.types)?page.types:(page.type&&page.type!=="untagged"?[page.type]:[]);
   const regionTypes=(page.regions||[]).map(r=>r.type).filter(t=>_CLASSIFIER_PAGE_TYPES.includes(t));
   return regionTypes.length?[...new Set([...aiTypes,...regionTypes])]:aiTypes;
+}
+function resolveBomRegion(pg){
+  const userRegions=(pg.regions||[]).filter(r=>r.type==="bom");
+  if(userRegions.length){
+    const r=userRegions[0];
+    return{x:r.x,y:r.y,w:r.w,h:r.h,source:"user"};
+  }
+  if(pg.aiBomRegion){
+    return{...pg.aiBomRegion,source:"ai"};
+  }
+  return null;
 }
 // DECISION(v1.19.819, ECO Phase 2.J): _basePages filters out ECO-tagged drawings so
 // they don't leak into base-quote extraction/validation/UI counters. Pages tagged
@@ -14266,6 +14425,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           const info=await detectPageTypes(pg.dataUrl,learningEx);
           newPages[i].types=info.types||[];
           newPages[i].aiDetectedTypes=info.types||[];
+          if(info.bomRegion)newPages[i].aiBomRegion=info.bomRegion;
         }catch(e){console.warn("[ECO Drawings] page-type detect failed:",pg.name,e.message);}
         detectDone++;
         setEcoExtractMsg(`🤖 Detecting page types — ${detectDone}/${newPages.length}…`);
@@ -21319,13 +21479,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const info=await detectPageTypes(item.dataUrl,learningEx);
         newItems[i].types=info.types;
         newItems[i].aiDetectedTypes=info.types; // store original AI result
+        if(info.bomRegion)newItems[i].aiBomRegion=info.bomRegion;
         done++;
         const msg=`🤖 Detecting page types — ${done}/${newItems.length}…`;
         setDetectProgress(msg);bgUpdate(panel.id,msg);
         // DECISION(v1.19.895): Per-page diagnostic log so we can see exactly
         // what the AI returned. Helps trace BOM-bias vs empty-types issues.
-        console.log(`[PAGE TYPE] ${item.name}: types=${JSON.stringify(info.types)}`);
-        livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,aiDetectedTypes:info.types}:p);
+        console.log(`[PAGE TYPE] ${item.name}: types=${JSON.stringify(info.types)}${info.bomRegion?" bomRegion="+JSON.stringify(info.bomRegion):""}`);
+        livePages=livePages.map(p=>p.id===item.id?{...p,types:info.types,aiDetectedTypes:info.types,...(info.bomRegion?{aiBomRegion:info.bomRegion}:{})}:p);
         setPendingPages([...livePages]);
       },4);
       // DECISION(v1.19.792): Safety fallback — if AI classified ALL newly-added pages
@@ -22042,7 +22203,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     await parallelMap(untagged,async(page)=>{
       const info=await detectPageTypes(page.dataUrl);
       // DECISION(v1.19.659): sheetNo no longer stored — derived from position at render.
-      updatedPages=updatedPages.map(p=>p.id===page.id?{...p,types:info.types}:p);
+      updatedPages=updatedPages.map(p=>p.id===page.id?{...p,types:info.types,...(info.bomRegion?{aiBomRegion:info.bomRegion}:{})}:p);
       done++;setDetectProgress(`Detecting ${done}/${untagged.length}…`);
     },4);
     const updated={...panel,pages:updatedPages};
@@ -22105,7 +22266,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         let pageItems=[],pageQs=[];
         for(const unit of units){
           const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):rgnNotes;
-          const result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber);
+          const result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
           if(result?.extractionPath)_reExtractionPathsSeen.add(result.extractionPath);
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           console.log(`[RE-EXTRACT] Page ${pgIdx+1} unit: ${items.length} items, ${(result.questions||[]).length} questions`);
@@ -22327,7 +22488,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         let pageItems=[],pageQs=[];
         for(const unit of units){
           const notes=unit.regionNote?("Cropped BOM region: "+unit.regionNote+fbRgnCtx):fbRgnCtx;
-          const result=await extractBomPage(unit.dataUrl,aiFeedback,notes,unit.originalPdfPath,unit.pageNumber);
+          const result=await extractBomPage(unit.dataUrl,aiFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
@@ -23064,6 +23225,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             .then(alts=>setAlternates([...alts])).catch(()=>{});
         }else if(correctionType){
           saveCorrectionEntry(uid,origPN,newPN,correctionType).then(()=>{}).catch(()=>{});
+        }
+        // Description cross: when user fills a blank-PN row from BC Item Browser,
+        // remember the description→part# mapping for future auto-population.
+        const origPNUpper=(origPN||"").trim().toUpperCase();
+        const wasBlankPN=!origPNUpper||origPNUpper==="?"||origPNUpper==="N/A"||origPNUpper==="EXTRACTION_FAILED";
+        const rowDesc=(r.description||"").trim();
+        if(wasBlankPN&&rowDesc){
+          saveDescriptionCrossEntry(uid,rowDesc,{
+            partNumber:bcItem.number,
+            manufacturer:bcItem._mfrCode||r.manufacturer||"",
+            description:bcItem.displayName||bcItem.description||rowDesc,
+            unitCost:bcItem.unitCost||null
+          }).catch(e=>console.warn("[DESC CROSS] save failed:",e.message));
         }
       }
       // ECO Stage B: tag the BC commit if we're in active ECO scope and the
@@ -25151,7 +25325,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     // below can also read it. Indicates the partNumber cell has additional
                     // context (from/auto-replace, Co-Part, Cross/ARC-Cross) that should be
                     // rendered as a separate sub-row beneath the data row.
-                    const _pnHasExtraLines=row.autoAddedCompanion||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber));
+                    const _pnHasExtraLines=row.autoAddedCompanion||row.isDescriptionCross||(row.isCrossed&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber));
                     // DECISION(v1.19.872, ECO delta-row model): in ECO scope, base
                     // (untagged) rows are READ-ONLY — every change is a separate
                     // tagged row below the CHANGE ORDER separator. Inputs, BC
@@ -25590,6 +25764,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       <tr key={row.id+"-meta"} style={{background:rowBg,borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none"}}>
                         <td colSpan={3}/>
                         <td colSpan={2} style={{padding:"0 5px 6px 38px"}}>
+                          {row.isDescriptionCross&&!isCross&&(
+                            <div style={{display:"flex",alignItems:"center",gap:6}}>
+                              <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:"#8b5cf6"}}>{(row.descriptionCrossFrom||"").slice(0,30)}</span></span>
+                            </div>
+                          )}
                           {isCross&&(
                             <div style={{display:"flex",alignItems:"center",gap:6}}>
                               <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:C.red}}>{row.crossedFrom}</span></span>
@@ -25609,6 +25788,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             )}
                             {isCross&&(
                               <span title={row.autoReplaced?"ARC auto-crossed this part from a saved alternate":"Part crossed to an alternate during extraction"} style={{fontSize:10,color:C.red,fontWeight:700,whiteSpace:"nowrap",cursor:"help",background:C.red+"22",padding:"1px 6px",borderRadius:10}}>{row.autoReplaced?"ARC Cross":"Crossed"}</span>
+                            )}
+                            {row.isDescriptionCross&&(
+                              <span title={`Part# auto-filled from description match: "${(row.descriptionCrossFrom||"").slice(0,60)}"`} style={{fontSize:10,color:"#8b5cf6",fontWeight:700,whiteSpace:"nowrap",cursor:"help",background:"#8b5cf622",padding:"1px 6px",borderRadius:10}}>Desc Cross</span>
                             )}
                           </div>
                         </td>
