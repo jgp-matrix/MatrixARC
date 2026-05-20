@@ -163,6 +163,67 @@ async function warnAdminsTokenUsage(uid, functionName, usage, maxTokens) {
   }
 }
 
+// ── MODEL FALLBACK ADMIN NOTIFICATION ──
+// DECISION(v1.20.1): Fire-and-forget email to company admins when a model 404
+// triggers a fallback. Goal: admin updates models.js before the fallback model
+// is also deprecated. De-duplicated via Firestore timestamp — at most one email
+// per 60 minutes per function/model pair.
+
+async function notifyAdminModelFallback(functionName, failedModel, fallbackModel, uid) {
+  try {
+    if (!SENDGRID_KEY) return;
+    // De-duplicate: check last notification timestamp
+    const dedupRef = db.doc('config/modelFallbackAlerts');
+    const dedupKey = `${functionName}_${failedModel}`;
+    const dedupDoc = await dedupRef.get();
+    const dedupData = dedupDoc.exists ? dedupDoc.data() : {};
+    const lastSent = dedupData[dedupKey] || 0;
+    if (Date.now() - lastSent < 60 * 60 * 1000) return; // 1 hour window
+    await dedupRef.set({ [dedupKey]: Date.now() }, { merge: true });
+
+    // Find company admins to notify
+    const profileDoc = await db.doc(`users/${uid}/config/profile`).get();
+    const companyId = profileDoc.exists ? profileDoc.data().companyId : null;
+    const adminEmails = [];
+    if (companyId) {
+      const membersSnap = await db.collection(`companies/${companyId}/members`).get();
+      const adminUids = membersSnap.docs.filter(d => d.data().role === 'admin').map(d => d.id);
+      for (const aUid of adminUids) {
+        try { const u = await admin.auth().getUser(aUid); if (u.email) adminEmails.push(u.email); } catch (_) {}
+      }
+    }
+    if (!adminEmails.length) return;
+
+    const now = new Date().toLocaleString('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+    const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;color:#1e293b">
+      <h2 style="color:#f59e0b;margin:0 0 8px 0;font-size:20px">⚠️ AI Model Fallback Triggered</h2>
+      <p style="color:#64748b;margin:0 0 20px 0;font-size:13px">The supplier portal automatically recovered, but the primary model needs to be updated.</p>
+      <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:14px 18px;border-radius:4px;margin-bottom:16px">
+        <table style="border-collapse:collapse;font-size:13px;color:#422006">
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Function:</td><td>${functionName}</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Failed model:</td><td><code style="background:#fde68a;padding:1px 6px;border-radius:3px">${failedModel}</code> (returned 404)</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Fallback used:</td><td><code style="background:#d1fae5;padding:1px 6px;border-radius:3px">${fallbackModel}</code></td></tr>
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Time (MDT):</td><td>${now}</td></tr>
+        </table>
+      </div>
+      <p style="color:#1e293b;font-size:13px;line-height:1.6"><strong>Action required:</strong> Update the model constant in <code>functions/models.js</code> and redeploy. The fallback model may be more expensive or could also be deprecated.</p>
+      <p style="color:#94a3b8;font-size:11px;margin-top:24px">MatrixARC automated alert · de-duplicated (1 email per hour max)</p>
+    </div>`;
+
+    for (const email of adminEmails) {
+      await sgMail.send({
+        to: email,
+        from: 'sales@matrixpci.com',
+        subject: `⚠️ ARC Model Fallback: ${failedModel} → ${fallbackModel}`,
+        html,
+      });
+    }
+    functions.logger.info(`notifyAdminModelFallback: emailed ${adminEmails.length} admin(s)`);
+  } catch (e) {
+    functions.logger.warn('notifyAdminModelFallback failed (non-fatal):', e.message);
+  }
+}
+
 // ── PUSH NOTIFICATION HELPER ──
 
 /**
@@ -968,22 +1029,47 @@ You MUST return one entry per requested item. Also include extra supplier items 
     }
   ];
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 64000,
-      system: [{ type: 'text', text: STATIC_PROMPT, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: messageContent }],
-    }),
-  });
-
-  if (!response.ok) {
+  // DECISION(v1.20.1): Model fallback chain. If the primary model returns 404
+  // (deprecated/retired), automatically try the next model in the chain instead
+  // of breaking the portal. Sends admin email on first fallback trigger so the
+  // registry can be updated proactively. Belt-and-suspenders with the daily
+  // monitorAnthropicModels probe.
+  const SUPPLIER_PORTAL_FALLBACK_CHAIN = [
+    ANTHROPIC_MODELS.SONNET,  // Primary — cost-effective for quote extraction
+    ANTHROPIC_MODELS.OPUS,    // Fallback — more expensive but reliable
+  ];
+  let response = null;
+  let modelUsed = SUPPLIER_PORTAL_FALLBACK_CHAIN[0];
+  for (let fi = 0; fi < SUPPLIER_PORTAL_FALLBACK_CHAIN.length; fi++) {
+    const tryModel = SUPPLIER_PORTAL_FALLBACK_CHAIN[fi];
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: tryModel,
+        max_tokens: 64000,
+        system: [{ type: 'text', text: STATIC_PROMPT, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: messageContent }],
+      }),
+    });
+    if (response.ok) {
+      modelUsed = tryModel;
+      if (fi > 0) {
+        functions.logger.warn(`extractSupplierQuotePricing: primary model ${SUPPLIER_PORTAL_FALLBACK_CHAIN[0]} returned 404, fell back to ${tryModel}`);
+        // Fire-and-forget admin alert so registry gets updated
+        notifyAdminModelFallback('extractSupplierQuotePricing', SUPPLIER_PORTAL_FALLBACK_CHAIN[0], tryModel, uid).catch(() => {});
+      }
+      break;
+    }
+    if (response.status === 404 && fi < SUPPLIER_PORTAL_FALLBACK_CHAIN.length - 1) {
+      functions.logger.warn(`extractSupplierQuotePricing: model ${tryModel} returned 404, trying next fallback…`);
+      continue;
+    }
+    // Non-404 error or last fallback exhausted — throw
     throw new functions.https.HttpsError('internal', `AI API error: ${response.status}`);
   }
 
@@ -2217,18 +2303,74 @@ exports.monitorAnthropicModels = functions
   }
 
   const failures = results.filter(r => r.status !== 'ok');
-  if (failures.length > 0 && TEAMS_WEBHOOK_URL) {
-    try {
-      const lines = failures.map(f => `- **${f.model}**: ${f.error || `HTTP ${f.httpStatus}`}`);
-      await fetch(TEAMS_WEBHOOK_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: `⚠️ **Anthropic Model Monitor** — ${failures.length} model(s) failed:\n${lines.join('\n')}`,
-        }),
-      });
-    } catch (e) {
-      functions.logger.warn('monitorAnthropicModels: Teams webhook post failed', { error: e.message });
+  if (failures.length > 0) {
+    const lines = failures.map(f => `- **${f.model}**: ${f.error || `HTTP ${f.httpStatus}`}`);
+
+    // Teams webhook (existing)
+    if (TEAMS_WEBHOOK_URL) {
+      try {
+        await fetch(TEAMS_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: `⚠️ **Anthropic Model Monitor** — ${failures.length} model(s) failed:\n${lines.join('\n')}`,
+          }),
+        });
+      } catch (e) {
+        functions.logger.warn('monitorAnthropicModels: Teams webhook post failed', { error: e.message });
+      }
+    }
+
+    // DECISION(v1.20.1): Email alert to all company admins on model probe failure.
+    // The daily monitor runs at 6 AM MDT — gives the admin time to update models.js
+    // before the workday starts. Uses the ANTHROPIC_API_KEY owner's profile to find
+    // the company; falls back to direct email to jon@matrixpci.com if no company found.
+    if (SENDGRID_KEY) {
+      try {
+        const now = new Date().toLocaleString('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+        const failRows = failures.map(f =>
+          `<tr><td style="padding:4px 10px;border-bottom:1px solid #fde68a;font-family:ui-monospace,monospace;font-size:12px">${f.model}</td>` +
+          `<td style="padding:4px 10px;border-bottom:1px solid #fde68a;color:${f.httpStatus === 404 ? '#dc2626' : '#92400e'}">${f.httpStatus ? `HTTP ${f.httpStatus}` : 'Exception'}</td>` +
+          `<td style="padding:4px 10px;border-bottom:1px solid #fde68a;font-size:12px">${f.error || '—'}</td></tr>`
+        ).join('');
+        const okModels = results.filter(r => r.status === 'ok').map(r => r.model).join(', ') || 'none';
+        const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;color:#1e293b">
+          <h2 style="color:#dc2626;margin:0 0 8px 0;font-size:20px">🚨 Anthropic Model Monitor — ${failures.length} Failure${failures.length > 1 ? 's' : ''}</h2>
+          <p style="color:#64748b;margin:0 0 16px 0;font-size:13px">Daily probe at ${now} MDT detected model issues. Affected models may break AI extraction if not updated.</p>
+          <table style="border-collapse:collapse;width:100%;font-size:13px;margin-bottom:16px">
+            <thead><tr style="background:#fef3c7"><th style="padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase;color:#92400e">Model</th><th style="padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase;color:#92400e">Status</th><th style="padding:6px 10px;text-align:left;font-size:11px;text-transform:uppercase;color:#92400e">Error</th></tr></thead>
+            <tbody>${failRows}</tbody>
+          </table>
+          <p style="font-size:12px;color:#64748b;margin:0 0 8px">Models passing: <strong>${okModels}</strong></p>
+          <p style="font-size:13px;color:#1e293b;line-height:1.6"><strong>Action:</strong> If the failed model is used in production, update <code>functions/models.js</code> and redeploy. The supplier portal has automatic 404 fallback, but BOM extraction may need a manual fix.</p>
+          <p style="color:#94a3b8;font-size:11px;margin-top:24px">MatrixARC daily model monitor · runs 6 AM MDT</p>
+        </div>`;
+
+        // Find admin emails — try company lookup, fall back to hardcoded
+        let adminEmails = [];
+        try {
+          // Scan all companies for admin members (monitor uses env key, not a user key)
+          const companiesSnap = await db.collectionGroup('members').where('role', '==', 'admin').limit(20).get();
+          const uidSet = new Set();
+          companiesSnap.docs.forEach(d => uidSet.add(d.id));
+          for (const aUid of uidSet) {
+            try { const u = await admin.auth().getUser(aUid); if (u.email) adminEmails.push(u.email); } catch (_) {}
+          }
+        } catch (_) {}
+        if (!adminEmails.length) adminEmails = ['jon@matrixpci.com'];
+
+        for (const email of adminEmails) {
+          await sgMail.send({
+            to: email,
+            from: 'sales@matrixpci.com',
+            subject: `🚨 ARC Model Monitor: ${failures.length} model${failures.length > 1 ? 's' : ''} failed`,
+            html,
+          });
+        }
+        functions.logger.info(`monitorAnthropicModels: emailed ${adminEmails.length} admin(s)`);
+      } catch (e) {
+        functions.logger.warn('monitorAnthropicModels: email alert failed', { error: e.message });
+      }
     }
   }
 

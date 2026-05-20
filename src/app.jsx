@@ -11755,7 +11755,7 @@ RULES:
 
   try{
     const raw=await apiCall({
-      model:'claude-sonnet-4-6',
+      model:ANTHROPIC_MODELS.SONNET,
       max_tokens:4000,
       system:'You are a UL508A panel shop inspector. Return only valid JSON.',
       messages:[{role:'user',content:prompt}]
@@ -41368,7 +41368,7 @@ INSTRUCTIONS:
       const historySlice=sqHistory.slice(-12);
       const messages=[...historySlice,{role:'user',content:q}];
 
-      const answer=(await apiCall({model:'claude-sonnet-4-6',max_tokens:2000,system:systemPrompt,messages})).trim();
+      const answer=(await apiCall({model:ANTHROPIC_MODELS.SONNET,max_tokens:2000,system:systemPrompt,messages})).trim();
       setSqAnswer(answer);
       setSqHistory(prev=>[...prev,{role:'user',content:q},{role:'assistant',content:answer}].slice(-12));
 
