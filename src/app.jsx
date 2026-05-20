@@ -5866,7 +5866,11 @@ async function _bcQueueExecute(item){
 const RFQ_STALE_MS=60*24*60*60*1000; // 60 days
 async function buildRfqSupplierGroups(bom){
   const now=Date.now();
-  const RFQ_EXCLUDE_ITEMS=/job\s*buy.?off|crating|^crate$/i;
+  // DECISION(v1.20.2): Added duct + DIN rail to exclusion list. These are bulk
+  // cut-to-length consumables sourced internally — never belong on an RFQ.
+  // Pattern matches the same duct/DIN rail detection used elsewhere (crossed
+  // items display, quote PDF, panel BOM views).
+  const RFQ_EXCLUDE_ITEMS=/job\s*buy.?off|crating|^crate$|\b(din\s*rail|duct)\b/i;
   const RFQ_SENT_COOLDOWN=30*24*60*60*1000; // 30 days — don't re-send within this window
   // DECISION(v1.19.699): Track WHY each row was included so we can auto-enable the
   // "Lead Times Only" checkbox per vendor when the only issue is missing lead times.
