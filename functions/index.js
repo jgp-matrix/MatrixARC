@@ -130,7 +130,7 @@ async function warnAdminsTokenUsage(uid, functionName, usage, maxTokens) {
     const adminUids = membersSnap.docs.filter(d => d.data().role === 'admin').map(d => d.id);
     if (!adminUids.length) return;
     let userName = 'Unknown user';
-    try { const u = await admin.auth().getUser(uid); userName = u.displayName || u.email || uid; } catch (_) {}
+    try { const u = await admin.auth().getUser(uid); userName = (u.displayName || u.email || uid).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]); } catch (_) {}
     const emailHtml = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;color:#1e293b">
       <h2 style="color:#d97706;margin:0 0 8px 0;font-size:20px">⚠️ AI Token Usage Warning</h2>
       <p style="color:#64748b;margin:0 0 20px 0;font-size:13px"><strong>${functionName}</strong> used <strong>${pct}%</strong> of the token limit during extraction.</p>
