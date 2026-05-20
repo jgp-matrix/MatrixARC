@@ -7,6 +7,7 @@
 - [Parallel Claude session workflow](#parallel-claude-session-workflow)
 - [Superpowers skills](#superpowers-skills-available-manual-load-local)
 - [Project Overview](#project-overview) — architecture, deploy, versioning
+- [Troubleshooting](#troubleshooting--first-line-of-defence) — always check ARC Debug Logs first
 - [Verification toolkit](#verification-toolkit) — tools/, pre-commit hook, TODO.md
 - [Data Retention (CRITICAL)](#data-retention-critical) — Firestore paths, learning databases
 - [Key Architecture Notes](#key-architecture-notes) — AI models, save guards, JSX fragment rule, lead times
@@ -173,6 +174,10 @@ When the brainstorming or writing-plans skill produces a design spec or implemen
   - **Minor** (x.+1.0): New AI prompt capabilities, new device types, new labor categories, new UI sections, restructuring data flow — anything that changes what the app can detect or output
   - **Major** (+1.0.0): Schema changes requiring migration, breaking changes to saved data format, `APP_SCHEMA_VERSION` bumps
 - **JSX validation**: Run `node validate_jsx.js` before deploying to catch JSX errors early
+
+## Troubleshooting — First Line of Defence
+
+**When investigating any bug, stall, or user-reported issue in ARC, always check the in-app Debug Logs first** before diving into source code. Access via Settings → Open Debug Logs (admin only), or query Firestore directly: `companies/{companyId}/debugLogs` ordered by `createdAt` desc. Filter out `bcFuzzyLookup` noise — look for `error`/`warn` severity entries and extraction/validation-related sources. The logs capture uncaught errors, console.error/warn, and user-reported issues with breadcrumbs, and are often the fastest path to root cause.
 
 ## Verification toolkit
 
@@ -343,7 +348,8 @@ Functions deploy separately from hosting — `firebase deploy --only functions`.
 
 | Function | Trigger | Purpose |
 |----------|---------|---------|
-| `extractBomPage` | HTTPS callable | Server-side BOM extraction. Accepts native PDF (`{pdfPath, pageNumber}`) or image fallback. Client tries this first via `extractBomPageViaServer`; falls back to legacy direct API on error. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
+| `extractBomPage` | HTTPS callable | Server-side BOM extraction (single page). Accepts native PDF (`{pdfPath, pageNumber}`) or image fallback. Client tries this first via `extractBomPageViaServer`; falls back to legacy direct API on error. Prompt mirrored at `functions/bomPrompt.js` — keep in sync with `BOM_PROMPT` in app.jsx. |
+| `extractBomBatch` | HTTPS callable | Batch BOM extraction (v1.20.5). Downloads PDF once, slices + extracts multiple pages in parallel (concurrency 4). Client sends all BOM pages sharing a pdfPath in one call via `extractBomBatchViaServer`; per-page fallback for failures. 540s timeout, 2GB, max 20 pages/batch. |
 
 **Purchasing & Engineering**
 

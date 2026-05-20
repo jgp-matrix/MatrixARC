@@ -2352,7 +2352,7 @@ exports.extractBomPage = functions
     body: JSON.stringify({
       model: ANTHROPIC_MODELS.OPUS,
       max_tokens: 64000,
-      thinking: { type: 'enabled', budget_tokens: 16000 },
+      thinking: { type: 'enabled', budget_tokens: 8000 },
       system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
       messages: [{ role: 'user', content: userContent }],
     }),
@@ -2375,6 +2375,159 @@ exports.extractBomPage = functions
   warnAdminsTokenUsage(uid, 'extractBomPage', result.usage, 64000).catch(() => {});
 
   return { raw, extractionPath, modelUsed, stopReason, usage: result.usage || {} };
+});
+
+// ── extractBomBatch — Batch BOM extraction (v1.20.5) ──
+// Downloads the PDF ONCE and extracts multiple pages in parallel, eliminating
+// the per-page PDF download overhead that caused repeated deadline-exceeded
+// timeouts on large drawing packages (e.g. 23-page PDF with 11 BOM pages).
+// Client sends all BOM pages in one call; server fans out Anthropic calls
+// with controlled concurrency. Falls back gracefully: pages that fail
+// individually still return in the results array with an error field.
+
+exports.extractBomBatch = functions
+  .runWith({ timeoutSeconds: 540, memory: '2GB', maxInstances: 5 })
+  .https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+  const uid = context.auth.uid;
+  const { pdfPath, pages, feedback, userNotes } = data || {};
+
+  if (!pdfPath || !pdfPath.startsWith('originalPdfs/')) {
+    throw new functions.https.HttpsError('invalid-argument', 'Valid pdfPath required');
+  }
+  if (!Array.isArray(pages) || pages.length === 0 || pages.length > 20) {
+    throw new functions.https.HttpsError('invalid-argument', 'pages must be an array of 1-20 entries');
+  }
+  for (const pg of pages) {
+    const n = Number(pg.pageNumber);
+    if (!Number.isInteger(n) || n < 1 || n > 75) {
+      throw new functions.https.HttpsError('invalid-argument', `Invalid pageNumber: ${pg.pageNumber}`);
+    }
+  }
+
+  const apiKey = await resolveAnthropicKey(uid);
+  if (!apiKey) {
+    throw new functions.https.HttpsError('failed-precondition', 'No Anthropic API key configured');
+  }
+
+  // Download PDF once
+  const bucket = admin.storage().bucket();
+  const file = bucket.file(pdfPath);
+  const [exists] = await file.exists();
+  if (!exists) {
+    throw new functions.https.HttpsError('not-found', `PDF not found: ${pdfPath}`);
+  }
+  const [buf] = await file.download();
+  const fullPdf = await PDFDocument.load(buf);
+  const totalPages = fullPdf.getPageCount();
+  functions.logger.info('extractBomBatch PDF loaded', { uid, pdfPath, totalPages, pdfSizeKB: Math.round(buf.length / 1024), requestedPages: pages.length });
+
+  const feedbackSection = feedback
+    ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
+  const notesSection = userNotes
+    ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.` : '';
+  const pageHint = `Extract ALL Bill of Materials (BOM) items from this page. If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+
+  // Process pages with controlled concurrency
+  const CONCURRENCY = 4;
+  const results = new Array(pages.length);
+  let idx = 0;
+  let totalUsage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
+
+  const workers = Array.from({ length: Math.min(CONCURRENCY, pages.length) }, async () => {
+    while (idx < pages.length) {
+      const i = idx++;
+      const pg = pages[i];
+      const pageNumber = Number(pg.pageNumber);
+      try {
+        // Slice single page from already-loaded PDF
+        if (pageNumber > totalPages) {
+          results[i] = { pageNumber, error: `Page ${pageNumber} exceeds PDF page count (${totalPages})` };
+          continue;
+        }
+        const singlePagePdf = await PDFDocument.create();
+        const [copiedPage] = await singlePagePdf.copyPages(fullPdf, [pageNumber - 1]);
+        singlePagePdf.addPage(copiedPage);
+        const singlePageBytes = await singlePagePdf.save();
+        const pdfBase64 = Buffer.from(singlePageBytes).toString('base64');
+
+        // Build user content — cropped BOM image if provided, otherwise PDF
+        let userContent;
+        let extractionPath;
+        if (pg.croppedBomImage) {
+          extractionPath = 'bom-region-crop';
+          const cropHint = `This image is a CROPPED region showing ONLY the BOM table from a UL508A control panel drawing. Extract ALL items from this table.\n\n`;
+          userContent = [
+            { type: 'image', source: { type: 'base64', media_type: pg.croppedBomMediaType || 'image/jpeg', data: pg.croppedBomImage } },
+            { type: 'text', text: cropHint + feedbackSection + notesSection },
+          ];
+        } else {
+          extractionPath = 'pdf-native';
+          userContent = [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+            { type: 'text', text: pageHint + (pg.notes ? `\n\n${pg.notes}` : '') + feedbackSection + notesSection },
+          ];
+        }
+
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-beta': 'interleaved-thinking-2025-05-14',
+          },
+          body: JSON.stringify({
+            model: ANTHROPIC_MODELS.OPUS,
+            max_tokens: 64000,
+            thinking: { type: 'enabled', budget_tokens: 8000 },
+            system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
+            messages: [{ role: 'user', content: userContent }],
+          }),
+        });
+
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => ({}));
+          functions.logger.error('extractBomBatch page error', { pageNumber, status: response.status, error: errBody.error?.message });
+          results[i] = { pageNumber, error: `API error: ${response.status} — ${errBody.error?.message || 'unknown'}`, extractionPath };
+          continue;
+        }
+
+        const result = await response.json();
+        const raw = (result.content || []).find(b => b.type === 'text')?.text || '';
+        const modelUsed = result.model || ANTHROPIC_MODELS.OPUS;
+        const stopReason = result.stop_reason || 'unknown';
+        const usage = result.usage || {};
+
+        // Accumulate usage
+        totalUsage.input_tokens += usage.input_tokens || 0;
+        totalUsage.output_tokens += usage.output_tokens || 0;
+        totalUsage.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0;
+        totalUsage.cache_read_input_tokens += usage.cache_read_input_tokens || 0;
+
+        recordAnthropicUsage(uid, modelUsed, usage).catch(() => {});
+
+        results[i] = { pageNumber, raw, extractionPath, modelUsed, stopReason, usage };
+      } catch (pageErr) {
+        functions.logger.error('extractBomBatch page exception', { pageNumber, error: pageErr.message });
+        results[i] = { pageNumber, error: pageErr.message };
+      }
+    }
+  });
+
+  await Promise.all(workers);
+
+  warnAdminsTokenUsage(uid, 'extractBomBatch', totalUsage, 64000 * pages.length).catch(() => {});
+
+  functions.logger.info('extractBomBatch complete', {
+    uid, pdfPath, pagesRequested: pages.length,
+    pagesSucceeded: results.filter(r => r && r.raw).length,
+    pagesFailed: results.filter(r => r && r.error).length,
+  });
+
+  return { results, pdfPath, totalPages };
 });
 
 // ── monitorAnthropicModels — Daily synthetic probe of model aliases ──
