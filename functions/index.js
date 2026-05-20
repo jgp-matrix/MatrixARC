@@ -224,6 +224,80 @@ async function notifyAdminModelFallback(functionName, failedModel, fallbackModel
   }
 }
 
+// ── PORTAL FAILURE ADMIN NOTIFICATION ──
+// DECISION(v1.20.3): Fire-and-forget email to company admins when the supplier
+// portal encounters a failure the supplier can't resolve (AI extraction error,
+// JSON parse failure, notification pipeline break, cost-cap trigger). Uses the
+// same de-duplication pattern as notifyAdminModelFallback — at most one email
+// per 60 minutes per errorType.
+
+async function notifyAdminPortalFailure(uid, errorType, details) {
+  try {
+    if (!SENDGRID_KEY) return;
+    // De-duplicate via same doc as model fallback alerts
+    const dedupRef = db.doc('config/modelFallbackAlerts');
+    const dedupKey = `portal_${errorType}`;
+    const dedupDoc = await dedupRef.get();
+    const dedupData = dedupDoc.exists ? dedupDoc.data() : {};
+    const lastSent = dedupData[dedupKey] || 0;
+    if (Date.now() - lastSent < 60 * 60 * 1000) return; // 1 hour window
+    await dedupRef.set({ [dedupKey]: Date.now() }, { merge: true });
+
+    // Find company admins
+    const profileDoc = await db.doc(`users/${uid}/config/profile`).get();
+    const companyId = profileDoc.exists ? profileDoc.data().companyId : null;
+    const adminEmails = [];
+    if (companyId) {
+      const membersSnap = await db.collection(`companies/${companyId}/members`).get();
+      const adminUids = membersSnap.docs.filter(d => d.data().role === 'admin').map(d => d.id);
+      for (const aUid of adminUids) {
+        try { const u = await admin.auth().getUser(aUid); if (u.email) adminEmails.push(u.email); } catch (_) {}
+      }
+    }
+    if (!adminEmails.length) adminEmails.push('jon@matrixpci.com'); // fallback
+
+    const now = new Date().toLocaleString('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+    const safeDetails = Object.entries(details || {}).map(([k, v]) =>
+      `<tr><td style="padding:3px 12px 3px 0;font-weight:700">${String(k).replace(/[<>&"]/g, '')}</td><td>${String(v).replace(/[<>&"]/g, '')}</td></tr>`
+    ).join('');
+
+    const severityColors = {
+      ai_extraction_error: { bg: '#fef2f2', border: '#ef4444', icon: '🔴', label: 'AI Extraction Failed' },
+      json_parse_failure:  { bg: '#fef2f2', border: '#ef4444', icon: '🔴', label: 'AI Response Unparseable' },
+      cost_cap_reached:    { bg: '#fefce8', border: '#eab308', icon: '🟡', label: 'Cost Cap Triggered' },
+      notification_failed: { bg: '#fff7ed', border: '#f97316', icon: '🟠', label: 'Notification Pipeline Failed' },
+      email_failed:        { bg: '#fff7ed', border: '#f97316', icon: '🟠', label: 'Email Delivery Failed' },
+    };
+    const sev = severityColors[errorType] || { bg: '#fef2f2', border: '#ef4444', icon: '🔴', label: errorType };
+
+    const html = `<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;color:#1e293b">
+      <h2 style="color:${sev.border};margin:0 0 8px 0;font-size:20px">${sev.icon} Supplier Portal Alert: ${sev.label}</h2>
+      <p style="color:#64748b;margin:0 0 20px 0;font-size:13px">A supplier may need manual assistance with their quote submission.</p>
+      <div style="background:${sev.bg};border-left:4px solid ${sev.border};padding:14px 18px;border-radius:4px;margin-bottom:16px">
+        <table style="border-collapse:collapse;font-size:13px;color:#1e293b">
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Alert type:</td><td>${sev.label}</td></tr>
+          <tr><td style="padding:3px 12px 3px 0;font-weight:700">Time (MDT):</td><td>${now}</td></tr>
+          ${safeDetails}
+        </table>
+      </div>
+      <p style="color:#1e293b;font-size:13px;line-height:1.6"><strong>Action:</strong> Check the supplier portal submission and contact the supplier if they need help entering prices manually.</p>
+      <p style="color:#94a3b8;font-size:11px;margin-top:24px">MatrixARC automated alert · de-duplicated (1 email per hour max per alert type)</p>
+    </div>`;
+
+    for (const email of adminEmails) {
+      await sgMail.send({
+        to: email,
+        from: 'sales@matrixpci.com',
+        subject: `${sev.icon} ARC Portal Alert: ${sev.label}`,
+        html,
+      });
+    }
+    functions.logger.info(`notifyAdminPortalFailure[${errorType}]: emailed ${adminEmails.length} admin(s)`);
+  } catch (e) {
+    functions.logger.warn('notifyAdminPortalFailure failed (non-fatal):', e.message);
+  }
+}
+
 // ── PUSH NOTIFICATION HELPER ──
 
 /**
@@ -538,18 +612,29 @@ exports.onSupplierQuoteSubmitted = functions.firestore
 
     // Create notification
     const notifBody = `${vendorName} submitted a quote${projectName ? ` for "${projectName}"` : ''}${rfqNum ? ` (${rfqNum})` : ''}.`;
-    await admin.firestore().collection(`users/${uid}/notifications`).add({
-      type: 'supplier_quote',
-      title: `New Quote from ${vendorName}`,
-      body: notifBody,
-      createdAt: Date.now(),
-      read: false,
-      projectId: after.projectId || '',
-      rfqUploadId: token,
-      rfqNum,
-      vendorName,
-      projectName,
-    });
+    try {
+      await admin.firestore().collection(`users/${uid}/notifications`).add({
+        type: 'supplier_quote',
+        title: `New Quote from ${vendorName}`,
+        body: notifBody,
+        createdAt: Date.now(),
+        read: false,
+        projectId: after.projectId || '',
+        rfqUploadId: token,
+        rfqNum,
+        vendorName,
+        projectName,
+      });
+    } catch (notifErr) {
+      functions.logger.error('onSupplierQuoteSubmitted: notification creation failed:', notifErr.message);
+      notifyAdminPortalFailure(uid, 'notification_failed', {
+        Stage: 'Bell notification creation',
+        Error: notifErr.message,
+        Vendor: vendorName,
+        Project: projectName,
+        RFQ: rfqNum,
+      }).catch(() => {});
+    }
 
     // Send push notification
     await sendPushToUser(uid, {
@@ -622,6 +707,13 @@ exports.onSupplierQuoteSubmitted = functions.firestore
       }
     } catch (e) {
       console.warn('ARC user notification email failed:', e.message);
+      notifyAdminPortalFailure(uid, 'email_failed', {
+        Stage: 'ARC user notification email',
+        Error: e.message,
+        Vendor: vendorName,
+        Project: projectName,
+        RFQ: rfqNum,
+      }).catch(() => {});
     }
 
     // 2) Send confirmation to supplier
@@ -933,6 +1025,13 @@ exports.extractSupplierQuotePricing = functions
       'extractSupplierQuotePricing rejected: per-token call cap reached',
       { token, currentCallCount, cap: SUPPLIER_PORTAL_MAX_CALLS }
     );
+    notifyAdminPortalFailure(tokenData.uid, 'cost_cap_reached', {
+      Cap: 'Call count',
+      Calls: `${currentCallCount} / ${SUPPLIER_PORTAL_MAX_CALLS}`,
+      Token: token,
+      Vendor: tokenData.vendorName || '',
+      Project: tokenData.projectName || '',
+    }).catch(() => {});
     throw new functions.https.HttpsError(
       'resource-exhausted',
       'This token has reached its call limit. Contact ARC if you need to re-extract.'
@@ -948,6 +1047,13 @@ exports.extractSupplierQuotePricing = functions
       'extractSupplierQuotePricing rejected: per-token spend cap reached',
       { token, currentSpendCents, cap: SUPPLIER_PORTAL_MAX_SPEND_CENTS }
     );
+    notifyAdminPortalFailure(tokenData.uid, 'cost_cap_reached', {
+      Cap: 'Spend',
+      Spend: `$${(currentSpendCents / 100).toFixed(2)} / $${(SUPPLIER_PORTAL_MAX_SPEND_CENTS / 100).toFixed(2)}`,
+      Token: token,
+      Vendor: tokenData.vendorName || '',
+      Project: tokenData.projectName || '',
+    }).catch(() => {});
     throw new functions.https.HttpsError(
       'resource-exhausted',
       'This token has reached its spend limit.'
@@ -1070,6 +1176,14 @@ You MUST return one entry per requested item. Also include extra supplier items 
       continue;
     }
     // Non-404 error or last fallback exhausted — throw
+    notifyAdminPortalFailure(uid, 'ai_extraction_error', {
+      Function: 'extractSupplierQuotePricing',
+      'HTTP status': response.status,
+      'Model tried': tryModel,
+      Token: token,
+      Vendor: tokenData.vendorName || '',
+      Project: tokenData.projectName || '',
+    }).catch(() => {});
     throw new functions.https.HttpsError('internal', `AI API error: ${response.status}`);
   }
 
@@ -1134,6 +1248,14 @@ You MUST return one entry per requested item. Also include extra supplier items 
     // DECISION(v1.19.664): On parse failure, log first 120 chars only (usually enough to see
     // "missing brace" or "unexpected token X" context without leaking the whole response).
     functions.logger.warn('extractSupplierQuotePricing JSON parse failed:', e.message, 'raw_head:', text.slice(0, 120));
+    notifyAdminPortalFailure(uid, 'json_parse_failure', {
+      Function: 'extractSupplierQuotePricing',
+      Error: e.message,
+      'Response length': text.length,
+      Token: token,
+      Vendor: tokenData.vendorName || '',
+      Project: tokenData.projectName || '',
+    }).catch(() => {});
     extracted = [];
   }
 
