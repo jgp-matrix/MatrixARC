@@ -236,11 +236,11 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     - Set `ANTHROPIC_API_KEY` env var in Firebase for the monitor
     - Node.js 20 runtime deprecated 2026-04-30, decommissioned 2026-10-30 —
       upgrade `functions/package.json` engines to Node 22 in a future session
-    - **WATCH:** On next BOM extraction, check browser console for
+    - ~~**WATCH:** On next BOM extraction, check browser console for
       `[BOM EXTRACT/server] ok` confirming the restored `extractBomPage`
-      Cloud Function is being hit. If it shows the fallback warning instead
-      (`server path failed — falling back to direct API`), investigate.
-      Also check Settings → Debug Logs for the `extractBomPage` info entry.
+      Cloud Function is being hit.~~ **Confirmed working (2026-05-20):**
+      Noah's PRJ402101 extraction hit the `bom-region-crop` server path
+      successfully. Token limits subsequently bumped 16K→64K (see #37).
 
 ## Round 6 (user-reported, 2026-05-08)
 
@@ -702,6 +702,32 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     **IN PRE_REVIEW** (when sent for review) → **QUOTES SENT** (once the quote is
     sent). Status should update automatically based on data completeness and
     workflow actions.
+
+## Round 13 (BOM extraction token truncation, 2026-05-20)
+
+37. **RESOLVED** — `48deb1c9` (2026-05-20, deployed in v1.20.1) — BOM extraction
+    silently returning 0 items on dense/large BOMs (reported on PRJ402101,
+    Clearstream drawing format). Root cause: `max_tokens: 16000` was too low for
+    large BOMs — Anthropic returned `stopReason: "max_tokens"` with truncated
+    JSON that failed all 4 parse strategies in `_parseAndVerifyBomRaw`, resulting
+    in `items: []`. Because the HTTP call succeeded (200), no error was thrown and
+    the empty result was accepted silently. Fix: bumped `max_tokens` from 16000
+    to 64000 and `budget_tokens` (thinking) from 4000 to 16000 in all three
+    extraction paths — Cloud Function `extractBomPage`, client-side crop fallback,
+    and client-side PDF fallback. Also added crop-empty safety net: when the
+    cropped-BOM path returns 0 items, extraction now retries via the full
+    PDF-native path before giving up.
+
+38. **RESOLVED** — `48deb1c9` (2026-05-20, deployed in v1.20.1) — Same
+    `max_tokens: 16000` truncation affected `extractSupplierQuotePricing` Cloud
+    Function (supplier portal quote uploads). Bumped to `max_tokens: 64000`.
+
+39. **RESOLVED** — `48deb1c9` (2026-05-20, deployed in v1.20.1) — Added admin
+    warning email at 75% token usage. New `warnAdminsTokenUsage()` helper in
+    `functions/index.js` resolves the user's companyId, finds admin UIDs, and
+    sends a SendGrid alert when `output_tokens >= 0.75 * maxTokens`. Wired into
+    both `extractBomPage` and `extractSupplierQuotePricing`. Non-fatal — failures
+    are logged but don't block extraction.
 
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
