@@ -37098,7 +37098,10 @@ function CostAnalysisModal({onClose,uid,companyId}){
   const totalCents=memberLedgers.reduce((s,m)=>s+((m.ledger?.totalCents)||0),0);
   const monthDollars=monthCents/100;
   const totalDollars=totalCents/100;
-  const cap=300; // Workspace spend limit (matches the toolbar pill default)
+  // DECISION(v1.20.7): Read admin-configured budget from the current user's ledger.
+  // Falls back to $300 if not yet configured (matches original hardcoded default).
+  const userLedger=memberLedgers.find(m=>m.uid===uid)?.ledger;
+  const cap=userLedger?.monthlyBudgetDollars||300;
   const monthPct=Math.min(100,Math.round((monthDollars/cap)*100));
   const costPerProjMonth=counts.thisMonthProjects>0?(monthDollars/counts.thisMonthProjects):null;
   const costPerPanelMonth=counts.thisMonthPanels>0?(monthDollars/counts.thisMonthPanels):null;
@@ -37792,6 +37795,102 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs}){
             </form>
           )}
         </div>
+
+        {/* Admin: API Usage & Budget — DECISION(v1.20.7) */}
+        {isAdmin()&&(()=>{
+          const [budgetInput,setBudgetInput]=useState("");
+          const [budgetLoading,setBudgetLoading]=useState(false);
+          const [budgetSaved,setBudgetSaved]=useState(false);
+          const [ledgerData,setLedgerData]=useState(null);
+          useEffect(()=>{
+            const unsub=fbDb.doc(`users/${uid}/config/anthropicLedger`).onSnapshot(snap=>{
+              if(snap.exists){
+                const d=snap.data();
+                setLedgerData(d);
+                if(budgetInput==="")setBudgetInput(d.monthlyBudgetDollars!=null?String(d.monthlyBudgetDollars):"300");
+              }
+            });
+            return()=>unsub();
+          },[uid]);
+          const curMonth=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
+          const monthCents=(ledgerData&&ledgerData.monthKey===curMonth)?(ledgerData.monthCents||0):0;
+          const monthDollars=monthCents/100;
+          const totalCents=ledgerData?.totalCents||0;
+          const totalDollars=totalCents/100;
+          const capDollars=Number(budgetInput)||300;
+          const pct=capDollars>0?Math.min(100,Math.round((monthDollars/capDollars)*100)):0;
+          const tone=pct>=90?{bg:"#3a0a0a",border:"#ef4444",fg:"#fca5a5",bar:"#ef4444",label:"CRITICAL"}
+                    :pct>=50?{bg:"#3a1f00",border:"#f59e0b",fg:"#fcd34d",bar:"#f59e0b",label:"WARNING"}
+                    :{bg:"#0d2a18",border:"#22c55e",fg:"#86efac",bar:"#22c55e",label:"OK"};
+          const saveBudget=async()=>{
+            const val=Number(budgetInput);
+            if(!val||val<1){arcAlert("Enter a valid monthly budget (minimum $1).");return;}
+            setBudgetLoading(true);
+            try{
+              await fbDb.doc(`users/${uid}/config/anthropicLedger`).set({monthlyBudgetDollars:val},{merge:true});
+              setBudgetSaved(true);setTimeout(()=>setBudgetSaved(false),3000);
+            }catch(e){arcAlert("Failed to save budget: "+e.message);}
+            setBudgetLoading(false);
+          };
+          return(
+            <div style={{marginTop:20,padding:"14px 16px",background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:10}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+                📊 API Usage & Budget <span style={{fontSize:10,fontWeight:600,color:"#a78bfa",background:"#1a1033",borderRadius:10,padding:"1px 8px"}}>ADMIN</span>
+              </div>
+              {/* Usage meter */}
+              <div style={{marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6}}>
+                  <span style={{fontSize:20,fontWeight:800,color:tone.fg}}>${monthDollars.toFixed(2)}</span>
+                  <span style={{fontSize:13,color:C.muted}}>of <strong style={{color:C.text}}>${capDollars.toFixed(0)}</strong> monthly budget</span>
+                </div>
+                <div style={{width:"100%",height:8,borderRadius:4,background:"#1e293b",overflow:"hidden"}}>
+                  <div style={{width:`${pct}%`,height:"100%",borderRadius:4,background:tone.bar,transition:"width 0.5s ease"}}/>
+                </div>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+                  <span style={{fontSize:10,color:tone.fg,fontWeight:600}}>{pct}% used</span>
+                  <span style={{fontSize:10,fontWeight:600,color:tone.fg,background:tone.bg,border:`1px solid ${tone.border}`,borderRadius:8,padding:"1px 8px"}}>{tone.label}</span>
+                </div>
+              </div>
+              {/* Details row */}
+              <div style={{display:"flex",gap:16,marginBottom:14,flexWrap:"wrap"}}>
+                <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
+                  <div style={{fontSize:10,color:C.muted,marginBottom:2}}>This Month</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.text}}>${monthDollars.toFixed(2)}</div>
+                </div>
+                <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
+                  <div style={{fontSize:10,color:C.muted,marginBottom:2}}>All Time</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.text}}>${totalDollars.toFixed(2)}</div>
+                </div>
+                <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
+                  <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Remaining</div>
+                  <div style={{fontSize:16,fontWeight:700,color:monthDollars>=capDollars?"#ef4444":"#86efac"}}>${Math.max(0,capDollars-monthDollars).toFixed(2)}</div>
+                </div>
+                {ledgerData?.lastCallAt&&(
+                  <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 120px",minWidth:120}}>
+                    <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Last Call</div>
+                    <div style={{fontSize:12,fontWeight:600,color:C.text}}>{new Date(ledgerData.lastCallAt).toLocaleDateString()}</div>
+                    <div style={{fontSize:10,color:C.muted}}>{ledgerData.lastCallModel||""}</div>
+                  </div>
+                )}
+              </div>
+              {/* Budget setting */}
+              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                <span style={{fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>Monthly budget:</span>
+                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                  <span style={{fontSize:13,color:C.text,fontWeight:600}}>$</span>
+                  <input type="number" min="1" step="50" value={budgetInput} onChange={e=>setBudgetInput(e.target.value)}
+                    style={{width:80,padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:"#111827",color:C.text,fontSize:13,fontWeight:600}}
+                    onKeyDown={e=>{if(e.key==="Enter")saveBudget();}}/>
+                </div>
+                <button onClick={saveBudget} disabled={budgetLoading}
+                  style={{padding:"5px 14px",borderRadius:6,border:"none",background:budgetSaved?"#22c55e":C.accent,color:"#fff",fontSize:12,fontWeight:600,cursor:budgetLoading?"wait":"pointer",opacity:budgetLoading?0.6:1}}>
+                  {budgetSaved?"Saved ✓":budgetLoading?"Saving…":"Save"}
+                </button>
+                <span style={{fontSize:10,color:C.muted}}>Matches your Anthropic console workspace limit</span>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Admin: Debug Logs — DECISION(v1.19.584) */}
         {isAdmin()&&onShowDebugLogs&&(
@@ -41574,6 +41673,7 @@ INSTRUCTIONS:
   // via onSnapshot so it updates live as extractions run. Resets to $0 on month
   // rollover (handled by _recordAnthropicUsage's monthKey check).
   const [anthropicMonthCents,setAnthropicMonthCents]=useState(null);
+  const [anthropicBudgetDollars,setAnthropicBudgetDollars]=useState(300); // default $300
   useEffect(()=>{
     if(!user.uid)return;
     const unsub=fbDb.doc(`users/${user.uid}/config/anthropicLedger`).onSnapshot(snap=>{
@@ -41582,6 +41682,9 @@ INSTRUCTIONS:
       // If month doesn't match current, treat as 0 (will reset on next call).
       const curMonth=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
       setAnthropicMonthCents(d.monthKey===curMonth?(d.monthCents||0):0);
+      // DECISION(v1.20.7): Admin-configurable monthly budget — stored alongside
+      // the ledger so the onSnapshot keeps the toolbar pill in sync in real time.
+      if(d.monthlyBudgetDollars!=null)setAnthropicBudgetDollars(d.monthlyBudgetDollars);
     },err=>{
       console.warn("[anthropicLedger] listener error:",err.message);
       setAnthropicMonthCents(null);
@@ -42137,17 +42240,22 @@ INSTRUCTIONS:
               v1.19.976: admin-only — non-admin users don't need API spend visibility. */}
           {anthropicMonthCents!=null&&isAdmin()&&(()=>{
             const monthDollars=anthropicMonthCents/100;
-            const capDollars=300; // matches the Workspace Spend Limit set in v1.19.953 plan
+            const capDollars=anthropicBudgetDollars||300;
             const pct=Math.min(100,Math.round((monthDollars/capDollars)*100));
-            const tone=pct>=90?{bg:"#3a0a0a",border:"#ef4444aa",fg:"#fca5a5"}
-                      :pct>=50?{bg:"#3a1f00",border:"#f59e0baa",fg:"#fcd34d"}
-                      :{bg:"#0d2a18",border:"#22c55e88",fg:"#86efac"};
+            const tone=pct>=90?{bg:"#3a0a0a",border:"#ef4444aa",fg:"#fca5a5",bar:"#ef4444"}
+                      :pct>=50?{bg:"#3a1f00",border:"#f59e0baa",fg:"#fcd34d",bar:"#f59e0b"}
+                      :{bg:"#0d2a18",border:"#22c55e88",fg:"#86efac",bar:"#22c55e"};
             return(
-              <div title={`Anthropic API spend this month — running total from your spend ledger.\n\nResets monthly. The workspace cap on console.anthropic.com is your hard ceiling; this pill helps you stay ahead of it.`}
-                style={{display:"flex",alignItems:"center",gap:6,padding:"0 12px",height:36,borderRadius:10,background:tone.bg,border:`1px solid ${tone.border}`,cursor:"default",flexShrink:0}}>
+              <div title={`Anthropic API spend: $${monthDollars.toFixed(2)} of $${capDollars.toFixed(0)} monthly budget (${pct}%)\n\nBudget is configurable in Settings. Resets monthly.`}
+                style={{display:"flex",alignItems:"center",gap:6,padding:"0 12px",height:36,borderRadius:10,background:tone.bg,border:`1px solid ${tone.border}`,cursor:"pointer",flexShrink:0}}
+                onClick={()=>setShowSettings(true)}>
                 <span style={{fontSize:11,fontWeight:600,color:tone.fg,letterSpacing:0.3,opacity:0.85}}>Anthropic</span>
-                <span style={{fontSize:13,fontWeight:700,color:tone.fg,whiteSpace:"nowrap"}}>${monthDollars.toFixed(2)}</span>
-                <span style={{fontSize:10,color:tone.fg,opacity:0.6,whiteSpace:"nowrap"}}>/mo</span>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2}}>
+                  <span style={{fontSize:13,fontWeight:700,color:tone.fg,whiteSpace:"nowrap"}}>${monthDollars.toFixed(2)} <span style={{fontSize:10,fontWeight:500,opacity:0.6}}>/ ${capDollars.toFixed(0)}</span></span>
+                  <div style={{width:60,height:3,borderRadius:2,background:`${tone.fg}22`}}>
+                    <div style={{width:`${pct}%`,height:"100%",borderRadius:2,background:tone.bar,transition:"width 0.5s ease"}}/>
+                  </div>
+                </div>
               </div>
             );
           })()}
