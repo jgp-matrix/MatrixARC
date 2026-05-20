@@ -10320,7 +10320,7 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
 // to the legacy direct API path, preserving zero-regression behavior.
 async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl){
   if(!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF.");
-  const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:300000});
+  const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:540000});
   const payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
   if(croppedBomDataUrl){
     const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
@@ -10410,7 +10410,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         body:JSON.stringify({
           model:ANTHROPIC_MODELS.OPUS,
           max_tokens:64000,
-          thinking:{type:"enabled",budget_tokens:16000},
+          thinking:{type:"enabled",budget_tokens:8000},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
             {type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},
@@ -10456,7 +10456,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         body:JSON.stringify({
           model:ANTHROPIC_MODELS.OPUS,
           max_tokens:64000,
-          thinking:{type:"enabled",budget_tokens:16000},
+          thinking:{type:"enabled",budget_tokens:8000},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
             {type:"document",source:{type:"base64",media_type:"application/pdf",data:pdfBase64}},
