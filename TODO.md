@@ -729,6 +729,46 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     both `extractBomPage` and `extractSupplierQuotePricing`. Non-fatal — failures
     are logged but don't block extraction.
 
+## Round 14 (RFQ / Supplier Portal bug fixes, 2026-05-20)
+
+40. **RESOLVED** — `52394c87` (2026-05-20, deployed in v1.20.3) — Duct and DIN rail
+    items appearing on RFQs. `RFQ_EXCLUDE_ITEMS` regex in `buildRfqSupplierGroups()`
+    only excluded job buyoff / crating / crate. Fix: added `\b(din\s*rail|duct)\b`
+    to the exclusion pattern. These are bulk cut-to-length consumables sourced
+    internally — never belong on supplier RFQs.
+
+41. **RESOLVED** — `aa9b45c1` (2026-05-20, deployed in v1.20.3) — Crossed parts
+    using stale vendor/manufacturer for RFQs. Auto-cross at `src/app.jsx` line
+    ~9014 spreads `{...r, partNumber:alt.replacement.partNumber}` without clearing
+    `bcVendorName`/`bcVendorNo`, so the RFQ routes to the original part's supplier
+    instead of the crossed part's supplier. Fix: `buildRfqSupplierGroups()` now
+    re-resolves vendor from BC for any `isCrossed` item before the existing
+    empty-vendor fallback. Falls back to stale vendor if BC lookup fails.
+
+42. **RESOLVED** — `c2bba6cf` (2026-05-20, deployed in v1.20.3) — "Default for
+    future RFQs" vendor email persistence — three bugs:
+    (A) Emails only saved on checkbox toggle — edits made after checking "remember"
+    were never persisted. Fix: save all remembered vendor emails at send time in
+    `sendAll()`.
+    (B) Saved defaults silently discarded when BC had already populated the email
+    field. Fix: saved defaults now always override BC-populated contacts.
+    (C) Silent `.catch(()=>{})` on Firestore writes swallowed errors. Fix: replaced
+    with `console.warn` logging.
+
+43. **RESOLVED** — `e61f13ed` (2026-05-20, deployed in v1.20.4) — No admin
+    notifications when supplier portal encounters failures. New
+    `notifyAdminPortalFailure()` helper in `functions/index.js` sends de-duplicated
+    emails (1/hr per alert type) to company admins for: AI extraction errors,
+    JSON parse failures, cost-cap triggers, notification pipeline breaks, and
+    email delivery failures. Also wrapped `onSupplierQuoteSubmitted` notification
+    creation in try/catch to prevent unhandled rejections from killing the trigger.
+
+44. **RESOLVED** — `09c1f79b` (2026-05-20, deployed in v1.20.4) — Supplier-facing
+    error message shows raw technical error text. Replaced with user-friendly copy:
+    "We couldn't auto-extract pricing from your quote — our team has been notified
+    and will review it. Please enter prices manually below to keep things moving."
+    Raw error still stored in state for console diagnostics.
+
 T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
