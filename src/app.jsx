@@ -5913,6 +5913,17 @@ async function buildRfqSupplierGroups(bom){
   for(const {row:item,reason} of eligibleWithReasons){
     let vendorName=item.bcVendorName||"";
     let vendorNo=item.bcVendorNo||"";
+    // DECISION(v1.20.2): Crossed items carry stale bcVendorName/bcVendorNo from the
+    // original part (auto-cross spreads ...r without clearing vendor fields). Always
+    // re-resolve from BC using the current (crossed) partNumber so the RFQ routes to
+    // the correct supplier. Falls back to the stale vendor if BC lookup fails.
+    if(item.isCrossed&&_bcToken){
+      const pn=(item.partNumber||"").trim();
+      if(pn){
+        const freshNo=await bcGetItemVendorNo(pn);
+        if(freshNo){const freshName=await bcGetVendorName(freshNo);if(freshName){vendorName=freshName;vendorNo=freshNo;}}
+      }
+    }
     if(!vendorName&&_bcToken){
       const pn=(item.partNumber||"").trim();
       if(pn){vendorNo=vendorNo||await bcGetItemVendorNo(pn);vendorName=vendorNo?await bcGetVendorName(vendorNo):"";}
