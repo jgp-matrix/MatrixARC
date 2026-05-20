@@ -16640,9 +16640,13 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
           const{data}=await _readSupplierConfig(currentUid,"vendorEmails");
           const saved=data||{};
           const rem={};
+          // DECISION(v1.20.2): Saved defaults ALWAYS override BC-populated emails.
+          // Previously the guard `prev[g.vendorName]?prev:...` skipped the saved
+          // value when BC had already populated the email field — the user's
+          // explicit "remember" choice was silently discarded.
           groups.forEach(g=>{
             if(saved[g.vendorName]){
-              setEmails(prev=>prev[g.vendorName]?prev:{...prev,[g.vendorName]:saved[g.vendorName]});
+              setEmails(prev=>({...prev,[g.vendorName]:saved[g.vendorName]}));
               rem[g.vendorName]=true;
             }
           });
@@ -16790,6 +16794,21 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         // company-shared path (or fall back to user-shared on solo accounts).
         // Mirrors the alternates/corrections team-shared pattern.
         fbDb.doc(_supplierDocPath(uid,"supplierCrossRef")).set({records:firebase.firestore.FieldValue.arrayUnion(...allCrossings)},{merge:true}).catch(e=>console.warn("CrossRef save failed:",e));
+      }
+      // DECISION(v1.20.2): Persist vendor emails at send time for every vendor
+      // with "remember" checked. Previously the save only fired at checkbox-toggle
+      // time — if the user modified contacts AFTER checking "remember" (or the
+      // checkbox was pre-loaded from a previous save), the updated email was
+      // never written back. Now the final email value is always persisted.
+      const emailsToSave={};
+      groups.forEach(g=>{
+        if(remember[g.vendorName]){
+          const emailVal=(emails[g.vendorName]||"").trim();
+          if(emailVal)emailsToSave[g.vendorName]=emailVal;
+        }
+      });
+      if(Object.keys(emailsToSave).length>0){
+        fbDb.doc(_supplierDocPath(uid,"vendorEmails")).set(emailsToSave,{merge:true}).catch(e=>console.warn("[RFQ] vendorEmails save failed:",e.message));
       }
     }
     // Process API vendor groups — auto-fetch pricing with cross-vendor check
@@ -16988,9 +17007,9 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                           const emailVal=(emails[g.vendorName]||"").trim();
                           // v1.19.996 (audit Item D follow-up): write to company-shared path
                           if(checked&&emailVal){
-                            fbDb.doc(_supplierDocPath(currentUid,"vendorEmails")).set({[g.vendorName]:emailVal},{merge:true}).catch(()=>{});
+                            fbDb.doc(_supplierDocPath(currentUid,"vendorEmails")).set({[g.vendorName]:emailVal},{merge:true}).catch(e=>console.warn("[RFQ] vendorEmails save failed:",e.message));
                           }else if(!checked){
-                            fbDb.doc(_supplierDocPath(currentUid,"vendorEmails")).set({[g.vendorName]:firebase.firestore.FieldValue.delete()},{merge:true}).catch(()=>{});
+                            fbDb.doc(_supplierDocPath(currentUid,"vendorEmails")).set({[g.vendorName]:firebase.firestore.FieldValue.delete()},{merge:true}).catch(e=>console.warn("[RFQ] vendorEmails delete failed:",e.message));
                           }
                         }
                       }} style={{accentColor:"#4ade80",width:12,height:12,cursor:"pointer"}}/>
