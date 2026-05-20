@@ -1997,6 +1997,9 @@ exports.extractBomPage = functions
   const hasPdf = !!(pdfPath && pageNumber != null);
   const hasImage = !!(imageBase64 && imageMediaType);
   const hasCroppedBom = !!(croppedBomImage && croppedBomMediaType);
+  if (croppedBomImage && croppedBomImage.length > 7_000_000) {
+    throw new functions.https.HttpsError('invalid-argument', 'Cropped BOM image too large (>5MB)');
+  }
   if (!hasCroppedBom && !hasPdf && !hasImage) {
     throw new functions.https.HttpsError('invalid-argument', 'Provide {croppedBomImage}, {pdfPath, pageNumber}, or {imageBase64, imageMediaType}');
   }
