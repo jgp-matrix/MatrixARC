@@ -1992,12 +1992,13 @@ exports.extractBomPage = functions
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   }
   const uid = context.auth.uid;
-  const { pdfPath, pageNumber, imageBase64, imageMediaType, feedback, userNotes, regionLearningParts } = data || {};
+  const { pdfPath, pageNumber, imageBase64, imageMediaType, feedback, userNotes, regionLearningParts, croppedBomImage, croppedBomMediaType } = data || {};
 
   const hasPdf = !!(pdfPath && pageNumber != null);
   const hasImage = !!(imageBase64 && imageMediaType);
-  if (!hasPdf && !hasImage) {
-    throw new functions.https.HttpsError('invalid-argument', 'Provide either {pdfPath, pageNumber} or {imageBase64, imageMediaType}');
+  const hasCroppedBom = !!(croppedBomImage && croppedBomMediaType);
+  if (!hasCroppedBom && !hasPdf && !hasImage) {
+    throw new functions.https.HttpsError('invalid-argument', 'Provide {croppedBomImage}, {pdfPath, pageNumber}, or {imageBase64, imageMediaType}');
   }
 
   if (pageNumber != null) {
@@ -2019,7 +2020,19 @@ exports.extractBomPage = functions
   let extractionPath;
   let userContent;
 
-  if (hasPdf) {
+  if (hasCroppedBom) {
+    extractionPath = 'bom-region-crop';
+    const feedbackSection = feedback
+      ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
+    const notesSection = userNotes
+      ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting.` : '';
+    const pageHint = `This image is a CROPPED region showing ONLY the BOM table from a UL508A control panel drawing. Extract ALL items from this table.\n\n`;
+    userContent = [
+      { type: 'image', source: { type: 'base64', media_type: croppedBomMediaType, data: croppedBomImage } },
+      { type: 'text', text: pageHint + feedbackSection + notesSection },
+    ];
+    functions.logger.info('extractBomPage using cropped BOM region', { uid, croppedSizeKB: Math.round(croppedBomImage.length * 0.75 / 1024) });
+  } else if (hasPdf) {
     extractionPath = 'pdf-native';
     const bucket = admin.storage().bucket();
     const file = bucket.file(pdfPath);

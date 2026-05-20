@@ -91,6 +91,43 @@ STEP 4 — EXTRACT EVERY ROW (no skipping):
   e.g. "ABB KXTBRHEBFP, OXP10X225, OH865L10B" → three rows, each with same qty/manufacturer/notes
   First row: original description unchanged
   Each extra row: append " (sub-part)" to description
+★ COMBINED MFG/PART NO. COLUMNS (CRITICAL for some drawing formats):
+Some BOM tables use a single column headed "MFG/PART NO." or "MFR/PART NO." that contains
+BOTH the manufacturer name AND the catalog number in the same cell. When you see this column
+header pattern:
+
+1. The FIRST word(s) in the cell are usually the manufacturer name/abbreviation.
+   Split them from the catalog number that follows.
+
+2. Common manufacturer prefixes to recognize and split:
+   SAGINAW, HOFFMAN, ABB, IDEC, EATON, SCHNEIDER, SQUARE D, SIEMENS, ALLEN-BRADLEY, AB,
+   ROCKWELL, PHOENIX, PHOENIX CONTACT, WAGO, AUTOMATION DIRECT, AUTOMATIONDIRECT, PILZ,
+   TURCK, SICK, BANNER, OMRON, KEYENCE, MURR, RITTAL, PANDUIT, BRADY, BELDEN, MOLEX,
+   WEIDMULLER, HUBBELL, FEDERAL, FEDERAL SIGNAL, LITTLE FUSE, LITTELFUSE, IMPERVITRAN,
+   HAMMOND, TRUMETER, EMEC, CPU, STAHLIN, NVENT, MERSEN, BUSSMANN, FERRAZ SHAWMUT,
+   GE, MITSUBISHI, CUTLER-HAMMER, LEVITON, COOPER, LUTZE, MEANWELL,
+   MEAN WELL, RED LION, CROUSE-HINDS, APPLETON
+
+3. When a cell contains MULTIPLE catalog codes separated by commas:
+   e.g. "ABB AF09-30-10-13, CA4-22M, TF42-1.0"
+   This means: main item AF09-30-10-13 (ABB), PLUS companion parts CA4-22M and TF42-1.0
+   (also ABB). ALL share the same manufacturer prefix from the beginning of the cell.
+   - First part: main item row with original description
+   - Additional parts: additionalPartNumbers entries with relationship "accessory"
+
+   e.g. "FEDERAL 350B-120-30, KB435666A, TR"
+   Main part 350B-120-30 (FEDERAL), additional parts KB435666A and TR (both FEDERAL).
+
+   e.g. "TRUMETER 722-0004, 5003-011"
+   Main part 722-0004 (TRUMETER), additional part 5003-011 (TRUMETER).
+
+4. Some cells have NO manufacturer prefix — just the catalog number(s):
+   e.g. "ALD2QH211DNUG" or "G85K" or "XT1NU3020AAA000XXX"
+   When the cell has no recognizable manufacturer prefix, set manufacturer to ""
+   and put the entire cell value as partNumber.
+
+5. If the column header is "MFG/PART NO." but a row's value is "N/A":
+   This means no part number exists for that item. Set partNumber to "" and manufacturer to "N/A".
 • COMPANION PARTS — capture genuine secondary catalog codes ONLY from these two places:
     1. The PART NUMBER column itself, when it contains multiple codes separated by ", " or " / "
        (e.g. "ABB KXTBRHEBFP, OXP10X225, OH865L10B" — emit 3 separate items)
