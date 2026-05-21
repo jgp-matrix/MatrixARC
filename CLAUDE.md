@@ -2,6 +2,7 @@
 
 ## Table of Contents
 - [Session startup procedure](#session-startup-procedure)
+- [Diagnostic session startup (diagstartup)](#diagnostic-session-startup-diagstartup) — read-only investigation mode
 - [Session shutdown procedure](#session-shutdown-procedure) — Close Out + Closed two-step
 - [Commit destination](#commit-destination)
 - [Parallel Claude session workflow](#parallel-claude-session-workflow)
@@ -29,6 +30,42 @@
 - Report the active site version (the `APP_VERSION` constant in `public/index.html`, e.g. `v1.19.1107`) alongside the verification output so the user knows which deployed build the session is starting from.
 
 If anything looks unexpected — wrong directory, unfamiliar branch, untracked files you didn't create, commits you didn't make — **stop and surface the contradiction to the user before doing any task work**. Do not auto-clean, auto-checkout, or "fix" the state. The parallel testing/review CLI session may have written artifacts you should not touch.
+
+## Diagnostic session startup (diagstartup)
+
+When the user invokes "diagstartup" or says "this is a diagnostic session," apply the following rules for the duration of the session in addition to the standard Session startup procedure above.
+
+**Posture:** investigate, gather evidence, and report. No code changes, no deploys, no data mutations regardless of how clear the fix looks.
+
+**Allowed without asking (use freely, do not request approval):**
+- Read, Grep, Glob, View on any file in the repo
+- Bash for read-only inspection: git status, git log, git diff, git show, ls, cat, head, tail, grep, find, wc
+- Firebase read commands: firestore:get, firestore:list, functions:log, hosting:channel:list, projects:list
+- Any MCP read tool (search, get, list, fetch operations)
+- Web fetch and web search for documentation or error reference
+- Script execution where the script name matches read-only patterns: verify-*, check-*, inspect-*, *-diagnostic*, *-report*, audit-*. Treat these as read-only by convention.
+
+**Stop and ask before ANY of the following:**
+- Edit, Write, MultiEdit on any file
+- File or directory deletion (rm, mv to delete, git rm)
+- Any git mutation: commit, push, branch creation, merge, rebase, reset, checkout to different branch
+- Any firebase deploy, firebase functions:delete, firestore:delete, hosting:disable
+- Any npm/pip install, publish, or package mutation
+- Any script execution where the script name does NOT match the read-only patterns above
+- Any Bash command that mutates files, environment, or external services
+- Any MCP write/mutate tool
+
+If uncertain whether something is read-only or mutating, stop and ask.
+
+**Reporting posture:**
+The user is likely away from the desk during diagnostic sessions. Do not stall on non-blocking clarification questions. Instead:
+- If a question doesn't block progress, log it and keep working on parallel diagnostic paths.
+- If genuinely blocked, stop and ask with a specific, actionable request.
+- At a natural reporting milestone (full diagnostic complete, or blocked on input), produce a consolidated report and stop.
+
+Do NOT produce a fix plan and stop for approval to act. Produce the diagnostic findings AND the proposed plan together, then stop. The user will review the plan separately before any approval to make changes.
+
+**Confirmation:** Acknowledge the diagstartup boundaries explicitly before starting work. State the diagnostic task and your initial plan before pulling first evidence.
 
 ## Session shutdown procedure
 
