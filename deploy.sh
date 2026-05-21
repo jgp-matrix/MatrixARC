@@ -70,8 +70,8 @@ git tag "$NEW_VERSION"
 git push origin master
 git push origin "$NEW_VERSION"
 
-# Deploy to Firebase (firebase picks up public/index.bundle.js since it lives in public/)
-firebase deploy --only hosting
+# Deploy to Firebase production site only (test site deployed separately via hosting:test)
+firebase deploy --only hosting:production
 
 echo ""
 echo "✓ Deployed $NEW_VERSION to Firebase"

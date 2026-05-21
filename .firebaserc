@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "matrix-arc"
-  }
+  },
+  "targets": {
+    "matrix-arc": {
+      "hosting": {
+        "test": [
+          "matrix-arc-test"
+        ],
+        "production": [
+          "matrix-arc"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

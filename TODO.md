@@ -794,3 +794,48 @@ T5. **OPEN** — Quote package enhancement: investigate sending the client a cop
     to receive the stamped drawings (with ARC markups/redlines) and the extracted BOM as part
     of the quote package. Would require bundling or attaching additional PDFs to the quote
     email or print output.
+T6. **OPEN** — `extractionReport` not updated on re-extraction. When a user re-extracts a
+    panel, the `panel.extractionReport` retains the timestamp and stats from the PREVIOUS
+    extraction. Observed on PRJ402101: extractionReport timestamp 2026-05-20T22:23Z is from
+    Round 1 extraction, but qvHistory shows `re_extract` at 2026-05-20T21:20Z (Round 2).
+    The report should be regenerated on every extraction pass. Root cause: `runExtractionTask`
+    builds `extractionReport` at the end of the pipeline but may not overwrite it on re-extract
+    if the report-generation code path is skipped or conditional. Fix: ensure `extractionReport`
+    is always rebuilt from scratch on every extraction, not merged with prior data.
+    Discovered: 2026-05-21 diagnostic session (Issue E).
+T7. **OPEN** — Duplicate Firestore documents: 23 BC project numbers have two documents in
+    `companies/{companyId}/projects/` — one created manually by a user (with pages/BOM), one
+    from BC import (empty, `importedFromBC: true`, panels: 0). No data divergence (all 23
+    BC-import docs are empty shells), but the duplicate causes confusion: different users may
+    load different documents for the same project number. Root cause: no uniqueness constraint
+    on `bcProjectNumber` at creation time. Fix (Layer A): add a duplicate guard that checks
+    for existing documents with the same `bcProjectNumber` before creating a new project.
+    Remediation: all 23 BC-import docs are safe to delete (0 BOM, 0 pages). See audit data
+    from 2026-05-21 diagnostic session.
+    Discovered: 2026-05-21 diagnostic session (Issue A root cause).
+T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:30 AM 5/21/2026
+    (post-hard-refresh) showed enclosure qty=8 and A/C qty=48, but current Firestore has qty=1
+    for both. Extraction completed 4:23 PM 5/20 — no extraction was running at 8:30 AM.
+    Investigation paths:
+    (a) Firestore offline persistence: RULED OUT — `enablePersistence()` never called in ARC.
+        IndexedDB cannot be serving stale data.
+    (b) Wrong document: Projects load by document ID, not bcProjectNumber. Two duplicate docs
+        exist for PRJ402101. CONSTRAINED by server metadata: the BC-import shell
+        (arc-40b43a7c...) server updateTime = createTime = 5/20/2026 11:57:02 AM MDT.
+        The shell was NEVER WRITTEN TO after initial creation — it cannot have temporarily
+        held BOM data. The `quoteRev:1` and `lastQuoteHash:655853926` were set at creation
+        time (part of the initial BC import save), not from a later operation.
+        The manual doc (z1QmSG8B...) updateTime = 5/21/2026 9:32:38 AM MDT (1 hour AFTER
+        Noah's screenshot, by Jon). Before that write, the manual doc was unchanged since
+        the 5:06 PM refresh_pricing on 5/20.
+    (c) BOM modification without qvHistory: Exact-dedup SUM (line 12518/22481 in index.bundle.js)
+        aggregates qty across pages without per-row qvHistory. Snippet self-correction can also
+        modify qty during extraction without separate qvHistory entry. But `bomPageCount:1` and
+        no active extraction at 8:30 AM makes this path unlikely.
+    Status: no satisfying explanation found. Server metadata rules out the shell as a source
+    of stale data (never modified) and rules out a recent write to the manual doc (no write
+    between 5:06 PM 5/20 and 9:32 AM 5/21, after the screenshot). Remaining possibilities:
+    (i) Noah's screenshot was from a different project, (ii) the screenshot timestamp is
+    inaccurate, or (iii) a client-side rendering bug displayed wrong quantities from correct
+    data. Need Noah's actual screenshot to cross-reference visible part numbers.
+    Discovered: 2026-05-21 diagnostic session.

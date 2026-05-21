@@ -8,7 +8,9 @@
   "functions": {
     "source": "functions"
   },
-  "hosting": {
+  "hosting": [
+    {
+    "target": "production",
     "public": "public",
     "ignore": [
       "firebase.json",
@@ -87,5 +89,51 @@
         "destination": "/index.html"
       }
     ]
-  }
+    },
+    {
+      "target": "test",
+      "public": "public",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "headers": [
+        {
+          "source": "**/*.html",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          ]
+        },
+        {
+          "source": "index.bundle.js",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+          ]
+        }
+      ],
+      "rewrites": [
+        {
+          "source": "/purchasing/**",
+          "destination": "/modules/purchasing/index.html"
+        },
+        {
+          "source": "/engineering/**",
+          "destination": "/modules/engineering/index.html"
+        },
+        {
+          "source": "/review",
+          "destination": "/modules/engineering/portal.html"
+        },
+        {
+          "source": "/review/**",
+          "destination": "/modules/engineering/portal.html"
+        },
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  ]
 }
