@@ -96,19 +96,28 @@ async function recordAnthropicUsage(uid, model, usage) {
     let existingMonth = null;
     try { const s = await ref.get(); if (s.exists) existingMonth = s.data().monthKey || null; } catch (_) {}
     const isRollover = existingMonth && existingMonth !== monthKey;
+    const inTok = usage.input_tokens || 0;
+    const outTok = usage.output_tokens || 0;
+    const cacheTok = (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
     await ref.set({
       monthKey,
       lastCallAt: Date.now(),
       lastCallModel: model || 'unknown',
       lastCallCents: cents,
       lastCallUsage: {
-        input: usage.input_tokens || 0,
-        output: usage.output_tokens || 0,
+        input: inTok,
+        output: outTok,
         cacheWrite: usage.cache_creation_input_tokens || 0,
         cacheRead: usage.cache_read_input_tokens || 0,
       },
       monthCents: isRollover ? cents : admin.firestore.FieldValue.increment(cents),
       totalCents: admin.firestore.FieldValue.increment(cents),
+      // DECISION(v1.20.8): Cumulative token counters for the admin usage meter.
+      monthInputTokens: isRollover ? inTok : admin.firestore.FieldValue.increment(inTok),
+      monthOutputTokens: isRollover ? outTok : admin.firestore.FieldValue.increment(outTok),
+      monthCacheTokens: isRollover ? cacheTok : admin.firestore.FieldValue.increment(cacheTok),
+      totalInputTokens: admin.firestore.FieldValue.increment(inTok),
+      totalOutputTokens: admin.firestore.FieldValue.increment(outTok),
     }, { merge: true });
   } catch (e) {
     functions.logger.warn('recordAnthropicUsage failed (non-fatal):', e.message);

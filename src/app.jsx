@@ -2397,20 +2397,29 @@ async function _recordAnthropicUsage(model,usage){
     let existingMonth=null;
     try{const s=await ref.get();if(s.exists)existingMonth=s.data().monthKey||null;}catch(_){}
     const isRollover=existingMonth&&existingMonth!==monthKey;
+    const inTok=usage.input_tokens||0;
+    const outTok=usage.output_tokens||0;
+    const cacheTok=(usage.cache_creation_input_tokens||0)+(usage.cache_read_input_tokens||0);
     const update={
       monthKey,
       lastCallAt:Date.now(),
       lastCallModel:model||"unknown",
       lastCallCents:cents,
       lastCallUsage:{
-        input:usage.input_tokens||0,
-        output:usage.output_tokens||0,
+        input:inTok,
+        output:outTok,
         cacheWrite:usage.cache_creation_input_tokens||0,
         cacheRead:usage.cache_read_input_tokens||0,
       },
       // Atomic increments — no transaction needed, no race.
       monthCents:isRollover?cents:FV.increment(cents),
       totalCents:FV.increment(cents),
+      // DECISION(v1.20.8): Cumulative token counters for the admin usage meter.
+      monthInputTokens:isRollover?inTok:FV.increment(inTok),
+      monthOutputTokens:isRollover?outTok:FV.increment(outTok),
+      monthCacheTokens:isRollover?cacheTok:FV.increment(cacheTok),
+      totalInputTokens:FV.increment(inTok),
+      totalOutputTokens:FV.increment(outTok),
     };
     await ref.set(update,{merge:true});
   }catch(e){
@@ -37634,6 +37643,30 @@ function AdminBudgetSection({uid}){
           </div>
         )}
       </div>
+      {/* Token usage row */}
+      {(ledgerData?.monthInputTokens||ledgerData?.monthOutputTokens)?(
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:6,letterSpacing:0.5}}>TOKEN USAGE THIS MONTH</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 100px",minWidth:100}}>
+              <div style={{fontSize:10,color:"#93c5fd",marginBottom:2}}>Input</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#93c5fd"}}>{((ledgerData.monthInputTokens||0)/1000).toFixed(1)}K</div>
+            </div>
+            <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 100px",minWidth:100}}>
+              <div style={{fontSize:10,color:"#c4b5fd",marginBottom:2}}>Output</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#c4b5fd"}}>{((ledgerData.monthOutputTokens||0)/1000).toFixed(1)}K</div>
+            </div>
+            <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 100px",minWidth:100}}>
+              <div style={{fontSize:10,color:"#86efac",marginBottom:2}}>Cache</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#86efac"}}>{((ledgerData.monthCacheTokens||0)/1000).toFixed(1)}K</div>
+            </div>
+            <div style={{padding:"8px 14px",background:"#111827",borderRadius:8,flex:"1 1 100px",minWidth:100}}>
+              <div style={{fontSize:10,color:C.muted,marginBottom:2}}>Total</div>
+              <div style={{fontSize:14,fontWeight:700,color:C.text}}>{(((ledgerData.monthInputTokens||0)+(ledgerData.monthOutputTokens||0)+(ledgerData.monthCacheTokens||0))/1000).toFixed(1)}K</div>
+            </div>
+          </div>
+        </div>
+      ):null}
       {/* Budget setting */}
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>Monthly budget:</span>
