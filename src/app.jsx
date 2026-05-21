@@ -37570,6 +37570,7 @@ function CustomerTemplatesModal({uid,onClose}){
 // React's Rules of Hooks — useState/useEffect can't live inside a conditional IIFE.
 function AdminBudgetSection({uid}){
   const [budgetInput,setBudgetInput]=useState("");
+  const [tokenBudgetInput,setTokenBudgetInput]=useState("");
   const [budgetLoading,setBudgetLoading]=useState(false);
   const [budgetSaved,setBudgetSaved]=useState(false);
   const [ledgerData,setLedgerData]=useState(null);
@@ -37579,6 +37580,7 @@ function AdminBudgetSection({uid}){
         const d=snap.data();
         setLedgerData(d);
         if(budgetInput==="")setBudgetInput(d.monthlyBudgetDollars!=null?String(d.monthlyBudgetDollars):"300");
+        if(tokenBudgetInput==="")setTokenBudgetInput(d.monthlyTokenBudget!=null?String(Math.round(d.monthlyTokenBudget/1000000)):"5");
       }
     });
     return()=>unsub();
@@ -37595,10 +37597,12 @@ function AdminBudgetSection({uid}){
             :{bg:"#0d2a18",border:"#22c55e",fg:"#86efac",bar:"#22c55e",label:"OK"};
   const saveBudget=async()=>{
     const val=Number(budgetInput);
-    if(!val||val<1){arcAlert("Enter a valid monthly budget (minimum $1).");return;}
+    const tokVal=Number(tokenBudgetInput);
+    if(!val||val<1){arcAlert("Enter a valid monthly dollar budget (minimum $1).");return;}
+    if(!tokVal||tokVal<0.1){arcAlert("Enter a valid monthly token budget (minimum 0.1M).");return;}
     setBudgetLoading(true);
     try{
-      await fbDb.doc(`users/${uid}/config/anthropicLedger`).set({monthlyBudgetDollars:val},{merge:true});
+      await fbDb.doc(`users/${uid}/config/anthropicLedger`).set({monthlyBudgetDollars:val,monthlyTokenBudget:Math.round(tokVal*1000000)},{merge:true});
       setBudgetSaved(true);setTimeout(()=>setBudgetSaved(false),3000);
     }catch(e){arcAlert("Failed to save budget: "+e.message);}
     setBudgetLoading(false);
@@ -37668,20 +37672,26 @@ function AdminBudgetSection({uid}){
           </div>
         </div>
       ):null}
-      {/* Budget setting */}
+      {/* Budget settings */}
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-        <span style={{fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>Monthly budget:</span>
+        <span style={{fontSize:12,color:C.muted,whiteSpace:"nowrap"}}>Dollar budget:</span>
         <div style={{display:"flex",alignItems:"center",gap:4}}>
           <span style={{fontSize:13,color:C.text,fontWeight:600}}>$</span>
           <input type="number" min="1" step="50" value={budgetInput} onChange={e=>setBudgetInput(e.target.value)}
             style={{width:80,padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:"#111827",color:C.text,fontSize:13,fontWeight:600}}
             onKeyDown={e=>{if(e.key==="Enter")saveBudget();}}/>
         </div>
+        <span style={{fontSize:12,color:C.muted,whiteSpace:"nowrap",marginLeft:8}}>Token budget:</span>
+        <div style={{display:"flex",alignItems:"center",gap:4}}>
+          <input type="number" min="0.1" step="1" value={tokenBudgetInput} onChange={e=>setTokenBudgetInput(e.target.value)}
+            style={{width:60,padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:"#111827",color:C.text,fontSize:13,fontWeight:600}}
+            onKeyDown={e=>{if(e.key==="Enter")saveBudget();}}/>
+          <span style={{fontSize:13,color:C.text,fontWeight:600}}>M</span>
+        </div>
         <button onClick={saveBudget} disabled={budgetLoading}
           style={{padding:"5px 14px",borderRadius:6,border:"none",background:budgetSaved?"#22c55e":C.accent,color:"#fff",fontSize:12,fontWeight:600,cursor:budgetLoading?"wait":"pointer",opacity:budgetLoading?0.6:1}}>
           {budgetSaved?"Saved ✓":budgetLoading?"Saving…":"Save"}
         </button>
-        <span style={{fontSize:10,color:C.muted}}>Matches your Anthropic console workspace limit</span>
       </div>
     </div>
   );
@@ -41712,17 +41722,22 @@ INSTRUCTIONS:
   // rollover (handled by _recordAnthropicUsage's monthKey check).
   const [anthropicMonthCents,setAnthropicMonthCents]=useState(null);
   const [anthropicBudgetDollars,setAnthropicBudgetDollars]=useState(300); // default $300
+  const [anthropicMonthTokens,setAnthropicMonthTokens]=useState(0);
+  const [anthropicTokenBudget,setAnthropicTokenBudget]=useState(5000000); // default 5M
   useEffect(()=>{
     if(!user.uid)return;
     const unsub=fbDb.doc(`users/${user.uid}/config/anthropicLedger`).onSnapshot(snap=>{
-      if(!snap.exists){setAnthropicMonthCents(0);return;}
+      if(!snap.exists){setAnthropicMonthCents(0);setAnthropicMonthTokens(0);return;}
       const d=snap.data();
-      // If month doesn't match current, treat as 0 (will reset on next call).
       const curMonth=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,"0")}`;
-      setAnthropicMonthCents(d.monthKey===curMonth?(d.monthCents||0):0);
+      const isCurMonth=d.monthKey===curMonth;
+      setAnthropicMonthCents(isCurMonth?(d.monthCents||0):0);
       // DECISION(v1.20.7): Admin-configurable monthly budget — stored alongside
       // the ledger so the onSnapshot keeps the toolbar pill in sync in real time.
       if(d.monthlyBudgetDollars!=null)setAnthropicBudgetDollars(d.monthlyBudgetDollars);
+      // DECISION(v1.20.9): Token pill — cumulative tokens this month + configurable budget.
+      setAnthropicMonthTokens(isCurMonth?((d.monthInputTokens||0)+(d.monthOutputTokens||0)+(d.monthCacheTokens||0)):0);
+      if(d.monthlyTokenBudget!=null)setAnthropicTokenBudget(d.monthlyTokenBudget);
     },err=>{
       console.warn("[anthropicLedger] listener error:",err.message);
       setAnthropicMonthCents(null);
@@ -42291,6 +42306,29 @@ INSTRUCTIONS:
                 <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2}}>
                   <span style={{fontSize:13,fontWeight:700,color:tone.fg,whiteSpace:"nowrap"}}>${monthDollars.toFixed(2)} <span style={{fontSize:10,fontWeight:500,opacity:0.6}}>/ ${capDollars.toFixed(0)}</span></span>
                   <div style={{width:60,height:3,borderRadius:2,background:`${tone.fg}22`}}>
+                    <div style={{width:`${pct}%`,height:"100%",borderRadius:2,background:tone.bar,transition:"width 0.5s ease"}}/>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+          {/* DECISION(v1.20.9): Token usage pill — shows used / total available tokens this month. */}
+          {anthropicMonthTokens!=null&&isAdmin()&&(()=>{
+            const used=anthropicMonthTokens;
+            const budget=anthropicTokenBudget||5000000;
+            const pct=Math.min(100,Math.round((used/budget)*100));
+            const fmtTok=n=>n>=1000000?`${(n/1000000).toFixed(1)}M`:n>=1000?`${(n/1000).toFixed(0)}K`:String(n);
+            const tone=pct>=90?{bg:"#2a0a2a",border:"#c084fcaa",fg:"#e9d5ff",bar:"#c084fc"}
+                      :pct>=50?{bg:"#1a1033",border:"#a78bfaaa",fg:"#c4b5fd",bar:"#a78bfa"}
+                      :{bg:"#0d1a2a",border:"#60a5faaa",fg:"#93c5fd",bar:"#60a5fa"};
+            return(
+              <div title={`Tokens used: ${used.toLocaleString()} of ${budget.toLocaleString()} monthly budget (${pct}%)\n\nInput + Output + Cache tokens. Budget configurable in Settings.`}
+                style={{display:"flex",alignItems:"center",gap:6,padding:"0 10px",height:36,borderRadius:10,background:tone.bg,border:`1px solid ${tone.border}`,cursor:"pointer",flexShrink:0}}
+                onClick={()=>setShowSettings(true)}>
+                <span style={{fontSize:11,fontWeight:600,color:tone.fg,letterSpacing:0.3,opacity:0.85}}>Tokens</span>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2}}>
+                  <span style={{fontSize:13,fontWeight:700,color:tone.fg,whiteSpace:"nowrap"}}>{fmtTok(used)} <span style={{fontSize:10,fontWeight:500,opacity:0.6}}>/ {fmtTok(budget)}</span></span>
+                  <div style={{width:50,height:3,borderRadius:2,background:`${tone.fg}22`}}>
                     <div style={{width:`${pct}%`,height:"100%",borderRadius:2,background:tone.bar,transition:"width 0.5s ease"}}/>
                   </div>
                 </div>
