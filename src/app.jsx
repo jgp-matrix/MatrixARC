@@ -2420,6 +2420,7 @@ async function _recordAnthropicUsage(model,usage){
       monthCacheTokens:isRollover?cacheTok:FV.increment(cacheTok),
       totalInputTokens:FV.increment(inTok),
       totalOutputTokens:FV.increment(outTok),
+      totalCacheTokens:FV.increment(cacheTok),
     };
     await ref.set(update,{merge:true});
   }catch(e){

@@ -118,6 +118,7 @@ async function recordAnthropicUsage(uid, model, usage) {
       monthCacheTokens: isRollover ? cacheTok : admin.firestore.FieldValue.increment(cacheTok),
       totalInputTokens: admin.firestore.FieldValue.increment(inTok),
       totalOutputTokens: admin.firestore.FieldValue.increment(outTok),
+      totalCacheTokens: admin.firestore.FieldValue.increment(cacheTok),
     }, { merge: true });
   } catch (e) {
     functions.logger.warn('recordAnthropicUsage failed (non-fatal):', e.message);
