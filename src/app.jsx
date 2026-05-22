@@ -9335,6 +9335,11 @@ function positionalMergeBomItems(items){
   // Since the v1.19.622 quadrant revert, we no longer need loose tolerance to catch cross-
   // quadrant duplicates (there are none in single-pass extraction).
   const Y_TOL=0.004;
+  // DECISION(v1.20.20): X-position guard for multi-column BOMs. Two-column BOMs have
+  // left-column items at x_left≈0.01 and right-column at x_left≈0.50 (gap=0.49).
+  // Without this check, cross-column items at matching y_top values falsely merge.
+  // PRJ402107: 87 extracted → 70 after dedup (17 cross-column items lost).
+  const X_TOL=0.15;
   for(let i=0;i<withY.length;i++){
     if(consumed.has(i))continue;
     let base={...withY[i]};
@@ -9344,6 +9349,10 @@ function positionalMergeBomItems(items){
       // DECISION(v1.19.645): Different page → not the same row, and sorted by page first
       // so no further candidates can match this base either. Break out immediately.
       if(b.sourcePageIdx!==base.sourcePageIdx)break;
+      // DECISION(v1.20.20): Different column → not the same row. Uses continue (not break)
+      // because items are sorted by y_top, not x_left — valid same-column candidates may
+      // follow. Falls through if either item lacks x_left (legacy/manual rows).
+      if(typeof b.x_left==="number"&&typeof base.x_left==="number"&&Math.abs(b.x_left-base.x_left)>X_TOL)continue;
       // Y-tops within tolerance → likely same row
       if(Math.abs((b.y_top||0)-(base.y_top||0))>Y_TOL){
         // Sorted by y_top within same page — if we've exceeded tolerance, no more candidates.
