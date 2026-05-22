@@ -3494,7 +3494,9 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
       if(qtyChanged)patch.Quantity=payload.Quantity||0;
       if(priceChanged)patch.Unit_Price=payload.Unit_Price||0;
       if(costChanged)patch.Unit_Cost=payload.Unit_Cost||0;
-      const pr=await patchLine(line.Line_No,patch,existing["@odata.etag"]);
+      // TODO: Wildcard ETag assumes single-writer (ARC-only). Revisit when multi-user
+      // features or BC-side edits are introduced. See TODO.md Issue H Path B design.
+      const pr=await patchLine(line.Line_No,patch);
       // DECISION(v1.19.615): Suppress per-line console.log/warn — caller logs a summary at end.
       if(pr.ok||pr.status===204){updated++;}
       else{const txt=await pr.text();
@@ -3649,7 +3651,9 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
       if(descChanged)patch.Description=payload.Description||"";
       if(qtyChanged)patch.Quantity=payload.Quantity||0;
       if(costChanged)patch.Unit_Cost=payload.Unit_Cost||0;
-      const pr=await patchLine(line.Line_No,patch,existing["@odata.etag"]);
+      // TODO: Wildcard ETag assumes single-writer (ARC-only). Revisit when multi-user
+      // features or BC-side edits are introduced. See TODO.md Issue H Path B design.
+      const pr=await patchLine(line.Line_No,patch);
       if(pr.ok||pr.status===204){updated++;}
       else{const txt=await pr.text();
         if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt});}
