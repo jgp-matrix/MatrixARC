@@ -2388,7 +2388,7 @@ exports.extractBomPage = functions
 
     const singlePageBytes = await singlePagePdf.save();
     const pdfBase64 = Buffer.from(singlePageBytes).toString('base64');
-    const pdfQuality = assessPdfPageQuality(fullPdf.getPage(pageNumber - 1), fullPdf.context);
+    pdfQuality = assessPdfPageQuality(fullPdf.getPage(pageNumber - 1), fullPdf.context);
     functions.logger.info('extractBomPage PDF sliced', { totalPages, extractedPage: pageNumber, fullSizeKB: Math.round(buf.length / 1024), slicedSizeKB: Math.round(singlePageBytes.length / 1024), pdfQuality, pdfCropped });
 
     const feedbackSection = feedback
