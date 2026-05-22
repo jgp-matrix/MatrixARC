@@ -12178,6 +12178,17 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const phaseRange={};
     for(const p of phases){const start=Math.round((cumWeight/totalWeight)*100);cumWeight+=p.weight;phaseRange[p.name]={start,end:Math.round((cumWeight/totalWeight)*100)};};
     function phasePct(name,frac){const r=phaseRange[name];if(!r)return;const pct=r.start+Math.round(frac*(r.end-r.start));bgSetPct(panel.id,Math.min(pct,99));}
+    function startHeartbeat(taskId,startPct,maxPct,msg,intervalMs=3000){
+      let cur=startPct;
+      const remaining=()=>maxPct-cur;
+      const iv=setInterval(()=>{
+        const step=Math.max(0.3,remaining()*0.06);
+        cur=Math.min(cur+step,maxPct-0.5);
+        const elapsed=Math.round((cur-startPct)/(maxPct-startPct)*100);
+        bgSetPct(taskId,Math.round(cur),`${msg} (${elapsed}%)`);
+      },intervalMs);
+      return{stop:(finalPct)=>{clearInterval(iv);if(finalPct!=null)bgSetPct(taskId,finalPct);}};
+    }
 
     bgSetPct(panel.id,0,hasBom?"Extracting BOM…":hasVal?"Validating…":"Processing…");
 
@@ -12247,7 +12258,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             if(_worstLevel!=="none"){
               const isHigh=_worstLevel==="high";
               const monoCount=_qResults.filter(q=>q.isMonochrome).length;
-              bgUpdate(panel.id,isHigh?`⚠ Low-quality scanned drawing detected${monoCount?` (${monoCount} fax-scan page${monoCount>1?"s":""})`:""}  — extraction will take longer and part numbers may need review`:`⚠ Scanned drawing detected — some part numbers may need verification`);
+              bgUpdate(panel.id,isHigh?`⚠ Low-quality scanned drawing detected${monoCount?` (${monoCount} fax-scan page${monoCount>1?"s":""})`:""} — extraction will take longer and part numbers may need review`:`⚠ Scanned drawing detected — some part numbers may need verification`);
               console.log("[BOM EXTRACT] Pre-flight quality check:",_worstLevel,_qResults);
             }
           }catch(qErr){console.warn("[BOM EXTRACT] Pre-flight quality check failed (non-blocking):",qErr.message);}
@@ -12276,7 +12287,11 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
               const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
               return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes,bomRegion:unit.bomRegion||null};
             }));
-            _batchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",userNotes);
+            const _bomRange=phaseRange["bom"]||{start:0,end:40};
+            const _hb=startHeartbeat(panel.id,_bomRange.start+1,_bomRange.end-2,`Batch extracting ${_batchEligible.length} BOM pages…`);
+            try{
+              _batchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",userNotes);
+            }finally{_hb.stop();}
             console.log(`[BOM BATCH] pre-fetched ${Object.keys(_batchResults).length} results for ${_batchEligible.length} pages`);
           }catch(batchErr){
             console.warn(`[BOM BATCH] batch extraction failed, falling back to per-page: ${batchErr.message}`);
@@ -12322,7 +12337,9 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             result=_batchResults[unit.pageNumber];
             console.log(`[BOM EXTRACT] page="${pg.name||pgIdx+1}" using BATCH result (${(result.items||[]).length} items)`);
           } else {
-            result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
+            const _pgBomRange=phaseRange["bom"]||{start:0,end:40};
+            const _pgHb=startHeartbeat(panel.id,_pgBomRange.start+1,_pgBomRange.end-2,`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
+            try{result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);}finally{_pgHb.stop();}
           }
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
           if(result?.pdfQuality)pagePdfQuality=result.pdfQuality;
@@ -22446,7 +22463,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
             return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
           }));
-          _reBatchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",rgnNotes);
+          const _reHb=startHeartbeat(panel.id,3,55,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
+          try{
+            _reBatchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",rgnNotes);
+          }finally{_reHb.stop();}
           console.log(`[RE-EXTRACT BATCH] pre-fetched ${Object.keys(_reBatchResults).length} results`);
         }catch(batchErr){
           console.warn(`[RE-EXTRACT BATCH] failed, falling back to per-page: ${batchErr.message}`);
