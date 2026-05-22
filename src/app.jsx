@@ -10334,10 +10334,11 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
 // region-learning context) take the IDENTICAL code path. If the function
 // throws (deploy lag, transient error, network), the caller falls back
 // to the legacy direct API path, preserving zero-regression behavior.
-async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl){
+async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion=null){
   if(!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF.");
   const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:540000});
   const payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
+  if(bomRegion&&originalPdfPath)payload.bomRegion=bomRegion;
   if(croppedBomDataUrl&&!originalPdfPath){
     const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
     payload.croppedBomImage=base64;
@@ -10369,12 +10370,14 @@ async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPat
       }
     }
   }catch(_){}
-  return _parseAndVerifyBomRaw(data.raw,data.extractionPath||intendedPath);
+  const parsed=_parseAndVerifyBomRaw(data.raw,data.extractionPath||intendedPath);
+  if(data.pdfQuality)parsed.pdfQuality=data.pdfQuality;
+  return parsed;
 }
 
 async function extractBomBatchViaServer(pdfPath,pages,feedback,userNotes){
   const callable=fbFunctions.httpsCallable("extractBomBatch",{timeout:540000});
-  const payload={pdfPath,pages:pages.map(pg=>({pageNumber:pg.pageNumber,croppedBomImage:pg.croppedBomImage||null,croppedBomMediaType:pg.croppedBomMediaType||null,notes:pg.notes||null})),feedback:feedback||"",userNotes:userNotes||""};
+  const payload={pdfPath,pages:pages.map(pg=>({pageNumber:pg.pageNumber,croppedBomImage:pg.croppedBomImage||null,croppedBomMediaType:pg.croppedBomMediaType||null,notes:pg.notes||null,bomRegion:pg.bomRegion||null})),feedback:feedback||"",userNotes:userNotes||""};
   const t0=Date.now();
   const result=await callable(payload);
   const elapsedMs=Date.now()-t0;
@@ -10391,7 +10394,7 @@ async function extractBomBatchViaServer(pdfPath,pages,feedback,userNotes){
   const parsed={};
   for(const r of results){
     if(r.raw){
-      try{parsed[r.pageNumber]={..._parseAndVerifyBomRaw(r.raw,r.extractionPath||"pdf-native"),extractionPath:r.extractionPath,modelUsed:r.modelUsed,stopReason:r.stopReason};}
+      try{const p=_parseAndVerifyBomRaw(r.raw,r.extractionPath||"pdf-native");if(r.pdfQuality)p.pdfQuality=r.pdfQuality;parsed[r.pageNumber]={...p,extractionPath:r.extractionPath,modelUsed:r.modelUsed,stopReason:r.stopReason};}
       catch(e){parsed[r.pageNumber]={error:e.message};}
     } else if(r.error){
       parsed[r.pageNumber]={error:r.error};
@@ -10400,7 +10403,7 @@ async function extractBomBatchViaServer(pdfPath,pages,feedback,userNotes){
   return parsed;
 }
 
-async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=null,pageNumber=null,croppedBomDataUrl=null){
+async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=null,pageNumber=null,croppedBomDataUrl=null,bomRegion=null){
   if(_apiCreditExhausted)throw new Error("Anthropic API credits exhausted — see admin to top up billing.");
   if(!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF to fix this.");
 
@@ -10414,10 +10417,10 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
 
   // Server-side path FIRST. On error, falls through to direct API.
   try{
-    const serverResult=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl);
+    const serverResult=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion);
     if((serverResult.items||[]).length===0&&originalPdfPath&&pageNumber&&croppedBomDataUrl){
       console.warn("[BOM EXTRACT] server PDF-native returned 0 items — retrying via crop fallback");
-      try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl);}
+      try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl,null);}
       catch(retryErr){console.warn("[BOM EXTRACT] crop fallback retry also failed:",retryErr?.message||retryErr);}
     }
     return serverResult;
@@ -12247,7 +12250,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
                 croppedBomMediaType="image/jpeg";
               }
               const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
-              return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
+              return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes,bomRegion:unit.bomRegion||null};
             }));
             _batchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",userNotes);
             console.log(`[BOM BATCH] pre-fetched ${Object.keys(_batchResults).length} results for ${_batchEligible.length} pages`);
@@ -12283,6 +12286,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // is lightweight (small output) and precisely targets the blind spot.
         // Supports BOMs with 100+ items where a single pass may not capture all rows.
         let pageRetryAttempts=0;
+        let pagePdfQuality=null;
         for(const unit of units){
           const cropInfo=unit.bomRegion?`region-crop (${unit.bomRegion.source}, ${Math.round(unit.bomRegion.w*100)}×${Math.round(unit.bomRegion.h*100)}%)`:"full-page";
           console.log(`[BOM EXTRACT] page="${pg.name||pgIdx+1}" mode=${cropInfo} hasPdf=${!!unit.originalPdfPath} hasCrop=${!!unit.croppedBomDataUrl}`);
@@ -12294,9 +12298,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             result=_batchResults[unit.pageNumber];
             console.log(`[BOM EXTRACT] page="${pg.name||pgIdx+1}" using BATCH result (${(result.items||[]).length} items)`);
           } else {
-            result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
+            result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
           }
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
+          if(result?.pdfQuality)pagePdfQuality=result.pdfQuality;
           // L3 Phase 1: broad retry + merge
           const verif=result?.extractionVerification;
           const shouldRetry=verif&&verif.status==="needs-review"&&pageRetryAttempts<1;
@@ -12312,7 +12317,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
               const retryFeedback=`AUTO-RETRY (your previous extraction was flagged for review):\n\n${reasons.join("\n\n")}\n\nThis is a SECOND PASS — you have full memory of your previous attempt. Identify which BOM rows you missed and capture them this time. Specifically look for additional BOM boxes/columns elsewhere on the page that you may have skipped.`;
               console.warn(`[BOM EXTRACT] L3 Phase 1 retry triggered for page "${pg.name||pgIdx+1}": ${reasons[0]}`);
               pageRetryAttempts++;
-              const retryResult=await extractBomPage(unit.dataUrl,retryFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
+              const retryResult=await extractBomPage(unit.dataUrl,retryFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
               if(retryResult?.extractionPath){_extractionPathsSeen.add(retryResult.extractionPath);pageExtractionPath=retryResult.extractionPath;}
               const firstItems=result.items||[];
               const retryItems=(retryResult.items||[]);
@@ -12372,7 +12377,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
               const gapFeedback=`TARGETED GAP-FILL — extract ONLY the following missing item numbers: ${gapList}\n\nYour previous extraction captured ${mergedItems.length} items successfully but missed these specific line items. Look carefully at the BOM table for rows with these item numbers. They may be:\n- In a different column/section of the BOM\n- Between rows you already extracted (tightly spaced)\n- Near the boundary between two BOM columns\n- At the very top or bottom of a BOM box\n\nReturn ONLY the missing items listed above. Do NOT re-extract items you already found.`;
               console.warn(`[BOM EXTRACT] L3 Phase 2 gap-fill for page "${pg.name||pgIdx+1}": missing items ${gapList}`);
               pageRetryAttempts++;
-              const gapResult=await extractBomPage(unit.dataUrl,gapFeedback,notes,unit.originalPdfPath,unit.pageNumber);
+              const gapResult=await extractBomPage(unit.dataUrl,gapFeedback,notes,unit.originalPdfPath,unit.pageNumber,null,unit.bomRegion||null);
               if(gapResult?.extractionPath){_extractionPathsSeen.add(gapResult.extractionPath);pageExtractionPath=gapResult.extractionPath;}
               const gapItems=(gapResult.items||[]).filter(it=>{
                 const num=parseInt(String(it.itemNo||"").replace(/\D/g,""),10);
@@ -12426,6 +12431,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           extractionPath:pageExtractionPath,
           rejectReasons:pageRejectReasons,
           types:pg.types||[],
+          pdfQuality:pagePdfQuality,
         });
         if(pageItems.length===0){
           const reason=pageRejectReasons[0]||"unknown";
@@ -12688,6 +12694,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       finalItemCount:mergeStats.finalItemCount||0,
       l3MergeRecovered:mergeStats.l3MergeRecovered||0,
       l3GapFillRecovered:mergeStats.l3GapFillRecovered||0,
+      scanQuality:(()=>{const rank={high:3,medium:2,low:1,none:0};return(mergeStats.perPageOutcomes||[]).reduce((worst,o)=>{const lvl=o.pdfQuality?.warningLevel||"none";return rank[lvl]>rank[worst]?lvl:worst;},"none");})(),
+      scanDetails:(mergeStats.perPageOutcomes||[]).filter(o=>o.pdfQuality?.warningLevel&&o.pdfQuality.warningLevel!=="none").map(o=>({pageName:o.pageName,isMonochrome:o.pdfQuality.isMonochrome,estimatedDpi:o.pdfQuality.estimatedDpi,warningLevel:o.pdfQuality.warningLevel})),
       timestamp:Date.now(),
       version:APP_VERSION,
     }:null;
@@ -22436,7 +22444,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             result=_reBatchResults[unit.pageNumber];
             console.log(`[RE-EXTRACT] Page ${pgIdx+1} using BATCH result (${(result.items||[]).length} items)`);
           } else {
-            result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
+            result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
           }
           if(result?.extractionPath)_reExtractionPathsSeen.add(result.extractionPath);
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
@@ -22659,7 +22667,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         let pageItems=[],pageQs=[];
         for(const unit of units){
           const notes=unit.regionNote?("Cropped BOM region: "+unit.regionNote+fbRgnCtx):fbRgnCtx;
-          const result=await extractBomPage(unit.dataUrl,aiFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl);
+          const result=await extractBomPage(unit.dataUrl,aiFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
@@ -25127,6 +25135,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 PDF native
               </span>
             )}
+            {(()=>{
+              const sq=panel.extractionReport?.scanQuality;
+              if(!sq||sq==="none")return null;
+              const isHigh=sq==="high";
+              const details=panel.extractionReport?.scanDetails||[];
+              const monoPages=details.filter(d=>d.isMonochrome).length;
+              const msg=isHigh
+                ?`Low-quality scanned drawing${monoPages?` (${monoPages} monochrome fax-scan page${monoPages>1?"s":""})`:""}  — part numbers may contain errors. Review carefully.`
+                :`Scanned drawing detected — some part numbers may need verification.`;
+              return(
+                <div style={{background:isHigh?"#3a1500":"#2a2500",border:`1px solid ${isHigh?"#f97316aa":"#eab308aa"}`,color:isHigh?"#fdba74":"#fde68a",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:8,width:"100%",marginBottom:4}}>
+                  <span style={{fontSize:16}}>⚠</span>
+                  <span>{msg}</span>
+                </div>
+              );
+            })()}
             {/* DECISION(v1.19.969): BOM extraction verification badge. Reads each row's
                 `confidence` field (set by the AI per Layer 1 prompt) plus placeholder
                 markers ("?" partNumber + EXTRACTION_FAILED note) to compute how many
@@ -25546,6 +25570,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
                           )}
                           <div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>
+                            {f==="partNumber"&&(row.confidence==="low"||row.confidence==="medium")&&!row.isLaborRow&&!row.isContingency&&(
+                              <span title={`AI confidence: ${row.confidence} \u2014 verify this part number against the source drawing`}
+                                style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:row.confidence==="low"?"#ef4444":"#f59e0b",marginRight:3,flexShrink:0}}/>
+                            )}
                             <span style={{visibility:"hidden",whiteSpace:"pre",fontSize:13,fontFamily:"inherit",padding:"5px 20px 5px 7px",display:"block",pointerEvents:"none"}}>{row[f]||"\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"}</span>
                             <input value={row[f]||""} readOnly={readOnly||row.isLaborRow||_baseLockedInEco}
                               title={_baseLockedInEco?"Use the BC Item Browser (🔍) to change "+f+" — base BOM is preserved; an ECO modify row will be created":undefined}
