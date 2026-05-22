@@ -2449,12 +2449,14 @@ async function apiCall(body){
       const r=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:ANTHROPIC_MODELS.OPUS,...body})
+        body:JSON.stringify({model:ANTHROPIC_MODELS.OPUS,temperature:0,...body})
       });
       const d=await r.json();
       if(r.ok){
         // v1.19.965: record per-call usage to the spend ledger (best-effort).
         _recordAnthropicUsage(d.model||body.model||ANTHROPIC_MODELS.OPUS,d.usage);
+        const toolBlock=d.content?.find(b=>b.type==="tool_use");
+        if(toolBlock)return JSON.stringify(toolBlock.input);
         return d.content?.[0]?.text||"";
       }
       // Permanent errors: never retry
@@ -12979,12 +12981,13 @@ NON-CONTENT TYPES — return [] (empty array):
   • Legend / symbol key — symbol-to-meaning map.
   • Truly blank or near-blank page.
 
-DECISION ORDER:
-  1. Is this page primarily depicting a drawing (ladder rungs, panel layout with DIN rails, cabinet views, P&ID flow)? → pick the matching drawing type. A side-table callout does not change this.
-  2. Otherwise, is this page primarily a parts table (QTY + PART NUMBER columns, rows = physical items)? → "bom".
-  3. Otherwise, is it a sheet index, cover, revision block, notes, legend, blank? → [].
-  4. CRITICAL: a sheet index (SHEET NO. + TITLE columns) is NEVER "bom". A drawing with a small reference table is NEVER "bom".
-  5. When you genuinely can't tell whether a page is a drawing or a parts table — re-examine for the QTY + alphanumeric-PART-NUMBER signature. If the rows are catalog codes and quantities, it's "bom". If the rows are sheet titles or symbol descriptions, it's [].
+CLASSIFICATION RULES (a page can have MULTIPLE types):
+  1. Evaluate EACH type independently. A schematic page that also contains a BOM table → ["schematic", "bom"]. A backpanel layout with a parts list on the side → ["backpanel", "bom"].
+  2. Drawing types: assign if the page depicts that drawing, even if a parts table also appears on the same page.
+  3. "bom": assign if the page contains a parts table with QTY + PART NUMBER columns listing orderable items, whether or not a drawing also appears.
+  4. CRITICAL: a sheet index (SHEET NO. + TITLE columns) is NEVER "bom". A revision block is NEVER "bom". A device legend callout is NEVER "bom".
+  5. Non-content pages (cover, sheet index, revision, notes, legend, blank): return [].
+  6. When genuinely uncertain — re-examine for the QTY + alphanumeric-PART-NUMBER signature. If the rows are catalog codes and quantities, include "bom". If the rows are sheet titles or symbol descriptions, return [].
 
 When "bom" is detected, also return the bounding box of the BOM table:
   "bomRegion": {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
@@ -13017,23 +13020,17 @@ async function detectPageTypes(dataUrl,learningExamples=[]){
       }
     }catch(e){/* non-blocking */}
     const raw=await apiCall({
-      // DECISION(v1.19.650): Switched page-type detection from Haiku to Sonnet. Haiku
-      // mis-tagged cover pages and drawing-index pages as "bom", which poisoned extraction
-      // downstream. Sonnet's structural-classification accuracy is materially better.
-      // DECISION(v1.19.659): Lowered max_tokens to 100 now that sheetNo is removed from
-      // the response — smaller JSON, no need for generous budget.
-      // Bumped to 200 for bomRegion bounding-box JSON in the response.
       model:ANTHROPIC_MODELS.SONNET,
-      max_tokens:200,
+      max_tokens:300,
+      tools:[{name:"classify_page",description:"Classify a drawing page",input_schema:{type:"object",properties:{types:{type:"array",items:{type:"string",enum:["bom","schematic","backpanel","enclosure","pid"]}},bomRegion:{type:"object",properties:{x:{type:"number"},y:{type:"number"},w:{type:"number"},h:{type:"number"}},required:["x","y","w","h"]}},required:["types"]}}],
+      tool_choice:{type:"tool",name:"classify_page"},
       messages:[{role:"user",content:[
         ...regionParts,
         {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
         {type:"text",text:PAGE_TYPE_DETECT_PROMPT+hint}
       ]}]
     });
-    const m=raw.replace(/```json|```/g,"").trim().match(/\{[\s\S]*\}/);
-    if(!m)return{types:[]};
-    const obj=JSON.parse(m[0]);
+    const obj=JSON.parse(raw);
     const types=(obj.types||[]).filter(t=>["bom","schematic","backpanel","enclosure","pid"].includes(t));
     let bomRegion=null;
     if(types.includes("bom")&&obj.bomRegion){
@@ -21746,7 +21743,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
     const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&(p.dataUrl||p.storageUrl));
     const willValidate=_apiKey&&hasSchOrLayout;
-    if(!bomPages.length&&!willValidate){bgDone(panel.id,"Complete");return;}
+    if(!bomPages.length&&!willValidate){
+      bgDone(panel.id,"⚠ No BOM pages");
+      const pageCount=(updated.pages||[]).length;
+      const typesList=(updated.pages||[]).map(p=>(getPageTypes(p)||[]).join(",")).filter(Boolean);
+      const uniqueTypes=[...new Set(typesList)].join(", ")||"none detected";
+      try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+        window.logDebugEntry({severity:"warn",source:"confirmAndExtract",
+          message:"Zero BOM pages — extraction skipped",
+          extra:{projectId,panelId:panel.id,pageCount,detectedTypes:uniqueTypes}});
+      }}catch(_){}
+      arcAlert(
+        `No pages were classified as BOM in this panel (${pageCount} page${pageCount!==1?"s":""} uploaded).\n\n`+
+        `Detected page types: ${uniqueTypes}\n\n`+
+        "If one of these pages contains a Bill of Materials table, go back and manually tag it as BOM before extracting.",
+        {kind:"warning"}
+      ).catch(()=>{});
+      return;
+    }
     const valPageCount=(updated.pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl)).length;
     const totalEst=Math.max(30,bomPages.length*15+valPageCount*20);
     setExtracting(bomPages.length>0);setValidatingPanel(willValidate);
@@ -41658,7 +41672,7 @@ INSTRUCTIONS:
       const historySlice=sqHistory.slice(-12);
       const messages=[...historySlice,{role:'user',content:q}];
 
-      const answer=(await apiCall({model:ANTHROPIC_MODELS.SONNET,max_tokens:2000,system:systemPrompt,messages})).trim();
+      const answer=(await apiCall({model:ANTHROPIC_MODELS.SONNET,max_tokens:2000,temperature:1,system:systemPrompt,messages})).trim();
       setSqAnswer(answer);
       setSqHistory(prev=>[...prev,{role:'user',content:q},{role:'assistant',content:answer}].slice(-12));
 
