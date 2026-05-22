@@ -839,3 +839,104 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     inaccurate, or (iii) a client-side rendering bug displayed wrong quantities from correct
     data. Need Noah's actual screenshot to cross-reference visible part numbers.
     Discovered: 2026-05-21 diagnostic session.
+
+## Round 15 (diagnostic session fixes, 2026-05-21)
+
+45. **RESOLVED** — (firestore.rules deployed 2026-05-21, commit pending) — Issue I: `_snapshots`
+    subcollection under `companies/{companyId}/projects/{projectId}` had no matching Firestore
+    rule. The `users/{uid}/{document=**}` recursive wildcard covers user-path subcollections,
+    but the company-path `match /projects/{projectId}` block only had explicit rules for the
+    project document itself and `ecos/{ecoId}` — no rule for `_snapshots/{snapshotId}`.
+    Result: `saveSnapshot()` silently failed for ALL company-account projects since the
+    snapshot feature was introduced. Every "Restore" safety-net call (before re-extraction,
+    Get New Pricing, panel deletion) was non-functional.
+
+    Fix: added `match /_snapshots/{snapshotId}` rule inside the company-path projects block:
+    `allow read: if isMember(); allow create: if canWrite(); allow delete: if canWrite();
+    allow update: if false;` Snapshots are immutable by design — create and delete only.
+    Deployed via `firebase deploy --only firestore:rules` (single Firebase project, applies
+    to both test and production hosting targets).
+
+    Verification: triggered Get New Pricing on PRJ402105 Panel 1. Console confirmed
+    `SNAPSHOT: saved "Before Get New Pricing" for Panel 1`. UI Restore button shows
+    "Before Get New Pricing — 5/21/2026, 6:13:36 PM · 50 BOM items" with working Restore
+    button. PASS.
+
+46. **RESOLVED** — `ab5f3b91` (v1.20.13, deployed 2026-05-21) — Issue H: BC sync self-conflict — "Another user has already changed the
+    record" ETag concurrency errors on valid BC Items during planning line sync.
+    Observed on PRJ402105 during pricing run: 3 items (CHCC2DIU, 592273, 2910386) all
+    show the same error with different CorrelationIds. All items exist in BC; single user.
+
+    **Root cause (confirmed 2026-05-21):** ARC racing itself via BC server-side cascades
+    inside `bcSyncPanelPlanningLines` (`src/app.jsx:3279`). The function captures ETags
+    for all ~50 planning lines in one bulk GET (Step 1, line 3356), then runs two
+    operations that can invalidate those ETags before the PATCH loop (Step 3) reaches
+    the affected lines:
+
+    (A) Step 2b (lines 3425-3443) PATCHes ItemCard posting groups for items with empty
+    `Gen_Prod_Posting_Group`/`Inventory_Posting_Group`. BC's business logic revalidates
+    planning lines referencing the patched item, bumping their `@odata.etag`.
+
+    (B) Step 3's own sequential PATCHes (300ms spacing, ~30s total loop time) trigger BC
+    task-level recalculations that can bump ETags on other lines in the same task. Early
+    PATCHes invalidate later PATCHes' Step-1 ETags.
+
+    (C) `bcSyncPanelTaskDescriptions` (line 22208) runs concurrently (fire-and-forget)
+    and PATCHes task records in the same project, potentially triggering additional BC
+    server-side recalculations.
+
+    `patchLine` (line 3463) retries only on 429 (rate limiting). No re-fetch-ETag-and-
+    retry pattern for concurrency conflicts. No re-read-before-write.
+
+    **Proposed fix:** Use `If-Match: "*"` for planning line PATCHes in Step 3, matching
+    what `bcSyncPanelTaskDescriptions` already does. Safe because: (a) the sync is a
+    full-state overwrite; (b) `bcSyncing` guard prevents overlapping UI-triggered syncs;
+    (c) the "other user" is always ARC's own server-side cascade, not a human. Step 2b's
+    `bcPatchItemOData` should keep per-item ETags (shared ItemCard records could be
+    modified externally). Alternative: re-fetch ETag immediately before each PATCH
+    (preserves concurrency safety, costs ~50 extra GETs per sync).
+
+    **Separate sub-issue:** The original diagnostic also captured 4 "Inventory Posting
+    Group is read-only" errors (different items, different root cause — ARC's PATCH
+    payload includes a read-only field). These may be addressed separately.
+
+    Discovered: 2026-05-21 diagnostic session.
+
+    **Reproduction #2 (2026-05-21 evening, production):** Project CSW1904-121
+    (Springfield WWTP, PRJ402105). 7 items failed BC sync:
+    - 300-AOD930 (300 NEMA contactor) — "Another user has already changed the record"
+    - FNQ-R-1 (Bussmann fuse) — same ETag conflict
+    - CHCC2DIU (fuse holder) — same ETag conflict
+    - 592273 (enclosure equipment tag) — same ETag conflict
+    - 2910386 (surge protective device) — same ETag conflict
+    - CRATE — same ETag conflict
+    - JOB BUYOFF — "BC item validation error" (different root cause, not ETag)
+    Trigger: BC sync after pricing. 6 of 7 are the same ETag self-conflict pattern
+    from the original diagnostic. Confirms the issue is reliably reproducible on
+    any project with 20+ BOM items syncing to BC.
+
+    **Interim fix (Path B wildcard):** Dropped `existing["@odata.etag"]` from both
+    `patchLine` call sites (BASE sync at `src/app.jsx:3499`, ECO sync at
+    `src/app.jsx:3656`). `patchLine` defaults to `If-Match: "*"` when no ETag is
+    passed. Planning lines are project-specific — ARC is the sole writer, so
+    wildcard is safe. `bcPatchItemOData` (shared ItemCards) retains per-item ETags.
+    Verified on test: PRJ402105 BC sync completed without ETag errors for all
+    previously-failing items. Long-term: if multi-user BC editing is introduced,
+    revisit the wildcard assumption (TODO comment in code marks both sites).
+
+47. **RESOLVED** — `9987dc4a` (v1.20.12, deployed 2026-05-21) — FIX 2: AI determinism
+    + structured output + multi-type page classification.
+    Three changes shipped together:
+    (a) `apiCall` now defaults `temperature:0` for all AI calls, eliminating
+        nondeterministic extraction results. Smart Query chatbot overridden to
+        `temperature:1` at its call site to preserve conversational tone.
+    (b) `apiCall` response handling now detects `tool_use` blocks and returns
+        `JSON.stringify(toolBlock.input)` — enables structured output via Anthropic's
+        tool_use schema enforcement.
+    (c) `detectPageTypes` now uses `tools` + `tool_choice` (forced tool call) with a
+        typed schema (`types: string[]` enum + optional `bomRegion` object). Prompt
+        DECISION ORDER replaced with CLASSIFICATION RULES allowing multi-type arrays
+        (e.g. `["schematic","bom"]` for pages with both drawing and parts table).
+        Deepens the region-merge fix from #25 — AI itself now returns multi-type,
+        not just user regions compensating for single-type AI output.
+    Relates to: #25 (original DECISION ORDER single-type issue).
