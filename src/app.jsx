@@ -12229,6 +12229,30 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // breadcrumb-only console.warn, which doesn't surface to admins.
     const _perPageOutcomes=[];
     if(hasBom){
+      // Pre-flight scan quality check: warn user early if drawings are scanned/degraded.
+      // Re-extraction: check existing extractionReport. First extraction: call checkPdfQuality.
+      const _existingScanQuality=panel.extractionReport?.scanQuality;
+      if(_existingScanQuality&&_existingScanQuality!=="none"){
+        const isHigh=_existingScanQuality==="high";
+        bgUpdate(panel.id,isHigh?"⚠ Low-quality scanned drawing — extraction may take longer and require review":"⚠ Scanned drawing detected — extraction may need review");
+      } else {
+        const _pdfPages=bomPages.filter(pg=>pg.originalPdfPath&&pg.pageNumber);
+        if(_pdfPages.length>0){
+          try{
+            const _commonPdf=_pdfPages[0].originalPdfPath;
+            const _pageNums=[...new Set(_pdfPages.map(pg=>pg.pageNumber))];
+            const _qc=await fbFunctions.httpsCallable("checkPdfQuality",{timeout:15000})({pdfPath:_commonPdf,pageNumbers:_pageNums});
+            const _qResults=_qc?.data?.quality||[];
+            const _worstLevel=_qResults.reduce((w,q)=>{const rank={high:3,medium:2,low:1,none:0};return(rank[q.warningLevel]||0)>(rank[w]||0)?q.warningLevel:w;},"none");
+            if(_worstLevel!=="none"){
+              const isHigh=_worstLevel==="high";
+              const monoCount=_qResults.filter(q=>q.isMonochrome).length;
+              bgUpdate(panel.id,isHigh?`⚠ Low-quality scanned drawing detected${monoCount?` (${monoCount} fax-scan page${monoCount>1?"s":""})`:""}  — extraction will take longer and part numbers may need review`:`⚠ Scanned drawing detected — some part numbers may need verification`);
+              console.log("[BOM EXTRACT] Pre-flight quality check:",_worstLevel,_qResults);
+            }
+          }catch(qErr){console.warn("[BOM EXTRACT] Pre-flight quality check failed (non-blocking):",qErr.message);}
+        }
+      }
       let bomDone=0;
       let allQuestions=[];
       // v1.20.5: Batch server extraction — pre-fetch all BOM pages in one Cloud Function
