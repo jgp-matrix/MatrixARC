@@ -940,3 +940,81 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
         Deepens the region-merge fix from #25 — AI itself now returns multi-type,
         not just user regions compensating for single-type AI output.
     Relates to: #25 (original DECISION ORDER single-type issue).
+
+## Round 16 (crop-path rollback + scanned PDF quality + progress bar, 2026-05-22)
+
+48. **RESOLVED** — `ed1c6a42` (v1.20.14, deployed 2026-05-22) — Crop-path extraction
+    regression rollback. Commit `8d984699` (2026-05-20, v1.20.5) reintroduced
+    crop-first BOM extraction priority, unknowingly re-enabling the same JPEG
+    compression artifact failure mode that caused ~20 wrong part numbers on dense
+    D-size BOMs (character-merging: B↔8, I↔1, S↔5, 2↔3). Originally deleted in
+    `571105e9` (2026-05-14). Reintroduction was via direct commit to master with
+    no PR, no documented rationale, and no test case.
+
+    Discovered 2026-05-22 after PRJ402107 BOM extraction missed most part numbers.
+    Diagnostic confirmed the source PDF (CSW1807-121_Rev.D.pdf) contains
+    CCITTFaxDecode monochrome fax-scan images (~280 DPI), not vector text.
+
+    Fix: restored PDF-native priority across all three call sites (extractBomPage CF,
+    extractBomBatch CF, client-side fallback). Added 6-rule Extraction Path Change
+    Protocol to CLAUDE.md to prevent recurrence. Exposure assessment: 87 projects
+    scanned, 7 affected, 1 quoted (MTX-Q202018) — manually verified clean.
+
+49. **RESOLVED** — `06a0b9ee` (v1.20.15, deployed 2026-05-22) — Scanned PDF quality
+    detection and enhanced extraction for degraded source material. Multi-part feature:
+
+    (a) Server-side `assessPdfPageQuality()` helper in `functions/index.js` — inspects
+    pdf-lib page XObject resources for CCITTFaxDecode (monochrome fax), DCTDecode
+    (JPEG), large FlateDecode images. Returns `{isScanned, isMonochrome, estimatedDpi,
+    imageCount, hasVectorText, warningLevel}`.
+
+    (b) Dynamic prompt enhancement: when quality is degraded, injects SCANNED DOCUMENT
+    ALERT into the Anthropic prompt instructing maximum character scrutiny, default
+    medium confidence, explicit disambiguation rules for B/8, O/0, S/5, I/1.
+
+    (c) PDF-native CropBox: when users draw BOM regions, applies `page.setCropBox()`
+    in native PDF coordinates instead of converting to JPEG crop. Preserves vector
+    fidelity. Coordinate transform from normalized (0-1, top-left origin) to PDF
+    points (bottom-left origin).
+
+    (d) Client-side propagation: `pdfQuality` flows from server response → parsed
+    result → `_perPageOutcomes` → `extractionReport.scanQuality` (persisted on panel).
+
+    (e) UI scan-quality warning banner above BOM table — amber for medium, orange for
+    high (monochrome fax). Persists across reloads via extractionReport.
+
+    (f) Confidence dot indicators on BOM rows — red (#ef4444) for low confidence,
+    amber (#f59e0b) for medium. Tooltip shows "AI confidence: {level}".
+
+50. **RESOLVED** — `8a3e8773` (v1.20.16, deployed 2026-05-22) — Pre-extraction scan
+    quality warning. New `checkPdfQuality` Cloud Function (30s timeout, 512MB, no AI
+    call) — lightweight pre-flight check that downloads PDF and inspects XObjects.
+    Client calls it before extraction starts; for re-extractions uses cached
+    `extractionReport.scanQuality` instead. Shows warning via progress status bar:
+    "Low-quality scanned drawing detected (N fax-scan pages) — extraction will take
+    longer and part numbers may need review." Non-blocking (try/catch).
+
+51. **RESOLVED** — `4c6581d7` (v1.20.18, deployed 2026-05-22) — Progress bar heartbeat
+    during long API calls. Added `bgHeartbeat()` function that ticks the progress bar
+    forward every 3 seconds using an asymptotic curve (fast initial progress, slows
+    over time, never reaches cap). Wired into 3 stall points: batch extraction, per-page
+    fallback, and re-extract batch. Shows elapsed progress like "Batch extracting 3 BOM
+    pages… (42%)". v1.20.17 had a scoping bug (function defined inside `runExtractionTask`
+    but called from `PanelCard`) — fixed in v1.20.18 by hoisting to module scope.
+
+52. **OPEN** — Progress bar streaming (future improvement). Current heartbeat is synthetic
+    — it shows simulated progress, not real extraction progress. The Anthropic API
+    supports `stream: true` which could provide token-level progress updates. Would
+    require server-side streaming (Cloud Functions → client) or SSE/WebSocket bridge.
+    Significantly more complex than the heartbeat approach. Deferred.
+
+53. **OPEN** — ECO page type detection bug (Issue G from 2026-05-22 diagnostic). When an
+    ECO is created from a panel, the page type detection may misclassify pages that were
+    previously correctly typed. Needs investigation — observed during the PRJ402107
+    diagnostic session but not root-caused.
+
+54. **OPEN** — BC sync 400 errors on valid items (Issue J from 2026-05-22 diagnostic).
+    Separate from the ETag self-conflict (#46) — these are HTTP 400 validation errors
+    where the PATCH payload includes fields that BC considers read-only or invalid for
+    the target entity type. Needs investigation to identify which fields in the PATCH
+    payload trigger the rejection.

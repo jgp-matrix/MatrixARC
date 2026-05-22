@@ -10,7 +10,7 @@ const { mouserSearchPart, mouserSearchBatch } = require('./mouserApi');
 const { digikeySearchPart, digikeySearchBatch } = require('./digikeyApi');
 const { BOM_PROMPT } = require('./bomPrompt');
 const { ANTHROPIC_MODELS, MONITORED_MODELS } = require('./models');
-const { PDFDocument } = require('pdf-lib');
+const { PDFDocument, PDFName, PDFRef } = require('pdf-lib');
 
 // Purchasing module functions
 const purchasing = require('./purchasing');
@@ -2247,6 +2247,61 @@ exports.bulkMfrLookup = functions.runWith({
   return { success: true, found: results.filter(r => r.manufacturer).length, patched, unknownMfr, results };
 });
 
+// ── PDF page quality assessment ──
+// Inspects a pdf-lib page's XObject resources for scanned/degraded indicators:
+// CCITTFaxDecode (fax scans), DCTDecode (embedded JPEG), low-DPI raster images.
+function assessPdfPageQuality(pdfPage, context) {
+  const result = { isScanned: false, isMonochrome: false, estimatedDpi: null, imageCount: 0, hasVectorText: false, warningLevel: 'none' };
+  try {
+    const rawRes = pdfPage.node.get(PDFName.of('Resources'));
+    if (!rawRes) return result;
+    const resDict = rawRes instanceof PDFRef ? context.lookup(rawRes) : rawRes;
+    if (!resDict || typeof resDict.get !== 'function') return result;
+
+    const rawFonts = resDict.get(PDFName.of('Font'));
+    if (rawFonts) {
+      const fontDict = rawFonts instanceof PDFRef ? context.lookup(rawFonts) : rawFonts;
+      if (fontDict && typeof fontDict.entries === 'function') {
+        result.hasVectorText = [...fontDict.entries()].length > 0;
+      }
+    }
+
+    const rawXo = resDict.get(PDFName.of('XObject'));
+    if (!rawXo) return result;
+    const xoDict = rawXo instanceof PDFRef ? context.lookup(rawXo) : rawXo;
+    if (!xoDict || typeof xoDict.entries !== 'function') return result;
+
+    const pageSize = pdfPage.getSize();
+    for (const [, val] of xoDict.entries()) {
+      const obj = val instanceof PDFRef ? context.lookup(val) : val;
+      if (!obj || !obj.dict) continue;
+      const subtype = obj.dict.get(PDFName.of('Subtype'));
+      if (!subtype || subtype.toString() !== '/Image') continue;
+      result.imageCount++;
+      const filter = obj.dict.get(PDFName.of('Filter'));
+      const filterStr = filter ? filter.toString() : '';
+      const width = obj.dict.get(PDFName.of('Width'));
+      const height = obj.dict.get(PDFName.of('Height'));
+      const w = width ? Number(width.toString()) : 0;
+      const h = height ? Number(height.toString()) : 0;
+      if (filterStr.includes('CCITTFax')) { result.isScanned = true; result.isMonochrome = true; }
+      if (filterStr.includes('DCTDecode')) { result.isScanned = true; }
+      if (filterStr.includes('FlateDecode') && w > 1000 && h > 1000) { result.isScanned = true; }
+      if (w > 0 && pageSize.width > 0) {
+        const dpi = Math.round(w / (pageSize.width / 72));
+        if (!result.estimatedDpi || dpi < result.estimatedDpi) result.estimatedDpi = dpi;
+      }
+    }
+
+    if (result.isMonochrome) result.warningLevel = 'high';
+    else if (result.isScanned && result.estimatedDpi && result.estimatedDpi < 200) result.warningLevel = 'high';
+    else if (result.isScanned) result.warningLevel = 'medium';
+  } catch (e) {
+    functions.logger.warn('assessPdfPageQuality error', { error: e.message });
+  }
+  return result;
+}
+
 // ── extractBomPage — Server-side BOM extraction (v1.19.981) ──
 // Client tries this first via extractBomPageViaServer; falls back to direct
 // Anthropic API on error. Accepts native PDF ({pdfPath, pageNumber}) or
@@ -2260,7 +2315,7 @@ exports.extractBomPage = functions
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   }
   const uid = context.auth.uid;
-  const { pdfPath, pageNumber, imageBase64, imageMediaType, feedback, userNotes, regionLearningParts, croppedBomImage, croppedBomMediaType } = data || {};
+  const { pdfPath, pageNumber, imageBase64, imageMediaType, feedback, userNotes, regionLearningParts, croppedBomImage, croppedBomMediaType, bomRegion } = data || {};
 
   const hasPdf = !!(pdfPath && pageNumber != null);
   const hasImage = !!(imageBase64 && imageMediaType);
@@ -2290,6 +2345,7 @@ exports.extractBomPage = functions
 
   let extractionPath;
   let userContent;
+  let pdfQuality = null;
 
   if (hasPdf) {
     extractionPath = 'pdf-native';
@@ -2308,15 +2364,41 @@ exports.extractBomPage = functions
     const singlePagePdf = await PDFDocument.create();
     const [copiedPage] = await singlePagePdf.copyPages(fullPdf, [pageNumber - 1]);
     singlePagePdf.addPage(copiedPage);
+
+    // PDF-native region crop: if user drew a BOM region, apply CropBox to focus
+    // the AI on just the BOM table while preserving native PDF quality.
+    // bomRegion = {x, y, w, h} in normalized 0-1 coordinates (origin top-left).
+    let pdfCropped = false;
+    if (bomRegion && bomRegion.x != null && bomRegion.y != null && bomRegion.w > 0 && bomRegion.h > 0) {
+      try {
+        const pg = singlePagePdf.getPage(0);
+        const { width: pgW, height: pgH } = pg.getSize();
+        // Convert normalized coords (origin top-left) to PDF points (origin bottom-left)
+        const cropX = Math.round(bomRegion.x * pgW);
+        const cropY = Math.round((1 - bomRegion.y - bomRegion.h) * pgH);
+        const cropW = Math.round(bomRegion.w * pgW);
+        const cropH = Math.round(bomRegion.h * pgH);
+        pg.setCropBox(cropX, cropY, cropW, cropH);
+        pdfCropped = true;
+        functions.logger.info('extractBomPage PDF region crop applied', { cropX, cropY, cropW, cropH, pgW, pgH });
+      } catch (cropErr) {
+        functions.logger.warn('extractBomPage PDF region crop failed, using full page', { error: cropErr.message });
+      }
+    }
+
     const singlePageBytes = await singlePagePdf.save();
     const pdfBase64 = Buffer.from(singlePageBytes).toString('base64');
-    functions.logger.info('extractBomPage PDF sliced', { totalPages, extractedPage: pageNumber, fullSizeKB: Math.round(buf.length / 1024), slicedSizeKB: Math.round(singlePageBytes.length / 1024) });
+    const pdfQuality = assessPdfPageQuality(fullPdf.getPage(pageNumber - 1), fullPdf.context);
+    functions.logger.info('extractBomPage PDF sliced', { totalPages, extractedPage: pageNumber, fullSizeKB: Math.round(buf.length / 1024), slicedSizeKB: Math.round(singlePageBytes.length / 1024), pdfQuality, pdfCropped });
 
     const feedbackSection = feedback
       ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
     const notesSection = userNotes
       ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.` : '';
-    const pageHint = `Extract ALL Bill of Materials (BOM) items from this page. If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+    const qualityAlert = pdfQuality.warningLevel !== 'none'
+      ? `\n\n⚠️ SCANNED DOCUMENT ALERT: This page is a ${pdfQuality.isMonochrome ? 'monochrome (black-and-white) fax-quality' : 'scanned'} image at ~${pdfQuality.estimatedDpi || 'unknown'} DPI embedded in a PDF. The BOM table is a bitmap, NOT vector text. Characters WILL be ambiguous.\n\nAPPLY MAXIMUM SCRUTINY:\n- Perform the character-count check on EVERY part number, not just long ones\n- Default ALL rows to confidence "medium" unless the glyph is crystal clear\n- For any character that could be B/8, O/0, S/5, I/1 — examine the surrounding pattern for clues\n- Count total BOM rows TWICE before starting extraction — scanned tables are easy to under-count\n- If the BOM spans multiple image regions on this page, explicitly note how many sections you found\n` : '';
+    const cropHintText = pdfCropped ? 'This PDF has been cropped to show ONLY the BOM table region. ' : '';
+    const pageHint = `${cropHintText}Extract ALL Bill of Materials (BOM) items from this page.${qualityAlert} If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
 
     userContent = [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
@@ -2384,7 +2466,42 @@ exports.extractBomPage = functions
   recordAnthropicUsage(uid, modelUsed, result.usage).catch(() => {});
   warnAdminsTokenUsage(uid, 'extractBomPage', result.usage, 64000).catch(() => {});
 
-  return { raw, extractionPath, modelUsed, stopReason, usage: result.usage || {} };
+  return { raw, extractionPath, modelUsed, stopReason, usage: result.usage || {}, pdfQuality };
+});
+
+// ── checkPdfQuality — Lightweight pre-flight quality check (v1.20.15) ──
+// Downloads the PDF and inspects page XObject resources for scan quality
+// indicators. Returns in 1-2 seconds — no AI call. Client uses this to
+// show a warning before the slow extraction call starts.
+exports.checkPdfQuality = functions
+  .runWith({ timeoutSeconds: 30, memory: '512MB', maxInstances: 10 })
+  .https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
+  }
+  const { pdfPath, pageNumbers } = data || {};
+  if (!pdfPath || !pdfPath.startsWith('originalPdfs/')) {
+    throw new functions.https.HttpsError('invalid-argument', 'Valid pdfPath required');
+  }
+  if (!Array.isArray(pageNumbers) || pageNumbers.length === 0 || pageNumbers.length > 30) {
+    throw new functions.https.HttpsError('invalid-argument', 'pageNumbers must be 1-30 entries');
+  }
+
+  const bucket = admin.storage().bucket();
+  const file = bucket.file(pdfPath);
+  const [exists] = await file.exists();
+  if (!exists) return { quality: [] };
+  const [buf] = await file.download();
+  const fullPdf = await PDFDocument.load(buf);
+  const totalPages = fullPdf.getPageCount();
+
+  const quality = pageNumbers.map(pn => {
+    const n = Number(pn);
+    if (!Number.isInteger(n) || n < 1 || n > totalPages) return { pageNumber: n, error: 'invalid' };
+    return { pageNumber: n, ...assessPdfPageQuality(fullPdf.getPage(n - 1), fullPdf.context) };
+  });
+
+  return { quality, totalPages, pdfSizeKB: Math.round(buf.length / 1024) };
 });
 
 // ── extractBomBatch — Batch BOM extraction (v1.20.5) ──
@@ -2460,8 +2577,28 @@ exports.extractBomBatch = functions
         const singlePagePdf = await PDFDocument.create();
         const [copiedPage] = await singlePagePdf.copyPages(fullPdf, [pageNumber - 1]);
         singlePagePdf.addPage(copiedPage);
+
+        // PDF-native region crop for batch
+        let batchPdfCropped = false;
+        const pgRegion = pg.bomRegion;
+        if (pgRegion && pgRegion.x != null && pgRegion.y != null && pgRegion.w > 0 && pgRegion.h > 0) {
+          try {
+            const spg = singlePagePdf.getPage(0);
+            const { width: pgW, height: pgH } = spg.getSize();
+            const cropX = Math.round(pgRegion.x * pgW);
+            const cropY = Math.round((1 - pgRegion.y - pgRegion.h) * pgH);
+            const cropW = Math.round(pgRegion.w * pgW);
+            const cropH = Math.round(pgRegion.h * pgH);
+            spg.setCropBox(cropX, cropY, cropW, cropH);
+            batchPdfCropped = true;
+          } catch (cropErr) {
+            functions.logger.warn('extractBomBatch PDF region crop failed', { pageNumber, error: cropErr.message });
+          }
+        }
+
         const singlePageBytes = await singlePagePdf.save();
         const pdfBase64 = Buffer.from(singlePageBytes).toString('base64');
+        const pgQuality = assessPdfPageQuality(fullPdf.getPage(pageNumber - 1), fullPdf.context);
 
         // Build user content — cropped BOM image if provided AND no PDF, otherwise PDF
         let userContent;
@@ -2475,9 +2612,12 @@ exports.extractBomBatch = functions
           ];
         } else {
           extractionPath = 'pdf-native';
+          const batchQualityAlert = pgQuality.warningLevel !== 'none'
+            ? `\n\n⚠️ SCANNED DOCUMENT ALERT: This page is a ${pgQuality.isMonochrome ? 'monochrome (black-and-white) fax-quality' : 'scanned'} image at ~${pgQuality.estimatedDpi || 'unknown'} DPI. Characters WILL be ambiguous. Default ALL rows to confidence "medium" unless every glyph is crystal clear. Perform character-count checks on EVERY part number.\n` : '';
+          const batchCropHint = batchPdfCropped ? 'This PDF has been cropped to show ONLY the BOM table region. ' : '';
           userContent = [
             { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
-            { type: 'text', text: pageHint + (pg.notes ? `\n\n${pg.notes}` : '') + feedbackSection + notesSection },
+            { type: 'text', text: batchCropHint + pageHint + batchQualityAlert + (pg.notes ? `\n\n${pg.notes}` : '') + feedbackSection + notesSection },
           ];
         }
 
@@ -2519,7 +2659,7 @@ exports.extractBomBatch = functions
 
         recordAnthropicUsage(uid, modelUsed, usage).catch(() => {});
 
-        results[i] = { pageNumber, raw, extractionPath, modelUsed, stopReason, usage };
+        results[i] = { pageNumber, raw, extractionPath, modelUsed, stopReason, usage, pdfQuality: pgQuality };
       } catch (pageErr) {
         functions.logger.error('extractBomBatch page exception', { pageNumber, error: pageErr.message });
         results[i] = { pageNumber, error: pageErr.message };
