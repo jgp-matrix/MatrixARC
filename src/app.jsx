@@ -441,6 +441,17 @@ function bgDismiss(taskId){
   delete _bgTasks[taskId];
   _bgNotify();
 }
+function bgHeartbeat(taskId,startPct,maxPct,msg,intervalMs=3000){
+  let cur=startPct;
+  const remaining=()=>maxPct-cur;
+  const iv=setInterval(()=>{
+    const step=Math.max(0.3,remaining()*0.06);
+    cur=Math.min(cur+step,maxPct-0.5);
+    const elapsed=Math.round((cur-startPct)/(maxPct-startPct)*100);
+    bgSetPct(taskId,Math.round(cur),`${msg} (${elapsed}%)`);
+  },intervalMs);
+  return{stop:(finalPct)=>{clearInterval(iv);if(finalPct!=null)bgSetPct(taskId,finalPct);}};
+}
 
 // ── REMOTE BACKGROUND TASKS (team-wide visibility) ──
 // DECISION(v1.19.599): Mirror extraction status to Firestore so other company members
@@ -12178,17 +12189,6 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     const phaseRange={};
     for(const p of phases){const start=Math.round((cumWeight/totalWeight)*100);cumWeight+=p.weight;phaseRange[p.name]={start,end:Math.round((cumWeight/totalWeight)*100)};};
     function phasePct(name,frac){const r=phaseRange[name];if(!r)return;const pct=r.start+Math.round(frac*(r.end-r.start));bgSetPct(panel.id,Math.min(pct,99));}
-    function startHeartbeat(taskId,startPct,maxPct,msg,intervalMs=3000){
-      let cur=startPct;
-      const remaining=()=>maxPct-cur;
-      const iv=setInterval(()=>{
-        const step=Math.max(0.3,remaining()*0.06);
-        cur=Math.min(cur+step,maxPct-0.5);
-        const elapsed=Math.round((cur-startPct)/(maxPct-startPct)*100);
-        bgSetPct(taskId,Math.round(cur),`${msg} (${elapsed}%)`);
-      },intervalMs);
-      return{stop:(finalPct)=>{clearInterval(iv);if(finalPct!=null)bgSetPct(taskId,finalPct);}};
-    }
 
     bgSetPct(panel.id,0,hasBom?"Extracting BOM…":hasVal?"Validating…":"Processing…");
 
@@ -12288,7 +12288,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
               return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes,bomRegion:unit.bomRegion||null};
             }));
             const _bomRange=phaseRange["bom"]||{start:0,end:40};
-            const _hb=startHeartbeat(panel.id,_bomRange.start+1,_bomRange.end-2,`Batch extracting ${_batchEligible.length} BOM pages…`);
+            const _hb=bgHeartbeat(panel.id,_bomRange.start+1,_bomRange.end-2,`Batch extracting ${_batchEligible.length} BOM pages…`);
             try{
               _batchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",userNotes);
             }finally{_hb.stop();}
@@ -12338,7 +12338,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             console.log(`[BOM EXTRACT] page="${pg.name||pgIdx+1}" using BATCH result (${(result.items||[]).length} items)`);
           } else {
             const _pgBomRange=phaseRange["bom"]||{start:0,end:40};
-            const _pgHb=startHeartbeat(panel.id,_pgBomRange.start+1,_pgBomRange.end-2,`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
+            const _pgHb=bgHeartbeat(panel.id,_pgBomRange.start+1,_pgBomRange.end-2,`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
             try{result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);}finally{_pgHb.stop();}
           }
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
@@ -22463,7 +22463,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
             return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
           }));
-          const _reHb=startHeartbeat(panel.id,3,55,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
+          const _reHb=bgHeartbeat(panel.id,3,55,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
           try{
             _reBatchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",rgnNotes);
           }finally{_reHb.stop();}
