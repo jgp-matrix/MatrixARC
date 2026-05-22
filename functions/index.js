@@ -2291,19 +2291,7 @@ exports.extractBomPage = functions
   let extractionPath;
   let userContent;
 
-  if (hasCroppedBom) {
-    extractionPath = 'bom-region-crop';
-    const feedbackSection = feedback
-      ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
-    const notesSection = userNotes
-      ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting.` : '';
-    const pageHint = `This image is a CROPPED region showing ONLY the BOM table from a UL508A control panel drawing. Extract ALL items from this table.\n\n`;
-    userContent = [
-      { type: 'image', source: { type: 'base64', media_type: croppedBomMediaType, data: croppedBomImage } },
-      { type: 'text', text: pageHint + feedbackSection + notesSection },
-    ];
-    functions.logger.info('extractBomPage using cropped BOM region', { uid, croppedSizeKB: Math.round(croppedBomImage.length * 0.75 / 1024) });
-  } else if (hasPdf) {
+  if (hasPdf) {
     extractionPath = 'pdf-native';
     const bucket = admin.storage().bucket();
     const file = bucket.file(pdfPath);
@@ -2334,6 +2322,18 @@ exports.extractBomPage = functions
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
       { type: 'text', text: pageHint + feedbackSection + notesSection },
     ];
+  } else if (hasCroppedBom) {
+    extractionPath = 'bom-region-crop';
+    const feedbackSection = feedback
+      ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
+    const notesSection = userNotes
+      ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting.` : '';
+    const pageHint = `This image is a CROPPED region showing ONLY the BOM table from a UL508A control panel drawing. Extract ALL items from this table.\n\n`;
+    userContent = [
+      { type: 'image', source: { type: 'base64', media_type: croppedBomMediaType, data: croppedBomImage } },
+      { type: 'text', text: pageHint + feedbackSection + notesSection },
+    ];
+    functions.logger.info('extractBomPage using cropped BOM region (PDF unavailable)', { uid, croppedSizeKB: Math.round(croppedBomImage.length * 0.75 / 1024) });
   } else {
     extractionPath = 'image-fallback';
     const feedbackSection = feedback
@@ -2463,10 +2463,10 @@ exports.extractBomBatch = functions
         const singlePageBytes = await singlePagePdf.save();
         const pdfBase64 = Buffer.from(singlePageBytes).toString('base64');
 
-        // Build user content — cropped BOM image if provided, otherwise PDF
+        // Build user content — cropped BOM image if provided AND no PDF, otherwise PDF
         let userContent;
         let extractionPath;
-        if (pg.croppedBomImage) {
+        if (pg.croppedBomImage && !pdfBase64) {
           extractionPath = 'bom-region-crop';
           const cropHint = `This image is a CROPPED region showing ONLY the BOM table from a UL508A control panel drawing. Extract ALL items from this table.\n\n`;
           userContent = [

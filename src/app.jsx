@@ -10338,12 +10338,12 @@ async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPat
   if(!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF.");
   const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:540000});
   const payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
-  if(croppedBomDataUrl){
+  if(croppedBomDataUrl&&!originalPdfPath){
     const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
     payload.croppedBomImage=base64;
     payload.croppedBomMediaType="image/jpeg";
   }
-  const intendedPath="pdf-native";
+  const intendedPath=originalPdfPath?"pdf-native":"bom-region-crop";
   const t0=Date.now();
   const result=await callable(payload);
   const elapsedMs=Date.now()-t0;
@@ -10415,10 +10415,10 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   // Server-side path FIRST. On error, falls through to direct API.
   try{
     const serverResult=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl);
-    if((serverResult.items||[]).length===0&&croppedBomDataUrl&&originalPdfPath&&pageNumber){
-      console.warn("[BOM EXTRACT] server crop path returned 0 items — retrying via PDF-native");
-      try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,null);}
-      catch(retryErr){console.warn("[BOM EXTRACT] PDF-native retry also failed:",retryErr?.message||retryErr);}
+    if((serverResult.items||[]).length===0&&originalPdfPath&&pageNumber&&croppedBomDataUrl){
+      console.warn("[BOM EXTRACT] server PDF-native returned 0 items — retrying via crop fallback");
+      try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl);}
+      catch(retryErr){console.warn("[BOM EXTRACT] crop fallback retry also failed:",retryErr?.message||retryErr);}
     }
     return serverResult;
   }catch(serverErr){
@@ -10440,7 +10440,44 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
     }catch(_){}
   }
 
-  // Cropped BOM region — preferred when available (higher resolution of just the BOM)
+  // Native PDF extraction — preferred when available (vector text, no JPEG artifacts).
+  if(originalPdfPath&&pageNumber){
+    try{
+      const pdfBase64=await loadOriginalPdfAsBase64(originalPdfPath,pageNumber);
+      const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
+      const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
+      const pageHint=`Extract ALL Bill of Materials (BOM) items from this page. If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+      console.log(`[BOM EXTRACT] using native PDF input — page ${pageNumber}, pdf=${originalPdfPath}`);
+      const resp=await fetch("https://api.anthropic.com/v1/messages",{
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
+        body:JSON.stringify({
+          model:ANTHROPIC_MODELS.OPUS,
+          max_tokens:64000,
+          thinking:{type:"enabled",budget_tokens:8000},
+          system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
+          messages:[{role:"user",content:[
+            {type:"document",source:{type:"base64",media_type:"application/pdf",data:pdfBase64}},
+            {type:"text",text:pageHint+feedbackSection+notesSection}
+          ]}]
+        })
+      });
+      const d=await resp.json();
+      if(!resp.ok){
+        throw new Error(`PDF native API call failed: ${d.error?.message||resp.status}`);
+      }{
+        if(d.stop_reason==="max_tokens")console.warn("BOM extraction (PDF): response TRUNCATED (hit max_tokens limit) — some items may be lost");
+        const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
+        console.log("BOM extraction (PDF) response:",raw.length,"chars, stop_reason:",d.stop_reason);
+        _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
+        return _parseAndVerifyBomRaw(raw,"pdf-native");
+      }
+    }catch(pdfErr){
+      console.warn(`[BOM EXTRACT] PDF native failed: ${pdfErr.message}, falling back to cropped region`);
+    }
+  }
+
+  // Cropped BOM region — fallback when PDF unavailable or failed.
   if(croppedBomDataUrl){
     try{
       const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
@@ -10463,66 +10500,21 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         })
       });
       const d=await resp.json();
-      if(resp.ok){
+      if(!resp.ok){
+        throw new Error(`Cropped region API call failed: ${d.error?.message||resp.status}`);
+      }{
         if(d.stop_reason==="max_tokens")console.warn("BOM extraction (cropped): response TRUNCATED");
         const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
         console.log("BOM extraction (cropped region) response:",raw.length,"chars, stop_reason:",d.stop_reason);
         _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
-        const cropResult=_parseAndVerifyBomRaw(raw,"bom-region-crop");
-        if((cropResult.items||[]).length>0)return cropResult;
-        console.warn("[BOM EXTRACT] cropped region returned 0 items — falling back to full PDF");
-      } else {
-      console.warn(`[BOM EXTRACT] cropped region API call failed (${d.error?.message||resp.status}), falling back to full PDF`);}
+        return _parseAndVerifyBomRaw(raw,"bom-region-crop");
+      }
     }catch(cropErr){
-      console.warn(`[BOM EXTRACT] cropped region failed: ${cropErr.message}, falling back to full PDF`);
+      throw new Error(`Cropped BOM extraction failed: ${cropErr.message}`);
     }
   }
 
-  // Native PDF extraction — fallback when cropped region unavailable or failed.
-  {
-    try{
-      const pdfBase64=await loadOriginalPdfAsBase64(originalPdfPath,pageNumber);
-      const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
-      const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
-      const pageHint=`Extract ALL Bill of Materials (BOM) items from this page. If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
-      console.log(`[BOM EXTRACT] using native PDF input — page ${pageNumber}, pdf=${originalPdfPath}`);
-      // DECISION(v1.19.963, cost report A4): Prompt caching on BOM_PROMPT. The prompt
-      // is ~3500 tokens of carefully-tuned extraction logic (column mapping, character
-      // disambiguation, multi-tag aggregation, etc.) and is identical on every call.
-      // Marking it cache_control: ephemeral lets subsequent calls within 5 min reuse
-      // the cached prompt at ~10% of regular input cost. Hit rate is high because
-      // panels in the same project extract back-to-back. Variable parts (page hint,
-      // user feedback, notes) sit AFTER the document and outside the cached system
-      // block — they vary per call and can't be cached effectively.
-      const resp=await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST",
-        headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({
-          model:ANTHROPIC_MODELS.OPUS,
-          max_tokens:64000,
-          thinking:{type:"enabled",budget_tokens:8000},
-          system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
-          messages:[{role:"user",content:[
-            {type:"document",source:{type:"base64",media_type:"application/pdf",data:pdfBase64}},
-            {type:"text",text:pageHint+feedbackSection+notesSection}
-          ]}]
-        })
-      });
-      const d=await resp.json();
-      if(!resp.ok){
-        throw new Error(`PDF native API call failed: ${d.error?.message||resp.status}`);
-      }{
-        if(d.stop_reason==="max_tokens")console.warn("BOM extraction (PDF): response TRUNCATED (hit max_tokens limit) — some items may be lost");
-        const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
-        console.log("BOM extraction (PDF) response:",raw.length,"chars, stop_reason:",d.stop_reason);
-        // v1.19.965: record per-call usage to spend ledger (best-effort).
-        _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
-        return _parseAndVerifyBomRaw(raw,"pdf-native");
-      }
-    }catch(pdfErr){
-      throw new Error(`PDF native extraction failed: ${pdfErr.message}`);
-    }
-  }
+  throw new Error("BOM extraction failed: no PDF path and no cropped BOM image available");
 }
 
 // ── PER-ROW SNIPPET SELF-CORRECTION ──

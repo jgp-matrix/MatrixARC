@@ -40,6 +40,7 @@ When the user invokes "diagstartup" or says "this is a diagnostic session," appl
 **Allowed without asking (use freely, do not request approval):**
 - Read, Grep, Glob, View on any file in the repo
 - Bash for read-only inspection: git status, git log, git diff, git show, ls, cat, head, tail, grep, find, wc
+- PowerShell commands (Windows-native, equivalent to Bash on this machine). Treat PowerShell with the same read-only criteria as Bash: read-only inspection (Get-ChildItem, Get-Content, Select-String, Where-Object, ForEach-Object for inspection) is auto-allowed. Mutations (Remove-Item, New-Item with mutations, Set-Content writes, Invoke-RestMethod with non-GET methods) still require approval per the existing rules.
 - Firebase read commands: firestore:get, firestore:list, functions:log, hosting:channel:list, projects:list
 - Any MCP read tool (search, get, list, fetch operations)
 - Web fetch and web search for documentation or error reference
@@ -309,6 +310,24 @@ AI returns a classified wire list (`internal: true/false`), code filters program
 | BC Item Browser row locate | Haiku (table boundaries + math) | Image | |
 
 **Model gotcha:** Sonnet 4.6 does NOT support assistant prefill — use Haiku for prefill-based JSON extraction.
+
+### Extraction Path Change Protocol
+
+**Never reintroduce a previously-deleted extraction path without the following:**
+
+1. **Commit message must reference the prior deletion** — cite the commit SHA and reason for the deletion. Example: "Reintroducing crop-path extraction (deleted in 571105e9 due to OCR character-merging on dense BOMs). Changes since deletion: [list what's different]."
+
+2. **Test case must reproduce the original failure mode** — before merging, verify the new implementation does NOT reproduce the failure that motivated the prior deletion. For BOM extraction paths, this means extracting the same project/page that originally failed and comparing part numbers.
+
+3. **Path priority must preserve PDF-native precedence** — when both PDF and image data are available, PDF-native MUST take priority. Image/crop paths are fallbacks only. Any code that checks `hasCroppedBom` or `hasImage` before `hasPdf` is a bug.
+
+4. **Extraction path is logged** — the `extractionPath` field in function log output (`pdf-native`, `bom-region-crop`, `image-fallback`) enables post-deploy auditing. If changing path selection logic, verify the log field still accurately reports the chosen path.
+
+5. **All three call sites must stay in sync** — path priority in `extractBomPage` Cloud Function, `extractBomBatch` Cloud Function, and the client-side `extractBomPage()` fallback chain must use the same precedence order. Changing one without the others creates silent divergence.
+
+6. **Direct commits to master are prohibited** for changes to extraction path priority, page type detection, save path, BC sync logic, or any code path previously deleted for being broken. These changes require either: (a) a PR with description and reviewer, or (b) explicit pre-implementation approval recorded in the commit message (e.g., "Approved per Claude review session 2026-XX-XX").
+
+**Rationale:** On May 14 (571105e9), image-based extraction was deleted because JPEG compression artifacts caused ~20 wrong part numbers on dense D-size BOMs (character-merging: B↔8, I↔1, S↔5, 2↔3). On May 20 (8d984699), crop-based image extraction was reintroduced with crop-first priority, unknowingly re-enabling the same failure mode — via direct commit to master with no PR, no documented rationale, and no test case. Diagnosed May 22 after PRJ402107 stalled at 1% and produced OCR errors. This protocol prevents recurrence.
 
 ### Anthropic Cost-Attack Hardening
 The supplier portal Cloud Function `extractSupplierQuotePricing` is hardened against cost-attack via leaked tokens:
