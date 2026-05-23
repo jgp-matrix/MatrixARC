@@ -9275,8 +9275,8 @@ function fuzzyMergeBomItemsWithReport(items){
       const dropped=keepA?b.partNumber:base.partNumber;
       merges.push({
         kept,dropped,editDist:ed,
-        keptItemNo:base.itemNo||base.item||"",
-        droppedItemNo:b.itemNo||b.item||"",
+        keptItemNo:keepA?(base.itemNo||base.item||""):(b.itemNo||b.item||""),
+        droppedItemNo:keepA?(b.itemNo||b.item||""):(base.itemNo||base.item||""),
         reason:mfrMatch&&descMatch?"mfr+desc match":mfrMatch?"mfr match":"desc match",
         manufacturer:base.manufacturer||b.manufacturer||"",
         description:((base.description||"").length>=(b.description||"").length?base.description:b.description)||"",
