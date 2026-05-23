@@ -6,6 +6,7 @@
 - [Session shutdown procedure](#session-shutdown-procedure) — Close Out + Closed two-step
 - [Commit destination](#commit-destination)
 - [Parallel Claude session workflow](#parallel-claude-session-workflow)
+- [Multi-instance workflow](#multi-instance-workflow) — CCD/Coach/Jon roles, file ownership, H-item discipline
 - [Superpowers skills](#superpowers-skills-available-manual-load-local)
 - [Project Overview](#project-overview) — architecture, deploy, versioning
 - [Troubleshooting](#troubleshooting--first-line-of-defence) — always check ARC Debug Logs first
@@ -173,6 +174,48 @@ The user runs **two Claude sessions in parallel** against this codebase:
 - Don't assume the working tree is the same as last edit. Quick `git status` before risky changes is cheap insurance.
 - If the user says "the CLI is touching X," skip X until they say it's safe.
 - Do not run `tools/review.sh` or other test/scan scripts from the dev session — that's the CLI's job, and concurrent runs may corrupt their output files.
+
+## Multi-instance workflow
+
+Three Claude instances plus Jon operate against this codebase with distinct roles.
+
+### Roles
+
+| Instance | Role | Owns |
+|----------|------|------|
+| **CCD** (Claude Code IDE) | Implementation, empirical investigation, regression testing, deploys | Source code, test artifacts, H{N}-PLAN.md files |
+| **Coach** (separate CC terminal) | Architectural review, code-grounded analysis, finding log | COACH.md (all writes) |
+| **Jon** | Priority decisions, plan approval, final sign-off | All approval gates |
+| **Claude.ai** (browser conversation) | Outside-the-repo strategic perspective | No file ownership |
+
+### File ownership boundaries
+
+| File / path | Writer | Others |
+|-------------|--------|--------|
+| `COACH.md` | Coach only | CCD and Jon read-only |
+| `H{N}-PLAN.md` (repo root) | CCD | Coach reads for review |
+| `src/app.jsx`, `functions/index.js`, all source | CCD | Coach reads for review |
+| `tests/extraction-baseline/` | CCD | Coach reads for review |
+| `TODO.md` | CCD (during Close Out) | Coach references |
+
+### Discipline for non-trivial work items (H-items)
+
+1. **Baseline** — capture regression test data before any changes.
+2. **Plan** — CCD drafts `H{N}-PLAN.md` at repo root.
+3. **Coach review** — Coach reviews plan, logs verdict as a C-finding in `COACH.md`.
+4. **Jon approves** — no implementation until explicit approval.
+5. **Implement** — CCD writes code, runs `validate_jsx.js`.
+6. **Regression test** — CCD runs tests against affected production panels. All previously-passing cases must still pass; fix-specific success criteria must be met.
+7. **Coach review** — Coach reviews test results before finalization.
+8. **Jon final-approves** — H-item is closed.
+
+Trivial fixes (typos, single-line config changes, report-field corrections) skip steps 2-4 and 7 — implement directly, test, deploy.
+
+### Naming conventions
+
+- **H{N}**: Work items requiring implementation (H6, H7, H9, etc.)
+- **C{N}**: Coach findings logged in `COACH.md` (C1-C13, etc.)
+- **H{N}-PLAN.md**: Implementation plan for work item H{N}
 
 ## Superpowers skills available (manual-load, local)
 Jesse Vincent's `obra/superpowers` skill pack is cloned at `C:\Users\jon\superpowers\skills\`. The Claude Code plugin system isn't available in this environment, so skills are loaded on-demand via `Read` on `C:\Users\jon\superpowers\skills\<skill-name>\SKILL.md`.
