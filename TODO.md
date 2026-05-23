@@ -1018,3 +1018,56 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     where the PATCH payload includes fields that BC considers read-only or invalid for
     the target entity type. Needs investigation to identify which fields in the PATCH
     payload trigger the rejection.
+
+## Round 17 (H9 fuzzy merge fix + Coach post-deploy findings, 2026-05-22)
+
+55. **RESOLVED** — `6d47099b` (v1.20.21), `2d707228` (v1.20.22, deployed 2026-05-22) —
+    H9: fuzzy merge itemNo guard. Added a 3-line predicate to
+    `fuzzyMergeBomItemsWithReport` (app.jsx:9221-9223) that blocks merges when both items
+    have different non-empty itemNo values. Prevents false merges of product-family
+    variants (e.g. IDEC RH1B/RH2B/RH3B relays, SH1B/SH2B/SH3B sockets) that differ by
+    1 character, share the same manufacturer, and have identical descriptions — previously
+    passing all 7 existing gates including the v1.19.642 identical-description override of
+    the Y-position guard.
+
+    v1.20.22 follow-up fixed keepA alignment in merge report fields (keptItemNo/
+    droppedItemNo now track the keepA conditional correctly). Diagnostic-only impact.
+
+    Regression tested across 10 production panels (22 saved merges analyzed), PRJ402104
+    reconstructed pre-merge BOM (items 27/28/30 all survived), and 3 single-column BOM
+    projects (PRJ402068, PRJ402089, PRJ402096 — zero regressions). Coach signed off: C14.
+
+    Test artifacts: `tests/extraction-baseline/verify-h9-guard.js`,
+    `tests/extraction-baseline/prj402104-post-h9.json`,
+    `tests/extraction-baseline/prj402104-post-h9-diff.md`.
+
+56. **OPEN** — PRJ402104 re-extraction raw count drop 50→21 (Coach C14). Post-H9
+    re-extraction produced items 27-47 only — items 1-26 entirely absent from AI output.
+    This is upstream of the fuzzy merge fix (raw count, not pipeline loss). Most likely
+    hypothesis: multi-page BOM where page 1 wasn't included in re-extraction batch.
+    Pre-H9 raw=47 is consistent with 2-page BOM. Requires: (1) Firestore page data
+    inspection (how many "bom" pages?), (2) Cloud Function logs, (3) re-run test for
+    determinism check. Not an H9 regression — pipeline preserved all 21 AI items
+    (21→21→21→21, zero loss at every stage).
+
+57. **OPEN** — Re-extraction batch path missing bomRegion (Coach C14/C15, promoted to H10).
+    `app.jsx:22481` constructs batch page objects WITHOUT `bomRegion` — initial extraction
+    at line 12305 correctly includes `bomRegion:unit.bomRegion||null`. When
+    `extractBomBatchViaServer` maps these pages, `pg.bomRegion` is undefined→null, Cloud
+    Function skips CropBox. AI sees full page instead of focused BOM region. One-field
+    mechanical fix, but part of broader H10 re-extraction architecture work.
+
+58. **OPEN** — Re-extraction verification gap (Coach C15, CRITICAL, H10). Re-extraction
+    path computes per-page verification via `verifyBomExtraction` but silently discards
+    the result. The verification object is computed, not read, and never stored. H10 scope:
+    (1) bomRegion in batch payload (#57), (2) read extractionVerification result,
+    (3) missing-from-start gap detection, (4) L3 retry/gap-fill, (5) verification in
+    extractionReport, (6) L3 report fields, (7) shared L3 function. Absorbs H7
+    (re-extraction path was previously tracked separately). Monday work.
+
+59. **OPEN** — 4 panels with fuzzy merges but no sequence gaps (from H9 regression test).
+    PRJ402091, PRJ402083, PRJ402093, PRJ402079 each have 1-3 saved fuzzy merges in
+    `extractionReport.fuzzyMerges` but empty `finalSequenceGaps`. These merges were
+    legitimate (true duplicates, not product-family variants) — the itemNo guard would
+    not have changed the outcome. Worth spot-checking to confirm no false positives exist
+    in production merge history beyond the 10 known IDEC-family cases.
