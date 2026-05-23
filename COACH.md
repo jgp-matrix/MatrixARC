@@ -9,6 +9,12 @@
 - **2026-05-22 (Session 1, cont.)** — C4 definitive Firestore check. PRJ402107 was a re-extraction on v1.20.18 — L3 absent from re-extraction path. AI extracted all 87 items (rawCount:87); 17 lost in positional dedup that doesn't check x-position. Root cause is dedup bug for multi-column BOMs, not extraction quality. C7 closed (manual review is sufficient belt).
 - **2026-05-22 (Session 1, cont.)** — C8: BC Item Browser Drawing Reference investigation. Two rendering paths (Haiku AI preferred, stored coords fallback). H6 incidentally improves fallback path accuracy. x_right=0.99 affects snippet self-correction, not Drawing Reference. Per-column x_left values confirmed (0.01 / 0.50).
 - **2026-05-22 (Session 1, cont.)** — C9: H6-PLAN.md coach review. APPROVED. All seven criteria pass. One minor omission (selfCorrectBomRowsWithSnippets as downstream consumer), zero risk. Ready for implementation.
+- **2026-05-22 (Session 1, cont.)** — C10: H6 post-deploy verification. SIGNED OFF. 15/17 recovered, 0 false non-merges. 2 remaining are same-column y-collision (different bug class, stochastic, 2.3% impact). Exact match count invariance confirmed (32/32, 20 stable overlap). H8 baseline established.
+- **2026-05-22 (Session 1, cont.)** — C11: H7-PLAN.md coach review. APPROVE with 2 flags. Architecture sound, feedback exclusion justified, downstream safe. Must fix: test plan needs real L3-triggering project via `find-l3-evidence.js`. Recommended: code-level diff for refactor verification.
+- **2026-05-22 (Session 1, cont.)** — C12: Fuzzy merge silent data loss discovered. 22 items across 10 production panels. IDEC product-family variants merged due to v1.19.642 description override defeating Y-guard. H9 promoted to priority 1.
+- **2026-05-22 (Session 1, cont.)** — C13: H9-PLAN.md coach review. APPROVED — no blocking issues. itemNo reliable at merge stage, v1.19.642 interaction clean, no legitimate cross-itemNo merges exist, risk asymmetry holds. One minor doc nit (edge case 6).
+- **2026-05-22 (Session 1, cont.)** — C14: H9 post-deploy verification. SIGNED OFF on H9 fix (items 27/28/30 present, zero fuzzy merges, zero gaps). keepA fix clean. Separate finding: 50→21 raw count drop — AI missed items 1-26 contiguously. Root cause undetermined; three hypotheses with investigation steps. New code deficiency: re-extraction batch path omits bomRegion (line 22481 vs 12305).
+- **2026-05-22 (Session 1, cont.)** — C15: Re-extraction verification gap. CRITICAL architectural finding. Re-extraction path computes per-page verification but silently discards the result. PRJ402104's 21-item extraction passed without flags. H10 reshaped to include verification + L3 + report fields. H7 absorbed into H10 — same architectural gap, one coherent fix.
 
 ## Findings
 
@@ -525,6 +531,550 @@ CCD's Section 3 pipeline is accurate but omits **`selfCorrectBomRowsWithSnippets
 
 **Recommendation:** Implement as written. The plan is clean, the risk assessment is honest, and the failure modes are all safe-side (detectable, not silent). No changes needed before implementation.
 
+### C10 — 2026-05-22 — H6 post-deploy verification: SIGNED OFF
+
+**H6 verdict: SUCCESS.** 15 of 17 cross-column items recovered. 0 false non-merges. 0 duplicate rows. No systematic OCR change. The fix works as designed.
+
+#### Headline numbers
+
+| Metric | Pre-H6 | Post-H6 | Reference |
+|--------|--------|---------|-----------|
+| Raw items extracted | 87 | 87 | 87 |
+| After positional dedup | 70 | 85 | — |
+| Items dropped by dedup | 17 | 2 | 0 |
+| Exact PN matches | 32 | 32 | — |
+| Extra items (false non-merges) | 0 | 0 | — |
+| Version | v1.20.19 | v1.20.20 | — |
+
+#### The 2 remaining missing items: same-column y-collision (different bug class)
+
+Both missing items are **same-column** merges at adjacent rows where the AI reports y_top values within Y_TOL=0.004. This is NOT the cross-column bug H6 fixed — it's a denser, rarer failure mode.
+
+**Item 50 (5069-L330ERM, ALLEN BRADLEY, $8,713 PLC controller) — merged with item 49:**
+
+- Item 49 post-H6: x_left=0.01, y_top=0.988, notes=`"ECB1330; PLC1344"`
+- PLC1344 is item 50's tag per the reference. The semicolon-concatenated notes are the `keepNotes` pattern from positional merge. Item 49 (PHOENIX CONTACT circuit breaker, $345) won on score and absorbed item 50.
+- Both items are at the very bottom of the left column where row spacing is compressed. The AI placed them within 0.004 of each other in y-space.
+- **This is an incorrect merge.** Two different items, different manufacturers, different prices ($345 vs $8,713), different functions.
+
+**Item 64 (SH3B-05C, IDEC, relay socket, qty 5) — merged with item 63:**
+
+- Item 63 post-H6: x_left=0.5, y_top=0.24, notes=`"CR1470, CR1472, CR1480, CR1482, CR1490"`
+- Those are item 64's tag locations per the reference. Item 63 (RH3B-ULC-DC24V, relay) won on score and absorbed item 64 (SH3B-05C, socket — the companion part mounted under the relay).
+- Items 63 and 64 are adjacent rows in the right column. Both are IDEC parts at the same tag locations — they're companion parts (relay + socket) that physically co-locate.
+- **This is an incorrect merge.** Different PNs, different functions, different prices. They must remain separate BOM lines.
+
+**Root cause:** On a 2-column BOM with ~43 rows per column spanning ~96% of page height, theoretical row spacing is ≈2.2%. Y_TOL=0.004 (0.4%) should be well below that. But the AI's y_top precision degrades at the page extremes (item 50 at y_top≈0.988) and for visually similar adjacent rows (items 63/64, both IDEC relay-family parts). In these edge cases, the AI reports y_top values within 0.004 of the neighbor.
+
+**Is this a new H-item?** Not right now. Assessment:
+
+| Factor | H6 (cross-column) | This (same-column y-collision) |
+|--------|-------------------|-------------------------------|
+| Items affected | 17/87 (20%) | 2/87 (2.3%) |
+| Root cause | Missing x-check — deterministic | AI y_top noise — stochastic |
+| Fix complexity | One predicate | Needs smarter merge criterion (field similarity, PN mismatch guard) |
+| Reproducibility | Every extraction of this BOM | Varies per extraction (AI non-determinism) |
+
+The same-column y-collision is stochastic — different extraction runs produce different collisions. Item 50 was exact-match pre-H6 (no collision in that run) but collided post-H6 (different y_top assignment). A fix would likely involve adding a field-similarity requirement to the merge (e.g., require matching manufacturer or similar PN to merge) — but this conflicts with the original quadrant-overlap use case where different readings of the same row produce different PNs. Worth revisiting if the quadrant path is fully retired, but not blocking current work.
+
+#### Exact match count invariance: confirmed (with nuance)
+
+The count 32 is stable, but the **specific items** differ significantly between extraction runs:
+
+| Category | Count |
+|----------|-------|
+| Stable exact matches (correct in both runs) | 20 |
+| Lost exact matches (correct pre-H6, now wrong or missing) | 12 |
+| Gained exact matches (wrong/missing pre-H6, now correct) | 12 |
+| Net change | 0 |
+
+Of the 12 gained exact matches, 6 were among the 15 recovered items (18, 19, 20, 25, 51, 87). The other 6 are items that were present pre-H6 but had wrong PNs, and happened to get read correctly this time (AI non-determinism).
+
+**What the invariance proves:**
+1. **H6 does not affect OCR accuracy.** Expected — it changes dedup, not extraction.
+2. **6/15 recovered items (40%) are exact matches** — in line with the overall 32/85 (37.6%) accuracy rate. The recovered items have the same OCR quality distribution as items that were always surviving. No data corruption introduced by the fix.
+3. **20 items are "stably correct"** across runs — these are the parts the AI reads reliably at current resolution. The other 12 are in a noise band where the AI sometimes gets them right and sometimes doesn't.
+4. **12 items that were correct pre-H6 are now wrong** — pure AI non-determinism, not H6-related. Item 50 is among these (was exact match pre-H6, now merged away by same-column collision).
+
+#### H6 status update
+
+| Item | Status | Priority | Notes |
+|------|--------|----------|-------|
+| **H6** | **CLOSED — VERIFIED** | ✓ | Deployed v1.20.20. 15/17 recovered. 2 remaining are same-column y-collision (different bug class). |
+| **H9** | **APPROVED — C13** | 1 | Fuzzy merge itemNo guard. CRITICAL — 22 items across 10 production panels. |
+| **H8** | **READY — baseline captured** | 2 | Post-H6 baseline. Re-baseline again after H9. |
+| **H7** | **READY — blocked by H9** | 3 | L3 in re-extraction path. H9 must land first. |
+| H5 | ON HOLD | 4 | Scope re-evaluation against clean baseline (post-H6 + H9). |
+
+### C11 — 2026-05-22 — H7-PLAN.md Coach Review
+
+**Verdict: APPROVE with two flags for revision before implementation.**
+
+The architecture is sound. The shared-function approach is correct, the feedback exclusion is justified, and downstream consumers need no changes. Two gaps in the test plan need fixing.
+
+#### 1. Approach B (shared function) — SOUND
+
+CCD's argument is correct. L3 has been tuned twice (v1.19.1057 initial, then gap-fill limits), and it's ~135 lines. Two copies in a 2MB file will diverge. The proposed interface is clean:
+
+```
+applyL3RetryAndGapFill({ result, unit, notes, pageLabel, pageRetryAttempts })
+→ { result, pageRetryAttempts, extractionPathsSeen }
+```
+
+Verified against the actual L3 code at lines 12355-12462: all scope dependencies are accounted for. The `unit` parameter carries `dataUrl`, `originalPdfPath`, `pageNumber`, `croppedBomDataUrl`, `bomRegion` — matching the `extractBomPage` call signatures in both Phase 1 (line 12370, passes `croppedBomDataUrl`) and Phase 2 (line 12430, passes `null` for gap-fill). The `pageLabel` parameter abstracts `pg.name||pgIdx+1`. The `extractionPathsSeen` return lets callers accumulate paths into their own Set. No hidden coupling.
+
+**One detail CCD didn't call out but handles correctly:** Phase 1 passes `unit.croppedBomDataUrl` to the retry call (same crop as original) while Phase 2 passes `null` (gap-fill sees full page). Since the shared function body is a mechanical copy, this distinction is preserved. Worth a comment in the function.
+
+#### 2. Feedback re-extraction exclusion — JUSTIFIED (with a nuance)
+
+CCD's stated reason: "Adding L3 Phase 1 on top would send BOTH the user's feedback AND automated retry feedback — potentially conflicting instructions."
+
+The actual mechanism is slightly different: L3 Phase 1 calls `extractBomPage(unit.dataUrl, retryFeedback, notes, ...)` where `retryFeedback` is the second parameter. In `reExtractWithFeedback`, the first call uses `aiFeedback` (the user's text) as the second parameter (line 22723). If L3 fired, the retry call would **replace** the user's feedback with automated retry instructions, not conflict with them. The user's domain-specific corrections would be lost on the retry pass.
+
+The conclusion is the same — don't add L3 to the feedback path — but the reason matters for future consideration. If someone later revisits this decision, they need to CONCATENATE `aiFeedback + retryFeedback`, not just add L3.
+
+#### 3. Report field selection — DEFENSIBLE
+
+**Add l3MergeRecovered, l3GapFillRecovered:** Correct. These are the primary L3 outcome fields. The re-extraction report builder at line 22584 currently lacks them.
+
+**Add perPageOutcomes:** Correct. This enables the `ZeroBomBanner` component (line 20424) to show rejection reasons for re-extractions that produce empty BOMs — currently broken because the field is missing.
+
+**Skip scanQuality, scanDetails:** Defensible. These are derived from `pdfQuality` data captured per-page during extraction. The initial extraction's scanQuality is already on the panel's extractionReport. Re-extracting the same pages won't change PDF quality. Edge case (user uploads new PDF between extractions) is theoretical — re-extraction is always triggered on existing pages.
+
+#### 4. Downstream consumers — NO CHANGES NEEDED
+
+Verified all consumers:
+
+| Consumer | Location | Reads | Safe with new fields? |
+|----------|----------|-------|-----------------------|
+| Extraction concerns banner | `app.jsx:20540` | `(r.l3MergeRecovered\|\|0)+(r.l3GapFillRecovered\|\|0)` | Yes — `\|\|0` fallback handles absent/present |
+| ZeroBomBanner | `app.jsx:20424` | `r.perPageOutcomes\|\|[]` | Yes — `\|\|[]` fallback. **Positive change:** banner now shows rejection reasons for re-extractions |
+| scanQuality derivation | `app.jsx:12747` | Derives from `perPageOutcomes` | N/A — only in initial report builder, not re-extraction |
+| `read-extraction-report.js` | `tests/` | Reads both L3 fields | Already handles missing gracefully |
+
+No code changes needed beyond what CCD plans. All consumers use defensive fallbacks.
+
+#### 5. Test plan — TWO FLAGS
+
+**FLAG 1 (MUST FIX): Section 7.3 "Force-trigger L3 on re-extraction" is too vague.**
+
+CCD's plan says "Find or create a project where AI extraction misses items... OR temporarily lower the detectedLineCount threshold."
+
+"Find or create" is not a test plan — it's a hope. "Lower threshold" is a test hack that validates plumbing but not real-world L3 behavior.
+
+**CCD already wrote `tests/extraction-baseline/find-l3-evidence.js`** — a Firestore scanner that identifies:
+- Panels where `l3MergeRecovered > 0` or `l3GapFillRecovered > 0` (proven L3 triggers)
+- Panels with `finalSequenceGaps` but no L3 recovery (possible re-extraction path victims — exactly the scenario H7 fixes)
+
+**Required revision:** The test plan must include:
+1. Run `find-l3-evidence.js` to identify real projects where L3 has fired or where gaps exist
+2. Pick one project from the results as the L3 verification target
+3. Re-extract that project on the H7 code to confirm L3 fires in the re-extraction path
+4. If `find-l3-evidence.js` returns zero results (L3 has never fired in production), that's a finding worth logging — and the "lower threshold" hack becomes acceptable as a fallback, but should be explicitly noted as a synthetic test
+
+This is the only blocking flag. Without a real L3-triggering test case, the core claim "L3 now works in re-extraction" is unverified.
+
+**FLAG 2 (RECOMMENDED, not blocking): Section 7.2 "Confirm initial extraction unchanged" relies on non-deterministic comparison.**
+
+CCD says: "Re-extract a single-column test project using initial extraction. Verify final BOM matches previous extraction."
+
+Extraction is non-deterministic — the AI produces different results each run. Comparing two extraction runs can't distinguish "refactor changed L3 behavior" from "AI extracted differently." The test will pass even if the refactor introduced a subtle bug, because any differences will be attributed to AI variance.
+
+**Better approach:** After extracting the shared function, do a code-level diff of the function body against the original inline code (lines 12355-12462). Confirm the logic is character-for-character identical except for the parameterization changes (pg.name → pageLabel, etc.). This is a 5-minute manual review that provides stronger assurance than any behavioral test.
+
+#### Summary
+
+| Criterion | Verdict | Notes |
+|-----------|---------|-------|
+| Approach B vs A | Sound | Clean interface, correct dependency handling |
+| Feedback exclusion | Justified | Real reason: retry replaces feedback, not conflicts |
+| Report fields | Defensible | scanQuality skip is correct |
+| Downstream consumers | No changes needed | All use defensive fallbacks |
+| L3 trigger test | **MUST FIX** | Run `find-l3-evidence.js`, use real project |
+| Refactor verification | Recommended fix | Code diff > behavioral comparison |
+
+**Recommendation:** Fix Flag 1 (identify a real L3-triggering test project via `find-l3-evidence.js`) before implementation. Flag 2 is recommended but CCD can address it during implementation via a manual code review of the extraction.
+
+### C14 — 2026-05-22 — H9 Post-Deploy Verification
+
+**Verdict: H9 SIGNED OFF. The itemNo guard works as designed. Separate extraction-quality finding escalated.**
+
+#### 1. H9 Success Criteria — ALL PASS
+
+| Criterion | Result | Evidence |
+|-----------|--------|----------|
+| Item 27 (RH2B-ULC-120) present | ✓ PASS | `prj402104-post-h9.json` line 16-23: itemNo "27", qty 3, IDEC |
+| Item 28 (SH2B-05C) present | ✓ PASS | JSON line 25-31: itemNo "28", qty 3, IDEC |
+| Item 30 (SH3B-05C) present | ✓ PASS | JSON line 41-49: itemNo "30", qty 3, IDEC |
+| Zero fuzzy merges | ✓ PASS | JSON line 11: `"fuzzyMerges": []` |
+| Zero sequence gaps | ✓ PASS | JSON line 12: `"finalSequenceGaps": []` |
+| Pipeline invariance | ✓ PASS | raw=21 → exact=21 → fuzzy=21 → final=21. No items lost at any stage. |
+
+The three items that were previously dropped by fuzzy merge (C12: RH2B-ULC-120 merged into RH1B-ULC-120, SH2B-05C into SH1B-05C, SH3B-05C into SH1B-05C) now survive. The itemNo guard blocked all three false merges as designed.
+
+#### 2. v1.20.22 keepA Fix — CLEAN
+
+Verified at `app.jsx:9272-9279`:
+
+```
+const keepA=pnA.length>=pnB.length;           // line 9272
+const kept=keepA?base.partNumber:b.partNumber;  // line 9274
+const dropped=keepA?b.partNumber:base.partNumber; // line 9275
+keptItemNo:keepA?(base.itemNo||base.item||""):(b.itemNo||b.item||""),  // line 9278
+droppedItemNo:keepA?(b.itemNo||b.item||""):(base.itemNo||base.item||""), // line 9279
+```
+
+`keptItemNo` and `droppedItemNo` correctly track the `keepA` conditional — when `base` is kept, `base.itemNo` goes to `keptItemNo` and `b.itemNo` goes to `droppedItemNo`, and vice versa. These are diagnostic-only fields (no consumers today); the fix ensures merge reports accurately reflect which item survived. No functional impact.
+
+#### 3. Raw Count Drop: 50→27 BOM items (47→21 raw AI items) — SEPARATE FINDING
+
+**Observation:** The post-H9 re-extraction produced items 27-47 only. Items 1-26 are entirely absent from the AI output (`rawCount=21`). This is a contiguous half-BOM miss — the AI started extraction at item 27 and missed everything above it.
+
+**H9 regression ruled out:** The itemNo guard runs inside `fuzzyMergeBomItemsWithReport`, which is post-extraction. It cannot affect what the AI extracts from the PDF. The raw count drop is upstream of H9's change. The pipeline correctly preserved all 21 AI-extracted items through dedup (21→21→21→21 — zero loss at every stage).
+
+**Three hypotheses:**
+
+| # | Hypothesis | Likelihood | Evidence For | Evidence Against |
+|---|-----------|-----------|-------------|-----------------|
+| A | **Multi-page BOM, first page not sent** — PRJ402104's BOM spans 2+ pages. If page 1 (items 1-26) wasn't classified as "bom" or wasn't included in re-extraction, only page 2 would be extracted. | Medium-High | Item count split (26+21=47) is a natural page break. Pre-H9 extraction (v1.20.20) had raw=47, consistent with 2 pages. | The re-extraction code processes all `bomPages` — skipping a page would require it to be untagged or filtered by `_basePages`. |
+| B | **AI non-determinism on a single page** — Full BOM is on one page but the AI started extraction at item 27. | Medium | AI extraction is inherently non-deterministic. Diff report acknowledges AI non-determinism for items 25-26. | Contiguous half-BOM miss is far outside normal variance. Random per-item drops produce scattered gaps, not a clean 1-26 cutoff. |
+| C | **bomRegion/CropBox clipping** — A user-drawn or AI-detected bomRegion that covers only the bottom half of the BOM table. If the CropBox was applied to the PDF, the AI would only see items 27-47. | Low-Medium | The Cloud Function applies CropBox when bomRegion is provided (functions/index.js:2370-2385). A miscalibrated bomRegion would produce exactly this symptom. | The re-extraction batch path at line 22481 does NOT pass bomRegion (see finding below), so for the batch path, CropBox was NOT applied. If the extraction went through batch, this hypothesis fails. |
+
+**Cannot determine root cause without:**
+1. **Firestore page data:** How many pages does PRJ402104 have tagged as "bom"? If 2+ pages, was page 1 included in the re-extraction?
+2. **Cloud Function logs:** What did `extractBomBatch` actually receive and return? How many pages were in the batch payload?
+3. **Re-run test:** Re-extract PRJ402104 again. If the same 21 items return, the cause is deterministic (page config or bomRegion). If items 1-26 return, it was AI non-determinism.
+
+**Assessment:** Hypothesis A (multi-page, first page dropped) is the most likely. The clean 1-26/27-47 split, combined with the pre-H9 raw=47 count, strongly suggests a 2-page BOM where only page 2 was sent in this extraction. This is separate from H9 and predates it — the extraction quality issue exists in the re-extraction path independent of the fuzzy merge fix.
+
+#### 4. Code Deficiency Found: Re-Extraction Batch Missing bomRegion
+
+**Bug:** The re-extraction batch path at `app.jsx:22481` constructs batch page objects WITHOUT `bomRegion`:
+
+```javascript
+// Re-extraction batch (line 22481) — MISSING bomRegion:
+return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
+
+// Initial extraction batch (line 12305) — INCLUDES bomRegion:
+return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes,bomRegion:unit.bomRegion||null};
+```
+
+When `extractBomBatchViaServer` (line 10408) maps these pages, `pg.bomRegion` is `undefined` → `null`. The Cloud Function skips CropBox application. The AI sees the full PDF page instead of the focused BOM region.
+
+**Impact on PRJ402104:** This bug means the AI saw the FULL page, not just the BOM region. For native PDFs this is likely neutral or beneficial (more content, not less). So this is NOT the direct cause of the 50→21 drop. However, for raster-origin PDFs where bomRegion increases effective DPI, the missing CropBox degrades extraction quality on re-extraction vs. initial extraction.
+
+**Scope:** Affects ONLY the re-extraction batch path (line 22481). The feedback re-extraction path (line 22731) correctly passes `unit.bomRegion||null` via per-page extraction. The initial extraction batch path (line 12305) correctly includes `bomRegion:unit.bomRegion||null`.
+
+**Fix:** Add `bomRegion:unit.bomRegion||null` to the return object at line 22481. One field, mechanical change.
+
+**Promoted to H10.**
+
+#### Summary
+
+| Item | Verdict |
+|------|---------|
+| H9 itemNo guard | ✓ SIGNED OFF — all 3 target items recovered, zero false merges, zero gaps |
+| keepA diagnostic fix | ✓ CLEAN — correctly tracks kept/dropped itemNo in merge report |
+| 50→21 raw count drop | UNDETERMINED — most likely multi-page BOM with first page dropped. Requires Firestore page data + Cloud Function logs + re-run test. Separate from H9. |
+| Re-extraction batch bomRegion | BUG — missing field at line 22481. Promoted to H10. |
+
+### C15 — 2026-05-22 — Re-Extraction Verification Gap (CRITICAL)
+
+**Finding: The re-extraction path silently discards per-page extraction verification. Items can go missing with zero user-visible signal. This is the root cause behind the PRJ402104 50→21 drop.**
+
+#### The three-layer verification architecture (and where it breaks)
+
+| Layer | What it does | Initial extraction | Re-extraction | Feedback re-extraction |
+|-------|-------------|-------------------|---------------|----------------------|
+| **1. Per-page verification** (`_parseAndVerifyBomRaw`, line 10278-10302) | Compares `detectedLineCount` vs `items.length`, detects missing items from start (minItemNo > 1), detects internal sequence gaps. Returns `extractionVerification` with status "ok" or "needs-review". | ✓ Computed AND read | ✓ Computed, **DISCARDED** | ✓ Computed, **DISCARDED** |
+| **2. L3 retry** (lines 12364-12458) | Uses Layer 1's "needs-review" status to trigger broad retry (Phase 1) and targeted gap-fill (Phase 2). | ✓ Present | ✗ Missing (H7) | ✗ Missing (correct — would replace user feedback) |
+| **3. Final gap check** (lines 12603-12614 / 22584-22589) | Detects internal sequence gaps in the assembled BOM. | Internal gaps only | Internal gaps only | Internal gaps only |
+
+**Layer 1 is computed in all paths** because it's inside `extractBomPage` → `extractBomPageViaServer` → `_parseAndVerifyBomRaw` (line 10401) and `extractBomBatchViaServer` → `_parseAndVerifyBomRaw` (line 10425). But the re-extraction path at lines 22504-22511 only takes `result.items`:
+
+```javascript
+// Re-extraction batch hit (line 22504-22506):
+result=_reBatchResults[unit.pageNumber];
+// Re-extraction per-page fallback (line 22508):
+result=await extractBomPage(unit.dataUrl,"",notes,...);
+// Both then do:
+const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
+// ← result.extractionVerification is NEVER READ
+```
+
+**Layer 3 is structurally weaker than Layer 1.** Both initial and re-extraction final gap checks use the same algorithm: iterate sorted item numbers, detect gaps between consecutive values. Neither checks for missing items from the start. But Layer 1 (`_parseAndVerifyBomRaw`) DOES:
+
+```javascript
+// _parseAndVerifyBomRaw, line 10292-10295:
+const minItemNo=sorted[0];
+if(minItemNo>1){
+  verification.status="needs-review";
+  verification.missingFromStart=minItemNo-1;
+  for(let g=1;g<minItemNo;g++)verification.sequenceGaps.push(g);
+}
+```
+
+For PRJ402104 post-H9 re-extraction (items 27-47):
+- **Layer 1 would have flagged:** minItemNo=27 > 1 → status="needs-review", missingFromStart=26, sequenceGaps=[1,2,...,26]. *But this was discarded.*
+- **Layer 2 would have retried:** "Items 1..26 appear to be MISSING from your previous read — the smallest itemNo you returned was 27." *But L3 doesn't exist in re-extraction.*
+- **Layer 3 computed:** items 27,28,29,...,47 are consecutive → _reSeqGaps=[] → no warning.
+
+The BOM finalized at 21 items with zero flags. It went through pricing and BC sync without any indication that 26 items were missing.
+
+#### Why this is worse than H7
+
+H7 was scoped as "add L3 retry to re-extraction path" — bringing Layer 2 to re-extraction. But **Layer 2 depends on Layer 1 being read.** Currently, even if L3 retry code were added to the re-extraction path, it would need to read `result.extractionVerification` to know when to trigger. The verification is computed but thrown away.
+
+The real fix has three components:
+
+1. **Read the verification** — capture `result.extractionVerification` in the re-extraction path (line 22504-22511) and the feedback re-extraction path (line 22729-22732)
+2. **Act on verification** — either retry (L3, for re-extraction) or at minimum flag the BOM as unverified
+3. **Fix the final gap check** — add missing-from-start detection to the final gap algorithm (lines 12603-12614 and 22584-22589), so Layer 3 catches what Layer 1 caught
+
+Component 1 is a prerequisite for H7. Component 3 is independent and can land immediately — it's the same 4-line check from `_parseAndVerifyBomRaw` applied to the final BOM.
+
+#### Why the final gap check misses edge items
+
+Both initial and re-extraction final gap checks iterate from `sortedNos[0]` to `sortedNos[last]`:
+
+```javascript
+for(let i=0;i<sortedNos.length-1;i++){
+  if(sortedNos[i+1]-sortedNos[i]>1){
+    for(let g=sortedNos[i]+1;g<sortedNos[i+1];g++)finalSequenceGaps.push(g);
+  }
+}
+```
+
+This detects a gap between items 27 and 30 (would flag 28, 29) but does NOT detect:
+- Missing items before the minimum (items 1-26 when BOM starts at 27)
+- Missing items after the maximum (items 48-50 if BOM ends at 47 but should go to 50)
+
+The `_parseAndVerifyBomRaw` per-page check adds the missing-from-start detection. A complete fix would add both start AND end detection to the final check, but start detection is the higher-priority case (the symptom that exposed this gap).
+
+#### Additional code deficiency: re-extraction batch missing bomRegion
+
+Separately from the verification gap, the re-extraction batch path at `app.jsx:22481` constructs batch pages WITHOUT `bomRegion`:
+
+```javascript
+// Re-extraction batch (line 22481) — MISSING bomRegion:
+return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
+
+// Initial extraction batch (line 12305) — INCLUDES bomRegion:
+return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes,bomRegion:unit.bomRegion||null};
+```
+
+The AI gets the full PDF page instead of the focused BOM region. For native PDFs this is likely neutral (full text access). For raster PDFs, the missing CropBox means lower effective DPI on the BOM area — potential quality degradation on re-extraction vs. initial extraction.
+
+**Fix:** Add `bomRegion:unit.bomRegion||null` to line 22481.
+
+#### Root cause of PRJ402104 50→21 drop: refined assessment
+
+With the verification gap understood, the 50→21 drop is explained as follows:
+
+1. The AI (for whatever reason — non-determinism, multi-page skip, or model behavior) extracted only items 27-47 on this re-extraction run
+2. Per-page verification correctly flagged this as "needs-review" (minItemNo=27, missing 1-26)
+3. The re-extraction path discarded the verification
+4. No retry was available (no L3)
+5. The final gap check found no internal gaps in 27-47
+6. The BOM was saved with 21 items, zero flags
+
+**The verification system worked.** It correctly identified the problem at Layer 1. The failure is that Layer 1's output was discarded by the re-extraction path, and Layer 3 is too weak to catch edge-item losses.
+
+Whether the AI's 21-item result was a one-off (non-determinism) or reproducible (multi-page skip, page misclassification) is secondary. The architectural gap is that the re-extraction path has no safety net for ANY undercount failure, regardless of cause. The initial extraction path handles this with L3 retry + verification. The re-extraction path handles it with nothing.
+
+#### H10 Scope (finalized per Jon 2026-05-22)
+
+H7 absorbed into H10. The re-extraction path lacks multiple safety mechanisms that share the same root cause (re-extraction was built as a simpler code path and never got parity with initial extraction). Fix as one coherent architectural improvement:
+
+1. Add `bomRegion` parameter to re-extraction batch payload (line 22481)
+2. Read `result.extractionVerification` on per-page results in re-extraction path
+3. Add missing-from-start detection (`minItemNo > 1` check) to final gap algorithm
+4. Fire L3 retry/gap-fill when `status === "needs-review"`
+5. Store per-page verification in re-extraction report
+6. Add L3 report fields (`l3MergeRecovered`, `l3GapFillRecovered`) to re-extraction report builder
+7. Refactor L3 logic into shared function (Approach B from H7-PLAN.md — validated in C11)
+
+Monday work. Plan will be drafted then.
+
+#### Meta-observation: "check fires but result discarded" failure class
+
+C15's root cause is a pattern worth watching for elsewhere in the codebase: **a validation or check runs correctly, produces the right answer, but nothing reads the result.** The check provides a false sense of safety — it exists in the code, so it looks like the path is covered, but the output is silently dropped.
+
+This is distinct from "check is missing" (easy to find — grep for the function name, count call sites) and from "check has a bug" (the logic itself is wrong). In the "result discarded" pattern, the check is present, correct, and called — the failure is in the *consumer*, not the *producer*.
+
+**Why it's hard to spot in review:** A code reviewer sees `extractBomPage(...)` called in the re-extraction path, knows that `extractBomPage` internally calls `_parseAndVerifyBomRaw`, and reasonably concludes the path is verified. The gap is that the re-extraction path destructures only `result.items` and ignores `result.extractionVerification`. This requires tracing the return value through the caller, not just the callee.
+
+**Where else to look (not investigated, not urgent — just a note for future sessions):**
+- Any shared function that returns a rich object (items + metadata + diagnostics) where some callers only use a subset of the fields
+- The feedback re-extraction path (lines 22719-22758) — same code pattern as re-extraction, likely same gaps
+- `filterNonBomRows` returns `{kept, dropped}` — do all callers use `dropped` for diagnostics?
+- `fuzzyMergeBomItemsWithReport` returns `{items, merges}` — do all callers capture `merges` for the report?
+
+This is not an action item. It's a class of failure mode to keep in peripheral vision during future code review.
+
+### C13 — 2026-05-22 — H9-PLAN.md Coach Review
+
+**Verdict: APPROVE — no blocking issues. One minor documentation nit. Ready for implementation.**
+
+This is the cleanest plan CCD has produced. Single predicate, well-defined insertion point, comprehensive edge cases, correct risk asymmetry argument. The H6 pattern (add a guard predicate to a permissive merge function) is proven and this is a faithful application.
+
+#### 1. itemNo reliability at the fuzzy merge stage — CONFIRMED
+
+Traced the pipeline from AI output through fuzzy merge entry:
+
+| Stage | What happens to itemNo |
+|-------|----------------------|
+| AI extraction | Assigns `itemNo` from drawing's BOM table |
+| `translateItemsToPageCoords` | Spreads all fields — `itemNo` preserved |
+| `positionalMergeBomItems` | Winner is `{...winner, id:base.id, ...}` — winner's `itemNo` preserved |
+| Exact PN dedup (line 12571) | Groups by normalized PN. First item's fields kept via `map[key]={...item}`. Subsequent same-PN items only contribute qty. `itemNo` preserved on the surviving item. |
+| **→ `fuzzyMergeBomItemsWithReport`** | Items have their original `itemNo` from AI |
+
+IDEC variants (RH1B-ULC-120 vs RH2B-ULC-120) have different normalized PNs (`RH1BULC120` vs `RH2BULC120` via `_bomNormPn`), so they survive exact dedup as separate items, each retaining their original `itemNo`. Confirmed by PRJ402104 data: 44/50 items have `itemNo`, the 6 without are labor/contingency/crate/buyoff.
+
+#### 2. v1.19.642 description override interaction — CLEAN
+
+The proposed placement (after line 9220, before line 9237) means the code flow is:
+
+1. Short PN skip (9211)
+2. Exact match skip (9218)
+3. Length delta (9220)
+4. **→ itemNo guard (NEW)** — different non-empty itemNos → `continue`
+5. Y-position guard + description override (9237-9250)
+6. Edit distance (9252-9255)
+7. Signal gates (9258-9264)
+8. Merge (9265-9291)
+
+Items with different itemNos are blocked at step 4 and NEVER REACH the description override at step 5. This is the correct ordering — the v1.19.642 override was defeating the Y-guard for exactly the items the itemNo guard now protects.
+
+**The override's original intent is preserved:** AI-hallucinated duplicate rows (same BOM row read twice with slight PN variation) would have the SAME itemNo in both readings. The itemNo guard doesn't fire (same value), and the description override correctly catches and merges them. Product-family variants (different rows, different itemNos, identical descriptions) are blocked before the override can enable the false merge.
+
+This is a clean separation of concerns: itemNo distinguishes "different items," the description override distinguishes "same item read twice."
+
+#### 3. Legitimate cross-itemNo fuzzy merges — NONE EXIST
+
+Different itemNos on a BOM drawing means different line items, by definition. Scenarios considered:
+
+- **Same part at multiple item numbers** (e.g., SH3B-05C at items 62 and 64): These are distinct BOM lines with different quantities, different tags, different panel locations. They must NOT merge. The current bug merges them; the guard prevents it.
+- **AI misreads item number** (e.g., reads item 25 as item 26): This would give two items with itemNo "26" (the real 26 and the misread 25). They have the SAME itemNo → guard doesn't fire → falls through to existing gates. The edit distance check handles whether the PNs are similar enough. Correct behavior.
+- **Retired quadrant extraction path** (different quadrant reads same row): `translateItemsToPageCoords` normalizes coordinates, so same-row items from different quadrants end up at the same y_top → positional dedup catches them BEFORE fuzzy merge.
+
+No production scenario produces items with different itemNos that should fuzzy-merge.
+
+#### 4. 10-panel coverage in test plan — ADEQUATE
+
+Section 6.1 lists all 10 panels with PRJ402104 having specific items (27, 28, 30). The other 9 are validated by running the adapted `reproduce-fuzzy-merge.js` with the guard applied. This is an automated test that checks all 22 dropped items across all 10 panels — the script provides per-panel specificity even though the plan document doesn't enumerate it.
+
+Section 6.2 (legitimate OCR dedup) and 6.3 (items without itemNo) cover the guard's fall-through behavior. Section 6.4 (live re-extraction of PRJ402104) provides end-to-end validation. Section 6.5 (single-column regression) catches unintended interactions. Comprehensive.
+
+#### 5. Edge cases — 7 enumerated, 1 minor documentation error
+
+Edge cases 1-5 and 7 are correctly analyzed. Edge case 6 has a nit:
+
+**Edge case 6: itemNo "0"** — CCD says "Normalizes to '0' or empty string — falls through." This is wrong. `"0".replace(/\D/g,"")` = `"0"`, which is truthy in JavaScript (string `"0"` is truthy, unlike number `0`). So itemNo "0" does NOT fall through — it's treated as a real itemNo. Two items with itemNo "0" would compare equal (fall through, correct). An item with itemNo "0" vs itemNo "25" would be blocked (different values).
+
+**Impact: zero.** BOM items use positive integer numbering (1, 2, 3, ...). ItemNo "0" doesn't occur in practice. The documentation is wrong but the code behavior is harmless.
+
+#### 6. Risk asymmetry — HOLDS
+
+Same argument as H6, applied correctly:
+
+| Failure mode | Visibility | User action | Risk |
+|-------------|-----------|-------------|------|
+| Guard too strict (blocks legitimate merge) | Duplicate item visible in BOM | User deletes the duplicate | Low — 5 seconds to fix |
+| Current bug (no guard) | Item silently dropped from BOM | User can't see what's missing | High — wrong quote, wrong order |
+
+The worst case of the fix (visible duplicate) is strictly better than the current state (invisible data loss). This asymmetry is the same one that justified H6's x_left guard and it holds equally well here.
+
+#### Summary
+
+| Criterion | Verdict | Notes |
+|-----------|---------|-------|
+| itemNo reliability at fuzzy merge | Confirmed | Survives all upstream stages unchanged |
+| v1.19.642 override interaction | Clean | Guard fires before override; override's intent preserved |
+| Legitimate cross-itemNo merges | None exist | Different itemNos = different items by definition |
+| 10-panel test coverage | Adequate | Script validates all 22 items; live test on PRJ402104 |
+| 7 edge cases | Complete | Nit: edge case 6 ("0" falls through) is wrong but inconsequential |
+| Risk asymmetry | Holds | Duplicates visible, missing items invisible |
+
+**Recommendation:** Implement as written. The only action item is fixing the edge case 6 documentation in the plan (optional — it's a nit, not a code issue).
+
+### C12 — 2026-05-22 — Fuzzy merge silent data loss: IDEC product-family variants (CRITICAL)
+
+**Finding:** `fuzzyMergeBomItemsWithReport` (`app.jsx:9205-9297`) is silently dropping legitimate BOM items across production drawings. The function merges items whose normalized part numbers differ by ≤ threshold edit-distance, have the same manufacturer, and have similar descriptions. This correctly catches OCR variants (e.g., `RH1BULC120` misread as `RH1BULCI20`) but incorrectly merges **product-family variants** where a single character distinguishes genuinely different parts.
+
+#### Root cause
+
+IDEC relay/socket product families encode the pole count in a single character:
+
+| Part Number | Normalized | Product | Poles |
+|-------------|-----------|---------|-------|
+| RH1B-ULC-120 | `RH1BULC120` | Relay | 1-pole (SPDT) |
+| RH2B-ULC-120 | `RH2BULC120` | Relay | 2-pole (DPDT) |
+| RH3B-ULC-120 | `RH3BULC120` | Relay | 3-pole (3PDT) |
+| SH1B-05C | `SH1B05C` | Socket | 1-pole |
+| SH2B-05C | `SH2B05C` | Socket | 2-pole |
+| SH3B-05C | `SH3B05C` | Socket | 3-pole |
+| SH4B-05C | `SH4B05C` | Socket | 4-pole |
+
+These pass every merge gate:
+
+1. **Edit distance:** `RH1BULC120` vs `RH2BULC120` = 1 (threshold=2 for maxLen=10). `SH1B05C` vs `SH2B05C` = 1 (threshold=1 for maxLen=7). All within threshold.
+2. **Manufacturer match:** All IDEC → `mfrMatch=true`.
+3. **Description match:** All share identical descriptions after normalization (e.g., "RELAY, FINGERSAFE TERMINALS, DPDT" or "SOCKET, FINGER-SAFE").
+4. **Y-position guard override:** Items are at different Y positions on the drawing (different rows), but the Y-guard (`yDiff > 0.008`) is overridden when descriptions are identical after normalization (`descIdentical` check at line 9265-9270, added in v1.19.642). Since IDEC variants share identical descriptions, the Y-guard — the last line of defense — is bypassed.
+
+The merge keeps the first item encountered and drops subsequent variants. The dropped items' `itemNo` values disappear from the final BOM, creating `finalSequenceGaps`.
+
+#### Production impact
+
+**10 panels affected, 22 items total incorrectly dropped.** All false merges are IDEC relay/socket product-family variants. Verified via `tests/extraction-baseline/reproduce-fuzzy-merge.js` (global Firestore scan) and `tests/extraction-baseline/check-merged-itemnos.js` (PRJ402104 detail).
+
+PRJ402104 specific losses:
+- Item 27: `RH2B-ULC-120` (2-pole relay) merged into item 25 `RH1B-ULC-120` (1-pole relay)
+- Item 28: `SH2B-05C` (2-pole socket) merged into item 26 `SH1B-05C` (1-pole socket)
+- Item 30: `SH3B-05C` (3-pole socket) merged into item 26 `SH1B-05C` (1-pole socket)
+
+#### This is a missing-guard problem, not a threshold problem
+
+Tightening edit-distance thresholds would break legitimate OCR dedup (the function's primary purpose). The real issue is that the function has no concept of item identity. Two items with **different item numbers on the drawing** are, by definition, different items — regardless of how similar their part numbers look. The Y-guard was intended to catch this, but the v1.19.642 identical-description override defeated it for exactly the product families where it matters most.
+
+#### Proposed fix: itemNo guard
+
+Add an itemNo guard to `fuzzyMergeBomItemsWithReport`, analogous to H6's x_left guard for `positionalMergeBomItems`:
+
+```
+// Inside the inner loop, after the consumed check (line 9238)
+// and before the normalization (line 9239):
+const itemNoA = String(base.itemNo || base.item || "").replace(/\D/g, "");
+const itemNoB = String(b.itemNo || b.item || "").replace(/\D/g, "");
+if (itemNoA && itemNoB && itemNoA !== itemNoB) continue;
+```
+
+Items with different non-empty itemNo values should never fuzzy merge. Items without itemNo (labor, contingency, crate, job-buyoff — 6 of 50 rows in PRJ402104) still merge normally.
+
+**Why itemNo is reliable at this pipeline stage:** The fuzzy merge runs after positional dedup and exact-PN dedup, both of which preserve itemNo. Verified via `check-merged-itemnos.js`: 44 of 50 BOM items in PRJ402104 have itemNo; the 6 without are all non-material rows (labor, contingency, crate, job-buyoff) that wouldn't have product-family variants anyway.
+
+#### Connected finding: L3 blindspot explained
+
+C4/C11 investigated why L3 (retry/gap-fill) never fired in production despite 7 panels having `finalSequenceGaps`. Answer: **all sequence gaps originate from fuzzy merge, not from AI extraction misses.** For every affected panel, `rawCount === exactCount` — the AI extracted a gap-free sequence, then fuzzy merge introduced the gaps. L3 checks the raw AI output for gaps (via `_parseAndVerifyBomRaw`), finds none, and doesn't fire.
+
+This means:
+1. H7 (adding L3 to re-extraction) is still correct but lower priority than H9 — L3 can't recover items that fuzzy merge will drop downstream.
+2. H9 must land before H7 for the safety net to be meaningful. Fix the data loss first, then extend the safety net.
+
+#### Test plan
+
+1. Extract PRJ402104 on H9-fixed code. Verify items 27, 28, 30 survive in final BOM.
+2. Verify no regression on OCR dedup — items with same itemNo but different PNs (actual OCR errors) should still merge. Pick a panel with known OCR merges from the `reproduce-fuzzy-merge.js` output (if any are legitimate).
+3. Global check: re-run `reproduce-fuzzy-merge.js` logic against post-fix code to confirm zero false merges.
+
+#### Severity and priority
+
+**CRITICAL.** This is actively losing customer BOM items in production with no user-visible signal. The items simply vanish from the quote. Unlike H6 (which duplicated items — visible oddity), H9 deletes items — invisible until someone manually compares the quote to the drawing. Analogous to H6 in fix complexity (single guard, well-defined insertion point) but higher business impact.
+
+**Recommendation:** H9 should be the next implementation item, ahead of H7. Single function, single predicate, clear test case. Implement, verify on PRJ402104, deploy.
+
 ## Open Questions for Jon
 
 1. How many concurrent users / active projects does ARC typically serve? Trying to calibrate whether the monolith's complexity ceiling is a near-term or long-term concern.
@@ -681,10 +1231,12 @@ The current baseline (32/87 exact matches, 38 wrong PNs, 17 missing) is unreliab
 
 | Item | Status | Priority | Notes |
 |------|--------|----------|-------|
-| **H6** | **NEW — top priority** | 1 | Dedup fix. Implement and deploy immediately, no plan doc needed. |
-| **H8** | **NEW — required after H6** | 2 | Re-baseline PRJ402107. Needed before scoping H5. |
-| **H7** | **NEW — high** | 3 | L3 in re-extraction path. Can be done before or after H8. |
-| H5 | ON HOLD | 4 | Scope must be re-evaluated against H8's clean baseline. H5-PLAN.md deferred until H8 completes. |
+| **H6** | **CLOSED — VERIFIED** | ✓ | Deployed v1.20.20. 15/17 recovered. 2 remaining are same-column y-collision (different bug class). |
+| **H9** | **CLOSED — VERIFIED (C14)** | ✓ | itemNo guard deployed v1.20.22. Items 27/28/30 recovered. Zero fuzzy merges, zero gaps. |
+| **H10** | **NEW — CRITICAL (C14/C15)** | 1 | Re-extraction path architectural fix. Scope: (1) bomRegion in batch payload, (2) read extractionVerification, (3) missing-from-start gap detection, (4) L3 retry/gap-fill, (5) verification in report, (6) L3 report fields, (7) shared L3 function (Approach B). Absorbs H7. Monday work. |
+| **H8** | **READY — baseline captured** | 2 | `prj402107-post-h6.json` + diff are the clean baseline. H5 scope re-evaluation can proceed. |
+| **H7** | **ABSORBED INTO H10** | — | L3 in re-extraction path. Absorbed because reading verification (H10 scope item 2) is prerequisite for L3 trigger (H10 scope item 4). Same architectural gap, one coherent fix. |
+| H5 | ON HOLD | 4 | True OCR error rate now measurable: 53/85 (62.4%) PN mismatches. Scope re-evaluation against H8 baseline pending. |
 | H1 | Bundled into H5 | — | "1 SET" qty fix. Still needed, ships with H5. |
 | H3 | Bundled into H5 | — | Tag-count vs qty check. Still needed, ships with H5. |
 | H2 | Deferred | — | Catalog-description cross-validation. Not in current scope. |

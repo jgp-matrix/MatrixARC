@@ -1,0 +1,259 @@
+{
+  "projectId": "0i3NiLwcAOVh96tsvwJd",
+  "bcProjectNumber": "PRJ402104",
+  "capturedAt": "2026-05-23T00:43:16.360Z",
+  "version": "v1.20.22",
+  "extractionPath": "pdf-native",
+  "rawCount": 21,
+  "exactCount": 21,
+  "finalCount": 21,
+  "finalItemCount": 21,
+  "fuzzyMerges": [],
+  "finalSequenceGaps": [],
+  "bomLength": 27,
+  "bom": [
+    {
+      "itemNo": "27",
+      "partNumber": "RH2B-ULC-120",
+      "qty": 3,
+      "manufacturer": "IDEC",
+      "description": "RELAY, DPDT, WITH INDICATOR AND CHECK BUTTON, 120V AC",
+      "unitPrice": 11.25,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "28",
+      "partNumber": "SH2B-05C",
+      "qty": 3,
+      "manufacturer": "IDEC",
+      "description": "SOCKET, RELAY, FINGERSAFE TERMINALS",
+      "unitPrice": 2.15,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "29",
+      "partNumber": "RH3B-ULC-120",
+      "qty": 3,
+      "manufacturer": "IDEC",
+      "description": "RELAY, 3PDT, WITH INDICATOR AND CHECK BUTTON, 120V AC",
+      "unitPrice": 13.25,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "30",
+      "partNumber": "SH3B-05C",
+      "qty": 3,
+      "manufacturer": "IDEC",
+      "description": "SOCKET, RELAY, FINGERSAFE TERMINALS",
+      "unitPrice": 7.4,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "31",
+      "partNumber": "AVD302NUR",
+      "qty": 1,
+      "manufacturer": "IDEC",
+      "description": "TWND SERIES PUSH-TO-TEST TYPE, WHITE PILOT LIGHT-FULL VOLTAGE, 120VAC, NEMA 4X, 1N.O.+1N.C.",
+      "unitPrice": 60,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "32",
+      "partNumber": "ALD2QH211DNUA",
+      "qty": 1,
+      "manufacturer": "IDEC",
+      "description": "TWND SERIES PUSH-TO-TEST TYPE, AMBER PILOT LIGHT-FULL VOLTAGE, 120VAC, NEMA 4X, 1N.O.+1N.C.",
+      "unitPrice": 46.18,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "33",
+      "partNumber": "ALD2QH211DNUG",
+      "qty": 1,
+      "manufacturer": "IDEC",
+      "description": "TWND SERIES PUSH-TO-TEST TYPE, GREEN PILOT LIGHT-FULL VOLTAGE, 120VAC, NEMA 4X, 1N.O.+1N.C.",
+      "unitPrice": 46.18,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "34",
+      "partNumber": "ALD2QH211DNUR",
+      "qty": 2,
+      "manufacturer": "IDEC",
+      "description": "TWND SERIES PUSH-TO-TEST TYPE, RED PILOT LIGHT-FULL VOLTAGE, 120VAC, NEMA 4X, 1N.O.+1N.C.",
+      "unitPrice": 44.4,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "35",
+      "partNumber": "ABD111NUBGR",
+      "qty": 2,
+      "manufacturer": "IDEC",
+      "description": "Pushbutton, Mom, Blk/Grn/Red, 1/1, Non-Ill, 30mm M",
+      "unitPrice": 21.26,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "36",
+      "partNumber": "ABD111NUBGR",
+      "qty": 1,
+      "manufacturer": "IDEC",
+      "description": "Pushbutton, Mom, Blk/Grn/Red, 1/1, Non-Ill, 30mm M",
+      "unitPrice": 21.26,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "37",
+      "partNumber": "AVD302NUR",
+      "qty": 1,
+      "manufacturer": "IDEC",
+      "description": "EMERGENCY STOP, MUSHROOM HEAD, PUSHLOCK TWIST RELEASE, NEMA 4X WITH 2NC CONTACTS",
+      "unitPrice": 60,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "38",
+      "partNumber": "ASD340NU",
+      "qty": 1,
+      "manufacturer": "IDEC",
+      "description": "TWND SERIES, 3-POSITION MAINTAINED SELECTOR SWITCH, KNOB TYPE, WITH 4 N.O.+0 NC CONTACT BLOCKS",
+      "unitPrice": 26.15,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "39",
+      "partNumber": "49046A",
+      "qty": 1,
+      "manufacturer": "OVIVO",
+      "description": "NAME PLATE - \"DANGER\"",
+      "unitPrice": 15,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "40",
+      "partNumber": "679001",
+      "qty": 1,
+      "manufacturer": "OVIVO",
+      "description": "NAME PLATE (ETCH AS SHOWN)",
+      "unitPrice": 20,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "41",
+      "partNumber": "592273",
+      "qty": 1,
+      "manufacturer": "OVIVO",
+      "description": "ENLCOUSRE EQUIPMENT TAG ID",
+      "unitPrice": 10,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "42",
+      "partNumber": "3044102",
+      "qty": 49,
+      "manufacturer": "PHOENIX CONTACT",
+      "description": "UT 4, SCREW CONNECTION, FEED THROUGH TERMINAL BLOCK",
+      "unitPrice": 0.71,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "43",
+      "partNumber": "3044128",
+      "qty": 4,
+      "manufacturer": "PHOENIX CONTACT",
+      "description": "UT 4-PE, SCREW CONNECTION, GROUND TERMINAL BLOCK",
+      "unitPrice": 3.94,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "44",
+      "partNumber": "3047028",
+      "qty": 4,
+      "manufacturer": "PHOENIX CONTACT",
+      "description": "D-UT 2.5/10, END COVER FOR TERMINAL BLOCK",
+      "unitPrice": 0.56,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "45",
+      "partNumber": "0800886",
+      "qty": 14,
+      "manufacturer": "PHOENIX CONTACT",
+      "description": "E/NS 35 N, END BRACKET",
+      "unitPrice": 1.24,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "46",
+      "partNumber": "2910386",
+      "qty": 1,
+      "manufacturer": "PHOENIX CONTACT",
+      "description": "TYPE 1 SURGE PROTECTIVE DEVICE, THREE CHANNEL WITH REMOTE INDICATOR CONTACT FOR 480 V AC DELTA.",
+      "unitPrice": 401.48,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "47",
+      "partNumber": "RE17RMMW",
+      "qty": 1,
+      "manufacturer": "SCHNEIDER",
+      "description": "MODULAR, MULTIFUNCTIONAL TIMING RELAY, 8A, 1C/O, 1 SEC TO 100 HOUR TIME DELAY, 12V TO 240V AC",
+      "unitPrice": 57.9,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "",
+      "partNumber": "1012",
+      "qty": 4,
+      "manufacturer": "",
+      "description": "CUT",
+      "unitPrice": 45,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "",
+      "partNumber": "1013",
+      "qty": 12,
+      "manufacturer": "",
+      "description": "LAYOUT",
+      "unitPrice": 45,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "",
+      "partNumber": "1014",
+      "qty": 23,
+      "manufacturer": "",
+      "description": "WIRE",
+      "unitPrice": 45,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "",
+      "partNumber": "JOB BUYOFF",
+      "qty": 2,
+      "manufacturer": "",
+      "description": "job buyoff",
+      "unitPrice": 130,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "",
+      "partNumber": "CRATE",
+      "qty": 1,
+      "manufacturer": "",
+      "description": "Crate",
+      "unitPrice": 350,
+      "priceSource": "bc"
+    },
+    {
+      "itemNo": "",
+      "partNumber": "Contingency",
+      "qty": 1,
+      "manufacturer": "Matrix Systems",
+      "description": "Contingency",
+      "unitPrice": 1400,
+      "priceSource": "bc"
+    }
+  ]
+}
