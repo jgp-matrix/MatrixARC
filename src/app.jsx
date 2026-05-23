@@ -9218,6 +9218,12 @@ function fuzzyMergeBomItemsWithReport(items){
       if(pnA===pnB)continue; // exact dedup already handled elsewhere
       // Length delta ≤ 2 keeps us safe (OCR typically adds/drops 1-2 chars)
       if(Math.abs(pnA.length-pnB.length)>2)continue;
+      // DECISION(v1.20.21): itemNo guard for product-family variants. Items with different
+      // non-empty itemNo values are different BOM line items — never merge regardless of PN
+      // similarity. Analogous to x_left guard in positionalMergeBomItems (v1.20.20).
+      const inA=String(base.itemNo||base.item||"").replace(/\D/g,"");
+      const inB=String(b.itemNo||b.item||"").replace(/\D/g,"");
+      if(inA&&inB&&inA!==inB)continue;
       // DECISION(v1.19.628): CRITICAL Y-position guard. If both items have y_top and they're
       // at materially different positions on the page, they are DIFFERENT ROWS in the same
       // BOM table — never merge. This was silently destroying legitimate product-family
@@ -9269,6 +9275,8 @@ function fuzzyMergeBomItemsWithReport(items){
       const dropped=keepA?b.partNumber:base.partNumber;
       merges.push({
         kept,dropped,editDist:ed,
+        keptItemNo:base.itemNo||base.item||"",
+        droppedItemNo:b.itemNo||b.item||"",
         reason:mfrMatch&&descMatch?"mfr+desc match":mfrMatch?"mfr match":"desc match",
         manufacturer:base.manufacturer||b.manufacturer||"",
         description:((base.description||"").length>=(b.description||"").length?base.description:b.description)||"",
