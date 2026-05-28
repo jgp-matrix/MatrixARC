@@ -38229,7 +38229,7 @@ function AdminBudgetSection({uid}){
   );
 }
 
-function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchive}){
+function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchive,onShowArchiveBrowser}){
   // v1.19.986 (audit Item E): saveErr surfaces API-key save failures inline.
   const [saveErr,setSaveErr]=useState(null);
   const [key,setKey]=useState("");
@@ -38481,12 +38481,16 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchi
           </div>
         )}
 
-        {/* Admin: Archive Tools — DECISION(v1.20.23) */}
-        {isAdmin()&&onShowBulkArchive&&(
+        {/* Archive Tools — DECISION(v1.20.23, F3 restructure v1.20.32) */}
+        {/* Section visible to all writers (canWrite), bulk archive button admin-only */}
+        {_appCtx.role!=="view"&&(
           <div style={{marginTop:20,padding:"14px 16px",background:"#0a1a14",border:`1px solid #10b98133`,borderRadius:10}}>
-            <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:6,display:"flex",alignItems:"center",gap:8}}>📦 Project Archives <span style={{fontSize:10,fontWeight:600,color:"#10b981",background:"#052e16",borderRadius:10,padding:"1px 8px"}}>ADMIN</span></div>
-            <div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginBottom:10}}>Archive all projects before a BC Database reset. Creates read-only snapshots that can be restored into the new BC environment.</div>
-            <button onClick={()=>{onShowBulkArchive();onClose();}} style={btn("#10b981","#fff",{fontSize:13,padding:"7px 18px"})}>Archive All Projects</button>
+            <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:6,display:"flex",alignItems:"center",gap:8}}>📦 Project Archives</div>
+            <div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginBottom:10}}>Browse archived project snapshots. Restore into the current BC environment or copy to a new quote.</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {onShowArchiveBrowser&&<button onClick={()=>{onShowArchiveBrowser();onClose();}} style={btn(C.accent,"#fff",{fontSize:13,padding:"7px 18px"})}>Show Archived Projects</button>}
+              {isAdmin()&&onShowBulkArchive&&<button onClick={()=>{onShowBulkArchive();onClose();}} style={btn("#10b981","#fff",{fontSize:13,padding:"7px 18px"})}>Archive All Projects<span style={{fontSize:10,fontWeight:600,color:"#10b981",background:"#052e16",borderRadius:10,padding:"1px 8px",marginLeft:6}}>ADMIN</span></button>}
+            </div>
           </div>
         )}
 
@@ -40118,6 +40122,145 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         </>);
       })()}
     </div>
+  );
+}
+
+// ── ARCHIVE BROWSER MODAL (Milestone C Phase 4d) ──
+// Lists all archived projects with search/sort. Entry points: gear menu + Settings button.
+// Gated by canWrite (userRole!=="view"). Delete is disabled (future update).
+function ArchiveBrowserModal({uid,onClose,onPreviewOpen}){
+  const [archives,setArchives]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [searchTerm,setSearchTerm]=useState("");
+  const [sortField,setSortField]=useState("archivedAt"); // archivedAt | name | bcProjectNumber
+  const [sortDir,setSortDir]=useState("desc"); // asc | desc
+  const searchTimer=useRef(null);
+  const [debouncedSearch,setDebouncedSearch]=useState("");
+
+  // Load archives on mount
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        const list=await loadArchives();
+        if(!cancelled)setArchives(list||[]);
+      }catch(e){
+        console.warn("[ARCHIVE BROWSER] load failed:",e.message);
+        if(!cancelled)setArchives([]);
+      }finally{
+        if(!cancelled)setLoading(false);
+      }
+    })();
+    return()=>{cancelled=true;};
+  },[]);
+
+  // Debounced search (200ms)
+  useEffect(()=>{
+    if(searchTimer.current)clearTimeout(searchTimer.current);
+    searchTimer.current=setTimeout(()=>setDebouncedSearch(searchTerm),200);
+    return()=>{if(searchTimer.current)clearTimeout(searchTimer.current);};
+  },[searchTerm]);
+
+  function handleSort(field){
+    if(sortField===field)setSortDir(d=>d==="asc"?"desc":"asc");
+    else{setSortField(field);setSortDir(field==="archivedAt"?"desc":"asc");}
+  }
+
+  // Filter + sort
+  const filtered=useMemo(()=>{
+    if(!archives)return[];
+    let list=archives;
+    if(debouncedSearch){
+      const q=debouncedSearch.toLowerCase();
+      list=list.filter(a=>(a.name||"").toLowerCase().includes(q)||(a.originalBcProjectNumber||"").toLowerCase().includes(q));
+    }
+    list=[...list].sort((a,b)=>{
+      let va,vb;
+      if(sortField==="archivedAt"){va=a.archivedAt||0;vb=b.archivedAt||0;}
+      else if(sortField==="name"){va=(a.name||"").toLowerCase();vb=(b.name||"").toLowerCase();}
+      else{va=(a.originalBcProjectNumber||"").toLowerCase();vb=(b.originalBcProjectNumber||"").toLowerCase();}
+      if(va<vb)return sortDir==="asc"?-1:1;
+      if(va>vb)return sortDir==="asc"?1:-1;
+      return 0;
+    });
+    return list;
+  },[archives,debouncedSearch,sortField,sortDir]);
+
+  const sortBtn=(field,label)=>{
+    const active=sortField===field;
+    return(<button onClick={()=>handleSort(field)} style={{background:active?"#1a2744":"none",border:`1px solid ${active?C.accent+"66":C.border}`,borderRadius:6,padding:"4px 12px",fontSize:12,color:active?C.accent:C.muted,cursor:"pointer",fontWeight:active?700:500}}>
+      {label}{active&&(sortDir==="desc"?" ▾":" ▴")}
+    </button>);
+  };
+
+  function formatDate(ts){
+    if(!ts)return"—";
+    const d=typeof ts==="number"?new Date(ts):ts.toDate?ts.toDate():new Date(ts);
+    return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+  }
+
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}66`,borderRadius:10,padding:"28px 32px",width:680,maxHeight:"85vh",overflow:"auto",boxShadow:"0 0 40px 10px rgba(56,189,248,0.5),0 8px 40px rgba(0,0,0,0.7)"}}>
+        {/* Header */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div style={{fontSize:16,fontWeight:800,color:C.accent}}>📦 Archived Projects</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,fontWeight:700}}>✕</button>
+        </div>
+
+        {/* Search */}
+        <input value={searchTerm} onChange={e=>setSearchTerm(e.target.value)}
+          placeholder="🔍 Search by name or BC project number..."
+          style={{width:"100%",padding:"10px 14px",background:"#111",border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:13,marginBottom:12,boxSizing:"border-box"}}/>
+
+        {/* Sort buttons */}
+        <div style={{display:"flex",gap:6,marginBottom:16,alignItems:"center"}}>
+          <span style={{fontSize:11,color:C.muted,marginRight:4}}>Sort:</span>
+          {sortBtn("archivedAt","Archived Date")}
+          {sortBtn("name","Name")}
+          {sortBtn("bcProjectNumber","BC Project #")}
+        </div>
+
+        {/* Content */}
+        {loading&&<div style={{padding:40,textAlign:"center",color:C.muted,fontSize:14}}>Loading archived projects…</div>}
+
+        {!loading&&filtered.length===0&&(
+          <div style={{padding:40,textAlign:"center",color:C.muted,fontSize:13,lineHeight:1.6}}>
+            {debouncedSearch?"No archives match your search.":"No archived projects found. Use Settings → Archive All Projects to create archives before a BC Database reset."}
+          </div>
+        )}
+
+        {!loading&&filtered.map(a=>(
+          <div key={a.archiveId||a.id} style={{background:"#111827",border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 18px",marginBottom:10}}>
+            {/* Title row */}
+            <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:4}}>{a.originalBcProjectNumber||"—"} — {a.name||"Untitled"}</div>
+            {/* Meta row */}
+            <div style={{fontSize:11,color:C.muted,marginBottom:8,display:"flex",flexWrap:"wrap",gap:12}}>
+              <span>BC# {a.originalBcProjectNumber||"—"}</span>
+              <span>Archived: {formatDate(a.archivedAt)}</span>
+              <span>By: {a.archivedBy||"—"}</span>
+              <span>Restored: {(a.restoreHistory||[]).length} times</span>
+              {a.originalBcEnv&&<span>BC Env: {a.originalBcEnv}</span>}
+            </div>
+            {/* Action buttons */}
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <button onClick={()=>onPreviewOpen(a,"restore")} style={btn(C.accent,"#fff",{fontSize:12,padding:"5px 14px"})}>🔄 Restore</button>
+              <button onClick={()=>onPreviewOpen(a,"copy")} style={btn("#8b5cf6","#fff",{fontSize:12,padding:"5px 14px"})}>📋 Copy to New Quote</button>
+              <button disabled title="Coming in a future update" style={{...btn(C.border,C.muted,{fontSize:12,padding:"5px 14px"}),opacity:0.4,cursor:"not-allowed"}}>🗑 Delete</button>
+            </div>
+          </div>
+        ))}
+
+        {/* Footer count */}
+        {!loading&&archives&&archives.length>0&&(
+          <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:12}}>
+            Showing {filtered.length} of {archives.length} archived project{archives.length!==1?"s":""}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -41985,6 +42128,8 @@ function App({user}){
   const [transferProject,setTransferProject]=useState(null); // project object
   const [copyProject_,setCopyProject]=useState(null); // project object for copy modal
   const [showBulkArchive,setShowBulkArchive]=useState(false); // BulkArchiveModal
+  const [showArchiveBrowser,setShowArchiveBrowser]=useState(false); // ArchiveBrowserModal (Milestone C)
+  const [archivePreviewTarget,setArchivePreviewTarget]=useState(null); // {archive, mode:"restore"|"copy"} for RestorePreviewModal
   const [archivingProject,setArchivingProject]=useState(null); // single-project archive in progress
   const [userFirstName,setUserFirstName]=useState("");
   const [memberMap,setMemberMap]=useState({}); // uid → {email, firstName}
@@ -43086,6 +43231,7 @@ INSTRUCTIONS:
               <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📊 Reports</button>
               <button onClick={()=>{setShowSupplierPricing(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📥 Upload Supplier Pricing</button>
               {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?"#1a0a2a":"none",border:"none",color:"#a78bfa",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={e=>{if(view!=="aidb")e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(view!=="aidb")e.target.style.background="none";}}>🧠 ARC AI Database</button>}
+              {userRole!=="view"&&<button onClick={()=>{setShowArchiveBrowser(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:showArchiveBrowser?"#0a1a14":"none",border:"none",color:"#10b981",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={e=>{if(!showArchiveBrowser)e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(!showArchiveBrowser)e.target.style.background="none";}}>📦 Archived Projects</button>}
               {userRole!=="view"&&<button onClick={()=>{setShowCustomerTemplates(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:"#c4b5fd",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📋 Customer Templates</button>}
               <div style={{height:1,background:C.border,margin:"4px 0"}}/>
               <button onClick={()=>{setShowAbout(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.muted,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>ℹ About</button>
@@ -43218,8 +43364,9 @@ INSTRUCTIONS:
       {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} project={deleteConfirm.project} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
       {transferProject&&<TransferProjectModal project={transferProject} companyId={companyId} uid={user.uid} userEmail={user.email} onTransferred={handleTransferDone} onClose={()=>setTransferProject(null)}/>}
       {copyProject_&&<CopyProjectModal project={copyProject_} uid={user.uid} onCopied={p=>{setCopyProject(null);setProjects(ps=>[p,...ps]);handleOpen(p);}} onClose={()=>setCopyProject(null)}/>}
-      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)} onShowDebugLogs={()=>setShowDebugLogs(true)} onShowBulkArchive={companyId?()=>setShowBulkArchive(true):undefined}/>}
+      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)} onShowDebugLogs={()=>setShowDebugLogs(true)} onShowBulkArchive={companyId?()=>setShowBulkArchive(true):undefined} onShowArchiveBrowser={companyId?()=>setShowArchiveBrowser(true):undefined}/>}
       {showBulkArchive&&<BulkArchiveModal uid={user.uid} onClose={()=>setShowBulkArchive(false)}/>}
+      {showArchiveBrowser&&<ArchiveBrowserModal uid={user.uid} onClose={()=>setShowArchiveBrowser(false)} onPreviewOpen={(archive,mode)=>{setArchivePreviewTarget({archive,mode});}}/>}
       {showApiSetup&&<APISetupModal uid={user.uid} onClose={()=>setShowApiSetup(false)}/>}
       {showCostAnalysis&&<CostAnalysisModal uid={user.uid} companyId={companyId} onClose={()=>setShowCostAnalysis(false)}/>}
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
