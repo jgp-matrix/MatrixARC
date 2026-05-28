@@ -8950,6 +8950,193 @@ async function loadArchives(){
   }
 }
 
+// ── RESTORE PREVIEW CACHE (Milestone C Phase 3a) ──
+// Per-section cache with individual TTL (R3) and bcTokenFingerprint invalidation (R4).
+// Each section (items, customer, vendors) has its own fetchedAt — a section retried 2 min ago
+// stays fresh even if other sections were fetched 6 min ago.
+let _restorePreviewCache=new Map();
+const PREVIEW_CACHE_TTL=5*60*1000; // 5 minutes per section
+
+// R4: Synchronous token fingerprint for cache-key comparison. NOT a security hash — only
+// detects token changes (re-auth, disconnect/reconnect). Slicing first+last 8 chars is
+// sufficient to detect a different token without storing the full bearer token in memory.
+function bcTokenFingerprint(token){
+  if(!token||token.length<16)return token||"";
+  return token.slice(0,8)+":"+token.slice(-8);
+}
+
+// R3: Per-section staleness check.
+function _isPreviewSectionStale(entry){
+  return!entry||!entry.fetchedAt||(Date.now()-entry.fetchedAt>PREVIEW_CACHE_TTL);
+}
+
+// ── BUILD RESTORE PREVIEW (Milestone C Phase 3b) ──
+// Progressive drift detection: compares archived BC data against live BC state.
+// Returns {items, customer, vendors, laborRates, errors}. Each section is delivered
+// incrementally via opts.onSectionDone so the modal can render progressively.
+// Entirely read-only — no Firestore writes, no BC mutations.
+async function buildRestorePreview(archive,opts){
+  const signal=opts?.signal;
+  const onSectionDone=opts?.onSectionDone||(()=>{});
+  const archiveId=archive.archiveId||archive.id;
+
+  // 0. Check cache — return fully fresh results immediately, re-fetch only stale sections
+  const cached=_restorePreviewCache.get(archiveId);
+  const currentFp=bcTokenFingerprint(_bcToken);
+  if(cached&&cached.bcTokenFingerprint===currentFp){
+    const freshSections={};
+    const staleSections=[];
+    for(const sn of["items","customer","vendors"]){
+      const entry=cached.sections[sn];
+      if(!_isPreviewSectionStale(entry)){
+        freshSections[sn]=entry.result;
+        onSectionDone(sn,entry.result);
+      }else{
+        staleSections.push(sn);
+      }
+    }
+    if(staleSections.length===0){
+      onSectionDone("labor",cached.labor);
+      return{items:cached.sections.items.result,customer:cached.sections.customer.result,vendors:cached.sections.vendors.result,laborRates:cached.labor};
+    }
+    // Fall through — only stale sections will be re-fetched below
+  }
+
+  // 1. Extract unique references from archive (R6: build vendorNameMap during extraction)
+  const uniquePartNumbers=new Set();
+  const uniqueVendorNos=new Set();
+  const vendorNameMap=new Map(); // R6: O(1) lookup, avoids O(vendors×rows)
+  const panelLaborRates=[];
+  const firstRowByPn=new Map(); // first BOM row for each part number, for archived cost lookup
+
+  for(const panel of(archive.panels||[])){
+    for(const row of(panel.bom||[])){
+      const pn=row.bcPartNumber||row.partNumber;
+      if(pn){
+        uniquePartNumbers.add(pn);
+        if(!firstRowByPn.has(pn))firstRowByPn.set(pn,row);
+      }
+      if(row.bcVendorNo){
+        uniqueVendorNos.add(row.bcVendorNo);
+        if(!vendorNameMap.has(row.bcVendorNo))vendorNameMap.set(row.bcVendorNo,row.bcVendorName||"");
+      }
+    }
+    panelLaborRates.push({panelId:panel.id,panelName:panel.name||"Panel",archivedRate:(panel.pricing&&panel.pricing.laborRate)||0});
+  }
+
+  // 2. Labor rates — immediate, no BC call
+  const laborResult=panelLaborRates;
+  onSectionDone("labor",laborResult);
+
+  // 3. Customer — fast (1 BC call)
+  let customerResult=null;
+  try{
+    const custNum=archive.bcCustomerNumber;
+    if(custNum){
+      const liveCustomer=await bcLookupCustomer(custNum,{signal});
+      if(!liveCustomer){
+        customerResult={status:"missing",archivedName:archive.bcCustomerName||"",liveName:null};
+      }else if(liveCustomer.displayName!==(archive.bcCustomerName||"")){
+        customerResult={status:"name_changed",archivedName:archive.bcCustomerName||"",liveName:liveCustomer.displayName};
+      }else{
+        customerResult={status:"ok",archivedName:archive.bcCustomerName||"",liveName:liveCustomer.displayName};
+      }
+    }else{
+      customerResult={status:"no_customer",archivedName:null,liveName:null};
+    }
+    onSectionDone("customer",customerResult);
+  }catch(e){
+    if(e.name==="AbortError")throw e;
+    customerResult={status:"error",message:e.message};
+    onSectionDone("customer",customerResult);
+  }
+
+  // 4. Vendors — fast (3-8 calls, sequential with 300ms pacing to avoid BC rate limiting)
+  let vendorResults=[];
+  try{
+    for(const vendorNo of uniqueVendorNos){
+      const liveVendor=await bcLookupVendor(vendorNo,{signal});
+      const archivedName=vendorNameMap.get(vendorNo)||"";
+      if(!liveVendor){
+        vendorResults.push({vendorNo,status:"missing",archivedName,liveName:null});
+      }else if(liveVendor.displayName!==archivedName){
+        vendorResults.push({vendorNo,status:"name_changed",archivedName,liveName:liveVendor.displayName});
+      }else{
+        vendorResults.push({vendorNo,status:"ok",archivedName,liveName:liveVendor.displayName});
+      }
+      // Rate-limit pacing between vendor lookups
+      if(uniqueVendorNos.size>1)await new Promise(res=>setTimeout(res,300));
+    }
+    onSectionDone("vendors",vendorResults);
+  }catch(e){
+    if(e.name==="AbortError")throw e;
+    vendorResults.push({status:"error",message:e.message});
+    onSectionDone("vendors",vendorResults);
+  }
+
+  // 5. Items — slow (batched, 30 items per request via bcFetchItemCardCosts)
+  let itemResults=[];
+  try{
+    const partNumberArr=Array.from(uniquePartNumbers);
+    const itemCostMap=await bcFetchItemCardCosts(partNumberArr,{signal});
+
+    for(const pn of partNumberArr){
+      const liveItem=itemCostMap.get(pn);
+      const archivedRow=firstRowByPn.get(pn)||{};
+      // Prefer bcItemCardCost for apples-to-apples comparison against BC ItemCard Unit_Cost
+      let archivedCost=archivedRow.bcItemCardCost;
+      let legacyFallback=false;
+      if(archivedCost==null){
+        archivedCost=archivedRow.unitPrice;
+        legacyFallback=true;
+      }
+
+      if(!liveItem){
+        itemResults.push({partNumber:pn,costStatus:"missing",descStatus:"unknown",archivedCost:archivedCost??null,liveCost:null,delta:null,archivedDescription:archivedRow.description||"",liveDescription:null,legacyFallback});
+      }else{
+        const liveCost=liveItem.unitCost;
+        const liveDesc=liveItem.description||"";
+        const archivedDesc=archivedRow.description||"";
+
+        // Cost drift check (R2: separate costStatus field)
+        let costStatus="ok";
+        let delta=null;
+        if(liveCost!=null&&archivedCost!=null&&archivedCost!==0){
+          delta=(liveCost-archivedCost)/archivedCost;
+          if(Math.abs(delta)>COST_DRIFT_THRESHOLD)costStatus="cost_drift";
+        }else if(liveCost===0||liveCost==null){
+          costStatus="zero_cost";
+        }
+
+        // Description drift check (R2: separate descStatus field)
+        let descStatus="ok";
+        if(liveDesc&&archivedDesc&&liveDesc!==archivedDesc)descStatus="description_changed";
+
+        itemResults.push({partNumber:pn,costStatus,descStatus,archivedCost:archivedCost??null,liveCost:liveCost??null,delta,archivedDescription:archivedDesc,liveDescription:liveDesc,legacyFallback});
+      }
+    }
+    onSectionDone("items",itemResults);
+  }catch(e){
+    if(e.name==="AbortError")throw e;
+    // Partial results may exist — deliver what we have plus the error
+    onSectionDone("items",{results:itemResults,error:e.message});
+  }
+
+  // 6. Cache result (R3: per-section fetchedAt, R4: bcTokenFingerprint)
+  const now=Date.now();
+  _restorePreviewCache.set(archiveId,{
+    sections:{
+      items:{result:itemResults,fetchedAt:now},
+      customer:{result:customerResult,fetchedAt:now},
+      vendors:{result:vendorResults,fetchedAt:now}
+    },
+    labor:laborResult,
+    bcTokenFingerprint:currentFp
+  });
+
+  return{items:itemResults,customer:customerResult,vendors:vendorResults,laborRates:laborResult};
+}
+
 // ── COPY PROJECT ──
 async function copyProject(uid,sourceProject,onProgress){
   const pp=onProgress||(()=>{});
