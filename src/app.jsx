@@ -8702,6 +8702,26 @@ async function deleteProject(uid,id){
 // wasn't the original uploader. Best-effort — never throws; failures get logged so
 // the Firestore doc deletion still succeeds.
 async function deleteProjectStorageBlobs(currentUid,projectId,project){
+  // DECISION(v1.20.25, Milestone B): Archive-aware deletion guard.
+  // If a complete archive references this project, preserve Storage blobs — the archive's
+  // storageUrl references still point at them. Fail-safe: if the lookup itself fails,
+  // skip deletion (safer to leak storage than orphan archive references).
+  if(_appCtx.companyId){
+    try{
+      const archiveSnap=await db.collection(`companies/${_appCtx.companyId}/projects_archive`)
+        .where("originalProjectId","==",projectId)
+        .where("_archiveComplete","==",true)
+        .limit(1).get();
+      if(!archiveSnap.empty){
+        const archiveId=archiveSnap.docs[0].id;
+        console.log(`[deleteProjectStorageBlobs] skipped — archive ${archiveId} references project ${projectId}`);
+        return{deleted:0,failed:0,uids:[],skipped:true,reason:"archive_exists"};
+      }
+    }catch(e){
+      console.warn(`[deleteProjectStorageBlobs] skipped — archive lookup failed: ${e.message||e}`);
+      return{deleted:0,failed:0,uids:[],skipped:true,reason:"lookup_failed"};
+    }
+  }
   const uids=new Set();
   if(currentUid)uids.add(currentUid);
   if(project?.createdBy)uids.add(project.createdBy);
