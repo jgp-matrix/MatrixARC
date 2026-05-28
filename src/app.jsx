@@ -40388,6 +40388,8 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
   };
 
   function handleRetrySection(sectionName){
+    // Abort any in-flight request before starting retry
+    if(abortRef.current)abortRef.current.abort();
     // Clear cache for this archive and re-run preview
     _restorePreviewCache.delete(archiveId);
     setSectionResults(prev=>{const n={...prev};delete n[sectionName];return n;});
@@ -40438,11 +40440,11 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
         {noBc?<div style={{color:C.muted,fontSize:12}}>Waiting for BC connection...</div>:renderCustomer()}
 
         {/* Vendors section */}
-        {sectionHeader("Vendors",sectionResults.vendors?Array.isArray(sectionResults.vendors)?sectionResults.vendors.length:0:null)}
+        {sectionHeader("Vendors",sectionResults.vendors&&Array.isArray(sectionResults.vendors)?sectionResults.vendors.length+" unique":null)}
         {noBc?<div style={{color:C.muted,fontSize:12}}>Waiting for BC connection...</div>:renderVendors()}
 
         {/* Items section */}
-        {sectionHeader("Items",sectionResults.items?Array.isArray(sectionResults.items)?sectionResults.items.length:0:null)}
+        {sectionHeader("Items",sectionResults.items&&Array.isArray(sectionResults.items)?sectionResults.items.length+" unique parts":null)}
         {noBc?<div style={{color:C.muted,fontSize:12}}>Waiting for BC connection...</div>:renderItems()}
 
         {/* Labor rates section */}
