@@ -8735,6 +8735,135 @@ async function deleteProjectStorageBlobs(currentUid,projectId,project){
   return{deleted,failed,uids:[...uids]};
 }
 
+// ── PROJECT ARCHIVE (Milestone A) ──
+// DECISION(v1.20.23): Archive write path — deep-clone project + subcollections to
+// `companies/{companyId}/projects_archive`. Uses subcollection topology for ECOs and
+// snapshots (avoids Firestore 1MB doc limit). `_archiveComplete` flag ensures partial
+// writes are invisible to the archive browser.
+async function archiveProject(uid,project,reason){
+  if(!_appCtx.companyId)throw new Error("Archive requires a company workspace");
+  const archivePath=`companies/${_appCtx.companyId}/projects_archive`;
+  const projectId=project.id;
+  const projectsBase=_appCtx.projectsPath||`users/${uid}/projects`;
+
+  // 1. Fetch ECOs subcollection
+  let ecoDocs=[];
+  try{
+    const ecoSnap=await fbDb.collection(`${projectsBase}/${projectId}/ecos`).get();
+    ecoDocs=ecoSnap.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){console.warn(`[ARCHIVE] ECO fetch failed for ${projectId}:`,e.message);}
+
+  // 2. Fetch _snapshots subcollection
+  let snapshotDocs=[];
+  try{
+    const snapSnap=await fbDb.collection(`${projectsBase}/${projectId}/_snapshots`).orderBy("createdAt","desc").limit(10).get();
+    snapshotDocs=snapSnap.docs.map(d=>({id:d.id,...d.data()}));
+  }catch(e){console.warn(`[ARCHIVE] Snapshot fetch failed for ${projectId}:`,e.message);}
+
+  // 3. Build archive envelope (project data + envelope metadata, NO embedded ECOs/snapshots)
+  const now=Date.now();
+  const archiveDoc={
+    ...JSON.parse(JSON.stringify(project)),
+    // Archive envelope fields
+    originalProjectId:projectId,
+    originalBcProjectNumber:project.bcProjectNumber||null,
+    originalBcEnv:project.bcEnv||null,
+    archivedAt:now,
+    archivedBy:uid,
+    archiveReason:reason||"user-initiated",
+    archiveVersion:1,
+    restoreHistory:[],
+    _archiveComplete:false, // flipped to true after all subcollection writes
+  };
+  // Strip fields that don't belong in the archive
+  delete archiveDoc.dataUrl; // 1MB limit — never persist dataUrl
+
+  // 4. Write parent archive document with _archiveComplete: false
+  const archiveRef=await fbDb.collection(archivePath).add(archiveDoc);
+  const archiveId=archiveRef.id;
+  console.log(`[ARCHIVE] parent doc written: ${archiveId} for project ${projectId} (_archiveComplete: false)`);
+
+  // 5. Write ECO subcollection — preserve original doc IDs
+  for(const eco of ecoDocs){
+    const ecoId=eco.id;
+    const ecoData={...eco};
+    delete ecoData.id; // Firestore doc ID is the key, not a field
+    await fbDb.doc(`${archivePath}/${archiveId}/_ecos/${ecoId}`).set(ecoData);
+  }
+  if(ecoDocs.length)console.log(`[ARCHIVE] wrote ${ecoDocs.length} ECO doc(s) to _ecos subcollection`);
+
+  // 6. Write snapshot subcollection
+  for(const snap of snapshotDocs){
+    const snapData={...snap};
+    delete snapData.id;
+    await fbDb.collection(`${archivePath}/${archiveId}/_snapshots`).add(snapData);
+  }
+  if(snapshotDocs.length)console.log(`[ARCHIVE] wrote ${snapshotDocs.length} snapshot doc(s) to _snapshots subcollection`);
+
+  // 7. Flip _archiveComplete to true — archive is now visible
+  await archiveRef.update({_archiveComplete:true});
+  console.log(`[ARCHIVE] complete: ${archiveId} for ${project.bcProjectNumber||project.name||projectId}`);
+  return{archiveId,archivedAt:now};
+}
+
+async function bulkArchiveProjects(uid,onProgress){
+  if(!_appCtx.companyId)throw new Error("Bulk archive requires a company workspace");
+  const pp=onProgress||(()=>{});
+  const archivePath=`companies/${_appCtx.companyId}/projects_archive`;
+
+  // 1. Load all project IDs
+  const projectsBase=_appCtx.projectsPath||`users/${uid}/projects`;
+  const projSnap=await fbDb.collection(projectsBase).get();
+  const allProjects=projSnap.docs.map(d=>({id:d.id,...d.data()}));
+  const total=allProjects.length;
+
+  // 2. Query existing complete archives for skip logic
+  const existingSnap=await fbDb.collection(archivePath).where("_archiveComplete","==",true).get();
+  const archivedSet=new Set(existingSnap.docs.map(d=>d.data().originalProjectId));
+
+  let done=0,skipped=0,failed=0;
+  const failedNames=[];
+  pp({total,done,skipped,failed,failedNames,msg:"Starting bulk archive…"});
+
+  // 3. Archive each project sequentially
+  for(const proj of allProjects){
+    if(archivedSet.has(proj.id)){
+      skipped++;
+      done++;
+      pp({total,done,skipped,failed,failedNames,msg:`Skipped ${proj.name||proj.id} (already archived)`});
+      continue;
+    }
+    try{
+      await archiveProject(uid,proj,"pre-reset");
+      done++;
+      pp({total,done,skipped,failed,failedNames,msg:`Archived ${proj.name||proj.id}`});
+    }catch(e){
+      console.warn(`[BULK ARCHIVE] failed for ${proj.name||proj.id}:`,e.message);
+      failed++;
+      done++;
+      failedNames.push(proj.name||proj.id);
+      pp({total,done,skipped,failed,failedNames,msg:`Failed: ${proj.name||proj.id} — ${e.message}`});
+    }
+  }
+  console.log(`[BULK ARCHIVE] complete: ${done-skipped-failed} archived, ${skipped} skipped, ${failed} failed out of ${total}`);
+  return{total,archived:done-skipped-failed,skipped,failed,failedNames};
+}
+
+async function loadArchives(){
+  if(!_appCtx.companyId)return[];
+  const archivePath=`companies/${_appCtx.companyId}/projects_archive`;
+  try{
+    const snap=await fbDb.collection(archivePath)
+      .where("_archiveComplete","==",true)
+      .orderBy("archivedAt","desc")
+      .get();
+    return snap.docs.map(d=>({archiveId:d.id,...d.data()}));
+  }catch(e){
+    console.warn("[ARCHIVE] loadArchives failed:",e.message);
+    return[];
+  }
+}
+
 // ── COPY PROJECT ──
 async function copyProject(uid,sourceProject,onProgress){
   const pp=onProgress||(()=>{});
@@ -31346,6 +31475,9 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
               {!readOnly&&onCopy&&(
                 <button onClick={onCopy} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⧉ Copy</button>
               )}
+              {!readOnly&&onArchive&&(
+                <button onClick={onArchive} style={btn("#0a1a14","#10b981",{border:"1px solid #10b98144",fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>📦 Archive</button>
+              )}
               {!readOnly&&onTransfer&&(
                 <button onClick={onTransfer} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⇄ Transfer</button>
               )}
@@ -32817,7 +32949,7 @@ function OwnerTakeoverModal({ownerName,onClose,onConfirm}){
 }
 
 // ── PROJECT VIEW ──
-function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,autoOpenPortal,onPortalOpened,autoOpenCustomerReview,onCustomerReviewOpened}){
+function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,onArchive,autoOpenPortal,onPortalOpened,autoOpenCustomerReview,onCustomerReviewOpened}){
   const [project,setProject]=useState(()=>migrateProject(init));
   const projectRef=useRef(migrateProject(init));
   // DECISION(v1.19.785): ECO scope tab + editor state. Phase 1 of the ECO plan
@@ -37796,7 +37928,7 @@ function AdminBudgetSection({uid}){
   );
 }
 
-function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs}){
+function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchive}){
   // v1.19.986 (audit Item E): saveErr surfaces API-key save failures inline.
   const [saveErr,setSaveErr]=useState(null);
   const [key,setKey]=useState("");
@@ -38045,6 +38177,15 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs}){
             <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:6,display:"flex",alignItems:"center",gap:8}}>🪲 Debug Logs <span style={{fontSize:10,fontWeight:600,color:"#a78bfa",background:"#1a1033",borderRadius:10,padding:"1px 8px"}}>ADMIN</span></div>
             <div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginBottom:10}}>View captured errors and user-submitted issue reports from all team members.</div>
             <button onClick={()=>{onShowDebugLogs();onClose();}} style={btn(C.accent,"#fff",{fontSize:13,padding:"7px 18px"})}>Open Debug Logs</button>
+          </div>
+        )}
+
+        {/* Admin: Archive Tools — DECISION(v1.20.23) */}
+        {isAdmin()&&onShowBulkArchive&&(
+          <div style={{marginTop:20,padding:"14px 16px",background:"#0a1a14",border:`1px solid #10b98133`,borderRadius:10}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:6,display:"flex",alignItems:"center",gap:8}}>📦 Project Archives <span style={{fontSize:10,fontWeight:600,color:"#10b981",background:"#052e16",borderRadius:10,padding:"1px 8px"}}>ADMIN</span></div>
+            <div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginBottom:10}}>Archive all projects before a BC Database reset. Creates read-only snapshots that can be restored into the new BC environment.</div>
+            <button onClick={()=>{onShowBulkArchive();onClose();}} style={btn("#10b981","#fff",{fontSize:13,padding:"7px 18px"})}>Archive All Projects</button>
           </div>
         )}
 
@@ -39734,6 +39875,110 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
   );
 }
 
+// ── BULK ARCHIVE MODAL (Milestone A) ──
+// DECISION(v1.20.23): Admin-only modal for archiving all projects before a BC Database reset.
+// Placed in Settings admin area. Shows progress, handles partial failures, supports retry.
+function BulkArchiveModal({uid,onClose}){
+  const [phase,setPhase]=useState("confirm"); // confirm | running | done
+  const [progress,setProgress]=useState({total:0,done:0,skipped:0,failed:0,failedNames:[],msg:""});
+  const [result,setResult]=useState(null);
+  const closeGuard=useRef(false);
+
+  async function handleStart(){
+    setPhase("running");
+    closeGuard.current=true;
+    try{
+      const r=await bulkArchiveProjects(uid,p=>setProgress({...p}));
+      setResult(r);
+      setPhase("done");
+    }catch(e){
+      setResult({error:e.message});
+      setPhase("done");
+    }
+    closeGuard.current=false;
+  }
+
+  async function handleRetry(){
+    setPhase("running");
+    closeGuard.current=true;
+    try{
+      const r=await bulkArchiveProjects(uid,p=>setProgress({...p}));
+      setResult(r);
+      setPhase("done");
+    }catch(e){
+      setResult({error:e.message});
+      setPhase("done");
+    }
+    closeGuard.current=false;
+  }
+
+  // R1: beforeunload guard during bulk archive
+  useEffect(()=>{
+    function guard(e){if(closeGuard.current){e.preventDefault();e.returnValue="";}}
+    window.addEventListener("beforeunload",guard);
+    return()=>window.removeEventListener("beforeunload",guard);
+  },[]);
+
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onMouseDown={e=>{if(!closeGuard.current&&e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}66`,borderRadius:10,padding:"28px 32px",width:500,maxHeight:"80vh",overflow:"auto",boxShadow:"0 0 40px 10px rgba(56,189,248,0.5),0 8px 40px rgba(0,0,0,0.7)"}}>
+        <div style={{fontSize:16,fontWeight:800,color:C.accent,marginBottom:12}}>📦 Archive All Projects</div>
+
+        {phase==="confirm"&&(<>
+          <div style={{fontSize:13,color:C.sub,lineHeight:1.6,marginBottom:16}}>
+            This will create a read-only archive snapshot of every project in the company workspace.
+            Projects that have already been archived will be skipped. This operation may take several minutes
+            for large project counts.
+          </div>
+          <div style={{fontSize:12,color:C.yellow,background:"#3a2800",border:"1px solid #fde04744",borderRadius:8,padding:"10px 14px",marginBottom:16,lineHeight:1.5}}>
+            ⚠ This is typically done before a BC Database reset. Make sure all team members have saved their work.
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={onClose} style={btn(C.border,C.muted,{fontSize:13})}>Cancel</button>
+            <button onClick={handleStart} style={btn(C.accent,"#fff",{fontSize:13,fontWeight:700})}>Start Archive</button>
+          </div>
+        </>)}
+
+        {phase==="running"&&(<>
+          <div style={{fontSize:13,color:C.accent,marginBottom:8}}>{progress.msg||"Preparing…"}</div>
+          <div style={{width:"100%",height:8,background:C.border,borderRadius:4,overflow:"hidden",marginBottom:8}}>
+            <div style={{height:"100%",width:progress.total?(progress.done/progress.total*100)+"%":"0%",background:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.3s"}}/>
+          </div>
+          <div style={{fontSize:12,color:C.muted,display:"flex",gap:16,flexWrap:"wrap"}}>
+            <span>Progress: {progress.done}/{progress.total}</span>
+            {progress.skipped>0&&<span style={{color:C.sub}}>Skipped: {progress.skipped}</span>}
+            {progress.failed>0&&<span style={{color:C.red}}>Failed: {progress.failed}</span>}
+          </div>
+          <div style={{fontSize:11,color:C.yellow,marginTop:12}}>⚠ Do not close this window while archiving is in progress.</div>
+        </>)}
+
+        {phase==="done"&&(<>
+          {result?.error?(
+            <div style={{fontSize:13,color:C.red,marginBottom:12,lineHeight:1.5}}>❌ Bulk archive failed: {result.error}</div>
+          ):(
+            <div style={{fontSize:13,color:C.green,marginBottom:12,lineHeight:1.5}}>
+              ✓ Bulk archive complete — {result?.archived||0} archived, {result?.skipped||0} skipped{result?.failed>0?`, ${result.failed} failed`:""}.
+            </div>
+          )}
+          {result?.failed>0&&result?.failedNames?.length>0&&(
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:12,color:C.red,fontWeight:700,marginBottom:4}}>Failed projects:</div>
+              <div style={{fontSize:11,color:C.muted,lineHeight:1.6,maxHeight:120,overflow:"auto",background:"#1a0a0a",border:"1px solid #ef444433",borderRadius:6,padding:"6px 10px"}}>
+                {result.failedNames.map((n,i)=><div key={i}>• {n}</div>)}
+              </div>
+              <button onClick={handleRetry} style={btn(C.yellow,"#000",{fontSize:12,marginTop:8,fontWeight:700})}>Retry Failed</button>
+            </div>
+          )}
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={onClose} style={btn(C.accent,"#fff",{fontSize:13,fontWeight:700})}>Done</button>
+          </div>
+        </>)}
+      </div>
+    </div>,document.body
+  );
+}
+
 // ── TRANSFER PROJECT MODAL ──
 function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onClose}){
   const [members,setMembers]=useState([]);
@@ -39825,15 +40070,17 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const _activeEcoTile=computeActiveEco(p);
   const _hasActiveEcoTile=!!_activeEcoTile;
   const _ecoLabelInline=_activeEcoTile?` · ECO ${String(_activeEcoTile.number||0).padStart(2,"0")}`:"";
-  const _idleBorderColor=_hasActiveEcoTile?"#ef4444":"#4a5080";
-  const _idleHoverColor=_hasActiveEcoTile?"#fca5a5":(C.accent+"99");
-  const _tileBg=_hasActiveEcoTile?"#1f0a0a":undefined;
+  // DECISION(v1.20.23): When BC env mismatches, muted border wins over ECO red — the ECO
+  // state is stale too (it was for the old BC project). Muted gray correctly signals staleness.
+  const _idleBorderColor=bcDisconnected?"#64748b55":_hasActiveEcoTile?"#ef4444":"#4a5080";
+  const _idleHoverColor=bcDisconnected?"#64748b88":_hasActiveEcoTile?"#fca5a5":(C.accent+"99");
+  const _tileBg=bcDisconnected?undefined:_hasActiveEcoTile?"#1f0a0a":undefined;
   return(
   <div className="fade-in" onClick={()=>onOpen(p)}
     draggable={isDraggable||false}
     onDragStart={onDragStart}
     onDragEnd={onDragEnd}
-    style={{...card({padding:"4px 10px"}),...(_tileBg?{background:_tileBg}:{}),border:`1px solid ${_idleBorderColor}`,cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column",gap:1}}
+    style={{...card({padding:"4px 10px"}),...(_tileBg?{background:_tileBg}:{}),border:`1px solid ${_idleBorderColor}`,opacity:bcDisconnected?0.5:1,cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column",gap:1}}
     onMouseEnter={e=>{e.currentTarget.style.borderColor=_idleHoverColor;e.currentTarget.style.transform="translateY(-2px)";}}
     onMouseLeave={e=>{e.currentTarget.style.borderColor=_idleBorderColor;e.currentTarget.style.transform="none";}}>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
@@ -39841,7 +40088,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>
         {p.bcProjectNumber||"–"}
         {_hasActiveEcoTile&&<span style={{color:"#fca5a5",fontWeight:800,letterSpacing:0.3}}>{_ecoLabelInline}</span>}
-        {bcDisconnected&&<span style={{fontSize:9,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={"Linked to "+p.bcEnv}>⚠</span>}
+        {bcDisconnected&&<span style={{fontSize:9,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={`BC Disconnected — this project was linked to ${p.bcEnv}, which doesn't match your current BC environment (${_bcConfig.env||"none"}). Column placement may be stale. Restore from archive or re-link to update.`}>⚠</span>}
       </div>
       <div style={{fontSize:14,color:C.text,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,visibility:p.bcCustomerName?"visible":"hidden"}}>{p.bcCustomerName||"–"}</div>
       {(()=>{
@@ -41436,6 +41683,8 @@ function App({user}){
   const [deleteConfirm,setDeleteConfirm]=useState(null); // {id, name}
   const [transferProject,setTransferProject]=useState(null); // project object
   const [copyProject_,setCopyProject]=useState(null); // project object for copy modal
+  const [showBulkArchive,setShowBulkArchive]=useState(false); // BulkArchiveModal
+  const [archivingProject,setArchivingProject]=useState(null); // single-project archive in progress
   const [userFirstName,setUserFirstName]=useState("");
   const [memberMap,setMemberMap]=useState({}); // uid → {email, firstName}
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
@@ -42668,7 +42917,8 @@ INSTRUCTIONS:
       {deleteConfirm&&<DeleteConfirmModal projectName={deleteConfirm.name} bcProjectNumber={deleteConfirm.bcProjectNumber} isAdmin={userRole==="admin"} project={deleteConfirm.project} onConfirm={confirmDelete} onCancel={()=>setDeleteConfirm(null)}/>}
       {transferProject&&<TransferProjectModal project={transferProject} companyId={companyId} uid={user.uid} userEmail={user.email} onTransferred={handleTransferDone} onClose={()=>setTransferProject(null)}/>}
       {copyProject_&&<CopyProjectModal project={copyProject_} uid={user.uid} onCopied={p=>{setCopyProject(null);setProjects(ps=>[p,...ps]);handleOpen(p);}} onClose={()=>setCopyProject(null)}/>}
-      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)} onShowDebugLogs={()=>setShowDebugLogs(true)}/>}
+      {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)} onShowDebugLogs={()=>setShowDebugLogs(true)} onShowBulkArchive={companyId?()=>setShowBulkArchive(true):undefined}/>}
+      {showBulkArchive&&<BulkArchiveModal uid={user.uid} onClose={()=>setShowBulkArchive(false)}/>}
       {showApiSetup&&<APISetupModal uid={user.uid} onClose={()=>setShowApiSetup(false)}/>}
       {showCostAnalysis&&<CostAnalysisModal uid={user.uid} companyId={companyId} onClose={()=>setShowCostAnalysis(false)}/>}
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
@@ -42697,7 +42947,7 @@ INSTRUCTIONS:
           projects, engineering, purchasing, production. */}
       {view==="project"&&openProject&&navTab===(projectOriginTab||"projects")&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
+          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} onArchive={companyId?async()=>{if(!await arcConfirm(`Archive "${openProject.name||openProject.bcProjectNumber}"? This creates a read-only snapshot. The original project is not affected.`,{okLabel:"Archive"}))return;setArchivingProject(openProject.id);try{await archiveProject(user.uid,openProject,"user-initiated");await arcAlert(`✓ Archived "${openProject.name||openProject.bcProjectNumber}" successfully.`);}catch(e){await arcAlert("Archive failed: "+e.message,{kind:"error"});}finally{setArchivingProject(null);}}:undefined} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
         </ErrorBoundary>
       )}
       </div>{/* end main content column */}
