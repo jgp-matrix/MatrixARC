@@ -9146,12 +9146,16 @@ async function buildRestorePreview(archive,opts){
     }
     if(oldestKey)_restorePreviewCache.delete(oldestKey);
   }
+  // Preserve original fetchedAt for sections served from cache (not re-fetched)
   const now=Date.now();
+  const prevItems=cachedSections&&!needsFetch.has("items")?cachedSections.items:null;
+  const prevCustomer=cachedSections&&!needsFetch.has("customer")?cachedSections.customer:null;
+  const prevVendors=cachedSections&&!needsFetch.has("vendors")?cachedSections.vendors:null;
   _restorePreviewCache.set(archiveId,{
     sections:{
-      items:{result:itemResults,fetchedAt:now},
-      customer:{result:customerResult,fetchedAt:now},
-      vendors:{result:vendorResults,fetchedAt:now}
+      items:prevItems||{result:itemResults,fetchedAt:now},
+      customer:prevCustomer||{result:customerResult,fetchedAt:now},
+      vendors:prevVendors||{result:vendorResults,fetchedAt:now}
     },
     labor:laborResult,
     bcTokenFingerprint:currentFp
