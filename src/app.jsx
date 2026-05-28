@@ -375,6 +375,7 @@ async function saveBcConfig(companyId,config){
   await fbDb.doc(`companies/${companyId}/config/bcEnvironment`).set(_bcConfig);
   // Reset BC connection state when env changes
   _bcToken=null;_bcCompanyId=null;_msalInstance=null;_odataPageCache=null;
+  if(typeof _restorePreviewCache!=="undefined"&&_restorePreviewCache&&_restorePreviewCache.clear)_restorePreviewCache.clear();
   console.log("BC CONFIG saved:",_bcConfig.env,_bcConfig.companyName);
 }
 let _bcToken=null;
@@ -1482,6 +1483,9 @@ function _invalidateUserScopedCaches(reason){
     _altCache=null;
     _correctionsCache=null;
     _descCrossCache=null;
+    // DECISION(v1.20.36, Milestone C Phase 6b): Clear restore preview cache on BC token/account change.
+    // bcTokenFingerprint comparison already handles this per-entry, but clearing is cheap insurance.
+    if(typeof _restorePreviewCache!=="undefined"&&_restorePreviewCache.clear)_restorePreviewCache.clear();
     console.log(`[cache-invalidate] cleared user-scoped caches (reason: ${reason||"unspecified"})`);
   }catch(e){console.warn("_invalidateUserScopedCaches failed:",e?.message);}
 }
