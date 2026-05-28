@@ -8708,7 +8708,7 @@ async function deleteProjectStorageBlobs(currentUid,projectId,project){
   // skip deletion (safer to leak storage than orphan archive references).
   if(_appCtx.companyId){
     try{
-      const archiveSnap=await db.collection(`companies/${_appCtx.companyId}/projects_archive`)
+      const archiveSnap=await fbDb.collection(`companies/${_appCtx.companyId}/projects_archive`)
         .where("originalProjectId","==",projectId)
         .where("_archiveComplete","==",true)
         .limit(1).get();
