@@ -40264,6 +40264,230 @@ function ArchiveBrowserModal({uid,onClose,onPreviewOpen}){
   );
 }
 
+// ── RESTORE PREVIEW MODAL (Milestone C Phase 5) ──
+// Progressive drift visualization: Customer → Vendors → Items, with labor rate review.
+// Restore/Copy buttons disabled in Milestone C ("Coming in next update").
+function RestorePreviewModal({archive,mode,uid,onClose}){
+  const abortRef=useRef(null);
+  const [sectionResults,setSectionResults]=useState({}); // {labor, customer, vendors, items}
+  const [previewDone,setPreviewDone]=useState(false);
+  const [previewErrors,setPreviewErrors]=useState([]);
+  const [laborOverrides,setLaborOverrides]=useState({}); // {panelId: newRate}
+  const [ecoMode,setEcoMode]=useState("keep_separate"); // combine | keep_separate
+  const [remaps,setRemaps]=useState({items:{},customer:{},vendors:{}}); // Milestone D state placeholder
+  const [noBc,setNoBc]=useState(!_bcToken);
+
+  // Start progressive load on mount (§6.5 abort pattern)
+  useEffect(()=>{
+    if(!_bcToken){setNoBc(true);return;}
+    setNoBc(false);
+    const controller=new AbortController();
+    abortRef.current=controller;
+    buildRestorePreview(archive,{
+      signal:controller.signal,
+      onSectionDone:(section,result)=>{
+        setSectionResults(prev=>({...prev,[section]:result}));
+      }
+    }).then(r=>{
+      setPreviewDone(true);
+      if(r.errors&&r.errors.length)setPreviewErrors(r.errors);
+    }).catch(e=>{
+      if(e.name!=="AbortError")console.warn("[RESTORE PREVIEW] unexpected error:",e);
+    });
+    return()=>{if(abortRef.current)abortRef.current.abort();};
+  },[archive.archiveId||archive.id]);
+
+  const archiveId=archive.archiveId||archive.id;
+  const title=mode==="restore"?"🔄 Restore":"📋 Copy to New Quote";
+  const projLabel=`${archive.originalBcProjectNumber||"—"} — ${archive.name||"Untitled"}`;
+
+  // Section renderers
+  const renderCustomer=()=>{
+    const c=sectionResults.customer;
+    if(!c)return<div style={{color:C.muted,fontSize:12}}>⏳ Checking customer...</div>;
+    if(c.status==="error")return<div style={{color:C.red,fontSize:12}}>🔴 Error checking customer — {c.message} <button onClick={()=>handleRetrySection("customer")} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:12,textDecoration:"underline"}}>Retry</button></div>;
+    if(c.status==="ok")return<div style={{color:C.green,fontSize:12}}>✅ {c.archivedName} (#{archive.bcCustomerNumber}) — found in BC</div>;
+    if(c.status==="missing")return(<div><div style={{color:C.red,fontSize:12}}>🔴 {c.archivedName||"Unknown"} (#{archive.bcCustomerNumber}) — missing from BC</div><div style={{fontSize:11,color:C.yellow,marginTop:4}}>⚠ Customer must be mapped before restore can proceed (Milestone D)</div></div>);
+    if(c.status==="name_changed")return<div style={{color:C.yellow,fontSize:12}}>🟡 #{archive.bcCustomerNumber} — name changed: "{c.archivedName}" → "{c.liveName}"</div>;
+    if(c.status==="no_customer")return<div style={{color:C.muted,fontSize:12}}>ℹ No customer linked to this archive</div>;
+    return<div style={{color:C.muted,fontSize:12}}>⏳ Checking customer...</div>;
+  };
+
+  const renderVendors=()=>{
+    const v=sectionResults.vendors;
+    if(!v)return<div style={{color:C.muted,fontSize:12}}>⏳ Checking vendors...</div>;
+    if(!Array.isArray(v))return<div style={{color:C.red,fontSize:12}}>🔴 Error checking vendors</div>;
+    const ok=v.filter(x=>x.status==="ok");
+    const missing=v.filter(x=>x.status==="missing");
+    const changed=v.filter(x=>x.status==="name_changed");
+    const errors=v.filter(x=>x.status==="error");
+    return(<div>
+      {ok.length>0&&<div style={{color:C.green,fontSize:12,marginBottom:4}}>✅ {ok.length} matched</div>}
+      {missing.map((m,i)=><div key={i} style={{color:C.red,fontSize:12,marginBottom:2}}>🔴 {m.archivedName||m.vendorNo} (#{m.vendorNo}) — missing from BC</div>)}
+      {changed.map((m,i)=><div key={i} style={{color:C.yellow,fontSize:12,marginBottom:2}}>🟡 #{m.vendorNo} — renamed: "{m.archivedName}" → "{m.liveName}"</div>)}
+      {errors.map((m,i)=><div key={i} style={{color:C.red,fontSize:12,marginBottom:2}}>🔴 Error: {m.message}</div>)}
+    </div>);
+  };
+
+  const renderItems=()=>{
+    const it=sectionResults.items;
+    if(!it)return<div style={{color:C.muted,fontSize:12}}>⏳ Checking items...</div>;
+    const items=Array.isArray(it)?it:(it.results||[]);
+    const ok=items.filter(x=>x.costStatus==="ok"&&x.descStatus==="ok");
+    const missing=items.filter(x=>x.costStatus==="missing");
+    const drifted=items.filter(x=>x.costStatus==="cost_drift");
+    const zeroCost=items.filter(x=>x.costStatus==="zero_cost");
+    const descChanged=items.filter(x=>x.descStatus==="description_changed"&&x.costStatus!=="missing"&&x.costStatus!=="cost_drift");
+    return(<div>
+      {ok.length>0&&<div style={{color:C.green,fontSize:12,marginBottom:6}}>✅ {ok.length} matched (cost within {(COST_DRIFT_THRESHOLD*100).toFixed(0)}% threshold)</div>}
+      {missing.length>0&&(<div style={{marginBottom:6}}>
+        <div style={{color:C.red,fontSize:12,fontWeight:600,marginBottom:3}}>🔴 {missing.length} missing from BC</div>
+        {missing.slice(0,10).map((m,i)=><div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber} "{m.archivedDescription||"—"}"</div>)}
+        {missing.length>10&&<div style={{fontSize:11,color:C.muted,paddingLeft:16}}>…and {missing.length-10} more</div>}
+      </div>)}
+      {drifted.length>0&&(<div style={{marginBottom:6}}>
+        <div style={{color:C.yellow,fontSize:12,fontWeight:600,marginBottom:3}}>🟡 {drifted.length} with cost drift &gt; {(COST_DRIFT_THRESHOLD*100).toFixed(0)}%</div>
+        {drifted.slice(0,10).map((m,i)=>{
+          const pct=m.delta!=null?(m.delta*100).toFixed(1):"?";
+          const sign=m.delta>0?"+":"";
+          return<div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber}  ${m.archivedCost!=null?m.archivedCost.toFixed(2):"?"} → ${m.liveCost!=null?m.liveCost.toFixed(2):"?"} ({sign}{pct}%)</div>;
+        })}
+        {drifted.length>10&&<div style={{fontSize:11,color:C.muted,paddingLeft:16}}>…and {drifted.length-10} more</div>}
+      </div>)}
+      {zeroCost.length>0&&(<div style={{marginBottom:6}}>
+        <div style={{color:C.muted,fontSize:12,marginBottom:3}}>⚪ {zeroCost.length} with no cost in BC</div>
+        {zeroCost.slice(0,5).map((m,i)=><div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber} (item exists, Unit_Cost = 0)</div>)}
+        {zeroCost.length>5&&<div style={{fontSize:11,color:C.muted,paddingLeft:16}}>…and {zeroCost.length-5} more</div>}
+      </div>)}
+      {descChanged.length>0&&(<div style={{marginBottom:6}}>
+        <div style={{color:C.yellow,fontSize:12,marginBottom:3}}>📝 {descChanged.length} with description changes</div>
+        {descChanged.slice(0,5).map((m,i)=><div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber}: "{(m.archivedDescription||"").substring(0,40)}" → "{(m.liveDescription||"").substring(0,40)}"</div>)}
+        {descChanged.length>5&&<div style={{fontSize:11,color:C.muted,paddingLeft:16}}>…and {descChanged.length-5} more</div>}
+      </div>)}
+    </div>);
+  };
+
+  const renderLabor=()=>{
+    const labor=sectionResults.labor;
+    if(!labor||!labor.length)return<div style={{color:C.muted,fontSize:12}}>No panel labor rates in archive.</div>;
+    return(<div>
+      {labor.map((p,i)=>{
+        const override=laborOverrides[p.panelId];
+        const val=override!=null?override:p.archivedRate;
+        return<div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <span style={{fontSize:12,color:C.sub,minWidth:200}}>{p.panelName}</span>
+          <span style={{fontSize:12,color:C.muted}}>$</span>
+          <input type="number" value={val} onChange={e=>setLaborOverrides(prev=>({...prev,[p.panelId]:parseFloat(e.target.value)||0}))}
+            style={{width:70,padding:"4px 8px",background:"#111",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,textAlign:"right"}}/>
+          <span style={{fontSize:12,color:C.muted}}>/hr</span>
+          {override!=null&&override!==p.archivedRate&&<span style={{fontSize:10,color:C.yellow}}>modified</span>}
+        </div>;
+      })}
+      <div style={{fontSize:11,color:C.muted,marginTop:4}}>Adjust rates before confirming. These override the archived values on restore.</div>
+    </div>);
+  };
+
+  function handleRetrySection(sectionName){
+    // Clear cache for this archive and re-run preview
+    _restorePreviewCache.delete(archiveId);
+    setSectionResults(prev=>{const n={...prev};delete n[sectionName];return n;});
+    const controller=new AbortController();
+    abortRef.current=controller;
+    buildRestorePreview(archive,{
+      signal:controller.signal,
+      onSectionDone:(section,result)=>{
+        setSectionResults(prev=>({...prev,[section]:result}));
+      }
+    }).then(r=>{
+      setPreviewDone(true);
+      if(r.errors&&r.errors.length)setPreviewErrors(r.errors);
+    }).catch(e=>{
+      if(e.name!=="AbortError")console.warn("[RESTORE PREVIEW] retry error:",e);
+    });
+  }
+
+  const sectionHeader=(label,count)=>(
+    <div style={{fontSize:13,fontWeight:700,color:C.text,borderBottom:`1px solid ${C.border}`,paddingBottom:6,marginBottom:8,marginTop:16}}>
+      {label}{count!=null&&<span style={{color:C.muted,fontWeight:400}}> ({count})</span>}
+    </div>
+  );
+
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+      onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}66`,borderRadius:10,padding:"28px 32px",width:720,maxHeight:"90vh",overflow:"auto",boxShadow:"0 0 40px 10px rgba(56,189,248,0.5),0 8px 40px rgba(0,0,0,0.7)"}}>
+        {/* Header */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:800,color:C.accent}}>{title}</div>
+            <div style={{fontSize:13,color:C.sub,marginTop:2}}>{projLabel}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,fontWeight:700}}>✕</button>
+        </div>
+
+        {/* BC disconnected warning */}
+        {noBc&&(
+          <div style={{background:"#1e3a5f33",border:"1px solid #38bdf844",borderRadius:8,padding:"12px 16px",marginBottom:16}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.yellow}}>⚠ BC Connection Required</div>
+            <div style={{fontSize:12,color:C.muted,marginTop:4}}>Connect to Business Central to preview cost and reference drift. Labor rates are available without BC.</div>
+          </div>
+        )}
+
+        {/* Customer section */}
+        {sectionHeader("Customer")}
+        {noBc?<div style={{color:C.muted,fontSize:12}}>Waiting for BC connection...</div>:renderCustomer()}
+
+        {/* Vendors section */}
+        {sectionHeader("Vendors",sectionResults.vendors?Array.isArray(sectionResults.vendors)?sectionResults.vendors.length:0:null)}
+        {noBc?<div style={{color:C.muted,fontSize:12}}>Waiting for BC connection...</div>:renderVendors()}
+
+        {/* Items section */}
+        {sectionHeader("Items",sectionResults.items?Array.isArray(sectionResults.items)?sectionResults.items.length:0:null)}
+        {noBc?<div style={{color:C.muted,fontSize:12}}>Waiting for BC connection...</div>:renderItems()}
+
+        {/* Labor rates section */}
+        {sectionHeader("Labor Rates (per panel)")}
+        {renderLabor()}
+
+        {/* ECO handling — copy mode only */}
+        {mode==="copy"&&(archive.ecoCounter||0)>0&&(<>
+          {sectionHeader("ECO Handling")}
+          <div style={{fontSize:12,color:C.sub}}>
+            <label style={{display:"block",marginBottom:6,cursor:"pointer"}}>
+              <input type="radio" name="ecoMode" value="combine" checked={ecoMode==="combine"} onChange={()=>setEcoMode("combine")} style={{marginRight:6}}/>
+              Combine ECOs into base BOM
+            </label>
+            <label style={{display:"block",cursor:"pointer"}}>
+              <input type="radio" name="ecoMode" value="keep_separate" checked={ecoMode==="keep_separate"} onChange={()=>setEcoMode("keep_separate")} style={{marginRight:6}}/>
+              Keep ECOs separate
+            </label>
+          </div>
+        </>)}
+
+        {/* Action buttons — disabled in Milestone C */}
+        <div style={{marginTop:24,display:"flex",justifyContent:"flex-end",gap:8,alignItems:"center"}}>
+          <button onClick={onClose} style={btn(C.border,C.muted,{fontSize:13})}>Cancel</button>
+          <button disabled title="Restore will be available in the next update"
+            style={{...btn(C.accent,"#fff",{fontSize:13,fontWeight:700}),opacity:0.4,cursor:"not-allowed"}}>
+            {mode==="restore"?"Restore ▸":"Copy to New Quote ▸"}
+          </button>
+        </div>
+        <div style={{textAlign:"center",marginTop:12,fontSize:11,color:C.yellow,background:"#3a280033",border:"1px solid #fde04722",borderRadius:8,padding:"8px 12px"}}>
+          ⚠ {mode==="restore"?"Restore":"Copy"} will be enabled in the next update. This preview lets you review drift before proceeding.
+        </div>
+
+        {/* Preview errors */}
+        {previewErrors.length>0&&(
+          <div style={{marginTop:12,fontSize:11,color:C.red}}>
+            {previewErrors.map((e,i)=><div key={i}>⚠ {e.section}: {e.message}</div>)}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ── COPY PROJECT MODAL ──
 function CopyProjectModal({project,uid,onCopied,onClose}){
   const [name,setName]=useState((project.name||"")+" (Copy)");
@@ -43367,6 +43591,7 @@ INSTRUCTIONS:
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)} onShowDebugLogs={()=>setShowDebugLogs(true)} onShowBulkArchive={companyId?()=>setShowBulkArchive(true):undefined} onShowArchiveBrowser={companyId?()=>setShowArchiveBrowser(true):undefined}/>}
       {showBulkArchive&&<BulkArchiveModal uid={user.uid} onClose={()=>setShowBulkArchive(false)}/>}
       {showArchiveBrowser&&<ArchiveBrowserModal uid={user.uid} onClose={()=>setShowArchiveBrowser(false)} onPreviewOpen={(archive,mode)=>{setArchivePreviewTarget({archive,mode});}}/>}
+      {archivePreviewTarget&&<RestorePreviewModal archive={archivePreviewTarget.archive} mode={archivePreviewTarget.mode} uid={user.uid} onClose={()=>setArchivePreviewTarget(null)}/>}
       {showApiSetup&&<APISetupModal uid={user.uid} onClose={()=>setShowApiSetup(false)}/>}
       {showCostAnalysis&&<CostAnalysisModal uid={user.uid} companyId={companyId} onClose={()=>setShowCostAnalysis(false)}/>}
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
