@@ -3808,6 +3808,36 @@ async function bcLoadAllCustomers(){
   }catch(e){console.warn("bcLoadAllCustomers error:",e);return[];}
 }
 
+// DECISION(v1.20.29, Milestone C Phase 2): Direct BC customer lookup by number.
+// Uses $filter instead of $top=500 list — avoids false-missing for companies with >500 customers.
+// buildRestorePreview uses this to check if the archived customer still exists in BC.
+// 429 retry with exponential backoff (R8): 1s, 2s, 4s — matches bcSyncPanelPlanningLines pattern.
+async function bcLookupCustomer(customerNumber,opts){
+  if(!_bcToken||!customerNumber)return null;
+  const compId=await bcGetCompanyId();
+  if(!compId)return null;
+  const url=`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${customerNumber}'&$top=1&$select=number,displayName`;
+  const MAX_RETRIES=3;
+  for(let attempt=0;attempt<=MAX_RETRIES;attempt++){
+    try{
+      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
+      if(r.status===429&&attempt<MAX_RETRIES){
+        const delay=1000*Math.pow(2,attempt);
+        console.warn(`bcLookupCustomer: 429 rate limit, retry ${attempt+1}/${MAX_RETRIES} in ${delay}ms`);
+        await new Promise(res=>setTimeout(res,delay));
+        continue;
+      }
+      if(r.status===401){_bcToken=null;return null;}
+      if(!r.ok){console.warn("bcLookupCustomer failed:",r.status);return null;}
+      const d=await r.json();
+      const v=d.value;
+      if(!v||!v.length)return null;
+      return{number:v[0].number||"",displayName:v[0].displayName||""};
+    }catch(e){if(e.name==="AbortError")throw e;console.warn("bcLookupCustomer error:",e);return null;}
+  }
+  return null;
+}
+
 async function bcLoadAllProjects(){
   if(!_bcToken)return[];
   const compId=await bcGetCompanyId();
@@ -5268,6 +5298,36 @@ async function bcListVendors(){
     const d=await r.json();
     return(d.value||[]).map(v=>({number:v.number||"",displayName:v.displayName||""}));
   }catch(e){console.warn("bcListVendors error:",e);return[];}
+}
+
+// DECISION(v1.20.29, Milestone C Phase 2): Direct BC vendor lookup by number.
+// Uses $filter instead of $top=500 list — avoids false-missing for companies with >500 vendors.
+// buildRestorePreview uses this to check if archived vendors still exist in BC.
+// 429 retry with exponential backoff (R8): 1s, 2s, 4s — matches bcSyncPanelPlanningLines pattern.
+async function bcLookupVendor(vendorNo,opts){
+  if(!_bcToken||!vendorNo)return null;
+  const compId=await bcGetCompanyId();
+  if(!compId)return null;
+  const url=`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${vendorNo}'&$top=1&$select=number,displayName`;
+  const MAX_RETRIES=3;
+  for(let attempt=0;attempt<=MAX_RETRIES;attempt++){
+    try{
+      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
+      if(r.status===429&&attempt<MAX_RETRIES){
+        const delay=1000*Math.pow(2,attempt);
+        console.warn(`bcLookupVendor: 429 rate limit, retry ${attempt+1}/${MAX_RETRIES} in ${delay}ms`);
+        await new Promise(res=>setTimeout(res,delay));
+        continue;
+      }
+      if(r.status===401){_bcToken=null;return null;}
+      if(!r.ok){console.warn("bcLookupVendor failed:",r.status);return null;}
+      const d=await r.json();
+      const v=d.value;
+      if(!v||!v.length)return null;
+      return{number:v[0].number||"",displayName:v[0].displayName||""};
+    }catch(e){if(e.name==="AbortError")throw e;console.warn("bcLookupVendor error:",e);return null;}
+  }
+  return null;
 }
 
 async function bcListGenProdPostingGroups(){
