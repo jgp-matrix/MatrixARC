@@ -55,16 +55,32 @@ fi
 # Write version.json so the app can detect stale cached HTML on load
 echo "{\"version\":\"$NEW_VERSION\"}" > "$REPO/public/version.json"
 
+# DECISION(v1.20.27): Scope checker gate — catches undefined-reference bugs that
+# compile fine but crash at runtime (the class of bugs from v1.20.23 onArchive and
+# v1.20.26 db→fbDb). Runs BEFORE the JSX build because there's no point compiling
+# or deploying if scope violations exist. Exit code 0 = pass (baseline violations
+# are warnings only; NEW violations fail). Use --strict to also fail on baseline.
+# The || block catches the non-zero exit before set -e aborts, giving a clear message.
+cd "$REPO"
+echo "Running scope checker…"
+if ! node tools/check-scope.js; then
+  echo ""
+  echo "ERROR: Scope checker found NEW undefined-reference violations."
+  echo "Fix the violations above before deploying."
+  exit 1
+fi
+
 # DECISION(v1.19.767): Build the JSX bundle (src/app.jsx → public/index.bundle.js)
 # BEFORE git commit and firebase deploy. validate_jsx.js validates syntax and writes
 # the compiled JS — replaces the in-browser babel-standalone transform that used to
 # happen on every page load.
-cd "$REPO"
 echo "Building JSX bundle…"
 node validate_jsx.js
 
 # Commit, tag, push (bundle is gitignored, regenerated each deploy)
+# Stage core files + deploy tooling if modified (deploy.sh, tools/)
 git add public/index.html public/version.json src/app.jsx 2>/dev/null || git add public/index.html public/version.json
+git add deploy.sh tools/check-scope.js 2>/dev/null || true
 git commit -m "Release $NEW_VERSION"
 git tag "$NEW_VERSION"
 git push origin master

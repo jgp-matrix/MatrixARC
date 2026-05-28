@@ -1872,6 +1872,9 @@ function setTooltipsEnabled(v){
 // rate cascades: panel.pricing.ecoLaborRate (per-panel override) → this
 // global config → ECO_LABOR_RATE_DEFAULT constant.
 let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65};
+// DECISION(v1.20.28, Milestone C): Cost drift threshold for restore preview.
+// buildRestorePreview flags items where |liveCost - archivedCost| / archivedCost > this value.
+const COST_DRIFT_THRESHOLD=0.05;
 async function loadPricingConfig(uid){
   try{
     const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
@@ -4896,7 +4899,10 @@ async function bcFetchPurchasePrices(partNumbers){
 // Used by runPricingAudit to compare ARC unitPrice against BC's authoritative
 // Item Card cost. Mirrors bcFetchPurchasePrices's batching pattern (30 items
 // per request, OR'd Item No filters).
-async function bcFetchItemCardCosts(partNumbers){
+// DECISION(v1.20.28, Milestone C Phase 1): Optional {signal} for AbortController support.
+// buildRestorePreview passes signal so closing the preview modal cancels in-flight BC calls.
+// Existing callers pass no second argument — zero breakage.
+async function bcFetchItemCardCosts(partNumbers,opts){
   if(!_bcToken||!partNumbers.length)return new Map();
   const allPages=await bcDiscoverODataPages();
   const itemPage=allPages.find(n=>/^itemcard$/i.test(n))||allPages.find(n=>/^items?$/i.test(n));
@@ -4909,13 +4915,13 @@ async function bcFetchItemCardCosts(partNumbers){
     const filterClauses=batch.map(pn=>`No eq '${pn.replace(/'/g,"''")}'`).join(' or ');
     const url=`${baseUrl}?$filter=${encodeURIComponent(filterClauses)}&$select=No,Unit_Cost,Description`;
     try{
-      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
       if(!r.ok)continue;
       const d=await r.json();
       for(const item of (d.value||[])){
         if(item.No)results.set(item.No,{unitCost:item.Unit_Cost??null,description:item.Description||""});
       }
-    }catch(e){console.warn("bcFetchItemCardCosts batch failed:",e.message);}
+    }catch(e){if(e.name==="AbortError")throw e;console.warn("bcFetchItemCardCosts batch failed:",e.message);}
   }
   return results;
 }
