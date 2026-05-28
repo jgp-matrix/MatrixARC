@@ -31150,7 +31150,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     {(project.bcProjectNumber||project.bcCustomerName)&&(
                       <div style={{display:"flex",alignItems:"baseline",gap:10}}>
                         {project.bcProjectNumber&&<span style={{fontSize:26,fontWeight:800,color:project.bcEnv&&project.bcEnv!==_bcConfig.env?"#64748b":C.accent,lineHeight:1}}>{project.bcProjectNumber}</span>}
-                        {isBcDisconnected&&<span style={{fontSize:11,fontWeight:700,color:C.yellow,background:"rgba(234,179,8,0.1)",border:"1px solid rgba(234,179,8,0.3)",borderRadius:12,padding:"2px 10px",whiteSpace:"nowrap"}} title={"Linked to "+project.bcEnv}>⚠ BC Disconnected</span>}
+                        {isBcDisconnected&&<span style={{fontSize:11,fontWeight:700,color:C.yellow,background:"rgba(234,179,8,0.1)",border:"1px solid rgba(234,179,8,0.3)",borderRadius:12,padding:"2px 10px",whiteSpace:"nowrap"}} title={"Linked to "+project.bcEnv}>⚠ Disconnected — Old BC Environment</span>}
                         {isBcDisconnected&&!readOnly&&onRelink&&<button onClick={e=>{e.stopPropagation();onRelink();}} disabled={relinking} style={{fontSize:11,fontWeight:700,color:"#38bdf8",background:"rgba(56,189,248,0.08)",border:"1px solid rgba(56,189,248,0.3)",borderRadius:12,padding:"2px 10px",cursor:relinking?"wait":"pointer",whiteSpace:"nowrap",opacity:relinking?0.6:1}}>{relinking?"Re-linking…":"🔗 Re-link to BC"}</button>}
                         {project.bcCustomerName&&!readOnly?(
                           <span style={{fontSize:18,fontWeight:700,color:C.text,cursor:"text",borderBottom:"1px dashed transparent"}}
@@ -40089,9 +40089,9 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>
         {p.bcProjectNumber||"–"}
         {_hasActiveEcoTile&&<span style={{color:"#fca5a5",fontWeight:800,letterSpacing:0.3}}>{_ecoLabelInline}</span>}
-        {bcDisconnected&&<span style={{fontSize:9,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={`BC Disconnected — this project was linked to ${p.bcEnv}, which doesn't match your current BC environment (${_bcConfig.env||"none"}). Column placement may be stale. Restore from archive or re-link to update.`}>⚠</span>}
+        {bcDisconnected&&<span style={{fontSize:9,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={`Disconnected — Old BC Environment. This project was linked to ${p.bcEnv}, current environment is ${_bcConfig.env||"none"}. Column placement may be stale. Restore or re-link to bring it current.`}>⚠</span>}
       </div>
-      <div style={{fontSize:14,color:C.text,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,visibility:p.bcCustomerName?"visible":"hidden"}}>{p.bcCustomerName||"–"}</div>
+      <div style={{fontSize:14,color:bcDisconnected?"#64748b":C.text,fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,visibility:p.bcCustomerName?"visible":"hidden"}}>{p.bcCustomerName||"–"}</div>
       {(()=>{
         // DECISION(v1.19.602): If a teammate is in this project right now, replace the
         // creator's name with "<Viewer> editing" (amber + pulsing) so it's clear at a glance.
@@ -40107,7 +40107,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
       })()}
     </div>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
-      <div style={{fontSize:17,fontWeight:700,color:C.green,lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{p.name}</div>
+      <div style={{fontSize:17,fontWeight:700,color:bcDisconnected?"#64748b":C.green,lineHeight:1.3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{p.name}</div>
       {rfqCount>0&&<span style={{background:C.redDim,color:C.red,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",flexShrink:0}}>{rfqCount} RFQ{rfqCount>1?"S":""}</span>}
       {/* DECISION(v1.19.753): When project.lostAt is set, replace the status badge with a
           dedicated red LOST pill so the tile reads at a glance in the Lost / All views. */}
