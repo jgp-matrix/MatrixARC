@@ -8983,24 +8983,27 @@ async function buildRestorePreview(archive,opts){
   // 0. Check cache — return fully fresh results immediately, re-fetch only stale sections
   const cached=_restorePreviewCache.get(archiveId);
   const currentFp=bcTokenFingerprint(_bcToken);
+  const needsFetch=new Set(["customer","vendors","items"]); // default: fetch all
+  let cachedSections=null;
   if(cached&&cached.bcTokenFingerprint===currentFp){
-    const freshSections={};
+    cachedSections=cached.sections;
     const staleSections=[];
     for(const sn of["items","customer","vendors"]){
-      const entry=cached.sections[sn];
+      const entry=cachedSections[sn];
       if(!_isPreviewSectionStale(entry)){
-        freshSections[sn]=entry.result;
         onSectionDone(sn,entry.result);
+        needsFetch.delete(sn); // fresh — skip re-fetch
       }else{
         staleSections.push(sn);
       }
     }
     if(staleSections.length===0){
       onSectionDone("labor",cached.labor);
-      return{items:cached.sections.items.result,customer:cached.sections.customer.result,vendors:cached.sections.vendors.result,laborRates:cached.labor};
+      return{items:cachedSections.items.result,customer:cachedSections.customer.result,vendors:cachedSections.vendors.result,laborRates:cached.labor};
     }
-    // Fall through — only stale sections will be re-fetched below
+    // Fall through — only stale sections in needsFetch will be re-fetched below
   }
+  const errors=[];
 
   // 1. Extract unique references from archive (R6: build vendorNameMap during extraction)
   const uniquePartNumbers=new Set();
@@ -9028,101 +9031,121 @@ async function buildRestorePreview(archive,opts){
   const laborResult=panelLaborRates;
   onSectionDone("labor",laborResult);
 
-  // 3. Customer — fast (1 BC call)
-  let customerResult=null;
-  try{
-    const custNum=archive.bcCustomerNumber;
-    if(custNum){
-      const liveCustomer=await bcLookupCustomer(custNum,{signal});
-      if(!liveCustomer){
-        customerResult={status:"missing",archivedName:archive.bcCustomerName||"",liveName:null};
-      }else if(liveCustomer.displayName!==(archive.bcCustomerName||"")){
-        customerResult={status:"name_changed",archivedName:archive.bcCustomerName||"",liveName:liveCustomer.displayName};
+  // 3. Customer — fast (1 BC call). Skipped if cached section is still fresh.
+  let customerResult=cachedSections&&!needsFetch.has("customer")?cachedSections.customer.result:null;
+  if(needsFetch.has("customer")){
+    try{
+      const custNum=archive.bcCustomerNumber;
+      if(custNum){
+        const liveCustomer=await bcLookupCustomer(custNum,{signal});
+        if(!liveCustomer){
+          customerResult={status:"missing",archivedName:archive.bcCustomerName||"",liveName:null};
+        }else if(liveCustomer.displayName!==(archive.bcCustomerName||"")){
+          customerResult={status:"name_changed",archivedName:archive.bcCustomerName||"",liveName:liveCustomer.displayName};
+        }else{
+          customerResult={status:"ok",archivedName:archive.bcCustomerName||"",liveName:liveCustomer.displayName};
+        }
       }else{
-        customerResult={status:"ok",archivedName:archive.bcCustomerName||"",liveName:liveCustomer.displayName};
+        customerResult={status:"no_customer",archivedName:null,liveName:null};
       }
-    }else{
-      customerResult={status:"no_customer",archivedName:null,liveName:null};
+      onSectionDone("customer",customerResult);
+    }catch(e){
+      if(e.name==="AbortError")throw e;
+      customerResult={status:"error",message:e.message};
+      errors.push({section:"customer",message:e.message});
+      onSectionDone("customer",customerResult);
     }
-    onSectionDone("customer",customerResult);
-  }catch(e){
-    if(e.name==="AbortError")throw e;
-    customerResult={status:"error",message:e.message};
-    onSectionDone("customer",customerResult);
   }
 
-  // 4. Vendors — fast (3-8 calls, sequential with 300ms pacing to avoid BC rate limiting)
-  let vendorResults=[];
-  try{
-    for(const vendorNo of uniqueVendorNos){
-      const liveVendor=await bcLookupVendor(vendorNo,{signal});
-      const archivedName=vendorNameMap.get(vendorNo)||"";
-      if(!liveVendor){
-        vendorResults.push({vendorNo,status:"missing",archivedName,liveName:null});
-      }else if(liveVendor.displayName!==archivedName){
-        vendorResults.push({vendorNo,status:"name_changed",archivedName,liveName:liveVendor.displayName});
-      }else{
-        vendorResults.push({vendorNo,status:"ok",archivedName,liveName:liveVendor.displayName});
+  // 4. Vendors — fast (3-8 calls, sequential with 300ms pacing). Skipped if cached fresh.
+  let vendorResults=cachedSections&&!needsFetch.has("vendors")?cachedSections.vendors.result:[];
+  if(needsFetch.has("vendors")){
+    vendorResults=[];
+    try{
+      for(const vendorNo of uniqueVendorNos){
+        const liveVendor=await bcLookupVendor(vendorNo,{signal});
+        const archivedName=vendorNameMap.get(vendorNo)||"";
+        if(!liveVendor){
+          vendorResults.push({vendorNo,status:"missing",archivedName,liveName:null});
+        }else if(liveVendor.displayName!==archivedName){
+          vendorResults.push({vendorNo,status:"name_changed",archivedName,liveName:liveVendor.displayName});
+        }else{
+          vendorResults.push({vendorNo,status:"ok",archivedName,liveName:liveVendor.displayName});
+        }
+        // Rate-limit pacing between vendor lookups
+        if(uniqueVendorNos.size>1)await new Promise(res=>setTimeout(res,300));
       }
-      // Rate-limit pacing between vendor lookups
-      if(uniqueVendorNos.size>1)await new Promise(res=>setTimeout(res,300));
+      onSectionDone("vendors",vendorResults);
+    }catch(e){
+      if(e.name==="AbortError")throw e;
+      vendorResults.push({status:"error",message:e.message});
+      errors.push({section:"vendors",message:e.message});
+      onSectionDone("vendors",vendorResults);
     }
-    onSectionDone("vendors",vendorResults);
-  }catch(e){
-    if(e.name==="AbortError")throw e;
-    vendorResults.push({status:"error",message:e.message});
-    onSectionDone("vendors",vendorResults);
   }
 
-  // 5. Items — slow (batched, 30 items per request via bcFetchItemCardCosts)
-  let itemResults=[];
-  try{
-    const partNumberArr=Array.from(uniquePartNumbers);
-    const itemCostMap=await bcFetchItemCardCosts(partNumberArr,{signal});
+  // 5. Items — slow (batched, 30 items per request via bcFetchItemCardCosts). Skipped if cached fresh.
+  let itemResults=cachedSections&&!needsFetch.has("items")?cachedSections.items.result:[];
+  if(needsFetch.has("items")){
+    itemResults=[];
+    try{
+      const partNumberArr=Array.from(uniquePartNumbers);
+      const itemCostMap=await bcFetchItemCardCosts(partNumberArr,{signal});
 
-    for(const pn of partNumberArr){
-      const liveItem=itemCostMap.get(pn);
-      const archivedRow=firstRowByPn.get(pn)||{};
-      // Prefer bcItemCardCost for apples-to-apples comparison against BC ItemCard Unit_Cost
-      let archivedCost=archivedRow.bcItemCardCost;
-      let legacyFallback=false;
-      if(archivedCost==null){
-        archivedCost=archivedRow.unitPrice;
-        legacyFallback=true;
-      }
-
-      if(!liveItem){
-        itemResults.push({partNumber:pn,costStatus:"missing",descStatus:"unknown",archivedCost:archivedCost??null,liveCost:null,delta:null,archivedDescription:archivedRow.description||"",liveDescription:null,legacyFallback});
-      }else{
-        const liveCost=liveItem.unitCost;
-        const liveDesc=liveItem.description||"";
-        const archivedDesc=archivedRow.description||"";
-
-        // Cost drift check (R2: separate costStatus field)
-        let costStatus="ok";
-        let delta=null;
-        if(liveCost!=null&&archivedCost!=null&&archivedCost!==0){
-          delta=(liveCost-archivedCost)/archivedCost;
-          if(Math.abs(delta)>COST_DRIFT_THRESHOLD)costStatus="cost_drift";
-        }else if(liveCost===0||liveCost==null){
-          costStatus="zero_cost";
+      for(const pn of partNumberArr){
+        const liveItem=itemCostMap.get(pn);
+        const archivedRow=firstRowByPn.get(pn)||{};
+        // Prefer bcItemCardCost for apples-to-apples comparison against BC ItemCard Unit_Cost
+        let archivedCost=archivedRow.bcItemCardCost;
+        let legacyFallback=false;
+        if(archivedCost==null){
+          archivedCost=archivedRow.unitPrice;
+          legacyFallback=true;
         }
 
-        // Description drift check (R2: separate descStatus field)
-        let descStatus="ok";
-        if(liveDesc&&archivedDesc&&liveDesc!==archivedDesc)descStatus="description_changed";
+        if(!liveItem){
+          itemResults.push({partNumber:pn,costStatus:"missing",descStatus:"unknown",archivedCost:archivedCost??null,liveCost:null,delta:null,archivedDescription:archivedRow.description||"",liveDescription:null,legacyFallback});
+        }else{
+          const liveCost=liveItem.unitCost;
+          const liveDesc=liveItem.description||"";
+          const archivedDesc=archivedRow.description||"";
 
-        itemResults.push({partNumber:pn,costStatus,descStatus,archivedCost:archivedCost??null,liveCost:liveCost??null,delta,archivedDescription:archivedDesc,liveDescription:liveDesc,legacyFallback});
+          // Cost drift check (R2: separate costStatus field)
+          let costStatus="ok";
+          let delta=null;
+          if(liveCost!=null&&archivedCost!=null&&archivedCost!==0){
+            delta=(liveCost-archivedCost)/archivedCost;
+            if(Math.abs(delta)>COST_DRIFT_THRESHOLD)costStatus="cost_drift";
+          }else if(liveCost===0||liveCost==null){
+            costStatus="zero_cost";
+          }
+
+          // Description drift check (R2: separate descStatus field)
+          let descStatus="ok";
+          if(liveDesc&&archivedDesc&&liveDesc!==archivedDesc)descStatus="description_changed";
+
+          itemResults.push({partNumber:pn,costStatus,descStatus,archivedCost:archivedCost??null,liveCost:liveCost??null,delta,archivedDescription:archivedDesc,liveDescription:liveDesc,legacyFallback});
+        }
       }
+      onSectionDone("items",itemResults);
+    }catch(e){
+      if(e.name==="AbortError")throw e;
+      // Deliver partial results as array; error captured in top-level errors[]
+      errors.push({section:"items",message:e.message});
+      onSectionDone("items",itemResults);
     }
-    onSectionDone("items",itemResults);
-  }catch(e){
-    if(e.name==="AbortError")throw e;
-    // Partial results may exist — deliver what we have plus the error
-    onSectionDone("items",{results:itemResults,error:e.message});
   }
 
   // 6. Cache result (R3: per-section fetchedAt, R4: bcTokenFingerprint)
+  // Cap cache at 20 entries — evict oldest by fetchedAt when exceeded
+  if(_restorePreviewCache.size>=20){
+    let oldestKey=null,oldestTime=Infinity;
+    for(const[k,v]of _restorePreviewCache){
+      const t=Math.min(v.sections.items?.fetchedAt||Infinity,v.sections.customer?.fetchedAt||Infinity,v.sections.vendors?.fetchedAt||Infinity);
+      if(t<oldestTime){oldestTime=t;oldestKey=k;}
+    }
+    if(oldestKey)_restorePreviewCache.delete(oldestKey);
+  }
   const now=Date.now();
   _restorePreviewCache.set(archiveId,{
     sections:{
@@ -9134,7 +9157,7 @@ async function buildRestorePreview(archive,opts){
     bcTokenFingerprint:currentFp
   });
 
-  return{items:itemResults,customer:customerResult,vendors:vendorResults,laborRates:laborResult};
+  return{items:itemResults,customer:customerResult,vendors:vendorResults,laborRates:laborResult,errors};
 }
 
 // ── COPY PROJECT ──
