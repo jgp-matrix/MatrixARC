@@ -9771,6 +9771,23 @@ async function executeRestore(archive,remaps,options,onProgress){
   }
 }
 
+// Console smoke-test helper for Phase 1 restore logic.
+// Usage: testRestoreM("ARCHIVE_DOC_ID")  — loads archive from Firestore, runs executeRestore
+// with empty remaps, logs progress to console. Returns the result object.
+// Avoids awkward Map/object construction in the console.
+async function testRestoreM(archiveId){
+  if(!_appCtx.companyId){console.error("testRestoreM: not logged in (no companyId)");return;}
+  if(!_bcToken){console.error("testRestoreM: BC not connected");return;}
+  const archivePath=`companies/${_appCtx.companyId}/projects_archive`;
+  const doc=await fbDb.doc(`${archivePath}/${archiveId}`).get();
+  if(!doc.exists){console.error(`testRestoreM: archive ${archiveId} not found`);return;}
+  const archive={...doc.data(),id:doc.id};
+  console.log(`testRestoreM: loaded archive "${archive.name||"Untitled"}" (${archive.originalBcProjectNumber||"no BC#"}), ${(archive.panels||[]).length} panels, ${(archive.ecoSummary||[]).length} ECOs`);
+  const result=await executeRestore(archive,new Map(),{laborOverrides:new Map()},p=>console.log(`[RESTORE ${p.pct||0}%] ${p.stepName}: ${p.detail}`));
+  console.log("testRestoreM: result",result);
+  return result;
+}
+
 // ── COPY PROJECT ──
 async function copyProject(uid,sourceProject,onProgress){
   const pp=onProgress||(()=>{});
