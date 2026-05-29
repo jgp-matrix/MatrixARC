@@ -222,10 +222,13 @@ Trivial fixes (typos, single-line config changes, report-field corrections) skip
 
 Fire a Pushover notification at the completion of major tasks so the user knows to return to the desk. All Claude sessions (CCD, Coach) follow these rules.
 
-**Command:**
+**Correct mechanism — pwsh via Bash tool:**
 ```powershell
 pwsh -NoProfile -File "C:/Users/jon/.claude/tools/notify.ps1" -Message "[SOURCE]: [description]" -Priority 0
 ```
+Call `notify.ps1` directly through the Bash tool. This fires to Pushover unconditionally regardless of terminal focus or window state. Always works.
+
+**DO NOT USE Claude Code's built-in `PushNotification` tool.** It has focus-aware suppression — it does NOT fire when the terminal has focus, which defeats the purpose. Always use the pwsh/Bash mechanism above instead.
 
 **Credentials:** `C:\Users\jon\.claude\pushover.json` (user_key + api_token). Do not log or echo these values.
 
