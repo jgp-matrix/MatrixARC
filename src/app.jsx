@@ -9758,7 +9758,7 @@ async function executeRestore(archive,remaps,options,onProgress){
       console.warn("[RESTORE] step 11c (release lock) failed:",e11c.message);
       results.errors.push({step:11,name:"cleanup-unlock",message:e11c.message});
     }
-    results.steps.push({step:11,name:"cleanup",status:"ok"});
+    results.steps.push({step:11,name:"cleanup",status:results.errors.some(e=>e.step===11)?"partial":"ok"});
 
     report(12,"done",`Restore complete — ${bcProjectNumber}`,100);
     return{newProjectId,bcProjectNumber,results};
