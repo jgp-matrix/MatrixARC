@@ -41116,7 +41116,7 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
       window.onbeforeunload=null;
       setRestoreResult(result);
       if(result.error){setModalView("failure");return;}
-      if(result.results&&result.results.errors.length>0)setModalView("failure");
+      if(result.results?.errors?.length>0)setModalView("failure");
       else setModalView("completion");
     }catch(e){
       window.onbeforeunload=null;
