@@ -4929,6 +4929,44 @@ async function bcFetchPurchasePrices(partNumbers){
   return results;
 }
 
+// DECISION(v1.20.37, Milestone C Cost Source Hotfix Phase 1): Batch-fetch Purchase Prices
+// from BC, keyed by partNumber:vendorNo. Returns ALL vendor records per part (no dedup
+// across vendors). Used by drift detection where the comparison target is the specific
+// vendor on the archived BOM row. Within each (part, vendor) pair, keeps the most recent
+// Starting_Date record. Separate function from bcFetchPurchasePrices to avoid disrupting
+// existing callers (line 4633, pricing sync) that expect single-vendor dedup keyed by part only.
+async function bcFetchPurchasePricesMultiVendor(partNumbers,opts){
+  if(!_bcToken||!partNumbers.length)return new Map();
+  const allPages=await bcDiscoverODataPages();
+  const ppPage=allPages.find(n=>/purchase.?price/i.test(n));
+  if(!ppPage){console.warn("bcFetchPurchasePricesMultiVendor: no PurchasePrices OData page");return new Map();}
+  const baseUrl=`${BC_ODATA_BASE}/${ppPage}`;
+  const results=new Map();
+  const BATCH=30;
+  for(let i=0;i<partNumbers.length;i+=BATCH){
+    if(opts?.signal?.aborted){const e=new Error("Aborted");e.name="AbortError";throw e;}
+    const batch=partNumbers.slice(i,i+BATCH);
+    const filterClauses=batch.map(pn=>`Item_No eq '${pn.replace(/'/g,"''")}'`).join(' or ');
+    const url=`${baseUrl}?$filter=${encodeURIComponent(filterClauses)}&$select=Item_No,Vendor_No,Direct_Unit_Cost,Starting_Date,Unit_of_Measure_Code`;
+    try{
+      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
+      if(!r.ok){console.warn("bcFetchPurchasePricesMultiVendor batch failed:",r.status);continue;}
+      const d=await r.json();
+      (d.value||[]).forEach(rec=>{
+        const key=`${rec.Item_No||''}:${rec.Vendor_No||''}`;
+        const sd=rec.Starting_Date?new Date(rec.Starting_Date).getTime():0;
+        const existing=results.get(key);
+        // Per vendor+part combo, keep the most recent Starting_Date (H4: null date → epoch 0)
+        if(!existing||sd>(existing.startingDate||0)){
+          results.set(key,{directUnitCost:rec.Direct_Unit_Cost||0,startingDate:sd||null,uom:rec.Unit_of_Measure_Code||''});
+        }
+      });
+    }catch(e){if(e.name==="AbortError")throw e;console.warn("bcFetchPurchasePricesMultiVendor batch error:",e);}
+  }
+  console.log("[BC] Fetched multi-vendor Purchase Prices:",results.size,"entries for",partNumbers.length,"items");
+  return results;
+}
+
 // DECISION(v1.19.906): Batch fetch BC ItemCard Unit_Cost for many parts.
 // Used by runPricingAudit to compare ARC unitPrice against BC's authoritative
 // Item Card cost. Mirrors bcFetchPurchasePrices's batching pattern (30 items
