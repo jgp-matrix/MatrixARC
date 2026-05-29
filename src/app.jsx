@@ -9292,6 +9292,468 @@ async function buildRestorePreview(archive,opts){
   return{items:itemResults,customer:customerResult,vendors:vendorResults,laborRates:laborResult,errors};
 }
 
+// ── RESTORE PROJECT (Milestone D, Phase 1) ──
+// Seven module-level functions for archive restore execution.
+// Inserted after buildRestorePreview; called from RestorePreviewModal (Phase 3).
+// Phase 1 ships these functions only — Confirm button stays disabled until Phase 3 wires it.
+// Console-testable via: executeRestore(archive, new Map(), {laborOverrides: new Map()}, console.log)
+
+// §2.1 — Atomic lock on archive doc. Prevents two users restoring the same archive simultaneously.
+// Pattern mirrors existing transactions at lines 2189, 14256, 14310, 34295.
+async function acquireRestoreLock(archiveId,uid,userName){
+  const archivePath=`companies/${_appCtx.companyId}/projects_archive`;
+  const archiveRef=fbDb.doc(`${archivePath}/${archiveId}`);
+  const STALE_MS=5*60*1000; // 5 minutes
+  return await fbDb.runTransaction(async tx=>{
+    const doc=await tx.get(archiveRef);
+    if(!doc.exists)throw new Error("Archive not found");
+    const data=doc.data();
+    // Integrity check (plan step 2)
+    if(!data._archiveComplete)throw new Error("Archive is incomplete — re-archive to complete");
+    const lock=data.restoreLock;
+    const now=Date.now();
+    // Case 3: non-stale lock from different user → HARD BLOCK
+    if(lock&&lock.lockedBy!==uid&&(now-lock.lockedAt)<STALE_MS){
+      return{blocked:true,lockedByName:lock.lockedByName||"another user",lockedAt:lock.lockedAt};
+    }
+    // Case 1 (no lock / stale) or Case 2 (same user): acquire/refresh lock
+    tx.update(archiveRef,{
+      restoreLock:{lockedBy:uid,lockedByName:userName,lockedAt:now}
+    });
+    return{blocked:false,staleLockTakeover:!!(lock&&lock.lockedBy!==uid)};
+  });
+}
+
+// §2.2 — Find an in-progress restore doc for this archive (resume scenario).
+// Z6: no limit — log warning if multiple docs match (data corruption indicator).
+async function findResumeDoc(archiveId){
+  const path=_appCtx.projectsPath;
+  if(!path)return null;
+  const snap=await fbDb.collection(path)
+    .where("_restoringFromArchive","==",archiveId)
+    .get();
+  if(snap.empty)return null;
+  if(snap.size>1){
+    console.warn(`[RESTORE] findResumeDoc: ${snap.size} docs found for archiveId ${archiveId} — expected 1. Using most recent.`);
+  }
+  const sorted=snap.docs.sort((a,b)=>(b.data().updatedAt||0)-(a.data().updatedAt||0));
+  const doc=sorted[0];
+  const data=doc.data();
+  return{
+    projectId:doc.id,
+    projectData:data,
+    bcProjectNumber:data.bcProjectNumber||null
+  };
+}
+
+// §2.3 — Release restore lock on archive doc.
+// Z10: uses FieldValue.delete() for clean doc state (no leftover empty object).
+async function releaseRestoreLock(archiveId){
+  const archivePath=`companies/${_appCtx.companyId}/projects_archive`;
+  await fbDb.doc(`${archivePath}/${archiveId}`).update({
+    restoreLock:firebase.firestore.FieldValue.delete()
+  });
+}
+
+// §2.5 — Apply customer/vendor/item remaps to project data.
+// Mutates `data` in place. Called from buildRestoreProjectData.
+// remaps.items and remaps.vendors are JS Maps (for...of iteration).
+function applyRemaps(data,remaps){
+  if(!remaps)return;
+  // Customer remap (D7: clear contact fields on remap)
+  if(remaps.customer&&remaps.customer.action==="remap"){
+    data.bcCustomerNumber=remaps.customer.remapTo;
+    data.bcCustomerName=remaps.customer.remapName||null;
+    // D7: Clear contact fields — stale contacts from old customer
+    data.bcContactNo=null;
+    data.bcContactName=null;
+    data.bcContactEmail=null;
+    data.bcContactPhone=null;
+  }
+  // Vendor remaps — apply to all BOM rows referencing old vendor
+  if(remaps.vendors){
+    for(const[oldVendorNo,action]of remaps.vendors){
+      if(action.action!=="remap")continue;
+      for(const panel of(data.panels||[])){
+        for(const row of(panel.bom||[])){
+          if((row.bcVendorNo||"").trim()===oldVendorNo){
+            row.bcVendorNo=action.remapTo;
+            row.bcVendorName=action.remapName||null;
+            // unitPrice NOT recalculated — archived price preserved
+          }
+        }
+      }
+    }
+  }
+  // Item remaps — skip or remap
+  if(remaps.items){
+    for(const[oldPn,action]of remaps.items){
+      for(const panel of(data.panels||[])){
+        for(const row of(panel.bom||[])){
+          const rowPn=row.bcPartNumber||row.partNumber;
+          if(rowPn!==oldPn)continue;
+          if(action.action==="skip"){
+            row.restoreSkipped=true;
+            // customerSupplied NOT touched — per Q2 ruling
+          }else if(action.action==="remap"){
+            row.partNumber=action.remapTo;
+            row.bcPartNumber=action.remapTo;
+            row.bcItemId=null;       // new item, unknown until BC lookup
+            row.bcItemNumber=action.remapTo;
+            row.bcVerify=null;        // needs re-verification
+            // description preserved — user chose this description for this slot
+            // unitPrice preserved — user can re-price after restore
+          }
+          // "accept" → no changes
+        }
+      }
+    }
+  }
+}
+
+// §2.6 — Apply per-panel labor rate overrides from preview UI (A7).
+function applyLaborOverrides(data,laborOverrides){
+  if(!laborOverrides)return;
+  for(const[panelId,overrideRate]of laborOverrides){
+    const panel=(data.panels||[]).find(p=>p.id===panelId);
+    if(!panel)continue;
+    const rate=Number(overrideRate);
+    if(Number.isNaN(rate)||rate<0)continue;
+    // Only override if panel has existing pricing data
+    // Don't create a pricing object from nothing — rate has no context without pricing structure
+    if(panel.pricing){
+      panel.pricing.laborRate=rate;
+      // Zero is valid — user may intentionally zero out labor (e.g., warranty project)
+    }
+  }
+}
+
+// §2.4 — Pure, deterministic function: deep-clone → migrate → reset → remap → labor overrides.
+// No Firestore calls, no side effects, no module-level reads.
+// Z2: bcEnv and bcCompanyName passed as params (caller captures from _bcConfig).
+// Z3 verified: migrateProjectShape is pure (only console.log for tracing — no Firestore/state reads).
+// A4: `now` passed from caller for timestamp determinism.
+function buildRestoreProjectData(archive,remaps,options,uid,now,bcEnv,bcCompanyName){
+  // 1. Deep clone
+  let data=JSON.parse(JSON.stringify(archive));
+
+  // 2. Strip archive envelope fields
+  const ENVELOPE_FIELDS=[
+    'archiveId','archiveVersion','archivedAt','archivedBy','archiveReason',
+    'originalProjectId','originalBcProjectNumber','originalBcEnv',
+    'restoreHistory','restoreLock','_archiveComplete'
+  ];
+  for(const f of ENVELOPE_FIELDS)delete data[f];
+
+  // 3. Run migrateProjectShape — before field resets (ordering matters for quoteRev normalization)
+  data=migrateProjectShape(data);
+
+  // 4a. BC Project-Entity Fields (reset — old BC project no longer exists)
+  data.bcProjectId=null;
+  data.bcProjectNumber=null;
+  data.bcEnv=bcEnv;           // Z2: passed from caller, not read from _bcConfig
+  data.bcCompanyName=bcCompanyName; // Z2: passed from caller
+  data.bcPoNumber=null;
+  data.bcPoStatus=null;
+  data.bcPoDate=null;
+  data.bcStatusForcedToQuote=false;
+  data.bcStatusForcedToQuoteAt=null;
+  data.bcPdfAttached=false;
+  data.bcPdfFileName=null;
+
+  // 4b. Per-Panel BC Project-Entity Fields (reset)
+  for(const panel of(data.panels||[])){
+    panel.bcPdfAttached=false;
+    panel.bcPdfFileName=null;
+    panel.bcUploadCount=0;
+    panel.bcUploadQuoteRev=null;
+    panel.bcProjectTaskNo=null;
+  }
+
+  // 4c. Project Lifecycle Fields (reset — clean slate)
+  data.id=null; // saveProject() assigns new
+  data.wonAt=null;data.wonBy=null;
+  data.lostAt=null;data.lostBy=null;
+  data.quoteRev=1;
+  data.quoteRevAtPrint=null;
+  data.lastQuoteHash=null;
+  data.qvHistory=[];
+  // Pre-review fields (13)
+  data.preReviewStatus=null;
+  data.preReviewSubmittedAt=null;
+  data.preReviewSubmittedBy=null;
+  data.preReviewApprovedAt=null;
+  data.preReviewApprovedBy=null;
+  data.preReviewNotes=null;
+  data.preReviewAssignedTo=null;
+  data.preReviewAssignedToName=null;
+  data.preReviewRev=0;
+  data.preReviewChangeLog=[];
+  data.reviewRev=0;
+  data.reviewRevBumpedThisCycle=false;
+  data.reviewChangeLog=[];
+  // Post-review fields (8)
+  data.postReviewStatus=null;
+  data.postReviewSubmittedAt=null;
+  data.postReviewSubmittedBy=null;
+  data.postReviewApprovedAt=null;
+  data.postReviewApprovedBy=null;
+  data.postReviewNotes=null;
+  data.postReviewAssignedTo=null;
+  data.postReviewAssignedToName=null;
+  // Ownership + lock fields
+  data.ownerLockActive=false;
+  data.ownerTakeoverActive=null;
+  data.ownerTakeoverLog=[];
+  data.editUnlocked=false;
+  data.quotePrintLock=null;
+  data.unlockRequestedBy=null;
+  data.createdBy=uid;
+  data.createdAt=now;
+  data.updatedBy=uid;
+  data.updatedAt=now;
+  data.status="draft";
+  // D6: Permanent audit field linking restored project to its archive
+  data.restoredFromArchive=archive.archiveId||archive.id;
+  // A2: restoredBy — updated on stale-lock takeover (initially same as createdBy)
+  data.restoredBy=uid;
+
+  // 5. Apply remaps (customer, vendor, item — see §2.5)
+  applyRemaps(data,remaps);
+
+  // 6. Apply labor overrides (per-panel — see §2.6)
+  applyLaborOverrides(data,options.laborOverrides);
+
+  // 4d. BC Master-Data Fields — DO NOT RESET
+  // bcCustomerNumber, bcCustomerName, bcContact*, bcSalesperson*,
+  // bcProjectManager*, bcDesigner*, per-row bcPartNumber, bcVendorNo,
+  // bcVendorName, bcPurchasePrice, bcItemCardCost, bcCurrentCost,
+  // bcVerify, bcItemId, bcItemNumber, per-row bcPoDate — all preserved.
+  // (Customer/vendor remaps may have overwritten some of these — that's intentional.)
+
+  return data;
+}
+
+// §2.7 — Core restore orchestration: lock → build → save → BC writes → subcollections → cleanup.
+// D2 continue-on-error: steps 6–10 catch independently, errors accumulated.
+// A1 retry: re-calls executeRestore → findResumeDoc → resumes at step 6.
+async function executeRestore(archive,remaps,options,onProgress){
+  // Z8: centralize archiveId resolution once
+  const archiveId=archive.archiveId||archive.id;
+  // Z1: unified source — firebase.auth().currentUser for both uid and displayName
+  const currentUser=firebase.auth().currentUser;
+  const uid=currentUser.uid;
+  const userName=currentUser.displayName||currentUser.email||uid;
+  const archivePath=`companies/${_appCtx.companyId}/projects_archive`;
+  const projectsPath=_appCtx.projectsPath;
+  const now=Date.now(); // A4: single timestamp for all fields
+  // Z2: capture _bcConfig values here — pass to buildRestoreProjectData as params
+  const bcEnv=_bcConfig.env;
+  const bcCompanyName=_bcConfig.companyName;
+
+  const report=(step,stepName,detail,pct)=>
+    onProgress?.({step,stepName,detail,pct});
+  const results={steps:[],errors:[],warnings:[]};
+
+  // ── Step 1: Lock acquisition ──
+  report(1,"lock","Acquiring restore lock…",0);
+  const lockResult=await acquireRestoreLock(archiveId,uid,userName);
+  if(lockResult.blocked){
+    return{error:"blocked",lockedByName:lockResult.lockedByName,lockedAt:lockResult.lockedAt};
+  }
+  results.steps.push({step:1,name:"lock",status:"ok"});
+
+  try{
+    // ── Step 2: Resume check ──
+    report(2,"resume","Checking for in-progress restore…",5);
+    const resumeDoc=await findResumeDoc(archiveId);
+
+    let projectData,newProjectId,bcProjectNumber;
+
+    if(resumeDoc){
+      // ── RESUME PATH ──
+      newProjectId=resumeDoc.projectId;
+      bcProjectNumber=resumeDoc.bcProjectNumber;
+      projectData=resumeDoc.projectData;
+      // A2: on stale-lock takeover, update restoredBy
+      if(lockResult.staleLockTakeover){
+        await fbDb.doc(`${projectsPath}/${newProjectId}`).update({restoredBy:uid});
+      }
+      report(3,"resume",`Resuming restore of ${bcProjectNumber||"new project"}…`,10);
+      results.steps.push({step:2,name:"resume",status:"resumed",bcProjectNumber});
+    }else{
+      // ── FRESH PATH ──
+      // Step 3: Build project data
+      report(3,"build","Building project data…",10);
+      projectData=buildRestoreProjectData(archive,remaps,options,uid,now,bcEnv,bcCompanyName);
+      results.steps.push({step:3,name:"build",status:"ok"});
+
+      // Step 4: Save to Firestore
+      report(4,"save","Saving to Firestore…",15);
+      const saved=await saveProject(uid,{
+        ...projectData,
+        _restoringFromArchive:archiveId
+      });
+      newProjectId=saved.id;
+      projectData=saved; // saveProject stamps id, schemaVersion, updatedAt
+      results.steps.push({step:4,name:"save",status:"ok",projectId:newProjectId});
+    }
+
+    // ── Step 5: Create BC project (skip if resuming with bcProjectNumber) ──
+    if(!bcProjectNumber){
+      report(5,"bc-project","Creating BC project…",20);
+      const customerNumber=projectData.bcCustomerNumber;
+      if(!customerNumber)throw new Error("No customer number — cannot create BC project");
+      const bcResult=await bcCreateProject(projectData.name,customerNumber);
+      bcProjectNumber=bcResult.number;
+
+      // Step 5a: CHECKPOINT — persist bcProjectNumber immediately
+      await fbDb.doc(`${projectsPath}/${newProjectId}`).update({
+        bcProjectNumber:bcProjectNumber,
+        bcProjectId:bcResult.id,
+        bcEnv:_bcConfig.env
+      });
+      results.steps.push({step:5,name:"bc-project",status:"ok",bcProjectNumber});
+    }
+
+    // ── Step 6: Panel task structure ──
+    // Z5: if step 6 fails, skip steps 7–8 (they depend on task slots and produce
+    // cascading 400 errors). Surface one clear error instead of 50+.
+    report(6,"tasks","Creating panel task structure…",30);
+    let step6Failed=false;
+    try{
+      await bcCreatePanelTaskStructure(bcProjectNumber,projectData.name,projectData.panels);
+      results.steps.push({step:6,name:"tasks",status:"ok"});
+    }catch(e){
+      step6Failed=true;
+      results.errors.push({step:6,name:"tasks",message:e.message});
+      results.steps.push({step:6,name:"tasks",status:"error",message:e.message});
+      results.warnings.push("Panel task structure failed — fix this first, then retry. Steps 7–8 skipped.");
+    }
+
+    // ── Step 7: Base planning lines per panel ──
+    const panels=projectData.panels||[];
+    if(step6Failed){
+      results.steps.push({step:7,name:"planning",status:"skipped",message:"Skipped — step 6 failed"});
+    }else for(let i=0;i<panels.length;i++){
+      const pIdx=i+1; // 1-based
+      report(7,"planning",`Syncing planning lines — panel ${pIdx}/${panels.length}…`,
+        35+(i/Math.max(panels.length,1))*25);
+      try{
+        await bcSyncPanelPlanningLines(bcProjectNumber,pIdx,panels[i],projectData.name);
+        results.steps.push({step:7,name:`planning-panel-${pIdx}`,status:"ok"});
+      }catch(e){
+        results.errors.push({step:7,name:`planning-panel-${pIdx}`,message:e.message});
+        results.steps.push({step:7,name:`planning-panel-${pIdx}`,status:"error",message:e.message});
+        // D2: continue to next panel
+      }
+    }
+
+    // ── Step 8: ECO task slots + skeleton + planning lines ──
+    // D5: sequence must be bcAddEcoTask → bcCreateEcoTaskPlanningSkeleton → bcSyncEcoPanelPlanningLines
+    const ecoSummary=projectData.ecoSummary||[];
+    if(step6Failed){
+      // Z5: skip step 8 when step 6 failed — same rationale as step 7
+      if(ecoSummary.length>0){
+        results.steps.push({step:8,name:"eco",status:"skipped",message:"Skipped — step 6 failed"});
+      }
+    }else if(ecoSummary.length>0){
+      // Z4: warn if panels array is empty but ecoSummary isn't — ECOs would be silently skipped
+      if(panels.length===0){
+        results.warnings.push("Archive has ECOs but no panels — ECO BC writes skipped.");
+      }
+      let ecoStepsDone=0;
+      const totalEcoSteps=panels.length*ecoSummary.length;
+      for(let i=0;i<panels.length;i++){
+        const pIdx=i+1;
+        const panelName=panels[i].name||`Panel ${pIdx}`;
+        // Sort ECOs by ecoNumber ascending
+        const sortedEcos=[...ecoSummary].sort((a,b)=>(a.ecoNumber||0)-(b.ecoNumber||0));
+        for(const eco of sortedEcos){
+          const ecoNum=eco.ecoNumber;
+          const ecoId=eco.ecoId;
+          ecoStepsDone++;
+          report(8,"eco",`ECO ${ecoNum} panel ${pIdx}/${panels.length} (${ecoStepsDone}/${totalEcoSteps})…`,
+            60+(ecoStepsDone/Math.max(totalEcoSteps,1))*20);
+          try{
+            // 8a: Create ECO task slot (idempotent — probes before creating, Phase 0 fix v1.20.40)
+            await bcAddEcoTask(bcProjectNumber,pIdx,ecoNum,panelName);
+            // 8b: Create ECO task planning skeleton (idempotent — probes before creating, Phase 0 fix v1.20.40)
+            await bcCreateEcoTaskPlanningSkeleton(bcProjectNumber,pIdx,ecoNum,panelName);
+            // 8c: Sync ECO planning lines (idempotent — incremental diff)
+            await bcSyncEcoPanelPlanningLines(bcProjectNumber,pIdx,ecoNum,ecoId,panels[i],projectData.name);
+            results.steps.push({step:8,name:`eco-${ecoNum}-panel-${pIdx}`,status:"ok"});
+          }catch(e){
+            results.errors.push({step:8,name:`eco-${ecoNum}-panel-${pIdx}`,message:e.message});
+            results.steps.push({step:8,name:`eco-${ecoNum}-panel-${pIdx}`,status:"error",message:e.message});
+            // D2: continue to next ECO/panel
+          }
+        }
+      }
+    }
+
+    // ── Step 9: Recreate ECO subcollection (Firestore) ──
+    report(9,"ecos","Recreating ECO documents…",85);
+    try{
+      const ecoSnap=await fbDb.collection(`${archivePath}/${archiveId}/_ecos`).get();
+      for(const doc of ecoSnap.docs){
+        await fbDb.doc(`${projectsPath}/${newProjectId}/ecos/${doc.id}`).set(doc.data());
+      }
+      results.steps.push({step:9,name:"ecos",status:"ok",count:ecoSnap.size});
+    }catch(e){
+      results.errors.push({step:9,name:"ecos",message:e.message});
+      results.steps.push({step:9,name:"ecos",status:"error",message:e.message});
+    }
+
+    // ── Step 10: Recreate _snapshots subcollection (Firestore) ──
+    // Z9 FIX: use .doc(doc.id).set() instead of .add() — preserves source doc IDs,
+    // making retries idempotent (overwrite same doc instead of creating duplicates).
+    report(10,"snapshots","Recreating snapshots…",90);
+    try{
+      const snapSnap=await fbDb.collection(`${archivePath}/${archiveId}/_snapshots`).get();
+      for(const doc of snapSnap.docs){
+        await fbDb.doc(`${projectsPath}/${newProjectId}/_snapshots/${doc.id}`).set(doc.data());
+      }
+      results.steps.push({step:10,name:"snapshots",status:"ok",count:snapSnap.size});
+    }catch(e){
+      results.errors.push({step:10,name:"snapshots",message:e.message});
+      results.steps.push({step:10,name:"snapshots",status:"error",message:e.message});
+    }
+
+    // ── Step 11: Cleanup ──
+    report(11,"cleanup","Finalizing…",95);
+    // 11a: Clear _restoringFromArchive + persist final state
+    await fbDb.doc(`${projectsPath}/${newProjectId}`).update({
+      _restoringFromArchive:firebase.firestore.FieldValue.delete(),
+      bcProjectNumber:bcProjectNumber,
+      restoredBy:uid
+    });
+    // 11b: Append to archive's restoreHistory
+    await fbDb.doc(`${archivePath}/${archiveId}`).update({
+      restoreHistory:firebase.firestore.FieldValue.arrayUnion({
+        restoredAt:now,
+        restoredBy:uid,
+        restoredByName:userName,
+        newProjectId:newProjectId,
+        bcProjectNumber:bcProjectNumber,
+        errorsCount:results.errors.length
+      })
+    });
+    // 11c: Release lock
+    await releaseRestoreLock(archiveId);
+    results.steps.push({step:11,name:"cleanup",status:"ok"});
+
+    report(12,"done",`Restore complete — ${bcProjectNumber}`,100);
+    return{newProjectId,bcProjectNumber,results};
+
+  }catch(e){
+    // Catastrophic failure — lock auto-expires after 5 min
+    // D3: leave orphan BC project (resume handles it)
+    console.error("[RESTORE] catastrophic failure:",e);
+    return{error:e.message,results};
+  }
+}
+
 // ── COPY PROJECT ──
 async function copyProject(uid,sourceProject,onProgress){
   const pp=onProgress||(()=>{});
