@@ -9771,23 +9771,6 @@ async function executeRestore(archive,remaps,options,onProgress){
   }
 }
 
-// Console smoke-test helper for Phase 1 restore logic.
-// Usage: testRestoreM("ARCHIVE_DOC_ID")  — loads archive from Firestore, runs executeRestore
-// with empty remaps, logs progress to console. Returns the result object.
-// Avoids awkward Map/object construction in the console.
-async function testRestoreM(archiveId){
-  if(!_appCtx.companyId){console.error("testRestoreM: not logged in (no companyId)");return;}
-  if(!_bcToken){console.error("testRestoreM: BC not connected");return;}
-  const archivePath=`companies/${_appCtx.companyId}/projects_archive`;
-  const doc=await fbDb.doc(`${archivePath}/${archiveId}`).get();
-  if(!doc.exists){console.error(`testRestoreM: archive ${archiveId} not found`);return;}
-  const archive={...doc.data(),id:doc.id};
-  console.log(`testRestoreM: loaded archive "${archive.name||"Untitled"}" (${archive.originalBcProjectNumber||"no BC#"}), ${(archive.panels||[]).length} panels, ${(archive.ecoSummary||[]).length} ECOs`);
-  const result=await executeRestore(archive,new Map(),{laborOverrides:new Map()},p=>console.log(`[RESTORE ${p.pct||0}%] ${p.stepName}: ${p.detail}`));
-  console.log("testRestoreM: result",result);
-  return result;
-}
-
 // ── COPY PROJECT ──
 async function copyProject(uid,sourceProject,onProgress){
   const pp=onProgress||(()=>{});
@@ -40891,7 +40874,7 @@ function ArchiveBrowserModal({uid,onClose,onPreviewOpen}){
 // ── RESTORE PREVIEW MODAL (Milestone C Phase 5) ──
 // Progressive drift visualization: Customer → Vendors → Items, with labor rate review.
 // Restore/Copy buttons disabled in Milestone C ("Coming in next update").
-function RestorePreviewModal({archive,mode,uid,onClose}){
+function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
   const abortRef=useRef(null);
   const [sectionResults,setSectionResults]=useState({}); // {labor, customer, vendors, items}
   const [previewDone,setPreviewDone]=useState(false);
@@ -40903,6 +40886,11 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
   const [remapCustomer,setRemapCustomer]=useState(null); // {action:"remap",remapTo,remapName} or null
   const [remapVendors,setRemapVendors]=useState(()=>new Map()); // Map<vendorNo, {action:"accept"|"remap",remapTo?,remapName?}>
   const [noBc,setNoBc]=useState(!_bcToken);
+  // Milestone D Phase 3: progress/completion/failure state machine (Appendix A)
+  const [modalView,setModalView]=useState("preview"); // "preview"|"progress"|"completion"|"failure"
+  const [progressSteps,setProgressSteps]=useState([]); // [{step,stepName,detail,pct}]
+  const [restoreResult,setRestoreResult]=useState(null);
+  const [validationError,setValidationError]=useState(null);
 
   // Start progressive load on mount (§6.5 abort pattern)
   useEffect(()=>{
@@ -40923,6 +40911,8 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
     });
     return()=>{if(abortRef.current)abortRef.current.abort();};
   },[archive.archiveId||archive.id]);
+  // Phase 3: clean up onbeforeunload on unmount (safety net)
+  useEffect(()=>()=>{window.onbeforeunload=null;},[]);
 
   const archiveId=archive.archiveId||archive.id;
   const title=mode==="restore"?"🔄 Restore":"📋 Copy to New Quote";
@@ -41112,6 +41102,136 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
     });
   }
 
+  // ── Phase 3: Confirm handler + restore execution runner ──
+  async function runRestore(){
+    setModalView("progress");
+    setProgressSteps([]);
+    setRestoreResult(null);
+    window.onbeforeunload=(e)=>{e.preventDefault();return"Restore in progress — closing may leave incomplete data.";};
+    try{
+      const remaps={customer:remapCustomer,vendors:remapVendors,items:remapItems};
+      const result=await executeRestore(archive,remaps,{laborOverrides},(p)=>{
+        setProgressSteps(prev=>[...prev,{...p,ts:Date.now()}]);
+      });
+      window.onbeforeunload=null;
+      setRestoreResult(result);
+      if(result.error){setModalView("failure");return;}
+      if(result.results&&result.results.errors.length>0)setModalView("failure");
+      else setModalView("completion");
+    }catch(e){
+      window.onbeforeunload=null;
+      setRestoreResult({error:e.message,results:{steps:[],errors:[{step:0,name:"catastrophic",message:e.message}],warnings:[]}});
+      setModalView("failure");
+    }
+  }
+  function handleConfirmRestore(){
+    // Validate non-empty remapTo for all active remaps (advisory review note from Phase 2)
+    if(remapCustomer&&!remapCustomer.remapTo){setValidationError("Customer remap target is empty.");return;}
+    for(const[vendorNo,v]of remapVendors){
+      if(v.action==="remap"&&!v.remapTo){setValidationError(`Vendor #${vendorNo} remap target is empty.`);return;}
+    }
+    for(const[pn,v]of remapItems){
+      if(v.action==="remap"&&!v.remapTo){setValidationError(`Item "${pn}" remap target is empty.`);return;}
+    }
+    setValidationError(null);
+    runRestore();
+  }
+
+  // ── Phase 3: Progress / failure / completion renderers (§4.3, Appendix A) ──
+  const RESTORE_STEP_DISPLAY=[
+    {min:1,max:1,label:"Restore lock acquired"},
+    {min:2,max:3,label:"Project data built"},
+    {min:4,max:4,label:"Saved to Firestore"},
+    {min:5,max:5,label:"BC project created"},
+    {min:6,max:6,label:"Panel task structure"},
+    {min:7,max:7,label:"Planning lines synced"},
+    {min:8,max:8,label:"ECO planning lines"},
+    {min:9,max:9,label:"ECO documents"},
+    {min:10,max:10,label:"Snapshots"},
+    {min:11,max:11,label:"Finalizing"},
+  ];
+  function renderProgressView(){
+    const last=progressSteps.length>0?progressSteps[progressSteps.length-1]:null;
+    const pct=last?.pct||0;
+    const curStep=last?.step||0;
+    const detail=last?.detail||"Starting…";
+    return(<div>
+      <div style={{fontSize:14,fontWeight:700,color:C.accent,marginBottom:16}}>
+        {mode==="restore"?"Restoring":"Copying"}: {projLabel}
+      </div>
+      <div style={{background:"#222",borderRadius:6,height:8,marginBottom:8,overflow:"hidden"}}>
+        <div style={{background:C.accent,height:"100%",width:`${pct}%`,transition:"width 0.3s ease",borderRadius:6}}/>
+      </div>
+      <div style={{fontSize:11,color:C.muted,marginBottom:16,textAlign:"right"}}>{pct}%</div>
+      {RESTORE_STEP_DISPLAY.map(s=>{
+        let icon="○",clr=C.muted;
+        if(curStep>s.max||curStep===12){icon="✅";clr=C.green;}
+        else if(curStep>=s.min&&curStep<=s.max){icon="⏳";clr=C.accent;}
+        return<div key={s.min} style={{fontSize:12,color:clr,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
+          <span style={{width:20,textAlign:"center"}}>{icon}</span>
+          <span>{s.label}</span>
+          {icon==="⏳"&&<span style={{fontSize:11,color:C.muted,marginLeft:4}}>— {detail}</span>}
+        </div>;
+      })}
+      <div style={{marginTop:20,fontSize:12,color:C.yellow,fontWeight:600}}>⚠ Do not close this window during restore</div>
+    </div>);
+  }
+  function renderFailureView(){
+    const r=restoreResult;
+    if(!r)return null;
+    const errors=r.results?.errors||[];
+    const warnings=r.results?.warnings||[];
+    const steps=r.results?.steps||[];
+    const blocked=r.error==="blocked";
+    return(<div>
+      <div style={{fontSize:14,fontWeight:700,color:blocked?C.red:C.yellow,marginBottom:16}}>
+        {blocked?"🔒 Restore Blocked":"⚠ Restore Complete With Errors"}
+      </div>
+      {blocked&&<div style={{fontSize:12,color:C.sub,marginBottom:12}}>
+        Another restore is in progress by {r.lockedByName||"unknown"} (started {r.lockedAt?new Date(r.lockedAt).toLocaleString():"unknown"}). Wait for it to finish or retry after the 5-minute lock expires.
+      </div>}
+      {!blocked&&(<>
+        {steps.filter(s=>s.status&&s.status!=="skipped").map((s,i)=>{
+          const icon=s.status==="ok"?"✅":s.status==="error"?"❌":s.status==="partial"?"🟡":"○";
+          return<div key={i} style={{fontSize:12,color:s.status==="error"?C.red:s.status==="ok"?C.green:C.yellow,marginBottom:4}}>
+            {icon} {s.name}{s.bcProjectNumber?` — ${s.bcProjectNumber}`:""}{s.count!=null?` (${s.count})`:""}{s.status==="error"&&s.message?<span style={{fontSize:11,color:C.muted,marginLeft:6}}>— {s.message}</span>:null}
+          </div>;
+        })}
+        {errors.length>0&&(<div style={{marginTop:12,background:"#1a0000",border:`1px solid ${C.red}44`,borderRadius:8,padding:"12px 16px"}}>
+          <div style={{fontSize:12,fontWeight:700,color:C.red,marginBottom:6}}>❌ {errors.length} error{errors.length>1?"s":""}</div>
+          {errors.map((e,i)=><div key={i} style={{fontSize:11,color:C.sub,marginBottom:3}}>Step {e.step} ({e.name}): {e.message}</div>)}
+        </div>)}
+        {warnings.length>0&&(<div style={{marginTop:8}}>
+          {warnings.map((w,i)=><div key={i} style={{fontSize:11,color:C.yellow,marginBottom:2}}>⚠ {w}</div>)}
+        </div>)}
+      </>)}
+      <div style={{marginTop:20,display:"flex",justifyContent:"flex-end",gap:8}}>
+        {!blocked&&<button onClick={()=>runRestore()} style={btn(C.accent,"#fff",{fontSize:13,fontWeight:700})}>Retry Failed Steps ▸</button>}
+        {!blocked&&r.newProjectId&&<button onClick={()=>{if(onRestoreComplete)onRestoreComplete(r.newProjectId);else onClose();}} style={btn(C.border,C.muted,{fontSize:13})}>Open Project Anyway</button>}
+        {blocked&&<button onClick={onClose} style={btn(C.border,C.muted,{fontSize:13})}>Close</button>}
+      </div>
+    </div>);
+  }
+  function renderCompletionView(){
+    const r=restoreResult;
+    if(!r)return null;
+    const steps=r.results?.steps||[];
+    const ecoStep=steps.find(s=>s.step===9&&s.status==="ok");
+    const snapStep=steps.find(s=>s.step===10&&s.status==="ok");
+    const panelCount=(archive.panels||[]).length;
+    return(<div style={{textAlign:"center",padding:"20px 0"}}>
+      <div style={{fontSize:32,marginBottom:8}}>✅</div>
+      <div style={{fontSize:16,fontWeight:800,color:C.green,marginBottom:16}}>Restore Complete</div>
+      <div style={{fontSize:13,color:C.sub,marginBottom:8}}>BC Project: <span style={{color:C.accent,fontWeight:700}}>{r.bcProjectNumber}</span></div>
+      <div style={{display:"flex",justifyContent:"center",gap:16,fontSize:12,color:C.muted,marginBottom:24}}>
+        <span>Panels: {panelCount}</span>
+        {ecoStep&&ecoStep.count>0&&<span>ECO docs: {ecoStep.count}</span>}
+        {snapStep&&snapStep.count>0&&<span>Snapshots: {snapStep.count}</span>}
+      </div>
+      <button onClick={()=>{if(onRestoreComplete)onRestoreComplete(r.newProjectId);else onClose();}} style={btn(C.accent,"#fff",{fontSize:14,fontWeight:700,padding:"10px 28px"})}>Open Project ▸</button>
+    </div>);
+  }
+
   const sectionHeader=(label,count)=>(
     <div style={{fontSize:13,fontWeight:700,color:C.text,borderBottom:`1px solid ${C.border}`,paddingBottom:6,marginBottom:8,marginTop:16}}>
       {label}{count!=null&&<span style={{color:C.muted,fontWeight:400}}> ({count})</span>}
@@ -41120,7 +41240,7 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
 
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
-      onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
+      onMouseDown={e=>{if(modalView==="preview"&&e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}66`,borderRadius:10,padding:"28px 32px",width:720,maxHeight:"90vh",overflow:"auto",boxShadow:"0 0 40px 10px rgba(56,189,248,0.5),0 8px 40px rgba(0,0,0,0.7)"}}>
         {/* Header */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
@@ -41128,9 +41248,11 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
             <div style={{fontSize:16,fontWeight:800,color:C.accent}}>{title}</div>
             <div style={{fontSize:13,color:C.sub,marginTop:2}}>{projLabel}</div>
           </div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,fontWeight:700}}>✕</button>
+          {modalView!=="progress"&&<button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,fontWeight:700}}>✕</button>}
         </div>
 
+        {/* ── Phase 3: View state machine — preview | progress | completion | failure ── */}
+        {modalView==="preview"&&(<>
         {/* BC disconnected warning */}
         {noBc&&(
           <div style={{background:"#1e3a5f33",border:"1px solid #38bdf844",borderRadius:8,padding:"12px 16px",marginBottom:16}}>
@@ -41170,7 +41292,8 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
           </div>
         </>)}
 
-        {/* Action buttons — Phase 2: conditional Confirm button */}
+        {/* Action buttons — Phase 3: wired to executeRestore via handleConfirmRestore */}
+        {validationError&&<div style={{fontSize:12,color:C.red,marginBottom:8}}>⚠ {validationError}</div>}
         {(()=>{
           // Confirm button activation logic per §4.1
           const customerResult=sectionResults.customer;
@@ -41185,11 +41308,7 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
           return<div style={{marginTop:24,display:"flex",justifyContent:"flex-end",gap:8,alignItems:"center"}}>
             <button onClick={onClose} style={btn(C.border,C.muted,{fontSize:13})}>Cancel</button>
             <button disabled={confirmDisabled} title={confirmTooltip}
-              onClick={()=>{
-                // Phase 2: log remaps state for verification. Phase 3 wires this to executeRestore.
-                const remapsObj={customer:remapCustomer,vendors:remapVendors,items:remapItems};
-                console.log("[RESTORE] Confirm clicked. Remaps:",remapsObj,"Labor overrides:",laborOverrides);
-              }}
+              onClick={handleConfirmRestore}
               style={{...btn(C.accent,"#fff",{fontSize:13,fontWeight:700}),...(confirmDisabled?{opacity:0.4,cursor:"not-allowed"}:{})}}>
               {confirmLabel}
             </button>
@@ -41202,6 +41321,13 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
             {previewErrors.map((e,i)=><div key={i}>⚠ {e.section}: {e.message}</div>)}
           </div>
         )}
+        </>)}
+        {/* ── Progress view ── */}
+        {modalView==="progress"&&renderProgressView()}
+        {/* ── Failure view ── */}
+        {modalView==="failure"&&renderFailureView()}
+        {/* ── Completion view ── */}
+        {modalView==="completion"&&renderCompletionView()}
       </div>
     </div>,
     document.body
