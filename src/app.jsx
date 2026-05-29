@@ -2988,6 +2988,33 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
   // tenant's NAV.ProjectTaskLines doesn't expose it. bcCreatePanelTaskStructure
   // (the working BASE-task creator) doesn't set it either, so it's not
   // required for tasks to land correctly in the BC project tree.
+
+  // DECISION(v1.20.40, Milestone D Phase 0): Probe-before-create for idempotency.
+  // On restore retry / resume, bcAddEcoTask may be called again for an ECO task
+  // that was already created. Without this probe, the POST creates a duplicate
+  // (BC returns 400 "already exists") and poisons every subsequent retry. Pattern
+  // mirrors bcCreatePanelTaskBlock (line 2901-2908).
+  let FP="Project"; // field prefix — may flip to "Job" during probe
+  const probeUrl=`${BC_ODATA_BASE}/${taskPage}(${FP}_No='${encodeURIComponent(projectNumber)}',${FP}_Task_No='${encodeURIComponent(taskNo)}')`;
+  try{
+    const pr=await fetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(pr.ok){
+      console.log(`bcAddEcoTask: ECO ${ecoNumber} task ${taskNo} already exists for panel ${panelIndex}, skipping`);
+      return taskNo;
+    }
+    // Field-prefix mismatch — try alternate prefix
+    if(pr.status===400){
+      const altFP=FP==="Project"?"Job":"Project";
+      const altUrl=`${BC_ODATA_BASE}/${taskPage}(${altFP}_No='${encodeURIComponent(projectNumber)}',${altFP}_Task_No='${encodeURIComponent(taskNo)}')`;
+      const pr2=await fetch(altUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(pr2.ok){
+        console.log(`bcAddEcoTask: ECO ${ecoNumber} task ${taskNo} already exists (via ${altFP}_No), skipping`);
+        return taskNo;
+      }
+      if(pr2.status===404){FP=altFP;} // detected correct prefix via the 404 (exists but not found)
+    }
+  }catch(_){/* probe failed — fall through to POST */}
+
   function buildBody(prefix){
     return{
       [`${prefix}_No`]:projectNumber,
@@ -3006,11 +3033,13 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
     const txt=await r.text();
     return{ok:false,status:r.status,text:txt};
   }
-  // First try Project_ prefix
-  let res=await postTask("Project");
-  if(!res.ok&&res.status===400&&/'Project_No' does not exist/i.test(res.text||"")){
-    console.log(`bcAddEcoTask: Project_No rejected, retrying with Job_No for task ${taskNo}`);
-    res=await postTask("Job");
+  // First try with detected or default prefix
+  let res=await postTask(FP);
+  if(!res.ok&&res.status===400&&/'(Project|Job)_No' does not exist/i.test(res.text||"")){
+    const altFP=FP==="Project"?"Job":"Project";
+    console.log(`bcAddEcoTask: ${FP}_No rejected, retrying with ${altFP}_No for task ${taskNo}`);
+    FP=altFP;
+    res=await postTask(FP);
   }
   if(!res.ok)throw new Error(`bcAddEcoTask: task ${taskNo} failed (${res.status}): ${res.text}`);
   console.log(`bcAddEcoTask: ECO ${ecoNumber} task ${taskNo} created for panel ${panelIndex}`);
@@ -3066,8 +3095,32 @@ async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNum
       Line_Type:"Budget",Type:"Resource",No:"R0020",Description:"WIRE",
       Quantity:0,Unit_of_Measure_Code:"HR",Location_Code:"MAIN"},
   ];
-  let created=0,failed=0;const errors=[];
+  // DECISION(v1.20.40, Milestone D Phase 0): Probe existing lines for idempotency.
+  // On restore retry / resume, skeleton may have been partially or fully created.
+  // Fetch existing Line_No values on this task and skip lines that already exist.
+  // Pattern mirrors the per-line probe in bcCreatePanelTaskBlock (line 2922-2929).
+  const existingLineNos=new Set();
+  try{
+    const filter=encodeURIComponent(`${FP_NO} eq '${projectNumber}' and ${FP_TASK_NO} eq '${taskNo}'`);
+    const probeR=await fetch(`${BC_ODATA_BASE}/${planPage}?$filter=${filter}&$select=Line_No`,{
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}
+    });
+    if(probeR.ok){
+      const probeD=await probeR.json();
+      (probeD.value||[]).forEach(rec=>{if(rec.Line_No!=null)existingLineNos.add(rec.Line_No);});
+      if(existingLineNos.size>=lines.length){
+        console.log(`bcCreateEcoTaskPlanningSkeleton: all ${lines.length} skeleton lines already exist on task ${taskNo}, skipping`);
+        return{taskNo,created:0,skipped:lines.length};
+      }
+      if(existingLineNos.size>0){
+        console.log(`bcCreateEcoTaskPlanningSkeleton: ${existingLineNos.size} of ${lines.length} skeleton lines already exist on task ${taskNo}, creating missing ones`);
+      }
+    }
+  }catch(_){/* probe failed — fall through to POST all */}
+
+  let created=0,skipped=0,failed=0;const errors=[];
   for(const line of lines){
+    if(existingLineNos.has(line.Line_No)){skipped++;continue;}
     const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
@@ -3081,7 +3134,7 @@ async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNum
     }
   }
   if(failed>0)throw new Error(`bcCreateEcoTaskPlanningSkeleton: ${failed} of ${lines.length} lines failed: ${errors[0]}`);
-  return{taskNo,created};
+  return{taskNo,created,skipped};
 }
 if(typeof window!=="undefined"){window._bcCreateEcoTaskPlanningSkeleton=bcCreateEcoTaskPlanningSkeleton;}
 
