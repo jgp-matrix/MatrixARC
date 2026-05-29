@@ -40404,17 +40404,36 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
     </div>);
   };
 
+  // DECISION(v1.20.39, Cost Source Hotfix Phase 4): Updated renderItems for costSource field,
+  // cost_check_unavailable status, and revised legacyFallback semantics per hotfix §5.1-§5.3.
   const renderItems=()=>{
     const it=sectionResults.items;
     if(!it)return<div style={{color:C.muted,fontSize:12}}>⏳ Checking items...</div>;
-    const items=Array.isArray(it)?it:(it.results||[]);
+    const items=Array.isArray(it)?it:[];
     const ok=items.filter(x=>x.costStatus==="ok"&&x.descStatus==="ok");
     const missing=items.filter(x=>x.costStatus==="missing");
     const drifted=items.filter(x=>x.costStatus==="cost_drift");
     const zeroCost=items.filter(x=>x.costStatus==="zero_cost");
+    const costUnavailable=items.filter(x=>x.costStatus==="cost_check_unavailable");
     const descChanged=items.filter(x=>x.descStatus==="description_changed"&&x.costStatus!=="missing"&&x.costStatus!=="cost_drift");
+    const fallbackCount=items.filter(x=>x.costSource==="item_card_fallback").length;
+
+    // costSource annotation helper (§5.1)
+    const costNote=(m)=>{
+      if(m.costSource==="item_card_fallback")return<span title={`No price for vendor ${m.archivedVendor||"(none)"} — using ItemCard Unit_Cost`} style={{color:C.muted,fontSize:10,marginLeft:4}}>ℹ ItemCard fallback</span>;
+      if(m.legacyFallback&&m.costSource==="purchase_price")return<span title="Archived price was not from BC — cost comparison approximate. May include manual edits or markup." style={{color:C.muted,fontSize:10,marginLeft:4}}>ℹ approx</span>;
+      return null;
+    };
+
     return(<div>
-      {ok.length>0&&<div style={{color:C.green,fontSize:12,marginBottom:6}}>✅ {ok.length} matched (cost within {(COST_DRIFT_THRESHOLD*100).toFixed(0)}% threshold)</div>}
+      {ok.length>0&&<div style={{color:C.green,fontSize:12,marginBottom:6}}>✅ {ok.length} matched (cost within {(COST_DRIFT_THRESHOLD*100).toFixed(0)}% threshold){fallbackCount>0&&<span style={{color:C.muted,fontSize:10,marginLeft:6}}>({fallbackCount} via ItemCard fallback)</span>}</div>}
+
+      {/* H2: PurchasePrices fetch failed — cost data unavailable */}
+      {costUnavailable.length>0&&(<div style={{marginBottom:6}}>
+        <div style={{color:C.yellow,fontSize:12,fontWeight:600,marginBottom:3}}>⚠ {costUnavailable.length} items — cost check unavailable</div>
+        <div style={{fontSize:11,color:C.muted,paddingLeft:16,marginBottom:4}}>Purchase price check failed — cost drift data unavailable. Item existence and description checks are still valid.</div>
+      </div>)}
+
       {missing.length>0&&(<div style={{marginBottom:6}}>
         <div style={{color:C.red,fontSize:12,fontWeight:600,marginBottom:3}}>🔴 {missing.length} missing from BC</div>
         {missing.slice(0,10).map((m,i)=><div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber} "{m.archivedDescription||"—"}"</div>)}
@@ -40425,13 +40444,13 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
         {drifted.slice(0,10).map((m,i)=>{
           const pct=m.delta!=null?(m.delta*100).toFixed(1):"?";
           const sign=m.delta>0?"+":"";
-          return<div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber}  ${m.archivedCost!=null?m.archivedCost.toFixed(2):"?"} → ${m.liveCost!=null?m.liveCost.toFixed(2):"?"} ({sign}{pct}%)</div>;
+          return<div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber}  ${m.archivedCost!=null?m.archivedCost.toFixed(2):"?"} → ${m.liveCost!=null?m.liveCost.toFixed(2):"?"} ({sign}{pct}%){costNote(m)}</div>;
         })}
         {drifted.length>10&&<div style={{fontSize:11,color:C.muted,paddingLeft:16}}>…and {drifted.length-10} more</div>}
       </div>)}
       {zeroCost.length>0&&(<div style={{marginBottom:6}}>
         <div style={{color:C.muted,fontSize:12,marginBottom:3}}>⚪ {zeroCost.length} with no cost in BC</div>
-        {zeroCost.slice(0,5).map((m,i)=><div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber} (item exists, Unit_Cost = 0)</div>)}
+        {zeroCost.slice(0,5).map((m,i)=><div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber} (item exists, Direct_Unit_Cost = 0){costNote(m)}</div>)}
         {zeroCost.length>5&&<div style={{fontSize:11,color:C.muted,paddingLeft:16}}>…and {zeroCost.length-5} more</div>}
       </div>)}
       {descChanged.length>0&&(<div style={{marginBottom:6}}>
