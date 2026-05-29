@@ -9611,7 +9611,7 @@ async function executeRestore(archive,remaps,options,onProgress){
       await fbDb.doc(`${projectsPath}/${newProjectId}`).update({
         bcProjectNumber:bcProjectNumber,
         bcProjectId:bcResult.id,
-        bcEnv:_bcConfig.env
+        bcEnv:bcEnv // Z2: use captured value, not _bcConfig direct read
       });
       results.steps.push({step:5,name:"bc-project",status:"ok",bcProjectNumber});
     }
@@ -9721,26 +9721,43 @@ async function executeRestore(archive,remaps,options,onProgress){
     }
 
     // ── Step 11: Cleanup ──
+    // Advisory review finding: 11a/11b/11c must each survive independently.
+    // If 11a or 11b throws, lock release (11c) still runs to avoid 5-min stale lock.
     report(11,"cleanup","Finalizing…",95);
     // 11a: Clear _restoringFromArchive + persist final state
-    await fbDb.doc(`${projectsPath}/${newProjectId}`).update({
-      _restoringFromArchive:firebase.firestore.FieldValue.delete(),
-      bcProjectNumber:bcProjectNumber,
-      restoredBy:uid
-    });
-    // 11b: Append to archive's restoreHistory
-    await fbDb.doc(`${archivePath}/${archiveId}`).update({
-      restoreHistory:firebase.firestore.FieldValue.arrayUnion({
-        restoredAt:now,
-        restoredBy:uid,
-        restoredByName:userName,
-        newProjectId:newProjectId,
+    try{
+      await fbDb.doc(`${projectsPath}/${newProjectId}`).update({
+        _restoringFromArchive:firebase.firestore.FieldValue.delete(),
         bcProjectNumber:bcProjectNumber,
-        errorsCount:results.errors.length
-      })
-    });
-    // 11c: Release lock
-    await releaseRestoreLock(archiveId);
+        restoredBy:uid
+      });
+    }catch(e11a){
+      console.warn("[RESTORE] step 11a (clear _restoringFromArchive) failed:",e11a.message);
+      results.errors.push({step:11,name:"cleanup-clear-flag",message:e11a.message});
+    }
+    // 11b: Append to archive's restoreHistory
+    try{
+      await fbDb.doc(`${archivePath}/${archiveId}`).update({
+        restoreHistory:firebase.firestore.FieldValue.arrayUnion({
+          restoredAt:now,
+          restoredBy:uid,
+          restoredByName:userName,
+          newProjectId:newProjectId,
+          bcProjectNumber:bcProjectNumber,
+          errorsCount:results.errors.length
+        })
+      });
+    }catch(e11b){
+      console.warn("[RESTORE] step 11b (append restoreHistory) failed:",e11b.message);
+      results.errors.push({step:11,name:"cleanup-history",message:e11b.message});
+    }
+    // 11c: Release lock — must always run
+    try{
+      await releaseRestoreLock(archiveId);
+    }catch(e11c){
+      console.warn("[RESTORE] step 11c (release lock) failed:",e11c.message);
+      results.errors.push({step:11,name:"cleanup-unlock",message:e11c.message});
+    }
     results.steps.push({step:11,name:"cleanup",status:"ok"});
 
     report(12,"done",`Restore complete — ${bcProjectNumber}`,100);
