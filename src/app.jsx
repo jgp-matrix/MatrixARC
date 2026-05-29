@@ -40879,9 +40879,12 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
   const [sectionResults,setSectionResults]=useState({}); // {labor, customer, vendors, items}
   const [previewDone,setPreviewDone]=useState(false);
   const [previewErrors,setPreviewErrors]=useState([]);
-  const [laborOverrides,setLaborOverrides]=useState({}); // {panelId: newRate}
+  const [laborOverrides,setLaborOverrides]=useState(()=>new Map()); // Map<panelId, newRate>
   const [ecoMode,setEcoMode]=useState("keep_separate"); // combine | keep_separate
-  const [remaps,setRemaps]=useState({items:{},customer:{},vendors:{}}); // Milestone D state placeholder
+  // Milestone D Phase 2: remap state — Maps for for...of iteration in applyRemaps
+  const [remapItems,setRemapItems]=useState(()=>new Map()); // Map<partNumber, {action:"skip"|"remap",remapTo?}>
+  const [remapCustomer,setRemapCustomer]=useState(null); // {action:"remap",remapTo,remapName} or null
+  const [remapVendors,setRemapVendors]=useState(()=>new Map()); // Map<vendorNo, {action:"accept"|"remap",remapTo?,remapName?}>
   const [noBc,setNoBc]=useState(!_bcToken);
 
   // Start progressive load on mount (§6.5 abort pattern)
@@ -40914,7 +40917,21 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
     if(!c)return<div style={{color:C.muted,fontSize:12}}>⏳ Checking customer...</div>;
     if(c.status==="error")return<div style={{color:C.red,fontSize:12}}>🔴 Error checking customer — {c.message} <button onClick={()=>handleRetrySection("customer")} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:12,textDecoration:"underline"}}>Retry</button></div>;
     if(c.status==="ok")return<div style={{color:C.green,fontSize:12}}>✅ {c.archivedName} (#{archive.bcCustomerNumber}) — found in BC</div>;
-    if(c.status==="missing")return(<div><div style={{color:C.red,fontSize:12}}>🔴 {c.archivedName||"Unknown"} (#{archive.bcCustomerNumber}) — missing from BC</div><div style={{fontSize:11,color:C.yellow,marginTop:4}}>⚠ Customer must be mapped before restore can proceed (Milestone D)</div></div>);
+    if(c.status==="missing")return(<div>
+      <div style={{color:C.red,fontSize:12}}>🔴 {c.archivedName||"Unknown"} (#{archive.bcCustomerNumber}) — missing from BC</div>
+      <div style={{marginTop:8,paddingLeft:16}}>
+        <label style={{fontSize:11,color:C.muted,display:"block",marginBottom:4}}>Remap to customer #:</label>
+        <input type="text" placeholder="e.g. C10200"
+          value={remapCustomer?.remapTo||""}
+          onChange={e=>{
+            const v=e.target.value.trim();
+            setRemapCustomer(v?{action:"remap",remapTo:v,remapName:null}:null);
+          }}
+          style={{width:160,padding:"5px 8px",background:"#111",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12}}/>
+        {remapCustomer&&<div style={{fontSize:10,color:C.yellow,marginTop:4}}>⚠ Contact fields (name, email, phone) will be cleared on remap — re-select after restore.</div>}
+        {!remapCustomer&&<div style={{fontSize:10,color:C.red,marginTop:4}}>Customer must be remapped before restore can proceed.</div>}
+      </div>
+    </div>);
     if(c.status==="name_changed")return<div style={{color:C.yellow,fontSize:12}}>🟡 #{archive.bcCustomerNumber} — name changed: "{c.archivedName}" → "{c.liveName}"</div>;
     if(c.status==="no_customer")return<div style={{color:C.muted,fontSize:12}}>ℹ No customer linked to this archive</div>;
     return<div style={{color:C.muted,fontSize:12}}>⏳ Checking customer...</div>;
@@ -40930,7 +40947,29 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
     const errors=v.filter(x=>x.status==="error");
     return(<div>
       {ok.length>0&&<div style={{color:C.green,fontSize:12,marginBottom:4}}>✅ {ok.length} matched</div>}
-      {missing.map((m,i)=><div key={i} style={{color:C.red,fontSize:12,marginBottom:2}}>🔴 {m.archivedName||m.vendorNo} (#{m.vendorNo}) — missing from BC</div>)}
+      {missing.map((m,i)=>{
+        const vAction=remapVendors.get(m.vendorNo);
+        const isRemap=vAction?.action==="remap";
+        return<div key={i} style={{marginBottom:8}}>
+          <div style={{color:C.red,fontSize:12}}>🔴 {m.archivedName||m.vendorNo} (#{m.vendorNo}) — missing from BC</div>
+          <div style={{paddingLeft:16,marginTop:4,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <label style={{fontSize:11,color:C.sub,cursor:"pointer"}}>
+              <input type="radio" name={`vendor-${m.vendorNo}`} checked={!isRemap}
+                onChange={()=>{setRemapVendors(prev=>{const n=new Map(prev);n.delete(m.vendorNo);return n;});}}
+                style={{marginRight:4}}/>Accept as-is
+            </label>
+            <label style={{fontSize:11,color:C.sub,cursor:"pointer"}}>
+              <input type="radio" name={`vendor-${m.vendorNo}`} checked={isRemap}
+                onChange={()=>{setRemapVendors(prev=>{const n=new Map(prev);n.set(m.vendorNo,{action:"remap",remapTo:"",remapName:null});return n;});}}
+                style={{marginRight:4}}/>Remap to:
+            </label>
+            {isRemap&&<input type="text" placeholder="e.g. V20100"
+              value={vAction.remapTo||""}
+              onChange={e=>{const v=e.target.value.trim();setRemapVendors(prev=>{const n=new Map(prev);n.set(m.vendorNo,{action:"remap",remapTo:v,remapName:null});return n;});}}
+              style={{width:120,padding:"4px 6px",background:"#111",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:11}}/>}
+          </div>
+        </div>;
+      })}
       {changed.map((m,i)=><div key={i} style={{color:C.yellow,fontSize:12,marginBottom:2}}>🟡 #{m.vendorNo} — renamed: "{m.archivedName}" → "{m.liveName}"</div>)}
       {errors.map((m,i)=><div key={i} style={{color:C.red,fontSize:12,marginBottom:2}}>🔴 Error: {m.message}</div>)}
     </div>);
@@ -40968,8 +41007,30 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
 
       {missing.length>0&&(<div style={{marginBottom:6}}>
         <div style={{color:C.red,fontSize:12,fontWeight:600,marginBottom:3}}>🔴 {missing.length} missing from BC</div>
-        {missing.slice(0,10).map((m,i)=><div key={i} style={{fontSize:11,color:C.sub,paddingLeft:16,marginBottom:2}}>{m.partNumber} "{m.archivedDescription||"—"}"</div>)}
-        {missing.length>10&&<div style={{fontSize:11,color:C.muted,paddingLeft:16}}>…and {missing.length-10} more</div>}
+        {missing.map((m,i)=>{
+          const iAction=remapItems.get(m.partNumber);
+          const isRemap=iAction?.action==="remap";
+          const isSkip=!iAction||iAction.action==="skip"; // default is skip
+          return<div key={i} style={{paddingLeft:16,marginBottom:6}}>
+            <div style={{fontSize:11,color:C.sub,marginBottom:3}}>{m.partNumber} "{m.archivedDescription||"—"}"</div>
+            <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",paddingLeft:8}}>
+              <label style={{fontSize:11,color:C.sub,cursor:"pointer"}}>
+                <input type="radio" name={`item-${m.partNumber}`} checked={isSkip}
+                  onChange={()=>{setRemapItems(prev=>{const n=new Map(prev);n.set(m.partNumber,{action:"skip"});return n;});}}
+                  style={{marginRight:4}}/>Skip
+              </label>
+              <label style={{fontSize:11,color:C.sub,cursor:"pointer"}}>
+                <input type="radio" name={`item-${m.partNumber}`} checked={isRemap}
+                  onChange={()=>{setRemapItems(prev=>{const n=new Map(prev);n.set(m.partNumber,{action:"remap",remapTo:""});return n;});}}
+                  style={{marginRight:4}}/>Remap to:
+              </label>
+              {isRemap&&<input type="text" placeholder="new part #"
+                value={iAction.remapTo||""}
+                onChange={e=>{const v=e.target.value.trim();setRemapItems(prev=>{const n=new Map(prev);n.set(m.partNumber,{action:"remap",remapTo:v});return n;});}}
+                style={{width:140,padding:"4px 6px",background:"#111",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:11}}/>}
+            </div>
+          </div>;
+        })}
       </div>)}
       {drifted.length>0&&(<div style={{marginBottom:6}}>
         <div style={{color:C.yellow,fontSize:12,fontWeight:600,marginBottom:3}}>🟡 {drifted.length} with cost drift &gt; {(COST_DRIFT_THRESHOLD*100).toFixed(0)}%</div>
@@ -40998,12 +41059,12 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
     if(!labor||!labor.length)return<div style={{color:C.muted,fontSize:12}}>No panel labor rates in archive.</div>;
     return(<div>
       {labor.map((p,i)=>{
-        const override=laborOverrides[p.panelId];
+        const override=laborOverrides.get(p.panelId);
         const val=override!=null?override:p.archivedRate;
         return<div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
           <span style={{fontSize:12,color:C.sub,minWidth:200}}>{p.panelName}</span>
           <span style={{fontSize:12,color:C.muted}}>$</span>
-          <input type="number" value={val} onChange={e=>setLaborOverrides(prev=>({...prev,[p.panelId]:parseFloat(e.target.value)||0}))}
+          <input type="number" value={val} onChange={e=>{const v=parseFloat(e.target.value)||0;setLaborOverrides(prev=>{const n=new Map(prev);n.set(p.panelId,v);return n;});}}
             style={{width:70,padding:"4px 8px",background:"#111",border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,textAlign:"right"}}/>
           <span style={{fontSize:12,color:C.muted}}>/hr</span>
           {override!=null&&override!==p.archivedRate&&<span style={{fontSize:10,color:C.yellow}}>modified</span>}
@@ -41092,17 +41153,31 @@ function RestorePreviewModal({archive,mode,uid,onClose}){
           </div>
         </>)}
 
-        {/* Action buttons — disabled in Milestone C */}
-        <div style={{marginTop:24,display:"flex",justifyContent:"flex-end",gap:8,alignItems:"center"}}>
-          <button onClick={onClose} style={btn(C.border,C.muted,{fontSize:13})}>Cancel</button>
-          <button disabled title="Restore will be available in the next update"
-            style={{...btn(C.accent,"#fff",{fontSize:13,fontWeight:700}),opacity:0.4,cursor:"not-allowed"}}>
-            {mode==="restore"?"Restore ▸":"Copy to New Quote ▸"}
-          </button>
-        </div>
-        <div style={{textAlign:"center",marginTop:12,fontSize:11,color:C.yellow,background:"#3a280033",border:"1px solid #fde04722",borderRadius:8,padding:"8px 12px"}}>
-          ⚠ {mode==="restore"?"Restore":"Copy"} will be enabled in the next update. This preview lets you review drift before proceeding.
-        </div>
+        {/* Action buttons — Phase 2: conditional Confirm button */}
+        {(()=>{
+          // Confirm button activation logic per §4.1
+          const customerResult=sectionResults.customer;
+          const customerMissing=customerResult&&customerResult.status==="missing";
+          const customerBlocked=customerMissing&&!remapCustomer;
+          let confirmDisabled=false;
+          let confirmTooltip="";
+          if(noBc||!_bcToken){confirmDisabled=true;confirmTooltip="Connect to BC first";}
+          else if(customerBlocked){confirmDisabled=true;confirmTooltip="Customer must be remapped";}
+          else if(!previewDone){confirmDisabled=true;confirmTooltip="Loading preview…";}
+          const confirmLabel=mode==="restore"?"Confirm Restore ▸":"Confirm Copy ▸";
+          return<div style={{marginTop:24,display:"flex",justifyContent:"flex-end",gap:8,alignItems:"center"}}>
+            <button onClick={onClose} style={btn(C.border,C.muted,{fontSize:13})}>Cancel</button>
+            <button disabled={confirmDisabled} title={confirmTooltip}
+              onClick={()=>{
+                // Phase 2: log remaps state for verification. Phase 3 wires this to executeRestore.
+                const remapsObj={customer:remapCustomer,vendors:remapVendors,items:remapItems};
+                console.log("[RESTORE] Confirm clicked. Remaps:",remapsObj,"Labor overrides:",laborOverrides);
+              }}
+              style={{...btn(C.accent,"#fff",{fontSize:13,fontWeight:700}),...(confirmDisabled?{opacity:0.4,cursor:"not-allowed"}:{})}}>
+              {confirmLabel}
+            </button>
+          </div>;
+        })()}
 
         {/* Preview errors */}
         {previewErrors.length>0&&(
