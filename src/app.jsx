@@ -3013,7 +3013,7 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
       }
       if(pr2.status===404){FP=altFP;} // detected correct prefix via the 404 (exists but not found)
     }
-  }catch(_){/* probe failed — fall through to POST */}
+  }catch(probeErr){console.warn(`bcAddEcoTask: probe for task ${taskNo} failed, falling through to POST:`,probeErr.message||probeErr);}
 
   function buildBody(prefix){
     return{
@@ -3116,7 +3116,7 @@ async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNum
         console.log(`bcCreateEcoTaskPlanningSkeleton: ${existingLineNos.size} of ${lines.length} skeleton lines already exist on task ${taskNo}, creating missing ones`);
       }
     }
-  }catch(_){/* probe failed — fall through to POST all */}
+  }catch(probeErr){console.warn(`bcCreateEcoTaskPlanningSkeleton: probe for task ${taskNo} lines failed, falling through to POST all:`,probeErr.message||probeErr);}
 
   let created=0,skipped=0,failed=0;const errors=[];
   for(const line of lines){
