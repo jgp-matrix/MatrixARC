@@ -7,6 +7,7 @@
 - [Commit destination](#commit-destination)
 - [Parallel Claude session workflow](#parallel-claude-session-workflow)
 - [Multi-instance workflow](#multi-instance-workflow) — CCD/Coach/Jon roles, file ownership, H-item discipline
+- [Pushover notification behavior](#pushover-notification-behavior) — when to fire phone notifications, source prefixes (ARC DEV / COACH / DEPLOY)
 - [Superpowers skills](#superpowers-skills-available-manual-load-local)
 - [Project Overview](#project-overview) — architecture, deploy, versioning
 - [Troubleshooting](#troubleshooting--first-line-of-defence) — always check ARC Debug Logs first
@@ -216,6 +217,52 @@ Trivial fixes (typos, single-line config changes, report-field corrections) skip
 - **H{N}**: Work items requiring implementation (H6, H7, H9, etc.)
 - **C{N}**: Coach findings logged in `COACH.md` (C1-C13, etc.)
 - **H{N}-PLAN.md**: Implementation plan for work item H{N}
+
+## Pushover notification behavior
+
+Fire a Pushover notification at the completion of major tasks so the user knows to return to the desk. All Claude sessions (CCD, Coach) follow these rules.
+
+**Command:**
+```powershell
+pwsh -NoProfile -File "C:/Users/jon/.claude/tools/notify.ps1" -Message "[SOURCE]: [description]" -Priority 0
+```
+
+**Credentials:** `C:\Users\jon\.claude\pushover.json` (user_key + api_token). Do not log or echo these values.
+
+### Source prefix (REQUIRED)
+Every notification message MUST begin with a source prefix so Jon knows which session sent it and can route to the right interface:
+- **`ARC DEV:`** — Claude Code Desktop sessions (implementation, planning documents, code writing, deploys)
+- **`COACH:`** — Claude Code Terminal sessions (verification, architecture review, code audit)
+- **`DEPLOY:`** — used by `deploy.sh` directly for deploy completions (Priority 1)
+
+### Fire notification for (major tasks):
+- Completing a verification report (Coach role)
+- Finishing a planning document (supplement, detailed plan, hotfix spec)
+- Completing a multi-phase implementation
+- Finishing a smoke test analysis
+- Completing a substantial codebase audit
+- Any task where the user said "text me when done" / "notify me" / "ping me"
+
+### Do NOT fire for:
+- Quick replies to simple questions
+- Single-file edits
+- Status checks or progress updates
+- Mid-task confirmations
+
+### Priority levels:
+- **Priority 0** (normal): All major task completions listed above
+- **Priority 1** (high): Reserved for deploys — handled directly in `deploy.sh`, not via this instruction
+
+### Message format:
+`[SOURCE]: [brief description]`. Examples:
+- `"COACH: Milestone D verification report complete"`
+- `"ARC DEV: Plan v3 with R1-R8 refinements ready"`
+- `"ARC DEV: Phase 4 implementation deployed, smoke test pending"`
+- `"COACH: Hotfix spec finalized"`
+- `"DEPLOY: v1.20.42 deployed (commit a3e4d25e)"`
+
+### Shell helper:
+`done` is on the user's PATH (`C:\Users\jon\.claude\tools\done.cmd`). The user can append `&& done` to any terminal command for a notification on success. In Git Bash (e.g., `deploy.sh`), call `pwsh` directly instead of `done.cmd`.
 
 ## Superpowers skills available (manual-load, local)
 Jesse Vincent's `obra/superpowers` skill pack is cloned at `C:\Users\jon\superpowers\skills\`. The Claude Code plugin system isn't available in this environment, so skills are loaded on-demand via `Read` on `C:\Users\jon\superpowers\skills\<skill-name>\SKILL.md`.
