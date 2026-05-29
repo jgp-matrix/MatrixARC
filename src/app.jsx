@@ -9126,47 +9126,80 @@ async function buildRestorePreview(archive,opts){
     }
   }
 
-  // 5. Items — slow (batched, 30 items per request via bcFetchItemCardCosts). Skipped if cached fresh.
+  // 5. Items — DECISION(v1.20.38, Cost Source Hotfix Phase 2): Fetch BOTH ItemCard (existence+description)
+  // and PurchasePrices (cost drift) in parallel. Graceful degradation (H2): if one fetch fails, the
+  // other's data is still usable. AbortError always re-throws — modal-close abort must propagate.
+  // Live cost: vendor-specific Direct_Unit_Cost from PurchasePrices (ppMap keyed by "pn:vendorNo").
+  // Archived cost: unitPrice (only price field stored on BOM rows). For priceSource==="bc" rows,
+  // unitPrice was written from Direct_Unit_Cost during last pricing sync (line 4638-4639).
+  // Note (H1): priceSource reflects last pricing operation, not last edit — manual edits after
+  // BC re-verify leave priceSource as "bc" but unitPrice no longer represents BC cost.
   let itemResults=cachedSections&&!needsFetch.has("items")?cachedSections.items.result:[];
   if(needsFetch.has("items")){
     itemResults=[];
     try{
       const partNumberArr=Array.from(uniquePartNumbers);
-      const itemCostMap=await bcFetchItemCardCosts(partNumberArr,{signal});
+
+      // Parallel fetch: ItemCard for existence+description, PurchasePrices for cost drift
+      let itemCostMap=new Map();
+      let ppMap=new Map();
+      let ppFetchFailed=false;
+
+      const itemCardPromise=bcFetchItemCardCosts(partNumberArr,{signal})
+        .then(map=>{itemCostMap=map;})
+        .catch(e=>{if(e.name==="AbortError")throw e;errors.push({section:"items",message:"ItemCard fetch failed: "+e.message});});
+
+      const ppPromise=bcFetchPurchasePricesMultiVendor(partNumberArr,{signal})
+        .then(map=>{ppMap=map;})
+        .catch(e=>{if(e.name==="AbortError")throw e;ppFetchFailed=true;errors.push({section:"items",message:"PurchasePrices fetch failed: "+e.message});});
+
+      await Promise.all([itemCardPromise,ppPromise]);
 
       for(const pn of partNumberArr){
         const liveItem=itemCostMap.get(pn);
         const archivedRow=firstRowByPn.get(pn)||{};
-        // Prefer bcItemCardCost for apples-to-apples comparison against BC ItemCard Unit_Cost
-        let archivedCost=archivedRow.bcItemCardCost;
-        let legacyFallback=false;
-        if(archivedCost==null){
-          archivedCost=archivedRow.unitPrice;
+        const archivedVendor=(archivedRow.bcVendorNo||"").trim();
+
+        // Drift comparison: live Direct_Unit_Cost for this part+vendor vs archived unitPrice
+        const ppKey=`${pn}:${archivedVendor}`;
+        const livePp=ppFetchFailed?null:ppMap.get(ppKey);
+
+        // Archived cost: unitPrice is the only price field stored on BOM rows.
+        let archivedCost=archivedRow.unitPrice;
+        let legacyFallback=archivedRow.priceSource!=="bc";
+
+        // Live cost: prefer vendor-specific Direct_Unit_Cost from Purchase Prices
+        let liveCost=livePp?livePp.directUnitCost:null;
+        let costSource=livePp?"purchase_price":(ppFetchFailed?"cost_check_unavailable":"none");
+
+        // Fallback: if no purchase price for this vendor, use ItemCard Unit_Cost (less accurate)
+        if(liveCost==null&&liveItem&&!ppFetchFailed){
+          liveCost=liveItem.unitCost;
+          costSource="item_card_fallback";
           legacyFallback=true;
         }
 
         if(!liveItem){
-          itemResults.push({partNumber:pn,costStatus:"missing",descStatus:"unknown",archivedCost:archivedCost??null,liveCost:null,delta:null,archivedDescription:archivedRow.description||"",liveDescription:null,legacyFallback});
+          itemResults.push({partNumber:pn,costStatus:"missing",descStatus:"unknown",archivedCost:archivedCost??null,liveCost:null,delta:null,archivedDescription:archivedRow.description||"",liveDescription:null,legacyFallback,costSource,archivedVendor});
         }else{
-          const liveCost=liveItem.unitCost;
           const liveDesc=liveItem.description||"";
           const archivedDesc=archivedRow.description||"";
 
-          // Cost drift check (R2: separate costStatus field)
-          let costStatus="ok";
+          // Cost drift check — skip if PurchasePrices fetch failed (H2: degrade, don't mislead)
+          let costStatus=ppFetchFailed?"cost_check_unavailable":"ok";
           let delta=null;
-          if(liveCost!=null&&archivedCost!=null&&archivedCost!==0){
+          if(!ppFetchFailed&&liveCost!=null&&archivedCost!=null&&archivedCost!==0){
             delta=(liveCost-archivedCost)/archivedCost;
             if(Math.abs(delta)>COST_DRIFT_THRESHOLD)costStatus="cost_drift";
-          }else if(liveCost===0||liveCost==null){
+          }else if(!ppFetchFailed&&(liveCost===0||liveCost==null)){
             costStatus="zero_cost";
           }
 
-          // Description drift check (R2: separate descStatus field)
+          // Description drift check — independent of cost, always available if ItemCard succeeded
           let descStatus="ok";
           if(liveDesc&&archivedDesc&&liveDesc!==archivedDesc)descStatus="description_changed";
 
-          itemResults.push({partNumber:pn,costStatus,descStatus,archivedCost:archivedCost??null,liveCost:liveCost??null,delta,archivedDescription:archivedDesc,liveDescription:liveDesc,legacyFallback});
+          itemResults.push({partNumber:pn,costStatus,descStatus,archivedCost:archivedCost??null,liveCost:liveCost??null,delta,archivedDescription:archivedDesc,liveDescription:liveDesc,legacyFallback,costSource,archivedVendor});
         }
       }
       onSectionDone("items",itemResults);
