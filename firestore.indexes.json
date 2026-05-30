@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "projects_archive",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "_archiveComplete", "order": "ASCENDING" },
+        { "fieldPath": "archivedAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

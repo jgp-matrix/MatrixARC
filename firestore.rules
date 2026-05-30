@@ -434,6 +434,30 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      // DECISION(v1.20.23): Archive — read-only snapshots of projects for BC reset recovery.
+      // Members can read (browse archives), writers can create and update (per-project
+      // archive — need update to flip _archiveComplete after subcollection writes),
+      // admins can delete.
+      match /projects_archive/{archiveId} {
+        allow read: if isMember();
+        allow create, update: if canWrite();
+        allow delete: if isAdminMember();
+
+        // ECO documents from the archived project. Mirrored from projects/{id}/ecos.
+        match /_ecos/{ecoId} {
+          allow read: if isMember();
+          allow create: if canWrite();
+          allow delete: if isAdminMember();
+        }
+
+        // Panel snapshots from the archived project. Mirrored from projects/{id}/_snapshots.
+        match /_snapshots/{snapshotId} {
+          allow read: if isMember();
+          allow create: if canWrite();
+          allow delete: if isAdminMember();
+        }
+      }
+
       // DECISION(v1.19.599): Active extraction status — team-wide visibility of who is
       // extracting what. Members can read all; writers can only modify their own records.
       // DECISION(v1.19.612): Any member can DELETE any doc (mutual cleanup of orphans from
