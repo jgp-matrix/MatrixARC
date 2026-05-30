@@ -44038,6 +44038,16 @@ INSTRUCTIONS:
     return()=>window.removeEventListener('arc-open-project',onOpenProject);
   },[projects]);
   function handleCreated(p){setShowNew(false);setProjects(ps=>[p,...ps]);setOpenProject(p);setView("project");setNavTab("projects");setProjectOriginTab("projects");}
+  async function handleRestoreComplete(projectId){
+    setArchivePreviewTarget(null);
+    setShowArchiveBrowser(false);
+    try{
+      const fresh=await loadProjects(user.uid);
+      setProjects(fresh);
+      const proj=fresh.find(p=>p.id===projectId);
+      if(proj)handleOpen(proj);
+    }catch(e){console.warn("[RESTORE] post-restore project load failed:",e.message);}
+  }
   function handleChange(p){setProjects(ps=>ps.map(x=>x.id===p.id?p:x));setOpenProject(p);}
   function handleDelete(id,name,bcProjectId,bcProjectNumber,project){setDeleteConfirm({id,name,bcProjectId,bcProjectNumber,project});}
   async function confirmDelete(deleteFromBC){
@@ -44441,7 +44451,7 @@ INSTRUCTIONS:
       {showSettings&&<SettingsModal uid={user.uid} onClose={()=>setShowSettings(false)} onNameChange={n=>setUserFirstName(n)} onShowDebugLogs={()=>setShowDebugLogs(true)} onShowBulkArchive={companyId?()=>setShowBulkArchive(true):undefined} onShowArchiveBrowser={companyId?()=>setShowArchiveBrowser(true):undefined}/>}
       {showBulkArchive&&<BulkArchiveModal uid={user.uid} onClose={()=>setShowBulkArchive(false)}/>}
       {showArchiveBrowser&&<ArchiveBrowserModal uid={user.uid} onClose={()=>setShowArchiveBrowser(false)} onPreviewOpen={(archive,mode)=>{setArchivePreviewTarget({archive,mode});}}/>}
-      {archivePreviewTarget&&<RestorePreviewModal archive={archivePreviewTarget.archive} mode={archivePreviewTarget.mode} uid={user.uid} onClose={()=>setArchivePreviewTarget(null)}/>}
+      {archivePreviewTarget&&<RestorePreviewModal archive={archivePreviewTarget.archive} mode={archivePreviewTarget.mode} uid={user.uid} onClose={()=>setArchivePreviewTarget(null)} onRestoreComplete={handleRestoreComplete}/>}
       {showApiSetup&&<APISetupModal uid={user.uid} onClose={()=>setShowApiSetup(false)}/>}
       {showCostAnalysis&&<CostAnalysisModal uid={user.uid} companyId={companyId} onClose={()=>setShowCostAnalysis(false)}/>}
       {showReports&&<ReportsModal uid={user.uid} onClose={()=>setShowReports(false)}/>}
