@@ -4675,7 +4675,8 @@ async function _bcReVerifyNotInBc(bom){
     if(item){
       updates[String(row.id)]={
         bcVerify:{status:"in-bc",at:Date.now(),reVerified:true},
-        ...(item.unitCost!=null&&item.unitCost>0?{priceSource:"bc",unitPrice:item.unitCost,bcVendorNo:item.vendorNo||row.bcVendorNo||""}:{})
+        ...(item.unitCost!=null&&item.unitCost>0?{priceSource:"bc",unitPrice:item.unitCost,bcVendorNo:item.vendorNo||row.bcVendorNo||""}:{}),
+        ...(row.restoreSkipped?{restoreSkipped:null}:{})
       };
     }
   }
@@ -24186,7 +24187,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       _oldVal=r[field];
       const next={...r,[field]:val};
       if(field==="qty"&&r.suspectQty){delete next.suspectQty;delete next.suspectQtyReason;}
-      if(field==="partNumber"){next.confidence="high";delete next._confDowngradeReason;}
+      if(field==="partNumber"){next.confidence="high";delete next._confDowngradeReason;delete next.restoreSkipped;}
       // DECISION(v1.19.687): Manual edit of leadTimeDays — stamp source, timestamp, clear estimate flag.
       if(field==="leadTimeDays"){
         next.leadTimeSource="manual";
@@ -26608,7 +26609,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     //   add    → purple tint
                     //   remove → red tint + reduced opacity (struck-through downstream)
                     const _ecoTint=row.ecoOp==="modify"?"rgba(252,211,77,0.16)":row.ecoOp==="add"?"rgba(168,85,247,0.16)":row.ecoOp==="remove"?"rgba(248,113,113,0.18)":null;
-                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:row.restoreSkipped?"#78350f22":_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
                     // Strikethrough on the row text for ecoOp:"remove" so the
                     // "this is being removed" intent is visible at a glance.
                     const _rowTextDecoration=row.ecoOp==="remove"?"line-through":undefined;
@@ -26628,7 +26629,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     const _baseLockedInEco=_isBaseRowInEcoScope(row);
                     const _rowEl=(()=>{
                   return(
-                  <tr key={row.id} data-row-id={String(row.id)} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":(ecoFlashRowId&&String(ecoFlashRowId)===String(row.id)?"eco-row-flash":undefined)} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg,textDecoration:_rowTextDecoration,opacity:_rowOpacity}}>
+                  <tr key={row.id} data-row-id={String(row.id)} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":(ecoFlashRowId&&String(ecoFlashRowId)===String(row.id)?"eco-row-flash":undefined)} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg,textDecoration:_rowTextDecoration,opacity:_rowOpacity,...(row.restoreSkipped?{borderLeft:"3px solid #f59e0b"}:{})}}>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:13,fontWeight:700,color:C.muted,userSelect:"none",position:"relative"}}>
                       {i+1}
                       {bcUpdatedRows.has(String(row.id))&&bcUpdateNotif&&(
@@ -26818,6 +26819,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                              which rows were auto-corrected (informational, not actionable). */}
                           {f==="partNumber"&&row.snippetCorrected&&!row.isLaborRow&&(
                             <span title="AI re-read this row in isolation and corrected it" style={{fontSize:10,color:"#6ee7b7",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#10b98122",padding:"1px 6px",borderRadius:10}}>✓ Fix</span>
+                          )}
+                          {f==="partNumber"&&row.restoreSkipped&&!row.isLaborRow&&(
+                            <span title="This item was not found in BC when the project was restored. Review and remap to a valid BC item, or mark as customer-supplied if the customer provides this part." style={{fontSize:10,color:"#f59e0b",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:"#f59e0b22",padding:"1px 6px",borderRadius:10}}>⚠ SKIPPED</span>
                           )}
                           </div>
                           {/* DECISION(v1.19.828): Meta content (from/auto-replace + Co-Part/ARC
