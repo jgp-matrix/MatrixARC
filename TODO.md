@@ -1071,3 +1071,64 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     legitimate (true duplicates, not product-family variants) — the itemNo guard would
     not have changed the outcome. Worth spot-checking to confirm no false positives exist
     in production merge history beyond the 10 known IDEC-family cases.
+
+60. **OPEN** — Latent identifier scope bugs in existing codebase (discovered by
+    `tools/check-scope.js` during Milestone B, v1.20.26). Eight pre-existing identifier
+    scope bugs documented as `KNOWN_VIOLATIONS` in the scope checker. Each is the same bug
+    class as the v1.20.23 `onArchive` regression (JSX compiles, runtime crashes when code
+    path executes). Latent because the code paths aren't hit frequently or only trigger
+    under specific conditions.
+
+    Priority order for resolution:
+    1. `VendorsPanel` `setMigrateStatus` — Vendor Posting Group migration would crash if
+       invoked. Most likely user-visible failure.
+    2. `ProjectView` `_doInlineQuoteSend` `onUpdate` — inline quote send would crash.
+       ProjectView has `onChange`, not `onUpdate`.
+    3. `ProjectView` EcoEditor `onUpdate` prop — same scope mismatch as #2.
+    4. `PanelListView` ship-date popover `update` vs `onUpdate` — Enter key handler crash
+       in the lead-time override popover.
+    5. `ProjectView` `applyPortalPrices` `selectedPanelId` — references PanelListView's
+       state. Guarded by `bomIsEmpty` check so only triggers on empty-BOM portal apply.
+    6. `EcoEditor` `handleEcoFiles` `projectId` / `_logRemote` — scope mismatch, should
+       use `project.id` and the function is from `addFiles` scope.
+    7. `reExtractWithFeedback` `fbQs` — block-scoped `let` inside `try{}` block referenced
+       after catch. Works only because catch returns early on error.
+
+    Address after Milestone C ships. The `KNOWN_VIOLATIONS` baseline in `tools/check-scope.js`
+    ensures these don't get worse, and the scope checker catches any new instances immediately.
+
+61. **RESOLVED** (v1.20.36, index deployed separately) — Missing Firestore composite index
+    for `loadArchives()` query. The query uses `where('_archiveComplete', '==', true)` combined
+    with `orderBy('archivedAt', 'desc')` on `companies/{companyId}/projects_archive`. Firestore
+    requires a composite index for any query that filters on one field and orders on a different
+    field. Added to `firestore.indexes.json` and deployed via `firebase deploy --only firestore:indexes`.
+
+    **CHECKLIST for future milestones:** Any Firestore query combining `where()` filters with
+    `orderBy()` on different fields needs its composite index added to `firestore.indexes.json`
+    BEFORE the query goes live. Milestone D may add restore history queries (filtered by user,
+    ordered by date) — check index requirements during planning.
+
+62. **OPEN** — BC sync doesn't update BOM row descriptions. BOM rows retain the originally
+    scanned (OCR/AI-extracted) descriptions even after BC sync executes. Part numbers and
+    pricing sync correctly; descriptions don't. Quote PDFs and downstream BC writes carry the
+    scanned text, not the BC ItemCard description.
+
+    Discovered during Milestone C smoke testing — restore preview surfaced "30 with description
+    changes" on archived projects that proved to be the cumulative scanned-vs-BC gap present
+    since original quote time, not real BC-side drift.
+
+    Impact:
+    - Restore preview description drift display surfaces noise rather than signal (structural
+      gap masquerading as drift)
+    - Quote documents may show scanned descriptions that don't match BC catalog descriptions
+      (potential customer-facing issue worth investigating)
+    - Milestone D restore execution needs to decide: write scanned descriptions back to BC,
+      or fetch BC descriptions for writes
+
+    Root cause likely in: the BC re-verify / pricing sync path — around `bcSyncPanelPlanningLines`
+    (~line 3469) or the pricing audit function (~line 5034). Confirm by grepping through `bc*`
+    functions for any that update `row.description`.
+
+    Priority: Medium-high. Not blocking Milestone C (read-only preview, Restore button disabled).
+    Should be resolved before Milestone D ships so restore execution writes BC-truth descriptions,
+    not scanned text.
