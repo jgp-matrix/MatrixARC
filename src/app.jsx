@@ -41380,6 +41380,7 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
   );
 
   return ReactDOM.createPortal(
+    <><style>{`@keyframes arcPulse{0%,100%{opacity:0.4;transform:scale(1)}50%{opacity:1;transform:scale(1.15)}}`}</style>
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
       onMouseDown={e=>{if(modalView==="preview"&&e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}66`,borderRadius:10,padding:"28px 32px",width:720,maxHeight:"90vh",overflow:"auto",boxShadow:"0 0 40px 10px rgba(56,189,248,0.5),0 8px 40px rgba(0,0,0,0.7)"}}>
@@ -41470,7 +41471,7 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
         {/* ── Completion view ── */}
         {modalView==="completion"&&renderCompletionView()}
       </div>
-    </div>,
+    </div></>,
     document.body
   );
 }
