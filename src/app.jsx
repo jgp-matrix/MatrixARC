@@ -3349,7 +3349,7 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, pro
   }
 }
 
-async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projectName){
+async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projectName, opts){
   // Full sync of BC Job Planning Lines for task 20N10 (where N = panelIndex, 1-based).
   // Strategy: delete all existing lines for the task, then recreate from current ARC state.
   // DECISION(v1.19.1005, TODO #22): Backfill the panel task block first.
@@ -3476,7 +3476,10 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   // BASE task — they're routed to the ECO task slot 20N3{eco-1} via
   // bcSyncEcoPanelPlanningLines (called from syncPlanningLinesToBC after
   // this BASE sync completes).
-  const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.ecoTag);
+  // Phase 2.1 B2: Exclude restoreSkipped rows — these have invalid part numbers
+  // that would produce 400 errors from BC. For non-restore callers, restoreSkipped
+  // is undefined/null so the filter passes through unchanged.
+  const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.ecoTag&&!r.restoreSkipped);
   let lineNo=60000;
   for(const row of bomRows){
     const desc=(row.description||"").slice(0,100);
@@ -3496,8 +3499,10 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   }
 
   // Step 2b: Auto-fix items with missing Gen_Prod_Posting_Group (prevents sync failures)
+  // Phase 2.1 F3: Skip during restore — items that will fail anyway don't need
+  // posting-group PATCH attempts, which add unnecessary BC pressure (429 storms).
   const bomParts=lines.filter(l=>l.Type==="Item"&&l.Line_No>=60000).map(l=>l.No).filter(Boolean);
-  if(bomParts.length>0){
+  if(bomParts.length>0&&!(opts&&opts.skipPostingGroupFix)){
     for(const pn of bomParts){
       try{
         const chk=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(pn)}'&$select=No,Gen_Prod_Posting_Group,Inventory_Posting_Group`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
@@ -9641,12 +9646,35 @@ async function executeRestore(archive,remaps,options,onProgress){
       report(7,"planning",`Syncing planning lines — panel ${pIdx}/${panels.length}…`,
         35+(i/Math.max(panels.length,1))*25);
       try{
-        await bcSyncPanelPlanningLines(bcProjectNumber,pIdx,panels[i],projectData.name);
-        results.steps.push({step:7,name:`planning-panel-${pIdx}`,status:"ok"});
+        // Phase 2.1 B3: Capture return value to detect per-line failures that
+        // didn't throw (e.g. 400 errors on individual lines with fallback).
+        const syncResult=await bcSyncPanelPlanningLines(bcProjectNumber,pIdx,panels[i],projectData.name,{skipPostingGroupFix:true});
+        if(syncResult&&syncResult.failed&&syncResult.failed.length>0){
+          results.errors.push({step:7,name:`planning-panel-${pIdx}`,message:`${syncResult.failed.length} of ${syncResult.total} planning lines failed`});
+          results.steps.push({step:7,name:`planning-panel-${pIdx}`,status:"partial",created:syncResult.created,failed:syncResult.failed.length});
+        }else{
+          results.steps.push({step:7,name:`planning-panel-${pIdx}`,status:"ok"});
+        }
       }catch(e){
         results.errors.push({step:7,name:`planning-panel-${pIdx}`,message:e.message});
         results.steps.push({step:7,name:`planning-panel-${pIdx}`,status:"error",message:e.message});
         // D2: continue to next panel
+      }
+    }
+
+    // Phase 2.1 F4: Set bomSyncHash on each panel after step 7 so the project-open
+    // auto-sync doesn't fire a redundant second sync (restored projects had no hash
+    // and were treated as "never synced").
+    if(!step6Failed&&panels.length>0){
+      try{
+        for(let i=0;i<panels.length;i++){
+          panels[i].bomSyncHash=computePanelBomHash(panels[i]);
+        }
+        // Write the entire panels array — Firestore doesn't support array-index dot notation
+        await fbDb.doc(`${projectsPath}/${newProjectId}`).update({panels});
+      }catch(eHash){
+        console.warn("[RESTORE] F4 bomSyncHash write failed (non-fatal):",eHash.message);
+        // Non-fatal — worst case the auto-sync fires once more, which is the current behavior
       }
     }
 
@@ -9682,8 +9710,14 @@ async function executeRestore(archive,remaps,options,onProgress){
             // 8b: Create ECO task planning skeleton (idempotent — probes before creating, Phase 0 fix v1.20.40)
             await bcCreateEcoTaskPlanningSkeleton(bcProjectNumber,pIdx,ecoNum,panelName);
             // 8c: Sync ECO planning lines (idempotent — incremental diff)
-            await bcSyncEcoPanelPlanningLines(bcProjectNumber,pIdx,ecoNum,ecoId,panels[i],projectData.name);
-            results.steps.push({step:8,name:`eco-${ecoNum}-panel-${pIdx}`,status:"ok"});
+            // Phase 2.1 B3: Capture return value for per-line failure reporting (same pattern as step 7).
+            const ecoSyncResult=await bcSyncEcoPanelPlanningLines(bcProjectNumber,pIdx,ecoNum,ecoId,panels[i],projectData.name);
+            if(ecoSyncResult&&ecoSyncResult.failed&&ecoSyncResult.failed.length>0){
+              results.errors.push({step:8,name:`eco-${ecoNum}-panel-${pIdx}`,message:`${ecoSyncResult.failed.length} of ${ecoSyncResult.total} ECO planning lines failed`});
+              results.steps.push({step:8,name:`eco-${ecoNum}-panel-${pIdx}`,status:"partial",created:ecoSyncResult.created,failed:ecoSyncResult.failed.length});
+            }else{
+              results.steps.push({step:8,name:`eco-${ecoNum}-panel-${pIdx}`,status:"ok"});
+            }
           }catch(e){
             results.errors.push({step:8,name:`eco-${ecoNum}-panel-${pIdx}`,message:e.message});
             results.steps.push({step:8,name:`eco-${ecoNum}-panel-${pIdx}`,status:"error",message:e.message});
@@ -40965,6 +40999,23 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
     });
     return()=>{if(abortRef.current)abortRef.current.abort();};
   },[archive.archiveId||archive.id]);
+  // Phase 2.1 B1: Pre-populate remapItems with Skip defaults on preview load.
+  // Visual default is "Skip" (line 41074) but remapItems Map was empty on mount,
+  // so applyRemaps iterated over nothing → skipped items flowed to BC with
+  // invalid part numbers. This useEffect makes the data model match the visual.
+  useEffect(()=>{
+    const items=sectionResults.items;
+    if(!items||!Array.isArray(items))return;
+    const missing=items.filter(x=>x.costStatus==="missing");
+    if(missing.length===0)return;
+    setRemapItems(prev=>{
+      const n=new Map(prev);
+      for(const m of missing){
+        if(!n.has(m.partNumber))n.set(m.partNumber,{action:"skip"});
+      }
+      return n;
+    });
+  },[sectionResults.items]);
   // Phase 3: clean up onbeforeunload on unmount (safety net)
   useEffect(()=>()=>{window.onbeforeunload=null;},[]);
 
