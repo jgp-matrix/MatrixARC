@@ -40809,6 +40809,32 @@ function ArchiveBrowserModal({uid,onClose,onPreviewOpen}){
     const d=typeof ts==="number"?new Date(ts):ts.toDate?ts.toDate():new Date(ts);
     return d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
   }
+  function formatTimeAgo(ts){
+    const ms=Date.now()-ts;
+    const m=Math.round(ms/60000);
+    if(m<60)return m+"m ago";
+    const h=Math.round(m/60);
+    if(h<24)return h+"h ago";
+    return Math.round(h/24)+"d ago";
+  }
+  const STALE_MS=5*60*1000;
+  // Z7: Start Fresh — tag orphaned partial-restore docs before starting a new restore
+  async function handleStartFresh(a){
+    const archiveId=a.archiveId||a.id;
+    try{
+      const resumeDoc=await findResumeDoc(archiveId);
+      if(resumeDoc&&resumeDoc.projectId){
+        const projectsPath=_appCtx.projectsPath;
+        if(projectsPath){
+          await fbDb.doc(`${projectsPath}/${resumeDoc.projectId}`).update({
+            _orphanedByStartFresh:true,
+            _orphanedAt:Date.now()
+          });
+        }
+      }
+    }catch(e){console.warn("[ARCHIVE BROWSER] orphan tagging failed:",e.message);}
+    onPreviewOpen(a,"restore");
+  }
 
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.82)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
@@ -40842,8 +40868,15 @@ function ArchiveBrowserModal({uid,onClose,onPreviewOpen}){
           </div>
         )}
 
-        {!loading&&filtered.map(a=>(
-          <div key={a.archiveId||a.id} style={{background:"#111827",border:`1px solid ${C.border}`,borderRadius:10,padding:"14px 18px",marginBottom:10}}>
+        {!loading&&filtered.map(a=>{
+          const lock=a.restoreLock;
+          const lockAge=lock&&lock.lockedAt?(Date.now()-lock.lockedAt):Infinity;
+          const isInterrupted=lock&&lock.lockedAt&&lockAge>STALE_MS;
+          const isActivelyLocked=lock&&lock.lockedAt&&lockAge<=STALE_MS;
+          const isOwnLock=isActivelyLocked&&lock.lockedBy===uid;
+          const isOtherLock=isActivelyLocked&&lock.lockedBy!==uid;
+          return(
+          <div key={a.archiveId||a.id} style={{background:"#111827",border:`1px solid ${isInterrupted?"#f59e0b44":isOtherLock?"#ef444444":C.border}`,borderRadius:10,padding:"14px 18px",marginBottom:10}}>
             {/* Title row */}
             <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:4}}>{a.originalBcProjectNumber||"—"} — {a.name||"Untitled"}</div>
             {/* Meta row */}
@@ -40854,14 +40887,31 @@ function ArchiveBrowserModal({uid,onClose,onPreviewOpen}){
               <span>Restored: {(a.restoreHistory||[]).length} times</span>
               {a.originalBcEnv&&<span>BC Env: {a.originalBcEnv}</span>}
             </div>
+            {/* Interrupted restore indicator (stale lock) */}
+            {isInterrupted&&(
+              <div style={{background:"#78350f33",border:"1px solid #f59e0b44",borderRadius:8,padding:"8px 12px",marginBottom:8,fontSize:12}}>
+                <div style={{color:"#f59e0b",fontWeight:700,marginBottom:6}}>⚠ Interrupted restore (started by {lock.lockedByName||"unknown"}, {formatTimeAgo(lock.lockedAt)})</div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <button onClick={()=>onPreviewOpen(a,"restore")} style={btn("#f59e0b","#000",{fontSize:11,padding:"4px 12px",fontWeight:700})}>Resume Restore</button>
+                  <button onClick={()=>handleStartFresh(a)} style={btn(C.border,C.muted,{fontSize:11,padding:"4px 12px"})}>Start Fresh</button>
+                  <button onClick={()=>onPreviewOpen(a,"restore")} style={btn(C.border,C.muted,{fontSize:11,padding:"4px 12px"})}>View Archive</button>
+                </div>
+              </div>
+            )}
+            {/* Active lock from another user — hard block */}
+            {isOtherLock&&(
+              <div style={{background:"#7f1d1d33",border:"1px solid #ef444444",borderRadius:8,padding:"8px 12px",marginBottom:8,fontSize:12,color:"#fca5a5"}}>
+                🔒 Restore in progress by {lock.lockedByName||"another user"} (started {formatTimeAgo(lock.lockedAt)})
+              </div>
+            )}
             {/* Action buttons */}
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              <button onClick={()=>onPreviewOpen(a,"restore")} style={btn(C.accent,"#fff",{fontSize:12,padding:"5px 14px"})}>🔄 Restore</button>
+              {!isInterrupted&&!isOtherLock&&<button onClick={()=>onPreviewOpen(a,"restore")} style={btn(C.accent,"#fff",{fontSize:12,padding:"5px 14px"})}>🔄 Restore</button>}
               <button onClick={()=>onPreviewOpen(a,"copy")} style={btn("#8b5cf6","#fff",{fontSize:12,padding:"5px 14px"})}>📋 Copy to New Quote</button>
               <button disabled title="Coming in a future update" style={{...btn(C.border,C.muted,{fontSize:12,padding:"5px 14px"}),opacity:0.4,cursor:"not-allowed"}}>🗑 Delete</button>
             </div>
-          </div>
-        ))}
+          </div>);
+        })}
 
         {/* Footer count */}
         {!loading&&archives&&archives.length>0&&(
