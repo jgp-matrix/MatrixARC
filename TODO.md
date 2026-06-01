@@ -1150,3 +1150,76 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
     Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
     Priority: Defer to Milestone D wind-down or Milestone E.
+
+## Post-Milestone-D BC Housekeeping (discovered during Phase 2.1 smoke test, v1.20.52)
+
+64. **OPEN** — BC concurrency cap and exponential backoff. BC requests fire without
+    coordination. Multiple parallel call paths hit 429 simultaneously. Retries don't back off
+    correctly — same calls re-hit 429 in tight loops.
+
+    Required behavior: Global concurrency cap (5–10 simultaneous BC requests), exponential
+    backoff with jitter on 429, circuit breaker after N consecutive 429s.
+
+    Investigation start: Identify all BC fetch/POST/PATCH call sites, find or build a shared
+    throttle/queue layer.
+
+    Effort estimate: Medium (touches many BC call sites OR centralizes through one shared helper).
+    Priority: HIGH — first item after Milestone D wind-down.
+    Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
+
+65. **OPEN** — Project-open BC sync hygiene. Opening any project triggers cascading BC sync
+    work — customer re-sync, BC verify, purchase price fetch, labor sync, progress billing
+    patch, panel task block backfill. Multiple parallel BC calls per open. Restored projects
+    with partial state continuously try to "catch up" forever, each open firing another sync
+    attempt.
+
+    Required behavior: Debounce sync triggers (no re-sync within N seconds of last sync),
+    verify F4's bomSyncHash actually prevents re-sync on restored projects, make on-open sync
+    lazy/opt-in where possible.
+
+    Related: F4 from Phase 2.1 (v1.20.52) should have addressed this for restored projects,
+    but smoke test logs suggest it isn't working as intended — needs verification.
+
+    Investigation start: Find all project-open BC sync trigger points, identify which ones are
+    necessary vs. opportunistic.
+
+    Priority: HIGH — second item after Milestone D wind-down.
+    Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
+
+66. **OPEN** — bcCreatePanelTaskStructure idempotency gap. When resuming a partial restore,
+    `bcCreatePanelTaskBlock` probes for one task (20100) but the wider
+    `bcCreatePanelTaskStructure` tries to create all six tasks (10000, 20100, 20110, 20120,
+    20199, 99999) sequentially without probing. On resume, the previously-created tasks return
+    "EntityWithSameKeyExists" 400 errors.
+
+    Required behavior: Probe-before-create for ALL six task numbers, not just 20100. Pattern
+    same as Phase 0 fix for `bcAddEcoTask` and `bcCreateEcoTaskPlanningSkeleton`.
+
+    Effort estimate: Small (~20 LOC, mirrors Phase 0 fix pattern).
+
+    Note: Missed during Milestone D planning. Phase 0 caught the ECO functions but didn't
+    audit the panel task function. Lesson for future planning: when adding probe-before-create
+    for some BC writes, audit ALL related BC write functions for the same pattern.
+
+    Priority: HIGH — third item after Milestone D wind-down.
+    Discovered: Phase 2.1 smoke test (v1.20.52) when retrying PRJ402113 restore, by Jon, 2026-06-01.
+
+67. **OPEN** — Test cleanup utility for smoke-test-restored projects. Each test restore creates
+    a real BC project + real Firestore project. They persist forever, each one auto-syncing on
+    every open. Compounds BC load over time.
+
+    Required behavior: Way to mark projects as test artifacts and clean them up in batch.
+    Either a flag (`_testProject: true`) set during smoke test mode, or a dedicated cleanup
+    function that finds and removes recent test restores.
+
+    Priority: MEDIUM — after #64, #65, #66 ship.
+    Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
+
+68. **OPEN** — BC rate limit observability. 429 errors are silent (only visible in DevTools
+    console). No proactive signal to user when throttling is happening.
+
+    Required behavior: Surface 429 count in UI, optionally log to Firestore for cross-session
+    visibility. Could be as simple as a banner that appears when N 429s occur in a window.
+
+    Priority: LOWER — after the actual throttling improvements (#64) ship.
+    Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
