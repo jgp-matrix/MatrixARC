@@ -8953,10 +8953,19 @@ async function deleteProjectStorageBlobs(currentUid,projectId,project){
 // Customer-supplied rows ARE checked — they're real BC items with proper
 // catalog entries; only their cost is zero.
 function scanBomForArchiveIssues(project){
+  // Service items (BUYOFF, crate-pattern) don't need MFR/vendor — exclude from all checks.
+  function isServiceItem(r){
+    const pn=(r.partNumber||"").toUpperCase().trim();
+    const desc=(r.description||"").toUpperCase();
+    if(pn==="BUYOFF")return true;
+    if(pn.includes("CRATE")||desc.includes("CRATE"))return true;
+    return false;
+  }
   let bcNotInBcCount=0,mfrMissingCount=0,vendorMissingCount=0;
   for(const panel of(project.panels||[])){
     for(const r of(panel.bom||[])){
       if(r.isLaborRow||r.isContingency)continue;
+      if(isServiceItem(r))continue;
       if(r.bcVerify&&r.bcVerify.status==="not-in-bc")bcNotInBcCount++;
       if(!(r.manufacturer||"").trim())mfrMissingCount++;
       if(!(r.bcVendorNo||"").trim())vendorMissingCount++;
