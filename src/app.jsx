@@ -735,6 +735,11 @@ function computeLaborEstimate(panel){
     layout:{hours:Math.ceil(layoutHrs),cost:Math.ceil(layoutHrs)*laborRate},
     wire:{hours:Math.ceil(wireHrs),cost:Math.ceil(wireHrs)*laborRate}
   };
+  // Milestone E: ECO flatten labor bridge — ecoFlattenAdded carries signed delta hours
+  const ecoFlat=ld.ecoFlattenAdded||{};
+  if(ecoFlat.cut){groups.cut.hours=Math.max(0,groups.cut.hours+ecoFlat.cut);groups.cut.cost=groups.cut.hours*laborRate;}
+  if(ecoFlat.layout){groups.layout.hours=Math.max(0,groups.layout.hours+ecoFlat.layout);groups.layout.cost=groups.layout.hours*laborRate;}
+  if(ecoFlat.wire){groups.wire.hours=Math.max(0,groups.wire.hours+ecoFlat.wire);groups.wire.cost=groups.wire.hours*laborRate;}
   const totalHours=groups.cut.hours+groups.layout.hours+groups.wire.hours;
   const totalCost=groups.cut.cost+groups.layout.cost+groups.wire.cost;
 
@@ -833,6 +838,69 @@ function _ecosUpTo(project,upToEcoNumber){
     .slice()
     .sort((a,b)=>(+a.number||0)-(+b.number||0));
 }
+// ─── Milestone E: ECO Flatten Utilities ───
+// Used by "Copy to New Quote" to collapse all ECO layers into a single flat BOM.
+// Process ECOs in number order (oldest first) for cumulative application.
+function _stripEcoFields(row){
+  const clean={...row};
+  delete clean.ecoTag;
+  delete clean.ecoNumber;
+  delete clean.ecoOp;
+  delete clean.ecoModifiesBaseRowId;
+  delete clean.ecoOriginal;
+  delete clean.ecoCreatedAt;
+  delete clean.restoreSkipped;
+  clean.id="row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8);
+  return clean;
+}
+function flattenEcosIntoBom(panel,ecoSummary){
+  const baseRows=(panel.bom||[]).filter(r=>!r.ecoTag&&!r.isLaborRow);
+  const baseMap=new Map(baseRows.map(r=>[r.id,{...r}]));
+  const sortedEcos=(ecoSummary||[]).slice().sort((a,b)=>(+a.number||0)-(+b.number||0));
+  for(const eco of sortedEcos){
+    const ecoRows=(panel.bom||[]).filter(r=>r.ecoTag===eco.ecoId&&!r.isLaborRow);
+    for(const row of ecoRows){
+      if(row.ecoOp==="add"){
+        const clean=_stripEcoFields(row);
+        baseMap.set(clean.id,clean);
+      }else if(row.ecoOp==="remove"){
+        if(row.ecoModifiesBaseRowId){baseMap.delete(row.ecoModifiesBaseRowId);}
+        // Orphaned reference: silently skip if base row already gone
+      }else if(row.ecoOp==="modify"){
+        const base=baseMap.get(row.ecoModifiesBaseRowId);
+        if(!base)continue; // Base removed by prior ECO — skip
+        const orig=row.ecoOriginal||{};
+        const merged={...base};
+        // Qty is a signed delta. qty===0 means "no qty change"
+        if((+row.qty||0)!==0){merged.qty=(+base.qty||0)+(+row.qty||0);}
+        // Other fields: if changed from original, take the ECO value
+        for(const f of["partNumber","description","manufacturer","unitPrice"]){
+          if((row[f]??"")!==(orig[f]??"")){merged[f]=row[f];}
+        }
+        baseMap.set(base.id,merged);
+      }
+    }
+  }
+  return Array.from(baseMap.values());
+}
+function flattenEcosLabor(panel,ecoSummary){
+  const deltas={cut:0,layout:0,wire:0};
+  if(!ecoSummary||ecoSummary.length===0)return deltas;
+  const ecoLaborRows=(panel.bom||[]).filter(r=>r.isLaborRow&&r.ecoTag);
+  for(const r of ecoLaborRows){
+    const desc=(r.description||"").toUpperCase();
+    const hrs=Number(r.qty)||0;
+    if(desc==="CUT")deltas.cut+=hrs;
+    else if(desc==="LAYOUT")deltas.layout+=hrs;
+    else if(desc==="WIRE")deltas.wire+=hrs;
+  }
+  // Clamp to prevent extreme negative labor
+  deltas.cut=Math.max(deltas.cut,-999);
+  deltas.layout=Math.max(deltas.layout,-999);
+  deltas.wire=Math.max(deltas.wire,-999);
+  return deltas;
+}
+
 // DECISION(v1.19.925, Internal vs External ECOs): Customer-facing variants of
 // the cumulative ECO helpers. They filter to `kind === "external"` so Internal
 // ECOs (our-responsibility changes) never appear on the customer Quote totals
