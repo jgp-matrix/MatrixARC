@@ -32600,7 +32600,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                 <button onClick={()=>setShowCADLinkModal(true)} style={btn("#0d1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>📦 Send CADLink BOM's</button>
               )}
               {!readOnly&&onCopy&&(
-                <button onClick={onCopy} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⧉ Copy</button>
+                <button onClick={onCopy} style={btn(C.accentDim,C.accent,{border:`1px solid ${C.accent}`,fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>⧉ Copy to New Quote</button>
               )}
               {!readOnly&&onArchive&&(
                 <button onClick={onArchive} style={btn("#0a1a14","#10b981",{border:"1px solid #10b98144",fontSize:13,fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"})}>📦 Archive</button>
