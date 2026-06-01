@@ -838,6 +838,28 @@ function _ecosUpTo(project,upToEcoNumber){
     .slice()
     .sort((a,b)=>(+a.number||0)-(+b.number||0));
 }
+// ─── PRJ402109: Defensive BOM row ID dedup ───
+// Detects duplicate row IDs within a BOM array and assigns fresh IDs to duplicates.
+// Called in save path to prevent persisting collisions from any source.
+function _dedupBomRowIds(bom){
+  if(!Array.isArray(bom))return bom;
+  const seen=new Set();
+  let fixed=0;
+  const result=bom.map(row=>{
+    if(!row||!row.id)return row;
+    const id=String(row.id);
+    if(seen.has(id)){
+      const freshId="row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8);
+      console.warn("BOM ID DEDUP: duplicate id",id,"→ reassigned to",freshId);
+      fixed++;
+      return{...row,id:freshId};
+    }
+    seen.add(id);
+    return row;
+  });
+  if(fixed>0)console.warn("BOM ID DEDUP:",fixed,"duplicate ID(s) resolved");
+  return result;
+}
 // ─── Milestone E: ECO Flatten Utilities ───
 // Used by "Copy to New Quote" to collapse all ECO layers into a single flat BOM.
 // Process ECOs in number order (oldest first) for cumulative application.
@@ -8826,6 +8848,8 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     // un-versioned until their first mutation under the new code (per user spec — "leave
     // existing panels as-is").
     safeUpdated=_bumpBomVersionIfChanged(safeUpdated,existingTarget);
+    // PRJ402109: Defensive dedup — resolve any duplicate BOM row IDs before writing
+    if(safeUpdated.bom)safeUpdated={...safeUpdated,bom:_dedupBomRowIds(safeUpdated.bom)};
     let panels=(proj.panels||[]).map(p=>p.id===panelId?safeUpdated:p);
     // If panel wasn't found in existing array, append it
     if(!panels.some(p=>p.id===panelId))panels=[...panels,safeUpdated];
@@ -10737,7 +10761,7 @@ function _looksLikeCompanionPn(token,primaryPn){
 }
 function _makeCompanionRow(parentRow,pn,relationship){
   return{
-    id:(Date.now()+Math.random()),
+    id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),
     itemNo:parentRow.itemNo||"",
     qty:+parentRow.qty||1,
     partNumber:pn,
@@ -13824,7 +13848,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // exact-dedup's summing step. Positional takes MAX qty (a row has one qty, not
         // one qty per quadrant it's visible in). Then exact dedup sums qty for legitimate
         // repeats that have different Y positions.
-        const raw=all.map(it=>({...it,id:it.id||(Date.now()+Math.random()),qty:+it.qty||1}));
+        // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
+        const raw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
         const positional=positionalMergeBomItems(raw);
         const map={};
         positional.forEach(item=>{const pn=_bomNormPn(item.partNumber);const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item};}});
@@ -23787,7 +23812,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     ep.set(65,"Merging results…");
     bgSetPct(panel.id,65,"Merging results…");
     // DECISION(v1.19.620): Positional FIRST (max qty), then exact PN (sum qty for legit repeats), then fuzzy.
-    const reRaw=all.map(it=>({...it,id:it.id||(Date.now()+Math.random()),qty:+it.qty||1}));
+    // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
+    const reRaw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
     const positionalDedup=positionalMergeBomItems(reRaw);
     const map={};
     positionalDedup.forEach(item=>{
@@ -23995,7 +24021,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       fbQs=fbQs.slice(0,10);
     }catch(ex){setErr(`Failed: ${ex.message}`);setReExtracting(false);return;}
     // DECISION(v1.19.620): Positional FIRST (max qty for cross-quadrant), then exact PN, then fuzzy.
-    const fbRaw=all.map(it=>({...it,id:it.id||(Date.now()+Math.random()),qty:+it.qty||1}));
+    // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
+    const fbRaw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
     const fbPositional=positionalMergeBomItems(fbRaw);
     const map={};
     fbPositional.forEach(item=>{
