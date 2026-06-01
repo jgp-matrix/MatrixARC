@@ -8922,12 +8922,31 @@ async function deleteProjectStorageBlobs(currentUid,projectId,project){
   return{deleted,failed,uids:[...uids]};
 }
 
+// ── Phase 2.2: Scan BOM for archive-time integrity issues ──
+// Checks for conditions that will cause silent failures on restore:
+// items not in BC, missing manufacturer, missing vendor.
+// Excludes labor rows and contingency rows (no MFR/vendor by design).
+// Customer-supplied rows ARE checked — they're real BC items with proper
+// catalog entries; only their cost is zero.
+function scanBomForArchiveIssues(project){
+  let bcNotInBcCount=0,mfrMissingCount=0,vendorMissingCount=0;
+  for(const panel of(project.panels||[])){
+    for(const r of(panel.bom||[])){
+      if(r.isLaborRow||r.isContingency)continue;
+      if(r.bcVerify&&r.bcVerify.status==="not-in-bc")bcNotInBcCount++;
+      if(!(r.manufacturer||"").trim())mfrMissingCount++;
+      if(!(r.bcVendorNo||"").trim())vendorMissingCount++;
+    }
+  }
+  return{bcNotInBcCount,mfrMissingCount,vendorMissingCount};
+}
+
 // ── PROJECT ARCHIVE (Milestone A) ──
 // DECISION(v1.20.23): Archive write path — deep-clone project + subcollections to
 // `companies/{companyId}/projects_archive`. Uses subcollection topology for ECOs and
 // snapshots (avoids Firestore 1MB doc limit). `_archiveComplete` flag ensures partial
 // writes are invisible to the archive browser.
-async function archiveProject(uid,project,reason){
+async function archiveProject(uid,project,reason,acknowledgment){
   if(!_appCtx.companyId)throw new Error("Archive requires a company workspace");
   const archivePath=`companies/${_appCtx.companyId}/projects_archive`;
   const projectId=project.id;
@@ -8961,6 +8980,8 @@ async function archiveProject(uid,project,reason){
     archiveVersion:1,
     restoreHistory:[],
     _archiveComplete:false, // flipped to true after all subcollection writes
+    // Phase 2.2: Record integrity acknowledgment if user archived with known BOM issues
+    ...(acknowledgment?{archivedWithKnownIssues:acknowledgment}:{}),
   };
   // Strip fields that don't belong in the archive
   delete archiveDoc.dataUrl; // 1MB limit — never persist dataUrl
@@ -40920,6 +40941,7 @@ function ArchiveBrowserModal({uid,onClose,onPreviewOpen}){
               <span>By: {a.archivedBy||"—"}</span>
               <span>Restored: {(a.restoreHistory||[]).length} times</span>
               {a.originalBcEnv&&<span>BC Env: {a.originalBcEnv}</span>}
+              {a.archivedWithKnownIssues&&<span title={`Archived with: ${a.archivedWithKnownIssues.bcNotInBcCount||0} not in BC, ${a.archivedWithKnownIssues.mfrMissingCount||0} missing MFR, ${a.archivedWithKnownIssues.vendorMissingCount||0} missing vendor — acknowledged by ${a.archivedWithKnownIssues.acknowledgedByName||"unknown"}`} style={{color:"#f59e0b",fontWeight:700,cursor:"help"}}>⚠ Issues</span>}
             </div>
             {/* Interrupted restore indicator (stale lock) */}
             {isInterrupted&&(
@@ -44581,7 +44603,7 @@ INSTRUCTIONS:
           projects, engineering, purchasing, production. */}
       {view==="project"&&openProject&&navTab===(projectOriginTab||"projects")&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} onArchive={companyId?async()=>{if(!await arcConfirm(`Archive "${openProject.name||openProject.bcProjectNumber}"? This creates a read-only snapshot. The original project is not affected.`,{okLabel:"Archive"}))return;setArchivingProject(openProject.id);try{await archiveProject(user.uid,openProject,"user-initiated");await arcAlert(`✓ Archived "${openProject.name||openProject.bcProjectNumber}" successfully.`);}catch(e){await arcAlert("Archive failed: "+e.message,{kind:"error"});}finally{setArchivingProject(null);}}:undefined} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
+          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} onArchive={companyId?async()=>{const _archLabel=openProject.name||openProject.bcProjectNumber;const issues=scanBomForArchiveIssues(openProject);const hasIssues=issues.bcNotInBcCount>0||issues.mfrMissingCount>0||issues.vendorMissingCount>0;let acknowledgment=null;if(hasIssues){const bullets=[];if(issues.bcNotInBcCount>0)bullets.push(`${issues.bcNotInBcCount} item(s) not found in BC`);if(issues.mfrMissingCount>0)bullets.push(`${issues.mfrMissingCount} item(s) missing manufacturer`);if(issues.vendorMissingCount>0)bullets.push(`${issues.vendorMissingCount} item(s) missing vendor`);const proceed=await arcConfirm(`This project's BOM has issues that will affect restoration:\n\n${bullets.map(b=>"  • "+b).join("\n")}\n\nIf you archive now, restoring later may produce a BOM with missing items in BC requiring manual remediation.\n\nRecommended: resolve these issues before archiving (add missing items to BC, assign manufacturers/vendors).`,{kind:"warning",title:"⚠ Archive Warning — Incomplete BOM Sync",okLabel:"Archive Anyway — I Acknowledge",cancelLabel:"Cancel — Fix BOM First"});if(!proceed)return;const cu=firebase.auth().currentUser;acknowledgment={bcNotInBcCount:issues.bcNotInBcCount,mfrMissingCount:issues.mfrMissingCount,vendorMissingCount:issues.vendorMissingCount,acknowledgedBy:user.uid,acknowledgedByName:cu?.displayName||cu?.email||user.uid,acknowledgedAt:Date.now()};}else{if(!await arcConfirm(`Archive "${_archLabel}"? This creates a read-only snapshot. The original project is not affected.`,{okLabel:"Archive"}))return;}setArchivingProject(openProject.id);try{await archiveProject(user.uid,openProject,"user-initiated",acknowledgment);await arcAlert(`✓ Archived "${_archLabel}" successfully.`);}catch(e){await arcAlert("Archive failed: "+e.message,{kind:"error"});}finally{setArchivingProject(null);}}:undefined} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
         </ErrorBoundary>
       )}
       </div>{/* end main content column */}
