@@ -9962,53 +9962,82 @@ async function executeRestore(archive,remaps,options,onProgress){
   }
 }
 
-// ── COPY PROJECT ──
+// ── COPY PROJECT (Milestone E: "Copy to New Quote") ──
+// Firestore-local operation — no BC calls. Build-from-scratch pattern (include-list).
+// ECOs flattened into base BOMs via Phase 1 utilities.
 async function copyProject(uid,sourceProject,onProgress){
   const pp=onProgress||(()=>{});
   const src=sourceProject;
   const srcPanels=src.panels||[];
+  const ecoSummary=src.ecoSummary||[];
 
-  // Step 1: Create new BC project with same customer
-  pp({step:"bc",msg:"Creating BC project…",pct:5});
-  if(!_bcToken)await acquireBcToken(true);
-  if(!_bcToken)throw new Error("Could not connect to Business Central");
-  const bc=await bcCreateProject(src.name+" (Copy)",src.bcCustomerNumber);
+  // Step 1: Quote number (atomic transaction)
+  pp({step:"quote",msg:"Assigning quote number…",pct:5});
+  const quoteNumber=await getNextQuoteNumber(uid);
 
-  // Step 2: Create panel task structure in BC
-  pp({step:"tasks",msg:"Creating BC tasks…",pct:15});
-  const panelStubs=srcPanels.map((p,i)=>({id:`panel-${i+1}`,name:p.name||`Panel ${i+1}`}));
-  try{await bcCreatePanelTaskStructure(bc.number,src.name+" (Copy)",panelStubs);}catch(e){console.warn("Copy: task structure warning:",e.message);}
-
-  // Step 3: Deep clone panels (BOM, validation, labor, pages metadata)
-  pp({step:"clone",msg:"Cloning panel data…",pct:25});
-  const newPanels=srcPanels.map((panel,i)=>{
-    const newPages=(panel.pages||[]).map(pg=>({...pg,id:`pg-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,dataUrl:undefined,storageUrl:undefined,_srcStorageUrl:pg.storageUrl||null,_srcPageId:pg.id}));
-    const newBom=(panel.bom||[]).map(r=>({...r,id:`row-${Date.now()}-${Math.random().toString(36).slice(2,8)}`}));
-    return{...panel,id:`panel-${i+1}`,pages:newPages,bom:newBom};
+  // Step 2: Flatten ECOs per panel
+  pp({step:"flatten",msg:"Flattening ECOs…",pct:10});
+  const flattenedPanels=srcPanels.map(panel=>{
+    const flatBom=ecoSummary.length>0
+      ?flattenEcosIntoBom(panel,ecoSummary)
+      :(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.ecoTag).map(r=>({...r,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8)}));
+    const laborDeltas=ecoSummary.length>0?flattenEcosLabor(panel,ecoSummary):{cut:0,layout:0,wire:0};
+    // Preserve base labor rows (non-ECO), strip ECO labor rows
+    const baseLaborRows=(panel.bom||[]).filter(r=>r.isLaborRow&&!r.ecoTag).map(r=>({...r,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8)}));
+    const hasDeltas=laborDeltas.cut||laborDeltas.layout||laborDeltas.wire;
+    const laborData=panel.laborData?{...panel.laborData,...(hasDeltas?{ecoFlattenAdded:laborDeltas}:{})}:panel.laborData;
+    return{...panel,bom:[...flatBom,...baseLaborRows],laborData};
   });
 
-  // Step 4: Save new project to Firestore (without images yet)
-  pp({step:"save",msg:"Saving project…",pct:35});
-  const newProj=await saveProject(uid,{
+  // Step 3: Build new panels with fresh IDs, preserve specified fields, strip others
+  pp({step:"clone",msg:"Building panels…",pct:20});
+  const newPanels=flattenedPanels.map((panel,i)=>{
+    const newPages=(panel.pages||[]).map(pg=>({...pg,id:"pg-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),dataUrl:undefined,storageUrl:undefined,_srcStorageUrl:pg.storageUrl||null,_srcPageId:pg.id}));
+    return{
+      id:"panel-"+(i+1),
+      name:panel.name,
+      bom:panel.bom,
+      pages:newPages,
+      laborData:panel.laborData,
+      validation:panel.validation,
+      drawingNo:panel.drawingNo,
+      drawingDesc:panel.drawingDesc,
+      drawingRev:panel.drawingRev,
+      pricing:panel.pricing,
+      complianceReview:panel.complianceReview
+      // bomSyncHash: excluded (no BC linkage)
+      // engineeringQuestions: excluded (fresh project)
+    };
+  });
+
+  // Step 4: Build project doc — include-list only (§5.2)
+  pp({step:"build",msg:"Building project…",pct:30});
+  const now=Date.now();
+  const newProjectData={
     name:src.name+" (Copy)",
-    bcProjectId:bc.id,
-    bcProjectNumber:bc.number,
-    bcEnv:_bcConfig.env,
-    bcCustomerNumber:src.bcCustomerNumber,
-    bcCustomerName:src.bcCustomerName,
-    status:src.status||"draft",
+    status:"draft",
     panels:newPanels,
-    quote:src.quote?{...src.quote}:undefined,
-    createdAt:Date.now(),updatedAt:Date.now()
-  });
+    quote:{number:quoteNumber},
+    ecoSummary:[],
+    ecoCounter:0,
+    createdAt:now,
+    updatedAt:now
+    // saveProject adds id, schemaVersion, createdBy automatically
+    // All BC linkage, customer, quote metadata, ECO state, review state,
+    // purchasing, admin/lock, archive refs excluded by omission
+  };
 
-  // Step 5: Copy page images from source to new project in Storage
+  // Step 5: Save to Firestore (without images yet)
+  pp({step:"save",msg:"Saving project…",pct:35});
+  const newProj=await saveProject(uid,newProjectData);
+
+  // Step 6: Copy page images from source to new project in Storage
   const allPages=newPanels.flatMap((panel,pi)=>(panel.pages||[]).map((pg,pgi)=>({pi,pgi,pg})));
   const totalPages=allPages.filter(x=>x.pg._srcStorageUrl).length;
   let copied=0;
   for(const{pi,pgi,pg}of allPages){
     if(!pg._srcStorageUrl)continue;
-    pp({step:"images",msg:`Copying drawing ${copied+1}/${totalPages}…`,pct:35+Math.round((copied/Math.max(totalPages,1))*40)});
+    pp({step:"images",msg:"Copying drawing "+(copied+1)+"/"+totalPages+"…",pct:35+Math.round((copied/Math.max(totalPages,1))*45)});
     try{
       const loaded=await ensureDataUrl({storageUrl:pg._srcStorageUrl});
       if(loaded.dataUrl){
@@ -10022,16 +10051,9 @@ async function copyProject(uid,sourceProject,onProgress){
   // Clean up temp fields
   newPanels.forEach(panel=>(panel.pages||[]).forEach(pg=>{delete pg._srcStorageUrl;delete pg._srcPageId;}));
 
-  // Step 6: Re-save with storage URLs
-  pp({step:"save2",msg:"Saving images…",pct:80});
+  // Step 7: Re-save with storage URLs
+  pp({step:"save2",msg:"Saving images…",pct:85});
   const finalProj=await saveProject(uid,{...newProj,panels:newPanels,updatedAt:Date.now()});
-
-  // Step 7: Sync planning lines to BC for each panel
-  pp({step:"sync",msg:"Syncing planning lines to BC…",pct:85});
-  for(let i=0;i<newPanels.length;i++){
-    pp({step:"sync",msg:`Syncing panel ${i+1}/${newPanels.length} to BC…`,pct:85+Math.round((i/newPanels.length)*12)});
-    try{await bcSyncPanelPlanningLines(bc.number,i+1,newPanels[i],src.name);}catch(e){console.warn("Copy: planning line sync failed for panel",i+1,e.message);}
-  }
 
   pp({step:"done",msg:"Project copied!",pct:100});
   return finalProj;
@@ -41622,58 +41644,204 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
   );
 }
 
-// ── COPY PROJECT MODAL ──
+// ── COPY PROJECT MODAL (Milestone E: "Copy to New Quote") ──
+// Multi-view modal: preview → (optional warning) → progress → completion
 function CopyProjectModal({project,uid,onCopied,onClose}){
   const [name,setName]=useState((project.name||"")+" (Copy)");
-  const [copying,setCopying]=useState(false);
+  const [phase,setPhase]=useState("preview"); // preview | warning | progress | done | error
   const [progress,setProgress]=useState(null);
   const [error,setError]=useState("");
+  const [result,setResult]=useState(null);
+  const autoNavTimer=useRef(null);
 
-  async function handleCopy(){
-    if(!name.trim())return;
-    setCopying(true);setError("");
+  // Compute preview stats
+  const srcPanels=project.panels||[];
+  const ecoSummary=project.ecoSummary||[];
+  const ecoCount=ecoSummary.length;
+  const totalBaseBomRows=srcPanels.reduce((s,p)=>s+(p.bom||[]).filter(r=>!r.isLaborRow&&!r.ecoTag).length,0);
+  const totalEcoRows=srcPanels.reduce((s,p)=>s+(p.bom||[]).filter(r=>r.ecoTag&&!r.isLaborRow).length,0);
+  // Count flattened rows for preview (actual flatten for accurate count)
+  const flatPreviewCount=ecoCount>0
+    ?srcPanels.reduce((s,p)=>s+flattenEcosIntoBom(p,ecoSummary).length,0)
+    :totalBaseBomRows;
+  const addCount=ecoCount>0?srcPanels.reduce((s,p)=>s+(p.bom||[]).filter(r=>r.ecoTag&&!r.isLaborRow&&r.ecoOp==="add").length,0):0;
+  const removeCount=ecoCount>0?srcPanels.reduce((s,p)=>s+(p.bom||[]).filter(r=>r.ecoTag&&!r.isLaborRow&&r.ecoOp==="remove").length,0):0;
+
+  // BOM scan for warning (run on flattened panels)
+  const bomIssues=useMemo(()=>{
+    if(ecoCount>0){
+      const flatPanels=srcPanels.map(p=>({...p,bom:flattenEcosIntoBom(p,ecoSummary)}));
+      return scanBomForArchiveIssues({panels:flatPanels});
+    }
+    return scanBomForArchiveIssues(project);
+  },[project]);
+  const hasIssues=bomIssues.bcNotInBcCount>0||bomIssues.mfrMissingCount>0||bomIssues.vendorMissingCount>0;
+
+  // Progress steps for display
+  const STEPS=[
+    {key:"quote",label:"Quote number assigned"},
+    {key:"flatten",label:"ECOs flattened"},
+    {key:"clone",label:"Panels cloned"},
+    {key:"save",label:"Saved to Firestore"},
+    {key:"images",label:"Drawings copied"},
+    {key:"done",label:"Complete"}
+  ];
+
+  function stepStatus(stepKey){
+    if(!progress)return"pending";
+    const order=STEPS.map(s=>s.key);
+    const curIdx=order.indexOf(progress.step);
+    const thisIdx=order.indexOf(stepKey);
+    if(thisIdx<curIdx)return"done";
+    if(thisIdx===curIdx)return progress.step==="done"?"done":"active";
+    return"pending";
+  }
+
+  async function startCopy(acknowledgment){
+    setPhase("progress");setError("");
     try{
       const newProj=await copyProject(uid,{...project,name:name.trim()},p=>setProgress(p));
-      onCopied(newProj);
+      // If there was a BOM acknowledgment, store it on the new project
+      if(acknowledgment){
+        try{
+          const projPath=_appCtx.projectsPath||("users/"+uid+"/projects");
+          await fbDb.doc(projPath+"/"+newProj.id).update({copiedWithKnownIssues:acknowledgment});
+        }catch(e){console.warn("Copy: acknowledgment write failed:",e.message);}
+      }
+      setResult(newProj);
+      setPhase("done");
+      // Auto-navigate after 500ms so user sees "Complete" state
+      autoNavTimer.current=setTimeout(()=>onCopied(newProj),500);
     }catch(e){
       setError(e.message||"Copy failed");
-      setCopying(false);setProgress(null);
+      setPhase("error");
     }
   }
 
+  function handleConfirm(){
+    if(!name.trim())return;
+    if(hasIssues){
+      setPhase("warning");
+    }else{
+      startCopy(null);
+    }
+  }
+
+  function handleAcknowledge(){
+    const ack={
+      bcNotInBcCount:bomIssues.bcNotInBcCount,
+      mfrMissingCount:bomIssues.mfrMissingCount,
+      vendorMissingCount:bomIssues.vendorMissingCount,
+      acknowledgedBy:firebase.auth().currentUser?.displayName||firebase.auth().currentUser?.email||uid,
+      acknowledgedAt:Date.now()
+    };
+    startCopy(ack);
+  }
+
+  useEffect(()=>()=>{if(autoNavTimer.current)clearTimeout(autoNavTimer.current);},[]);
+
+  const canClose=phase==="preview"||phase==="warning"||phase==="error";
+
   return ReactDOM.createPortal(
+    <><style>{`@keyframes arcPulse{0%,100%{opacity:0.4;transform:scale(1)}50%{opacity:1;transform:scale(1.15)}}`}</style>
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
-      onMouseDown={e=>{if(!copying&&e.target===e.currentTarget)onClose();}}>
-      <div style={{background:"#0d0d1a",border:"1px solid "+C.accent+"66",borderRadius:10,padding:"24px 28px",width:420,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
-        <div style={{fontSize:15,fontWeight:800,color:C.accent,marginBottom:12}}>Copy Project</div>
-        <div style={{fontSize:12,color:C.muted,marginBottom:12,lineHeight:1.5}}>
-          Creates a new BC project with all panels, BOM data, drawings, tasks, and planning lines copied from <strong style={{color:C.text}}>{project.bcProjectNumber}</strong>.
-        </div>
-        <label style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4,display:"block"}}>New Project Name</label>
-        <input value={name} onChange={e=>setName(e.target.value)} disabled={copying}
-          style={{width:"100%",boxSizing:"border-box",background:C.card,border:"1px solid "+C.border,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:14,marginBottom:12,outline:"none"}}
-          onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border}/>
-        <div style={{fontSize:12,color:C.sub,marginBottom:12}}>
-          Customer: <strong style={{color:C.text}}>{project.bcCustomerName||"—"}</strong>
-        </div>
-        {progress&&(
-          <div style={{marginBottom:12}}>
-            <div style={{fontSize:11,color:progress.step==="done"?C.green:C.accent,marginBottom:4}}>{progress.msg}</div>
-            <div style={{width:"100%",height:6,background:C.border,borderRadius:4,overflow:"hidden"}}>
-              <div style={{height:"100%",width:(progress.pct||0)+"%",background:progress.step==="done"?C.green:`linear-gradient(90deg,${C.accent},#818cf8)`,borderRadius:4,transition:"width 0.4s"}}/>
+      onMouseDown={e=>{if(canClose&&e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#0d0d1a",border:"1px solid "+C.accent+"66",borderRadius:10,padding:"24px 28px",width:460,maxHeight:"80vh",overflowY:"auto",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+        <div style={{fontSize:15,fontWeight:800,color:C.accent,marginBottom:12}}>Copy to New Quote</div>
+
+        {/* ── PREVIEW VIEW ── */}
+        {phase==="preview"&&<>
+          <label style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4,display:"block"}}>New Project Name</label>
+          <input value={name} onChange={e=>setName(e.target.value)}
+            style={{width:"100%",boxSizing:"border-box",background:C.card,border:"1px solid "+C.border,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:14,marginBottom:12,outline:"none"}}
+            onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border}/>
+          <div style={{fontSize:12,color:C.sub,lineHeight:1.8,marginBottom:12,background:C.card,borderRadius:6,padding:"10px 14px",border:"1px solid "+C.border}}>
+            <div>Source: <strong style={{color:C.text}}>{project.bcProjectNumber||project.name}</strong></div>
+            <div>Panels: <strong style={{color:C.text}}>{srcPanels.length}</strong></div>
+            <div>BOM items: <strong style={{color:C.text}}>{totalBaseBomRows}</strong>
+              {ecoCount>0&&<span style={{color:C.accent}}> → {flatPreviewCount} after flatten ({removeCount>0?removeCount+" removal"+(removeCount!==1?"s":""):""}{removeCount>0&&addCount>0?", ":""}{addCount>0?addCount+" addition"+(addCount!==1?"s":""):""})</span>}
             </div>
+            {ecoCount>0&&<div>ECOs flattened: <strong style={{color:C.accent}}>{ecoCount}</strong> ({ecoSummary.map(e=>"ECO "+String(e.number||"?").padStart(2,"0")).join(", ")})</div>}
+            {ecoCount===0&&<div style={{color:C.muted}}>No ECOs to flatten</div>}
           </div>
-        )}
-        {error&&<div style={{fontSize:12,color:C.red,marginBottom:8}}>{error}</div>}
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-          {!copying&&<button onClick={onClose} style={{background:"transparent",border:"1px solid "+C.border,borderRadius:6,padding:"8px 16px",color:C.muted,fontSize:13,cursor:"pointer"}}>Cancel</button>}
-          <button onClick={handleCopy} disabled={copying||!name.trim()}
-            style={{background:copying?"#1e293b":C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:copying?"default":"pointer",opacity:copying?0.7:1}}>
-            {copying?"Copying…":"Copy Project"}
-          </button>
-        </div>
+          <div style={{fontSize:11,color:C.muted,marginBottom:12,lineHeight:1.5}}>
+            Creates a new draft project with a fresh quote number. No BC linkage, no customer data, no purchasing state. Source project is unchanged.
+          </div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={onClose} style={{background:"transparent",border:"1px solid "+C.border,borderRadius:6,padding:"8px 16px",color:C.muted,fontSize:13,cursor:"pointer"}}>Cancel</button>
+            <button onClick={handleConfirm} disabled={!name.trim()}
+              style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:name.trim()?"pointer":"default",opacity:name.trim()?1:0.5}}>
+              Copy to New Quote
+            </button>
+          </div>
+        </>}
+
+        {/* ── WARNING VIEW ── */}
+        {phase==="warning"&&<>
+          <div style={{fontSize:13,color:C.amber,fontWeight:700,marginBottom:8}}>⚠ BOM Integrity Issues</div>
+          <div style={{fontSize:12,color:C.sub,lineHeight:1.6,marginBottom:12}}>
+            The following issues were found in the{ecoCount>0?" flattened":""} BOM. These will carry over to the copied project:
+          </div>
+          <ul style={{margin:"0 0 12px 16px",padding:0,fontSize:12,color:C.text,lineHeight:1.8}}>
+            {bomIssues.bcNotInBcCount>0&&<li><strong style={{color:C.red}}>{bomIssues.bcNotInBcCount}</strong> item{bomIssues.bcNotInBcCount!==1?"s":""} not found in BC</li>}
+            {bomIssues.mfrMissingCount>0&&<li><strong style={{color:C.amber}}>{bomIssues.mfrMissingCount}</strong> item{bomIssues.mfrMissingCount!==1?"s":""} missing manufacturer</li>}
+            {bomIssues.vendorMissingCount>0&&<li><strong style={{color:C.amber}}>{bomIssues.vendorMissingCount}</strong> item{bomIssues.vendorMissingCount!==1?"s":""} missing vendor</li>}
+          </ul>
+          <div style={{fontSize:11,color:C.muted,marginBottom:12}}>You can fix these in the new project after copying.</div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={()=>setPhase("preview")} style={{background:"transparent",border:"1px solid "+C.border,borderRadius:6,padding:"8px 16px",color:C.muted,fontSize:13,cursor:"pointer"}}>Back</button>
+            <button onClick={handleAcknowledge}
+              style={{background:C.amber,color:"#000",border:"none",borderRadius:6,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              Copy Anyway
+            </button>
+          </div>
+        </>}
+
+        {/* ── PROGRESS VIEW ── */}
+        {phase==="progress"&&<>
+          <div style={{fontSize:12,color:C.sub,marginBottom:12}}>Copying project…</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+            {STEPS.map(s=>{
+              const st=stepStatus(s.key);
+              const icon=st==="done"?"✅":st==="active"?"⏳":"○";
+              return <div key={s.key} style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:st==="done"?C.green:st==="active"?C.accent:C.muted}}>
+                <span style={st==="active"?{animation:"arcPulse 1.2s ease-in-out infinite",display:"inline-block"}:{}}>{icon}</span>
+                <span>{s.label}</span>
+              </div>;
+            })}
+          </div>
+          {progress&&<div style={{width:"100%",height:6,background:C.border,borderRadius:4,overflow:"hidden"}}>
+            <div style={{height:"100%",width:(progress.pct||0)+"%",background:"linear-gradient(90deg,"+C.accent+",#818cf8)",borderRadius:4,transition:"width 0.4s"}}/>
+          </div>}
+        </>}
+
+        {/* ── DONE VIEW ── */}
+        {phase==="done"&&<>
+          <div style={{textAlign:"center",padding:"16px 0"}}>
+            <div style={{fontSize:28,marginBottom:8}}>✅</div>
+            <div style={{fontSize:14,fontWeight:700,color:C.green,marginBottom:4}}>Project Copied!</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:12}}>Opening new project…</div>
+            {result&&<button onClick={()=>onCopied(result)}
+              style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              Open New Project
+            </button>}
+          </div>
+        </>}
+
+        {/* ── ERROR VIEW ── */}
+        {phase==="error"&&<>
+          <div style={{fontSize:13,color:C.red,fontWeight:700,marginBottom:8}}>Copy Failed</div>
+          <div style={{fontSize:12,color:C.sub,marginBottom:12,lineHeight:1.5}}>{error}</div>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+            <button onClick={onClose} style={{background:"transparent",border:"1px solid "+C.border,borderRadius:6,padding:"8px 16px",color:C.muted,fontSize:13,cursor:"pointer"}}>Close</button>
+            <button onClick={()=>{setPhase("preview");setError("");setProgress(null);}}
+              style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              Try Again
+            </button>
+          </div>
+        </>}
       </div>
-    </div>,document.body
+    </div></>,document.body
   );
 }
 
