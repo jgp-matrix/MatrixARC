@@ -1273,3 +1273,22 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     gaps worth resolving.
     Discovered: Milestone E Phase 2 smoke test on PRJ402064 (v1.20.62), 2026-06-01.
     Owner for investigation: Coach.
+
+72. **OPEN** — Cannot change customer on existing project from ARC UI.
+    After a project is created, ARC's UI allows editing project name and customer contact, but not
+    the underlying customer (the `Bill_to_Customer_No` that ties the project to "Ovivo", "FLSmidth",
+    etc.).
+
+    Impact: If a customer is wrong at creation time, there's no recovery path within ARC. Limited
+    workaround is editing in BC directly, but it's unconfirmed whether BC allows changing
+    `Bill_to_Customer_No` on an existing project (may depend on PO activity, planning lines, etc.).
+
+    Why noted: Discovered during Milestone E Phase 3 planning, where this constraint determined that
+    Copy needs an upfront customer picker (rather than inheriting and allowing later change).
+
+    Investigation needed: Confirm whether BC allows changing `Bill_to_Customer_No` on an existing
+    project. If BC allows it, ARC should expose the change.
+
+    Priority: LOWER — no immediate user-facing issue, but represents a UI gap that could become a
+    problem if a customer assignment mistake happens.
+    Discovered: Milestone E Phase 3 planning (v1.20.63), 2026-06-01.
