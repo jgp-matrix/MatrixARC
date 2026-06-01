@@ -41251,7 +41251,7 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
       setModalView("failure");
     }
   }
-  function handleConfirmRestore(){
+  async function handleConfirmRestore(){
     // Validate non-empty remapTo for all active remaps (advisory review note from Phase 2)
     if(remapCustomer&&!remapCustomer.remapTo){setValidationError("Customer remap target is empty.");return;}
     for(const[vendorNo,v]of remapVendors){
@@ -41261,6 +41261,19 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
       if(v.action==="remap"&&!v.remapTo){setValidationError(`Item "${pn}" remap target is empty.`);return;}
     }
     setValidationError(null);
+    // Phase 2.3 B4: Warn user about missing items that will be skipped on restore.
+    // Defense-in-depth for B1+B2 — user should explicitly acknowledge skipped items.
+    const missingItems=(sectionResults.items||[]).filter(x=>x.costStatus==="missing");
+    if(missingItems.length>0){
+      const proceed=await arcConfirm(
+        `${missingItems.length} BOM item(s) are missing from BC and will be skipped on restore.\n\n`+
+        `These items will appear in ARC's BOM with a ⚠ SKIPPED badge but will NOT be added to BC planning lines.\n\n`+
+        `You can fix them after restore by editing the part number, marking them customer-supplied, or running BC re-verify.\n\n`+
+        `To remap them before restoring, click Cancel and select Remap for each item in the preview.`,
+        {kind:"warning",okLabel:`Proceed — ${missingItems.length} Item(s) Skipped`,cancelLabel:"Cancel — Let Me Remap"}
+      );
+      if(!proceed)return;
+    }
     runRestore();
   }
 
@@ -41292,10 +41305,11 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
       <div style={{fontSize:11,color:C.muted,marginBottom:16,textAlign:"right"}}>{pct}%</div>
       {RESTORE_STEP_DISPLAY.map(s=>{
         let icon="○",clr=C.muted;
+        let isActive=false;
         if(curStep>s.max||curStep===12){icon="✅";clr=C.green;}
-        else if(curStep>=s.min&&curStep<=s.max){icon="⏳";clr=C.accent;}
+        else if(curStep>=s.min&&curStep<=s.max){icon="⏳";clr=C.accent;isActive=true;}
         return<div key={s.min} style={{fontSize:12,color:clr,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
-          <span style={{width:20,textAlign:"center"}}>{icon}</span>
+          <span style={{width:20,textAlign:"center",...(isActive?{display:"inline-block",animation:"arcPulse 1.2s ease-in-out infinite"}:{})}}>{icon}</span>
           <span>{s.label}</span>
           {icon==="⏳"&&<span style={{fontSize:11,color:C.muted,marginLeft:4}}>— {detail}</span>}
         </div>;
@@ -45276,7 +45290,7 @@ function SupplierPortalPage({token}){
     <div style={{minHeight:"100vh",background:bg,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
       <div style={{background:card,border:`1px solid ${border}`,borderRadius:12,padding:"40px 36px",maxWidth:440,width:"100%",textAlign:"center",boxShadow:"0 4px 24px rgba(0,0,0,0.08)"}}>
         <div style={{width:48,height:48,margin:"0 auto 16px",border:"4px solid #e2e8f0",borderTop:`4px solid ${accent}`,borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
-        <style>{`@keyframes spin{to{transform:rotate(360deg)}}
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}@keyframes arcPulse{0%,100%{opacity:0.4;transform:scale(1)}50%{opacity:1;transform:scale(1.15)}}
 .spn-drop{max-height:200px;overflow-y:auto;scrollbar-width:auto;}
 .spn-drop::-webkit-scrollbar{width:14px;}
 .spn-drop::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:7px;border:3px solid #fff;}
