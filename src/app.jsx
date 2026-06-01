@@ -9068,9 +9068,10 @@ function scanBomForArchiveIssues(project){
     for(const r of(panel.bom||[])){
       if(r.isLaborRow||r.isContingency)continue;
       if(isServiceItem(r))continue;
+      if(/matrix\s*systems/i.test(r.bcVendorName||""))continue;
       if(r.bcVerify&&r.bcVerify.status==="not-in-bc")bcNotInBcCount++;
       if(!(r.manufacturer||"").trim())mfrMissingCount++;
-      if(!(r.bcVendorNo||"").trim())vendorMissingCount++;
+      if(!(r.bcVendorNo||"").trim()&&!(r.bcVendorName||"").trim())vendorMissingCount++;
     }
   }
   return{bcNotInBcCount,mfrMissingCount,vendorMissingCount};

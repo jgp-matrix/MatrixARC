@@ -1250,3 +1250,26 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
     Priority: LOW — only affects one customer, non-blocking.
     Discovered: Phase B investigation, 2026-06-01.
+
+71. **OPEN** — Vendor field source-of-truth audit. `bcVendorNo` and `bcVendorName` are
+    independently populated in BOM data. Many projects have `bcVendorName` but no `bcVendorNo`.
+    Different code paths check different fields for vendor presence.
+
+    Symptom: PRJ402064 had 18/18 base BOM rows with `bcVendorName` populated but `bcVendorNo`
+    empty. `scanBomForArchiveIssues` checked only `bcVendorNo`, flagging all 20 rows (including
+    ECO adds) as "missing vendor" despite every row having a vendor name assigned.
+
+    Stopgap shipped (v1.20.63): `scanBomForArchiveIssues` now passes if EITHER `bcVendorNo` OR
+    `bcVendorName` has data, plus Matrix Systems vendor exclusion added.
+
+    Audit needed: Identify all code paths reading vendor fields, determine when each is populated
+    (BC sync, extraction, manual entry, pricing refresh), recommend canonical field per purpose.
+    Investigation scope: Display, BC sync (PO creation, planning lines), search/filter,
+    import/export, ECO handling. Action items if audit surfaces issues: Possibly backfill missing
+    `bcVendorNo` from `bcVendorName` via BC lookup, or migrate to use `bcVendorName` as canonical
+    for validation checks.
+
+    Priority: MEDIUM — no immediate user-facing failures, but indicates systemic data integrity
+    gaps worth resolving.
+    Discovered: Milestone E Phase 2 smoke test on PRJ402064 (v1.20.62), 2026-06-01.
+    Owner for investigation: Coach.
