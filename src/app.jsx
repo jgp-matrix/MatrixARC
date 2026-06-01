@@ -388,26 +388,33 @@ let _msalReady=false;
 // All fetch() calls to BC_ODATA_BASE and BC_API_BASE route through bcGatedFetch.
 // 429 responses are retried automatically with Retry-After honoring (max 3 retries).
 const _bcSemaphore={inflight:0,max:6,queue:[]};
+function _bcRelease(){
+  _bcSemaphore.inflight--;
+  if(_bcSemaphore.queue.length)_bcSemaphore.queue.shift()();
+}
 async function bcGatedFetch(url,options){
   while(_bcSemaphore.inflight>=_bcSemaphore.max){
     await new Promise(r=>_bcSemaphore.queue.push(r));
   }
   _bcSemaphore.inflight++;
+  let r;
   try{
-    const r=await fetch(url,options);
-    if(r.status===429){
-      // Track retry depth via options to prevent infinite loops
-      const depth=(options&&options._bcRetryDepth)||0;
-      if(depth>=3){console.warn("bcGatedFetch: 429 retry limit (3) reached, returning 429 response");return r;}
-      const retryAfter=parseInt(r.headers.get("Retry-After")||"2",10);
-      await new Promise(resolve=>setTimeout(resolve,Math.min(retryAfter,30)*1000));
-      return bcGatedFetch(url,{...options,_bcRetryDepth:depth+1});
-    }
-    return r;
-  }finally{
-    _bcSemaphore.inflight--;
-    if(_bcSemaphore.queue.length)_bcSemaphore.queue.shift()();
+    r=await fetch(url,options);
+  }catch(e){
+    _bcRelease();
+    throw e;
   }
+  if(r.status===429){
+    // Release slot BEFORE sleeping — prevents deadlock when all slots hit 429 simultaneously.
+    _bcRelease();
+    const depth=(options&&options._bcRetryDepth)||0;
+    if(depth>=3){console.warn("bcGatedFetch: 429 retry limit (3) reached, returning 429 response");return r;}
+    const retryAfter=parseInt(r.headers.get("Retry-After")||"2",10);
+    await new Promise(resolve=>setTimeout(resolve,Math.min(retryAfter,30)*1000));
+    return bcGatedFetch(url,{...options,_bcRetryDepth:depth+1});
+  }
+  _bcRelease();
+  return r;
 }
 
 // ── BACKGROUND TASK REGISTRY ──
