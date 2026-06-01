@@ -34884,11 +34884,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           try{
             await bcSyncPanelPlanningLines(bcNum,i+1,p,init.name);
             synced++;
-            // #65b: Persist bomSyncHash so next open skips this panel if BOM unchanged.
-            // Uses saveProjectPanel (same as manual sync path) to write just the hash.
-            const hashed={...p,bomSyncHash:curHash};
-            init.panels[i]=hashed;
-            saveProjectPanel(uid,init.id,p.id,hashed,true).catch(e=>console.warn("Open BC sync hash save failed panel",i+1,":",e));
+            // #65b: DISABLED — stale init.panels snapshot overwrites user edits (PRJ402109 data loss).
+            // Coach diagnostic: DIAGNOSTIC-PRJ402109-DATA-LOSS.md. Will be re-enabled with
+            // projectRef.current.panels.find() pattern after careful review.
+            // const hashed={...p,bomSyncHash:curHash};
+            // init.panels[i]=hashed;
+            // saveProjectPanel(uid,init.id,p.id,hashed,true).catch(e=>console.warn("Open BC sync hash save failed panel",i+1,":",e));
           }catch(e){console.warn("Open BC sync panel",i+1,"failed:",e);}
         }
         if(synced>0)console.log("OPEN BC SYNC:",synced,"panels synced for",bcNum);
